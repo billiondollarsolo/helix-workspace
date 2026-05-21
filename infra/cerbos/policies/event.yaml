@@ -1,0 +1,34 @@
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: event
+  version: default
+  importDerivedRoles:
+    - helix_platform_roles
+  schemas:
+    principalSchema:
+      ref: cerbos:///platform/principal.json
+    resourceSchema:
+      ref: cerbos:///platform/resource.json
+  rules:
+    - actions: ["*"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]
+
+    - actions: ["create", "list", "search"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["org_member"]
+
+    - actions: ["read", "rsvp", "comment", "search"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["participant", "shared"]
+
+    - actions: ["read", "search"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["org_member"]
+      condition:
+        match:
+          expr: R.attr.visibility == "org"
+
+    - actions: ["*"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["owner"]

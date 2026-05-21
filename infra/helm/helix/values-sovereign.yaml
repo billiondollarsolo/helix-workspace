@@ -1,0 +1,139 @@
+# Helix Tier 4 "Sovereign" Helm overlay (PRD §6.3, §14.4 — Sovereign/DoD).
+#
+# This is an OPT-IN overlay. The default chart (`values.yaml`) ships FIPS off,
+# STIG off, open egress, and the standard image — a normal install is wholly
+# unaffected by this file. Tier 4 is enabled only by explicitly passing
+# `-f values-sovereign.yaml`.
+#
+# What this overlay turns on:
+#   - The STIG/FIPS image variant (infra/docker/Dockerfile.stig), digest-pinned.
+#   - The FipsCryptoProvider, fail-closed: HELIX_FIPS_MODE=required.
+#   - Default-deny network egress.
+#   - FIPS node selector so workloads land only on FIPS-validated nodes.
+#   - WORM + SIEM audit destinations and Vault/KMS/SPIRE wiring.
+#
+# Validate with:
+#   helm lint infra/helm/helix -f infra/helm/helix/values-sovereign.yaml
+#   helm template helix infra/helm/helix -f infra/helm/helix/values-sovereign.yaml
+
+security:
+  tier: sovereign
+  overrides:
+    internalTransit: spire-mtls
+    secrets: vault
+    auditHashChain: true
+    auditDestinations:
+      - postgres
+      - worm
+      - siem
+    networkEgress: default-deny
+    pluginSignatureRequired: true
+    localAiOnly: true
+
+# The default repository is overridden by the FIPS image below when
+# `fips.enabled` is true (see the `helix.image` helper). `digest` is left empty
+# here because the FIPS image — not the standard image — is the deployed one.
+image:
+  repository: registry.example.internal/helix/helix
+  tag: "0.9.0"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+external:
+  vault:
+    enabled: true
+  kms:
+    enabled: true
+  siem:
+    enabled: true
+
+# Tier 4 default-deny egress. No CIDRs and no DNS are allowed by the chart;
+# approved private-endpoint CIDRs must be added explicitly at install time
+# (see docs/security/tier4-airgap-install.md §3).
+networkPolicy:
+  egress:
+    allowAll: false
+    allowDns: false
+    cidrs: []
+
+spire:
+  enabled: true
+
+vault:
+  agentInject: true
+  csi:
+    enabled: true
+
+siem:
+  enabled: true
+
+# --- FIPS crypto adapter contract ------------------------------------------
+# The Helix crypto adapter (apps/helix/src/platform/crypto) reads HELIX_FIPS_MODE
+# and HELIX_CRYPTO_ADAPTER from the rendered ConfigMap. `mode: required` makes
+# the FipsCryptoProvider fail closed if the runtime cannot enter OpenSSL FIPS
+# mode — which is why the STIG image (FIPS-validated OpenSSL) is mandatory here.
+fips:
+  enabled: true
+  imageRepository: registry.example.internal/helix/helix-fips
+  # Placeholder digest. MUST be replaced with the promoted internal digest
+  # before production traffic; the STIG image policy below rejects this zero
+  # digest at admission time.
+  imageDigest: >-
+    sha256:0000000000000000000000000000000000000000000000000000000000000000
+  nodeSelector:
+    node-restriction.kubernetes.io/fips: "true"
+  crypto:
+    adapter: node-openssl-fips
+    # `required` (not `standard`): fail closed on a non-FIPS runtime or a
+    # non-approved algorithm. This is the switch that activates FipsCryptoProvider.
+    mode: required
+    moduleSource: host-validated
+    keyProvider: kms
+    randomSource: getrandom
+    minTlsVersion: "1.2"
+    preferredTlsVersion: "1.3"
+    allowedCipherSuites:
+      - TLS_AES_256_GCM_SHA384
+      - TLS_AES_128_GCM_SHA256
+      - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+    disallowedAlgorithms:
+      - md5
+      - sha1-signature
+      - rsa-1024
+      - tls10
+      - tls11
+    requireRuntimeAttestation: true
+
+# --- STIG image policy -----------------------------------------------------
+# Digest-pinned, signed, SBOM-bearing images from the approved internal
+# registry only. Enforced by an admission policy (Kyverno/Gatekeeper) outside
+# this chart; these values are the contract that policy reads.
+stig:
+  enabled: true
+  profile: disa-kubernetes-stig-high
+  imagePolicy:
+    requireDigest: true
+    forbidLatestTag: true
+    requireSignedImages: true
+    requireSbom: true
+    requireVulnerabilityReport: true
+    allowedRegistries:
+      - registry.example.internal
+    expectedRunAsUser: 10001
+    expectedRunAsGroup: 10001
+    expectedReadOnlyRootFilesystem: true
+    expectedDropCapabilities:
+      - ALL
+
+airgap:
+  enabled: true
+  imageRegistry: registry.example.internal
+  pullPolicy: IfNotPresent
+
+# Tier 4 availability posture: minimum 3 replicas, disruption budget of 2.
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 10
+
+podDisruptionBudget:
+  minAvailable: 2

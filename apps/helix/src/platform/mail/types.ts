@@ -1,0 +1,252 @@
+import type { AIClassification, JsonObject } from "@helix/sdk-types";
+
+export const mailPluginId = "com.helix.core.mail";
+
+export type MailDirection = "inbound" | "outbound";
+
+export type MailAddress = JsonObject & {
+  readonly address: string;
+  readonly email?: string;
+  readonly name?: string;
+};
+
+export type MailEnvelopeAddress = MailAddress;
+
+export interface MailAttachmentInput {
+  readonly filename?: string | undefined;
+  readonly mimeType: string;
+  readonly contentType?: string | undefined;
+  readonly content: Buffer;
+  readonly path?: string | undefined;
+  readonly contentId?: string | undefined;
+  readonly disposition?: string | undefined;
+}
+
+export interface MailMessageInput {
+  readonly orgId: string;
+  readonly actorId?: string | null | undefined;
+  readonly threadId?: string | undefined;
+  readonly messageId?: string | undefined;
+  readonly from: MailEnvelopeAddress;
+  readonly to: readonly MailEnvelopeAddress[];
+  readonly cc?: readonly MailEnvelopeAddress[] | undefined;
+  readonly bcc?: readonly MailEnvelopeAddress[] | undefined;
+  readonly subject: string;
+  readonly bodyText: string;
+  readonly bodyHtml?: string | undefined;
+  readonly inReplyTo?: string | undefined;
+  readonly references?: readonly string[] | undefined;
+  readonly attachments?: readonly MailAttachmentInput[] | undefined;
+  readonly receivedAt?: Date | undefined;
+  readonly metadata?: JsonObject | undefined;
+}
+
+export type MailOutboundStatus = "queued" | "sending" | "sent" | "failed" | "cancelled";
+
+export interface MailOutboundEnvelope {
+  readonly from: MailEnvelopeAddress;
+  readonly to: readonly MailEnvelopeAddress[];
+  readonly cc: readonly MailEnvelopeAddress[];
+  readonly bcc: readonly MailEnvelopeAddress[];
+  readonly subject: string;
+  readonly text: string;
+  readonly html?: string | undefined;
+  readonly attachments: readonly MailAttachmentInput[];
+}
+
+export interface StoredMailMessage {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly attachmentObjectIds: readonly string[];
+}
+
+export type MailFilterCriteria = JsonObject & {
+  readonly fromContains?: string;
+  readonly toContains?: string;
+  readonly subjectContains?: string;
+  readonly bodyContains?: string;
+  readonly hasAttachment?: boolean;
+};
+
+export type MailFilterActions = JsonObject & {
+  readonly applyLabels?: readonly string[];
+  readonly archive?: boolean;
+  readonly delete?: boolean;
+  readonly snoozeUntil?: string;
+};
+
+export interface MailFilterRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly priority: number;
+  readonly criteria: MailFilterCriteria;
+  readonly actions: MailFilterActions;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface MailThreadStatePatch {
+  readonly addLabels?: readonly string[] | undefined;
+  readonly removeLabels?: readonly string[] | undefined;
+  readonly archivedAt?: Date | undefined;
+  readonly deletedAt?: Date | undefined;
+  readonly snoozedUntil?: Date | undefined;
+  readonly readAt?: Date | null | undefined;
+  readonly starred?: boolean | undefined;
+}
+
+export interface MailVacationRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly enabled: boolean;
+  readonly subject: string;
+  readonly body: string;
+  readonly startsAt: Date | null;
+  readonly endsAt: Date | null;
+  readonly metadata: JsonObject;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface MailOutboundRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly messageId: string;
+  readonly threadId: string;
+  readonly outboxId: string | null;
+  readonly status: MailOutboundStatus;
+  readonly envelope: MailOutboundEnvelope;
+  readonly undoUntil: Date;
+  readonly sentAt: Date | null;
+  readonly cancelledAt: Date | null;
+  readonly failedAt: Date | null;
+  readonly lastError: string | null;
+  readonly providerMessageId: string | null;
+  readonly deliveryMetadata: JsonObject;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface MailOutboundDeliveryResult {
+  readonly providerMessageId?: string | undefined;
+  readonly deliveryMetadata?: JsonObject | undefined;
+}
+
+export interface MailSearchRequest {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly query?: string | undefined;
+  readonly labels?: readonly string[] | undefined;
+  readonly limit?: number | undefined;
+}
+
+export interface MailSearchHit {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly subject: string;
+  readonly from?: MailEnvelopeAddress | undefined;
+  readonly preview: string;
+  readonly sentAt: Date;
+  readonly labels: readonly string[];
+  readonly unread: boolean;
+  readonly starred: boolean;
+  readonly outboundStatus?: MailOutboundStatus | undefined;
+  readonly providerMessageId?: string | undefined;
+  readonly deliveryMetadata?: JsonObject | undefined;
+}
+
+export interface MailThreadGetRequest {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly threadId: string;
+}
+
+export interface MailThreadMessage {
+  readonly id: string;
+  readonly from?: MailEnvelopeAddress | undefined;
+  readonly to: readonly MailEnvelopeAddress[];
+  readonly cc: readonly MailEnvelopeAddress[];
+  readonly bcc: readonly MailEnvelopeAddress[];
+  readonly sentAt: Date;
+  readonly body: string;
+  readonly bodyFormat: "plain" | "html";
+  readonly hasAttachment: boolean;
+  readonly attachments: readonly MailThreadAttachment[];
+}
+
+export interface MailThreadAttachment {
+  readonly objectId: string;
+  readonly filename?: string | undefined;
+  readonly contentId?: string | undefined;
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly sha256?: string | undefined;
+  readonly disposition: string;
+}
+
+export interface MailThreadDetail {
+  readonly id: string;
+  readonly subject: string;
+  readonly preview: string;
+  readonly participants: readonly MailEnvelopeAddress[];
+  readonly messages: readonly MailThreadMessage[];
+  readonly labels: readonly string[];
+  readonly archivedAt: Date | null;
+  readonly deletedAt: Date | null;
+  readonly snoozedUntil: Date | null;
+  readonly lastActivity: Date;
+  readonly unread: boolean;
+  readonly starred: boolean;
+  readonly direction: MailDirection | "mixed";
+}
+
+export interface MailSearchRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly threadId: string;
+  readonly subject: string;
+  readonly body: string;
+  readonly from: MailAddress;
+  readonly to: readonly MailAddress[];
+  readonly cc?: readonly MailAddress[] | undefined;
+  readonly bcc?: readonly MailAddress[] | undefined;
+  readonly labels?: readonly string[] | undefined;
+  readonly folder?: string | undefined;
+  readonly direction: MailDirection;
+  readonly classification?: AIClassification | undefined;
+  readonly sentAt: string;
+  readonly updatedAt?: string | undefined;
+  readonly metadata?: JsonObject | undefined;
+}
+
+export interface MailSearchProjectionStore {
+  getMailSearchRecord(messageId: string): Promise<MailSearchRecord | null>;
+}
+
+export type MailEnrichmentRecord = MailSearchRecord;
+
+export interface MailEnrichmentProjectionStore {
+  getMailEnrichmentRecord(messageId: string): Promise<MailEnrichmentRecord | null>;
+  recordMailEnrichment?(input: MailEnrichmentWrite): Promise<void>;
+  setMailClassification?(input: MailClassificationWrite): Promise<void>;
+}
+
+export interface MailEnrichmentWrite {
+  readonly messageId: string;
+  readonly feature: string;
+  readonly data: JsonObject;
+}
+
+export interface MailClassificationWrite {
+  readonly messageId: string;
+  readonly classification: AIClassification;
+  readonly source: string;
+  readonly reason: string;
+}
+
+export type MailActivityPayload = JsonObject;

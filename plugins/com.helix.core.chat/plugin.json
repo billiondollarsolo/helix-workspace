@@ -1,0 +1,85 @@
+{
+  "id": "com.helix.core.chat",
+  "name": "Chat",
+  "version": "1.0.0",
+  "description": "First-party chat feature: rooms, direct messages, reactions, presence, typing indicators, and read receipts",
+  "vendor": {
+    "name": "Helix",
+    "url": "https://helix.example.com"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "core-app",
+  "main": "./src/index.ts",
+  "capabilities": {
+    "provides": [
+      "websocket:/ws/chat",
+      "tools:chat.*",
+      "indexer:chat",
+      "ui-route:/chat",
+      "command-palette:chat.*",
+      "notification-source:chat.message"
+    ],
+    "consumes": [
+      "threads",
+      "messages",
+      "permissions",
+      "search",
+      "nats",
+      "redis",
+      "notifier"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "chat.read",
+      "chat.write",
+      "chat.admin"
+    ],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": [
+      "NATS_URL",
+      "REDIS_URL",
+      "CHAT_PRESENCE_TTL_SECONDS"
+    ]
+  },
+  "migrations": "./migrations",
+  "policies": "./policies",
+  "uiContribution": {
+    "shellRoutes": [
+      "/chat"
+    ],
+    "leftRailItem": {
+      "label": "Chat",
+      "icon": "message-circle",
+      "order": 2
+    },
+    "settingsPages": [
+      "chat.rooms",
+      "chat.notifications"
+    ]
+  },
+  "tierRequirements": {
+    "minTier": "personal"
+  },
+  "ai": {
+    "suggestionSlots": [
+      {
+        "id": "chat.suggest-reply",
+        "description": "Suggest a reply in a chat room"
+      },
+      {
+        "id": "chat.summarize-room",
+        "description": "Summarize recent room activity"
+      }
+    ],
+    "enrichments": [
+      {
+        "id": "chat.action-items",
+        "description": "Extract action items from chat messages"
+      }
+    ]
+  }
+}

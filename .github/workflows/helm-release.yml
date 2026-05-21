@@ -1,0 +1,135 @@
+name: Helm Chart Release
+
+# P2-8: publish the Helix Helm chart to a Helm repository as part of the release
+# pipeline. The chart is pushed to the GitHub Container Registry as an OCI
+# artifact AND a classic index.yaml-based Helm repo is published to GitHub Pages,
+# so operators can `helm repo add` or `helm pull oci://...` either way.
+
+on:
+  push:
+    tags:
+      # Chart releases are tagged helm-v<chart-version>, e.g. helm-v0.9.0.
+      - "helm-v*"
+  workflow_dispatch:
+    inputs:
+      chartVersion:
+        description: "Override chart version (defaults to Chart.yaml)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+  pages: write
+  id-token: write
+
+env:
+  CHART_DIR: infra/helm/helix
+  OCI_REGISTRY: ghcr.io
+  OCI_REPO: ghcr.io/${{ github.repository_owner }}/charts
+
+jobs:
+  release-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Lint and template the chart
+        run: |
+          set -Eeuo pipefail
+          helm lint "$CHART_DIR"
+          for overlay in "" \
+            "-f $CHART_DIR/values-business.yaml" \
+            "-f $CHART_DIR/values-enterprise.yaml" \
+            "-f $CHART_DIR/values-sovereign.yaml"; do
+            # shellcheck disable=SC2086
+            helm template helix "$CHART_DIR" $overlay >/dev/null
+          done
+
+      - name: Run PRD hardening contract validation
+        run: bash infra/scripts/validate-helm.sh
+
+      - name: Resolve chart version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.chartVersion }}
+        run: |
+          set -Eeuo pipefail
+          CHART_VERSION="${INPUT_VERSION:-}"
+          if [ -z "$CHART_VERSION" ]; then
+            CHART_VERSION="$(helm show chart "$CHART_DIR" | awk '/^version:/ {print $2}')"
+          fi
+          echo "version=$CHART_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved chart version: $CHART_VERSION"
+
+      - name: Package the chart
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist
+          helm package "$CHART_DIR" \
+            --version "${CHART_VERSION}" \
+            --app-version "${CHART_VERSION}" \
+            --destination dist
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_ACTOR: ${{ github.actor }}
+        run: echo "${GHCR_TOKEN}" | helm registry login "$OCI_REGISTRY" --username "$GHCR_ACTOR" --password-stdin
+
+      - name: Push chart to the OCI Helm registry
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          helm push "dist/helix-${CHART_VERSION}.tgz" "oci://${OCI_REPO}"
+          echo "Published oci://${OCI_REPO}/helix:${CHART_VERSION}"
+
+      # Classic chart repository (index.yaml on GitHub Pages) for `helm repo add`.
+      - name: Build / refresh the Helm repo index
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -Eeuo pipefail
+          PAGES_URL="https://${REPO_OWNER}.github.io/${REPO_NAME}/charts"
+          mkdir -p public/charts
+          cp dist/*.tgz public/charts/
+          # Merge with the existing index if one is already published.
+          if curl -fsSL "${PAGES_URL}/index.yaml" -o public/charts/old-index.yaml; then
+            helm repo index public/charts --url "$PAGES_URL" --merge public/charts/old-index.yaml
+            rm -f public/charts/old-index.yaml
+          else
+            helm repo index public/charts --url "$PAGES_URL"
+          fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Upload packaged chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helix-helm-chart
+          path: dist/*.tgz
+          if-no-files-found: error
+
+  publish-pages:
+    needs: release-chart
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Helm repo to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

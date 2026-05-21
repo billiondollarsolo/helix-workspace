@@ -1,0 +1,174 @@
+import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
+import { z } from "zod";
+import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { zodToolSchema } from "../webhooks/tool-schemas.js";
+import type { AssistantOrchestrator } from "./orchestrator.js";
+import type { AssistantStore } from "./types.js";
+
+const uuidSchema = z.string().uuid();
+const metadataSchema = z.record(z.unknown()).default({});
+
+const createConversationSchema = z.object({
+  title: z.string().min(1).max(200).optional(),
+  memoryOptIn: z.boolean().optional(),
+  metadata: metadataSchema,
+});
+
+const chatSchema = z.object({
+  conversationId: uuidSchema.optional(),
+  message: z.string().min(1).max(100_000),
+  title: z.string().min(1).max(200).optional(),
+  memoryOptIn: z.boolean().optional(),
+  classification: z.enum(["public", "standard", "confidential", "restricted"]).default("standard"),
+  metadata: metadataSchema,
+});
+
+const forgetSchema = z.object({
+  conversationId: uuidSchema.optional(),
+  ids: z.array(z.string().min(1)).default([]),
+  olderThan: z.string().datetime().optional(),
+  all: z.boolean().default(true),
+  disableMemory: z.boolean().default(true),
+});
+
+const approveConfirmationSchema = z.object({
+  conversationId: uuidSchema,
+  pendingId: uuidSchema,
+  classification: z.enum(["public", "standard", "confidential", "restricted"]).default("standard"),
+  metadata: metadataSchema,
+});
+
+const cancelConfirmationSchema = z.object({
+  conversationId: uuidSchema,
+  pendingId: uuidSchema,
+  classification: z.enum(["public", "standard", "confidential", "restricted"]).default("standard"),
+  metadata: metadataSchema,
+});
+
+const genericObjectJsonSchema = {
+  type: "object",
+  additionalProperties: true,
+} as const;
+
+export interface CreateAssistantToolDefinitionsOptions {
+  readonly store: AssistantStore;
+  readonly orchestrator: AssistantOrchestrator;
+}
+
+export function createAssistantToolDefinitions(
+  options: CreateAssistantToolDefinitionsOptions,
+): readonly ToolDefinition[] {
+  return [
+    defineTool<z.output<typeof createConversationSchema>, unknown>({
+      id: "assistant.conversation.create",
+      description: "Create an assistant conversation.",
+      permission: "assistant.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(createConversationSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) =>
+        options.store.createConversation({
+          actor: ctx.actor,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.memoryOptIn === undefined ? {} : { memoryOptIn: input.memoryOptIn }),
+          metadata: toJsonObject(input.metadata),
+        }),
+    }),
+    defineTool<z.output<typeof chatSchema>, unknown>({
+      id: "assistant.chat",
+      description:
+        "Send a message to Helix Assistant with search, memory, and visible tool context.",
+      permission: "assistant.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(chatSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) =>
+        options.orchestrator.sendMessage({
+          actor: ctx.actor,
+          content: input.message,
+          ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.memoryOptIn === undefined ? {} : { memoryOptIn: input.memoryOptIn }),
+          classification: input.classification,
+          metadata: toJsonObject(input.metadata),
+          ...(ctx.request === undefined ? {} : { request: ctx.request }),
+        }),
+    }),
+    defineTool<z.output<typeof forgetSchema>, unknown>({
+      id: "assistant.memory.forget",
+      description: "Forget saved assistant memory for the current actor.",
+      permission: "assistant.memory",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(forgetSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) =>
+        options.orchestrator.forgetMemory({
+          actor: ctx.actor,
+          ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+          criteria: {
+            all: input.all,
+            ...(input.ids.length === 0 ? {} : { ids: input.ids }),
+            ...(input.olderThan === undefined ? {} : { olderThan: input.olderThan }),
+          },
+          disableMemory: input.disableMemory,
+          ...(ctx.request === undefined ? {} : { request: ctx.request }),
+        }),
+    }),
+    defineTool<z.output<typeof approveConfirmationSchema>, unknown>({
+      id: "assistant.confirmation.approve",
+      description:
+        "Approve a pending assistant tool action, execute it, and resume the assistant turn.",
+      permission: "assistant.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(approveConfirmationSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) =>
+        options.orchestrator.approvePendingTool({
+          actor: ctx.actor,
+          conversationId: input.conversationId,
+          pendingId: input.pendingId,
+          classification: input.classification,
+          metadata: toJsonObject(input.metadata),
+          ...(ctx.request === undefined ? {} : { request: ctx.request }),
+        }),
+    }),
+    defineTool<z.output<typeof cancelConfirmationSchema>, unknown>({
+      id: "assistant.confirmation.cancel",
+      description:
+        "Cancel a pending assistant tool action without executing it, and resume the assistant turn.",
+      permission: "assistant.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(cancelConfirmationSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) =>
+        options.orchestrator.cancelPendingTool({
+          actor: ctx.actor,
+          conversationId: input.conversationId,
+          pendingId: input.pendingId,
+          classification: input.classification,
+          metadata: toJsonObject(input.metadata),
+          ...(ctx.request === undefined ? {} : { request: ctx.request }),
+        }),
+    }),
+  ];
+}
+
+export function registerAssistantTools(
+  registry: RuntimeToolRegistry,
+  options: CreateAssistantToolDefinitionsOptions,
+): void {
+  for (const tool of createAssistantToolDefinitions(options)) {
+    registry.register(tool);
+  }
+}
+
+function defineTool<Input, Output>(
+  tool: ToolDefinition<Input, Output>,
+): ToolDefinition<Input, Output> {
+  return tool;
+}
+
+function toJsonObject(value: Record<string, unknown>): JsonObject {
+  return JSON.parse(JSON.stringify(value)) as JsonObject;
+}

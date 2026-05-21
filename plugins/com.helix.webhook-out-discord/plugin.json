@@ -1,0 +1,32 @@
+{
+  "id": "com.helix.webhook-out-discord",
+  "name": "Discord Outbound Webhooks",
+  "version": "1.0.0",
+  "description": "Discord webhook payload formatter for Helix outbound events.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "connector",
+  "main": "index.js",
+  "capabilities": {
+    "provides": [
+      "webhook.out.format.discord"
+    ],
+    "consumes": [
+      "webhook.engine"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "webhooks.write"
+    ],
+    "outbound-network": [
+      "discord.com"
+    ],
+    "filesystem": [],
+    "envVars": []
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cerbos:///platform/admin_resource.json",
+  "type": "object",
+  "required": ["org_id"],
+  "additionalProperties": true,
+  "properties": {
+    "org_id": { "type": "string", "minLength": 1 },
+    "section": { "type": "string", "minLength": 1 }
+  }
+}

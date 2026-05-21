@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://helix.local/plugins/com.helix.observability-otel/config.schema.json",
+  "title": "Helix OpenTelemetry configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "serviceName": {
+      "type": "string",
+      "minLength": 1,
+      "default": "helix-app"
+    },
+    "otlpEndpoint": {
+      "type": "string",
+      "format": "uri",
+      "description": "OTLP receiver endpoint. HTTP trace exporter endpoints are normalized to /v1/traces."
+    },
+    "tracesEndpoint": {
+      "type": "string",
+      "format": "uri",
+      "description": "Explicit OTLP HTTP trace exporter endpoint."
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "sampling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "traces": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.1
+        },
+        "llmCalls": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        },
+        "toolCalls": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        },
+        "permissionChecks": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.05
+        }
+      }
+    }
+  }
+}

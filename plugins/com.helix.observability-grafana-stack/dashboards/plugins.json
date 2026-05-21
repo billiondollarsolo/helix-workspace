@@ -1,0 +1,28 @@
+{
+  "uid": "helix-plugins",
+  "title": "Helix Plugins",
+  "tags": ["helix", "plugins"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Plugin metric rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate({__name__=~\"helix_plugin_.+_total\"}[5m])) by (__name__, plugin_id)" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Plugin operation latency p95",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum(rate({__name__=~\"helix_plugin_.+_duration_seconds_bucket\"}[5m])) by (le, __name__, plugin_id))" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    }
+  ]
+}

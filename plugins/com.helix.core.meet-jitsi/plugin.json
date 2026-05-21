@@ -1,0 +1,189 @@
+{
+  "id": "com.helix.core.meet-jitsi",
+  "name": "Meet Jitsi",
+  "version": "1.0.0",
+  "description": "First-party Meet feature backed by a self-hosted Jitsi stack: call rooms, actor-scoped JWTs, room lifecycle tools, and recording attachment metadata.",
+  "vendor": {
+    "name": "Helix",
+    "url": "https://helix.example.com"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "core-app",
+  "main": "./src/index.ts",
+  "capabilities": {
+    "provides": [
+      "tools:meet.create-room",
+      "tools:meet.mint-token",
+      "tools:meet.end-room",
+      "call-provider:jitsi",
+      "ui-route:/meet",
+      "command-palette:meet.*",
+      "notification-source:meet.room",
+      "webhook:/webhook/jitsi"
+    ],
+    "consumes": [
+      "threads",
+      "messages",
+      "objects",
+      "permissions",
+      "activity",
+      "storage",
+      "notifier"
+    ]
+  },
+  "tools": [
+    {
+      "id": "meet.create-room",
+      "description": "Create a call thread and backing Jitsi room for an actor.",
+      "scopes": [
+        "meet.write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "subject"
+        ],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roomName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "jitsiDomain": {
+            "type": "string",
+            "minLength": 1,
+            "default": "meet.localhost"
+          },
+          "participantActorIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "id": "meet.mint-token",
+      "description": "Mint a short-lived Jitsi JWT from the current actor session.",
+      "scopes": [
+        "meet.read"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "roomId"
+        ],
+        "properties": {
+          "roomId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expiresInSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400,
+            "default": 3600
+          },
+          "moderator": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "meet.end-room",
+      "description": "Mark a meeting room ended and publish room lifecycle activity.",
+      "scopes": [
+        "meet.write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "roomId"
+        ],
+        "properties": {
+          "roomId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    }
+  ],
+  "permissions": {
+    "scopes": [
+      "meet.read",
+      "meet.write",
+      "meet.admin"
+    ],
+    "outbound-network": [
+      "MEET_JITSI_PUBLIC_URL"
+    ],
+    "filesystem": [],
+    "envVars": [
+      "MEET_JITSI_DOMAIN",
+      "MEET_JITSI_PUBLIC_URL",
+      "MEET_JITSI_JWT_APP_ID",
+      "MEET_JITSI_JWT_AUDIENCE",
+      "MEET_JITSI_JWT_ISSUER",
+      "MEET_JITSI_JWT_SECRET",
+      "MEET_JITSI_TOKEN_TTL_SECONDS",
+      "MEET_JITSI_WEBHOOK_SHARED_SECRET"
+    ]
+  },
+  "configSchema": "./config.schema.json",
+  "config": {
+    "jitsiDomain": "${MEET_JITSI_DOMAIN}",
+    "publicUrl": "${MEET_JITSI_PUBLIC_URL}",
+    "jwt": {
+      "appId": "${MEET_JITSI_JWT_APP_ID}",
+      "issuer": "${MEET_JITSI_JWT_ISSUER}",
+      "audience": "${MEET_JITSI_JWT_AUDIENCE}",
+      "secretEnv": "MEET_JITSI_JWT_SECRET",
+      "ttlSeconds": "${MEET_JITSI_TOKEN_TTL_SECONDS}"
+    },
+    "webhook": {
+      "sharedSecretEnv": "MEET_JITSI_WEBHOOK_SHARED_SECRET"
+    }
+  },
+  "composeRecipe": "./compose.yaml",
+  "migrations": "./migrations",
+  "policies": "./policies",
+  "uiContribution": {
+    "shellRoutes": [
+      "/meet"
+    ],
+    "leftRailItem": {
+      "label": "Meet",
+      "icon": "video",
+      "order": 6
+    },
+    "settingsPages": [
+      "meet.jitsi"
+    ]
+  },
+  "tierRequirements": {
+    "minTier": "personal",
+    "tierRestrictions": {
+      "sovereign": {
+        "notes": "Jitsi runs as a local self-hosted stack. JWT signing secret and webhook shared secret remain tenant-controlled."
+      }
+    }
+  },
+  "ai": {
+    "suggestionSlots": [],
+    "enrichments": []
+  }
+}

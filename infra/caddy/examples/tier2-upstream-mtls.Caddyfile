@@ -1,0 +1,49 @@
+{
+	admin 127.0.0.1:2019
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+# Tier 2 / TASK-A00 example:
+# - public TLS at the edge
+# - mTLS from Caddy to the Helix upstream
+# - strict request security headers
+#
+# Required files:
+# - /etc/caddy/tls/helix.crt and /etc/caddy/tls/helix.key: public edge certificate
+# - /etc/caddy/mtls/ca.crt: CA that signed the Helix upstream server certificate
+# - /etc/caddy/mtls/caddy-client.crt and /etc/caddy/mtls/caddy-client.key: client identity accepted by Helix/upstream proxy
+
+{$HELIX_DOMAIN} {
+	encode zstd gzip
+
+	tls /etc/caddy/tls/helix.crt /etc/caddy/tls/helix.key {
+		protocols tls1.2 tls1.3
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	@health path /healthz /readyz
+	respond @health "ok" 200
+
+	reverse_proxy https://{$HELIX_UPSTREAM:helix.helix.svc.cluster.local:3000} {
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+		header_up X-Request-ID {http.request.header.X-Request-ID}
+
+		transport http {
+			tls
+			tls_server_name {$HELIX_UPSTREAM_SNI:helix.internal}
+			tls_trusted_ca_certs /etc/caddy/mtls/ca.crt
+			tls_client_auth /etc/caddy/mtls/caddy-client.crt /etc/caddy/mtls/caddy-client.key
+		}
+	}
+}

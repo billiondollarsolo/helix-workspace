@@ -1,0 +1,60 @@
+{{- if .Values.autoscaling.enabled }}
+{{- $ws := .Values.autoscaling.websocketConnections | default dict }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "helix.fullname" . }}
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "helix.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- if $ws.enabled }}
+    {{- /* PRD 16.1: WebSocket-connection-count autoscaling. The app publishes
+           the gauge {{ $ws.metricName }} on /metrics; a custom/external metrics
+           adapter exposes it to the HPA API. */}}
+    {{- if eq ($ws.metricType | default "Pods") "External" }}
+    - type: External
+      external:
+        metric:
+          name: {{ required "autoscaling.websocketConnections.metricName is required" $ws.metricName }}
+          {{- with $ws.selector }}
+          selector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+        target:
+          type: Value
+          value: {{ required "autoscaling.websocketConnections.targetValue is required for External metricType" $ws.targetValue | quote }}
+    {{- else }}
+    - type: Pods
+      pods:
+        metric:
+          name: {{ required "autoscaling.websocketConnections.metricName is required" $ws.metricName }}
+        target:
+          type: AverageValue
+          averageValue: {{ required "autoscaling.websocketConnections.targetAverageValue is required for Pods metricType" $ws.targetAverageValue | quote }}
+    {{- end }}
+    {{- end }}
+  {{- with .Values.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

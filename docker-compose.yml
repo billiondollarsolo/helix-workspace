@@ -1,0 +1,406 @@
+name: helix-infra
+
+services:
+  helix:
+    image: ${HELIX_IMAGE:-ghcr.io/helix/helix:latest}
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      HOST: 0.0.0.0
+      PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HELIX_SECURITY_TIER: ${HELIX_SECURITY_TIER:-personal}
+      HELIX_PUBLIC_URL: ${HELIX_PUBLIC_URL:-http://localhost:28441}
+      HELIX_DEFAULT_ORG_ID: ${HELIX_DEFAULT_ORG_ID:-00000000-0000-4000-8000-000000000100}
+      DATABASE_URL: postgres://${POSTGRES_USER:-helix}:${POSTGRES_PASSWORD:-helix_dev_password}@postgres:5432/${POSTGRES_DB:-helix}
+      BETTER_AUTH_ENABLED: ${BETTER_AUTH_ENABLED:-true}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:28441}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-helix_local_better_auth_secret_change_me_32_chars}
+      BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:28441,http://localhost:3000,http://localhost:5173,http://localhost:4173}
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      MEILI_HOST: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-helix_dev_meili_master_key}
+      RUSTFS_ENDPOINT: http://rustfs:9000
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-helixrustfs}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-helix_rustfs_dev_secret}
+      RUSTFS_BUCKET: ${RUSTFS_BUCKET:-helix-objects}
+      AUDIT_IMMUTABLE_S3_ENABLED: ${AUDIT_IMMUTABLE_S3_ENABLED:-false}
+      AUDIT_IMMUTABLE_S3_ENDPOINT: ${AUDIT_IMMUTABLE_S3_ENDPOINT:-http://rustfs:9000}
+      AUDIT_IMMUTABLE_S3_BUCKET: ${AUDIT_IMMUTABLE_S3_BUCKET:-helix-audit}
+      AUDIT_IMMUTABLE_S3_ACCESS_KEY: ${AUDIT_IMMUTABLE_S3_ACCESS_KEY:-helixrustfs}
+      AUDIT_IMMUTABLE_S3_SECRET_KEY: ${AUDIT_IMMUTABLE_S3_SECRET_KEY:-helix_rustfs_dev_secret}
+      AUDIT_IMMUTABLE_S3_REGION: ${AUDIT_IMMUTABLE_S3_REGION:-us-east-1}
+      AUDIT_IMMUTABLE_S3_FORCE_PATH_STYLE: ${AUDIT_IMMUTABLE_S3_FORCE_PATH_STYLE:-true}
+      AUDIT_IMMUTABLE_S3_PREFIX: ${AUDIT_IMMUTABLE_S3_PREFIX:-audit/activity}
+      AUDIT_IMMUTABLE_S3_BATCH_SIZE: ${AUDIT_IMMUTABLE_S3_BATCH_SIZE:-500}
+      AUDIT_IMMUTABLE_S3_INTERVAL_MS: ${AUDIT_IMMUTABLE_S3_INTERVAL_MS:-60000}
+      AUDIT_IMMUTABLE_S3_RETENTION_DAYS: ${AUDIT_IMMUTABLE_S3_RETENTION_DAYS:-365}
+      AUDIT_IMMUTABLE_S3_OBJECT_LOCK_MODE: ${AUDIT_IMMUTABLE_S3_OBJECT_LOCK_MODE:-COMPLIANCE}
+      MAIL_SMTP_HOST: ${MAIL_SMTP_HOST:-mailpit}
+      MAIL_SMTP_PORT: ${MAIL_SMTP_PORT:-1025}
+      MAIL_SMTP_SECURE: ${MAIL_SMTP_SECURE:-false}
+      MAIL_SMTP_RECEIVER_ENABLED: ${MAIL_SMTP_RECEIVER_ENABLED:-true}
+      MAIL_SMTP_RECEIVER_HOST: ${MAIL_SMTP_RECEIVER_HOST:-0.0.0.0}
+      MAIL_SMTP_RECEIVER_PORT: ${MAIL_SMTP_RECEIVER_PORT:-2525}
+      HELIX_DRIVE_OFFICE_PREVIEW_URL: ${HELIX_DRIVE_OFFICE_PREVIEW_URL:-http://drive-preview-libreoffice:8080}
+      CERBOS_HTTP_URL: http://cerbos:3592
+      HELIX_OBSERVABILITY_ENABLED: ${HELIX_OBSERVABILITY_ENABLED:-false}
+      HELIX_OTEL_TRACES_ENDPOINT: ${HELIX_OTEL_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-helix-app}
+      MEET_JITSI_DOMAIN: ${MEET_JITSI_DOMAIN:-meet.localhost}
+      MEET_JITSI_PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
+      MEET_JITSI_JWT_APP_ID: ${MEET_JITSI_JWT_APP_ID:-helix-meet}
+      MEET_JITSI_JWT_ISSUER: ${MEET_JITSI_JWT_ISSUER:-helix}
+      MEET_JITSI_JWT_AUDIENCE: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
+      MEET_JITSI_JWT_SECRET: ${MEET_JITSI_JWT_SECRET:-helix_dev_jitsi_jwt_secret_change_me}
+      MEET_JITSI_TOKEN_TTL_SECONDS: ${MEET_JITSI_TOKEN_TTL_SECONDS:-3600}
+      MEET_JITSI_WEBHOOK_SHARED_SECRET: ${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}
+      HELIX_CONFIG_JSON: >-
+        {"security":{"tier":"personal"},"plugins":{"com.helix.webhook-engine":{"enabled":true},"com.helix.webhook-out-generic":{"enabled":true},"com.helix.webhook-out-slack":{"enabled":true},"com.helix.webhook-out-discord":{"enabled":true},"com.helix.webhook-out-teams":{"enabled":true},"com.helix.webhook-out-custom-template":{"enabled":true},"com.helix.webhook-in-generic":{"enabled":true},"com.helix.webhook-in-github":{"enabled":true},"com.helix.webhook-in-stripe":{"enabled":true},"com.helix.webhook-in-linear":{"enabled":true},"com.helix.core.meet-jitsi":{"enabled":true,"jitsiDomain":"${MEET_JITSI_DOMAIN:-meet.localhost}","publicUrl":"${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}","jwt":{"appId":"${MEET_JITSI_JWT_APP_ID:-helix-meet}","issuer":"${MEET_JITSI_JWT_ISSUER:-helix}","audience":"${MEET_JITSI_JWT_AUDIENCE:-jitsi}","secretEnv":"MEET_JITSI_JWT_SECRET","ttlSeconds":${MEET_JITSI_TOKEN_TTL_SECONDS:-3600}},"webhook":{"sharedSecretEnv":"MEET_JITSI_WEBHOOK_SHARED_SECRET"}},"com.helix.observability-otel":{"enabled":true,"otlpEndpoint":"http://otel-collector:4318/v1/traces","sampling":{"traces":1,"toolCalls":1,"permissionChecks":1}}}}
+    ports:
+      - "${HELIX_PORT:-28431}:3000"
+      - "${HELIX_SMTP_RECEIVE_PORT:-28456}:2525"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      meilisearch:
+        condition: service_started
+      rustfs:
+        condition: service_started
+      cerbos:
+        condition: service_started
+      mailpit:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  postgres:
+    build:
+      context: ./infra/postgres
+    image: helix/postgres-pgvector:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-helix}
+      POSTGRES_USER: ${POSTGRES_USER:-helix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-helix_dev_password}
+    ports:
+      - "${POSTGRES_PORT:-28432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-28433}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "${NATS_CLIENT_PORT:-28434}:4222"
+      - "${NATS_MONITOR_PORT:-28435}:8222"
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.10
+    environment:
+      MEILI_ENV: ${MEILI_ENV:-development}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-helix_dev_meili_master_key}
+      MEILI_NO_ANALYTICS: "true"
+    ports:
+      - "${MEILI_PORT:-28436}:7700"
+    volumes:
+      - meili-data:/meili_data
+    restart: unless-stopped
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    command: ["/data"]
+    environment:
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-helixrustfs}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-helix_rustfs_dev_secret}
+      RUSTFS_SERVER_DOMAINS: ${RUSTFS_SERVER_DOMAINS:-localhost,rustfs}
+    ports:
+      - "${RUSTFS_API_PORT:-28437}:9000"
+      - "${RUSTFS_CONSOLE_PORT:-28438}:9001"
+    volumes:
+      - rustfs-data:/data
+    restart: unless-stopped
+
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:latest
+    command: ["server", "--config=/config/.cerbos.yaml"]
+    ports:
+      - "${CERBOS_HTTP_PORT:-28439}:3592"
+      - "${CERBOS_GRPC_PORT:-28440}:3593"
+    volumes:
+      - ./infra/cerbos/.cerbos.yaml:/config/.cerbos.yaml:ro
+      - ./infra/cerbos/policies:/policies:ro
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "${MAILPIT_SMTP_PORT:-28457}:1025"
+      - "${MAILPIT_WEB_PORT:-28458}:8025"
+    restart: unless-stopped
+
+  drive-preview-libreoffice:
+    build:
+      context: ./infra/drive-preview-libreoffice
+    image: helix/drive-preview-libreoffice:latest
+    profiles: ["drive-preview"]
+    environment:
+      PORT: 8080
+      MAX_BODY_BYTES: ${DRIVE_PREVIEW_MAX_BODY_BYTES:-52428800}
+    ports:
+      - "${DRIVE_PREVIEW_PORT:-28450}:8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      HELIX_DOMAIN: ${HELIX_DOMAIN:-localhost}
+      HELIX_UPSTREAM: ${HELIX_UPSTREAM:-helix:3000}
+    ports:
+      - "${CADDY_HTTP_PORT:-28441}:80"
+      - "${CADDY_HTTPS_PORT:-28442}:443"
+      - "${CADDY_HTTPS_PORT:-28442}:443/udp"
+      - "${CADDY_ADMIN_PORT:-28443}:2019"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - helix
+      - cerbos
+      - rustfs
+    restart: unless-stopped
+
+  jitsi-web:
+    image: jitsi/web:stable
+    profiles: ["meet"]
+    environment:
+      ENABLE_AUTH: "1"
+      ENABLE_GUESTS: "0"
+      ENABLE_XMPP_WEBSOCKET: "1"
+      AUTH_TYPE: jwt
+      PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
+      TZ: ${TZ:-UTC}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      XMPP_BOSH_URL_BASE: http://jitsi-prosody:5280
+      JWT_APP_ID: ${MEET_JITSI_JWT_APP_ID:-helix-meet}
+      JWT_APP_SECRET: ${MEET_JITSI_JWT_SECRET:-helix_dev_jitsi_jwt_secret_change_me}
+      JWT_ACCEPTED_ISSUERS: ${MEET_JITSI_JWT_ISSUER:-helix}
+      JWT_ACCEPTED_AUDIENCES: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
+    ports:
+      - "${JITSI_WEB_HTTP_PORT:-28451}:80"
+      - "${JITSI_WEB_HTTPS_PORT:-28452}:443"
+    volumes:
+      - ./infra/meet/config/web:/config
+      - ./infra/meet/config/transcripts:/usr/share/jitsi-meet/transcripts
+    depends_on:
+      - jitsi-prosody
+      - jitsi-jicofo
+      - jitsi-jvb
+    restart: unless-stopped
+
+  jitsi-prosody:
+    image: jitsi/prosody:stable
+    profiles: ["meet"]
+    environment:
+      AUTH_TYPE: jwt
+      ENABLE_AUTH: "1"
+      ENABLE_GUESTS: "0"
+      ENABLE_XMPP_WEBSOCKET: "1"
+      PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
+      TZ: ${TZ:-UTC}
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      JICOFO_AUTH_USER: focus
+      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-helix_dev_jicofo_auth_password_change_me}
+      JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-helix_dev_jicofo_component_secret_change_me}
+      JVB_AUTH_USER: jvb
+      JVB_AUTH_PASSWORD: ${JITSI_JVB_AUTH_PASSWORD:-helix_dev_jvb_auth_password_change_me}
+      JWT_APP_ID: ${MEET_JITSI_JWT_APP_ID:-helix-meet}
+      JWT_APP_SECRET: ${MEET_JITSI_JWT_SECRET:-helix_dev_jitsi_jwt_secret_change_me}
+      JWT_ACCEPTED_ISSUERS: ${MEET_JITSI_JWT_ISSUER:-helix}
+      JWT_ACCEPTED_AUDIENCES: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
+    ports:
+      - "${JITSI_PROSODY_C2S_PORT:-28454}:5222"
+      - "${JITSI_PROSODY_HTTP_PORT:-28455}:5280"
+    volumes:
+      - ./infra/meet/config/prosody:/config
+    restart: unless-stopped
+
+  jitsi-jicofo:
+    image: jitsi/jicofo:stable
+    profiles: ["meet"]
+    environment:
+      TZ: ${TZ:-UTC}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      JICOFO_AUTH_USER: focus
+      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-helix_dev_jicofo_auth_password_change_me}
+      JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-helix_dev_jicofo_component_secret_change_me}
+    volumes:
+      - ./infra/meet/config/jicofo:/config
+    depends_on:
+      - jitsi-prosody
+    restart: unless-stopped
+
+  jitsi-jvb:
+    image: jitsi/jvb:stable
+    profiles: ["meet"]
+    environment:
+      TZ: ${TZ:-UTC}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      JVB_AUTH_USER: jvb
+      JVB_AUTH_PASSWORD: ${JITSI_JVB_AUTH_PASSWORD:-helix_dev_jvb_auth_password_change_me}
+      JVB_BREWERY_MUC: jvbbrewery
+      JVB_PORT: 10000
+      JVB_TCP_HARVESTER_DISABLED: "true"
+      JVB_ADVERTISE_IPS: ${JITSI_JVB_ADVERTISE_IPS:-}
+    ports:
+      - "${JITSI_JVB_UDP_PORT:-28453}:10000/udp"
+    volumes:
+      - ./infra/meet/config/jvb:/config
+    depends_on:
+      - jitsi-prosody
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    profiles: ["observability"]
+    ports:
+      - "${OTEL_COLLECTOR_GRPC_PORT:-28444}:4317"
+      - "${OTEL_COLLECTOR_HTTP_PORT:-28445}:4318"
+    volumes:
+      - ./infra/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - tempo
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["observability"]
+    ports:
+      - "${PROMETHEUS_PORT:-28446}:9090"
+    volumes:
+      - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:latest
+    command: ["-config.file=/etc/tempo.yaml"]
+    profiles: ["observability"]
+    ports:
+      - "${TEMPO_HTTP_PORT:-28447}:3200"
+    volumes:
+      - ./infra/observability/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    profiles: ["observability"]
+    ports:
+      - "${LOKI_PORT:-28448}:3100"
+    volumes:
+      - ./infra/observability/loki/loki.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["observability"]
+    environment:
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_AUTH_ANONYMOUS_ENABLED:-true}
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "${GRAFANA_PORT:-28449}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infra/observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards/helix:ro
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  nats-data:
+  meili-data:
+  rustfs-data:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  tempo-data:
+  loki-data:
+  grafana-data:

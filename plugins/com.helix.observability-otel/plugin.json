@@ -1,0 +1,31 @@
+{
+  "id": "com.helix.observability-otel",
+  "name": "Helix OpenTelemetry",
+  "version": "1.0.0",
+  "description": "Configures Helix OpenTelemetry SDK startup, trace exporters, sampling, and W3C trace propagation.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "main": "index.js",
+  "capabilities": {
+    "provides": ["observability.telemetry"],
+    "consumes": ["platform.config"]
+  },
+  "permissions": {
+    "scopes": ["observability:configure"],
+    "outbound-network": ["config.otlpEndpoint"],
+    "filesystem": [],
+    "envVars": [
+      "HELIX_OBSERVABILITY_ENABLED",
+      "HELIX_OTEL_TRACES_ENDPOINT",
+      "HELIX_OTEL_OTLP_ENDPOINT",
+      "HELIX_OTEL_TRACES_SAMPLING",
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+      "OTEL_SERVICE_NAME"
+    ]
+  },
+  "configSchema": "./config.schema.json"
+}

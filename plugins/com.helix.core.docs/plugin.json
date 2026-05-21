@@ -1,0 +1,86 @@
+{
+  "id": "com.helix.core.docs",
+  "name": "Docs",
+  "version": "1.0.0",
+  "description": "First-party Docs feature: collaborative documents, update log sync, comments, and export tools",
+  "vendor": {
+    "name": "Helix",
+    "url": "https://helix.example.com"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "core-app",
+  "main": "./src/index.ts",
+  "capabilities": {
+    "provides": [
+      "websocket:/sync/docs/:docId",
+      "tools:docs.*",
+      "indexer:docs",
+      "ui-route:/docs",
+      "command-palette:docs.*",
+      "notification-source:docs.comment"
+    ],
+    "consumes": [
+      "threads",
+      "permissions",
+      "activity",
+      "search",
+      "notifier",
+      "ai-routing",
+      "vector-store"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "docs.read",
+      "docs.write",
+      "docs.comment",
+      "docs.admin"
+    ],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": []
+  },
+  "migrations": "./migrations",
+  "policies": "./policies",
+  "uiContribution": {
+    "shellRoutes": [
+      "/docs"
+    ],
+    "leftRailItem": {
+      "label": "Docs",
+      "icon": "file-text",
+      "order": 4
+    },
+    "settingsPages": [
+      "docs.sharing",
+      "docs.export"
+    ]
+  },
+  "tierRequirements": {
+    "minTier": "personal"
+  },
+  "ai": {
+    "suggestionSlots": [
+      {
+        "id": "docs.smart-write",
+        "description": "Suggest edits while writing a document"
+      },
+      {
+        "id": "docs.summarize",
+        "description": "Summarize a document"
+      },
+      {
+        "id": "docs.translate",
+        "description": "Translate selected document content"
+      }
+    ],
+    "enrichments": [
+      {
+        "id": "docs.outline",
+        "description": "Generate a document outline"
+      }
+    ]
+  }
+}

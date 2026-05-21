@@ -1,0 +1,9 @@
+{
+  "//": "Dedicated typecheck project for Playwright E2E specs. The app tsconfig.json only includes `src`; this project type-checks the E2E specs (which use Node + Playwright globals) without pulling Node types into the browser app build. Run via `pnpm typecheck:e2e`.",
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "@playwright/test"]
+  },
+  "include": ["**/*.ts"]
+}

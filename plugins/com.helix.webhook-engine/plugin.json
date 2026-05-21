@@ -1,0 +1,50 @@
+{
+  "id": "com.helix.webhook-engine",
+  "name": "Helix Webhook Engine",
+  "version": "1.0.0",
+  "description": "Core inbound and outbound webhook runtime, tools, delivery worker, and admin APIs.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "connector",
+  "main": "index.js",
+  "capabilities": {
+    "provides": [
+      "tools:webhook.*",
+      "rest-endpoints:/api/webhooks/*",
+      "webhook.engine",
+      "ui-route:/settings/webhooks"
+    ],
+    "consumes": [
+      "events",
+      "outbox",
+      "platform.config"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "webhooks.read",
+      "webhooks.write",
+      "webhooks.admin"
+    ],
+    "outbound-network": [
+      "config.webhookTargets"
+    ],
+    "filesystem": [],
+    "envVars": [
+      "WEBHOOK_EVENT_SUBJECT",
+      "WEBHOOK_RETRY_BATCH_SIZE",
+      "WEBHOOK_RETRY_INTERVAL_MS"
+    ]
+  },
+  "uiContribution": {
+    "settingsPages": [
+      "webhooks.outbound",
+      "webhooks.inbound",
+      "webhooks.deliveries"
+    ]
+  }
+}

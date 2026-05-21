@@ -1,0 +1,21 @@
+{
+  "id": "com.helix.core-mcp-server",
+  "name": "Helix MCP Server",
+  "version": "1.0.0",
+  "description": "Exposes the Helix tool registry over the Model Context Protocol.",
+  "vendor": { "name": "Helix" },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "main": "index.js",
+  "capabilities": {
+    "provides": ["mcp.server", "rest-endpoints:/mcp"],
+    "consumes": ["tools.registry", "oauth.bearer-auth"]
+  },
+  "permissions": {
+    "scopes": ["platform.read", "tools.invoke"],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": []
+  }
+}

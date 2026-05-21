@@ -1,0 +1,109 @@
+{
+  "id": "com.helix.core.mail",
+  "name": "Mail",
+  "version": "1.0.0",
+  "description": "First-party mail feature: SMTP in/out, threading, labels, filters, vacation",
+  "vendor": {
+    "name": "Helix",
+    "url": "https://helix.example.com"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "core-app",
+  "main": "./src/index.ts",
+  "capabilities": {
+    "provides": [
+      "trpc-router:mail",
+      "rest-endpoints:/mail/*",
+      "smtp-listener:25,587",
+      "tools:mail.*",
+      "indexer:mail",
+      "ui-route:/mail",
+      "ui-panel:right-rail:thread-contacts",
+      "command-palette:mail.*",
+      "notification-source:mail.received"
+    ],
+    "consumes": [
+      "storage",
+      "search",
+      "permissions",
+      "notifier",
+      "ai-routing",
+      "vector-store"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "mail.read",
+      "mail.write",
+      "mail.send",
+      "mail.admin"
+    ],
+    "outbound-network": [
+      "smtp.amazonses.com:587",
+      "smtp.mailgun.org:587",
+      "smtp.postmarkapp.com:587"
+    ],
+    "filesystem": [],
+    "envVars": [
+      "SMTP_RELAY_HOST",
+      "SMTP_RELAY_PORT",
+      "SMTP_RELAY_USER",
+      "SMTP_RELAY_PASS",
+      "MAIL_FROM_DOMAIN"
+    ]
+  },
+  "migrations": "./migrations",
+  "policies": "./policies",
+  "uiContribution": {
+    "shellRoutes": [
+      "/mail"
+    ],
+    "leftRailItem": {
+      "label": "Mail",
+      "icon": "mail",
+      "order": 1
+    },
+    "settingsPages": [
+      "mail.filters",
+      "mail.vacation",
+      "mail.aliases"
+    ]
+  },
+  "tierRequirements": {
+    "minTier": "personal",
+    "tierRestrictions": {
+      "sovereign": {
+        "outbound-network": "explicit-allowlist-required",
+        "notes": "Tier 4 deployments must use an on-prem SMTP relay; external SMTP relays prohibited"
+      }
+    }
+  },
+  "ai": {
+    "suggestionSlots": [
+      {
+        "id": "mail.compose-help",
+        "description": "Suggest body content while composing"
+      },
+      {
+        "id": "mail.summarize-thread",
+        "description": "Summarize a long thread"
+      },
+      {
+        "id": "mail.suggest-reply",
+        "description": "Suggest a short reply"
+      }
+    ],
+    "enrichments": [
+      {
+        "id": "mail.entity-extract",
+        "description": "Extract people, dates, action items"
+      },
+      {
+        "id": "mail.classification",
+        "description": "Tag with sensitivity classification"
+      }
+    ]
+  }
+}

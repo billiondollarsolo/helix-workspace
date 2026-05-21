@@ -1,0 +1,28 @@
+{
+  "id": "com.helix.ai-provider-openai-compat",
+  "name": "Helix OpenAI-Compatible AI Provider",
+  "version": "1.0.0",
+  "description": "Chat adapter for OpenAI-compatible endpoints including OpenAI, Azure OpenAI gateways, Ollama, vLLM, Groq, Together, and LiteLLM proxies.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "external-service",
+  "endpoint": null,
+  "capabilities": {
+    "provides": ["ai.provider.llm", "ai.provider.openai-compatible"],
+    "consumes": ["platform.config", "platform.secrets"]
+  },
+  "permissions": {
+    "scopes": ["ai:invoke"],
+    "outbound-network": ["config.baseUrl"],
+    "filesystem": [],
+    "envVars": ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OLLAMA_BASE_URL"]
+  },
+  "ai": {
+    "protocol": "openai-compatible",
+    "supports": ["chat"],
+    "localBaseUrls": ["http://localhost:11434/v1"]
+  }
+}

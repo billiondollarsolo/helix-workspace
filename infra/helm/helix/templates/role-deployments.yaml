@@ -1,0 +1,131 @@
+{{- /*
+Role-based Deployments — the scaling hook for the confirmed Helix architecture.
+
+Core apps ship in ONE image. The primary Deployment runs the default role (all
+enabled apps). Each entry in .Values.roleDeployments adds an extra Deployment of
+the SAME image, booted as a named role (HELIX_ROLE) or an explicit app subset
+(HELIX_APPS). This lets WS-heavy apps (chat, meet) scale on their own
+Deployment + HPA without a separate image build. Purely additive: an empty
+roleDeployments list keeps the single all-in-one Deployment.
+*/ -}}
+{{- range $role := .Values.roleDeployments }}
+{{- $fullname := printf "%s-%s" (include "helix.fullname" $) $role.name | trunc 63 | trimSuffix "-" }}
+{{- $autoscaling := $role.autoscaling | default dict }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "helix.labels" $ | nindent 4 }}
+    helix.io/role: {{ $role.name | quote }}
+spec:
+  {{- if not $autoscaling.enabled }}
+  replicas: {{ $role.replicaCount | default 1 }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "helix.selectorLabels" $ | nindent 6 }}
+      helix.io/role: {{ $role.name | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "helix.selectorLabels" $ | nindent 8 }}
+        helix.io/role: {{ $role.name | quote }}
+        {{- with $.Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include "helix.configJson" $ | sha256sum }}
+        {{- with $.Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "helix.serviceAccountName" $ }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- with ($role.nodeSelector | default $.Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with ($role.affinity | default $.Values.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with ($role.tolerations | default $.Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: helix
+          image: "{{ include "helix.image" $ }}"
+          imagePullPolicy: {{ ternary $.Values.airgap.pullPolicy $.Values.image.pullPolicy $.Values.airgap.enabled }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            {{- include "helix.containerEnv" $ | nindent 12 }}
+            {{- /* Role selection: only this Deployment's role's apps boot. */}}
+            {{- include "helix.roleEnv" $role | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml ($role.resources | default $.Values.resources) | nindent 12 }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ $.Values.gracefulShutdown.preStopSleepSeconds }}"]
+      terminationGracePeriodSeconds: {{ $.Values.gracefulShutdown.terminationGracePeriodSeconds }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- if $autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "helix.labels" $ | nindent 4 }}
+    helix.io/role: {{ $role.name | quote }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $fullname }}
+  minReplicas: {{ $autoscaling.minReplicas | default 2 }}
+  maxReplicas: {{ $autoscaling.maxReplicas | default 6 }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $autoscaling.targetCPUUtilizationPercentage | default 70 }}
+{{- end }}
+{{- end }}

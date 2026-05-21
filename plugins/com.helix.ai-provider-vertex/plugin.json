@@ -1,0 +1,28 @@
+{
+  "id": "com.helix.ai-provider-vertex",
+  "name": "Helix Vertex AI Provider",
+  "version": "1.0.0",
+  "description": "Chat adapter for Anthropic models through Google Cloud Vertex AI rawPredict endpoints.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "external-service",
+  "endpoint": null,
+  "capabilities": {
+    "provides": ["ai.provider.llm", "ai.provider.vertex"],
+    "consumes": ["platform.config", "platform.secrets"]
+  },
+  "permissions": {
+    "scopes": ["ai:invoke"],
+    "outbound-network": ["${config.location}-aiplatform.googleapis.com"],
+    "filesystem": [],
+    "envVars": ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "VERTEX_LOCATION", "VERTEX_ACCESS_TOKEN"]
+  },
+  "ai": {
+    "protocol": "vertex",
+    "supports": ["chat"],
+    "requestShape": "anthropic-messages"
+  }
+}

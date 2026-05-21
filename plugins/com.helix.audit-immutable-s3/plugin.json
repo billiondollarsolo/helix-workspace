@@ -1,0 +1,21 @@
+{
+  "id": "com.helix.audit-immutable-s3",
+  "name": "Helix Immutable S3 Audit Shipper",
+  "version": "1.0.0",
+  "description": "Ships audit/activity records to S3 Object Lock destinations for Tier 2+ deployments.",
+  "vendor": { "name": "Helix" },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "main": "index.js",
+  "capabilities": {
+    "provides": ["audit.destination.immutable-s3"],
+    "consumes": ["activity.log", "storage.provider.s3-compatible"]
+  },
+  "permissions": {
+    "scopes": ["audit.read", "audit.ship"],
+    "outbound-network": ["config.auditS3Endpoint"],
+    "filesystem": [],
+    "envVars": ["AUDIT_S3_ENDPOINT", "AUDIT_S3_BUCKET", "AUDIT_S3_ACCESS_KEY", "AUDIT_S3_SECRET_KEY"]
+  }
+}

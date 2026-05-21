@@ -1,0 +1,9 @@
+{
+  "extends": "@helix/config/tsconfig/node",
+  "compilerOptions": {
+    "declarationMap": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"]
+}

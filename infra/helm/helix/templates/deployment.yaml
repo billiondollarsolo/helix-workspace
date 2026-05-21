@@ -1,0 +1,152 @@
+{{- include "helix.validateValues" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "helix.fullname" . }}
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "helix.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "helix.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include "helix.configJson" . | sha256sum }}
+        {{- if and .Values.autoscaling.enabled (.Values.autoscaling.websocketConnections).enabled }}
+        {{- /* Prometheus scrape hints so prometheus-adapter / KEDA can read the
+               WebSocket-connection gauge that drives the HPA. */}}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "3000"
+        {{- end }}
+        {{- if .Values.vault.agentInject }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.external.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-helix: {{ .Values.vault.secretPath | quote }}
+        {{- end }}
+        {{- if .Values.spire.enabled }}
+        spire.io/trust-domain: {{ .Values.spire.trustDomain | quote }}
+        spire.io/workload-selector: {{ .Values.spire.workloadSelector | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "helix.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- $nodeSelector := .Values.nodeSelector }}
+      {{- if .Values.fips.enabled }}
+      {{- $nodeSelector = mergeOverwrite (deepCopy .Values.nodeSelector) .Values.fips.nodeSelector }}
+      {{- end }}
+      {{- with $nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: helix
+          image: "{{ include "helix.image" . }}"
+          imagePullPolicy: {{ ternary .Values.airgap.pullPolicy .Values.image.pullPolicy .Values.airgap.enabled }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          # Shared container env (configmap + external secrets). The same env
+          # is reused by the optional role-based Deployments so a role replica
+          # boots identically. Role replicas additionally set HELIX_ROLE /
+          # HELIX_APPS — see templates/role-deployments.yaml.
+          env:
+            {{- include "helix.containerEnv" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.spire.enabled }}
+            - name: spire-agent-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+            {{- end }}
+            {{- if .Values.vault.csi.enabled }}
+            - name: vault-secrets
+              mountPath: /mnt/secrets-store
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          # P0-2: graceful shutdown. The preStop hook sleeps so the pod is
+          # removed from Service endpoints before the app receives SIGTERM,
+          # avoiding requests routed to a draining replica. The app then drains
+          # in-flight work and releases its singleton-worker leader leases.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.gracefulShutdown.preStopSleepSeconds }}"]
+      # Allow the preStop sleep plus the in-process drain to complete before
+      # the kubelet sends SIGKILL.
+      terminationGracePeriodSeconds: {{ .Values.gracefulShutdown.terminationGracePeriodSeconds }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.spire.enabled }}
+        - name: spire-agent-socket
+          hostPath:
+            path: {{ dir .Values.spire.socketPath | quote }}
+            type: Directory
+        {{- end }}
+        {{- if .Values.vault.csi.enabled }}
+        - name: vault-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ .Values.vault.csi.providerClassName | quote }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

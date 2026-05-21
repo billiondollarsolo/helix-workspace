@@ -1,0 +1,17 @@
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: admin
+  version: default
+  schemas:
+    principalSchema:
+      ref: cerbos:///platform/principal.json
+    resourceSchema:
+      ref: cerbos:///platform/admin_resource.json
+  rules:
+    - actions: ["*"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]
+
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      roles: ["auditor"]

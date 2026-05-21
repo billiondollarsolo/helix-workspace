@@ -1,0 +1,131 @@
+{{- if .Values.cloudnativepg.enabled }}
+{{- $cnpg := .Values.cloudnativepg }}
+{{- $clusterAnnotations := dict }}
+{{- if $cnpg.tde.enabled }}
+{{- $_ := set $clusterAnnotations "helix.io/postgres-tde" "required" }}
+{{- with $cnpg.tde.provider }}
+{{- $_ := set $clusterAnnotations "helix.io/postgres-tde-provider" . }}
+{{- end }}
+{{- with $cnpg.tde.kmsKeyId }}
+{{- $_ := set $clusterAnnotations "helix.io/postgres-kms-key-id" . }}
+{{- end }}
+{{- end }}
+{{- $clusterAnnotations = mergeOverwrite $clusterAnnotations $cnpg.annotations $cnpg.tde.annotations }}
+{{- $inheritedAnnotations := mergeOverwrite (deepCopy $cnpg.inheritedAnnotations) $cnpg.tde.inheritedAnnotations }}
+{{- $storageAnnotations := mergeOverwrite (deepCopy $cnpg.storage.annotations) $cnpg.tde.storageAnnotations }}
+{{- $postgresqlParameters := mergeOverwrite (deepCopy $cnpg.postgresql.parameters) $cnpg.tde.postgresqlParameters }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $cnpg.clusterName }}
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+  {{- with $clusterAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  imageName: {{ $cnpg.imageName | quote }}
+  instances: {{ $cnpg.instances }}
+  {{- with $inheritedAnnotations }}
+  inheritedMetadata:
+    annotations:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
+  {{- with $postgresqlParameters }}
+  postgresql:
+    parameters:
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
+  storage:
+    {{- if or $cnpg.storage.pvcTemplate.enabled $storageAnnotations }}
+    pvcTemplate:
+      {{- with $storageAnnotations }}
+      metadata:
+        annotations:
+          {{- toYaml . | nindent 10 }}
+      {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml $cnpg.storage.pvcTemplate.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ $cnpg.storage.size | quote }}
+        {{- with $cnpg.storage.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        volumeMode: {{ $cnpg.storage.pvcTemplate.volumeMode | quote }}
+    {{- else }}
+    size: {{ $cnpg.storage.size | quote }}
+    {{- with $cnpg.storage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+    {{- end }}
+  {{- if $cnpg.walStorage.enabled }}
+  {{- $walStorageAnnotations := mergeOverwrite (deepCopy $cnpg.walStorage.annotations) $cnpg.tde.storageAnnotations }}
+  walStorage:
+    {{- if or $cnpg.walStorage.pvcTemplate.enabled $walStorageAnnotations }}
+    pvcTemplate:
+      {{- with $walStorageAnnotations }}
+      metadata:
+        annotations:
+          {{- toYaml . | nindent 10 }}
+      {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml $cnpg.walStorage.pvcTemplate.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ $cnpg.walStorage.size | quote }}
+        {{- with $cnpg.walStorage.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        volumeMode: {{ $cnpg.walStorage.pvcTemplate.volumeMode | quote }}
+    {{- else }}
+    size: {{ $cnpg.walStorage.size | quote }}
+    {{- with $cnpg.walStorage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+    {{- end }}
+  {{- end }}
+  bootstrap:
+    {{- if $cnpg.bootstrap.recovery.enabled }}
+    recovery:
+      source: {{ required "cloudnativepg.bootstrap.recovery.source is required when recovery is enabled" $cnpg.bootstrap.recovery.source | quote }}
+      {{- with $cnpg.bootstrap.recovery.database }}
+      database: {{ . | quote }}
+      {{- end }}
+      {{- with $cnpg.bootstrap.recovery.owner }}
+      owner: {{ . | quote }}
+      {{- end }}
+      {{- with $cnpg.bootstrap.recovery.secret.name }}
+      secret:
+        name: {{ . | quote }}
+      {{- end }}
+      {{- with $cnpg.bootstrap.recovery.recoveryTarget }}
+      recoveryTarget:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- else }}
+    initdb:
+      database: {{ $cnpg.bootstrap.database | quote }}
+      owner: {{ $cnpg.bootstrap.owner | quote }}
+      {{- with $cnpg.bootstrap.secret.name }}
+      secret:
+        name: {{ . | quote }}
+      {{- end }}
+    {{- end }}
+  {{- if $cnpg.backup.enabled }}
+  backup:
+    target: {{ $cnpg.backup.target | quote }}
+    retentionPolicy: {{ $cnpg.backup.retentionPolicy | quote }}
+    barmanObjectStore:
+      {{- include "helix.cloudnativepgObjectStore" $cnpg.backup.barmanObjectStore | nindent 6 }}
+  {{- end }}
+  {{- with $cnpg.recovery.externalClusters }}
+  externalClusters:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  monitoring:
+    enablePodMonitor: true
+{{- end }}

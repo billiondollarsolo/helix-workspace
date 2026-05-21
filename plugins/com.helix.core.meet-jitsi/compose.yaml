@@ -1,0 +1,99 @@
+services:
+  jitsi-web:
+    image: jitsi/web:stable
+    environment:
+      ENABLE_AUTH: "1"
+      ENABLE_GUESTS: "0"
+      ENABLE_XMPP_WEBSOCKET: "1"
+      AUTH_TYPE: jwt
+      PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
+      TZ: ${TZ:-UTC}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      XMPP_BOSH_URL_BASE: http://jitsi-prosody:5280
+      JWT_APP_ID: ${MEET_JITSI_JWT_APP_ID:-helix-meet}
+      JWT_APP_SECRET: ${MEET_JITSI_JWT_SECRET:-helix_dev_jitsi_jwt_secret_change_me}
+      JWT_ACCEPTED_ISSUERS: ${MEET_JITSI_JWT_ISSUER:-helix}
+      JWT_ACCEPTED_AUDIENCES: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
+    ports:
+      - "${JITSI_WEB_HTTP_PORT:-28451}:80"
+      - "${JITSI_WEB_HTTPS_PORT:-28452}:443"
+    volumes:
+      - ../../infra/meet/config/web:/config
+      - ../../infra/meet/config/transcripts:/usr/share/jitsi-meet/transcripts
+    depends_on:
+      - jitsi-prosody
+      - jitsi-jicofo
+      - jitsi-jvb
+    restart: unless-stopped
+
+  jitsi-prosody:
+    image: jitsi/prosody:stable
+    environment:
+      AUTH_TYPE: jwt
+      ENABLE_AUTH: "1"
+      ENABLE_GUESTS: "0"
+      ENABLE_XMPP_WEBSOCKET: "1"
+      PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
+      TZ: ${TZ:-UTC}
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      JICOFO_AUTH_USER: focus
+      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-helix_dev_jicofo_auth_password_change_me}
+      JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-helix_dev_jicofo_component_secret_change_me}
+      JVB_AUTH_USER: jvb
+      JVB_AUTH_PASSWORD: ${JITSI_JVB_AUTH_PASSWORD:-helix_dev_jvb_auth_password_change_me}
+      JWT_APP_ID: ${MEET_JITSI_JWT_APP_ID:-helix-meet}
+      JWT_APP_SECRET: ${MEET_JITSI_JWT_SECRET:-helix_dev_jitsi_jwt_secret_change_me}
+      JWT_ACCEPTED_ISSUERS: ${MEET_JITSI_JWT_ISSUER:-helix}
+      JWT_ACCEPTED_AUDIENCES: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
+    ports:
+      - "${JITSI_PROSODY_C2S_PORT:-28454}:5222"
+      - "${JITSI_PROSODY_HTTP_PORT:-28455}:5280"
+    volumes:
+      - ../../infra/meet/config/prosody:/config
+    restart: unless-stopped
+
+  jitsi-jicofo:
+    image: jitsi/jicofo:stable
+    environment:
+      TZ: ${TZ:-UTC}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      JICOFO_AUTH_USER: focus
+      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-helix_dev_jicofo_auth_password_change_me}
+      JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-helix_dev_jicofo_component_secret_change_me}
+    volumes:
+      - ../../infra/meet/config/jicofo:/config
+    depends_on:
+      - jitsi-prosody
+    restart: unless-stopped
+
+  jitsi-jvb:
+    image: jitsi/jvb:stable
+    environment:
+      TZ: ${TZ:-UTC}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      JVB_AUTH_USER: jvb
+      JVB_AUTH_PASSWORD: ${JITSI_JVB_AUTH_PASSWORD:-helix_dev_jvb_auth_password_change_me}
+      JVB_BREWERY_MUC: jvbbrewery
+      JVB_PORT: 10000
+      JVB_TCP_HARVESTER_DISABLED: "true"
+      JVB_ADVERTISE_IPS: ${JITSI_JVB_ADVERTISE_IPS:-}
+    ports:
+      - "${JITSI_JVB_UDP_PORT:-28453}:10000/udp"
+    volumes:
+      - ../../infra/meet/config/jvb:/config
+    depends_on:
+      - jitsi-prosody
+    restart: unless-stopped

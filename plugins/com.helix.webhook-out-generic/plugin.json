@@ -1,0 +1,32 @@
+{
+  "id": "com.helix.webhook-out-generic",
+  "name": "Generic Outbound Webhooks",
+  "version": "1.0.0",
+  "description": "Helix native JSON envelope formatter for outbound webhook deliveries.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "connector",
+  "main": "index.js",
+  "capabilities": {
+    "provides": [
+      "webhook.out.format.generic"
+    ],
+    "consumes": [
+      "webhook.engine"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "webhooks.write"
+    ],
+    "outbound-network": [
+      "webhook.target"
+    ],
+    "filesystem": [],
+    "envVars": []
+  }
+}

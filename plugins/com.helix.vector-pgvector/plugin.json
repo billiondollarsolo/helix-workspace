@@ -1,0 +1,22 @@
+{
+  "id": "com.helix.vector-pgvector",
+  "name": "Helix pgvector Vector Store",
+  "version": "1.0.0",
+  "description": "Default VectorStore backed by the existing Helix Postgres pgvector extension.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "capabilities": {
+    "provides": ["ai.vector-store.pgvector", "ai.memory-store.pgvector"],
+    "consumes": ["database.postgres", "ai.embedding"]
+  },
+  "permissions": {
+    "scopes": ["ai:vector:write", "ai:memory:write"],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": ["DATABASE_URL"]
+  }
+}

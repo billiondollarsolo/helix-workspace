@@ -1,0 +1,31 @@
+apiVersion: api.cerbos.dev/v1
+description: Platform contextual roles for shared Helix resources.
+derivedRoles:
+  name: helix_platform_roles
+  definitions:
+    - name: owner
+      parentRoles: ["*"]
+      condition:
+        match:
+          expr: R.attr.owner_id == P.id
+
+    - name: participant
+      parentRoles: ["*"]
+      condition:
+        match:
+          expr: R.attr.participant_ids.exists(actor_id, actor_id == P.id)
+
+    - name: shared
+      parentRoles: ["*"]
+      condition:
+        match:
+          any:
+            of:
+              - expr: R.attr.shared_actor_ids.exists(actor_id, actor_id == P.id)
+              - expr: R.attr.shared_org_ids.exists(org_id, org_id == P.attr.org_id)
+
+    - name: org_member
+      parentRoles: ["*"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id

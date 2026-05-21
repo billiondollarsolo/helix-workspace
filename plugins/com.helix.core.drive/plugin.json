@@ -1,0 +1,92 @@
+{
+  "id": "com.helix.core.drive",
+  "name": "Drive",
+  "version": "1.0.0",
+  "description": "First-party Drive feature: upload, versioning, sharing, trash, and file search",
+  "vendor": {
+    "name": "Helix",
+    "url": "https://helix.example.com"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "core-app",
+  "main": "./src/index.ts",
+  "capabilities": {
+    "provides": [
+      "tools:drive.*",
+      "indexer:drive",
+      "preview-source:drive",
+      "ui-route:/drive",
+      "command-palette:drive.*",
+      "notification-source:drive.share"
+    ],
+    "consumes": [
+      "objects",
+      "storage",
+      "permissions",
+      "activity",
+      "outbox",
+      "search",
+      "notifier",
+      "ai-routing",
+      "vector-store"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "drive.read",
+      "drive.read:shared",
+      "drive.write",
+      "drive.write:shared",
+      "drive.delete",
+      "drive.admin"
+    ],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": [
+      "RUSTFS_ENDPOINT",
+      "RUSTFS_ACCESS_KEY",
+      "RUSTFS_SECRET_KEY",
+      "RUSTFS_BUCKET",
+      "RUSTFS_REGION"
+    ]
+  },
+  "migrations": "./migrations",
+  "policies": "./policies",
+  "uiContribution": {
+    "shellRoutes": [
+      "/drive"
+    ],
+    "leftRailItem": {
+      "label": "Drive",
+      "icon": "folder",
+      "order": 3
+    },
+    "settingsPages": [
+      "drive.storage",
+      "drive.sharing"
+    ]
+  },
+  "tierRequirements": {
+    "minTier": "personal"
+  },
+  "ai": {
+    "suggestionSlots": [
+      {
+        "id": "drive.summarize-file",
+        "description": "Summarize a Drive file"
+      },
+      {
+        "id": "drive.describe-image",
+        "description": "Describe an image stored in Drive"
+      }
+    ],
+    "enrichments": [
+      {
+        "id": "drive.auto-tag",
+        "description": "Suggest tags for uploaded files"
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "com.helix.core.search-meilisearch",
+  "name": "Helix Meilisearch",
+  "version": "1.0.0",
+  "description": "Default keyword search engine and event indexer framework for Helix.",
+  "vendor": { "name": "Helix" },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "main": "index.js",
+  "capabilities": {
+    "provides": ["search.engine.meilisearch", "indexer.worker"],
+    "consumes": ["events", "platform.config"]
+  },
+  "permissions": {
+    "scopes": ["search.read", "search.write"],
+    "outbound-network": ["config.meilisearchEndpoint"],
+    "filesystem": [],
+    "envVars": ["MEILI_URL", "MEILI_MASTER_KEY", "MEILI_INDEX_UID"]
+  }
+}

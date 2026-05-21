@@ -1,0 +1,31 @@
+{
+  "id": "com.helix.webhook-in-stripe",
+  "name": "Stripe Inbound Webhooks",
+  "version": "1.0.0",
+  "description": "Stripe timestamped signature verification for inbound webhooks.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "connector",
+  "main": "index.js",
+  "capabilities": {
+    "provides": [
+      "webhook.in.source.stripe"
+    ],
+    "consumes": [
+      "webhook.engine",
+      "events"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "webhooks.write"
+    ],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": []
+  }
+}

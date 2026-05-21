@@ -1,0 +1,106 @@
+security:
+  tier: enterprise
+  overrides:
+    internalTransit: spire-mtls
+    secrets: vault
+    auditHashChain: true
+    auditDestinations:
+      - postgres
+      - immutable-s3
+      - siem
+    networkEgress: required-allowlist
+    pluginSignatureRequired: true
+
+external:
+  postgres:
+    url: ""
+    urlSecret:
+      name: helix-postgres-app
+      key: uri
+  vault:
+    enabled: true
+  kms:
+    enabled: true
+  siem:
+    enabled: true
+
+networkPolicy:
+  egress:
+    allowAll: false
+    cidrs:
+      - 10.0.0.0/8
+
+spire:
+  enabled: true
+
+vault:
+  agentInject: true
+
+siem:
+  enabled: true
+
+cloudnativepg:
+  enabled: true
+  instances: 3
+  storage:
+    size: 200Gi
+    annotations:
+      helix.io/encryption-at-rest: "required"
+  walStorage:
+    enabled: true
+    size: 50Gi
+    annotations:
+      helix.io/encryption-at-rest: "required"
+  backup:
+    enabled: true
+    target: prefer-standby
+    retentionPolicy: 30d
+    barmanObjectStore:
+      destinationPath: s3://helix-postgres-backups/enterprise
+      endpointURL: https://s3.example.internal
+      serverName: helix-postgres
+      s3Credentials:
+        accessKeyId:
+          name: helix-cnpg-backup
+          key: AWS_ACCESS_KEY_ID
+        secretAccessKey:
+          name: helix-cnpg-backup
+          key: AWS_SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+        encryption: aws:kms
+        maxParallel: 4
+        additionalCommandArgs:
+          - --sse-kms-key-id=alias/helix
+      data:
+        compression: gzip
+        encryption: aws:kms
+        jobs: 2
+        additionalCommandArgs:
+          - --sse-kms-key-id=alias/helix
+      tags:
+        helix.io/security-tier: enterprise
+        helix.io/backup-class: pitr
+      historyTags:
+        helix.io/security-tier: enterprise
+  scheduledBackup:
+    enabled: true
+    schedule: "0 0 0 * * *"
+    backupOwnerReference: cluster
+  tde:
+    enabled: true
+    provider: storage-class-or-postgres-tde
+    kmsKeyId: alias/helix
+    annotations:
+      helix.io/postgres-at-rest-encryption: "tde-or-kms-backed-storage-required"
+    inheritedAnnotations:
+      helix.io/postgres-kms-key-id: alias/helix
+    storageAnnotations:
+      helix.io/kms-key-id: alias/helix
+
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 20
+
+podDisruptionBudget:
+  minAvailable: 2

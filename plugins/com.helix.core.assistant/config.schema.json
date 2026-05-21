@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assistant plugin config",
+  "type": "object",
+  "properties": {
+    "defaultModel": {
+      "type": ["string", "null"],
+      "description": "Optional model id to request from ai-routing. Null or empty values use the provider default model."
+    },
+    "modelSelection": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["provider-default", "configured-default", "user-selected"],
+          "default": "provider-default"
+        },
+        "allowUserOverride": {
+          "type": "boolean",
+          "default": true
+        },
+        "fallbackToProviderDefault": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "default": {
+        "mode": "provider-default",
+        "allowUserOverride": true,
+        "fallbackToProviderDefault": true
+      }
+    },
+    "memory": {
+      "type": "object",
+      "properties": {
+        "enabledByDefault": {
+          "type": "boolean",
+          "default": false,
+          "description": "Default per-actor assistant memory state. Keep false unless deployment policy explicitly opts users in."
+        },
+        "requiresExplicitOptIn": {
+          "type": "boolean",
+          "const": true,
+          "default": true,
+          "description": "Assistant memory writes require an actor-level opt-in before memory can be stored."
+        },
+        "retentionDays": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": 365,
+          "description": "Optional memory retention window. Null keeps memory until explicit deletion."
+        },
+        "source": {
+          "type": "string",
+          "default": "assistant.user"
+        }
+      },
+      "additionalProperties": false,
+      "default": {
+        "enabledByDefault": false,
+        "requiresExplicitOptIn": true,
+        "retentionDays": 365,
+        "source": "assistant.user"
+      }
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "maxContextMessages": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 100
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 2048
+        }
+      },
+      "additionalProperties": false,
+      "default": {
+        "maxContextMessages": 100,
+        "maxOutputTokens": 2048
+      }
+    }
+  },
+  "additionalProperties": false
+}

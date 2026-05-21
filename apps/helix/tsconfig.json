@@ -1,0 +1,18 @@
+{
+  "extends": "../../packages/config/tsconfig/node.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "baseUrl": ".",
+    "paths": {
+      "@helix/sdk": ["../../packages/sdk/src/index.ts"],
+      "@helix/sdk-types": ["../../packages/sdk-types/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../packages/sdk-types" },
+    { "path": "../../packages/sdk" }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "routes": [
+    { "name": "Redirect root", "path": "/", "surface": "entry" },
+    { "name": "Login", "path": "/login", "surface": "auth" },
+    { "name": "Signup", "path": "/signup", "surface": "auth" },
+    { "name": "Mail", "path": "/mail", "surface": "shell" },
+    { "name": "Chat", "path": "/chat", "surface": "shell" },
+    { "name": "Drive", "path": "/drive", "surface": "shell" },
+    { "name": "Docs", "path": "/docs", "surface": "shell" },
+    { "name": "Calendar", "path": "/calendar", "surface": "shell" },
+    { "name": "Meet", "path": "/meet", "surface": "shell" },
+    { "name": "Assistant", "path": "/assistant", "surface": "shell" },
+    { "name": "Search", "path": "/search?q=launch", "surface": "shell" },
+    { "name": "Settings", "path": "/settings", "surface": "shell" },
+    { "name": "Settings Admin", "path": "/settings/admin", "surface": "shell" },
+    { "name": "Admin", "path": "/admin", "surface": "shell" }
+  ],
+  "viewports": [
+    { "name": "mobile", "width": 390, "height": 844 },
+    { "name": "tablet", "width": 768, "height": 1024 },
+    { "name": "desktop", "width": 1440, "height": 900 }
+  ]
+}

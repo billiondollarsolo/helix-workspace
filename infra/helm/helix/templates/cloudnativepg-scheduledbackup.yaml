@@ -1,0 +1,20 @@
+{{- if and .Values.cloudnativepg.enabled .Values.cloudnativepg.backup.enabled .Values.cloudnativepg.scheduledBackup.enabled }}
+{{- $cnpg := .Values.cloudnativepg }}
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ default (printf "%s-daily" $cnpg.clusterName) $cnpg.scheduledBackup.name }}
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+spec:
+  schedule: {{ $cnpg.scheduledBackup.schedule | quote }}
+  backupOwnerReference: {{ $cnpg.scheduledBackup.backupOwnerReference | quote }}
+  immediate: {{ $cnpg.scheduledBackup.immediate }}
+  suspend: {{ $cnpg.scheduledBackup.suspend }}
+  method: barmanObjectStore
+  cluster:
+    name: {{ $cnpg.clusterName }}
+  {{- with $cnpg.scheduledBackup.target }}
+  target: {{ . | quote }}
+  {{- end }}
+{{- end }}

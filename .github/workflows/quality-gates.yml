@@ -1,0 +1,140 @@
+name: Quality Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  backend-live-demo-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check Docker daemon
+        run: docker info
+
+      - name: Run live demo data smoke
+        run: pnpm quality:live-demo-data -- --execute --compose-project helix_demo_smoke_ci_${{ github.run_id }} --volume-mail-count 25 --batch-size 10
+
+      - name: Start Helix API
+        env:
+          HOST: 0.0.0.0
+          PORT: "39531"
+          LOG_LEVEL: error
+          DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
+          BETTER_AUTH_ENABLED: "true"
+          BETTER_AUTH_URL: http://127.0.0.1:39531
+          BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:39531
+          HELIX_PUBLIC_URL: http://127.0.0.1:39531
+          HELIX_DEFAULT_ORG_ID: 00000000-0000-4000-8000-000000000100
+          MEILI_HOST: http://127.0.0.1:39533
+          MEILI_MASTER_KEY: helix_dev_meili_master_key
+          RUSTFS_ENDPOINT: http://127.0.0.1:39534
+          RUSTFS_ACCESS_KEY: helixrustfs
+          RUSTFS_SECRET_KEY: helix_rustfs_dev_secret
+          RUSTFS_BUCKET: helix-objects
+          MAIL_SMTP_RECEIVER_ENABLED: "false"
+        run: |
+          pnpm --filter @helix/app exec tsx src/index.ts > /tmp/helix-api.log 2>&1 &
+          echo "$!" > /tmp/helix-api.pid
+          for attempt in $(seq 1 45); do
+            curl -fsS http://127.0.0.1:39531/readyz >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/helix-api.log
+          exit 1
+
+      - name: Run authenticated k6 target smoke
+        env:
+          HELIX_BASE_URL: http://127.0.0.1:39531
+          HELIX_SMOKE_CLIENT_ID: helix-local-oauth-client
+          HELIX_SMOKE_CLIENT_SECRET: helix-local-dev-secret
+          HELIX_SMOKE_K6_API_BASE_URL: http://127.0.0.1:39531
+          HELIX_SMOKE_K6_WEB_BASE_URL: http://127.0.0.1:39531
+          HELIX_SMOKE_K6_SCENARIO_GROUPS: api_smoke,mail_api,inbound_mail,search,chat,mcp,otel_health
+          HELIX_SMOKE_K6_DURATION: 2s
+          HELIX_K6_RUNNER: docker
+          HELIX_K6_DOCKER_API_BASE_URL: http://host.docker.internal:39531
+          HELIX_K6_DOCKER_WEB_BASE_URL: http://host.docker.internal:39531
+          MAIL_API_BODY: '{"query":"Renovate","limit":10}'
+          MAIL_API_EXPECT: Renovate
+          INBOUND_MAIL_MARKER: helix-ci-inbound-mail-probe
+          INBOUND_MAIL_TO: local-admin@helix.local
+          SEARCH_TOOL_IDS: search.query
+          SEARCH_BODY: '{"query":"Mail density","types":["chat"],"limit":10}'
+          SEARCH_EXPECT: Mail density
+          CHAT_BODY: '{"query":"Mail density","limit":10}'
+          CHAT_EXPECT: Mail density
+          MCP_EXPECT: mail.search
+        run: pnpm quality:live-auth-smoke -- --k6-target-smoke
+
+      - name: Stop Helix API
+        if: always()
+        run: |
+          if [ -f /tmp/helix-api.pid ]; then
+            kill "$(cat /tmp/helix-api.pid)" || true
+          fi
+
+      - name: Stop live demo services
+        if: always()
+        run: docker compose -p helix_demo_smoke_ci_${{ github.run_id }} down -v --remove-orphans
+
+  accessibility-and-load:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web app
+        run: pnpm --filter @helix/web build
+
+      - name: Start web preview
+        run: |
+          pnpm --filter @helix/web preview > /tmp/helix-web-preview.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:4173/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/helix-web-preview.log
+          exit 1
+
+      - name: Run strict accessibility audit
+        env:
+          HELIX_A11Y_REPORT_DIR: /tmp/helix-a11y
+        run: pnpm quality:a11y
+
+      - name: Validate k6 quality gate
+        run: pnpm quality:k6

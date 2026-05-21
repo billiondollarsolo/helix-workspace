@@ -1,0 +1,28 @@
+{
+  "uid": "helix-mail",
+  "title": "Helix Mail",
+  "tags": ["helix", "mail"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "SMTP receive and send rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_smtp_messages_total[5m])) by (direction)" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "DKIM SPF DMARC pass rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_mail_auth_checks_total{result=\"pass\"}[5m])) by (check)" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    }
+  ]
+}

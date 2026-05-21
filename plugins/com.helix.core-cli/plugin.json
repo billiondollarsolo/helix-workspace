@@ -1,0 +1,21 @@
+{
+  "id": "com.helix.core-cli",
+  "name": "Helix CLI",
+  "version": "1.0.0",
+  "description": "Provides the Helix command-line client surface generated from the platform API.",
+  "vendor": { "name": "Helix" },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "main": "index.js",
+  "capabilities": {
+    "provides": ["cli:helix"],
+    "consumes": ["openapi.document", "oauth.client-credentials", "tools.registry"]
+  },
+  "permissions": {
+    "scopes": ["platform.read", "tools.invoke"],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": ["HELIX_BASE_URL", "HELIX_TOKEN"]
+  }
+}

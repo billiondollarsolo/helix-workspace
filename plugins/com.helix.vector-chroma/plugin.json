@@ -1,0 +1,22 @@
+{
+  "id": "com.helix.vector-chroma",
+  "name": "Helix Chroma Vector Store",
+  "version": "1.0.0",
+  "description": "VectorStore adapter for a Chroma service.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "capabilities": {
+    "provides": ["ai.vector-store.chroma"],
+    "consumes": ["ai.embedding"]
+  },
+  "permissions": {
+    "scopes": ["ai:vector:write"],
+    "outbound-network": ["config.baseUrl"],
+    "filesystem": [],
+    "envVars": ["CHROMA_URL", "CHROMA_API_KEY"]
+  }
+}

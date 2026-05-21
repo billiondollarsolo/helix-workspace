@@ -1,0 +1,21 @@
+{
+  "id": "com.helix.secrets-sops",
+  "name": "Helix SOPS Secrets",
+  "version": "1.0.0",
+  "description": "SOPS and age-backed secrets adapter for Business-tier deployments.",
+  "vendor": { "name": "Helix" },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "main": "index.js",
+  "capabilities": {
+    "provides": ["secrets.provider.sops"],
+    "consumes": ["platform.config"]
+  },
+  "permissions": {
+    "scopes": ["secrets.read"],
+    "outbound-network": [],
+    "filesystem": ["config.sopsFile"],
+    "envVars": ["SOPS_AGE_KEY", "SOPS_AGE_KEY_FILE", "HELIX_SOPS_FILE"]
+  }
+}

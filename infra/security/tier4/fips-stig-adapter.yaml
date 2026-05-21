@@ -1,0 +1,178 @@
+---
+apiVersion: helix.io/v1alpha1
+kind: Tier4FipsStigAdapter
+metadata:
+  name: helix-tier4-fips-stig
+  labels:
+    helix.io/security-tier: sovereign
+spec:
+  scope:
+    tasks:
+      - TASK-A03
+    environments:
+      - sovereign
+      - disconnected
+      - regulated
+  fips:
+    required: true
+    runtimeMode: required
+    nodeSelector:
+      node-restriction.kubernetes.io/fips: "true"
+    cryptoAdapter:
+      interfaceVersion: helix.security.crypto/v1alpha1
+      adapterName: node-openssl-fips
+      configContract:
+        configMapKeys:
+          HELIX_FIPS_MODE: required
+          HELIX_CRYPTO_ADAPTER: node-openssl-fips
+          HELIX_TLS_MIN_VERSION: "1.2"
+          HELIX_TLS_PREFERRED_VERSION: "1.3"
+          HELIX_TLS_ALLOWED_CIPHERS: >-
+            TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+          HELIX_STIG_PROFILE: disa-kubernetes-stig-high
+          HELIX_AIRGAP_MODE: required
+        helmValues:
+          fips.enabled: true
+          fips.crypto.mode: required
+          fips.crypto.adapter: node-openssl-fips
+          fips.crypto.moduleSource: host-validated
+          fips.crypto.keyProvider: kms
+          fips.crypto.randomSource: getrandom
+          fips.crypto.requireRuntimeAttestation: true
+      interface:
+        requiredOperations:
+          - name: randomBytes
+            purpose: nonce-generation
+            source: kernel-getrandom
+          - name: sha256Digest
+            purpose: audit-hash-chain
+            algorithms:
+              - sha256
+              - sha384
+              - sha512
+          - name: hmacSha256
+            purpose: webhook-and-storage-integrity
+          - name: aesGcmEncrypt
+            purpose: envelope-encryption
+            keySizes:
+              - 256
+          - name: aesGcmDecrypt
+            purpose: envelope-decryption
+            keySizes:
+              - 256
+          - name: rsaPssSign
+            purpose: token-and-provenance-signing
+            minKeySize: 2048
+          - name: rsaPssVerify
+            purpose: token-and-provenance-verification
+            minKeySize: 2048
+          - name: tlsContext
+            purpose: outbound-service-tls
+            minVersion: "1.2"
+        forbiddenOperations:
+          - md5
+          - sha1-signature
+          - rsa-1024
+          - tls10
+          - tls11
+      runtimeAttestation:
+        requiredChecks:
+          - node-fips-label-present
+          - openssl-fips-provider-active
+          - crypto-adapter-self-test-pass
+          - tls-policy-env-present
+        evidenceFile: fips-runtime-attestation.json
+    cryptoPolicy:
+      minTlsVersion: "1.2"
+      preferredTlsVersion: "1.3"
+      allowedCipherFamilies:
+        - TLS_AES_256_GCM_SHA384
+        - TLS_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+      disallowedAlgorithms:
+        - md5
+        - sha1-signature
+        - rsa-1024
+        - tls10
+        - tls11
+    containerImages:
+      requireFipsBuild: true
+      requireDigestPinning: true
+      requireSignedProvenance: true
+      requiredValues:
+        repository: fips.imageRepository
+        digest: fips.imageDigest
+      signature:
+        verifier: cosign
+        identityIssuer: offline-root-or-enterprise-ca
+      sbomFormats:
+        - spdx-json
+        - cyclonedx-json
+  stig:
+    baseline:
+      source: DISA Kubernetes STIG
+      profile: high
+      profileId: disa-kubernetes-stig-high
+    podSecurity:
+      enforce: restricted
+      audit: restricted
+      warn: restricted
+    imagePolicy:
+      requireDigestReferences: true
+      rejectMutableTags: true
+      rejectPlaceholderDigests: true
+      requireSignatureVerification: true
+      requireSbom: true
+      requireVulnerabilityReport: true
+      maxAllowedSeverity:
+        runtimeImage: high
+        buildImage: critical
+      requiredImageEvidence:
+        - image-digest-map.yaml
+        - cosign-verify-images.txt
+        - sbom.spdx.json
+        - vulnerability-scan.json
+    kubernetes:
+      requireNetworkPolicies: true
+      requireReadOnlyRootFilesystem: true
+      requireRunAsNonRoot: true
+      forbidHostNetwork: true
+      forbidPrivileged: true
+      forbidPrivilegeEscalation: true
+      requireSeccompRuntimeDefault: true
+      requireResourceLimits: true
+    audit:
+      requiredDestinations:
+        - postgres
+        - worm
+        - siem
+      hashChainRequired: true
+      retentionClass: immutable
+  evidence:
+    requiredArtifacts:
+      - helm-rendered-manifests
+      - image-signature-verification
+      - sbom
+      - vulnerability-scan
+      - cluster-stig-scan
+      - fips-node-attestation
+      - network-policy-review
+      - vault-policy-review
+      - siem-ingestion-test
+      - airgap-manifest
+      - airgap-checklist
+      - fips-crypto-adapter-self-test
+    storage:
+      mode: offline-bundle
+      path: evidence/tier4
+    acceptanceGates:
+      - name: render-sovereign-overlay
+        command: >-
+          helm template helix infra/helm/helix
+          -f infra/helm/helix/values-sovereign.yaml
+      - name: lint-chart
+        command: >-
+          helm lint infra/helm/helix
+          -f infra/helm/helix/values-sovereign.yaml
+      - name: validate-tier4-yaml
+        command: yamllint infra/security/tier4

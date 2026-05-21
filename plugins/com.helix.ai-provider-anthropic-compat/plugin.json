@@ -1,0 +1,27 @@
+{
+  "id": "com.helix.ai-provider-anthropic-compat",
+  "name": "Helix Anthropic-Compatible AI Provider",
+  "version": "1.0.0",
+  "description": "Chat adapter for direct Anthropic-compatible Messages API endpoints.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "external-service",
+  "endpoint": null,
+  "capabilities": {
+    "provides": ["ai.provider.llm", "ai.provider.anthropic-compatible"],
+    "consumes": ["platform.config", "platform.secrets"]
+  },
+  "permissions": {
+    "scopes": ["ai:invoke"],
+    "outbound-network": ["config.baseUrl"],
+    "filesystem": [],
+    "envVars": ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_BETA_HEADERS"]
+  },
+  "ai": {
+    "protocol": "anthropic-compatible",
+    "supports": ["chat"]
+  }
+}

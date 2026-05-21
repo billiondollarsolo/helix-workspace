@@ -1,0 +1,28 @@
+{
+  "uid": "helix-chat",
+  "title": "Helix Chat",
+  "tags": ["helix", "chat"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Active WebSocket connections",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(helix_chat_ws_connections)" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Message and presence rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_chat_events_total[5m])) by (event_type)" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    }
+  ]
+}

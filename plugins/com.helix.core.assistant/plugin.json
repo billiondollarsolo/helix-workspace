@@ -1,0 +1,184 @@
+{
+  "id": "com.helix.core.assistant",
+  "name": "Assistant",
+  "version": "1.0.0",
+  "description": "First-party Helix Assistant backend: conversational orchestration, tool use, retrieved context, and opt-in memory.",
+  "vendor": {
+    "name": "Helix",
+    "url": "https://helix.example.com"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "core-app",
+  "main": "./src/index.ts",
+  "capabilities": {
+    "provides": [
+      "assistant:conversation",
+      "assistant:memory",
+      "tools:assistant.chat",
+      "tools:assistant.conversation.create",
+      "tools:assistant.memory.forget",
+      "ui-route:/assistant",
+      "ui-panel:right-rail:assistant",
+      "command-palette:assistant.*"
+    ],
+    "consumes": [
+      "ai-routing",
+      "tools",
+      "search",
+      "memory-store",
+      "permissions",
+      "activity"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "assistant.read",
+      "assistant.write",
+      "assistant.memory"
+    ],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": []
+  },
+  "tools": [
+    {
+      "id": "assistant.conversation.create",
+      "description": "Create an assistant conversation.",
+      "scopes": [
+        "assistant.write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "memoryOptIn": {
+            "type": "boolean"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "id": "assistant.chat",
+      "description": "Send a message to Helix Assistant with search, memory, and visible tool context.",
+      "scopes": [
+        "assistant.write"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "memoryOptIn": {
+            "type": "boolean"
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "public",
+              "standard",
+              "confidential",
+              "restricted"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "id": "assistant.memory.forget",
+      "description": "Forget saved assistant memory for the current actor.",
+      "scopes": [
+        "assistant.memory"
+      ],
+      "confirmationRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "olderThan": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "all": {
+            "type": "boolean",
+            "default": true
+          },
+          "disableMemory": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    }
+  ],
+  "migrations": "./migrations",
+  "policies": "./policies",
+  "uiContribution": {
+    "shellRoutes": [
+      "/assistant"
+    ],
+    "rightRailPanels": [
+      "assistant"
+    ],
+    "leftRailItem": {
+      "label": "Assistant",
+      "icon": "sparkles",
+      "order": 7
+    },
+    "settingsPages": [
+      "assistant.memory",
+      "assistant.providers"
+    ]
+  },
+  "tierRequirements": {
+    "minTier": "personal",
+    "tierRestrictions": {
+      "sovereign": {
+        "notes": "Assistant uses only locally configured AI routing providers and platform-visible tools."
+      }
+    }
+  },
+  "ai": {
+    "features": [
+      {
+        "id": "assistant.chat",
+        "description": "Main Helix Assistant chat orchestration feature"
+      }
+    ],
+    "suggestionSlots": [],
+    "enrichments": []
+  }
+}

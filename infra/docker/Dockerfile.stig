@@ -1,0 +1,112 @@
+# syntax=docker/dockerfile:1.7
+#
+# Helix STIG / FIPS-hardened image variant (PRD §14.4 — Tier 4 Sovereign/DoD).
+#
+# This is an OPT-IN image. It is NOT the default Helix build: a standard
+# `docker compose up` / default Helm install uses the normal image and never
+# runs FIPS code. This variant is referenced only by the sovereign Helm overlay
+# (`infra/helm/helix/values-sovereign.yaml`).
+#
+# Hardening posture (DISA Kubernetes STIG + container hardening):
+#   - Non-root runtime user (UID/GID 10001).
+#   - Read-only root filesystem at runtime (enforced by the Helm securityContext;
+#     this image keeps no writable state outside /tmp).
+#   - All Linux capabilities dropped at runtime (Helm securityContext).
+#   - Minimal final layer — no shell package managers, no build toolchain.
+#   - FIPS-capable base: the base image is a build ARG so a concrete
+#     FIPS 140-3 validated image (Chainguard FIPS / Iron Bank UBI-FIPS) can be
+#     pinned at promotion time. The generic default below is a placeholder and
+#     MUST be overridden for an accredited build.
+#
+# Build (generic, for CI / contract validation):
+#   docker build -f infra/docker/Dockerfile.stig -t helix-fips:dev .
+#
+# Build (accredited, FIPS base pinned by digest):
+#   docker build -f infra/docker/Dockerfile.stig \
+#     --build-arg RUNTIME_BASE=cgr.dev/chainguard/node-fips@sha256:<digest> \
+#     --build-arg BUILD_BASE=node@sha256:<digest> \
+#     -t registry.example.internal/helix/helix-fips:0.9.0 .
+#
+# FIPS module certification itself is an ops/procurement step: the base image
+# must ship a FIPS 140-3 validated OpenSSL. This Dockerfile makes the image
+# FIPS-capable and the Helix crypto adapter fail-closed; it does not, and cannot,
+# self-certify the cryptographic module.
+
+# --- build arguments -------------------------------------------------------
+# Base used to install dependencies and compile TypeScript. Non-FIPS is fine
+# for the build stage; only the runtime stage must be FIPS-validated.
+ARG BUILD_BASE=node:22-bookworm-slim
+# Runtime base. MUST be overridden with a FIPS 140-3 validated image for an
+# accredited Tier 4 build. The generic default keeps `docker build` working in
+# CI without access to a hardened registry.
+ARG RUNTIME_BASE=node:22-bookworm-slim
+
+# --- dependency / build stage ---------------------------------------------
+FROM ${BUILD_BASE} AS build
+
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    CI=true
+
+WORKDIR /app
+
+# Enable the pinned pnpm via corepack (no global npm install).
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+
+# Copy manifests first for a cacheable dependency layer.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/helix/package.json apps/helix/
+COPY packages/ packages/
+
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --filter @helix/app...
+
+# Copy sources and build the helix app.
+COPY apps/helix/ apps/helix/
+RUN pnpm --filter @helix/app build \
+    && pnpm --filter @helix/app deploy --prod --legacy /app/deploy
+
+# --- runtime stage ---------------------------------------------------------
+FROM ${RUNTIME_BASE} AS runtime
+
+# OCI metadata for SBOM / provenance tooling.
+LABEL org.opencontainers.image.title="helix-fips" \
+      org.opencontainers.image.description="STIG/FIPS-hardened Helix application image (Tier 4)" \
+      org.opencontainers.image.vendor="Helix" \
+      io.helix.security.profile="tier4-stig-fips"
+
+# FIPS contract for the crypto adapter. HELIX_FIPS_MODE=required makes the
+# FipsCryptoProvider fail closed if the runtime cannot enter OpenSSL FIPS mode.
+# The sovereign Helm overlay may override these via the rendered ConfigMap.
+ENV NODE_ENV=production \
+    HELIX_FIPS_MODE=required \
+    HELIX_CRYPTO_ADAPTER=node-openssl-fips \
+    HELIX_FIPS_OPENSSL=1 \
+    NODE_OPTIONS=--force-fips \
+    HELIX_TLS_MIN_VERSION=1.2
+
+WORKDIR /app
+
+# Non-root, fixed UID/GID matching the STIG image policy in values-sovereign.yaml
+# (stig.imagePolicy.expectedRunAsUser / expectedRunAsGroup = 10001).
+# The runtime base may already provide a non-root user; create one only if the
+# UID is free so the build works on both Chainguard and Debian-derived bases.
+RUN (getent group 10001 || groupadd --system --gid 10001 helix) \
+    && (getent passwd 10001 || useradd --system --uid 10001 --gid 10001 \
+        --home-dir /app --shell /usr/sbin/nologin helix) \
+    || true
+
+COPY --from=build --chown=10001:10001 /app/deploy /app
+
+# Drop to the non-root user. The Helm securityContext additionally enforces
+# readOnlyRootFilesystem, runAsNonRoot, allowPrivilegeEscalation=false, and
+# capability drop ALL — see infra/helm/helix/values-sovereign.yaml.
+USER 10001:10001
+
+EXPOSE 3000
+
+# Liveness probe target; kept self-contained (no curl/wget dependency).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+ENTRYPOINT ["node", "apps/helix/dist/index.js"]

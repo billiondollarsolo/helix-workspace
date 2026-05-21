@@ -1,0 +1,52 @@
+{
+  "uid": "helix-audit",
+  "title": "Helix Audit",
+  "tags": ["helix", "audit"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Activity rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_audit_activity_total[5m])) by (verb, object_type)" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Hash-chain verification failures",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_audit_hash_chain_failures_total[5m]))" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Shipping lag",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "max(helix_audit_shipping_lag_seconds) by (destination)" }],
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Latest hash-chain verification",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "max(helix_audit_hash_chain_last_verified_timestamp_seconds)" }],
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 8 }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Immutable shipping backlog",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(helix_audit_shipping_backlog_records) by (destination)" }],
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 8 }
+    }
+  ]
+}

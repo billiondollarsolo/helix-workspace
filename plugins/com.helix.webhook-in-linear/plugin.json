@@ -1,0 +1,31 @@
+{
+  "id": "com.helix.webhook-in-linear",
+  "name": "Linear Inbound Webhooks",
+  "version": "1.0.0",
+  "description": "Linear webhook source parsing and verification for inbound events.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "connector",
+  "main": "index.js",
+  "capabilities": {
+    "provides": [
+      "webhook.in.source.linear"
+    ],
+    "consumes": [
+      "webhook.engine",
+      "events"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "webhooks.write"
+    ],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": []
+  }
+}

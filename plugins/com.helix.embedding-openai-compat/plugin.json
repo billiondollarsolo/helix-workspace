@@ -1,0 +1,28 @@
+{
+  "id": "com.helix.embedding-openai-compat",
+  "name": "Helix OpenAI-Compatible Embedding Provider",
+  "version": "1.0.0",
+  "description": "Embedding adapter for OpenAI-compatible embedding endpoints including OpenAI, Ollama, vLLM, and LiteLLM proxies.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "external-service",
+  "endpoint": null,
+  "capabilities": {
+    "provides": ["ai.provider.embedding", "ai.embedding.openai-compatible"],
+    "consumes": ["platform.config", "platform.secrets"]
+  },
+  "permissions": {
+    "scopes": ["ai:embed"],
+    "outbound-network": ["config.baseUrl"],
+    "filesystem": [],
+    "envVars": ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OLLAMA_BASE_URL"]
+  },
+  "ai": {
+    "protocol": "openai-compatible",
+    "supports": ["embedding"],
+    "localBaseUrls": ["http://localhost:11434/v1"]
+  }
+}

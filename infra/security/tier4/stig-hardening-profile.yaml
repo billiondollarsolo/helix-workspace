@@ -1,0 +1,115 @@
+---
+apiVersion: helix.io/v1alpha1
+kind: StigHardeningProfile
+metadata:
+  name: helix-kubernetes-stig-profile
+spec:
+  profile:
+    id: disa-kubernetes-stig-high
+    source: DISA Kubernetes STIG
+    severity: high
+    target:
+      platform: kubernetes
+      workload: helix
+      overlay: infra/helm/helix/values-sovereign.yaml
+  namespace:
+    labels:
+      pod-security.kubernetes.io/enforce: restricted
+      pod-security.kubernetes.io/audit: restricted
+      pod-security.kubernetes.io/warn: restricted
+  admission:
+    requiredControls:
+      - deny-privileged-containers
+      - deny-host-namespaces
+      - deny-hostpath-volumes
+      - require-readonly-root-filesystem
+      - require-run-as-non-root
+      - require-seccomp-runtime-default
+      - require-drop-all-capabilities
+      - require-image-digests
+      - require-signed-images
+      - require-fips-node-selector
+      - require-fips-runtime-attestation
+      - deny-latest-tag
+      - deny-placeholder-digest
+      - require-airgap-registry
+  runtime:
+    seccompProfile: RuntimeDefault
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilitiesDrop:
+      - ALL
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+  images:
+    registryMode: internal-only
+    allowedRegistries:
+      - registry.example.internal
+    selectedHelmValues:
+      repository: fips.imageRepository
+      digest: fips.imageDigest
+      pullPolicy: airgap.pullPolicy
+    digestRequired: true
+    mutableTagsForbidden: true
+    placeholderDigestForbidden: true
+    signatures:
+      required: true
+      verifier: cosign
+      trustRoot: offline-root-or-enterprise-ca
+      evidenceFile: cosign-verify-images.txt
+    sbom:
+      required: true
+      acceptedFormats:
+        - spdx-json
+        - cyclonedx-json
+    vulnerabilityScan:
+      required: true
+      failOn:
+        - unfixed-critical
+        - exploitable-high
+    build:
+      requireFipsVariant: true
+      requireProvenance: true
+      allowedBaseFamilies:
+        - ubi-minimal-fips
+        - distroless-fips
+        - wolfi-fips
+      forbiddenPackages:
+        - openssh-server
+        - telnet
+        - netcat
+        - curl-debug-builds
+  networking:
+    defaultDenyIngress: true
+    defaultDenyEgress: true
+    allowedEgressCategories:
+      - cluster-dns
+      - approved-private-endpoints
+      - approved-siem
+      - approved-vault
+  secrets:
+    source: vault
+    requireShortLivedTokens: true
+    forbidPlaintextKubernetesSecrets: false
+    rotationDays: 30
+  observability:
+    auditEventRouting: siem
+    requireTraceCorrelation: true
+    requireClockSync: true
+  validation:
+    tools:
+      - helm lint
+      - helm template
+      - kubeconform or kubeval
+      - conftest or kyverno
+      - openscap or vendor STIG scanner
+    requiredEvidence:
+      - helix-sovereign.rendered.yaml
+      - fips-runtime-attestation.json
+      - image-digest-map.yaml
+      - cosign-verify-images.txt
+      - sbom.spdx.json
+      - vulnerability-scan.json
+      - network-policy-review.md
+      - siem-ingestion-test.json

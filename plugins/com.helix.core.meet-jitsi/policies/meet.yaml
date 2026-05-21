@@ -1,0 +1,14 @@
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: default
+  resource: meet_room
+  rules:
+    - actions: ["read", "join"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "admin"]
+    - actions: ["create", "end"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "admin"]
+    - actions: ["admin"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]

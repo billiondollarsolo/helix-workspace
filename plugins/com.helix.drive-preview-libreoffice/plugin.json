@@ -1,0 +1,45 @@
+{
+  "id": "com.helix.drive-preview-libreoffice",
+  "name": "Drive LibreOffice Preview",
+  "version": "1.0.0",
+  "description": "Converts Office documents to PDF for Drive previews using a separate headless LibreOffice service.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "external-service",
+  "endpoint": "http://drive-preview-libreoffice:3000",
+  "capabilities": {
+    "provides": [
+      "preview-renderer:application/msword",
+      "preview-renderer:application/vnd.ms-excel",
+      "preview-renderer:application/vnd.ms-powerpoint",
+      "preview-renderer:application/vnd.oasis.opendocument.*",
+      "preview-renderer:application/vnd.openxmlformats-officedocument.*",
+      "drive-preview:office-to-pdf"
+    ],
+    "consumes": ["storage", "permissions"]
+  },
+  "permissions": {
+    "scopes": ["drive.read", "drive.preview"],
+    "outbound-network": [],
+    "filesystem": ["/tmp/helix-drive-preview"],
+    "envVars": [
+      "DRIVE_PREVIEW_LIBREOFFICE_PORT",
+      "DRIVE_PREVIEW_MAX_BYTES",
+      "DRIVE_PREVIEW_WORKDIR",
+      "DRIVE_PREVIEW_TIMEOUT_MS"
+    ]
+  },
+  "composeRecipe": "./compose.yaml",
+  "tierRequirements": {
+    "minTier": "personal",
+    "tierRestrictions": {
+      "sovereign": {
+        "outbound-network": "none",
+        "notes": "Office preview conversion runs in an isolated container with no declared outbound network access."
+      }
+    }
+  }
+}

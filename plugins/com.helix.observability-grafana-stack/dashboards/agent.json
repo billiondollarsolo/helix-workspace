@@ -1,0 +1,36 @@
+{
+  "uid": "helix-agent",
+  "title": "Helix Agents",
+  "tags": ["helix", "agents"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Active agents",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(helix_agents_active)" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Tool call rate by tool",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_tool_invocations_total[5m])) by (tool_id, status)" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Confirmation gate metrics",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_tool_confirmations_total[5m])) by (status)" }],
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+    }
+  ]
+}

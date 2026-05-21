@@ -1,0 +1,16 @@
+apiVersion: v2
+name: helix
+description: Hardened Kubernetes deployment chart for Helix.
+type: application
+version: 0.9.0
+appVersion: "0.9.0"
+keywords:
+  - helix
+  - ai
+  - collaboration
+  - hardened
+home: https://github.com/helix/helix
+sources:
+  - https://github.com/helix/helix
+maintainers:
+  - name: Helix Platform

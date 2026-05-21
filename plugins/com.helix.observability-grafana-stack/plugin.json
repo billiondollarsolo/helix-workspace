@@ -1,0 +1,43 @@
+{
+  "id": "com.helix.observability-grafana-stack",
+  "name": "Helix Grafana Observability Stack",
+  "version": "1.0.0",
+  "description": "Bundled Grafana, Tempo, Loki, and Prometheus stack with Helix dashboards as code.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "main": "index.js",
+  "dependencies": [
+    {
+      "id": "com.helix.observability-otel",
+      "version": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "capabilities": {
+    "provides": ["observability.stack", "observability.dashboards"],
+    "consumes": ["observability.telemetry"]
+  },
+  "permissions": {
+    "scopes": ["observability:read"],
+    "outbound-network": [],
+    "filesystem": [
+      "plugins/com.helix.observability-grafana-stack/dashboards",
+      "plugins/com.helix.observability-grafana-stack/provisioning"
+    ],
+    "envVars": [
+      "GRAFANA_PORT",
+      "PROMETHEUS_PORT",
+      "TEMPO_HTTP_PORT",
+      "LOKI_PORT",
+      "OTEL_COLLECTOR_GRPC_PORT",
+      "OTEL_COLLECTOR_HTTP_PORT"
+    ]
+  },
+  "composeRecipe": "./compose.yaml",
+  "dashboards": "./dashboards",
+  "grafanaProvisioning": "./provisioning"
+}

@@ -1,0 +1,38 @@
+name: Restore Drill
+
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate shell syntax
+        run: bash -n infra/scripts/common.sh infra/scripts/backup.sh infra/scripts/restore.sh infra/scripts/restore-drill.sh
+
+      - name: Validate restore drill contracts
+        run: infra/scripts/validate-restore-drill.sh
+
+      - name: Dry-run backup workflow
+        run: infra/scripts/backup.sh --tier personal --output-dir /tmp/helix-backups --backup-id ci-dry-run
+
+      - name: Dry-run restore workflow
+        run: infra/scripts/restore.sh --backup /tmp/helix-backups/ci-dry-run.tar.gz --target-db helix_restore_drill --allow-drop-target --verify
+
+      - name: Dry-run restore drill
+        run: infra/scripts/restore-drill.sh --backup /tmp/helix-backups/ci-dry-run.tar.gz
+
+      - name: Start drill Postgres
+        run: docker compose up -d postgres
+
+      - name: Execute restore drill
+        run: infra/scripts/restore-drill.sh --create-backup --backup-dir /tmp/helix-backups --execute
+
+      - name: Stop drill stack
+        if: ${{ always() }}
+        run: docker compose down

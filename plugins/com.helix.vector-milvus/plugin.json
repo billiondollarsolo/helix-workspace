@@ -1,0 +1,22 @@
+{
+  "id": "com.helix.vector-milvus",
+  "name": "Helix Milvus Vector Store",
+  "version": "1.0.0",
+  "description": "VectorStore adapter for a Milvus service.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "capabilities": {
+    "provides": ["ai.vector-store.milvus"],
+    "consumes": ["ai.embedding"]
+  },
+  "permissions": {
+    "scopes": ["ai:vector:write"],
+    "outbound-network": ["config.baseUrl"],
+    "filesystem": [],
+    "envVars": ["MILVUS_URL", "MILVUS_API_KEY"]
+  }
+}

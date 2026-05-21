@@ -1,0 +1,28 @@
+{
+  "id": "com.helix.ai-provider-bedrock",
+  "name": "Helix AWS Bedrock AI Provider",
+  "version": "1.0.0",
+  "description": "Chat adapter for Anthropic models through AWS Bedrock Runtime with SigV4 request signing.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "external-service",
+  "endpoint": null,
+  "capabilities": {
+    "provides": ["ai.provider.llm", "ai.provider.bedrock"],
+    "consumes": ["platform.config", "platform.secrets"]
+  },
+  "permissions": {
+    "scopes": ["ai:invoke"],
+    "outbound-network": ["bedrock-runtime.${config.region}.amazonaws.com"],
+    "filesystem": [],
+    "envVars": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION"]
+  },
+  "ai": {
+    "protocol": "bedrock",
+    "supports": ["chat"],
+    "requestShape": "anthropic-messages"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "uid": "helix-security",
+  "title": "Helix Security",
+  "tags": ["helix", "security"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Permission denials",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_permission_checks_total{decision=\"DENY\"}[5m])) by (resource_type, action)" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Authentication failures",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_auth_failures_total[5m])) by (reason)" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "MFA and IP allowlist events",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_security_challenges_total[5m])) by (type, status)" }],
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "id": "com.helix.core.calendar",
+  "name": "Calendar",
+  "version": "1.0.0",
+  "description": "First-party Calendar feature: events, attendees, free/busy tools, CalDAV, and ICS invitations",
+  "vendor": {
+    "name": "Helix",
+    "url": "https://helix.example.com"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "core-app",
+  "main": "./src/index.ts",
+  "capabilities": {
+    "provides": [
+      "caldav:/dav/cal/*",
+      "tools:calendar.*",
+      "ui-route:/calendar",
+      "command-palette:calendar.*",
+      "notification-source:calendar.invitation"
+    ],
+    "consumes": [
+      "threads",
+      "permissions",
+      "activity",
+      "mail",
+      "notifier",
+      "ai-routing"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "calendar.read",
+      "calendar.read:freebusy",
+      "calendar.write",
+      "calendar.write:respond",
+      "calendar.admin"
+    ],
+    "outbound-network": [],
+    "filesystem": [],
+    "envVars": [
+      "PUBLIC_BASE_URL",
+      "MAIL_FROM_DOMAIN"
+    ]
+  },
+  "migrations": "./migrations",
+  "policies": "./policies",
+  "uiContribution": {
+    "shellRoutes": [
+      "/calendar"
+    ],
+    "leftRailItem": {
+      "label": "Calendar",
+      "icon": "calendar-days",
+      "order": 5
+    },
+    "settingsPages": [
+      "calendar.calendars",
+      "calendar.caldav"
+    ]
+  },
+  "tierRequirements": {
+    "minTier": "personal"
+  },
+  "ai": {
+    "suggestionSlots": [
+      {
+        "id": "calendar.suggest-meeting-time",
+        "description": "Suggest meeting times from free/busy data"
+      },
+      {
+        "id": "calendar.draft-agenda",
+        "description": "Draft a meeting agenda"
+      }
+    ],
+    "enrichments": []
+  }
+}

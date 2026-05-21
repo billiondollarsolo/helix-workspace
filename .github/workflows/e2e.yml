@@ -1,0 +1,183 @@
+name: E2E
+
+# Real browser end-to-end suite for P1-1 (PRD alignment plan 2026-05-21).
+#
+# Two jobs:
+#
+#   e2e-mocked  — Always runs. Serves the real production web UI (Vite) and runs
+#                 the Playwright feature specs in MOCKED mode: every /api/** call
+#                 is intercepted with deterministic fixtures. This is the
+#                 regression gate and needs no backend infrastructure.
+#
+#   e2e-live    — Runs the SAME specs in LIVE mode (HELIX_E2E_BACKEND=live)
+#                 against a real Helix backend. The docker-compose stack
+#                 (Postgres, Redis, NATS, Meilisearch, RustFS, Cerbos, Mailpit)
+#                 provides the dependencies; the Helix API runs from source via
+#                 tsx (mirroring quality-gates.yml). The mail SMTP send->receive
+#                 spec exercises the real Mailpit SMTP listener.
+#
+# The live job is correct as written; if Docker or the API fail to come up it
+# fails loudly rather than silently degrading to mocked behaviour.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  e2e-mocked:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck E2E specs
+        run: pnpm --filter @helix/web typecheck:e2e
+
+      - name: Lint E2E specs
+        run: pnpm --filter @helix/web lint:e2e
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @helix/web exec playwright install --with-deps chromium
+
+      - name: Run E2E suite (mocked backend)
+        run: pnpm --filter @helix/web test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-mocked
+          path: apps/web/playwright-report
+          retention-days: 7
+
+  e2e-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # docker-compose published ports (see docker-compose.yml defaults).
+      DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:28432/helix
+      HELIX_E2E_BACKEND: live
+      HELIX_E2E_API_BASE_URL: http://127.0.0.1:28431
+      HELIX_E2E_CLIENT_ID: helix-local-oauth-client
+      HELIX_E2E_CLIENT_SECRET: helix-local-dev-secret
+      HELIX_E2E_MAILPIT_SMTP_HOST: 127.0.0.1
+      HELIX_E2E_MAILPIT_SMTP_PORT: "28457"
+      HELIX_E2E_MAILPIT_API_BASE_URL: http://127.0.0.1:28458
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @helix/web exec playwright install --with-deps chromium
+
+      - name: Start backend dependency services
+        # Bring up only the infrastructure services the E2E suite needs. The
+        # `helix` app itself is run from source below so CI does not depend on a
+        # prebuilt image.
+        run: |
+          docker compose -p helix_e2e up -d \
+            postgres redis nats meilisearch rustfs cerbos mailpit
+
+      - name: Wait for Postgres
+        run: |
+          for attempt in $(seq 1 30); do
+            docker compose -p helix_e2e exec -T postgres pg_isready -U helix -d helix && exit 0
+            sleep 2
+          done
+          echo "Postgres did not become ready" >&2
+          exit 1
+
+      - name: Start Helix API from source
+        env:
+          HOST: 0.0.0.0
+          PORT: "28431"
+          LOG_LEVEL: error
+          BETTER_AUTH_ENABLED: "true"
+          BETTER_AUTH_URL: http://127.0.0.1:28431
+          BETTER_AUTH_SECRET: helix_local_better_auth_secret_change_me_32_chars
+          BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:28431,http://127.0.0.1:4173
+          HELIX_PUBLIC_URL: http://127.0.0.1:28431
+          HELIX_DEFAULT_ORG_ID: 00000000-0000-4000-8000-000000000100
+          REDIS_URL: redis://127.0.0.1:28433
+          NATS_URL: nats://127.0.0.1:28434
+          MEILI_HOST: http://127.0.0.1:28436
+          MEILI_MASTER_KEY: helix_dev_meili_master_key
+          RUSTFS_ENDPOINT: http://127.0.0.1:28437
+          RUSTFS_ACCESS_KEY: helixrustfs
+          RUSTFS_SECRET_KEY: helix_rustfs_dev_secret
+          RUSTFS_BUCKET: helix-objects
+          CERBOS_HTTP_URL: http://127.0.0.1:28439
+          MAIL_SMTP_HOST: 127.0.0.1
+          MAIL_SMTP_PORT: "28457"
+          MAIL_SMTP_SECURE: "false"
+          MAIL_SMTP_RECEIVER_ENABLED: "true"
+          MAIL_SMTP_RECEIVER_HOST: 0.0.0.0
+          MAIL_SMTP_RECEIVER_PORT: "2525"
+        run: |
+          pnpm --filter @helix/app exec tsx src/index.ts > /tmp/helix-api.log 2>&1 &
+          echo "$!" > /tmp/helix-api.pid
+          for attempt in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:28431/readyz >/dev/null && exit 0
+            sleep 2
+          done
+          echo "Helix API did not become ready" >&2
+          cat /tmp/helix-api.log
+          exit 1
+
+      - name: Run E2E suite (live backend)
+        run: pnpm --filter @helix/web test:e2e
+
+      - name: Stop Helix API
+        if: always()
+        run: |
+          if [ -f /tmp/helix-api.pid ]; then
+            kill "$(cat /tmp/helix-api.pid)" || true
+          fi
+
+      - name: Dump Helix API log
+        if: always()
+        run: cat /tmp/helix-api.log || true
+
+      - name: Tear down dependency services
+        if: always()
+        run: docker compose -p helix_e2e down -v --remove-orphans
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-live
+          path: apps/web/playwright-report
+          retention-days: 7

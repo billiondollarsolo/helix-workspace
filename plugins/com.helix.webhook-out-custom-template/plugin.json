@@ -1,0 +1,32 @@
+{
+  "id": "com.helix.webhook-out-custom-template",
+  "name": "Custom Template Outbound Webhooks",
+  "version": "1.0.0",
+  "description": "Custom template renderer for outbound webhook payloads.",
+  "vendor": {
+    "name": "Helix"
+  },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "connector",
+  "main": "index.js",
+  "capabilities": {
+    "provides": [
+      "webhook.out.format.custom-template"
+    ],
+    "consumes": [
+      "webhook.engine"
+    ]
+  },
+  "permissions": {
+    "scopes": [
+      "webhooks.write"
+    ],
+    "outbound-network": [
+      "webhook.target"
+    ],
+    "filesystem": [],
+    "envVars": []
+  }
+}

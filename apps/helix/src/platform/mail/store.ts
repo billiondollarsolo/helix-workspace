@@ -1,0 +1,1184 @@
+import { createHash, randomUUID } from "node:crypto";
+import type postgres from "postgres";
+import type { JsonObject } from "@helix/sdk-types";
+import type { MailOutboundDeliveryHealth } from "./admin-config.js";
+import type {
+  MailFilterActions,
+  MailFilterCriteria,
+  MailFilterRecord,
+  MailClassificationWrite,
+  MailEnrichmentProjectionStore,
+  MailEnrichmentRecord,
+  MailEnrichmentWrite,
+  MailMessageInput,
+  MailOutboundEnvelope,
+  MailOutboundDeliveryResult,
+  MailOutboundRecord,
+  MailOutboundStatus,
+  MailSearchHit,
+  MailSearchProjectionStore,
+  MailSearchRequest,
+  MailSearchRecord,
+  MailThreadDetail,
+  MailThreadAttachment,
+  MailThreadGetRequest,
+  MailThreadMessage,
+  MailThreadStatePatch,
+  MailVacationRecord,
+  StoredMailMessage,
+} from "./types.js";
+
+export interface CreateMailFilterInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly name: string;
+  readonly enabled?: boolean;
+  readonly priority?: number;
+  readonly criteria: MailFilterCriteria;
+  readonly actions: MailFilterActions;
+}
+
+export interface UpdateMailFilterInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly id: string;
+  readonly patch: Partial<Omit<CreateMailFilterInput, "orgId" | "actorId">>;
+}
+
+export interface SetMailVacationInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly enabled: boolean;
+  readonly subject: string;
+  readonly body: string;
+  readonly startsAt: Date | null;
+  readonly endsAt: Date | null;
+  readonly metadata: JsonObject;
+}
+
+export interface CreateOutboundMailInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly threadId?: string;
+  readonly inReplyTo?: string;
+  readonly references?: readonly string[];
+  readonly envelope: MailOutboundEnvelope;
+  readonly undoUntil: Date;
+  readonly outboxSubject: string;
+}
+
+export type MarkOutboundSentInput = MailOutboundDeliveryResult & {
+  readonly id: string;
+  readonly sentAt?: Date | undefined;
+};
+
+export interface MailStore {
+  findActorByAddress(
+    orgId: string,
+    address: string,
+  ): Promise<{ readonly actorId: string; readonly email: string } | null>;
+  insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage>;
+  createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord>;
+  getOutbound(id: string): Promise<MailOutboundRecord | null>;
+  markOutboundSending(id: string): Promise<MailOutboundRecord | null>;
+  markOutboundSent(input: MarkOutboundSentInput): Promise<MailOutboundRecord | null>;
+  markOutboundFailed(
+    id: string,
+    error: string,
+    failedAt?: Date,
+  ): Promise<MailOutboundRecord | null>;
+  cancelOutbound(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<MailOutboundRecord | null>;
+  updateThreadState(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly threadId: string;
+    readonly patch: MailThreadStatePatch;
+  }): Promise<void>;
+  createFilter(input: CreateMailFilterInput): Promise<MailFilterRecord>;
+  updateFilter(input: UpdateMailFilterInput): Promise<MailFilterRecord | null>;
+  deleteFilter(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<boolean>;
+  listFilters(orgId: string, actorId: string): Promise<readonly MailFilterRecord[]>;
+  getVacation(orgId: string, actorId: string): Promise<MailVacationRecord | null>;
+  setVacation(input: SetMailVacationInput): Promise<MailVacationRecord>;
+  getActiveVacation(orgId: string, actorId: string, now?: Date): Promise<MailVacationRecord | null>;
+  hasVacationResponse(input: {
+    readonly vacationId: string;
+    readonly senderEmail: string;
+  }): Promise<boolean>;
+  recordVacationResponse(input: {
+    readonly vacationId: string;
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly senderEmail: string;
+    readonly messageId?: string;
+    readonly threadId?: string;
+  }): Promise<boolean>;
+  search(input: MailSearchRequest): Promise<readonly MailSearchHit[]>;
+  getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null>;
+}
+
+interface MailFilterRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly actor_id: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly priority: number;
+  readonly criteria: MailFilterCriteria;
+  readonly actions: MailFilterActions;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
+interface MailVacationRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly actor_id: string;
+  readonly enabled: boolean;
+  readonly subject: string;
+  readonly body: string;
+  readonly starts_at: Date | null;
+  readonly ends_at: Date | null;
+  readonly metadata: JsonObject;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
+interface MailOutboundRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly actor_id: string;
+  readonly message_id: string;
+  readonly thread_id: string;
+  readonly outbox_id: string | null;
+  readonly status: MailOutboundStatus;
+  readonly envelope: MailOutboundEnvelope;
+  readonly undo_until: Date;
+  readonly sent_at: Date | null;
+  readonly cancelled_at: Date | null;
+  readonly failed_at: Date | null;
+  readonly last_error: string | null;
+  readonly provider_message_id: string | null;
+  readonly delivery_metadata: JsonObject;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
+interface MailSearchRow {
+  readonly thread_id: string;
+  readonly message_id: string;
+  readonly subject: string | null;
+  readonly body: string;
+  readonly metadata: JsonObject;
+  readonly sent_at: Date;
+  readonly labels: readonly string[] | null;
+  readonly read_at: Date | null;
+  readonly starred: boolean | null;
+  readonly outbound_status: MailOutboundStatus | null;
+  readonly provider_message_id: string | null;
+  readonly delivery_metadata: JsonObject | null;
+}
+
+interface MailThreadRow {
+  readonly thread_id: string;
+  readonly subject: string | null;
+  readonly thread_archived_at: Date | null;
+  readonly labels: readonly string[] | null;
+  readonly archived_at: Date | null;
+  readonly deleted_at: Date | null;
+  readonly snoozed_until: Date | null;
+  readonly read_at: Date | null;
+  readonly starred: boolean | null;
+  readonly message_id: string;
+  readonly body: string;
+  readonly body_format: string;
+  readonly metadata: JsonObject;
+  readonly sent_at: Date;
+  readonly has_attachment: boolean;
+  readonly attachments: readonly MailThreadAttachmentRow[] | null;
+}
+
+interface MailSearchRecordRow {
+  readonly org_id: string;
+  readonly thread_id: string;
+  readonly message_id: string;
+  readonly subject: string | null;
+  readonly body: string;
+  readonly metadata: JsonObject;
+  readonly sent_at: Date;
+  readonly updated_at: Date;
+  readonly labels: readonly string[] | null;
+}
+
+interface MailThreadAttachmentRow {
+  readonly objectId?: unknown;
+  readonly filename?: unknown;
+  readonly contentId?: unknown;
+  readonly mimeType?: unknown;
+  readonly byteSize?: unknown;
+  readonly sha256?: unknown;
+  readonly disposition?: unknown;
+}
+
+export class PostgresMailStore
+  implements MailStore, MailSearchProjectionStore, MailEnrichmentProjectionStore
+{
+  constructor(private readonly sql: postgres.Sql) {}
+
+  async findActorByAddress(
+    orgId: string,
+    address: string,
+  ): Promise<{ readonly actorId: string; readonly email: string } | null> {
+    const rows = (await this.sql`
+      select id, email
+      from actors
+      where org_id = ${orgId}
+        and disabled_at is null
+        and lower(email) = ${normalizeAddress(address)}
+      union all
+      select actor_id as id, email
+      from mail_aliases
+      where org_id = ${orgId}
+        and enabled = true
+        and disabled_at is null
+        and lower(email) = ${normalizeAddress(address)}
+      limit 1
+    `) as unknown as readonly { readonly id: string; readonly email: string }[];
+    return rows[0] === undefined ? null : { actorId: rows[0].id, email: rows[0].email };
+  }
+
+  async insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage> {
+    return this.sql.begin(async (tx) => insertMailMessage(tx, input));
+  }
+
+  async createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord> {
+    return this.sql.begin(async (tx) => {
+      const message = await insertMailMessage(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        threadId: input.threadId,
+        from: input.envelope.from,
+        to: input.envelope.to,
+        cc: input.envelope.cc,
+        bcc: input.envelope.bcc,
+        subject: input.envelope.subject,
+        bodyText: input.envelope.text,
+        ...(input.envelope.html === undefined ? {} : { bodyHtml: input.envelope.html }),
+        ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
+        ...(input.references === undefined ? {} : { references: input.references }),
+        metadata: { direction: "outbound" },
+      });
+
+      const outboxRows = (await tx`
+        insert into outbox (subject, payload, deliver_after)
+        values (
+          ${input.outboxSubject},
+          ${tx.json(toSqlJson({ mailOutboundId: "", orgId: input.orgId, actorId: input.actorId }))},
+          ${input.undoUntil}
+        )
+        returning id
+      `) as unknown as readonly { readonly id: string }[];
+      const outboxId = outboxRows[0]?.id ?? null;
+
+      const outboundRows = (await tx`
+        insert into mail_outbound_messages (
+          org_id, actor_id, message_id, thread_id, outbox_id, status, envelope, undo_until
+        )
+        values (
+          ${input.orgId},
+          ${input.actorId},
+          ${message.messageId},
+          ${message.threadId},
+          ${outboxId},
+          'queued',
+          ${tx.json(toSqlJson(input.envelope))},
+          ${input.undoUntil}
+        )
+        returning *
+      `) as unknown as readonly MailOutboundRow[];
+
+      const outbound = mapOutbound(outboundRows[0]);
+      if (outboxId !== null) {
+        await tx`
+          update outbox
+          set payload = ${tx.json(toSqlJson({ mailOutboundId: outbound.id, orgId: input.orgId, actorId: input.actorId }))}
+          where id = ${outboxId}
+        `;
+      }
+      return outbound;
+    });
+  }
+
+  async getOutbound(id: string): Promise<MailOutboundRecord | null> {
+    const rows = (await this.sql`
+      select * from mail_outbound_messages where id = ${id} limit 1
+    `) as unknown as readonly MailOutboundRow[];
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
+  async getOutboundDeliveryHealth(input: {
+    readonly orgId: string;
+    readonly since: Date;
+  }): Promise<MailOutboundDeliveryHealth> {
+    const rows = (await this.sql`
+      select status, count(*)::int as count
+      from mail_outbound_messages
+      where org_id = ${input.orgId}
+        and created_at >= ${input.since}
+      group by status
+    `) as unknown as readonly {
+      readonly status: MailOutboundStatus;
+      readonly count: number;
+    }[];
+    const failures = (await this.sql`
+      select failed_at, last_error
+      from mail_outbound_messages
+      where org_id = ${input.orgId}
+        and status = 'failed'
+        and failed_at >= ${input.since}
+      order by failed_at desc nulls last, updated_at desc
+      limit 1
+    `) as unknown as readonly {
+      readonly failed_at: Date | null;
+      readonly last_error: string | null;
+    }[];
+    const counts = outboundStatusCounts(rows);
+    return {
+      since: input.since.toISOString(),
+      counts,
+      failedLast24h: counts.failed,
+      lastFailureAt: failures[0]?.failed_at?.toISOString() ?? null,
+      lastError: failures[0]?.last_error ?? null,
+    };
+  }
+
+  async markOutboundSending(id: string): Promise<MailOutboundRecord | null> {
+    const rows = (await this.sql`
+      update mail_outbound_messages
+      set status = 'sending', updated_at = now()
+      where id = ${id} and status = 'queued' and undo_until <= now()
+      returning *
+    `) as unknown as readonly MailOutboundRow[];
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
+  async markOutboundSent(input: MarkOutboundSentInput): Promise<MailOutboundRecord | null> {
+    const rows = (await this.sql`
+      update mail_outbound_messages
+      set
+        status = 'sent',
+        sent_at = ${input.sentAt ?? new Date()},
+        last_error = null,
+        provider_message_id = ${input.providerMessageId ?? null},
+        delivery_metadata = ${this.sql.json(toSqlJson(input.deliveryMetadata ?? {}))},
+        updated_at = now()
+      where id = ${input.id}
+      returning *
+    `) as unknown as readonly MailOutboundRow[];
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
+  async markOutboundFailed(
+    id: string,
+    error: string,
+    failedAt: Date = new Date(),
+  ): Promise<MailOutboundRecord | null> {
+    const rows = (await this.sql`
+      update mail_outbound_messages
+      set status = 'failed', failed_at = ${failedAt}, last_error = ${error}, updated_at = now()
+      where id = ${id}
+      returning *
+    `) as unknown as readonly MailOutboundRow[];
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
+  async cancelOutbound(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<MailOutboundRecord | null> {
+    const rows = (await this.sql`
+      update mail_outbound_messages
+      set status = 'cancelled', cancelled_at = now(), updated_at = now()
+      where org_id = ${input.orgId}
+        and actor_id = ${input.actorId}
+        and id = ${input.id}
+        and status = 'queued'
+        and undo_until > now()
+      returning *
+    `) as unknown as readonly MailOutboundRow[];
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
+  async updateThreadState(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly threadId: string;
+    readonly patch: MailThreadStatePatch;
+  }): Promise<void> {
+    const currentRows = (await this.sql`
+      select labels from mail_thread_state
+      where actor_id = ${input.actorId} and thread_id = ${input.threadId}
+      limit 1
+    `) as unknown as readonly { readonly labels: readonly string[] }[];
+    const currentLabels = currentRows[0]?.labels ?? [];
+    const labels = mergeLabels(
+      currentLabels,
+      input.patch.addLabels ?? [],
+      input.patch.removeLabels ?? [],
+    );
+    const hasReadAtPatch = input.patch.readAt !== undefined;
+    const readAtPatch = input.patch.readAt ?? null;
+    const hasStarredPatch = input.patch.starred !== undefined;
+    const starredPatch = input.patch.starred ?? false;
+
+    await this.sql`
+      insert into mail_thread_state (
+        actor_id, thread_id, org_id, labels, archived_at, deleted_at, snoozed_until, read_at, starred, updated_at
+      )
+      values (
+        ${input.actorId},
+        ${input.threadId},
+        ${input.orgId},
+        ${this.sql.array([...labels])},
+        ${input.patch.archivedAt ?? null},
+        ${input.patch.deletedAt ?? null},
+        ${input.patch.snoozedUntil ?? null},
+        ${readAtPatch},
+        ${starredPatch},
+        now()
+      )
+      on conflict (actor_id, thread_id) do update
+      set
+        labels = ${this.sql.array([...labels])},
+        archived_at = coalesce(${input.patch.archivedAt ?? null}, mail_thread_state.archived_at),
+        deleted_at = coalesce(${input.patch.deletedAt ?? null}, mail_thread_state.deleted_at),
+        snoozed_until = coalesce(${input.patch.snoozedUntil ?? null}, mail_thread_state.snoozed_until),
+        read_at = case
+          when ${hasReadAtPatch} then ${readAtPatch}
+          else mail_thread_state.read_at
+        end,
+        starred = case
+          when ${hasStarredPatch} then ${starredPatch}
+          else mail_thread_state.starred
+        end,
+        updated_at = now()
+    `;
+  }
+
+  async createFilter(input: CreateMailFilterInput): Promise<MailFilterRecord> {
+    const rows = (await this.sql`
+      insert into mail_filters (org_id, actor_id, name, enabled, priority, criteria, actions)
+      values (
+        ${input.orgId},
+        ${input.actorId},
+        ${input.name},
+        ${input.enabled ?? true},
+        ${input.priority ?? 100},
+        ${this.sql.json(toSqlJson(input.criteria))},
+        ${this.sql.json(toSqlJson(input.actions))}
+      )
+      returning *
+    `) as unknown as readonly MailFilterRow[];
+    return mapFilter(rows[0]);
+  }
+
+  async updateFilter(input: UpdateMailFilterInput): Promise<MailFilterRecord | null> {
+    const currentRows = (await this.sql`
+      select * from mail_filters
+      where org_id = ${input.orgId} and actor_id = ${input.actorId} and id = ${input.id} and deleted_at is null
+      limit 1
+    `) as unknown as readonly MailFilterRow[];
+    const current = currentRows[0];
+    if (current === undefined) {
+      return null;
+    }
+
+    const rows = (await this.sql`
+      update mail_filters
+      set
+        name = ${input.patch.name ?? current.name},
+        enabled = ${input.patch.enabled ?? current.enabled},
+        priority = ${input.patch.priority ?? current.priority},
+        criteria = ${this.sql.json(toSqlJson(input.patch.criteria ?? current.criteria))},
+        actions = ${this.sql.json(toSqlJson(input.patch.actions ?? current.actions))},
+        updated_at = now()
+      where org_id = ${input.orgId} and actor_id = ${input.actorId} and id = ${input.id} and deleted_at is null
+      returning *
+    `) as unknown as readonly MailFilterRow[];
+    return rows[0] === undefined ? null : mapFilter(rows[0]);
+  }
+
+  async deleteFilter(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<boolean> {
+    const rows = await this.sql`
+      update mail_filters
+      set deleted_at = now(), enabled = false, updated_at = now()
+      where org_id = ${input.orgId} and actor_id = ${input.actorId} and id = ${input.id} and deleted_at is null
+      returning id
+    `;
+    return rows.count > 0;
+  }
+
+  async listFilters(orgId: string, actorId: string): Promise<readonly MailFilterRecord[]> {
+    const rows = (await this.sql`
+      select * from mail_filters
+      where org_id = ${orgId} and actor_id = ${actorId} and deleted_at is null
+      order by priority asc, created_at asc
+    `) as unknown as readonly MailFilterRow[];
+    return rows.map(mapFilter);
+  }
+
+  async getVacation(orgId: string, actorId: string): Promise<MailVacationRecord | null> {
+    const rows = (await this.sql`
+      select * from mail_vacation
+      where org_id = ${orgId} and actor_id = ${actorId}
+      limit 1
+    `) as unknown as readonly MailVacationRow[];
+    return rows[0] === undefined ? null : mapVacation(rows[0]);
+  }
+
+  async setVacation(input: SetMailVacationInput): Promise<MailVacationRecord> {
+    const rows = (await this.sql`
+      insert into mail_vacation (
+        org_id, actor_id, enabled, subject, body, starts_at, ends_at, metadata
+      )
+      values (
+        ${input.orgId},
+        ${input.actorId},
+        ${input.enabled},
+        ${input.subject},
+        ${input.body},
+        ${input.startsAt},
+        ${input.endsAt},
+        ${this.sql.json(toSqlJson(input.metadata))}
+      )
+      on conflict (actor_id) do update
+      set
+        org_id = excluded.org_id,
+        enabled = excluded.enabled,
+        subject = excluded.subject,
+        body = excluded.body,
+        starts_at = excluded.starts_at,
+        ends_at = excluded.ends_at,
+        metadata = excluded.metadata,
+        updated_at = now()
+      returning *
+    `) as unknown as readonly MailVacationRow[];
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error("Unable to set mail vacation.");
+    }
+    return mapVacation(row);
+  }
+
+  async getActiveVacation(
+    orgId: string,
+    actorId: string,
+    now: Date = new Date(),
+  ): Promise<MailVacationRecord | null> {
+    const rows = (await this.sql`
+      select * from mail_vacation
+      where org_id = ${orgId}
+        and actor_id = ${actorId}
+        and enabled = true
+        and (starts_at is null or starts_at <= ${now})
+        and (ends_at is null or ends_at >= ${now})
+      limit 1
+    `) as unknown as readonly MailVacationRow[];
+    return rows[0] === undefined ? null : mapVacation(rows[0]);
+  }
+
+  async hasVacationResponse(input: {
+    readonly vacationId: string;
+    readonly senderEmail: string;
+  }): Promise<boolean> {
+    const rows = await this.sql<{ exists: boolean }[]>`
+      select exists(
+        select 1 from mail_vacation_responses
+        where vacation_id = ${input.vacationId} and lower(sender_email) = ${normalizeAddress(input.senderEmail)}
+      ) as exists
+    `;
+    return rows[0]?.exists === true;
+  }
+
+  async recordVacationResponse(input: {
+    readonly vacationId: string;
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly senderEmail: string;
+    readonly messageId?: string;
+    readonly threadId?: string;
+  }): Promise<boolean> {
+    const rows = await this.sql<{ id: string }[]>`
+      insert into mail_vacation_responses (vacation_id, org_id, actor_id, sender_email, message_id, thread_id)
+      values (
+        ${input.vacationId},
+        ${input.orgId},
+        ${input.actorId},
+        ${normalizeAddress(input.senderEmail)},
+        ${input.messageId ?? null},
+        ${input.threadId ?? null}
+      )
+      on conflict do nothing
+      returning id
+    `;
+    return rows.length > 0;
+  }
+
+  async search(input: MailSearchRequest): Promise<readonly MailSearchHit[]> {
+    const rows = (await this.sql`
+      select
+        t.id as thread_id,
+        m.id as message_id,
+        t.subject,
+        m.body,
+        m.metadata,
+        m.sent_at,
+        mts.labels,
+        mts.read_at,
+        mts.starred,
+        outbound.status as outbound_status,
+        outbound.provider_message_id,
+        outbound.delivery_metadata
+      from messages m
+      join threads t on t.id = m.thread_id
+      left join mail_thread_state mts on mts.thread_id = t.id and mts.actor_id = ${input.actorId}
+      left join mail_outbound_messages outbound on outbound.message_id = m.id
+      where m.org_id = ${input.orgId}
+        and m.kind = 'mail'
+        and m.deleted_at is null
+        and coalesce(mts.deleted_at, t.archived_at) is null
+        and (mts.snoozed_until is null or mts.snoozed_until <= now())
+        and (${input.query ?? ""} = '' or t.subject ilike ${`%${input.query ?? ""}%`} or m.body ilike ${`%${input.query ?? ""}%`})
+      order by m.sent_at desc
+      limit ${input.limit ?? 50}
+    `) as unknown as readonly MailSearchRow[];
+    const requestedLabels = new Set(input.labels ?? []);
+    return rows
+      .filter(
+        (row) =>
+          requestedLabels.size === 0 ||
+          (row.labels ?? []).some((label) => requestedLabels.has(label)),
+      )
+      .map(mapSearchHit);
+  }
+
+  async getMailSearchRecord(messageId: string): Promise<MailSearchRecord | null> {
+    const rows = (await this.sql`
+      select
+        m.org_id,
+        m.thread_id,
+        m.id as message_id,
+        t.subject,
+        m.body,
+        m.metadata,
+        m.sent_at,
+        m.updated_at,
+        (
+          select array_agg(distinct label order by label)
+          from mail_thread_state mts
+          cross join unnest(mts.labels) as label
+          where mts.thread_id = m.thread_id
+        ) as labels
+      from messages m
+      join threads t on t.id = m.thread_id
+      where m.id = ${messageId}
+        and m.kind = 'mail'
+        and m.deleted_at is null
+      limit 1
+    `) as unknown as readonly MailSearchRecordRow[];
+    return rows[0] === undefined ? null : mapMailSearchRecord(rows[0]);
+  }
+
+  getMailEnrichmentRecord(messageId: string): Promise<MailEnrichmentRecord | null> {
+    return this.getMailSearchRecord(messageId);
+  }
+
+  async recordMailEnrichment(input: MailEnrichmentWrite): Promise<void> {
+    await this.sql`
+      update messages
+      set
+        metadata = jsonb_set(
+          metadata,
+          '{enrichments}',
+          coalesce(metadata->'enrichments', '{}'::jsonb) ||
+            jsonb_build_object(${input.feature}::text, ${this.sql.json(toSqlJson(input.data))}::jsonb),
+          true
+        ),
+        updated_at = now()
+      where id = ${input.messageId}
+        and kind = 'mail'
+    `;
+  }
+
+  async setMailClassification(input: MailClassificationWrite): Promise<void> {
+    await this.sql`
+      update messages
+      set
+        metadata = metadata || ${this.sql.json(
+          toSqlJson({
+            classification: input.classification,
+            classificationSource: {
+              source: input.source,
+              reason: input.reason,
+            },
+          }),
+        )}::jsonb,
+        updated_at = now()
+      where id = ${input.messageId}
+        and kind = 'mail'
+    `;
+  }
+
+  async getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null> {
+    const rows = (await this.sql`
+      select
+        t.id as thread_id,
+        t.subject,
+        t.archived_at as thread_archived_at,
+        mts.labels,
+        mts.archived_at,
+        mts.deleted_at,
+        mts.snoozed_until,
+        mts.read_at,
+        mts.starred,
+        m.id as message_id,
+        m.body,
+        m.body_format,
+        m.metadata,
+        m.sent_at,
+        exists(select 1 from message_attachments ma where ma.message_id = m.id) as has_attachment,
+        coalesce(
+          (
+            select jsonb_agg(
+              jsonb_build_object(
+                'objectId', o.id::text,
+                'filename', o.metadata->>'filename',
+                'contentId', o.metadata->>'contentId',
+                'mimeType', o.mime_type,
+                'byteSize', o.byte_size,
+                'sha256', o.sha256,
+                'disposition', ma.disposition
+              )
+              order by o.created_at asc, o.id asc
+            )
+            from message_attachments ma
+            join objects o on o.id = ma.object_id
+            where ma.message_id = m.id
+              and o.deleted_at is null
+          ),
+          '[]'::jsonb
+        ) as attachments
+      from threads t
+      join messages m on m.thread_id = t.id
+      left join mail_thread_state mts on mts.thread_id = t.id and mts.actor_id = ${input.actorId}
+      where t.org_id = ${input.orgId}
+        and t.kind = 'mail'
+        and t.id = ${input.threadId}
+        and m.kind = 'mail'
+        and m.deleted_at is null
+        and coalesce(mts.deleted_at, t.archived_at) is null
+      order by m.sent_at asc
+    `) as unknown as readonly MailThreadRow[];
+
+    return rows.length === 0 ? null : mapThreadDetail(rows);
+  }
+}
+
+type SqlLike = postgres.Sql | postgres.TransactionSql;
+
+async function insertMailMessage(
+  sql: SqlLike,
+  input: MailMessageInput,
+): Promise<StoredMailMessage> {
+  const threadRows =
+    input.threadId === undefined
+      ? await sql`
+        insert into threads (org_id, kind, subject, created_by_actor_id, metadata)
+        values (${input.orgId}, 'mail', ${input.subject}, ${input.actorId ?? null}, ${sql.json(toSqlJson({ messageId: input.messageId ?? null }))})
+        returning id
+      `
+      : await sql`
+        update threads
+        set updated_at = now()
+        where id = ${input.threadId} and org_id = ${input.orgId} and kind = 'mail'
+        returning id
+      `;
+  const threadId =
+    (threadRows as unknown as readonly { readonly id: string }[])[0]?.id ?? input.threadId;
+  if (threadId === undefined) {
+    throw new Error("Unable to resolve mail thread.");
+  }
+
+  const metadata = {
+    ...(input.metadata ?? {}),
+    from: input.from,
+    to: input.to,
+    cc: input.cc ?? [],
+    bcc: input.bcc ?? [],
+    subject: input.subject,
+    messageId: input.messageId ?? null,
+    inReplyTo: input.inReplyTo ?? null,
+    references: input.references ?? [],
+  } satisfies JsonObject;
+
+  const messageRows = (await sql`
+    insert into messages (org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
+    values (
+      ${input.orgId},
+      ${threadId},
+      ${input.actorId ?? null},
+      'mail',
+      ${input.bodyHtml ?? input.bodyText},
+      ${input.bodyHtml === undefined ? "plain" : "html"},
+      ${sql.json(toSqlJson(metadata))},
+      ${input.receivedAt ?? new Date()}
+    )
+    returning id
+  `) as unknown as readonly { readonly id: string }[];
+  const messageId = messageRows[0]?.id;
+  if (messageId === undefined) {
+    throw new Error("Unable to insert mail message.");
+  }
+
+  const objectIds: string[] = [];
+  for (const attachment of input.attachments ?? []) {
+    const objectRows = (await sql`
+      insert into objects (org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
+      values (
+        ${input.orgId},
+        ${input.actorId ?? null},
+        'mail_attachment',
+        ${`mail/${messageId}/${attachment.filename ?? randomUUID()}`},
+        ${attachment.mimeType},
+        ${attachment.content.byteLength},
+        ${createHash("sha256").update(attachment.content).digest("hex")},
+        ${sql.json(
+          toSqlJson({
+            filename: attachment.filename ?? null,
+            contentId: attachment.contentId ?? null,
+          }),
+        )}
+      )
+      returning id
+    `) as unknown as readonly { readonly id: string }[];
+    const objectId = objectRows[0]?.id;
+    if (objectId !== undefined) {
+      objectIds.push(objectId);
+      await sql`
+        insert into message_attachments (message_id, object_id, disposition)
+        values (${messageId}, ${objectId}, ${attachment.disposition ?? "attachment"})
+        on conflict do nothing
+      `;
+    }
+  }
+
+  await sql`
+    insert into outbox (subject, payload)
+    values (${input.metadata?.direction === "outbound" ? "activity.mail.sent" : "activity.mail.received"}, ${sql.json(
+      toSqlJson({
+        orgId: input.orgId,
+        actorId: input.actorId ?? null,
+        threadId,
+        messageId,
+        subject: input.subject,
+        from: input.from.address,
+        to: input.to.map((address) => address.address),
+      }),
+    )})
+  `;
+
+  return { threadId, messageId, attachmentObjectIds: objectIds };
+}
+
+function mapFilter(row: MailFilterRow | undefined): MailFilterRecord {
+  if (row === undefined) {
+    throw new Error("Expected mail filter row.");
+  }
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    actorId: row.actor_id,
+    name: row.name,
+    enabled: row.enabled,
+    priority: row.priority,
+    criteria: row.criteria,
+    actions: row.actions,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapVacation(row: MailVacationRow): MailVacationRecord {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    actorId: row.actor_id,
+    enabled: row.enabled,
+    subject: row.subject,
+    body: row.body,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    metadata: row.metadata,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapOutbound(row: MailOutboundRow | undefined): MailOutboundRecord {
+  if (row === undefined) {
+    throw new Error("Expected mail outbound row.");
+  }
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    actorId: row.actor_id,
+    messageId: row.message_id,
+    threadId: row.thread_id,
+    outboxId: row.outbox_id,
+    status: row.status,
+    envelope: row.envelope,
+    undoUntil: row.undo_until,
+    sentAt: row.sent_at,
+    cancelledAt: row.cancelled_at,
+    failedAt: row.failed_at,
+    lastError: row.last_error,
+    providerMessageId: row.provider_message_id,
+    deliveryMetadata: row.delivery_metadata,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function outboundStatusCounts(
+  rows: readonly {
+    readonly status: MailOutboundStatus;
+    readonly count: number;
+  }[],
+): Readonly<Record<MailOutboundStatus, number>> {
+  const counts: Record<MailOutboundStatus, number> = {
+    queued: 0,
+    sending: 0,
+    sent: 0,
+    failed: 0,
+    cancelled: 0,
+  };
+  for (const row of rows) {
+    counts[row.status] = row.count;
+  }
+  return counts;
+}
+
+function mapSearchHit(row: MailSearchRow): MailSearchHit {
+  const from = row.metadata.from as MailSearchHit["from"] | undefined;
+  return {
+    threadId: row.thread_id,
+    messageId: row.message_id,
+    subject: row.subject ?? "",
+    ...(from === undefined ? {} : { from }),
+    preview: row.body.slice(0, 240),
+    sentAt: row.sent_at,
+    labels: row.labels ?? [],
+    unread: row.read_at === null || row.read_at < row.sent_at,
+    starred: row.starred ?? false,
+    ...(row.outbound_status === null ? {} : { outboundStatus: row.outbound_status }),
+    ...(row.provider_message_id === null ? {} : { providerMessageId: row.provider_message_id }),
+    ...(row.delivery_metadata === null ? {} : { deliveryMetadata: row.delivery_metadata }),
+  };
+}
+
+function mapMailSearchRecord(row: MailSearchRecordRow): MailSearchRecord {
+  const cc = mailAddressArray(row.metadata.cc);
+  const bcc = mailAddressArray(row.metadata.bcc);
+  const classification = mailClassification(row.metadata.classification);
+  return {
+    id: row.message_id,
+    orgId: row.org_id,
+    threadId: row.thread_id,
+    subject: row.subject ?? stringMetadata(row.metadata.subject),
+    body: row.body,
+    from: mailAddress(row.metadata.from) ?? { address: "" },
+    to: mailAddressArray(row.metadata.to),
+    ...(cc.length === 0 ? {} : { cc }),
+    ...(bcc.length === 0 ? {} : { bcc }),
+    labels: row.labels ?? [],
+    direction: mailDirection(row.metadata.direction),
+    ...(classification === undefined ? {} : { classification }),
+    sentAt: row.sent_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+    metadata: row.metadata,
+  };
+}
+
+function mapThreadDetail(rows: readonly MailThreadRow[]): MailThreadDetail {
+  const first = rows[0];
+  if (first === undefined) {
+    throw new Error("Expected mail thread rows.");
+  }
+
+  const messages = rows.map(mapThreadMessage);
+  const participants = uniqueAddresses(
+    messages.flatMap((message) => [
+      ...(message.from === undefined ? [] : [message.from]),
+      ...message.to,
+      ...message.cc,
+      ...message.bcc,
+    ]),
+  );
+  const directions = new Set(
+    rows
+      .map((row) =>
+        typeof row.metadata.direction === "string" ? row.metadata.direction : undefined,
+      )
+      .filter(
+        (direction): direction is "inbound" | "outbound" =>
+          direction === "inbound" || direction === "outbound",
+      ),
+  );
+  const last = messages[messages.length - 1];
+  const onlyDirection = directions.values().next().value;
+  const lastActivity = last?.sentAt ?? first.thread_archived_at ?? new Date(0);
+
+  return {
+    id: first.thread_id,
+    subject: first.subject ?? "",
+    preview: last?.body.slice(0, 240) ?? "",
+    participants,
+    messages,
+    labels: first.labels ?? [],
+    archivedAt: first.archived_at ?? first.thread_archived_at,
+    deletedAt: first.deleted_at,
+    snoozedUntil: first.snoozed_until,
+    lastActivity,
+    unread: first.read_at === null || first.read_at < lastActivity,
+    starred: first.starred ?? false,
+    direction: directions.size === 1 && onlyDirection !== undefined ? onlyDirection : "mixed",
+  };
+}
+
+function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
+  return {
+    id: row.message_id,
+    from: mailAddress(row.metadata.from),
+    to: mailAddressArray(row.metadata.to),
+    cc: mailAddressArray(row.metadata.cc),
+    bcc: mailAddressArray(row.metadata.bcc),
+    sentAt: row.sent_at,
+    body: row.body,
+    bodyFormat: row.body_format === "html" ? "html" : "plain",
+    hasAttachment: row.has_attachment,
+    attachments: mailThreadAttachments(row.attachments),
+  };
+}
+
+function mailThreadAttachments(
+  attachments: readonly MailThreadAttachmentRow[] | null,
+): MailThreadMessage["attachments"] {
+  if (attachments === null) {
+    return [];
+  }
+  const parsed: MailThreadAttachment[] = [];
+  for (const attachment of attachments) {
+    if (
+      typeof attachment.objectId !== "string" ||
+      typeof attachment.mimeType !== "string" ||
+      typeof attachment.byteSize !== "number"
+    ) {
+      continue;
+    }
+    parsed.push({
+      objectId: attachment.objectId,
+      ...(typeof attachment.filename === "string" ? { filename: attachment.filename } : {}),
+      ...(typeof attachment.contentId === "string" ? { contentId: attachment.contentId } : {}),
+      mimeType: attachment.mimeType,
+      byteSize: attachment.byteSize,
+      ...(typeof attachment.sha256 === "string" ? { sha256: attachment.sha256 } : {}),
+      disposition:
+        typeof attachment.disposition === "string" ? attachment.disposition : "attachment",
+    });
+  }
+  return parsed;
+}
+
+function mailAddress(value: unknown): MailThreadMessage["from"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return typeof record.address === "string"
+    ? {
+        address: record.address,
+        ...(typeof record.name === "string" ? { name: record.name } : {}),
+      }
+    : undefined;
+}
+
+function mailAddressArray(value: unknown): readonly NonNullable<MailThreadMessage["from"]>[] {
+  return Array.isArray(value)
+    ? value
+        .map(mailAddress)
+        .filter(
+          (address): address is NonNullable<MailThreadMessage["from"]> => address !== undefined,
+        )
+    : [];
+}
+
+function uniqueAddresses(addresses: readonly NonNullable<MailThreadMessage["from"]>[]) {
+  const byAddress = new Map<string, NonNullable<MailThreadMessage["from"]>>();
+  for (const address of addresses) {
+    byAddress.set(address.address.toLowerCase(), address);
+  }
+  return [...byAddress.values()];
+}
+
+function mergeLabels(
+  current: readonly string[],
+  add: readonly string[],
+  remove: readonly string[],
+): readonly string[] {
+  const labels = new Set(current);
+  for (const label of add) {
+    labels.add(label);
+  }
+  for (const label of remove) {
+    labels.delete(label);
+  }
+  return [...labels].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeAddress(address: string): string {
+  return address.trim().toLowerCase();
+}
+
+function stringMetadata(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function mailDirection(value: unknown): MailSearchRecord["direction"] {
+  return value === "outbound" ? "outbound" : "inbound";
+}
+
+function mailClassification(value: unknown): MailSearchRecord["classification"] {
+  return value === "public" ||
+    value === "standard" ||
+    value === "confidential" ||
+    value === "restricted"
+    ? value
+    : undefined;
+}
+
+function toSqlJson(value: unknown): postgres.JSONValue {
+  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
+}

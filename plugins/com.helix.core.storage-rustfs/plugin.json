@@ -1,0 +1,28 @@
+{
+  "id": "com.helix.core.storage-rustfs",
+  "name": "Helix RustFS Storage",
+  "version": "1.0.0",
+  "description": "Default S3-compatible object storage provider for Drive, Mail attachments, Meet recordings, and exports.",
+  "vendor": { "name": "Helix" },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "main": "index.js",
+  "capabilities": {
+    "provides": ["storage.provider.s3-compatible", "storage.provider.rustfs"],
+    "consumes": ["platform.config"]
+  },
+  "permissions": {
+    "scopes": ["storage.read", "storage.write"],
+    "outbound-network": ["config.rustfsEndpoint"],
+    "filesystem": [],
+    "envVars": [
+      "RUSTFS_ENDPOINT",
+      "RUSTFS_BUCKET",
+      "RUSTFS_REGION",
+      "RUSTFS_ACCESS_KEY",
+      "RUSTFS_SECRET_KEY",
+      "RUSTFS_SERVER_SIDE_ENCRYPTION"
+    ]
+  }
+}

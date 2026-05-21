@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cerbos:///platform/resource.json",
+  "type": "object",
+  "required": [
+    "org_id",
+    "owner_id",
+    "participant_ids",
+    "shared_actor_ids",
+    "shared_org_ids",
+    "visibility"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "org_id": { "type": "string", "minLength": 1 },
+    "owner_id": { "type": "string", "minLength": 1 },
+    "participant_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "shared_actor_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "shared_org_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "visibility": {
+      "type": "string",
+      "enum": ["private", "shared", "org", "public"]
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["public", "internal", "confidential", "restricted"]
+    }
+  }
+}

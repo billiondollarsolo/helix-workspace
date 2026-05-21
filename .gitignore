@@ -1,0 +1,41 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+build
+out
+*.tsbuildinfo
+
+# Caches
+.turbo
+.tanstack
+.vite
+.cache
+.eslintcache
+coverage
+
+# Test artifacts
+test-results
+playwright-report
+.playwright
+**/reports/a11y/
+
+# Environment / secrets (keep example files)
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Local runtime data / volumes
+data
+*.log
+*.pid
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea
+.vscode/*
+!.vscode/extensions.json

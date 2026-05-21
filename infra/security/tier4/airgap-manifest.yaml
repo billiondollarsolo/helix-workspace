@@ -1,0 +1,95 @@
+---
+apiVersion: helix.io/v1alpha1
+kind: Tier4AirgapManifest
+metadata:
+  name: helix-tier4-airgap
+  labels:
+    helix.io/security-tier: sovereign
+spec:
+  chart:
+    name: helix
+    version: 0.9.0
+    package: helix-0.9.0.tgz
+    overlay: infra/helm/helix/values-sovereign.yaml
+    renderedManifest: helix-sovereign.rendered.yaml
+    checksumFile: SHA256SUMS
+  registry:
+    mode: disconnected-internal
+    target: registry.example.internal
+    digestPinningRequired: true
+    mutableTagsAllowed: false
+    placeholderDigestsAllowed: false
+  images:
+    application:
+      repository: registry.example.internal/helix/helix-fips
+      digestValue: fips.imageDigest
+      requiredEvidence:
+        - image-digest-map.yaml
+        - cosign-verify-images.txt
+        - sbom.spdx.json
+        - vulnerability-scan.json
+    platformSidecars:
+      requiredCategories:
+        - vault-csi-provider
+        - spire-agent
+        - ingress-controller
+        - policy-controller
+        - metrics-collector
+      requiredEvidence:
+        - platform-image-digests.yaml
+        - platform-image-signatures.txt
+        - platform-sbom-index.json
+  externalServices:
+    requiredPrivateEndpoints:
+      - postgres
+      - redis
+      - nats
+      - meilisearch
+      - s3-compatible-worm
+      - kms
+      - vault
+      - siem
+    requiredSecretRefs:
+      - external.postgres.urlSecret
+      - external.redis.urlSecret
+      - external.nats.urlSecret
+      - external.meilisearch.masterKeySecret
+      - external.s3.accessKeySecret
+      - external.s3.secretKeySecret
+      - external.kms.existingSecret
+      - external.siem.existingSecret
+  transferBundle:
+    root: dist/airgap
+    requiredFiles:
+      - helix-0.9.0.tgz
+      - values-sovereign.yaml
+      - helix-sovereign.rendered.yaml
+      - SHA256SUMS
+      - image-digest-map.yaml
+      - platform-image-digests.yaml
+      - cosign-verify-images.txt
+      - sbom.spdx.json
+      - vulnerability-scan.json
+      - fips-runtime-attestation.json
+      - stig-policy-report.json
+      - network-policy-review.md
+      - siem-ingestion-test.json
+      - operator-signoff.md
+  installChecklist:
+    preTransfer:
+      - Replace placeholder image digests in values-sovereign.yaml.
+      - Verify chart and image signatures on the connected build host.
+      - Generate SHA256SUMS for every transferred file.
+      - Record SBOM and vulnerability scan report for each image.
+    postTransfer:
+      - Verify SHA256SUMS inside the disconnected environment.
+      - Import images into the approved internal registry by digest.
+      - Confirm Kubernetes nodes carry the FIPS node label.
+      - Create all referenced Secrets before Helm install.
+      - Render manifests from the transferred chart and overlay.
+    preTraffic:
+      - Confirm Pods schedule only on FIPS-labeled nodes.
+      - Confirm HELIX_FIPS_MODE is required in the rendered ConfigMap.
+      - Run admission policy checks for STIG controls.
+      - Send and verify a SIEM audit test event.
+      - Verify WORM retention blocks audit object deletion.

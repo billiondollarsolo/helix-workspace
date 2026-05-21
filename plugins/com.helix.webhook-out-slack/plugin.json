@@ -1,0 +1,22 @@
+{
+  "id": "com.helix.webhook-out-slack",
+  "name": "Slack Outbound Webhooks",
+  "version": "1.0.0",
+  "description": "Slack incoming webhook payload formatter for Helix outbound events.",
+  "vendor": { "name": "Helix" },
+  "license": "Apache-2.0",
+  "sdkVersion": "^1.0.0",
+  "kind": "in-process",
+  "category": "connector",
+  "main": "index.js",
+  "capabilities": {
+    "provides": ["webhook.out.format.slack"],
+    "consumes": ["webhook.engine"]
+  },
+  "permissions": {
+    "scopes": ["webhooks.write"],
+    "outbound-network": ["hooks.slack.com"],
+    "filesystem": [],
+    "envVars": []
+  }
+}

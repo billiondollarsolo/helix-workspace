@@ -1,0 +1,68 @@
+{
+  "uid": "helix-ai",
+  "title": "Helix AI",
+  "tags": ["helix", "ai", "llm"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "LLM call rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_llm_calls_total[5m])) by (provider, model, feature)" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "LLM latency p95",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(helix_llm_latency_seconds_bucket[5m])) by (le, provider, model))" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Cost by provider and feature",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_llm_cost_usd_micros_total[5m])) by (provider, feature) / 1000000" }],
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Routing fallback rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_llm_routing_fallback_total[5m])) by (provider, feature)" }],
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "LLM error rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_llm_errors_total[5m])) by (provider, model, feature)" }],
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 }
+    },
+    {
+      "id": 6,
+      "type": "bargauge",
+      "title": "Top-cost actors",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "topk(10, sum(increase(helix_llm_cost_usd_micros_total[24h])) by (actor_id) / 1000000)" }],
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 }
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Cost by actor, provider, and feature",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(helix_llm_cost_usd_micros_total[24h])) by (actor_id, provider, model, feature) / 1000000", "format": "table", "instant": true }],
+      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 }
+    }
+  ]
+}

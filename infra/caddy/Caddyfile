@@ -1,0 +1,29 @@
+{
+	admin 0.0.0.0:2019
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+{$HELIX_DOMAIN:localhost} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+
+	@health path /healthz /readyz
+	respond @health "ok" 200
+
+	handle_path /cerbos/* {
+		reverse_proxy cerbos:3592
+	}
+
+	handle_path /rustfs/* {
+		reverse_proxy rustfs:9001
+	}
+
+	reverse_proxy {$HELIX_UPSTREAM:host.docker.internal:3000}
+}

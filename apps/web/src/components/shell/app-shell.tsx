@@ -10,10 +10,7 @@ import { Outlet } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Rail } from "@/components/shell/rail";
 import { AppLauncher } from "@/components/shell/app-launcher";
-import {
-  NotificationsPanel,
-  UNREAD_NOTIFICATION_COUNT,
-} from "@/components/shell/notifications-panel";
+import { NotificationsPanel } from "@/components/shell/notifications-panel";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { SettingsPage } from "@/components/shell/settings-page";
 import {
@@ -65,7 +62,6 @@ export function AppShell() {
       >
         <Rail
           onOpenLauncher={() => setLauncherOpen((open) => !open)}
-          notifUnread={UNREAD_NOTIFICATION_COUNT}
         />
         <AppLauncher open={launcherOpen} onClose={closeLauncher} />
 

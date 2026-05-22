@@ -81,6 +81,56 @@
 }
 
 /* ============================================================
+   Single persistent toolbar strip (replaces both old toolbars)
+   ============================================================ */
+
+/**
+ * One strip — always 36px tall, never moves.
+ * The left section swaps content; the right (pager) is stable.
+ */
+.mail-toolbar-strip {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* When rows are selected, tint the strip like the old bulk toolbar */
+.mail-toolbar-strip[aria-label="Bulk actions"] {
+  background: var(--accent-soft);
+}
+
+.mail-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mail-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.mail-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-2);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+/* ============================================================
    Bulk-action toolbar (replaces the normal list column header)
    ============================================================ */
 

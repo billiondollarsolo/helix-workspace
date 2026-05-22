@@ -712,6 +712,250 @@ describe("MailShell", () => {
   });
 
   /* ============================================================
+     Feature: persistent toolbar — pager always visible
+     ============================================================ */
+
+  it("pager is visible in idle state (no rows selected)", async () => {
+    render();
+    await flush();
+    // The pager range should be visible in the toolbar strip
+    expect(container.textContent).toContain("1–1 of 1");
+    // Newer/Older navigation buttons should be present
+    expect(container.querySelector('button[aria-label="Newer"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Older"]')).not.toBeNull();
+  });
+
+  it("pager is still visible in active (bulk) state", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    const masterCheckbox = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Select all"]',
+    );
+    if (masterCheckbox === null) {
+      throw new Error("Master checkbox not found");
+    }
+    act(() => {
+      masterCheckbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    // Selection is active
+    expect(container.textContent).toContain("3 selected");
+
+    // Pager must still be present
+    expect(container.querySelector('button[aria-label="Newer"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Older"]')).not.toBeNull();
+    expect(container.textContent).toContain("1–3 of 3");
+  });
+
+  /* ============================================================
+     Feature: toolbar Refresh invalidates threads query
+     ============================================================ */
+
+  it("Refresh button invalidates the mail.threads.list query", async () => {
+    render();
+    await flush();
+
+    const callsBefore = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/api/tools/mail.threads.list",
+    ).length;
+
+    clickAriaButton("Refresh");
+    await flush();
+
+    const callsAfter = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/api/tools/mail.threads.list",
+    ).length;
+
+    expect(callsAfter).toBeGreaterThan(callsBefore);
+  });
+
+  /* ============================================================
+     Feature: toolbar "Mark all as read"
+     ============================================================ */
+
+  it("Mark all as read calls mail.read.set for every unread thread in view", async () => {
+    // Set up 2 unread + 1 read thread
+    const rows = [
+      threadRow({ threadId: "t1", unread: true }),
+      threadRow({ threadId: "t2", subject: "Thread B", unread: true }),
+      threadRow({ threadId: "t3", subject: "Thread C", unread: false }),
+    ];
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : (input instanceof URL ? input.href : input.url);
+      if (url.endsWith("/mail.threads.list")) {
+        return Promise.resolve(
+          Response.json({ threads: rows, total: 3, limit: 50, offset: 0 }),
+        );
+      }
+      return defaultFetch(input, init);
+    });
+
+    render();
+    await flush();
+
+    // Open the "More" dropdown in idle toolbar
+    clickAriaButton("More actions");
+    await flush();
+
+    // Click "Mark all as read"
+    clickButtonText("Mark all as read");
+    await flush();
+
+    const readCalls = fetchMock.mock.calls
+      .filter((call) => call[0] === "/api/tools/mail.read.set")
+      .map((call) => {
+        const body = JSON.parse(
+          typeof (call[1] as RequestInit).body === "string"
+            ? ((call[1] as RequestInit).body as string)
+            : "{}",
+        ) as { readonly threadId: string; readonly unread: boolean };
+        return body;
+      });
+
+    // Only unread threads (t1 and t2) should have been marked read
+    const markedReadIds = readCalls
+      .filter((c) => c.unread === false)
+      .map((c) => c.threadId);
+    expect(markedReadIds).toContain("t1");
+    expect(markedReadIds).toContain("t2");
+    // t3 is already read — should NOT have been called for it via mark-all
+    expect(markedReadIds).not.toContain("t3");
+  });
+
+  /* ============================================================
+     Feature: bulk "Add star"
+     ============================================================ */
+
+  it("bulk 'Add star' fires mail.star.set(starred:true) for every selected thread", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    // Select all three threads
+    const masterCheckbox = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Select all"]',
+    );
+    if (masterCheckbox === null) {
+      throw new Error("Master checkbox not found");
+    }
+    act(() => {
+      masterCheckbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    // Open the bulk "More" menu
+    clickAriaButton("More bulk actions");
+    await flush();
+
+    // Click "Add star"
+    clickButtonText("Add star");
+    await flush();
+
+    const starCalls = fetchMock.mock.calls
+      .filter((call) => call[0] === "/api/tools/mail.star.set")
+      .map((call) => {
+        const body = JSON.parse(
+          typeof (call[1] as RequestInit).body === "string"
+            ? ((call[1] as RequestInit).body as string)
+            : "{}",
+        ) as { readonly threadId: string; readonly starred: boolean };
+        return body;
+      });
+
+    expect(starCalls.length).toBe(3);
+    expect(starCalls.every((c) => c.starred === true)).toBe(true);
+    const threadIds = starCalls.map((c) => c.threadId);
+    expect(threadIds).toContain("t1");
+    expect(threadIds).toContain("t2");
+    expect(threadIds).toContain("t3");
+  });
+
+  /* ============================================================
+     Feature: bulk "Filter messages like these"
+     ============================================================ */
+
+  it("'Filter messages like these' calls mail.filter.create with sender from first selected thread", async () => {
+    // Use threads where the first one has a known sender
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : (input instanceof URL ? input.href : input.url);
+      if (url.endsWith("/mail.threads.list")) {
+        return Promise.resolve(
+          Response.json({
+            threads: [
+              threadRow({
+                threadId: "t1",
+                fromEmail: "mira@helix.io",
+                from: "Mira Okafor",
+              }),
+            ],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          }),
+        );
+      }
+      if (url.endsWith("/mail.filter.create")) {
+        return Promise.resolve(
+          Response.json({
+            id: "f1",
+            name: "From mira@helix.io",
+            enabled: true,
+            priority: 100,
+            criteria: { fromContains: "mira@helix.io" },
+            actions: {},
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }),
+        );
+      }
+      return defaultFetch(input, init);
+    });
+
+    render();
+    await flush();
+
+    // Select the thread
+    const threadCheckbox = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Select Q3 roadmap sign-off"]',
+    );
+    if (threadCheckbox !== null) {
+      act(() => {
+        threadCheckbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    } else {
+      // Fallback: use master checkbox
+      const masterCb = container.querySelector<HTMLInputElement>('input[aria-label="Select all"]');
+      if (masterCb === null) throw new Error("Cannot find checkbox");
+      act(() => {
+        masterCb.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    }
+    await flush();
+
+    // Open the bulk "More" menu
+    clickAriaButton("More bulk actions");
+    await flush();
+
+    // Click "Filter messages like these"
+    clickButtonText("Filter messages like these");
+    await flush();
+
+    const filterCall = fetchMock.mock.calls.find(
+      (call) => call[0] === "/api/tools/mail.filter.create",
+    );
+    expect(filterCall).toBeDefined();
+    const body = JSON.parse(
+      typeof (filterCall?.[1] as RequestInit).body === "string"
+        ? ((filterCall?.[1] as RequestInit).body as string)
+        : "{}",
+    ) as { readonly criteria?: { readonly fromContains?: string } };
+    expect(body.criteria?.fromContains).toBe("mira@helix.io");
+  });
+
+  /* ============================================================
      Feature: bulk-select toolbar — applies to all selected threads
      ============================================================ */
 

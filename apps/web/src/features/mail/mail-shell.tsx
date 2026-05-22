@@ -28,6 +28,7 @@ import { SurfaceFrame } from "@/components/shell";
 import {
   applyMailLabels,
   archiveMailThread,
+  createMailFilter,
   deleteMailThread,
   replyToMail,
   sendMail,
@@ -641,6 +642,66 @@ interface ThreadListProps {
     labelSlug: string,
     add: boolean,
   ) => void;
+  // New toolbar actions
+  readonly onRefresh: () => void;
+  readonly onMarkAllRead: () => void;
+  readonly onBulkStar: (ids: ReadonlySet<string>) => void;
+  readonly onBulkFilterLike: (ids: ReadonlySet<string>) => void;
+}
+
+/* -------------------------------------------------------------- pager controls */
+
+interface PagerControlsProps {
+  readonly total: number;
+  readonly offset: number;
+  readonly limit: number;
+  readonly threadCount: number;
+  readonly isLoading: boolean;
+  readonly onPage: (offset: number) => void;
+}
+
+function PagerControls({ total, offset, limit, threadCount, isLoading, onPage }: PagerControlsProps) {
+  const rangeStart = total === 0 ? 0 : offset + 1;
+  const rangeEnd = offset + threadCount;
+  return (
+    <span
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      <span>
+        {total === 0
+          ? "No results"
+          : `${String(rangeStart)}–${String(rangeEnd)} of ${String(total)}`}
+      </span>
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="Newer"
+        disabled={offset === 0 || isLoading}
+        onClick={() => {
+          onPage(Math.max(0, offset - limit));
+        }}
+      >
+        <Icons.ChevronLeft />
+      </button>
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="Older"
+        disabled={offset + limit >= total || isLoading}
+        onClick={() => {
+          onPage(offset + limit);
+        }}
+      >
+        <Icons.ChevronRight />
+      </button>
+    </span>
+  );
 }
 
 function ThreadList({
@@ -676,23 +737,31 @@ function ThreadList({
   onBulkSnooze,
   onBulkMove,
   onBulkLabel,
+  onRefresh,
+  onMarkAllRead,
+  onBulkStar,
+  onBulkFilterLike,
 }: ThreadListProps) {
   const emptyState = MAIL_EMPTY_STATES[folder];
   const isEmptyFolder = emptyState != null && threads.length === 0 && !isLoading;
   const noResults =
     query.trim() !== "" && threads.length === 0 && !isEmptyFolder && !isLoading;
-  const rangeStart = total === 0 ? 0 : offset + 1;
-  const rangeEnd = offset + threads.length;
 
   // Select-all dropdown state
   const [selectDropOpen, setSelectDropOpen] = useState(false);
   const selectDropRef = useRef<HTMLDivElement>(null);
 
+  // Idle toolbar "More" menu
+  const [idleMoreOpen, setIdleMoreOpen] = useState(false);
+  const idleMoreRef = useRef<HTMLDivElement>(null);
+
   // Bulk menus
   const [moveMenuOpen, setMoveMenuOpen] = useState(false);
   const [labelsMenuOpen, setLabelsMenuOpen] = useState(false);
+  const [bulkMoreOpen, setBulkMoreOpen] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const labelsMenuRef = useRef<HTMLDivElement>(null);
+  const bulkMoreRef = useRef<HTMLDivElement>(null);
 
   // Shift-click tracking: last checked index (by threadId)
   const lastCheckedRef = useRef<string | null>(null);
@@ -707,6 +776,12 @@ function ThreadList({
         setSelectDropOpen(false);
       }
       if (
+        idleMoreRef.current &&
+        !idleMoreRef.current.contains(e.target as Node)
+      ) {
+        setIdleMoreOpen(false);
+      }
+      if (
         moveMenuRef.current &&
         !moveMenuRef.current.contains(e.target as Node)
       ) {
@@ -717,6 +792,12 @@ function ThreadList({
         !labelsMenuRef.current.contains(e.target as Node)
       ) {
         setLabelsMenuOpen(false);
+      }
+      if (
+        bulkMoreRef.current &&
+        !bulkMoreRef.current.contains(e.target as Node)
+      ) {
+        setBulkMoreOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -809,6 +890,58 @@ function ThreadList({
     { label: "Unstarred", value: "unstarred" },
   ];
 
+  /* ---- Master checkbox + caret (shared by both toolbar states) ---- */
+  const masterCheckboxSection = (
+    <div className="mail-select-all-wrap" ref={selectDropRef}>
+      <input
+        type="checkbox"
+        style={{ accentColor: "var(--accent)" }}
+        aria-label={hasBulk ? "Deselect all" : "Select all"}
+        checked={allChecked}
+        ref={(el) => {
+          if (el) {
+            el.indeterminate = someChecked;
+          }
+        }}
+        onChange={hasBulk ? () => { onCheckedChange(new Set()); } : handleMasterCheckbox}
+      />
+      <button
+        type="button"
+        className="mail-select-caret"
+        aria-label="Select subset"
+        aria-haspopup="listbox"
+        aria-expanded={selectDropOpen}
+        onClick={() => {
+          setSelectDropOpen((v) => !v);
+        }}
+      >
+        <Icons.ChevronDown size={10} />
+      </button>
+      {selectDropOpen && (
+        <div
+          className="mail-select-dropdown"
+          role="listbox"
+          aria-label="Select subset"
+        >
+          {SELECT_SUBSETS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              className="mail-select-dropdown-item"
+              role="option"
+              aria-selected={false}
+              onClick={() => {
+                applySelectSubset(item.value);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       style={{
@@ -839,300 +972,273 @@ function ThreadList({
         })}
       </div>
 
-      {/* ---- Normal toolbar (no selection) ---- */}
-      {!hasBulk && (
-        <div
-          style={{
-            height: 36,
-            display: "flex",
-            alignItems: "center",
-            padding: "0 16px",
-            gap: 8,
-            borderBottom: "1px solid var(--border)",
-            color: "var(--text-3)",
-            fontSize: 12,
-          }}
-        >
-          {/* Master checkbox + select-all caret */}
-          <div className="mail-select-all-wrap" ref={selectDropRef}>
-            <input
-              type="checkbox"
-              style={{ accentColor: "var(--accent)" }}
-              aria-label="Select all"
-              checked={allChecked}
-              ref={(el) => {
-                if (el) {
-                  el.indeterminate = someChecked;
-                }
-              }}
-              onChange={handleMasterCheckbox}
-            />
-            <button
-              type="button"
-              className="mail-select-caret"
-              aria-label="Select subset"
-              aria-haspopup="listbox"
-              aria-expanded={selectDropOpen}
-              onClick={() => {
-                setSelectDropOpen((v) => !v);
-              }}
-            >
-              <Icons.ChevronDown size={10} />
-            </button>
-            {selectDropOpen && (
-              <div
-                className="mail-select-dropdown"
-                role="listbox"
-                aria-label="Select subset"
+      {/* ---- Single persistent toolbar strip ---- */}
+      <div className="mail-toolbar-strip" role="toolbar" aria-label={hasBulk ? "Bulk actions" : "Toolbar"}>
+        {/* Left section — swaps based on selection state */}
+        <div className="mail-toolbar-left">
+          {masterCheckboxSection}
+
+          {!hasBulk ? (
+            /* Idle state left section */
+            <>
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Refresh"
+                onClick={onRefresh}
               >
-                {SELECT_SUBSETS.map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    className="mail-select-dropdown-item"
-                    role="option"
-                    aria-selected={false}
-                    onClick={() => {
-                      applySelectSubset(item.value);
-                    }}
+                <Icons.Refresh /> Refresh
+              </button>
+              {query.trim() !== "" && (
+                <span
+                  style={{
+                    marginLeft: 4,
+                    fontSize: 11,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <span>Filtering by</span>
+                  <span
+                    className="chip accent"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
                   >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <button type="button" className="icon-btn" aria-label="Filter">
-            <Icons.Filter />
-          </button>
-          <button type="button" className="icon-btn" aria-label="More actions">
-            <Icons.More />
-          </button>
-          {query.trim() !== "" && (
-            <span
-              style={{
-                marginLeft: 4,
-                fontSize: 11,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <span>Filtering by</span>
-              <span
-                className="chip accent"
-                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-              >
-                {query}
+                    {query}
+                    <button
+                      type="button"
+                      onClick={onClearQuery}
+                      aria-label="Clear search"
+                      style={{ display: "inline-flex" }}
+                    >
+                      <Icons.X size={10} />
+                    </button>
+                  </span>
+                </span>
+              )}
+              <div className="mail-menu-wrap" ref={idleMoreRef}>
                 <button
                   type="button"
-                  onClick={onClearQuery}
-                  aria-label="Clear search"
-                  style={{ display: "inline-flex" }}
+                  className="mail-bulk-btn"
+                  aria-label="More actions"
+                  aria-haspopup="menu"
+                  aria-expanded={idleMoreOpen}
+                  onClick={() => { setIdleMoreOpen((v) => !v); }}
                 >
-                  <Icons.X size={10} />
+                  <Icons.More />
                 </button>
-              </span>
-            </span>
-          )}
-          <span
-            style={{
-              marginLeft: "auto",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              whiteSpace: "nowrap",
-            }}
-          >
-            <span>
-              {total === 0
-                ? "No results"
-                : `${String(rangeStart)}–${String(rangeEnd)} of ${String(total)}`}
-            </span>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Newer"
-              disabled={offset === 0 || isLoading}
-              onClick={() => {
-                onPage(Math.max(0, offset - limit));
-              }}
-            >
-              <Icons.ChevronLeft />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Older"
-              disabled={offset + limit >= total || isLoading}
-              onClick={() => {
-                onPage(offset + limit);
-              }}
-            >
-              <Icons.ChevronRight />
-            </button>
-          </span>
-        </div>
-      )}
-
-      {/* ---- Bulk-action toolbar ---- */}
-      {hasBulk && (
-        <div className="mail-bulk-toolbar" role="toolbar" aria-label="Bulk actions">
-          <input
-            type="checkbox"
-            style={{ accentColor: "var(--accent)" }}
-            aria-label="Deselect all"
-            checked={allChecked}
-            ref={(el) => {
-              if (el) {
-                el.indeterminate = someChecked;
-              }
-            }}
-            onChange={() => {
-              onCheckedChange(new Set());
-            }}
-          />
-          <span className="mail-bulk-toolbar-count">
-            {String(checkedIds.size)} selected
-          </span>
-          <div className="v-divider" style={{ height: 18, margin: "0 2px" }} />
-          <button
-            type="button"
-            className="mail-bulk-btn"
-            aria-label="Archive selected"
-            onClick={() => {
-              onBulkArchive(checkedIds);
-            }}
-          >
-            <Icons.Archive /> Archive
-          </button>
-          <button
-            type="button"
-            className="mail-bulk-btn"
-            aria-label="Report spam"
-            onClick={() => {
-              onBulkSpam(checkedIds);
-            }}
-          >
-            <Icons.Bell /> Report spam
-          </button>
-          <button
-            type="button"
-            className="mail-bulk-btn"
-            aria-label="Delete selected"
-            onClick={() => {
-              onBulkDelete(checkedIds);
-            }}
-          >
-            <Icons.Trash /> Delete
-          </button>
-          <button
-            type="button"
-            className="mail-bulk-btn"
-            aria-label={bulkReadLabel}
-            onClick={() => {
-              onBulkRead(checkedIds, bulkReadUnread);
-            }}
-          >
-            <Icons.Eye /> {bulkReadLabel}
-          </button>
-          <button
-            type="button"
-            className="mail-bulk-btn"
-            aria-label="Snooze selected"
-            onClick={() => {
-              onBulkSnooze(checkedIds);
-            }}
-          >
-            <Icons.Snooze /> Snooze
-          </button>
-          {/* Move to menu */}
-          <div className="mail-menu-wrap" ref={moveMenuRef}>
-            <button
-              type="button"
-              className="mail-bulk-btn"
-              aria-label="Move to"
-              aria-haspopup="menu"
-              aria-expanded={moveMenuOpen}
-              onClick={() => {
-                setMoveMenuOpen((v) => !v);
-                setLabelsMenuOpen(false);
-              }}
-            >
-              <Icons.Folder /> Move to <Icons.ChevronDown size={10} />
-            </button>
-            {moveMenuOpen && (
-              <div className="mail-menu-dropdown" role="menu" aria-label="Move to folder">
-                {folders.map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    className="mail-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      onBulkMove(checkedIds, f.id);
-                      setMoveMenuOpen(false);
-                    }}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {/* Labels menu */}
-          <div className="mail-menu-wrap" ref={labelsMenuRef}>
-            <button
-              type="button"
-              className="mail-bulk-btn"
-              aria-label="Labels"
-              aria-haspopup="menu"
-              aria-expanded={labelsMenuOpen}
-              onClick={() => {
-                setLabelsMenuOpen((v) => !v);
-                setMoveMenuOpen(false);
-              }}
-            >
-              <Icons.Tag /> Labels <Icons.ChevronDown size={10} />
-            </button>
-            {labelsMenuOpen && (
-              <div className="mail-menu-dropdown" role="menu" aria-label="Apply label">
-                {labels.map((lbl) => {
-                  // A label is "applied" if ALL checked threads have it
-                  const applied = threads
-                    .filter((t) => checkedIds.has(t.threadId))
-                    .every((t) => t.labels.includes(lbl.slug));
-                  return (
+                {idleMoreOpen && (
+                  <div className="mail-menu-dropdown" role="menu" aria-label="More toolbar actions">
                     <button
-                      key={lbl.id}
                       type="button"
                       className="mail-menu-item"
-                      role="menuitemcheckbox"
-                      aria-checked={applied}
+                      role="menuitem"
                       onClick={() => {
-                        onBulkLabel(checkedIds, lbl.slug, !applied);
-                        setLabelsMenuOpen(false);
+                        onMarkAllRead();
+                        setIdleMoreOpen(false);
                       }}
                     >
-                      <span
-                        className="mail-menu-label-dot"
-                        style={{ background: lbl.color }}
-                      />
-                      {lbl.name}
-                      {applied && (
-                        <Icons.Check
-                          className="mail-menu-item-check"
-                          style={{ marginLeft: "auto" }}
-                        />
-                      )}
+                      Mark all as read
                     </button>
-                  );
-                })}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          ) : (
+            /* Active (bulk) state left section */
+            <>
+              <span className="mail-bulk-toolbar-count">
+                {String(checkedIds.size)} selected
+              </span>
+              <div className="v-divider mail-toolbar-divider" />
+              {/* Destructive group */}
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Archive selected"
+                onClick={() => { onBulkArchive(checkedIds); }}
+              >
+                <Icons.Archive /> Archive
+              </button>
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Report spam"
+                onClick={() => { onBulkSpam(checkedIds); }}
+              >
+                <Icons.Bell /> Report spam
+              </button>
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Delete selected"
+                onClick={() => { onBulkDelete(checkedIds); }}
+              >
+                <Icons.Trash /> Delete
+              </button>
+              <div className="v-divider mail-toolbar-divider" />
+              {/* State group */}
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label={bulkReadLabel}
+                onClick={() => { onBulkRead(checkedIds, bulkReadUnread); }}
+              >
+                <Icons.Eye /> {bulkReadLabel}
+              </button>
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Snooze selected"
+                onClick={() => { onBulkSnooze(checkedIds); }}
+              >
+                <Icons.Snooze /> Snooze
+              </button>
+              <div className="v-divider mail-toolbar-divider" />
+              {/* Organize group */}
+              <div className="mail-menu-wrap" ref={moveMenuRef}>
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="Move to"
+                  aria-haspopup="menu"
+                  aria-expanded={moveMenuOpen}
+                  onClick={() => {
+                    setMoveMenuOpen((v) => !v);
+                    setLabelsMenuOpen(false);
+                    setBulkMoreOpen(false);
+                  }}
+                >
+                  <Icons.Folder /> Move to <Icons.ChevronDown size={10} />
+                </button>
+                {moveMenuOpen && (
+                  <div className="mail-menu-dropdown" role="menu" aria-label="Move to folder">
+                    {folders.map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        className="mail-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          onBulkMove(checkedIds, f.id);
+                          setMoveMenuOpen(false);
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="mail-menu-wrap" ref={labelsMenuRef}>
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="Labels"
+                  aria-haspopup="menu"
+                  aria-expanded={labelsMenuOpen}
+                  onClick={() => {
+                    setLabelsMenuOpen((v) => !v);
+                    setMoveMenuOpen(false);
+                    setBulkMoreOpen(false);
+                  }}
+                >
+                  <Icons.Tag /> Labels <Icons.ChevronDown size={10} />
+                </button>
+                {labelsMenuOpen && (
+                  <div className="mail-menu-dropdown" role="menu" aria-label="Apply label">
+                    {labels.map((lbl) => {
+                      const applied = threads
+                        .filter((t) => checkedIds.has(t.threadId))
+                        .every((t) => t.labels.includes(lbl.slug));
+                      return (
+                        <button
+                          key={lbl.id}
+                          type="button"
+                          className="mail-menu-item"
+                          role="menuitemcheckbox"
+                          aria-checked={applied}
+                          onClick={() => {
+                            onBulkLabel(checkedIds, lbl.slug, !applied);
+                            setLabelsMenuOpen(false);
+                          }}
+                        >
+                          <span
+                            className="mail-menu-label-dot"
+                            style={{ background: lbl.color }}
+                          />
+                          {lbl.name}
+                          {applied && (
+                            <Icons.Check
+                              className="mail-menu-item-check"
+                              style={{ marginLeft: "auto" }}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {/* Bulk "More" menu */}
+              <div className="mail-menu-wrap" ref={bulkMoreRef}>
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="More bulk actions"
+                  aria-haspopup="menu"
+                  aria-expanded={bulkMoreOpen}
+                  onClick={() => {
+                    setBulkMoreOpen((v) => !v);
+                    setMoveMenuOpen(false);
+                    setLabelsMenuOpen(false);
+                  }}
+                >
+                  <Icons.More />
+                </button>
+                {bulkMoreOpen && (
+                  <div className="mail-menu-dropdown" role="menu" aria-label="More bulk actions menu">
+                    <button
+                      type="button"
+                      className="mail-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        onBulkStar(checkedIds);
+                        setBulkMoreOpen(false);
+                      }}
+                    >
+                      Add star
+                    </button>
+                    <button
+                      type="button"
+                      className="mail-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        onBulkFilterLike(checkedIds);
+                        setBulkMoreOpen(false);
+                      }}
+                    >
+                      Filter messages like these
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
-      )}
+
+        {/* Right section — pager, never moves */}
+        <div className="mail-toolbar-right">
+          <PagerControls
+            total={total}
+            offset={offset}
+            limit={limit}
+            threadCount={threads.length}
+            isLoading={isLoading}
+            onPage={onPage}
+          />
+        </div>
+      </div>
 
       <div style={{ flex: 1, overflowY: "auto" }}>
         {isError && (
@@ -2381,6 +2487,23 @@ export function MailShell() {
     },
   });
 
+  const filterMutation = useMutation({
+    mutationFn: (input: { readonly from: string }) =>
+      createMailFilter({
+        name: `From ${input.from}`,
+        enabled: true,
+        criteria: { fromContains: input.from },
+      }),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not create filter. Try again.");
+    },
+    onSuccess: () => {
+      // Brief success acknowledgement — clear any previous error
+      clearActionError();
+    },
+  });
+
   const handleSelect = useCallback(
     (id: string) => {
       setSelected(id);
@@ -2501,6 +2624,43 @@ export function MailShell() {
       setCheckedIds(new Set());
     },
     [labelMutation],
+  );
+
+  const handleRefresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["mail", "threads"] });
+  }, [queryClient]);
+
+  const handleMarkAllRead = useCallback(() => {
+    const unreadThreads = threads.filter((t) => t.unread);
+    for (const thread of unreadThreads) {
+      readMutation.mutate({ threadId: thread.threadId, unread: false });
+    }
+  }, [readMutation, threads]);
+
+  const handleBulkStar = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        starMutation.mutate({ threadId, starred: true });
+      }
+      setCheckedIds(new Set());
+    },
+    [starMutation],
+  );
+
+  const handleBulkFilterLike = useCallback(
+    (ids: ReadonlySet<string>) => {
+      const firstId = [...ids][0];
+      if (firstId === undefined) {
+        return;
+      }
+      const firstThread = threads.find((t) => t.threadId === firstId);
+      if (firstThread === undefined) {
+        return;
+      }
+      filterMutation.mutate({ from: firstThread.fromEmail || firstThread.from });
+      setCheckedIds(new Set());
+    },
+    [filterMutation, threads],
   );
 
   const actionBusy =
@@ -2635,6 +2795,10 @@ export function MailShell() {
               onBulkSnooze={handleBulkSnooze}
               onBulkMove={handleBulkMove}
               onBulkLabel={handleBulkLabel}
+              onRefresh={handleRefresh}
+              onMarkAllRead={handleMarkAllRead}
+              onBulkStar={handleBulkStar}
+              onBulkFilterLike={handleBulkFilterLike}
             />
           )}
         </div>

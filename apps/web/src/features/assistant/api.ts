@@ -64,6 +64,14 @@ export interface AssistantTurnResponseWithPendingConfirmations {
   }[];
   readonly toolCalls?: readonly AssistantTurnToolCall[];
   readonly pendingConfirmations?: readonly AssistantTurnPendingConfirmation[];
+  /** Full persisted conversation history after the turn (newest last). */
+  readonly messages?: readonly {
+    readonly id: string;
+    readonly conversationId?: string;
+    readonly role: "system" | "user" | "assistant" | "tool";
+    readonly content: string;
+    readonly createdAt?: string;
+  }[];
 }
 
 export type AssistantToolDecisionFetch = (
@@ -284,6 +292,133 @@ export async function forgetAssistantMemory(
   return output as AssistantMemoryForgetResult;
 }
 
+/* ----------------------------------------------------- conversation list -- */
+
+/** A conversation projected for the 240px Assistant thread list. */
+export interface AssistantConversationListItem {
+  readonly id: string;
+  readonly title: string | null;
+  readonly pinned: boolean;
+  readonly pinnedAt: string | null;
+  readonly memoryOptIn: boolean;
+  readonly updatedAt: string;
+  readonly createdAt: string;
+  readonly messageCount: number;
+  readonly preview: string | null;
+}
+
+export interface AssistantConversationListPage {
+  readonly items: readonly AssistantConversationListItem[];
+  readonly nextCursor: string | null;
+}
+
+export interface AssistantConversationListInput {
+  readonly query?: string;
+  readonly pinnedOnly?: boolean;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** A persisted conversation as returned by pin/unpin/rename tools. */
+export interface AssistantConversationRecord {
+  readonly id: string;
+  readonly title: string | null;
+  readonly pinnedAt: string | null;
+  readonly memoryOptIn: boolean;
+  readonly updatedAt: string;
+  readonly createdAt: string;
+}
+
+/** A persisted assistant message, as returned in a turn's `messages` array. */
+export interface AssistantConversationMessage {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly role: "system" | "user" | "assistant" | "tool";
+  readonly content: string;
+  readonly createdAt: string;
+}
+
+/**
+ * Lists the current actor's assistant conversations for the thread list.
+ * Pinned-first, with optional `query` search and keyset pagination via `cursor`.
+ */
+export async function listAssistantConversations(
+  input: AssistantConversationListInput = {},
+  fetchImpl: AssistantToolDecisionFetch = authenticatedFetch,
+): Promise<AssistantConversationListPage> {
+  const trimmedQuery = input.query?.trim() ?? "";
+  const output = await callAssistantTool<Partial<AssistantConversationListPage>>(
+    "assistant.conversations.list",
+    {
+      ...(trimmedQuery.length === 0 ? {} : { query: trimmedQuery }),
+      ...(input.pinnedOnly === undefined ? {} : { pinnedOnly: input.pinnedOnly }),
+      limit: input.limit ?? 50,
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    },
+    fetchImpl,
+  );
+  return {
+    items: output.items ?? [],
+    nextCursor: output.nextCursor ?? null,
+  };
+}
+
+/** Pins (`pinned: true`) or unpins a conversation in the thread list. */
+export async function setAssistantConversationPinned(
+  input: { readonly conversationId: string; readonly pinned: boolean },
+  fetchImpl: AssistantToolDecisionFetch = authenticatedFetch,
+): Promise<AssistantConversationRecord> {
+  return callAssistantTool<AssistantConversationRecord>(
+    input.pinned ? "assistant.conversation.pin" : "assistant.conversation.unpin",
+    { conversationId: input.conversationId },
+    fetchImpl,
+  );
+}
+
+/** Renames a conversation. */
+export async function renameAssistantConversation(
+  input: { readonly conversationId: string; readonly title: string },
+  fetchImpl: AssistantToolDecisionFetch = authenticatedFetch,
+): Promise<AssistantConversationRecord> {
+  return callAssistantTool<AssistantConversationRecord>(
+    "assistant.conversation.rename",
+    { conversationId: input.conversationId, title: input.title.trim() },
+    fetchImpl,
+  );
+}
+
+/** Deletes (archives) a conversation, removing it from the thread list. */
+export async function deleteAssistantConversation(
+  input: { readonly conversationId: string },
+  fetchImpl: AssistantToolDecisionFetch = authenticatedFetch,
+): Promise<void> {
+  await callAssistantTool<unknown>(
+    "assistant.conversation.delete",
+    { conversationId: input.conversationId },
+    fetchImpl,
+  );
+}
+
+/** Invokes a tool-registry endpoint and unwraps a JSON or error envelope. */
+async function callAssistantTool<Output>(
+  toolId: string,
+  input: unknown,
+  fetchImpl: AssistantToolDecisionFetch,
+): Promise<Output> {
+  const response = await fetchImpl(`/api/tools/${toolId}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const output: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
+    );
+  }
+  return output as Output;
+}
+
 export function assistantToolDecisionUrl(input: AssistantToolDecisionInput): string {
   return input.decision === "confirm"
     ? "/api/tools/assistant.confirmation.approve"
@@ -320,7 +455,20 @@ function statusFromOutput(output: unknown): AssistantToolDecisionStatus | undefi
 }
 
 function errorMessageFromOutput(output: unknown): string | undefined {
-  return isRecord(output) && typeof output.error === "string" ? output.error : undefined;
+  if (!isRecord(output)) {
+    return undefined;
+  }
+  if (typeof output.error === "string") {
+    return output.error;
+  }
+  // HelixError envelope: { error: { code, message, traceId } }.
+  if (isRecord(output.error) && typeof output.error.message === "string") {
+    return output.error.message;
+  }
+  if (typeof output.message === "string") {
+    return output.message;
+  }
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

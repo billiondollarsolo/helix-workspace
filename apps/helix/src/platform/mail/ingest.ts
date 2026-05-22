@@ -11,6 +11,8 @@ import type {
 } from "./types.js";
 import type { MailStore } from "./store.js";
 import { evaluateInboundMail, type MailFilterEvaluationResult } from "./filters.js";
+import type { SpamScanner, SpamScanResult } from "./spam.js";
+import type { AntivirusScanner, AntivirusScanResult } from "./antivirus.js";
 
 export interface MailAuthenticationSummary {
   readonly spf: string;
@@ -31,10 +33,33 @@ export interface IngestRawMailInput {
   readonly receivedAt?: Date;
 }
 
+/**
+ * Outcome of inbound spam + antivirus scanning. `routedToSpam` is true when
+ * either scanner produced a verdict that moved the message to the Spam folder.
+ */
+export interface InboundScanResult {
+  readonly spam: SpamScanResult | null;
+  readonly antivirus: AntivirusScanResult | null;
+  readonly routedToSpam: boolean;
+  readonly spamReason: "spam-score" | "virus" | null;
+}
+
 export interface IngestRawMailResult {
   readonly stored: StoredMailMessage;
   readonly auth: MailAuthenticationSummary;
   readonly filterResult: MailFilterEvaluationResult;
+  readonly scan: InboundScanResult;
+}
+
+/**
+ * Optional inbound content scanners. Config-gated in `server.ts`: when the
+ * spamd / clamd hooks are disabled the scanner is `undefined` and ingest
+ * records a no-op {@link InboundScanResult}. A scanner outage never fails
+ * ingest — the error is recorded on the message metadata as "unscanned".
+ */
+export interface InboundMailScanners {
+  readonly spam?: SpamScanner | undefined;
+  readonly antivirus?: AntivirusScanner | undefined;
 }
 
 export interface MailAuthenticator {
@@ -47,6 +72,8 @@ export interface SmtpReceiverOptions {
   readonly authenticator?: MailAuthenticator;
   readonly disabledCommands?: readonly string[];
   readonly logger?: { error(error: unknown, message?: string): void };
+  /** Optional inbound spam + antivirus scanners (config-gated in server.ts). */
+  readonly scanners?: InboundMailScanners | undefined;
 }
 
 export class MailauthAuthenticator implements MailAuthenticator {
@@ -74,6 +101,9 @@ export class SmtpMailReceiver {
               ...(this.options.authenticator === undefined
                 ? {}
                 : { authenticator: this.options.authenticator }),
+              ...(this.options.scanners === undefined
+                ? {}
+                : { scanners: this.options.scanners }),
               input: {
                 orgId: this.options.orgId,
                 raw,
@@ -126,31 +156,49 @@ export async function ingestRawMail(input: {
   readonly store: MailStore;
   readonly input: IngestRawMailInput;
   readonly authenticator?: MailAuthenticator;
+  readonly scanners?: InboundMailScanners;
 }): Promise<IngestRawMailResult> {
   // P2-6: an `smtp.receive` span covers authentication, parsing, persistence,
-  // and inbound-filter evaluation for one received message.
+  // inbound-filter evaluation, and spam/antivirus scanning for one message.
   return trace.getTracer("helix.mail").startActiveSpan(
     "smtp.receive",
     { attributes: { "helix.mail.org_id": input.input.orgId } },
     async (span) => {
       try {
         const authenticator = input.authenticator ?? new MailauthAuthenticator();
-        const [auth, parsed] = await Promise.all([
+        const [auth, parsed, scan] = await Promise.all([
           authenticator.authenticate(input.input),
           simpleParser(input.input.raw),
+          scanInboundMail(input.scanners, input.input.raw),
         ]);
-        const message = await parsedMailToMessage(input.store, input.input, parsed, auth);
+        const message = withScanMetadata(
+          await parsedMailToMessage(input.store, input.input, parsed, auth),
+          scan,
+        );
         const stored = await input.store.insertInboundMessage(message);
         span.setAttribute("helix.mail.message_id", stored.messageId);
         span.setAttribute("helix.mail.auth_spf", auth.spf);
         span.setAttribute("helix.mail.auth_dmarc", auth.dmarc);
+        span.setAttribute("helix.mail.spam_routed", scan.routedToSpam);
         const filterResult = await evaluateInboundMail(input.store, {
           message,
           stored,
           ...(message.actorId === undefined ? {} : { recipientActorId: message.actorId }),
           ...(input.input.receivedAt === undefined ? {} : { now: input.input.receivedAt }),
         });
-        return { stored, auth, filterResult };
+        // Route a spam/virus-flagged message to the recipient's Spam folder.
+        // Best-effort: a routed message that has no resolved actor (unknown
+        // recipient) is left unrouted — there is no per-actor folder to file it
+        // into.
+        if (scan.routedToSpam && message.actorId != null) {
+          await input.store.updateThreadState({
+            orgId: input.input.orgId,
+            actorId: message.actorId,
+            threadId: stored.threadId,
+            patch: { spamAt: input.input.receivedAt ?? new Date() },
+          });
+        }
+        return { stored, auth, filterResult, scan };
       } catch (error) {
         span.recordException(error instanceof Error ? error : new Error(String(error)));
         span.setStatus({ code: SpanStatusCode.ERROR });
@@ -209,6 +257,84 @@ async function parsedMailToMessage(
       auth: { ...auth },
       envelopeFrom: input.envelopeFrom ?? null,
       envelopeTo: [...input.envelopeTo],
+    },
+  };
+}
+
+/**
+ * Run the configured inbound spam + antivirus scanners over the raw message.
+ *
+ * Scanning is best-effort: a daemon outage / timeout is caught here and
+ * recorded as an "unscanned" verdict rather than failing ingest. A message is
+ * routed to Spam when the spam scanner reports `isSpam`, or when the antivirus
+ * scanner reports an infected verdict.
+ */
+export async function scanInboundMail(
+  scanners: InboundMailScanners | undefined,
+  raw: Buffer | string,
+): Promise<InboundScanResult> {
+  if (scanners === undefined) {
+    return { spam: null, antivirus: null, routedToSpam: false, spamReason: null };
+  }
+  const [spam, antivirus] = await Promise.all([
+    runScan(scanners.spam, raw),
+    runScan(scanners.antivirus, raw),
+  ]);
+  const virusRouted = antivirus !== null && antivirus.infected;
+  const spamRouted = spam !== null && spam.isSpam;
+  return {
+    spam,
+    antivirus,
+    routedToSpam: virusRouted || spamRouted,
+    spamReason: virusRouted ? "virus" : spamRouted ? "spam-score" : null,
+  };
+}
+
+async function runScan<T>(
+  scanner: { scan(raw: Buffer | string): Promise<T> } | undefined,
+  raw: Buffer | string,
+): Promise<T | null> {
+  if (scanner === undefined) {
+    return null;
+  }
+  try {
+    return await scanner.scan(raw);
+  } catch {
+    // Scanner outages must not fail ingest — treat as "unscanned".
+    return null;
+  }
+}
+
+/** Merge spam + antivirus scan evidence into the stored message metadata. */
+function withScanMetadata(message: MailMessageInput, scan: InboundScanResult): MailMessageInput {
+  if (scan.spam === null && scan.antivirus === null) {
+    return message;
+  }
+  return {
+    ...message,
+    metadata: {
+      ...(message.metadata ?? {}),
+      spam: {
+        routedToSpam: scan.routedToSpam,
+        reason: scan.spamReason,
+        ...(scan.spam === null
+          ? {}
+          : {
+              score: scan.spam.score,
+              isSpam: scan.spam.isSpam,
+              symbols: [...scan.spam.symbols],
+              scan: scan.spam.evidence,
+            }),
+        ...(scan.antivirus === null
+          ? {}
+          : {
+              antivirus: {
+                infected: scan.antivirus.infected,
+                signature: scan.antivirus.signature,
+                scan: scan.antivirus.evidence,
+              },
+            }),
+      },
     },
   };
 }

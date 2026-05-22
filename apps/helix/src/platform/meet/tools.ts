@@ -4,21 +4,44 @@ import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { mintJitsiJwt } from "./jwt.js";
 import type { MeetStore } from "./store.js";
-import type { MeetRoomRecord } from "./types.js";
+import type {
+  MeetMeetingRecord,
+  MeetRecordingArtifactRecord,
+  MeetRoomRecord,
+} from "./types.js";
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.unknown()).default({});
 
-const createRoomSchema = z.object({
-  subject: z.string().min(1).max(200),
-  roomName: z.string().min(1).max(128).optional(),
-  jitsiDomain: z.string().min(1).default("meet.localhost"),
-  participantActorIds: z.array(uuidSchema).default([]),
-  metadata: metadataSchema,
-});
+const createRoomSchema = z
+  .object({
+    subject: z.string().min(1).max(200),
+    roomName: z.string().min(1).max(128).optional(),
+    jitsiDomain: z.string().min(1).default("meet.localhost"),
+    participantActorIds: z.array(uuidSchema).default([]),
+    /**
+     * When set, the room is created in the `scheduled` lifecycle state for the
+     * Meet hub's upcoming panel instead of starting an instant `active` room.
+     */
+    scheduledStartAt: z.string().datetime().optional(),
+    scheduledEndAt: z.string().datetime().optional(),
+    metadata: metadataSchema,
+  })
+  .refine(
+    (value) =>
+      value.scheduledStartAt === undefined ||
+      value.scheduledEndAt === undefined ||
+      Date.parse(value.scheduledEndAt) >= Date.parse(value.scheduledStartAt),
+    { message: "scheduledEndAt must be at or after scheduledStartAt." },
+  );
 
 const listRoomsSchema = z.object({
-  status: z.enum(["active", "ended"]).optional(),
+  status: z.enum(["scheduled", "active", "ended"]).optional(),
+  limit: z.number().int().positive().max(100).default(50),
+});
+
+const listMeetingsSchema = z.object({
+  status: z.enum(["scheduled", "active", "ended"]).optional(),
   limit: z.number().int().positive().max(100).default(50),
 });
 
@@ -72,6 +95,12 @@ export function createMeetToolDefinitions(
             ...(input.roomName === undefined ? {} : { roomName: input.roomName }),
             jitsiDomain: input.jitsiDomain,
             participantActorIds: input.participantActorIds,
+            ...(input.scheduledStartAt === undefined
+              ? {}
+              : { scheduledStartAt: new Date(input.scheduledStartAt), status: "scheduled" }),
+            ...(input.scheduledEndAt === undefined
+              ? {}
+              : { scheduledEndAt: new Date(input.scheduledEndAt) }),
             metadata: toJsonObject(input.metadata),
           }),
         ),
@@ -93,6 +122,32 @@ export function createMeetToolDefinitions(
           })
         ).map(serializeRoom),
       }),
+    }),
+    defineTool<z.output<typeof listMeetingsSchema>, unknown>({
+      id: "meet.meetings.list",
+      description:
+        "List Meet meetings for the Meet hub: scheduled/upcoming and recent meetings with " +
+        "status, host, attendees, join code, recording and summary references.",
+      permission: "meet.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(listMeetingsSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const meetings = (
+          await options.store.listMeetingsForActor({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            ...(input.status === undefined ? {} : { status: input.status }),
+            limit: input.limit,
+          })
+        ).map(serializeMeeting);
+        return {
+          meetings,
+          scheduled: meetings.filter((meeting) => meeting.status === "scheduled"),
+          recent: meetings.filter((meeting) => meeting.status === "ended"),
+          active: meetings.filter((meeting) => meeting.status === "active"),
+        };
+      },
     }),
     defineTool<z.output<typeof mintTokenSchema>, unknown>({
       id: "meet.mint-token",
@@ -183,16 +238,53 @@ function defineTool<Input, Output>(
 function serializeRoom(room: MeetRoomRecord) {
   return {
     ...room,
-    recordingArtifacts: (room.recordingArtifacts ?? []).map((artifact) => ({
-      ...artifact,
-      createdAt: artifact.createdAt.toISOString(),
-      startedAt: artifact.startedAt?.toISOString() ?? null,
-      endedAt: artifact.endedAt?.toISOString() ?? null,
-    })),
+    recordingArtifacts: (room.recordingArtifacts ?? []).map(serializeRecordingArtifact),
     startedAt: room.startedAt.toISOString(),
     endedAt: room.endedAt?.toISOString() ?? null,
+    scheduledStartAt: room.scheduledStartAt?.toISOString() ?? null,
+    scheduledEndAt: room.scheduledEndAt?.toISOString() ?? null,
     createdAt: room.createdAt.toISOString(),
     updatedAt: room.updatedAt.toISOString(),
+  };
+}
+
+function serializeMeeting(meeting: MeetMeetingRecord) {
+  return {
+    id: meeting.id,
+    orgId: meeting.orgId,
+    threadId: meeting.threadId,
+    roomName: meeting.roomName,
+    subject: meeting.subject,
+    title: meeting.subject,
+    jitsiDomain: meeting.jitsiDomain,
+    status: meeting.status,
+    code: meeting.code,
+    host: meeting.host,
+    attendees: meeting.attendees,
+    attendeeCount: meeting.attendeeCount,
+    startedAt: meeting.startedAt?.toISOString() ?? null,
+    endedAt: meeting.endedAt?.toISOString() ?? null,
+    scheduledStartAt: meeting.scheduledStartAt?.toISOString() ?? null,
+    scheduledEndAt: meeting.scheduledEndAt?.toISOString() ?? null,
+    durationSeconds: meeting.durationSeconds,
+    recorded: meeting.recordingArtifacts.length > 0,
+    recordingArtifacts: meeting.recordingArtifacts.map(serializeRecordingArtifact),
+    summaries: meeting.summaries.map((summary) => ({
+      ...summary,
+      createdAt: summary.createdAt.toISOString(),
+    })),
+    metadata: meeting.metadata,
+    createdAt: meeting.createdAt.toISOString(),
+    updatedAt: meeting.updatedAt.toISOString(),
+  };
+}
+
+function serializeRecordingArtifact(artifact: MeetRecordingArtifactRecord) {
+  return {
+    ...artifact,
+    createdAt: artifact.createdAt.toISOString(),
+    startedAt: artifact.startedAt?.toISOString() ?? null,
+    endedAt: artifact.endedAt?.toISOString() ?? null,
   };
 }
 

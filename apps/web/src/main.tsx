@@ -11,8 +11,10 @@ import {
 } from "@helix/sdk-web";
 import { Toaster } from "sonner";
 import { routeTree } from "./routeTree.gen";
-import { registerPlatformShellContributions } from "./plugins/platform-shell";
 import "./styles.css";
+// Side-effect import: hydrates the appearance store (theme/density/accent)
+// from localStorage and applies it to the document root.
+import "@/components/settings-store";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,8 +33,6 @@ const platformHost = createWebPlatformHost({
     return mode === "light" || mode === "dark" || mode === "system" ? mode : "system";
   },
 });
-
-registerPlatformShellContributions(platformHost);
 
 const router = createRouter({
   routeTree,

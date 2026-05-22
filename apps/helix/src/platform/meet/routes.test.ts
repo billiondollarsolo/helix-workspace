@@ -2,7 +2,12 @@ import fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { registerMeetRoutes } from "./routes.js";
 import type { AttachMeetRecordingInput, MeetStore } from "./store.js";
-import type { MeetRecordingAttachmentRecord, MeetRoomRecord } from "./types.js";
+import type {
+  MeetMeetingRecord,
+  MeetRecordingAttachmentRecord,
+  MeetRoomRecord,
+  MeetSummaryRef,
+} from "./types.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const roomId = "33333333-3333-4333-8333-333333333333";
@@ -142,6 +147,10 @@ class FakeMeetStore implements MeetStore {
     throw new Error("Not implemented for route tests.");
   }
 
+  async listMeetingsForActor(): Promise<readonly MeetMeetingRecord[]> {
+    throw new Error("Not implemented for route tests.");
+  }
+
   async getRoomForActor(): Promise<MeetRoomRecord | null> {
     throw new Error("Not implemented for route tests.");
   }
@@ -165,5 +174,9 @@ class FakeMeetStore implements MeetStore {
       messageId,
       storageKey: input.storageKey,
     };
+  }
+
+  async attachSummary(): Promise<MeetSummaryRef | null> {
+    throw new Error("Not implemented for route tests.");
   }
 }

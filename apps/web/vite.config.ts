@@ -21,4 +21,29 @@ export default defineConfig({
       ),
     },
   },
+  server: {
+    // Dev: proxy the Helix backend surfaces to the local API server (:3000)
+    // so the SPA's relative `/api`, `/oauth`, `/trpc`, … calls reach it.
+    proxy: Object.fromEntries(
+      [
+        "/api",
+        "/oauth",
+        "/trpc",
+        "/mcp",
+        "/v1",
+        "/healthz",
+        "/openapi.json",
+        "/openapi.yaml",
+        "/asyncapi.json",
+        "/metrics",
+        "/events",
+        "/sync",
+        "/dav",
+        "/.well-known",
+      ].map((path) => [
+        path,
+        { target: "http://localhost:3000", changeOrigin: true, ws: true },
+      ]),
+    ),
+  },
 });

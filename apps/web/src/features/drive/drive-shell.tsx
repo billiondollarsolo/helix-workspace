@@ -1,950 +1,675 @@
+/* DriveShell — the Drive surface body, fully wired to the backend.
+
+   Layout: left sidebar (New/Upload, scopes, storage meter), main pane
+   (breadcrumb + grid/list toggle, Folders tiles, Files grid/list) and a
+   320px details panel that opens when a file is selected.
+
+   Data: every interaction rides a real platform tool via `POST /api/tools/*`.
+    - `drive.list`     — folder browsing for My Drive / Trash.
+    - `drive.search`   — search + the cross-folder Recent/Shared/Starred scopes.
+    - `drive.upload` + `drive.finalize` — the New / Upload buttons.
+    - `drive.move`     — moving a file out to the parent folder.
+    - `drive.trash` / `drive.restore` / `drive.delete` — trash lifecycle.
+    - `drive.share`    — the details-panel share affordance.
+   Mutations invalidate the Drive query cache. The typed handoff seed
+   (`DRIVE_FOLDERS_SEED` / `DRIVE_FILES_SEED`) is used only as an offline
+   fallback when the backend listing yields nothing AND the query errored. */
+
+import { type ChangeEvent, type CSSProperties, type DragEvent, useMemo, useRef, useState } from "react";
+import "./drive-shell.css";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { Icons } from "@/components/icons";
+import { Avatar } from "@/components/ui/avatar";
 import {
-  ArchiveRestore,
-  AudioLines,
-  Check,
-  ChevronRight,
-  Download,
-  File,
-  FileArchive,
-  FileImage,
-  FileText,
-  FileVideo,
-  Folder,
-  FolderInput,
-  Grid2X2,
-  Link2,
-  List,
-  MoreHorizontal,
-  MoveRight,
-  Play,
-  Plus,
-  Share2,
-  ShieldCheck,
-  Trash2,
-  Upload,
-  type LucideIcon,
-  X,
-} from "lucide-react";
-import { useForm } from "@tanstack/react-form";
-import { useDebouncedValue } from "@tanstack/react-pacer/debouncer";
-import { useQuery } from "@tanstack/react-query";
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-  type ColumnDef,
-  type RowData,
-} from "@tanstack/react-table";
-import { useVirtualizer, type VirtualItem, type Virtualizer } from "@tanstack/react-virtual";
-import { SuggestionSlot } from "@helix/sdk-web";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  type ChangeEvent,
-  type CSSProperties,
-  type ReactNode,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { z } from "zod";
-import { createDocsDocument, type DocsApiDocument } from "@/features/docs/api";
-import { DocsShell } from "@/features/docs/docs-shell";
-import { docsDocumentsQueryOptions } from "@/features/docs/queries";
-import {
+  createDriveEntry,
   deleteDriveObject,
-  finalizeDriveUpload,
+  driveDownloadResult,
   moveDriveObject,
-  prepareDriveUpload,
   restoreDriveObject,
   shareDrive,
   trashDriveObject,
+  uploadDriveFile,
   type DriveApiEntry,
-  type DriveApiPreview,
-  type DriveApiSearchHit,
+  type DriveCreateKind,
 } from "./api";
 import {
+  DRIVE_FILES_SEED,
+  DRIVE_FILE_META,
+  DRIVE_FOLDERS_SEED,
+  DRIVE_STORAGE,
+  fileItemFromEntry,
+  folderItemFromEntry,
+  formatModified,
+  type DriveFileItem,
+  type DriveFolderItem,
+} from "./drive-data";
+import {
+  applyDriveScope,
+  driveActorQueryOptions,
   driveItemsQueryOptions,
-  driveSuggestionsQueryOptions,
-  fallbackDriveSuggestions,
-  type DriveSuggestions,
+  driveQueryKeys,
+  type DriveScope,
 } from "./queries";
 
 type DriveView = "grid" | "list";
-type DriveScope = "my-drive" | "documents" | "sheets" | "slides" | "shared" | "trash";
-type DrivePreviewKind =
-  | "image"
-  | "pdf"
-  | "video"
-  | "audio"
-  | "text"
-  | "document"
-  | "office"
-  | "archive";
 
-interface DriveFolder {
-  readonly id: string;
-  readonly name: string;
-  readonly parentId: string | null;
-  readonly itemCount: number;
-  readonly updatedAt: string;
-  readonly owner: string;
-  readonly shared: boolean;
-  readonly trashed: boolean;
-}
-
-interface DriveFile {
-  readonly id: string;
-  readonly name: string;
-  readonly parentId: string | null;
-  readonly mimeType: string;
-  readonly size: string;
-  readonly updatedAt: string;
-  readonly owner: string;
-  readonly shared: boolean;
-  readonly trashed: boolean;
-  readonly kind: DrivePreviewKind;
-  readonly preview?: DriveApiPreview;
-  readonly previewText?: string;
-  readonly previewUrl?: string;
-  readonly syncState?: "local";
-}
-
-type DriveItem = DriveFolder | DriveFile;
-type DriveSuggestionContext = Parameters<typeof SuggestionSlot>[0]["context"];
-
-interface ShareTarget {
-  readonly id: string;
-  readonly label: string;
-  readonly permission: "viewer" | "commenter" | "editor";
-}
-
-interface ShareDialogState {
-  readonly itemIds: readonly string[];
-}
-
-interface MoveDialogState {
-  readonly itemIds: readonly string[];
-}
-
-export interface DriveShellRouteState {
-  readonly fileId?: string | null;
-  readonly folderId: string | null;
-  readonly includeTrashed: boolean;
-  readonly query: string;
-  readonly scope?: DriveScope;
-}
-
-const rootFolderId = "root";
-const driveGridLaneCount = 3;
-const driveGridGap = 10;
-const driveGridItemEstimate = 204;
-const driveListItemEstimate = 58;
-
-const rootDriveFolder: DriveFolder = {
-  id: rootFolderId,
-  name: "My Drive",
-  parentId: null,
-  itemCount: 0,
-  updatedAt: "",
-  owner: "Unknown owner",
-  shared: false,
-  trashed: false,
-};
-
-const initialShareTargets: readonly ShareTarget[] = [
-  { id: "target-team", label: "Product team", permission: "editor" },
-  { id: "target-finance", label: "Finance reviewers", permission: "viewer" },
-];
-
-const shareLabelSchema = z.string().trim().min(1, "People or groups is required.");
-const sharePermissionSchema = z.enum(["viewer", "commenter", "editor"]);
-
-const navItems: ReadonlyArray<{
+interface DriveScopeItem {
   readonly id: DriveScope;
   readonly label: string;
-  readonly icon: LucideIcon;
-}> = [
-  { id: "my-drive", label: "My Drive", icon: Folder },
-  { id: "documents", label: "Documents", icon: FileText },
-  { id: "sheets", label: "Sheets", icon: Grid2X2 },
-  { id: "slides", label: "Slides", icon: Play },
-  { id: "shared", label: "Shared with me", icon: Share2 },
-  { id: "trash", label: "Trash", icon: Trash2 },
+  readonly icon: keyof typeof Icons;
+}
+
+const DRIVE_SCOPES: readonly DriveScopeItem[] = [
+  { id: "my", label: "My Drive", icon: "Drive" },
+  { id: "shared", label: "Shared with me", icon: "Users" },
+  { id: "recent", label: "Recent", icon: "History" },
+  { id: "starred", label: "Starred", icon: "Star" },
+  { id: "trash", label: "Trash", icon: "Trash" },
 ];
 
-export function DriveShell({
-  initialFileId,
-  onRouteStateChange,
-  routeState,
-}: {
-  readonly initialFileId?: string;
-  readonly onRouteStateChange?: (state: DriveShellRouteState) => void;
-  readonly routeState?: DriveShellRouteState;
-} = {}) {
-  const uploadInputRef = useRef<HTMLInputElement | null>(null);
-  const driveBrowserRef = useRef<HTMLDivElement | null>(null);
-  const [folders, setFolders] = useState<readonly DriveFolder[]>([rootFolder()]);
-  const [files, setFiles] = useState<readonly DriveFile[]>([]);
-  const [backendOffline, setBackendOffline] = useState(false);
-  const [scope, setScope] = useState<DriveScope>(
-    routeState?.includeTrashed === true ? "trash" : (routeState?.scope ?? "my-drive"),
+const SCOPE_TITLE: Record<DriveScope, string> = {
+  my: "My Drive",
+  shared: "Shared with me",
+  recent: "Recent",
+  starred: "Starred",
+  trash: "Trash",
+};
+
+const TILE_GRID: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+};
+
+const LIST_COLUMNS = "1fr 160px 120px 90px 32px";
+
+/** A `navigate()` target opening a specific editor item. */
+interface EditorDestination {
+  readonly to: string;
+  readonly search: Record<string, string>;
+}
+
+/**
+ * Maps a `drive.create` result (`{ id, app }`) to the editor route that opens
+ * that item. The doc/sheet/deck routes read a single search param
+ * (`?doc=` / `?sheet=` / `?deck=`) and open straight into the editor.
+ */
+function editorDestinationFor(app: string, id: string): EditorDestination | null {
+  switch (app) {
+    case "docs":
+      return { to: "/docs", search: { doc: id } };
+    case "sheets":
+      return { to: "/sheets", search: { sheet: id } };
+    case "slides":
+      return { to: "/slides", search: { deck: id } };
+    default:
+      return null;
+  }
+}
+
+/** Icon + colour override for app-typed file entries. */
+const APP_ICON_META: Record<string, { readonly icon: keyof typeof Icons; readonly color: string }> =
+  {
+    docs: { icon: "Doc", color: "#2563eb" },
+    sheets: { icon: "Sheet", color: "#059669" },
+    // No distinct Slides icon — reuse Image (same as the "New > Presentation" menu item).
+    slides: { icon: "Image", color: "#ea580c" },
+  };
+
+/** A folder in the breadcrumb trail. `null` id is the scope root. */
+interface DriveCrumb {
+  readonly id: string | null;
+  readonly name: string;
+}
+
+/** The Drive surface body. Rendered inside `SurfaceFrame`. */
+export function DriveShell() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [view, setView] = useState<DriveView>("grid");
+  const [scope, setScope] = useState<DriveScope>("my");
+  const [trail, setTrail] = useState<readonly DriveCrumb[]>([]);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const folderId = trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : null;
+
+  const actorQuery = useQuery(driveActorQueryOptions());
+  const actorId = actorQuery.data?.actorId ?? null;
+
+  const itemsQuery = useQuery(
+    driveItemsQueryOptions({ folderId, scope, limit: scope === "recent" ? 50 : 100 }),
   );
-  const [currentFolderId, setCurrentFolderId] = useState(routeState?.folderId ?? rootFolderId);
-  const [view, setView] = useState<DriveView>("list");
-  const [query, setQuery] = useState(routeState?.query ?? "");
-  const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
-  const [previewId, setPreviewId] = useState("");
-  const [shareDialog, setShareDialog] = useState<ShareDialogState | null>(null);
-  const [moveDialog, setMoveDialog] = useState<MoveDialogState | null>(null);
-  const [shareTargets, setShareTargets] = useState<readonly ShareTarget[]>(initialShareTargets);
-  const normalizedQuery = query.trim();
-  const [debouncedQuery] = useDebouncedValue(query, { wait: 300 });
-  const debouncedNormalizedQuery = debouncedQuery.trim();
-  const backendFolderId = currentFolderId === rootFolderId ? null : currentFolderId;
-  const driveItemsQuery = useQuery(
-    driveItemsQueryOptions({
-      folderId: scope === "my-drive" ? backendFolderId : null,
-      includeTrashed: scope === "trash",
-      query: debouncedNormalizedQuery,
-      limit: debouncedNormalizedQuery.length > 0 ? 50 : 100,
-    }),
-  );
-  const docsDocumentsQuery = useQuery({
-    ...docsDocumentsQueryOptions({ limit: 100 }),
-    enabled: scope === "documents",
+
+  const invalidateDrive = () =>
+    queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+
+  const uploadMutation = useMutation({
+    mutationFn: (file: File) => uploadDriveFile({ file, folderId }),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      void invalidateDrive();
+    },
   });
-  const isRootHome =
-    scope === "my-drive" && currentFolderId === rootFolderId && normalizedQuery.length === 0;
-  const driveSuggestionsQuery = useQuery({
-    ...driveSuggestionsQueryOptions(),
-    enabled: isRootHome,
+
+  const trashMutation = useMutation({
+    mutationFn: (objectId: string) => trashDriveObject(objectId),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      setSelectedFileId(null);
+      void invalidateDrive();
+    },
   });
-  /**
-   * Suggestions to render in the Drive home. Prefer the backend query result;
-   * when the backend is unavailable, derive suggestions from the locally
-   * listed Drive entries so the Suggested sections are never empty offline.
-   */
-  const localSuggestions = useMemo<DriveSuggestions>(
-    () =>
-      fallbackDriveSuggestions([
-        ...folders
-          .filter((folder) => folder.id !== rootFolderId)
-          .map(driveApiEntryFromFolder),
-        ...files.map(driveApiEntryFromFile),
-      ]),
-    [files, folders],
-  );
-  const suggestionsBackendUnavailable =
-    driveSuggestionsQuery.isError ||
-    backendOffline ||
-    (!driveSuggestionsQuery.isPending &&
-      (driveSuggestionsQuery.data?.folders.length ?? 0) === 0 &&
-      (driveSuggestionsQuery.data?.files.length ?? 0) === 0);
-  const suggestions: DriveSuggestions =
-    suggestionsBackendUnavailable || driveSuggestionsQuery.data === undefined
-      ? localSuggestions
-      : driveSuggestionsQuery.data;
 
-  useEffect(() => {
-    if (routeState === undefined) {
-      return;
-    }
-    const nextFolderId = routeState.folderId ?? rootFolderId;
-    setCurrentFolderId((current) => (current === nextFolderId ? current : nextFolderId));
-    setQuery((current) => (current === routeState.query ? current : routeState.query));
-    setScope((current) => {
-      if (routeState.includeTrashed) {
-        return "trash";
+  const restoreMutation = useMutation({
+    mutationFn: (objectId: string) => restoreDriveObject(objectId),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      setSelectedFileId(null);
+      void invalidateDrive();
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (objectId: string) => deleteDriveObject(objectId),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      setSelectedFileId(null);
+      void invalidateDrive();
+    },
+  });
+
+  const moveMutation = useMutation({
+    mutationFn: (vars: { readonly objectId: string; readonly folderId: string | null }) =>
+      moveDriveObject(vars.objectId, vars.folderId),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      void invalidateDrive();
+    },
+  });
+
+  const shareMutation = useMutation({
+    mutationFn: (vars: { readonly objectId: string; readonly actorIds: readonly string[] }) =>
+      shareDrive({ objectId: vars.objectId, actorIds: vars.actorIds, role: "reader" }),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      void invalidateDrive();
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (vars: { readonly kind: DriveCreateKind; readonly name: string }) =>
+      createDriveEntry({ kind: vars.kind, name: vars.name, folderId }),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: (result) => {
+      void invalidateDrive();
+      // Doc/sheet/deck kinds return `{ id, app }` — open the new item's editor
+      // by threading its id through the route's search param. Folder kinds
+      // return a plain drive entry (no `app`) and just stay in Drive.
+      if (result.app !== undefined) {
+        const destination = editorDestinationFor(result.app, result.id);
+        if (destination !== null) {
+          void navigate({ to: destination.to, search: destination.search });
+        }
       }
-      if (routeState.scope !== undefined) {
-        return routeState.scope;
-      }
-      return current === "trash" ? "my-drive" : current;
-    });
-  }, [routeState]);
+    },
+  });
 
-  useEffect(() => {
-    const result = driveItemsQuery.data;
-    if (result === undefined) {
-      return;
-    }
-    setBackendOffline(false);
-
-    if (result.mode === "search") {
-      const nextFiles = result.hits.map(fileFromSearchHit);
-      const routeFile = findDriveFile(nextFiles, initialFileId);
-      setFolders([rootFolder()]);
-      setFiles((current) => [
-        ...clientOnlyFilesForFolder(current, currentFolderId).filter(
-          (file) => !nextFiles.some((nextFile) => nextFile.id === file.id),
-        ),
-        ...nextFiles,
-      ]);
-      if (routeFile !== undefined) {
-        setPreviewId(routeFile.id);
-        setSelectedIds([routeFile.id]);
-      } else {
-        setPreviewId((current) =>
-          current.length > 0 || result.hits.some((hit) => hit.objectId === current) ? current : "",
-        );
-        setSelectedIds([]);
-      }
-      return;
-    }
-
-    const backendFolders = result.entries
-      .filter((entry) => entry.type === "folder")
-      .map(folderFromEntry);
-    const nextFolders = [rootFolder(), ...backendFolders];
-    const nextFiles = result.entries.filter((entry) => entry.type === "file").map(fileFromEntry);
-    const routeFile = findDriveFile(nextFiles, initialFileId);
-    setFolders(nextFolders);
-    setFiles((current) => [
-      ...clientOnlyFilesForFolder(current, currentFolderId).filter(
-        (file) => !nextFiles.some((nextFile) => nextFile.id === file.id),
-      ),
-      ...nextFiles,
-    ]);
-    if (routeFile !== undefined) {
-      setScope(routeFile.trashed ? "trash" : "my-drive");
-      setCurrentFolderId(routeFile.parentId ?? rootFolderId);
-      setPreviewId(routeFile.id);
-      setSelectedIds([routeFile.id]);
-    } else {
-      setPreviewId((current) =>
-        current.length > 0 || result.entries.some((entry) => entry.id === current) ? current : "",
-      );
-      setSelectedIds([]);
-    }
-  }, [currentFolderId, driveItemsQuery.data, initialFileId]);
-
-  useEffect(() => {
-    const documents = docsDocumentsQuery.data;
-    if (documents === undefined) {
-      return;
-    }
-
-    const nextDocumentFiles = documents.map((document) =>
-      driveFileFromDocsDocument(document, rootFolderId),
-    );
-    setFiles((current) => [
-      ...current.filter(
-        (file) =>
-          file.kind !== "document" ||
-          file.syncState === "local" ||
-          !nextDocumentFiles.some((nextFile) => nextFile.id === file.id),
-      ),
-      ...nextDocumentFiles,
-    ]);
-    if (initialFileId !== undefined && nextDocumentFiles.some((file) => file.id === initialFileId)) {
-      setScope("documents");
-      setPreviewId(initialFileId);
-      setSelectedIds([initialFileId]);
-    }
-  }, [docsDocumentsQuery.data, initialFileId]);
-
-  useEffect(() => {
-    if (!driveItemsQuery.isError) {
-      return;
-    }
-    setBackendOffline(true);
-    setFolders([rootFolder()]);
-    setFiles((current) => current.filter((file) => file.syncState === "local"));
-    setPreviewId("");
-    setSelectedIds([]);
-  }, [driveItemsQuery.isError]);
-
-  const items = useMemo<readonly DriveItem[]>(() => [...folders, ...files], [files, folders]);
-  const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
-  const folderNamesById = useMemo(
-    () => new Map(folders.map((folder) => [folder.id, folder.name])),
-    [folders],
-  );
-  const previewItem = previewId.length > 0 ? itemById.get(previewId) : undefined;
-  const selectedItems = selectedIds.map((id) => itemById.get(id)).filter(isDriveItem);
-  const visibleItems = useMemo(() => {
-    const normalizedQuery = debouncedQuery.trim().toLowerCase();
-    return items.filter((item) => {
-      const matchesScope =
-        scope === "trash"
-          ? item.trashed
-          : scope === "shared"
-            ? item.shared && !item.trashed
-            : scope === "documents"
-              ? !item.trashed && !isDriveFolder(item) && item.kind === "document"
-              : scope === "sheets"
-                ? !item.trashed && !isDriveFolder(item) && isSheetFile(item)
-                : scope === "slides"
-                  ? !item.trashed && !isDriveFolder(item) && isSlideFile(item)
-              : !item.trashed && item.parentId === currentFolderId;
-      const matchesQuery = !normalizedQuery || item.name.toLowerCase().includes(normalizedQuery);
-      return matchesScope && matchesQuery;
-    });
-  }, [currentFolderId, debouncedQuery, items, scope]);
-  const breadcrumbs = useMemo(
-    () => buildBreadcrumbs(folders, currentFolderId),
-    [currentFolderId, folders],
-  );
-  const previewSuggestionContext =
-    previewItem && !isDriveFolder(previewItem)
-      ? driveSuggestionContextForFile(previewItem, breadcrumbs)
-      : undefined;
-  const selectedDocumentId =
-    previewItem !== undefined && !isDriveFolder(previewItem) && previewItem.kind === "document"
-      ? previewItem.id
-      : undefined;
-  const allVisibleSelected =
-    visibleItems.length > 0 && visibleItems.every((item) => selectedIds.includes(item.id));
-
-  const resetSelection = () => setSelectedIds([]);
-
-  const pushRouteState = (nextState: Partial<DriveShellRouteState>) => {
-    const { fileId: nextStateFileId, ...restNextState } = nextState;
-    const nextFileId =
-      nextStateFileId === null
-        ? undefined
-        : (nextStateFileId ?? (previewId.length > 0 ? previewId : undefined));
-    onRouteStateChange?.({
-      folderId: currentFolderId === rootFolderId ? null : currentFolderId,
-      includeTrashed: scope === "trash",
-      query: normalizedQuery,
-      scope: scope === "my-drive" ? undefined : scope,
-      ...(nextFileId === undefined ? {} : { fileId: nextFileId }),
-      ...restNextState,
-    });
+  const onNewItem = (kind: DriveCreateKind) => {
+    const defaultNames: Record<DriveCreateKind, string> = {
+      folder: "New folder",
+      document: "Untitled document",
+      spreadsheet: "Untitled spreadsheet",
+      presentation: "Untitled presentation",
+    };
+    createMutation.mutate({ kind, name: defaultNames[kind] });
   };
 
-  const openFolder = (folderId: string) => {
-    setScope("my-drive");
-    setCurrentFolderId(folderId);
-    pushRouteState({
-      fileId: null,
-      folderId: folderId === rootFolderId ? null : folderId,
-      includeTrashed: false,
-    });
-    resetSelection();
-  };
-
-  const selectScope = (nextScope: DriveScope) => {
-    setScope(nextScope);
-    if (nextScope !== "my-drive") {
-      setCurrentFolderId(rootFolderId);
+  // Live backend entries for the current scope/folder. Search results are
+  // already promoted into entry shape inside `driveItemsQueryOptions`.
+  const liveEntries = useMemo<readonly DriveApiEntry[]>(() => {
+    const data = itemsQuery.data;
+    if (data === undefined) {
+      return [];
     }
-    pushRouteState({
-      fileId: null,
-      folderId: nextScope === "my-drive" ? currentFolderIdForRoute(currentFolderId) : null,
-      includeTrashed: nextScope === "trash",
-      scope: nextScope === "my-drive" ? undefined : nextScope,
-    });
-    resetSelection();
-  };
-
-  const toggleItem = (itemId: string) => {
-    setSelectedIds((current) =>
-      current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId],
-    );
-  };
-
-  const selectOnly = (itemId: string) => {
-    setSelectedIds([itemId]);
-    setPreviewId(itemId);
-    const item = itemById.get(itemId);
-    if (item !== undefined && !isDriveFolder(item) && item.kind === "document") {
-      setScope("documents");
-      pushRouteState({
-        fileId: itemId,
-        folderId: null,
-        includeTrashed: false,
-        scope: "documents",
-      });
+    if (data.mode === "list") {
+      return applyDriveScope(data.entries, scope, actorId);
     }
-  };
-
-  const openDocument = (documentId: string) => {
-    setScope("documents");
-    setPreviewId(documentId);
-    setSelectedIds([documentId]);
-    pushRouteState({
-      fileId: documentId,
-      folderId: null,
-      includeTrashed: false,
-      scope: "documents",
-    });
-  };
-
-  const toggleVisibleSelection = () => {
-    setSelectedIds(allVisibleSelected ? [] : visibleItems.map((item) => item.id));
-  };
-
-  const uploadFiles = (event: ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(event.target.files ?? []);
-    if (selectedFiles.length === 0) {
-      return;
-    }
-    const uploadedFiles = selectedFiles.map<DriveFile>((file, index) => ({
-      id: `upload-${Date.now()}-${index}`,
-      name: file.name,
-      parentId: currentFolderId,
-      mimeType: file.type || "application/octet-stream",
-      size: formatBytes(file.size),
-      updatedAt: "Just now",
-      owner: "Local upload",
-      shared: false,
-      trashed: false,
-      kind: kindFromMime(file.type, file.name),
-      syncState: "local",
+    return data.hits.map((hit) => ({
+      id: hit.objectId,
+      type: "file" as const,
+      name: hit.name,
+      folderId: hit.folderId,
+      ownerActorId: null,
+      mimeType: hit.mimeType,
+      byteSize: hit.byteSize,
+      sha256: hit.sha256,
+      ...(hit.previewMetadata === undefined ? {} : { preview: hit.previewMetadata }),
+      deletedAt: null,
+      createdAt: hit.updatedAt,
+      updatedAt: hit.updatedAt,
     }));
-    setFiles((current) => [...uploadedFiles, ...current]);
-    setPreviewId(uploadedFiles[0]?.id ?? previewId);
-    setSelectedIds(uploadedFiles.map((file) => file.id));
-    for (const [index, file] of selectedFiles.entries()) {
-      const optimisticFileId = uploadedFiles[index]?.id;
-      void uploadFileToBackend(file, currentFolderId)
-        .then((backendFile) => {
-          setFiles((current) =>
-            current.map((currentFile) =>
-              currentFile.id === optimisticFileId ? backendFile : currentFile,
-            ),
-          );
-          setPreviewId((current) => (current === optimisticFileId ? backendFile.id : current));
-          setSelectedIds((current) =>
-            current.map((selectedId) =>
-              selectedId === optimisticFileId ? backendFile.id : selectedId,
-            ),
-          );
-        })
-        .catch(() => undefined);
+  }, [itemsQuery.data, scope, actorId]);
+
+  const usingSeed = useMemo(() => {
+    // Seed only when the backend genuinely failed at the root of My Drive —
+    // never mask a real (legitimately empty) folder or scope.
+    return (
+      itemsQuery.isError &&
+      liveEntries.length === 0 &&
+      scope === "my" &&
+      folderId === null
+    );
+  }, [itemsQuery.isError, liveEntries.length, scope, folderId]);
+
+  const folders = useMemo<readonly DriveFolderItem[]>(() => {
+    if (usingSeed) {
+      return DRIVE_FOLDERS_SEED;
+    }
+    return liveEntries.filter((e) => e.type === "folder").map(folderItemFromEntry);
+  }, [liveEntries, usingSeed]);
+
+  const files = useMemo<readonly DriveFileItem[]>(() => {
+    if (usingSeed) {
+      return DRIVE_FILES_SEED;
+    }
+    return liveEntries.filter((e) => e.type === "file").map(fileItemFromEntry);
+  }, [liveEntries, usingSeed]);
+
+  const entryById = useMemo(() => {
+    const map = new Map<string, DriveApiEntry>();
+    for (const entry of liveEntries) {
+      map.set(entry.id, entry);
+    }
+    return map;
+  }, [liveEntries]);
+
+  const selectedEntry = selectedFileId === null ? null : (entryById.get(selectedFileId) ?? null);
+  const selectedFile = useMemo(
+    () => files.find((file) => file.id === selectedFileId) ?? null,
+    [files, selectedFileId],
+  );
+
+  /**
+   * Called when the user clicks a file entry. If the entry is owned by an
+   * editor app (docs/sheets/slides) navigate straight into the editor;
+   * otherwise open the details panel as usual.
+   */
+  const onSelectFile = (id: string) => {
+    const entry = entryById.get(id);
+    if (entry?.app != null) {
+      const destination = editorDestinationFor(entry.app, id);
+      if (destination !== null) {
+        void navigate({ to: destination.to, search: destination.search });
+        return;
+      }
+    }
+    setSelectedFileId(id);
+  };
+
+  const openFolder = (folder: DriveFolderItem) => {
+    setSelectedFileId(null);
+    setTrail((prev) => [...prev, { id: folder.id, name: folder.name }]);
+  };
+
+  const navigateToCrumb = (index: number) => {
+    setSelectedFileId(null);
+    setTrail((prev) => (index < 0 ? [] : prev.slice(0, index + 1)));
+  };
+
+  const onScopeChange = (next: DriveScope) => {
+    setScope(next);
+    setTrail([]);
+    setSelectedFileId(null);
+  };
+
+  const onPickFile = () => fileInputRef.current?.click();
+
+  const onFileChosen = (event: ChangeEvent<HTMLInputElement>) => {
+    const chosen = event.target.files?.[0];
+    if (chosen !== undefined) {
+      uploadMutation.mutate(chosen);
     }
     event.target.value = "";
   };
 
-  const createDocument = () => {
-    const folderId = currentFolderId === rootFolderId ? null : currentFolderId;
-    const fallbackDocument = driveFileFromDocsDocument({
-      id: `doc-local-${Date.now()}`,
-      title: "Untitled document",
-      threadId: null,
-      ownerActorId: "Maya Chen",
-      createdByActorId: "Maya Chen",
-      ydocState: null,
-      ydocStateVector: null,
-      updateSeq: 0,
-      metadata: { source: "drive.local-fallback" },
-      deletedAt: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    createDocsDocument({
-      title: "Untitled document",
-      initialMarkdown: "# Untitled document\n",
-      folderId,
-      metadata: {
-        source: "web.drive-shell",
-        driveFolderId: folderId,
-      },
-    })
-      .then((document) => {
-        const file = driveFileFromDocsDocument(document, currentFolderId);
-        setFiles((current) => [file, ...current]);
-        setScope("documents");
-        setPreviewId(file.id);
-        setSelectedIds([file.id]);
-        pushRouteState({
-          fileId: file.id,
-          folderId: null,
-          includeTrashed: false,
-          scope: "documents",
-        });
-      })
-      .catch(() => {
-        const file = {
-          ...fallbackDocument,
-          parentId: currentFolderId,
-          syncState: "local" as const,
-        };
-        setFiles((current) => [file, ...current]);
-        setScope("documents");
-        setPreviewId(file.id);
-        setSelectedIds([file.id]);
-        pushRouteState({
-          fileId: file.id,
-          folderId: null,
-          includeTrashed: false,
-          scope: "documents",
-        });
-      });
-  };
-
-  const trashItems = (itemIds: readonly string[]) => {
-    void Promise.all(itemIds.map((itemId) => trashDriveObject(itemId).catch(() => null)));
-    setFolders((current) =>
-      current.map((folder) =>
-        itemIds.includes(folder.id) ? { ...folder, trashed: true } : folder,
-      ),
-    );
-    setFiles((current) =>
-      current.map((file) => (itemIds.includes(file.id) ? { ...file, trashed: true } : file)),
-    );
-    resetSelection();
-  };
-
-  const restoreItems = (itemIds: readonly string[]) => {
-    void Promise.all(itemIds.map((itemId) => restoreDriveObject(itemId).catch(() => null)));
-    setFolders((current) =>
-      current.map((folder) =>
-        itemIds.includes(folder.id) ? { ...folder, trashed: false } : folder,
-      ),
-    );
-    setFiles((current) =>
-      current.map((file) => (itemIds.includes(file.id) ? { ...file, trashed: false } : file)),
-    );
-    resetSelection();
-  };
-
-  const deleteItems = (itemIds: readonly string[]) => {
-    void Promise.all(itemIds.map((itemId) => deleteDriveObject(itemId).catch(() => undefined)));
-    setFolders((current) => current.filter((folder) => !itemIds.includes(folder.id)));
-    setFiles((current) => current.filter((file) => !itemIds.includes(file.id)));
-    if (itemIds.includes(previewId)) {
-      setPreviewId("");
-    }
-    resetSelection();
-  };
-
-  const moveItems = (itemIds: readonly string[], folderId: string) => {
-    const backendFolderId = folderId === rootFolderId ? null : folderId;
-    void Promise.all(
-      itemIds.map((itemId) => moveDriveObject(itemId, backendFolderId).catch(() => null)),
-    );
-    setFolders((current) =>
-      current.map((folder) =>
-        itemIds.includes(folder.id) && folder.id !== folderId
-          ? { ...folder, parentId: folderId }
-          : folder,
-      ),
-    );
-    setFiles((current) =>
-      current.map((file) => (itemIds.includes(file.id) ? { ...file, parentId: folderId } : file)),
-    );
-    setMoveDialog(null);
-    resetSelection();
-  };
-
-  const markShared = (itemIds: readonly string[]) => {
-    setFolders((current) =>
-      current.map((folder) => (itemIds.includes(folder.id) ? { ...folder, shared: true } : folder)),
-    );
-    setFiles((current) =>
-      current.map((file) => (itemIds.includes(file.id) ? { ...file, shared: true } : file)),
-    );
-  };
-
-  const shareItems = (itemIds: readonly string[], target: ShareTarget) => {
-    void Promise.all(
-      itemIds.map((itemId) =>
-        shareDrive({
-          objectId: itemId,
-          actorIds: [target.label],
-          role: target.permission === "viewer" ? "reader" : target.permission,
-        }).catch(() => undefined),
-      ),
-    );
-    setShareTargets((current) => [...current, target]);
-    markShared(itemIds);
-    setShareDialog(null);
-  };
-
-  const selectedActionIds =
-    selectedIds.length > 0 ? selectedIds : previewItem ? [previewItem.id] : [];
-  const toolbarLabel =
-    selectedItems.length === 0
-      ? `${visibleItems.length} items`
-      : `${selectedItems.length} selected`;
-  const virtualLaneCount = view === "grid" ? driveGridLaneCount : 1;
-  const virtualItemEstimate = view === "grid" ? driveGridItemEstimate : driveListItemEstimate;
-  const itemVirtualizer = useVirtualizer({
-    count: visibleItems.length,
-    estimateSize: () => virtualItemEstimate,
-    getItemKey: (index) => visibleItems[index]?.id ?? index,
-    getScrollElement: () => driveBrowserRef.current,
-    lanes: virtualLaneCount,
-    overscan: view === "grid" ? 9 : 10,
-  });
+  const isTrashScope = scope === "trash";
 
   return (
-    <section className="drive-page">
-      <aside className="drive-sidebar" aria-label="Drive sections">
-        <button
-          className="drive-upload-button"
-          onClick={() => uploadInputRef.current?.click()}
-          type="button"
-        >
-          <Upload aria-hidden="true" size={18} />
-          Upload
-        </button>
-        <button className="drive-upload-button secondary" onClick={createDocument} type="button">
-          <Plus aria-hidden="true" size={18} />
-          New doc
-        </button>
-        <input
-          aria-label="Upload files"
-          className="sr-only"
-          multiple
-          onChange={uploadFiles}
-          ref={uploadInputRef}
-          type="file"
-        />
-        <nav className="drive-nav">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                className={scope === item.id ? "drive-nav-item active" : "drive-nav-item"}
-                key={item.id}
-                onClick={() => selectScope(item.id)}
-                type="button"
-              >
-                <Icon aria-hidden="true" size={17} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-        <div className="drive-storage">
-          <div>
-            <strong>Storage</strong>
-            <span>18.7 GB of 100 GB</span>
-          </div>
-          <meter max={100} value={18.7}>
-            18.7 GB
-          </meter>
-        </div>
-      </aside>
-
-      <div className="drive-workspace" role="main" aria-labelledby="drive-title">
-        <header className="drive-header">
-          <div>
-            <h1 id="drive-title">Drive</h1>
-            <Breadcrumbs breadcrumbs={breadcrumbs} scope={scope} onOpenFolder={openFolder} />
-          </div>
-          <div className="drive-header-actions">
-            <button
-              className="helix-button helix-button-secondary"
-              onClick={() => setMoveDialog({ itemIds: selectedActionIds })}
-              disabled={selectedActionIds.length === 0 || scope === "trash"}
-              type="button"
-            >
-              <FolderInput aria-hidden="true" size={16} />
-              Move
-            </button>
-            <button
-              className="helix-button"
-              onClick={() => setShareDialog({ itemIds: selectedActionIds })}
-              disabled={selectedActionIds.length === 0 || scope === "trash"}
-              type="button"
-            >
-              <Share2 aria-hidden="true" size={16} />
-              Share
-            </button>
-          </div>
-        </header>
-
-        <div className="drive-toolbar">
-          <span className="drive-selection-count">{toolbarLabel}</span>
-          <div className="drive-action-group">
-            {scope === "trash" ? (
-              <>
-                <button
-                  className="helix-button helix-button-secondary"
-                  disabled={selectedActionIds.length === 0}
-                  onClick={() => restoreItems(selectedActionIds)}
-                  type="button"
-                >
-                  <ArchiveRestore aria-hidden="true" size={16} />
-                  Restore
-                </button>
-                <button
-                  className="helix-button helix-button-destructive"
-                  disabled={selectedActionIds.length === 0}
-                  onClick={() => deleteItems(selectedActionIds)}
-                  type="button"
-                >
-                  <Trash2 aria-hidden="true" size={16} />
-                  Delete
-                </button>
-              </>
-            ) : (
-              <button
-                className="helix-button helix-button-secondary"
-                disabled={selectedActionIds.length === 0}
-                onClick={() => trashItems(selectedActionIds)}
-                type="button"
-              >
-                <Trash2 aria-hidden="true" size={16} />
-                Trash
-              </button>
-            )}
-            <div className="drive-view-toggle" aria-label="View mode">
-              <button
-                aria-label="Grid view"
-                className={view === "grid" ? "active" : ""}
-                onClick={() => setView("grid")}
-                type="button"
-              >
-                <Grid2X2 aria-hidden="true" size={16} />
-              </button>
-              <button
-                aria-label="List view"
-                className={view === "list" ? "active" : ""}
-                onClick={() => setView("list")}
-                type="button"
-              >
-                <List aria-hidden="true" size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="drive-content">
-          <div className="drive-browser" ref={driveBrowserRef}>
-            {isRootHome ? (
-              <DriveSuggestionsPanel
-                isLoading={
-                  driveSuggestionsQuery.isPending &&
-                  !suggestionsBackendUnavailable
-                }
-                suggestions={suggestions}
-                folderNames={folderNamesById}
-                onOpenFolder={openFolder}
-              />
-            ) : null}
-            {view === "grid" && visibleItems.length > 0 ? (
-              <label className="drive-select-all">
-                <input
-                  checked={allVisibleSelected}
-                  onChange={toggleVisibleSelection}
-                  type="checkbox"
-                />
-                Select visible
-              </label>
-            ) : null}
-            {backendOffline ? (
-              <div className="drive-offline-state" role="status">
-                Drive backend is offline. Showing local-only items that have not synced yet.
-              </div>
-            ) : null}
-            {visibleItems.length === 0 ? (
-              <DriveEmptyState
-                isBackendOffline={backendOffline}
-                isLoading={driveItemsQuery.isPending}
-                query={normalizedQuery}
-                scope={scope}
-              />
-            ) : (
-              <DriveVirtualizedItems
-                items={visibleItems}
-                itemEstimate={virtualItemEstimate}
-                laneCount={virtualLaneCount}
-                onOpenDocument={openDocument}
-                onOpenFolder={openFolder}
-                onPreview={selectOnly}
-                onShare={(itemId) => setShareDialog({ itemIds: [itemId] })}
-                onToggle={toggleItem}
-                selectedIds={selectedIds}
-                virtualizer={itemVirtualizer}
-                view={view}
-              />
-            )}
-          </div>
-
-          {selectedDocumentId !== undefined ? (
-            <DriveDocumentEditorPanel
-              documentId={selectedDocumentId}
-              onClose={() => setPreviewId("")}
-            />
-          ) : previewItem ? (
-            <PreviewPanel
-              item={previewItem}
-              onClose={() => setPreviewId("")}
-              onOpenDocument={openDocument}
-              onMove={(itemId) => setMoveDialog({ itemIds: [itemId] })}
-              onShare={(itemId) => setShareDialog({ itemIds: [itemId] })}
-              onTrash={(itemId) => trashItems([itemId])}
-              suggestionContext={previewSuggestionContext}
-            />
-          ) : null}
-        </div>
-      </div>
-
-      {shareDialog ? (
-        <ShareDialog
-          itemNames={shareDialog.itemIds.map(
-            (itemId) => itemById.get(itemId)?.name ?? "Unknown item",
-          )}
-          onClose={() => setShareDialog(null)}
-          onShare={(target) => {
-            shareItems(shareDialog.itemIds, target);
-          }}
-          targets={shareTargets}
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        aria-hidden="true"
+        tabIndex={-1}
+        style={{ display: "none" }}
+        onChange={onFileChosen}
+      />
+      <DriveSidebar
+        activeScope={scope}
+        onScopeChange={onScopeChange}
+        onPickFile={onPickFile}
+        onNewItem={onNewItem}
+        uploading={uploadMutation.isPending}
+        creating={createMutation.isPending}
+      />
+      <DriveMain
+        view={view}
+        onViewChange={setView}
+        scope={scope}
+        trail={trail}
+        onNavigateCrumb={navigateToCrumb}
+        folders={folders}
+        files={files}
+        selectedFileId={selectedFileId}
+        onSelectFile={onSelectFile}
+        onOpenFolder={openFolder}
+        onUpload={onPickFile}
+        onDropFiles={(droppedFiles) => {
+          for (const file of droppedFiles) {
+            uploadMutation.mutate(file);
+          }
+        }}
+        onNewItem={onNewItem}
+        loading={itemsQuery.isLoading}
+        error={itemsQuery.isError && !usingSeed ? itemsQuery.error : null}
+        uploadError={uploadMutation.isError ? uploadMutation.error : null}
+        onRetry={() => void invalidateDrive()}
+        uploading={uploadMutation.isPending}
+        creating={createMutation.isPending}
+      />
+      {selectedFile !== null ? (
+        <DriveDetailsPanel
+          file={selectedFile}
+          entry={selectedEntry}
+          ownerName={actorQuery.data?.name ?? "You"}
+          currentActorId={actorId}
+          isTrash={isTrashScope}
+          inSubfolder={trail.length > 0}
+          busy={
+            trashMutation.isPending ||
+            restoreMutation.isPending ||
+            deleteMutation.isPending ||
+            moveMutation.isPending ||
+            shareMutation.isPending
+          }
+          actionError={
+            trashMutation.error ??
+            restoreMutation.error ??
+            deleteMutation.error ??
+            moveMutation.error ??
+            shareMutation.error ??
+            null
+          }
+          onClose={() => setSelectedFileId(null)}
+          onTrash={(id) => trashMutation.mutate(id)}
+          onRestore={(id) => restoreMutation.mutate(id)}
+          onDelete={(id) => deleteMutation.mutate(id)}
+          onMoveToParent={(id) =>
+            moveMutation.mutate({
+              objectId: id,
+              folderId: trail.length > 1 ? (trail[trail.length - 2]?.id ?? null) : null,
+            })
+          }
+          onShare={(id, actorIds) => shareMutation.mutate({ objectId: id, actorIds })}
+          shareDone={shareMutation.isSuccess}
         />
       ) : null}
-
-      {moveDialog ? (
-        <MoveDialog
-          folders={folders.filter(
-            (folder) => !folder.trashed && !moveDialog.itemIds.includes(folder.id),
-          )}
-          itemNames={moveDialog.itemIds.map(
-            (itemId) => itemById.get(itemId)?.name ?? "Unknown item",
-          )}
-          onClose={() => setMoveDialog(null)}
-          onMove={(folderId) => moveItems(moveDialog.itemIds, folderId)}
-        />
-      ) : null}
-    </section>
+    </>
   );
 }
 
-function Breadcrumbs({
-  breadcrumbs,
-  onOpenFolder,
-  scope,
+function DriveSidebar({
+  activeScope,
+  onScopeChange,
+  onPickFile,
+  onNewItem,
+  uploading,
+  creating,
 }: {
-  readonly breadcrumbs: readonly DriveFolder[];
-  readonly onOpenFolder: (folderId: string) => void;
-  readonly scope: DriveScope;
+  readonly activeScope: DriveScope;
+  readonly onScopeChange: (scope: DriveScope) => void;
+  readonly onPickFile: () => void;
+  readonly onNewItem: (kind: DriveCreateKind) => void;
+  readonly uploading: boolean;
+  readonly creating: boolean;
 }) {
-  if (scope === "documents") {
-    return <p className="drive-breadcrumb">Documents in Drive</p>;
-  }
-  if (scope === "sheets") {
-    return <p className="drive-breadcrumb">Sheets in Drive</p>;
-  }
-  if (scope === "slides") {
-    return <p className="drive-breadcrumb">Slides in Drive</p>;
-  }
-  if (scope === "shared") {
-    return <p className="drive-breadcrumb">Shared with me</p>;
-  }
-  if (scope === "trash") {
-    return <p className="drive-breadcrumb">Trash</p>;
-  }
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const busy = uploading || creating;
+
+  const handleMenuItem = (action: () => void) => {
+    setMenuOpen(false);
+    action();
+  };
+
   return (
-    <nav className="drive-breadcrumb" aria-label="Folder breadcrumb">
-      {breadcrumbs.map((folder, index) => (
-        <span key={folder.id}>
-          {index > 0 ? <ChevronRight aria-hidden="true" size={14} /> : null}
-          <button onClick={() => onOpenFolder(folder.id)} type="button">
-            {folder.name}
+    <aside
+      style={{
+        width: 220,
+        flexShrink: 0,
+        borderRight: "1px solid var(--border)",
+        background: "var(--surface)",
+        padding: 12,
+        overflowY: "auto",
+      }}
+    >
+      <div style={{ position: "relative", marginBottom: 12 }}>
+        <button
+          type="button"
+          className="btn primary lg"
+          style={{ width: "100%" }}
+          onClick={() => setMenuOpen((prev) => !prev)}
+          disabled={busy}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+        >
+          <Icons.Plus />
+          {uploading ? "Uploading…" : creating ? "Creating…" : "New"}
+        </button>
+        {menuOpen ? (
+          <>
+            {/* Backdrop to close menu on outside click */}
+            <div
+              aria-hidden="true"
+              style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 99,
+              }}
+              onClick={() => setMenuOpen(false)}
+            />
+            <div
+              role="menu"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setMenuOpen(false);
+                }
+              }}
+              style={{
+                position: "absolute",
+                top: "calc(100% + 4px)",
+                left: 0,
+                right: 0,
+                zIndex: 100,
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                boxShadow: "0 4px 12px rgba(0,0,0,.12)",
+                padding: 4,
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleMenuItem(() => onNewItem("folder"))}
+              >
+                <Icons.Folder />
+                New folder
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleMenuItem(() => onNewItem("document"))}
+              >
+                <Icons.Doc />
+                Document
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleMenuItem(() => onNewItem("spreadsheet"))}
+              >
+                <Icons.Sheet />
+                Spreadsheet
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleMenuItem(() => onNewItem("presentation"))}
+              >
+                <Icons.Image />
+                Presentation
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleMenuItem(onPickFile)}
+              >
+                <Icons.Upload />
+                Upload file
+              </button>
+            </div>
+          </>
+        ) : null}
+      </div>
+      {DRIVE_SCOPES.map((item) => {
+        const Icon = Icons[item.icon];
+        const active = item.id === activeScope;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            aria-current={active ? "page" : undefined}
+            onClick={() => onScopeChange(item.id)}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              height: 28,
+              padding: "0 10px",
+              borderRadius: 6,
+              fontSize: 12,
+              background: active ? "var(--accent-soft)" : "transparent",
+              color: active ? "var(--accent)" : "var(--text)",
+              fontWeight: active ? 600 : 400,
+            }}
+          >
+            <Icon />
+            <span>{item.label}</span>
+          </button>
+        );
+      })}
+      <div className="section-label">Storage</div>
+      <div style={{ padding: "0 10px" }}>
+        <div
+          role="progressbar"
+          aria-label="Storage used"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(DRIVE_STORAGE.fraction * 100)}
+          style={{
+            height: 4,
+            background: "var(--surface-2)",
+            borderRadius: 2,
+            marginBottom: 6,
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              width: `${String(Math.round(DRIVE_STORAGE.fraction * 100))}%`,
+              background: "var(--accent)",
+              borderRadius: 2,
+            }}
+          />
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-3)" }}>{DRIVE_STORAGE.label}</div>
+        <button type="button" className="btn sm" style={{ width: "100%", marginTop: 8 }}>
+          Upgrade
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function DriveBreadcrumb({
+  scope,
+  trail,
+  onNavigate,
+}: {
+  readonly scope: DriveScope;
+  readonly trail: readonly DriveCrumb[];
+  readonly onNavigate: (index: number) => void;
+}) {
+  return (
+    <nav
+      aria-label="Drive breadcrumb"
+      style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}
+    >
+      <button
+        type="button"
+        onClick={() => onNavigate(-1)}
+        disabled={trail.length === 0}
+        style={{
+          fontSize: 20,
+          fontWeight: 600,
+          color: trail.length === 0 ? "var(--text)" : "var(--accent)",
+          background: "transparent",
+          padding: 0,
+        }}
+      >
+        {SCOPE_TITLE[scope]}
+      </button>
+      {trail.map((crumb, index) => (
+        <span
+          key={crumb.id ?? `crumb-${String(index)}`}
+          style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}
+        >
+          <Icons.ChevronRight size={14} />
+          <button
+            type="button"
+            onClick={() => onNavigate(index)}
+            className="truncate"
+            disabled={index === trail.length - 1}
+            style={{
+              fontSize: 20,
+              fontWeight: 600,
+              color: index === trail.length - 1 ? "var(--text)" : "var(--accent)",
+              background: "transparent",
+              padding: 0,
+              maxWidth: 220,
+            }}
+          >
+            {crumb.name}
           </button>
         </span>
       ))}
@@ -952,1520 +677,858 @@ function Breadcrumbs({
   );
 }
 
-function DriveEmptyState({
-  isBackendOffline,
-  isLoading,
-  query,
-  scope,
-}: {
-  readonly isBackendOffline: boolean;
-  readonly isLoading: boolean;
-  readonly query: string;
-  readonly scope: DriveScope;
-}) {
-  let title = "No Drive files";
-  let description = "Upload a file to add it to Drive.";
-
-  if (isLoading) {
-    title = "Loading Drive";
-    description = "Checking Drive for your files.";
-  } else if (isBackendOffline) {
-    title = "Drive backend is offline";
-    description = "No backend files are shown. Local uploads will appear here until they sync.";
-  } else if (query.length > 0) {
-    title = "No matching files";
-    description = "Upload a file or change the current filter.";
-  } else if (scope === "documents") {
-    title = "No documents";
-    description = "Create a doc or open a document from Drive.";
-  } else if (scope === "sheets") {
-    title = "No sheets";
-    description = "Spreadsheet-style files in Drive will appear here.";
-  } else if (scope === "slides") {
-    title = "No slides";
-    description = "Presentation-style files in Drive will appear here.";
-  } else if (scope === "shared") {
-    title = "No shared files";
-    description = "Files shared with you will appear here.";
-  } else if (scope === "trash") {
-    title = "Trash is empty";
-    description = "Deleted files will appear here before permanent removal.";
-  }
-
-  return (
-    <div className="drive-empty-state">
-      <Folder aria-hidden="true" size={24} />
-      <h2>{title}</h2>
-      <p>{description}</p>
-    </div>
-  );
-}
-
-function DriveSuggestionsPanel({
-  isLoading,
-  suggestions,
-  folderNames,
-  onOpenFolder,
-}: {
-  readonly isLoading: boolean;
-  readonly suggestions: DriveSuggestions | undefined;
-  readonly folderNames: ReadonlyMap<string, string>;
-  readonly onOpenFolder: (folderId: string) => void;
-}) {
-  const folders = suggestions?.folders ?? [];
-  const files = suggestions?.files ?? [];
-
-  return (
-    <div className="drive-suggestions">
-      <section className="drive-suggested-folders">
-        <h2 className="drive-section-title">Suggested folders</h2>
-        {isLoading ? (
-          <p className="drive-suggestions-loading" role="status">
-            Loading suggestions...
-          </p>
-        ) : folders.length === 0 ? (
-          <p className="drive-suggestions-empty">No recent folders.</p>
-        ) : (
-          <div className="drive-suggested-cards">
-            {folders.map((folder) => (
-              <button
-                className="drive-suggested-card"
-                key={folder.id}
-                onClick={() => onOpenFolder(folder.id)}
-                type="button"
-              >
-                <span className="drive-suggested-card-icon" aria-hidden="true">
-                  <Folder size={20} />
-                </span>
-                <span className="drive-suggested-card-name">{folder.name}</span>
-                <span className="drive-suggested-card-meta">
-                  {folder.ownerActorId ?? "Unknown owner"}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="drive-suggested-files">
-        <h2 className="drive-section-title">Suggested files</h2>
-        {isLoading ? (
-          <p className="drive-suggestions-loading" role="status">
-            Loading suggestions...
-          </p>
-        ) : files.length === 0 ? (
-          <p className="drive-suggestions-empty">No recent files.</p>
-        ) : (
-          <Table className="drive-suggested-files-table drive-table" aria-label="Suggested files">
-            <TableHeader className="drive-table-header">
-              <TableRow>
-                <TableHead scope="col">Name</TableHead>
-                <TableHead scope="col">Reason suggested</TableHead>
-                <TableHead scope="col">Owner</TableHead>
-                <TableHead scope="col">Location</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {files.map((file) => (
-                <TableRow className="drive-item" key={file.id}>
-                  <TableCell className="drive-table-name">
-                    <span className="drive-table-name-cell">
-                      <span className="drive-item-icon" aria-hidden="true">
-                        <SuggestedFileIcon mimeType={file.mimeType ?? ""} />
-                      </span>
-                      <span className="drive-item-name">{file.name}</span>
-                    </span>
-                  </TableCell>
-                  <TableCell>Recently modified</TableCell>
-                  <TableCell className="drive-table-owner">
-                    {file.ownerActorId ?? "Unknown owner"}
-                  </TableCell>
-                  <TableCell>
-                    {file.folderId === null || file.folderId === undefined
-                      ? "My Drive"
-                      : (folderNames.get(file.folderId) ?? "My Drive")}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function SuggestedFileIcon({ mimeType }: { readonly mimeType: string }) {
-  const kind = suggestedFileKind(mimeType);
-  if (kind === "sheet") {
-    return <Grid2X2 size={18} />;
-  }
-  if (kind === "slide") {
-    return <Play size={18} />;
-  }
-  return <FileText size={18} />;
-}
-
-function suggestedFileKind(mimeType: string): "doc" | "sheet" | "slide" | "folder" {
-  if (
-    mimeType === "application/vnd.helix.document" ||
-    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    mimeType === "application/msword"
-  ) {
-    return "doc";
-  }
-  if (
-    mimeType.includes("spreadsheet") ||
-    mimeType === "application/vnd.ms-excel"
-  ) {
-    return "sheet";
-  }
-  if (
-    mimeType.includes("presentation") ||
-    mimeType === "application/vnd.ms-powerpoint"
-  ) {
-    return "slide";
-  }
-  return "doc";
-}
-
-declare module "@tanstack/react-table" {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  interface ColumnMeta<TData extends RowData, TValue> {
-    readonly cellClassName?: string;
-    readonly headClassName?: string;
-  }
-}
-
-function useDriveItemColumns({
-  onOpenDocument,
-  onOpenFolder,
-  onPreview,
-  onShare,
-  onToggle,
-}: {
-  readonly onOpenDocument: (documentId: string) => void;
-  readonly onOpenFolder: (folderId: string) => void;
-  readonly onPreview: (itemId: string) => void;
-  readonly onShare: (itemId: string) => void;
-  readonly onToggle: (itemId: string) => void;
-}): ColumnDef<DriveItem>[] {
-  return useMemo<ColumnDef<DriveItem>[]>(
-    () => [
-      {
-        id: "selection",
-        header: () => <span className="sr-only">Selection</span>,
-        meta: { cellClassName: "drive-table-select", headClassName: "drive-table-select" },
-        cell: ({ row }) => (
-          <label className="drive-item-check" aria-label={`Select ${row.original.name}`}>
-            <input
-              checked={row.getIsSelected()}
-              onChange={() => onToggle(row.original.id)}
-              onClick={(event) => event.stopPropagation()}
-              type="checkbox"
-            />
-          </label>
-        ),
-      },
-      {
-        accessorKey: "name",
-        header: "Name",
-        meta: { cellClassName: "drive-table-name", headClassName: "drive-table-name" },
-        cell: ({ row }) => {
-          const item = row.original;
-          const Icon = iconForItem(item);
-          const isFolder = isDriveFolder(item);
-          const iconKind = driveFileIconKind(item);
-          return (
-            <button
-              className="drive-table-name-cell"
-              onClick={() => openDriveItem(item, { onOpenDocument, onOpenFolder, onPreview })}
-              type="button"
-            >
-              <span className={`drive-item-icon ${isFolder ? "folder" : item.kind}`}>
-                <Icon
-                  aria-hidden="true"
-                  className="drive-file-icon"
-                  {...(iconKind === null ? {} : { "data-kind": iconKind })}
-                  size={20}
-                />
-              </span>
-              <span className="drive-item-name">{item.name}</span>
-              {!isFolder && item.syncState === "local" ? (
-                <span className="drive-shared-pill">Offline/local</span>
-              ) : null}
-            </button>
-          );
-        },
-      },
-      {
-        accessorKey: "owner",
-        header: "Owner",
-        meta: { cellClassName: "drive-table-owner", headClassName: "drive-table-owner" },
-      },
-      {
-        accessorKey: "updatedAt",
-        header: "Modified",
-        meta: { cellClassName: "drive-table-modified", headClassName: "drive-table-modified" },
-      },
-      {
-        id: "size",
-        header: "Size",
-        meta: { cellClassName: "drive-table-size", headClassName: "drive-table-size" },
-        cell: ({ row }) => {
-          const item = row.original;
-          return isDriveFolder(item) ? "" : item.size;
-        },
-      },
-      {
-        id: "sharing",
-        header: "Sharing",
-        meta: { cellClassName: "drive-table-sharing", headClassName: "drive-table-sharing" },
-        cell: ({ row }) =>
-          row.original.shared ? (
-            <span className="drive-shared-pill">
-              <Link2 aria-hidden="true" size={12} />
-              Shared
-            </span>
-          ) : null,
-      },
-      {
-        id: "actions",
-        header: "Actions",
-        meta: { cellClassName: "drive-table-actions", headClassName: "drive-table-actions" },
-        cell: ({ row }) => (
-          <button
-            className="icon-button"
-            aria-label={`Share ${row.original.name}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onShare(row.original.id);
-            }}
-            disabled={row.original.trashed}
-            type="button"
-          >
-            <MoreHorizontal aria-hidden="true" size={17} />
-          </button>
-        ),
-      },
-    ],
-    [onOpenDocument, onOpenFolder, onPreview, onShare, onToggle],
-  );
-}
-
-function openDriveItem(
-  item: DriveItem,
-  handlers: {
-    readonly onOpenDocument: (documentId: string) => void;
-    readonly onOpenFolder: (folderId: string) => void;
-    readonly onPreview: (itemId: string) => void;
-  },
-) {
-  if (isDriveFolder(item) && !item.trashed) {
-    handlers.onOpenFolder(item.id);
-    return;
-  }
-  if (!isDriveFolder(item) && item.kind === "document" && !item.trashed) {
-    handlers.onOpenDocument(item.id);
-    return;
-  }
-  handlers.onPreview(item.id);
-}
-
-function DriveVirtualizedItems({
-  itemEstimate,
-  items,
-  laneCount,
-  onOpenDocument,
-  onOpenFolder,
-  onPreview,
-  onShare,
-  onToggle,
-  selectedIds,
-  virtualizer,
+function DriveMain({
   view,
+  onViewChange,
+  scope,
+  trail,
+  onNavigateCrumb,
+  folders,
+  files,
+  selectedFileId,
+  onSelectFile,
+  onOpenFolder,
+  onUpload,
+  onDropFiles,
+  onNewItem,
+  loading,
+  error,
+  uploadError,
+  onRetry,
+  uploading,
+  creating,
 }: {
-  readonly itemEstimate: number;
-  readonly items: readonly DriveItem[];
-  readonly laneCount: number;
-  readonly onOpenDocument: (documentId: string) => void;
-  readonly onOpenFolder: (folderId: string) => void;
-  readonly onPreview: (itemId: string) => void;
-  readonly onShare: (itemId: string) => void;
-  readonly onToggle: (itemId: string) => void;
-  readonly selectedIds: readonly string[];
-  readonly virtualizer: Virtualizer<HTMLDivElement, Element>;
   readonly view: DriveView;
+  readonly onViewChange: (view: DriveView) => void;
+  readonly scope: DriveScope;
+  readonly trail: readonly DriveCrumb[];
+  readonly onNavigateCrumb: (index: number) => void;
+  readonly folders: readonly DriveFolderItem[];
+  readonly files: readonly DriveFileItem[];
+  readonly selectedFileId: string | null;
+  readonly onSelectFile: (id: string) => void;
+  readonly onOpenFolder: (folder: DriveFolderItem) => void;
+  readonly onUpload: () => void;
+  readonly onDropFiles: (files: readonly File[]) => void;
+  readonly onNewItem: (kind: DriveCreateKind) => void;
+  readonly loading: boolean;
+  readonly error: Error | null;
+  readonly uploadError: Error | null;
+  readonly onRetry: () => void;
+  readonly uploading: boolean;
+  readonly creating: boolean;
 }) {
-  const tableData = useMemo<DriveItem[]>(() => [...items], [items]);
-  const columns = useDriveItemColumns({
-    onOpenDocument,
-    onOpenFolder,
-    onPreview,
-    onShare,
-    onToggle,
-  });
-  const rowSelection = useMemo(
-    () => Object.fromEntries(selectedIds.map((id) => [id, true])),
-    [selectedIds],
-  );
-  const table = useReactTable({
-    columns,
-    data: tableData,
-    enableRowSelection: true,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (item) => item.id,
-    state: {
-      rowSelection,
-    },
-  });
-  const tableRows = table.getRowModel().rows;
-  const measuredVirtualItems = virtualizer.getVirtualItems();
-  const virtualItems =
-    measuredVirtualItems.length > 0
-      ? measuredVirtualItems
-      : fallbackVirtualItems(items.length, laneCount, itemEstimate);
-  const totalSize = Math.max(
-    virtualizer.getTotalSize(),
-    Math.ceil(items.length / laneCount) * itemEstimate,
-  );
+  const gridFiles = useMemo(() => files.filter((file) => file.type !== "folder"), [files]);
+  const isEmpty = !loading && error === null && folders.length === 0 && files.length === 0;
 
-  if (view === "list") {
-    return (
-      <Table
-        className="drive-list drive-table"
-        aria-label="Drive items"
-        aria-rowcount={items.length + 1}
-        data-testid="drive-virtualized-items"
-      >
-        <TableHeader className="drive-table-header">
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => {
-                const meta = header.column.columnDef.meta;
-                return (
-                  <TableHead key={header.id} className={meta?.headClassName}>
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                );
-              })}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody
-          style={{
-            display: "block",
-            minHeight: `${String(totalSize)}px`,
-            position: "relative",
-          }}
-        >
-          {virtualItems.map((virtualItem) => {
-            const row = tableRows[virtualItem.index];
-            if (row === undefined) {
-              return null;
-            }
-            const selected = row.getIsSelected();
-            return (
-              <TableRow
-                aria-rowindex={virtualItem.index + 2}
-                aria-selected={selected}
-                className={selected ? "drive-item selected" : "drive-item"}
-                data-index={virtualItem.index}
-                data-state={selected ? "selected" : undefined}
-                key={row.id}
-                style={virtualItemStyle(virtualItem, view, laneCount)}
-              >
-                {row.getVisibleCells().map((cell) => {
-                  const meta = cell.column.columnDef.meta;
-                  return (
-                    <TableCell key={cell.id} className={meta?.cellClassName}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  );
-                })}
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    );
-  }
+  // Drag-and-drop: track enter depth with a counter so child element re-enters
+  // don't flash the overlay off/on.
+  const dragDepthRef = useRef(0);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    if (dragDepthRef.current === 1) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepthRef.current -= 1;
+    if (dragDepthRef.current === 0) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    // Signal that we accept drop
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragOver(false);
+    const dropped = Array.from(event.dataTransfer.files);
+    if (dropped.length > 0) {
+      onDropFiles(dropped);
+    }
+  };
+
+  // Current folder name for the overlay label
+  const currentFolderName =
+    trail.length > 0 ? (trail[trail.length - 1]?.name ?? "My Drive") : "My Drive";
+
+  // FAB menu state
+  const [fabMenuOpen, setFabMenuOpen] = useState(false);
+  const busy = uploading || creating;
+
+  const handleFabMenuItem = (action: () => void) => {
+    setFabMenuOpen(false);
+    action();
+  };
 
   return (
     <div
-      className="drive-grid"
-      aria-label="Drive items"
-      data-testid="drive-virtualized-items"
+      data-testid="drive-main"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
       style={{
-        minHeight: `${String(totalSize)}px`,
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        padding: 24,
+        overflowY: "auto",
+        minWidth: 0,
         position: "relative",
       }}
     >
-      {virtualItems.map((virtualItem) => {
-        const item = items[virtualItem.index];
-        if (item === undefined) {
-          return null;
-        }
-        return (
-          <div
-            data-index={virtualItem.index}
-            key={virtualItem.key}
-            style={virtualItemStyle(virtualItem, view, laneCount)}
-          >
-            <DriveItemRow
-              item={item}
-              onOpenFolder={onOpenFolder}
-              onOpenDocument={onOpenDocument}
-              onPreview={onPreview}
-              onShare={onShare}
-              onToggle={onToggle}
-              selected={selectedIds.includes(item.id)}
-              view={view}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function fallbackVirtualItems(
-  count: number,
-  laneCount: number,
-  itemEstimate: number,
-): readonly VirtualItem[] {
-  const virtualCount = Math.min(count, laneCount * 8);
-  return Array.from({ length: virtualCount }, (_, index) => {
-    const row = Math.floor(index / laneCount);
-    const start = row * itemEstimate;
-    return {
-      end: start + itemEstimate,
-      index,
-      key: index,
-      lane: index % laneCount,
-      size: itemEstimate,
-      start,
-    };
-  });
-}
-
-function virtualItemStyle(
-  virtualItem: VirtualItem,
-  view: DriveView,
-  laneCount: number,
-): CSSProperties {
-  const baseStyle: CSSProperties = {
-    left: 0,
-    position: "absolute",
-    top: 0,
-    transform: `translateY(${String(virtualItem.start)}px)`,
-  };
-  if (view === "list") {
-    return {
-      ...baseStyle,
-      minHeight: `${String(virtualItem.size)}px`,
-      width: "100%",
-    };
-  }
-  const totalGap = driveGridGap * (laneCount - 1);
-  const width = `calc((100% - ${String(totalGap)}px) / ${String(laneCount)})`;
-  return {
-    ...baseStyle,
-    left: `calc(${String(virtualItem.lane)} * (${width} + ${String(driveGridGap)}px))`,
-    minHeight: `${String(virtualItem.size)}px`,
-    width,
-  };
-}
-
-function DriveItemRow({
-  item,
-  onOpenFolder,
-  onOpenDocument,
-  onPreview,
-  onShare,
-  onToggle,
-  selected,
-  tableCell = false,
-  view,
-}: {
-  readonly item: DriveItem;
-  readonly onOpenFolder: (folderId: string) => void;
-  readonly onOpenDocument: (documentId: string) => void;
-  readonly onPreview: (itemId: string) => void;
-  readonly onShare: (itemId: string) => void;
-  readonly onToggle: (itemId: string) => void;
-  readonly selected: boolean;
-  readonly tableCell?: boolean;
-  readonly view: DriveView;
-}) {
-  const Icon = iconForItem(item);
-  const isFolder = "itemCount" in item;
-  const iconKind = driveFileIconKind(item);
-  const openItem = () => {
-    if (isFolder && !item.trashed) {
-      onOpenFolder(item.id);
-      return;
-    }
-    if (!isFolder && item.kind === "document" && !item.trashed) {
-      onOpenDocument(item.id);
-      return;
-    }
-    onPreview(item.id);
-  };
-
-  return (
-    <article
-      className={selected ? "drive-item selected" : "drive-item"}
-      role={tableCell ? "cell" : undefined}
-    >
-      <label className="drive-item-check" aria-label={`Select ${item.name}`}>
-        <input
-          checked={selected}
-          onChange={() => onToggle(item.id)}
-          onClick={(event) => event.stopPropagation()}
-          type="checkbox"
-        />
-      </label>
-      <button className="drive-item-main" onClick={openItem} type="button">
-        <span className={`drive-item-icon ${isFolder ? "folder" : item.kind}`}>
-          <Icon
-            aria-hidden="true"
-            className="drive-file-icon"
-            {...(iconKind === null ? {} : { "data-kind": iconKind })}
-            size={view === "grid" ? 28 : 20}
-          />
-        </span>
-        <span className="drive-item-name">{item.name}</span>
-        <span className="drive-item-meta">{isFolder ? `${item.itemCount} items` : item.size}</span>
-        <span className="drive-item-meta">{item.owner}</span>
-        <span className="drive-item-meta">{item.updatedAt}</span>
-        {!isFolder && item.syncState === "local" ? (
-          <span className="drive-shared-pill">Offline/local</span>
-        ) : null}
-        {item.shared ? (
-          <span className="drive-shared-pill">
-            <Link2 aria-hidden="true" size={12} />
-            Shared
+      {/* Drop overlay */}
+      {isDragOver ? (
+        <div className="drive-drop-overlay" data-testid="drive-drop-overlay" aria-hidden="true">
+          <span className="drive-drop-overlay-icon">
+            <Icons.Upload size={40} />
           </span>
-        ) : null}
-      </button>
-      <button
-        className="icon-button"
-        aria-label={`Share ${item.name}`}
-        onClick={() => onShare(item.id)}
-        disabled={item.trashed}
-        type="button"
-      >
-        <MoreHorizontal aria-hidden="true" size={17} />
-      </button>
-    </article>
-  );
-}
-
-function PreviewPanel({
-  item,
-  onClose,
-  onOpenDocument,
-  onMove,
-  onShare,
-  onTrash,
-  suggestionContext,
-}: {
-  readonly item: DriveItem | undefined;
-  readonly onClose: () => void;
-  readonly onOpenDocument: (documentId: string) => void;
-  readonly onMove: (itemId: string) => void;
-  readonly onShare: (itemId: string) => void;
-  readonly onTrash: (itemId: string) => void;
-  readonly suggestionContext: DriveSuggestionContext | undefined;
-}) {
-  if (!item) {
-    return null;
-  }
-
-  const isFolder = "itemCount" in item;
-
-  return (
-    <section className="drive-preview-panel" aria-label="Preview panel">
-      <header>
-        <div>
-          <h2>{item.name}</h2>
-          <p>{isFolder ? `${item.itemCount} items` : item.mimeType}</p>
-          {!isFolder && item.syncState === "local" ? <p>Offline/local item</p> : null}
+          <span className="drive-drop-overlay-label">
+            Drop files to upload to {currentFolderName}
+          </span>
         </div>
-        <button className="icon-button" aria-label="Close preview" onClick={onClose} type="button">
-          <X aria-hidden="true" size={17} />
-        </button>
-      </header>
-      <div className="drive-preview-frame">
-        {isFolder ? <FolderPreview folder={item} /> : renderPreview(item)}
-      </div>
-      {!isFolder && item.kind === "image" ? (
-        <SuggestionSlot
-          className="drive-suggestion-slot"
-          context={suggestionContext}
-          emptyFallback={<div className="drive-suggestion-empty">No image description</div>}
-          loadingFallback={<div className="drive-suggestion-empty">Loading image description</div>}
-          slotId="drive.describe-image"
-        />
       ) : null}
-      {!isFolder ? (
-        <SuggestionSlot
-          className="drive-suggestion-slot"
-          context={suggestionContext}
-          emptyFallback={<div className="drive-suggestion-empty">No file summary</div>}
-          loadingFallback={<div className="drive-suggestion-empty">Loading file summary</div>}
-          slotId="drive.summarize-file"
-        />
-      ) : null}
-      <dl className="drive-preview-meta">
-        <div>
-          <dt>Owner</dt>
-          <dd>{item.owner}</dd>
-        </div>
-        <div>
-          <dt>Updated</dt>
-          <dd>{item.updatedAt}</dd>
-        </div>
-        <div>
-          <dt>Sharing</dt>
-          <dd>{item.shared ? "Shared" : "Private"}</dd>
-        </div>
-      </dl>
-      <div className="drive-preview-actions">
-        <button
-          className="helix-button helix-button-secondary"
-          disabled={item.trashed || isFolder}
-          onClick={() => {
-            if (!isFolder && item.kind === "document") {
-              onOpenDocument(item.id);
-            }
-          }}
-          type="button"
-        >
-          {isFolder || item.kind !== "document" ? (
-            <Download aria-hidden="true" size={16} />
-          ) : (
-            <FileText aria-hidden="true" size={16} />
-          )}
-          {isFolder || item.kind !== "document" ? "Download" : "Open in Docs"}
-        </button>
-        <button
-          className="helix-button helix-button-secondary"
-          disabled={item.trashed}
-          onClick={() => onMove(item.id)}
-          type="button"
-        >
-          <MoveRight aria-hidden="true" size={16} />
-          Move
-        </button>
-        <button
-          className="helix-button"
-          disabled={item.trashed}
-          onClick={() => onShare(item.id)}
-          type="button"
-        >
-          <Share2 aria-hidden="true" size={16} />
-          Share
-        </button>
-        <button
-          className="helix-button helix-button-destructive"
-          disabled={item.trashed}
-          onClick={() => onTrash(item.id)}
-          type="button"
-        >
-          <Trash2 aria-hidden="true" size={16} />
-          Trash
-        </button>
-      </div>
-    </section>
-  );
-}
 
-function DriveDocumentEditorPanel({
-  documentId,
-  onClose,
-}: {
-  readonly documentId: string;
-  readonly onClose: () => void;
-}) {
-  return (
-    <section className="drive-docs-panel" aria-label="Document editor">
-      <button className="icon-button drive-docs-close" aria-label="Close document" onClick={onClose} type="button">
-        <X aria-hidden="true" size={17} />
-      </button>
-      <DocsShell initialDocumentId={documentId} variant="drive-embedded" />
-    </section>
-  );
-}
-
-function driveSuggestionContextForFile(
-  file: DriveFile,
-  breadcrumbs: readonly DriveFolder[],
-): DriveSuggestionContext {
-  const previewText = file.preview?.kind === "text" ? file.preview.text : file.previewText;
-  const imageUrl = file.preview?.kind === "image" ? file.preview.url : file.previewUrl;
-  return {
-    routePath: "/drive",
-    resource: {
-      id: file.id,
-      type: "drive.file",
-      label: file.name,
-    },
-    classification: "standard",
-    input: previewText ?? file.name,
-    metadata: {
-      name: file.name,
-      mimeType: file.mimeType,
-      kind: file.kind,
-      path: [...breadcrumbs.map((folder) => folder.name), file.name],
-      previewText,
-      imageUrl,
-      owner: file.owner,
-      shared: file.shared,
-      trashed: file.trashed,
-      updatedAt: file.updatedAt,
-      syncState: file.syncState,
-    },
-  };
-}
-
-function FolderPreview({ folder }: { readonly folder: DriveFolder }) {
-  return (
-    <div className="drive-folder-preview">
-      <Folder aria-hidden="true" size={42} />
-      <strong>{folder.name}</strong>
-      <span>{folder.itemCount} items</span>
-    </div>
-  );
-}
-
-function renderPreview(file: DriveFile): ReactNode {
-  if (file.syncState === "local" && file.preview === undefined && file.previewUrl === undefined) {
-    return (
-      <div className="drive-preview-office">
-        <File aria-hidden="true" size={40} />
-        <strong>Offline/local file</strong>
-        <span>This upload is visible locally until the Drive backend accepts it.</span>
-      </div>
-    );
-  }
-  if (file.preview?.status === "available") {
-    if (file.preview.kind === "image" && file.preview.url !== undefined) {
-      return <img alt="" className="drive-preview-image" src={file.preview.url} />;
-    }
-    if (file.preview.kind === "pdf" && file.preview.url !== undefined) {
-      return <iframe className="drive-preview-pdf" src={file.preview.url} title={file.name} />;
-    }
-    if (file.preview.kind === "text" && file.preview.text !== undefined) {
-      return <pre className="drive-preview-text">{file.preview.text}</pre>;
-    }
-  }
-  if (file.preview?.status === "unsupported") {
-    return (
-      <div className="drive-preview-office">
-        <FileText aria-hidden="true" size={40} />
-        <strong>No generated preview</strong>
-        <span>{file.preview.blocker ?? "This file can still be downloaded or shared."}</span>
-      </div>
-    );
-  }
-  if (file.kind === "image") {
-    return <img alt="" className="drive-preview-image" src={file.previewUrl} />;
-  }
-  if (file.kind === "pdf") {
-    return <iframe className="drive-preview-pdf" src={file.previewUrl} title={file.name} />;
-  }
-  if (file.kind === "video") {
-    return (
-      <div className="drive-preview-video">
-        <video controls preload="metadata" />
-        <div>
-          <Play aria-hidden="true" size={28} />
-          <span>Video preview renderer</span>
-        </div>
-      </div>
-    );
-  }
-  if (file.kind === "audio") {
-    return (
-      <div className="drive-preview-audio">
-        <AudioLines aria-hidden="true" size={36} />
-        <audio controls preload="metadata" />
-      </div>
-    );
-  }
-  if (file.kind === "text") {
-    return <pre className="drive-preview-text">{file.previewText}</pre>;
-  }
-  if (file.kind === "document") {
-    return (
-      <div className="drive-preview-office">
-        <FileText aria-hidden="true" size={40} />
-        <strong>Helix Docs document</strong>
-        <span>{file.previewText ?? "Open this Drive-backed document in Docs to edit it."}</span>
-      </div>
-    );
-  }
-  if (file.kind === "office") {
-    return (
-      <div className="drive-preview-office">
-        <FileText aria-hidden="true" size={40} />
-        <strong>LibreOffice PDF conversion queued</strong>
-        <span>{file.previewText}</span>
-      </div>
-    );
-  }
-  return (
-    <div className="drive-preview-office">
-      <FileArchive aria-hidden="true" size={40} />
-      <strong>No first-party preview</strong>
-      <span>This file can still be downloaded or shared.</span>
-    </div>
-  );
-}
-
-function ShareDialog({
-  itemNames,
-  onClose,
-  onShare,
-  targets,
-}: {
-  readonly itemNames: readonly string[];
-  readonly onClose: () => void;
-  readonly onShare: (target: ShareTarget) => void;
-  readonly targets: readonly ShareTarget[];
-}) {
-  const shareForm = useForm({
-    defaultValues: {
-      label: "",
-      permission: "viewer" as ShareTarget["permission"],
-    },
-    onSubmit: ({ value }) => {
-      const trimmed = value.label.trim();
-      if (!trimmed) {
-        return;
-      }
-      onShare({ id: `target-${Date.now()}`, label: trimmed, permission: value.permission });
-    },
-  });
-
-  const submit = () => {
-    void shareForm.handleSubmit();
-  };
-
-  return (
-    <div className="helix-dialog-backdrop" role="presentation">
-      <form
-        className="helix-dialog drive-dialog"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
-        aria-labelledby="drive-share-title"
-      >
-        <header>
-          <h2 id="drive-share-title">Share</h2>
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 16, gap: 12 }}>
+        <DriveBreadcrumb scope={scope} trail={trail} onNavigate={onNavigateCrumb} />
+        <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
           <button
-            className="icon-button"
-            aria-label="Close share dialog"
-            onClick={onClose}
             type="button"
+            aria-label="Grid view"
+            aria-pressed={view === "grid"}
+            className={`btn sm ${view === "grid" ? "primary" : ""}`}
+            onClick={() => onViewChange("grid")}
           >
-            <X aria-hidden="true" size={17} />
+            <Icons.Grid />
           </button>
-        </header>
-        <p>{itemNames.length === 1 ? itemNames[0] : `${itemNames.length} selected items`}</p>
-        <shareForm.Field
-          name="label"
-          validators={{
-            onChange: validateWith(shareLabelSchema),
-            onSubmit: validateWith(shareLabelSchema),
+          <button
+            type="button"
+            aria-label="List view"
+            aria-pressed={view === "list"}
+            className={`btn sm ${view === "list" ? "primary" : ""}`}
+            onClick={() => onViewChange("list")}
+          >
+            <Icons.List />
+          </button>
+          <button type="button" className="btn sm">
+            <Icons.Filter />
+            Filter
+          </button>
+        </div>
+      </div>
+
+      {uploadError !== null ? (
+        <div
+          role="alert"
+          style={{
+            fontSize: 12,
+            color: "var(--danger, #dc2626)",
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            padding: "8px 12px",
+            marginBottom: 12,
           }}
         >
-          {(field) => (
-            <label className="drive-field">
-              <span>People or groups</span>
-              <input
-                aria-describedby="drive-share-label-error"
-                aria-invalid={field.state.meta.errors.length > 0}
-                onChange={(event) => field.handleChange(event.target.value)}
-                placeholder="name@company.com or Team"
-                value={field.state.value}
-              />
-              <FieldErrors id="drive-share-label-error" errors={field.state.meta.errors} />
-            </label>
-          )}
-        </shareForm.Field>
-        <shareForm.Field
-          name="permission"
-          validators={{
-            onChange: validateWith(sharePermissionSchema),
-            onSubmit: validateWith(sharePermissionSchema),
-          }}
-        >
-          {(field) => (
-            <label className="drive-field">
-              <span>Permission</span>
-              <select
-                aria-describedby="drive-share-permission-error"
-                aria-invalid={field.state.meta.errors.length > 0}
-                onChange={(event) =>
-                  field.handleChange(event.target.value as ShareTarget["permission"])
-                }
-                value={field.state.value}
+          Upload failed: {uploadError.message}
+        </div>
+      ) : null}
+
+      {error !== null ? (
+        <DriveErrorState message={error.message} onRetry={onRetry} />
+      ) : loading ? (
+        <DriveLoadingState />
+      ) : isEmpty ? (
+        <DriveEmptyState scope={scope} onUpload={onUpload} />
+      ) : (
+        <>
+          {folders.length > 0 ? (
+            <>
+              <div className="section-label" style={{ padding: "0 0 8px" }}>
+                Folders
+              </div>
+              <div style={{ ...TILE_GRID, gap: 8, marginBottom: 24 }}>
+                {folders.map((folder) => (
+                  <button
+                    key={folder.id}
+                    type="button"
+                    onClick={() => onOpenFolder(folder)}
+                    style={{
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 6,
+                      padding: "10px 12px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      textAlign: "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Icons.Folder />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="truncate" style={{ fontSize: 12, fontWeight: 500 }}>
+                        {folder.name}
+                      </div>
+                      <div style={{ fontSize: 10, color: "var(--text-3)" }}>
+                        {folder.itemCount > 0 ? `${String(folder.itemCount)} items` : "Open folder"}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
+
+          <div className="section-label" style={{ padding: "0 0 8px" }}>
+            Files
+          </div>
+          {gridFiles.length === 0 && view === "grid" ? (
+            <div style={{ fontSize: 12, color: "var(--text-3)", padding: "8px 0" }}>
+              No files here yet.
+            </div>
+          ) : view === "grid" ? (
+            <div style={{ ...TILE_GRID, gap: 12 }}>
+              {gridFiles.map((file) => (
+                <DriveFileCard
+                  key={file.id}
+                  file={file}
+                  selected={file.id === selectedFileId}
+                  onSelect={() => onSelectFile(file.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="panel">
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: LIST_COLUMNS,
+                  padding: "0 16px",
+                  height: 32,
+                  alignItems: "center",
+                  fontSize: 11,
+                  color: "var(--text-3)",
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: ".06em",
+                  borderBottom: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                }}
               >
-                <option value="viewer">Viewer</option>
-                <option value="commenter">Commenter</option>
-                <option value="editor">Editor</option>
-              </select>
-              <FieldErrors id="drive-share-permission-error" errors={field.state.meta.errors} />
-            </label>
+                <span>Name</span>
+                <span>Owner</span>
+                <span>Modified</span>
+                <span>Size</span>
+                <span />
+              </div>
+              {files.map((file) => (
+                <DriveFileRow
+                  key={file.id}
+                  file={file}
+                  selected={file.id === selectedFileId}
+                  onSelect={() => onSelectFile(file.id)}
+                  onOpenFolder={() => onOpenFolder({ id: file.id, name: file.name, itemCount: 0 })}
+                />
+              ))}
+            </div>
           )}
-        </shareForm.Field>
-        <div className="drive-share-list">
-          {targets.map((target) => (
-            <div key={target.id}>
-              <ShieldCheck aria-hidden="true" size={15} />
-              <span>{target.label}</span>
-              <strong>{target.permission}</strong>
+        </>
+      )}
+
+      {/* Floating Action Button (+ FAB) — bottom-right, same menu as the sidebar "New" button */}
+      <div className="drive-fab-wrapper">
+        {fabMenuOpen ? (
+          <>
+            {/* Backdrop to close FAB menu on outside click */}
+            <div
+              aria-hidden="true"
+              style={{ position: "fixed", inset: 0, zIndex: 99 }}
+              onClick={() => setFabMenuOpen(false)}
+            />
+            <div
+              role="menu"
+              className="drive-fab-menu"
+              data-testid="drive-fab-menu"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setFabMenuOpen(false);
+                }
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(() => onNewItem("folder"))}
+              >
+                <Icons.Folder />
+                New folder
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(() => onNewItem("document"))}
+              >
+                <Icons.Doc />
+                Document
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(() => onNewItem("spreadsheet"))}
+              >
+                <Icons.Sheet />
+                Spreadsheet
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(() => onNewItem("presentation"))}
+              >
+                <Icons.Image />
+                Presentation
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(onUpload)}
+              >
+                <Icons.Upload />
+                Upload file
+              </button>
+            </div>
+          </>
+        ) : null}
+        <button
+          type="button"
+          className="drive-fab"
+          data-testid="drive-fab"
+          aria-label="New"
+          aria-haspopup="menu"
+          aria-expanded={fabMenuOpen}
+          disabled={busy}
+          onClick={() => setFabMenuOpen((prev) => !prev)}
+        >
+          <Icons.Plus size={24} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DriveLoadingState() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{ fontSize: 12, color: "var(--text-3)", padding: "32px 0" }}
+    >
+      Loading Drive…
+    </div>
+  );
+}
+
+function DriveErrorState({
+  message,
+  onRetry,
+}: {
+  readonly message: string;
+  readonly onRetry: () => void;
+}) {
+  return (
+    <div
+      role="alert"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 10,
+        padding: "32px 0",
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 600 }}>Couldn’t load Drive</div>
+      <div style={{ fontSize: 12, color: "var(--text-3)" }}>{message}</div>
+      <button type="button" className="btn sm" onClick={onRetry}>
+        Try again
+      </button>
+    </div>
+  );
+}
+
+function DriveEmptyState({
+  scope,
+  onUpload,
+}: {
+  readonly scope: DriveScope;
+  readonly onUpload: () => void;
+}) {
+  const copy: Record<DriveScope, string> = {
+    my: "This folder is empty. Upload a file to get started.",
+    shared: "Nothing has been shared with you yet.",
+    recent: "No recent files.",
+    starred: "No starred files yet.",
+    trash: "Trash is empty.",
+  };
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 12,
+        padding: "48px 0",
+        color: "var(--text-3)",
+      }}
+    >
+      <Icons.Drive size={40} />
+      <div style={{ fontSize: 13 }}>{copy[scope]}</div>
+      {scope === "my" ? (
+        <button type="button" className="btn sm primary" onClick={onUpload}>
+          <Icons.Upload />
+          Upload a file
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function DriveFileCard({
+  file,
+  selected,
+  onSelect,
+}: {
+  readonly file: DriveFileItem;
+  readonly selected: boolean;
+  readonly onSelect: () => void;
+}) {
+  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
+  const meta = appMeta ?? DRIVE_FILE_META[file.type];
+  const FileIcon = Icons[meta.icon];
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      style={{
+        background: "var(--surface)",
+        border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+        borderRadius: 8,
+        padding: 0,
+        display: "flex",
+        flexDirection: "column",
+        textAlign: "left",
+        overflow: "hidden",
+        boxShadow: selected ? "0 0 0 3px var(--accent-soft)" : "none",
+      }}
+    >
+      <div
+        style={{
+          aspectRatio: "4 / 3",
+          background: "var(--surface-2)",
+          display: "grid",
+          placeItems: "center",
+          color: meta.color,
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <FileIcon size={36} />
+      </div>
+      <div style={{ padding: 10 }}>
+        <div className="truncate" style={{ fontSize: 12, fontWeight: 500, marginBottom: 4 }}>
+          {file.name}
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            color: "var(--text-3)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <Avatar name={file.owner} size={14} />
+          <span className="truncate">{file.modified}</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function DriveFileRow({
+  file,
+  selected,
+  onSelect,
+  onOpenFolder,
+}: {
+  readonly file: DriveFileItem;
+  readonly selected: boolean;
+  readonly onSelect: () => void;
+  readonly onOpenFolder: () => void;
+}) {
+  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
+  const meta = appMeta ?? DRIVE_FILE_META[file.type];
+  const FileIcon = Icons[meta.icon];
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={file.type === "folder" ? onOpenFolder : onSelect}
+      style={{
+        display: "grid",
+        gridTemplateColumns: LIST_COLUMNS,
+        padding: "0 16px",
+        height: 36,
+        alignItems: "center",
+        fontSize: 12,
+        width: "100%",
+        textAlign: "left",
+        background: selected ? "var(--accent-soft)" : "transparent",
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      <div className="row gap-2">
+        <span style={{ color: meta.color, display: "inline-flex" }}>
+          <FileIcon />
+        </span>
+        <span className="truncate">{file.name}</span>
+      </div>
+      <div className="row gap-2">
+        <Avatar name={file.owner} size={18} />
+        <span className="truncate">{file.owner}</span>
+      </div>
+      <span style={{ color: "var(--text-2)" }}>{file.modified}</span>
+      <span style={{ color: "var(--text-2)" }}>{file.size}</span>
+      <span
+        className="icon-btn"
+        role="presentation"
+        aria-hidden="true"
+        style={{ display: "inline-flex" }}
+      >
+        <Icons.MoreV />
+      </span>
+    </button>
+  );
+}
+
+function DriveDetailsPanel({
+  file,
+  entry,
+  ownerName,
+  currentActorId,
+  isTrash,
+  inSubfolder,
+  busy,
+  actionError,
+  onClose,
+  onTrash,
+  onRestore,
+  onDelete,
+  onMoveToParent,
+  onShare,
+  shareDone,
+}: {
+  readonly file: DriveFileItem;
+  readonly entry: DriveApiEntry | null;
+  readonly ownerName: string;
+  readonly currentActorId: string | null;
+  readonly isTrash: boolean;
+  readonly inSubfolder: boolean;
+  readonly busy: boolean;
+  readonly actionError: Error | null;
+  readonly onClose: () => void;
+  readonly onTrash: (id: string) => void;
+  readonly onRestore: (id: string) => void;
+  readonly onDelete: (id: string) => void;
+  readonly onMoveToParent: (id: string) => void;
+  readonly onShare: (id: string, actorIds: readonly string[]) => void;
+  readonly shareDone: boolean;
+}) {
+  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
+  const meta = appMeta ?? DRIVE_FILE_META[file.type];
+  const FileIcon = Icons[meta.icon];
+  const [shareInput, setShareInput] = useState("");
+
+  // Owner label: when the entry is owned by the current actor, show the
+  // session display name; otherwise show the raw owner actor id.
+  const ownerLabel =
+    entry?.ownerActorId === null || entry?.ownerActorId === currentActorId
+      ? ownerName
+      : (entry?.ownerActorId ?? file.owner);
+
+  // Recent activity from real entry timestamps.
+  const activity = useMemo<
+    ReadonlyArray<{ readonly who: string; readonly what: string; readonly time: string }>
+  >(() => {
+    if (entry === null) {
+      return [{ who: file.owner, what: "edited", time: file.modified }];
+    }
+    const items: Array<{ who: string; what: string; time: string }> = [
+      { who: ownerLabel, what: "edited", time: formatModified(entry.updatedAt) },
+      { who: ownerLabel, what: "created", time: formatModified(entry.createdAt) },
+    ];
+    if (entry.deletedAt !== null) {
+      items.unshift({ who: ownerLabel, what: "moved to trash", time: formatModified(entry.deletedAt) });
+    }
+    return items;
+  }, [entry, ownerLabel, file.owner, file.modified]);
+
+  const download = entry === null ? null : driveDownloadResult(entry);
+
+  const onShareSubmit = () => {
+    const ids = shareInput
+      .split(/[\s,]+/)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    if (ids.length > 0) {
+      onShare(file.id, ids);
+      setShareInput("");
+    }
+  };
+
+  return (
+    <aside
+      aria-label="File details"
+      style={{
+        width: 320,
+        flexShrink: 0,
+        borderLeft: "1px solid var(--border)",
+        background: "var(--surface)",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div
+        style={{
+          padding: "10px 14px",
+          display: "flex",
+          alignItems: "center",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <span className="truncate" style={{ fontSize: 13, fontWeight: 600 }}>
+          Details
+        </span>
+        <button
+          type="button"
+          aria-label="Close details"
+          className="icon-btn"
+          style={{ marginLeft: "auto" }}
+          onClick={onClose}
+        >
+          <Icons.X />
+        </button>
+      </div>
+      <div style={{ overflowY: "auto", flex: 1 }}>
+        <div
+          style={{
+            aspectRatio: "4 / 3",
+            background: "var(--surface-2)",
+            display: "grid",
+            placeItems: "center",
+            color: meta.color,
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          {entry?.preview?.kind === "image" && entry.preview.url !== undefined ? (
+            <img
+              src={entry.preview.url}
+              alt={file.name}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          ) : (
+            <FileIcon size={56} />
+          )}
+        </div>
+        <div style={{ padding: "12px 14px" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, wordBreak: "break-word" }}>
+            {file.name}
+          </div>
+          <div
+            className="row gap-2"
+            style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 12 }}
+          >
+            <span style={{ textTransform: "uppercase" }}>{file.type}</span>
+            <span>·</span>
+            <span>{file.size}</span>
+          </div>
+
+          {actionError !== null ? (
+            <div
+              role="alert"
+              style={{
+                fontSize: 11,
+                color: "var(--danger, #dc2626)",
+                marginBottom: 10,
+              }}
+            >
+              {actionError.message}
+            </div>
+          ) : null}
+
+          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+            <a
+              className="btn sm primary"
+              href={download?.url ?? "#"}
+              target="_blank"
+              rel="noreferrer"
+              aria-disabled={download === null}
+              style={{ flex: 1, justifyContent: "center" }}
+            >
+              <Icons.Eye />
+              Open
+            </a>
+            <a
+              className="btn sm"
+              href={download?.url ?? "#"}
+              download={download?.name}
+              aria-disabled={download === null}
+              style={{ flex: 1, justifyContent: "center" }}
+            >
+              <Icons.Download />
+              Download
+            </a>
+          </div>
+
+          {isTrash ? (
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+              <button
+                type="button"
+                className="btn sm"
+                style={{ flex: 1 }}
+                disabled={busy}
+                onClick={() => onRestore(file.id)}
+              >
+                <Icons.History />
+                Restore
+              </button>
+              <button
+                type="button"
+                className="btn sm"
+                style={{ flex: 1, color: "var(--danger, #dc2626)" }}
+                disabled={busy}
+                onClick={() => onDelete(file.id)}
+              >
+                <Icons.Trash />
+                Delete forever
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+              {inSubfolder ? (
+                <button
+                  type="button"
+                  className="btn sm"
+                  style={{ flex: 1 }}
+                  disabled={busy}
+                  onClick={() => onMoveToParent(file.id)}
+                >
+                  <Icons.ArrowLeft />
+                  Move up
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn sm"
+                style={{ flex: 1, color: "var(--danger, #dc2626)" }}
+                disabled={busy}
+                onClick={() => onTrash(file.id)}
+              >
+                <Icons.Trash />
+                Move to trash
+              </button>
+            </div>
+          )}
+
+          <div className="section-label" style={{ padding: "8px 0 4px" }}>
+            Owner
+          </div>
+          <div
+            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 12 }}
+          >
+            <Avatar name={ownerLabel} size={24} />
+            <span className="truncate">{ownerLabel}</span>
+          </div>
+          <div className="section-label" style={{ padding: "8px 0 4px" }}>
+            Modified
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 12 }}>
+            {entry !== null ? formatModified(entry.updatedAt) : file.modified}
+          </div>
+
+          {!isTrash ? (
+            <>
+              <div className="section-label" style={{ padding: "8px 0 6px" }}>
+                Share
+              </div>
+              <input
+                className="input"
+                value={shareInput}
+                onChange={(event) => setShareInput(event.target.value)}
+                placeholder="Actor ID(s) to share with"
+                style={{ width: "100%", fontSize: 12, marginBottom: 6 }}
+              />
+              <button
+                type="button"
+                className="btn sm"
+                style={{ width: "100%" }}
+                disabled={busy || shareInput.trim().length === 0}
+                onClick={onShareSubmit}
+              >
+                <Icons.Users />
+                Share
+              </button>
+              {shareDone ? (
+                <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 6 }}>
+                  Access granted.
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          <div className="section-label" style={{ padding: "16px 0 6px" }}>
+            Recent activity
+          </div>
+          {activity.map((item) => (
+            <div
+              key={`${item.who}-${item.what}-${item.time}`}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "4px 0",
+                fontSize: 11,
+              }}
+            >
+              <Avatar name={item.who} size={18} />
+              <span className="truncate">
+                <b style={{ fontWeight: 500 }}>{item.who}</b> {item.what}
+              </span>
+              <span style={{ marginLeft: "auto", color: "var(--text-3)" }}>{item.time}</span>
             </div>
           ))}
         </div>
-        <div className="helix-dialog-actions">
-          <button className="helix-button helix-button-secondary" onClick={onClose} type="button">
-            Cancel
-          </button>
-          <button className="helix-button" type="submit">
-            <Share2 aria-hidden="true" size={16} />
-            Share
-          </button>
-        </div>
-      </form>
-    </div>
+      </div>
+    </aside>
   );
-}
-
-function validateWith<T>(schema: z.ZodType<T>) {
-  return ({ value }: { readonly value: unknown }) => {
-    const result = schema.safeParse(value);
-    return result.success ? undefined : result.error.issues[0]?.message;
-  };
-}
-
-function FieldErrors({ errors, id }: { readonly errors: readonly unknown[]; readonly id: string }) {
-  const messages = errors.filter((error): error is string => typeof error === "string");
-  return messages.length === 0 ? null : (
-    <span id={id} role="alert">
-      {messages.join(" ")}
-    </span>
-  );
-}
-
-function MoveDialog({
-  folders,
-  itemNames,
-  onClose,
-  onMove,
-}: {
-  readonly folders: readonly DriveFolder[];
-  readonly itemNames: readonly string[];
-  readonly onClose: () => void;
-  readonly onMove: (folderId: string) => void;
-}) {
-  const [targetFolderId, setTargetFolderId] = useState(rootFolderId);
-
-  return (
-    <div className="helix-dialog-backdrop" role="presentation">
-      <section className="helix-dialog drive-dialog" aria-labelledby="drive-move-title">
-        <header>
-          <h2 id="drive-move-title">Move</h2>
-          <button
-            className="icon-button"
-            aria-label="Close move dialog"
-            onClick={onClose}
-            type="button"
-          >
-            <X aria-hidden="true" size={17} />
-          </button>
-        </header>
-        <p>{itemNames.length === 1 ? itemNames[0] : `${itemNames.length} selected items`}</p>
-        <div className="drive-move-targets" role="listbox" aria-label="Destination folder">
-          {folders.map((folder) => (
-            <button
-              className={targetFolderId === folder.id ? "active" : ""}
-              key={folder.id}
-              onClick={() => setTargetFolderId(folder.id)}
-              type="button"
-            >
-              <Folder aria-hidden="true" size={16} />
-              <span>{folder.name}</span>
-              {targetFolderId === folder.id ? <Check aria-hidden="true" size={15} /> : null}
-            </button>
-          ))}
-        </div>
-        <div className="helix-dialog-actions">
-          <button className="helix-button helix-button-secondary" onClick={onClose} type="button">
-            Cancel
-          </button>
-          <button className="helix-button" onClick={() => onMove(targetFolderId)} type="button">
-            <FolderInput aria-hidden="true" size={16} />
-            Move here
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function buildBreadcrumbs(
-  folders: readonly DriveFolder[],
-  folderId: string,
-): readonly DriveFolder[] {
-  const byId = new Map(folders.map((folder) => [folder.id, folder]));
-  const path: DriveFolder[] = [];
-  let cursor: DriveFolder | undefined = byId.get(folderId);
-  while (cursor) {
-    path.unshift(cursor);
-    cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined;
-  }
-  return path.length > 0 ? path : folders.filter((folder) => folder.id === rootFolderId);
-}
-
-type DriveFileIconKind = "folder" | "doc" | "sheet" | "slide";
-
-/**
- * Resolves the color-coded icon kind for a Drive row, mirroring Google Drive's
- * type-based icon coloring. Generic files return null so the icon falls through
- * to the default muted color.
- */
-function driveFileIconKind(item: DriveItem): DriveFileIconKind | null {
-  if ("itemCount" in item) {
-    return "folder";
-  }
-  const mimeType = item.mimeType;
-  if (
-    mimeType.includes("spreadsheet") ||
-    mimeType === "application/vnd.ms-excel"
-  ) {
-    return "sheet";
-  }
-  if (
-    mimeType.includes("presentation") ||
-    mimeType === "application/vnd.ms-powerpoint"
-  ) {
-    return "slide";
-  }
-  if (
-    mimeType === "application/vnd.helix.document" ||
-    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    mimeType === "application/msword" ||
-    item.kind === "document"
-  ) {
-    return "doc";
-  }
-  return null;
-}
-
-const driveFileIconByKind: Readonly<Record<DriveFileIconKind, LucideIcon>> = {
-  folder: Folder,
-  doc: FileText,
-  sheet: Grid2X2,
-  slide: Play,
-};
-
-function iconForItem(item: DriveItem): LucideIcon {
-  const iconKind = driveFileIconKind(item);
-  if (iconKind !== null) {
-    return driveFileIconByKind[iconKind];
-  }
-  if ("itemCount" in item) {
-    return Folder;
-  }
-  if (item.kind === "image") {
-    return FileImage;
-  }
-  if (item.kind === "video") {
-    return FileVideo;
-  }
-  if (item.kind === "audio") {
-    return AudioLines;
-  }
-  if (
-    item.kind === "text" ||
-    item.kind === "pdf" ||
-    item.kind === "document" ||
-    item.kind === "office"
-  ) {
-    return FileText;
-  }
-  return File;
-}
-
-function kindFromMime(mimeType: string, name: string): DrivePreviewKind {
-  const lowerName = name.toLowerCase();
-  if (mimeType.startsWith("image/")) {
-    return "image";
-  }
-  if (mimeType === "application/pdf") {
-    return "pdf";
-  }
-  if (mimeType.startsWith("video/")) {
-    return "video";
-  }
-  if (mimeType.startsWith("audio/")) {
-    return "audio";
-  }
-  if (mimeType.startsWith("text/") || lowerName.endsWith(".md")) {
-    return "text";
-  }
-  if (mimeType === "application/vnd.helix.document" || lowerName.endsWith(".helixdoc")) {
-    return "document";
-  }
-  if (
-    [
-      ".doc",
-      ".docx",
-      ".gslides",
-      ".gsheet",
-      ".ppt",
-      ".pptx",
-      ".xls",
-      ".xlsx",
-      ".odt",
-      ".ods",
-      ".odp",
-    ].some((extension) => lowerName.endsWith(extension))
-  ) {
-    return "office";
-  }
-  if (lowerName.endsWith(".zip")) {
-    return "archive";
-  }
-  return "archive";
-}
-
-function folderFromEntry(entry: DriveApiEntry): DriveFolder {
-  return {
-    id: entry.id,
-    name: entry.name,
-    parentId: entry.folderId ?? rootFolderId,
-    itemCount: 0,
-    updatedAt: formatTimestamp(entry.updatedAt),
-    owner: entry.ownerActorId ?? "Unknown owner",
-    shared: false,
-    trashed: entry.deletedAt !== null,
-  };
-}
-
-function rootFolder(): DriveFolder {
-  return rootDriveFolder;
-}
-
-function isSheetFile(file: DriveFile): boolean {
-  const lowerName = file.name.toLowerCase();
-  return (
-    file.mimeType.includes("spreadsheet") ||
-    lowerName.endsWith(".gsheet") ||
-    lowerName.endsWith(".xls") ||
-    lowerName.endsWith(".xlsx") ||
-    lowerName.endsWith(".ods")
-  );
-}
-
-function isSlideFile(file: DriveFile): boolean {
-  const lowerName = file.name.toLowerCase();
-  return (
-    file.mimeType.includes("presentation") ||
-    lowerName.endsWith(".gslides") ||
-    lowerName.endsWith(".ppt") ||
-    lowerName.endsWith(".pptx") ||
-    lowerName.endsWith(".odp")
-  );
-}
-
-function currentFolderIdForRoute(folderId: string): string | null {
-  return folderId === rootFolderId ? null : folderId;
-}
-
-function clientOnlyFilesForFolder(
-  files: readonly DriveFile[],
-  folderId: string,
-): readonly DriveFile[] {
-  return files.filter(
-    (file) =>
-      file.parentId === folderId &&
-      (file.syncState === "local" || file.mimeType === "application/vnd.helix.document"),
-  );
-}
-
-function fileFromEntry(entry: DriveApiEntry): DriveFile {
-  const mimeType = entry.mimeType ?? "application/octet-stream";
-  const preview = entry.preview ?? previewFromMetadata(mimeType, entry.metadata);
-  return {
-    id: entry.id,
-    name: entry.name,
-    parentId: entry.folderId ?? rootFolderId,
-    mimeType,
-    size: formatBytes(entry.byteSize ?? 0),
-    updatedAt: formatTimestamp(entry.updatedAt),
-    owner: entry.ownerActorId ?? "Unknown owner",
-    shared: false,
-    trashed: entry.deletedAt !== null,
-    kind: kindFromPreview(preview) ?? kindFromMime(mimeType, entry.name),
-    ...(preview === undefined ? {} : { preview }),
-    previewText: preview?.text ?? previewTextFromMetadata(entry.metadata),
-    previewUrl: preview?.url,
-  };
-}
-
-/**
- * Convert a locally-modeled Drive folder into the DriveApiEntry shape so it can
- * feed the suggestion-derivation helpers when the backend is offline.
- */
-function driveApiEntryFromFolder(folder: DriveFolder): DriveApiEntry {
-  return {
-    id: folder.id,
-    type: "folder",
-    name: folder.name,
-    folderId: folder.parentId === rootFolderId ? null : folder.parentId,
-    ownerActorId: folder.owner,
-    metadata: {},
-    deletedAt: folder.trashed ? new Date(0).toISOString() : null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-/**
- * Convert a locally-modeled Drive file into the DriveApiEntry shape for the
- * offline suggestion fallback.
- */
-function driveApiEntryFromFile(file: DriveFile): DriveApiEntry {
-  return {
-    id: file.id,
-    type: "file",
-    name: file.name,
-    folderId: file.parentId === rootFolderId ? null : file.parentId,
-    ownerActorId: file.owner,
-    mimeType: file.mimeType,
-    metadata: {},
-    deletedAt: file.trashed ? new Date(0).toISOString() : null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-async function uploadFileToBackend(file: File, folderId: string): Promise<DriveFile> {
-  const mimeType = file.type || "application/octet-stream";
-  const bytes = await file.arrayBuffer();
-  const sha256 = await sha256Hex(bytes);
-  const prepared = await prepareDriveUpload({
-    name: file.name,
-    folderId: folderId === rootFolderId ? null : folderId,
-    mimeType,
-    byteSize: file.size,
-    sha256,
-    metadata: { source: "web.drive-shell" },
-  });
-  if (prepared.uploadUrl !== null) {
-    const uploadResponse = await fetch(prepared.uploadUrl, {
-      method: "PUT",
-      headers: { "content-type": mimeType },
-      body: file,
-    });
-
-    if (!uploadResponse.ok) {
-      throw new Error(`Drive upload PUT failed with ${String(uploadResponse.status)}`);
-    }
-  }
-  const finalized = await finalizeDriveUpload({
-    objectId: prepared.objectId,
-    byteSize: file.size,
-    sha256,
-    mimeType,
-    storageKey: prepared.storageKey,
-    ...(prepared.uploadUrl === null ? { contentBase64: arrayBufferToBase64(bytes) } : {}),
-    metadata: { source: "web.drive-shell" },
-  });
-
-  return fileFromEntry({
-    id: prepared.objectId,
-    type: "file",
-    name: prepared.name,
-    folderId: prepared.folderId,
-    ownerActorId: prepared.ownerActorId,
-    mimeType: finalized.mimeType,
-    byteSize: finalized.byteSize,
-    sha256: finalized.sha256,
-    storageKey: finalized.storageKey,
-    versionNumber: finalized.versionNumber,
-    metadata: finalized.metadata,
-    deletedAt: null,
-    createdAt: finalized.createdAt,
-    updatedAt: finalized.createdAt,
-  });
-}
-
-function driveFileFromDocsDocument(document: DocsApiDocument, folderId = rootFolderId): DriveFile {
-  return {
-    id: document.id,
-    name: `${document.title}.helixdoc`,
-    parentId: folderId,
-    mimeType: "application/vnd.helix.document",
-    size: "Helix Doc",
-    updatedAt: formatTimestamp(document.updatedAt),
-    owner: document.ownerActorId ?? "Maya Chen",
-    shared: false,
-    trashed: document.deletedAt !== null,
-    kind: "document",
-    previewText: "Drive-backed collaborative document.",
-  };
-}
-
-function fileFromSearchHit(hit: DriveApiSearchHit): DriveFile {
-  const preview = hit.previewMetadata;
-  return {
-    id: hit.objectId,
-    name: hit.name,
-    parentId: hit.folderId ?? rootFolderId,
-    mimeType: hit.mimeType,
-    size: formatBytes(hit.byteSize),
-    updatedAt: formatTimestamp(hit.updatedAt),
-    owner: "Search result",
-    shared: false,
-    trashed: false,
-    kind: kindFromPreview(preview) ?? kindFromMime(hit.mimeType, hit.name),
-    ...(preview === undefined ? {} : { preview }),
-    previewText: preview?.text ?? hit.preview,
-    previewUrl: preview?.url,
-  };
-}
-
-function findDriveFile(
-  files: readonly DriveFile[],
-  fileId: string | undefined,
-): DriveFile | undefined {
-  return fileId === undefined ? undefined : files.find((file) => file.id === fileId);
-}
-
-function formatTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function previewTextFromMetadata(
-  metadata: Record<string, unknown> | undefined,
-): string | undefined {
-  if (metadata === undefined) {
-    return undefined;
-  }
-  return typeof metadata.previewText === "string" ? metadata.previewText : undefined;
-}
-
-function kindFromPreview(preview: DriveApiPreview | undefined): DrivePreviewKind | undefined {
-  if (preview === undefined || preview.kind === "unsupported") {
-    return undefined;
-  }
-  return preview.kind;
-}
-
-function previewFromMetadata(
-  mimeType: string,
-  metadata: Record<string, unknown> | undefined,
-): DriveApiPreview | undefined {
-  if (metadata === undefined) {
-    return undefined;
-  }
-  const preview = metadata.preview;
-  if (isRecord(preview)) {
-    const kind = preview.kind;
-    const status = preview.status;
-    if (
-      (kind === "text" ||
-        kind === "image" ||
-        kind === "pdf" ||
-        kind === "office" ||
-        kind === "unsupported") &&
-      (status === "available" || status === "unsupported")
-    ) {
-      return {
-        kind,
-        status,
-        mimeType: typeof preview.mimeType === "string" ? preview.mimeType : mimeType,
-        ...(typeof preview.text === "string" ? { text: preview.text } : {}),
-        ...(typeof preview.url === "string" ? { url: preview.url } : {}),
-        ...(typeof preview.previewUrl === "string" ? { url: preview.previewUrl } : {}),
-        ...(typeof preview.pageCount === "number" ? { pageCount: preview.pageCount } : {}),
-        ...(typeof preview.width === "number" ? { width: preview.width } : {}),
-        ...(typeof preview.height === "number" ? { height: preview.height } : {}),
-        ...(typeof preview.blocker === "string" ? { blocker: preview.blocker } : {}),
-        ...(typeof preview.generatedAt === "string" ? { generatedAt: preview.generatedAt } : {}),
-      };
-    }
-  }
-
-  if (typeof metadata.previewText === "string" && mimeType.startsWith("text/")) {
-    return { kind: "text", status: "available", mimeType, text: metadata.previewText };
-  }
-  const previewUrl =
-    typeof metadata.previewUrl === "string"
-      ? metadata.previewUrl
-      : typeof metadata.contentUrl === "string"
-        ? metadata.contentUrl
-        : undefined;
-  if (previewUrl !== undefined && mimeType.startsWith("image/")) {
-    return { kind: "image", status: "available", mimeType, url: previewUrl };
-  }
-  if (previewUrl !== undefined && mimeType === "application/pdf") {
-    return { kind: "pdf", status: "available", mimeType, url: previewUrl };
-  }
-  return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function arrayBufferToBase64(bytes: ArrayBuffer): string {
-  let binary = "";
-  for (const byte of new Uint8Array(bytes)) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
-}
-
-function isDriveItem(item: DriveItem | undefined): item is DriveItem {
-  return Boolean(item);
-}
-
-function isDriveFolder(item: DriveItem): item is DriveFolder {
-  return "itemCount" in item;
 }

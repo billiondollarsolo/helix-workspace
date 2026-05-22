@@ -956,6 +956,10 @@ class FakeDriveStore implements DriveStore {
       },
     ];
   }
+
+  async createFolder(): Promise<DriveEntryRecord> {
+    throw new Error("createFolder is not used by this test.");
+  }
 }
 
 class FakeChatStore implements ChatStore {

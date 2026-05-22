@@ -9,6 +9,8 @@ import type {
   CalendarEventRecord,
   CalendarEventStatus,
   CalendarFindTimeSlot,
+  CalendarListEntry,
+  CalendarMembershipRole,
   CalendarRecord,
   CalendarResponseStatus,
   CalendarSearchProjectionStore,
@@ -108,6 +110,15 @@ export interface CalendarStore {
     readonly password: string;
     readonly requiredScope: string;
   }): Promise<Actor | null>;
+  /**
+   * List the calendars an actor sees in their sidebar — calendars they own
+   * ("My calendars") plus calendars they are a member of ("Team") — with the
+   * actor's membership metadata (role, visibility, colour override).
+   */
+  listCalendarsForActor(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<readonly CalendarListEntry[]>;
 }
 
 interface CalendarRow {
@@ -122,6 +133,22 @@ interface CalendarRow {
   readonly deleted_at: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
+}
+
+interface CalendarMembershipRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly timezone: string;
+  readonly color: string | null;
+  readonly owner_actor_id: string;
+  readonly owner_display_name: string | null;
+  readonly color_override: string | null;
+  readonly visible: boolean;
+  readonly sort_order: number;
+  readonly role: CalendarMembershipRole;
+  readonly event_count: number;
 }
 
 interface EventRow {
@@ -534,6 +561,52 @@ export class PostgresCalendarStore implements CalendarStore, CalendarSearchProje
     }
     return null;
   }
+
+  async listCalendarsForActor(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<readonly CalendarListEntry[]> {
+    // Source of truth is `cal_calendar_memberships`, which carries an "owner"
+    // row for every calendar (materialised by migration 0021). Owned calendars
+    // are also picked up directly so a calendar created before the membership
+    // backfill — or by a path that has not yet written one — still appears.
+    const rows = (await this.sql`
+      with entries as (
+        select
+          c.id, c.org_id, c.name, c.description, c.timezone, c.color,
+          c.owner_actor_id,
+          m.role::text as role,
+          coalesce(m.visible, true) as visible,
+          m.color_override,
+          coalesce(m.sort_order, case when c.owner_actor_id = ${input.actorId} then 0 else 100 end) as sort_order
+        from cal_calendars c
+        left join cal_calendar_memberships m
+          on m.calendar_id = c.id and m.actor_id = ${input.actorId}
+        where c.org_id = ${input.orgId}
+          and c.deleted_at is null
+          and (c.owner_actor_id = ${input.actorId} or m.actor_id is not null)
+      )
+      select
+        e.id, e.org_id, e.name, e.description, e.timezone, e.color,
+        e.owner_actor_id,
+        e.color_override,
+        e.visible,
+        e.sort_order,
+        coalesce(
+          e.role,
+          case when e.owner_actor_id = ${input.actorId} then 'owner' else 'reader' end
+        ) as role,
+        a.display_name as owner_display_name,
+        coalesce((
+          select count(*)::int from cal_events ev
+          where ev.calendar_id = e.id and ev.deleted_at is null
+        ), 0) as event_count
+      from entries e
+      left join actors a on a.id = e.owner_actor_id
+      order by e.sort_order asc, lower(e.name) asc
+    `) as unknown as readonly CalendarMembershipRow[];
+    return rows.map((row) => mapCalendarListEntry(row, input.actorId));
+  }
 }
 
 async function ensureDefaultCalendar(
@@ -811,6 +884,32 @@ function mapCalendar(row: CalendarRow | undefined): CalendarRecord {
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+/** Default calendar colour when neither the calendar nor the membership sets one. */
+const DEFAULT_CALENDAR_COLOR = "#4f46e5";
+
+function mapCalendarListEntry(
+  row: CalendarMembershipRow,
+  actorId: string,
+): CalendarListEntry {
+  const writable = row.role === "owner" || row.role === "writer";
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    name: row.name,
+    description: row.description,
+    timezone: row.timezone,
+    color: row.color_override ?? row.color ?? DEFAULT_CALENDAR_COLOR,
+    ownerActorId: row.owner_actor_id,
+    ownerDisplayName: row.owner_display_name,
+    role: row.role,
+    visible: row.visible,
+    group: row.owner_actor_id === actorId ? "mine" : "team",
+    writable,
+    sortOrder: row.sort_order,
+    eventCount: row.event_count,
   };
 }
 

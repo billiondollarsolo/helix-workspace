@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   findCalendarTime,
   listCalendarEvents,
+  listCalendars,
   type CalendarFindTimeInput,
   type CalendarListEventsInput,
 } from "./api";
@@ -47,6 +48,9 @@ export const defaultCalendarRouteState = {
 } as const satisfies CalendarRouteState;
 
 export const calendarQueryKeys = {
+  /** Stable prefix for invalidating every events window query at once. */
+  eventsRoot: ["calendar", "events"] as const,
+  calendars: ["calendar", "calendars"] as const,
   findTime: (input: CalendarFindTimeInput = defaultCalendarFindTimeInput) =>
     [
       "calendar",
@@ -111,6 +115,14 @@ export function calendarEventsQueryOptions(
   return queryOptions({
     queryKey: calendarQueryKeys.events(input),
     queryFn: () => listCalendarEvents(input),
+    throwOnError: false,
+  });
+}
+
+export function calendarCalendarsQueryOptions() {
+  return queryOptions({
+    queryKey: calendarQueryKeys.calendars,
+    queryFn: () => listCalendars(),
     throwOnError: false,
   });
 }

@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
 import { registerDriveTools } from "./tools.js";
-import type { DriveStore, FinalizeDriveUploadInput, PrepareDriveUploadInput } from "./store.js";
+import type { DriveStore, DriveFolderCreateInput, FinalizeDriveUploadInput, PrepareDriveUploadInput } from "./store.js";
 import type { DriveEntryRecord, DriveSearchHit, DriveUploadRecord, DriveVersionRecord } from "./types.js";
+import type { DocsStore, CreateDocsDocumentInput } from "../docs/store.js";
+import type { DocsDocumentRecord } from "../docs/types.js";
+import type { SheetsStore, CreateSheetInput } from "../sheets/store.js";
+import type { SheetWithTabs } from "../sheets/types.js";
+import type { SlidesStore, CreateSlideDeckInput } from "../slides/store.js";
+import type { SlideDeckSummaryRecord } from "../slides/types.js";
+
+const plainFileId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const docsFileId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const sheetsFileId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const testFolderId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 const now = new Date("2026-05-20T12:00:00.000Z");
 const orgId = "11111111-1111-4111-8111-111111111111";
@@ -18,6 +29,7 @@ describe("drive tools", () => {
     registerDriveTools(registry, { store: new FakeDriveStore() });
 
     expect(registry.list().filter((tool) => tool.id.startsWith("drive.")).map((tool) => tool.id)).toEqual([
+      "drive.create",
       "drive.delete",
       "drive.finalize",
       "drive.list",
@@ -121,11 +133,281 @@ describe("drive tools", () => {
       },
     });
   });
+  it("drive.create with kind:folder creates a drive_folders row", async () => {
+    const driveStore = new FakeDriveStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: driveStore,
+      docsStore: new FakeDocsStore(),
+      sheetsStore: new FakeSheetsStore(),
+      slidesStore: new FakeSlidesStore(),
+    });
+    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
+
+    const result = await registry.invoke("drive.create", {
+      kind: "folder",
+      name: "My Folder",
+      folderId: folderId,
+    }, { actor });
+    expect(result.ok).toBe(true);
+    expect(driveStore.createdFolders).toHaveLength(1);
+    expect(driveStore.createdFolders[0]).toMatchObject({
+      orgId,
+      actorId,
+      name: "My Folder",
+      parentFolderId: folderId,
+    });
+    if (result.ok) {
+      expect(result.output).toMatchObject({ id: objectId, type: "folder" });
+    }
+  });
+
+  it("drive.create with kind:document returns { id, app:'docs' } and calls docs store", async () => {
+    const docsStore = new FakeDocsStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      docsStore,
+      sheetsStore: new FakeSheetsStore(),
+      slidesStore: new FakeSlidesStore(),
+    });
+    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
+
+    const result = await registry.invoke("drive.create", {
+      kind: "document",
+      name: "My Doc",
+      folderId,
+    }, { actor });
+    expect(result.ok).toBe(true);
+    expect(docsStore.created).toHaveLength(1);
+    expect(docsStore.created[0]).toMatchObject({
+      orgId,
+      actorId,
+      title: "My Doc",
+      folderId,
+    });
+    if (result.ok) {
+      expect(result.output).toMatchObject({ id: objectId, app: "docs" });
+    }
+  });
+
+  it("drive.create with kind:spreadsheet returns { id, app:'sheets' } and calls sheets store", async () => {
+    const sheetsStore = new FakeSheetsStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      docsStore: new FakeDocsStore(),
+      sheetsStore,
+      slidesStore: new FakeSlidesStore(),
+    });
+    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
+
+    const result = await registry.invoke("drive.create", {
+      kind: "spreadsheet",
+      name: "My Sheet",
+      folderId,
+    }, { actor });
+    expect(result.ok).toBe(true);
+    expect(sheetsStore.created).toHaveLength(1);
+    expect(sheetsStore.created[0]).toMatchObject({
+      orgId,
+      actorId,
+      title: "My Sheet",
+      folderId,
+    });
+    if (result.ok) {
+      expect(result.output).toMatchObject({ id: sheetsFileId, app: "sheets" });
+    }
+  });
+
+  it("drive.create with kind:presentation returns { id, app:'slides' } and calls slides store", async () => {
+    const slidesStore = new FakeSlidesStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      docsStore: new FakeDocsStore(),
+      sheetsStore: new FakeSheetsStore(),
+      slidesStore,
+    });
+    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
+
+    const result = await registry.invoke("drive.create", {
+      kind: "presentation",
+      name: "My Deck",
+      folderId,
+    }, { actor });
+    expect(result.ok).toBe(true);
+    expect(slidesStore.created).toHaveLength(1);
+    expect(slidesStore.created[0]).toMatchObject({
+      orgId,
+      actorId,
+      title: "My Deck",
+      folderId,
+    });
+    if (result.ok) {
+      expect(result.output).toMatchObject({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", app: "slides" });
+    }
+  });
+
+  it("drive.create with kind:document and no folderId passes null folderId to docs store", async () => {
+    const docsStore = new FakeDocsStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      docsStore,
+      sheetsStore: new FakeSheetsStore(),
+      slidesStore: new FakeSlidesStore(),
+    });
+    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
+
+    const result = await registry.invoke("drive.create", {
+      kind: "document",
+      name: "No Folder Doc",
+    }, { actor });
+    expect(result.ok).toBe(true);
+    expect(docsStore.created[0]).toMatchObject({ folderId: null });
+  });
+
+  it("drive.create tool is registered in the tool list", () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      docsStore: new FakeDocsStore(),
+      sheetsStore: new FakeSheetsStore(),
+      slidesStore: new FakeSlidesStore(),
+    });
+    const toolIds = registry.list().filter((tool) => tool.id.startsWith("drive.")).map((tool) => tool.id);
+    expect(toolIds).toContain("drive.create");
+  });
+
+  it("drive.list returns app field on each entry and supports app filter", async () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store: new AppFilterFakeDriveStore() });
+    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.read"] };
+
+    // No filter → all three file entries returned, each carrying their app value
+    const allResult = await registry.invoke("drive.list", { folderId: testFolderId }, { actor });
+    expect(allResult.ok).toBe(true);
+    const allOutput = allResult.ok ? (allResult.output as { entries: DriveEntryRecord[] }) : { entries: [] };
+    expect(allOutput.entries).toHaveLength(3);
+    const plain = allOutput.entries.find((e) => e.id === plainFileId);
+    const doc = allOutput.entries.find((e) => e.id === docsFileId);
+    const sheet = allOutput.entries.find((e) => e.id === sheetsFileId);
+    expect(plain?.app).toBeNull();
+    expect(doc?.app).toBe("docs");
+    expect(sheet?.app).toBe("sheets");
+
+    // app: "docs" filter → only the docs entry
+    const docsResult = await registry.invoke("drive.list", { folderId: testFolderId, app: "docs" }, { actor });
+    expect(docsResult.ok).toBe(true);
+    const docsOutput = docsResult.ok ? (docsResult.output as { entries: DriveEntryRecord[] }) : { entries: [] };
+    expect(docsOutput.entries).toHaveLength(1);
+    expect(docsOutput.entries[0]?.id).toBe(docsFileId);
+    expect(docsOutput.entries[0]?.app).toBe("docs");
+  });
 });
+
+class AppFilterFakeDriveStore implements DriveStore {
+  async prepareUpload(): Promise<DriveUploadRecord> {
+    throw new Error("not used");
+  }
+  async finalizeUpload(): Promise<DriveVersionRecord> {
+    throw new Error("not used");
+  }
+  async createFolder(): Promise<DriveEntryRecord> {
+    throw new Error("not used");
+  }
+  async list(input: Parameters<DriveStore["list"]>[0]): Promise<readonly DriveEntryRecord[]> {
+    const allEntries: DriveEntryRecord[] = [
+      {
+        id: plainFileId,
+        type: "file",
+        name: "plain.txt",
+        folderId: testFolderId,
+        ownerActorId: actorId,
+        mimeType: "text/plain",
+        byteSize: 10,
+        sha256: null,
+        storageKey: "drive/test/plain.txt",
+        app: null,
+        metadata: { name: "plain.txt", folderId: testFolderId },
+        deletedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: docsFileId,
+        type: "file",
+        name: "My Doc",
+        folderId: testFolderId,
+        ownerActorId: actorId,
+        mimeType: "application/vnd.helix.doc",
+        byteSize: 0,
+        sha256: null,
+        storageKey: "drive/test/doc",
+        app: "docs",
+        metadata: { name: "My Doc", folderId: testFolderId, app: "docs" },
+        deletedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: sheetsFileId,
+        type: "file",
+        name: "My Sheet",
+        folderId: testFolderId,
+        ownerActorId: actorId,
+        mimeType: "application/vnd.helix.sheet",
+        byteSize: 0,
+        sha256: null,
+        storageKey: "drive/test/sheet",
+        app: "sheets",
+        metadata: { name: "My Sheet", folderId: testFolderId, app: "sheets" },
+        deletedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    if (input.app !== undefined && input.app !== null) {
+      return allEntries.filter((e) => e.app === input.app);
+    }
+    return allEntries;
+  }
+  async share(input: Parameters<DriveStore["share"]>[0]) {
+    return { objectId: input.objectId, sharedWithActorIds: input.targetActorIds, role: input.role };
+  }
+  async move(): Promise<DriveEntryRecord | null> { return null; }
+  async trash(): Promise<DriveEntryRecord | null> { return null; }
+  async restore(): Promise<DriveEntryRecord | null> { return null; }
+  async delete(): Promise<boolean> { return false; }
+  async search(): Promise<readonly DriveSearchHit[]> { return []; }
+}
+
+const deckId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 
 class FakeDriveStore implements DriveStore {
   readonly uploads: PrepareDriveUploadInput[] = [];
   readonly finalized: FinalizeDriveUploadInput[] = [];
+  readonly createdFolders: DriveFolderCreateInput[] = [];
+
+  async createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord> {
+    this.createdFolders.push(input);
+    return {
+      id: objectId,
+      type: "folder",
+      name: input.name,
+      folderId: input.parentFolderId ?? null,
+      ownerActorId: input.actorId,
+      app: null,
+      mimeType: "application/vnd.helix.folder",
+      byteSize: 0,
+      sha256: null,
+      metadata: input.metadata ?? {},
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
 
   async prepareUpload(input: PrepareDriveUploadInput): Promise<DriveUploadRecord> {
     this.uploads.push(input);
@@ -215,6 +497,7 @@ function entry(): DriveEntryRecord {
     name: "report.pdf",
     folderId,
     ownerActorId: actorId,
+    app: null,
     mimeType: "application/pdf",
     byteSize: 128,
     sha256,
@@ -237,4 +520,67 @@ function entry(): DriveEntryRecord {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+class FakeDocsStore implements Pick<DocsStore, "create"> {
+  readonly created: CreateDocsDocumentInput[] = [];
+
+  async create(input: CreateDocsDocumentInput): Promise<DocsDocumentRecord> {
+    this.created.push(input);
+    return {
+      id: objectId,
+      orgId: input.orgId,
+      title: input.title,
+      threadId: null,
+      ownerActorId: input.actorId,
+      createdByActorId: input.actorId,
+      ydocState: null,
+      ydocStateVector: null,
+      updateSeq: 0,
+      metadata: { ...(input.metadata ?? {}), folderId: input.folderId ?? null },
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+}
+
+class FakeSheetsStore implements Pick<SheetsStore, "createSheet"> {
+  readonly created: CreateSheetInput[] = [];
+
+  async createSheet(input: CreateSheetInput): Promise<SheetWithTabs> {
+    this.created.push(input);
+    return {
+      id: sheetsFileId,
+      orgId: input.orgId,
+      ownerActorId: input.actorId,
+      createdByActorId: input.actorId,
+      title: input.title,
+      metadata: { ...(input.metadata ?? {}), app: "sheets", folderId: input.folderId ?? null },
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      tabs: [],
+    };
+  }
+}
+
+class FakeSlidesStore implements Pick<SlidesStore, "createDeck"> {
+  readonly created: CreateSlideDeckInput[] = [];
+
+  async createDeck(input: CreateSlideDeckInput): Promise<SlideDeckSummaryRecord> {
+    this.created.push(input);
+    return {
+      id: deckId,
+      orgId: input.orgId,
+      title: input.title,
+      ownerActorId: input.actorId,
+      createdByActorId: input.actorId,
+      metadata: { ...(input.metadata ?? {}), app: "slides", folderId: input.folderId ?? null },
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      slideCount: 0,
+    };
+  }
 }

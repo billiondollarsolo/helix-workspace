@@ -1,0 +1,86 @@
+/* Drive surface styles — tokens only.
+   All values resolve to the foundation CSS custom properties in `src/styles.css`. */
+
+/* ---- Drop-zone overlay ----------------------------------------- */
+
+.drive-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--accent-soft);
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  pointer-events: none;
+  color: var(--accent);
+}
+
+.drive-drop-overlay-icon {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.drive-drop-overlay-label {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* ---- Floating Action Button ------------------------------------- */
+
+.drive-fab-wrapper {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  /* Offset right enough to avoid TanStack Query devtools button
+     which sits at bottom-right corner. */
+  z-index: 40;
+}
+
+.drive-fab {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  padding: 0;
+}
+
+.drive-fab:hover {
+  background: var(--accent-2);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+}
+
+.drive-fab:active {
+  transform: scale(0.95);
+}
+
+.drive-fab:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* FAB dropdown menu — anchored above the FAB */
+.drive-fab-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 100;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  min-width: 180px;
+}

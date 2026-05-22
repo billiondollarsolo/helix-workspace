@@ -10,6 +10,9 @@ import type {
   MailEnrichmentProjectionStore,
   MailEnrichmentRecord,
   MailEnrichmentWrite,
+  MailFolderId,
+  MailFolderSummary,
+  MailLabelRecord,
   MailMessageInput,
   MailOutboundEnvelope,
   MailOutboundDeliveryResult,
@@ -22,11 +25,16 @@ import type {
   MailThreadDetail,
   MailThreadAttachment,
   MailThreadGetRequest,
+  MailThreadListRequest,
+  MailThreadListResult,
   MailThreadMessage,
+  MailThreadRowRecord,
   MailThreadStatePatch,
   MailVacationRecord,
   StoredMailMessage,
 } from "./types.js";
+import { MAIL_FOLDER_IDS } from "./types.js";
+import { classifyMailCategory, coerceMailCategory } from "./category.js";
 
 export interface CreateMailFilterInput {
   readonly orgId: string;
@@ -123,6 +131,23 @@ export interface MailStore {
   }): Promise<boolean>;
   search(input: MailSearchRequest): Promise<readonly MailSearchHit[]>;
   getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null>;
+  /**
+   * List the thread-row projection for one folder view, optionally filtered by
+   * category tab, label, and free-text query. Paginated; returns `total` for
+   * the matching set before `limit`/`offset`.
+   */
+  listThreads(input: MailThreadListRequest): Promise<MailThreadListResult>;
+  /** Per-folder thread + unread counts for the active actor. */
+  listFolders(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly now?: Date | undefined;
+  }): Promise<readonly MailFolderSummary[]>;
+  /** Org + actor labels with display colours and live thread counts. */
+  listLabels(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<readonly MailLabelRecord[]>;
 }
 
 interface MailFilterRow {
@@ -226,6 +251,43 @@ interface MailThreadAttachmentRow {
   readonly byteSize?: unknown;
   readonly sha256?: unknown;
   readonly disposition?: unknown;
+}
+
+interface MailThreadListRow {
+  readonly thread_id: string;
+  readonly subject: string | null;
+  readonly message_id: string;
+  readonly body: string;
+  readonly metadata: JsonObject;
+  readonly sent_at: Date;
+  readonly message_count: number;
+  readonly has_attachment: boolean;
+  readonly labels: readonly string[] | null;
+  readonly read_at: Date | null;
+  readonly starred: boolean | null;
+  readonly category: string | null;
+  readonly snoozed_until: Date | null;
+  readonly outbound_status: MailOutboundStatus | null;
+  readonly total: number;
+}
+
+interface MailFolderCountRow {
+  readonly folder: MailFolderId;
+  readonly total: number;
+  readonly unread: number;
+}
+
+interface MailLabelRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly owner_actor_id: string | null;
+  readonly slug: string;
+  readonly name: string;
+  readonly color: string;
+  readonly sort_order: number;
+  readonly thread_count: number;
+  readonly created_at: Date;
+  readonly updated_at: Date;
 }
 
 export class PostgresMailStore
@@ -439,10 +501,13 @@ export class PostgresMailStore
     const readAtPatch = input.patch.readAt ?? null;
     const hasStarredPatch = input.patch.starred !== undefined;
     const starredPatch = input.patch.starred ?? false;
+    const hasSpamAtPatch = input.patch.spamAt !== undefined;
+    const spamAtPatch = input.patch.spamAt ?? null;
 
     await this.sql`
       insert into mail_thread_state (
-        actor_id, thread_id, org_id, labels, archived_at, deleted_at, snoozed_until, read_at, starred, updated_at
+        actor_id, thread_id, org_id, labels, archived_at, deleted_at, snoozed_until,
+        read_at, starred, spam_at, updated_at
       )
       values (
         ${input.actorId},
@@ -454,6 +519,7 @@ export class PostgresMailStore
         ${input.patch.snoozedUntil ?? null},
         ${readAtPatch},
         ${starredPatch},
+        ${spamAtPatch},
         now()
       )
       on conflict (actor_id, thread_id) do update
@@ -469,6 +535,10 @@ export class PostgresMailStore
         starred = case
           when ${hasStarredPatch} then ${starredPatch}
           else mail_thread_state.starred
+        end,
+        spam_at = case
+          when ${hasSpamAtPatch} then ${spamAtPatch}
+          else mail_thread_state.spam_at
         end,
         updated_at = now()
     `;
@@ -795,7 +865,235 @@ export class PostgresMailStore
 
     return rows.length === 0 ? null : mapThreadDetail(rows);
   }
+
+  async listThreads(input: MailThreadListRequest): Promise<MailThreadListResult> {
+    const folder: MailFolderId = input.folder ?? "inbox";
+    const limit = clampLimit(input.limit, 50);
+    const offset = Math.max(0, Math.trunc(input.offset ?? 0));
+    const now = input.now ?? new Date();
+    const query = (input.query ?? "").trim();
+    const label = input.label ?? "";
+    // The tab filter only applies inside the inbox view; other folders are not
+    // category-bucketed.
+    const tab = folder === "inbox" ? (input.tab ?? null) : null;
+
+    const rows = (await this.sql`
+      with latest as (
+        select distinct on (m.thread_id)
+          m.thread_id,
+          m.id as message_id,
+          m.body,
+          m.body_format,
+          m.metadata,
+          m.sent_at,
+          t.subject,
+          t.archived_at as thread_archived_at,
+          mts.labels,
+          mts.archived_at,
+          mts.deleted_at,
+          mts.snoozed_until,
+          mts.read_at,
+          mts.starred,
+          mts.spam_at,
+          mts.category,
+          (
+            select count(*)::int from messages mm
+            where mm.thread_id = m.thread_id and mm.kind = 'mail' and mm.deleted_at is null
+          ) as message_count,
+          exists(
+            select 1 from message_attachments ma
+            join messages mm on mm.id = ma.message_id
+            where mm.thread_id = m.thread_id
+          ) as has_attachment,
+          (
+            select max((mo.metadata->>'direction'))
+            from messages mo
+            where mo.thread_id = m.thread_id and mo.kind = 'mail' and mo.deleted_at is null
+              and mo.metadata->>'direction' = 'outbound'
+          ) as has_outbound,
+          (
+            select ob.status from mail_outbound_messages ob
+            where ob.thread_id = m.thread_id
+            order by ob.created_at desc
+            limit 1
+          ) as outbound_status
+        from messages m
+        join threads t on t.id = m.thread_id
+        left join mail_thread_state mts on mts.thread_id = m.thread_id and mts.actor_id = ${input.actorId}
+        where m.org_id = ${input.orgId}
+          and m.kind = 'mail'
+          and m.deleted_at is null
+          and t.kind = 'mail'
+        order by m.thread_id, m.sent_at desc, m.id desc
+      ),
+      filtered as (
+        select * from latest
+        where
+          case ${folder}::text
+            when 'trash' then deleted_at is not null
+            when 'spam' then deleted_at is null and spam_at is not null
+            when 'archive' then deleted_at is null and spam_at is null
+              and coalesce(archived_at, thread_archived_at) is not null
+            when 'starred' then deleted_at is null and starred is true
+            when 'snoozed' then deleted_at is null
+              and snoozed_until is not null and snoozed_until > ${now}
+            when 'sent' then deleted_at is null and has_outbound = 'outbound'
+            when 'drafts' then deleted_at is null and outbound_status = 'queued'
+            else /* inbox */ deleted_at is null
+              and spam_at is null
+              and coalesce(archived_at, thread_archived_at) is null
+              and (snoozed_until is null or snoozed_until <= ${now})
+              and (has_outbound is null or has_outbound <> 'outbound')
+          end
+          and (${tab}::text is null or coalesce(category, 'primary') = ${tab})
+          and (${label}::text = '' or ${label} = any(coalesce(labels, '{}'::text[])))
+          and (
+            ${query} = ''
+            or subject ilike ${`%${query}%`}
+            or body ilike ${`%${query}%`}
+          )
+      )
+      select
+        thread_id, subject, message_id, body, metadata, sent_at,
+        message_count, has_attachment, labels, read_at, starred, category,
+        snoozed_until, outbound_status,
+        count(*) over ()::int as total
+      from filtered
+      order by sent_at desc
+      limit ${limit} offset ${offset}
+    `) as unknown as readonly MailThreadListRow[];
+
+    return {
+      threads: rows.map((row) => mapThreadRow(row, folder)),
+      total: rows[0]?.total ?? 0,
+      limit,
+      offset,
+    };
+  }
+
+  async listFolders(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly now?: Date | undefined;
+  }): Promise<readonly MailFolderSummary[]> {
+    const now = input.now ?? new Date();
+    const rows = (await this.sql`
+      with latest as (
+        select distinct on (m.thread_id)
+          m.thread_id,
+          m.metadata,
+          m.sent_at,
+          t.archived_at as thread_archived_at,
+          mts.archived_at,
+          mts.deleted_at,
+          mts.snoozed_until,
+          mts.read_at,
+          mts.starred,
+          mts.spam_at,
+          (
+            select bool_or(mo.metadata->>'direction' = 'outbound')
+            from messages mo
+            where mo.thread_id = m.thread_id and mo.kind = 'mail' and mo.deleted_at is null
+          ) as has_outbound,
+          (
+            select ob.status from mail_outbound_messages ob
+            where ob.thread_id = m.thread_id
+            order by ob.created_at desc
+            limit 1
+          ) as outbound_status
+        from messages m
+        join threads t on t.id = m.thread_id
+        left join mail_thread_state mts on mts.thread_id = m.thread_id and mts.actor_id = ${input.actorId}
+        where m.org_id = ${input.orgId}
+          and m.kind = 'mail'
+          and m.deleted_at is null
+          and t.kind = 'mail'
+        order by m.thread_id, m.sent_at desc, m.id desc
+      ),
+      classified as (
+        select
+          unnest(folders) as folder,
+          (read_at is null or read_at < sent_at) as unread
+        from latest,
+        lateral (
+          select array_remove(array[
+            case when deleted_at is null
+              and spam_at is null
+              and coalesce(archived_at, thread_archived_at) is null
+              and (snoozed_until is null or snoozed_until <= ${now})
+              and (has_outbound is not true) then 'inbox' end,
+            case when deleted_at is null and starred is true then 'starred' end,
+            case when deleted_at is null and snoozed_until is not null
+              and snoozed_until > ${now} then 'snoozed' end,
+            case when deleted_at is null and has_outbound is true then 'sent' end,
+            case when deleted_at is null and outbound_status = 'queued' then 'drafts' end,
+            case when deleted_at is null and spam_at is null
+              and coalesce(archived_at, thread_archived_at) is not null then 'archive' end,
+            case when deleted_at is null and spam_at is not null then 'spam' end,
+            case when deleted_at is not null then 'trash' end
+          ], null) as folders
+        ) f
+      )
+      select folder, count(*)::int as total, count(*) filter (where unread)::int as unread
+      from classified
+      group by folder
+    `) as unknown as readonly MailFolderCountRow[];
+
+    const byFolder = new Map(rows.map((row) => [row.folder, row]));
+    return MAIL_FOLDER_IDS.map((id) => {
+      const row = byFolder.get(id);
+      return {
+        id,
+        label: MAIL_FOLDER_LABELS[id],
+        total: row?.total ?? 0,
+        unread: row?.unread ?? 0,
+      };
+    });
+  }
+
+  async listLabels(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<readonly MailLabelRecord[]> {
+    const rows = (await this.sql`
+      select
+        l.id,
+        l.org_id,
+        l.owner_actor_id,
+        l.slug,
+        l.name,
+        l.color,
+        l.sort_order,
+        l.created_at,
+        l.updated_at,
+        coalesce((
+          select count(*)::int
+          from mail_thread_state mts
+          where mts.actor_id = ${input.actorId}
+            and mts.org_id = ${input.orgId}
+            and mts.deleted_at is null
+            and l.slug = any(mts.labels)
+        ), 0) as thread_count
+      from mail_labels l
+      where l.org_id = ${input.orgId}
+        and l.deleted_at is null
+        and (l.owner_actor_id is null or l.owner_actor_id = ${input.actorId})
+      order by l.sort_order asc, lower(l.name) asc
+    `) as unknown as readonly MailLabelRow[];
+    return rows.map(mapLabel);
+  }
 }
+
+const MAIL_FOLDER_LABELS: Readonly<Record<MailFolderId, string>> = {
+  inbox: "Inbox",
+  starred: "Starred",
+  snoozed: "Snoozed",
+  sent: "Sent",
+  drafts: "Drafts",
+  archive: "Archive",
+  spam: "Spam",
+  trash: "Trash",
+};
 
 type SqlLike = postgres.Sql | postgres.TransactionSql;
 
@@ -883,6 +1181,27 @@ async function insertMailMessage(
         on conflict do nothing
       `;
     }
+  }
+
+  // Category-tab classification (Primary/Updates/Promotions/Social). Derived
+  // on ingest for inbound mail addressed to a known actor and cached on the
+  // per-actor thread-state row so the thread-list projection stays a single
+  // indexed query. Best-effort: outbound mail and unrouted inbound mail are
+  // left unclassified and fall through to Primary in the projection.
+  if (input.metadata?.direction !== "outbound" && input.actorId != null) {
+    const headerUnsubscribe = headerHasListUnsubscribe(input.metadata);
+    const category = classifyMailCategory({
+      fromAddress: input.from.address,
+      ...(input.from.name === undefined ? {} : { fromName: input.from.name }),
+      subject: input.subject,
+      hasListUnsubscribe: headerUnsubscribe,
+    });
+    await sql`
+      insert into mail_thread_state (actor_id, thread_id, org_id, category)
+      values (${input.actorId}, ${threadId}, ${input.orgId}, ${category})
+      on conflict (actor_id, thread_id) do update
+      set category = excluded.category, updated_at = now()
+    `;
   }
 
   await sql`
@@ -996,6 +1315,60 @@ function mapSearchHit(row: MailSearchRow): MailSearchHit {
     ...(row.outbound_status === null ? {} : { outboundStatus: row.outbound_status }),
     ...(row.provider_message_id === null ? {} : { providerMessageId: row.provider_message_id }),
     ...(row.delivery_metadata === null ? {} : { deliveryMetadata: row.delivery_metadata }),
+  };
+}
+
+function clampLimit(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(200, Math.max(1, Math.trunc(value)));
+}
+
+function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): MailThreadRowRecord {
+  const from = mailAddress(row.metadata.from);
+  const fromAddress = from?.address ?? "";
+  // A category may be missing on legacy threads — derive it on the fly so the
+  // tab filter and the row payload are always populated.
+  const category =
+    row.category === null
+      ? classifyMailCategory({
+          fromAddress,
+          ...(from?.name === undefined ? {} : { fromName: from.name }),
+          subject: row.subject ?? "",
+        })
+      : coerceMailCategory(row.category);
+  return {
+    threadId: row.thread_id,
+    messageId: row.message_id,
+    subject: row.subject ?? "",
+    from: from?.name ?? fromAddress,
+    fromEmail: fromAddress,
+    preview: row.body.slice(0, 240),
+    time: row.sent_at.toISOString(),
+    unread: row.read_at === null || row.read_at < row.sent_at,
+    starred: row.starred ?? false,
+    hasAttachment: row.has_attachment,
+    messageCount: row.message_count,
+    labels: row.labels ?? [],
+    category,
+    folder,
+    snoozedUntil: row.snoozed_until?.toISOString() ?? null,
+  };
+}
+
+function mapLabel(row: MailLabelRow): MailLabelRecord {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    ownerActorId: row.owner_actor_id,
+    slug: row.slug,
+    name: row.name,
+    color: row.color,
+    sortOrder: row.sort_order,
+    threadCount: row.thread_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -1181,4 +1554,24 @@ function mailClassification(value: unknown): MailSearchRecord["classification"] 
 
 function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
+}
+
+/**
+ * True when a message's metadata carries a `List-Unsubscribe` signal. The
+ * ingest pipeline may surface this either as an explicit boolean flag or under
+ * a parsed-headers map; absence is treated as "no signal".
+ */
+function headerHasListUnsubscribe(metadata: JsonObject | undefined): boolean {
+  if (metadata === undefined) {
+    return false;
+  }
+  if (metadata.hasListUnsubscribe === true || metadata.listUnsubscribe != null) {
+    return true;
+  }
+  const headers = metadata.headers;
+  if (headers !== null && typeof headers === "object" && !Array.isArray(headers)) {
+    const record = headers as Record<string, unknown>;
+    return Object.keys(record).some((key) => key.toLowerCase() === "list-unsubscribe");
+  }
+  return false;
 }

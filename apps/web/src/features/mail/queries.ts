@@ -1,6 +1,15 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
-import { getMailThread, getMailVacation, listMailFilters, searchMail } from "./api";
+import {
+  getMailThread,
+  getMailVacation,
+  listMailFilters,
+  listMailFolders,
+  listMailLabels,
+  listMailThreads,
+  searchMail,
+  type MailThreadsListInput,
+} from "./api";
 
 export interface MailSearchQueryInput {
   readonly query?: string;
@@ -59,9 +68,46 @@ export const mailQueryKeys = {
       input.limit ?? 50,
     ] as const,
   thread: (threadId: string) => ["mail", "thread", threadId] as const,
+  threads: (input: MailThreadsListInput) =>
+    [
+      "mail",
+      "threads",
+      input.folder,
+      input.tab ?? "",
+      input.label ?? "",
+      input.query?.trim() ?? "",
+      input.limit ?? 50,
+      input.offset ?? 0,
+    ] as const,
+  folders: () => ["mail", "folders"] as const,
+  labels: () => ["mail", "labels"] as const,
   filters: () => ["mail", "filters"] as const,
   vacation: () => ["mail", "vacation"] as const,
 };
+
+export function mailThreadsQueryOptions(input: MailThreadsListInput) {
+  return queryOptions({
+    queryKey: mailQueryKeys.threads(input),
+    queryFn: () => listMailThreads(input),
+    throwOnError: false,
+  });
+}
+
+export function mailFoldersQueryOptions() {
+  return queryOptions({
+    queryKey: mailQueryKeys.folders(),
+    queryFn: () => listMailFolders(),
+    throwOnError: false,
+  });
+}
+
+export function mailLabelsQueryOptions() {
+  return queryOptions({
+    queryKey: mailQueryKeys.labels(),
+    queryFn: () => listMailLabels(),
+    throwOnError: false,
+  });
+}
 
 const nonEmptyStringParam = z
   .string()

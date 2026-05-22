@@ -4,11 +4,17 @@ import type { Actor, JsonObject } from "@helix/sdk-types";
 import type {
   AssistantAppendMessageInput,
   AssistantConversation,
+  AssistantConversationListItem,
+  AssistantConversationListPage,
   AssistantCreateConversationInput,
+  AssistantListConversationsInput,
   AssistantMemoryPreference,
   AssistantMessage,
   AssistantStore,
 } from "./types.js";
+
+/** Maximum characters retained for a thread-list message preview. */
+const PREVIEW_MAX_LENGTH = 140;
 
 interface AssistantConversationRow {
   readonly id: string;
@@ -16,10 +22,17 @@ interface AssistantConversationRow {
   readonly actor_id: string;
   readonly title: string | null;
   readonly memory_opt_in: boolean;
+  readonly pinned_at: Date | null;
   readonly metadata: JsonObject;
   readonly archived_at: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
+}
+
+interface AssistantConversationListRow extends AssistantConversationRow {
+  readonly message_count: string | number;
+  readonly preview: string | null;
+  readonly last_activity_at: Date;
 }
 
 interface AssistantMessageRow {
@@ -56,6 +69,7 @@ export class InMemoryAssistantStore implements AssistantStore {
       actorId: input.actor.id,
       title: input.title ?? null,
       memoryOptIn: input.memoryOptIn ?? preference?.enabled ?? false,
+      pinnedAt: null,
       metadata: input.metadata ?? {},
       archivedAt: null,
       createdAt: now,
@@ -64,6 +78,109 @@ export class InMemoryAssistantStore implements AssistantStore {
     this.#conversations.set(conversation.id, conversation);
     this.#messages.set(conversation.id, []);
     return conversation;
+  }
+
+  async listConversations(
+    input: AssistantListConversationsInput,
+  ): Promise<AssistantConversationListPage> {
+    const query = input.query?.trim().toLowerCase() ?? "";
+    const items = [...this.#conversations.values()]
+      .filter(
+        (conversation) =>
+          conversation.orgId === input.orgId &&
+          conversation.actorId === input.actorId &&
+          conversation.archivedAt === null,
+      )
+      .filter((conversation) => !input.pinnedOnly || conversation.pinnedAt !== null)
+      .map((conversation) => this.#toListItem(conversation))
+      .filter((item) => {
+        if (query.length === 0) {
+          return true;
+        }
+        const haystack = `${item.title ?? ""}\n${item.preview ?? ""}`.toLowerCase();
+        return haystack.includes(query);
+      })
+      .sort(sortConversationListItems)
+      .filter((item) => input.cursor === undefined || item.updatedAt < input.cursor);
+    const page = items.slice(0, input.limit);
+    const nextCursor =
+      items.length > input.limit ? (page[page.length - 1]?.updatedAt ?? null) : null;
+    return { items: page, nextCursor };
+  }
+
+  async setConversationPinned(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+    readonly pinned: boolean;
+  }): Promise<AssistantConversation | null> {
+    const conversation = await this.getConversation(input);
+    if (conversation === null) {
+      return null;
+    }
+    const updated: AssistantConversation = {
+      ...conversation,
+      pinnedAt: input.pinned ? (conversation.pinnedAt ?? new Date().toISOString()) : null,
+      updatedAt: new Date().toISOString(),
+    };
+    this.#conversations.set(updated.id, updated);
+    return updated;
+  }
+
+  async renameConversation(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+    readonly title: string;
+  }): Promise<AssistantConversation | null> {
+    const conversation = await this.getConversation(input);
+    if (conversation === null) {
+      return null;
+    }
+    const updated: AssistantConversation = {
+      ...conversation,
+      title: input.title,
+      updatedAt: new Date().toISOString(),
+    };
+    this.#conversations.set(updated.id, updated);
+    return updated;
+  }
+
+  async deleteConversation(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+  }): Promise<boolean> {
+    const conversation = await this.getConversation(input);
+    if (conversation === null) {
+      return false;
+    }
+    this.#conversations.set(conversation.id, {
+      ...conversation,
+      archivedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    return true;
+  }
+
+  #toListItem(conversation: AssistantConversation): AssistantConversationListItem {
+    const messages = this.#messages.get(conversation.id) ?? [];
+    const last = messages[messages.length - 1];
+    const updatedAt =
+      last !== undefined && last.createdAt > conversation.updatedAt
+        ? last.createdAt
+        : conversation.updatedAt;
+    return {
+      id: conversation.id,
+      title: conversation.title,
+      pinned: conversation.pinnedAt !== null,
+      pinnedAt: conversation.pinnedAt,
+      memoryOptIn: conversation.memoryOptIn,
+      updatedAt,
+      createdAt: conversation.createdAt,
+      messageCount: messages.length,
+      preview: last === undefined ? null : truncatePreview(last.content),
+    };
   }
 
   async getConversation(input: {
@@ -75,7 +192,8 @@ export class InMemoryAssistantStore implements AssistantStore {
     if (
       conversation === undefined ||
       conversation.orgId !== input.orgId ||
-      conversation.actorId !== input.actorId
+      conversation.actorId !== input.actorId ||
+      conversation.archivedAt !== null
     ) {
       return null;
     }
@@ -182,7 +300,7 @@ export class PostgresAssistantStore implements AssistantStore {
         ${input.memoryOptIn ?? preference?.enabled ?? false},
         ${this.sql.json(toSqlJson(input.metadata ?? {}))}
       )
-      returning id, org_id, actor_id, title, memory_opt_in, metadata, archived_at, created_at, updated_at
+      returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
     `;
     return requiredConversation(rows);
   }
@@ -193,7 +311,7 @@ export class PostgresAssistantStore implements AssistantStore {
     readonly conversationId: string;
   }): Promise<AssistantConversation | null> {
     const rows = await this.sql`
-      select id, org_id, actor_id, title, memory_opt_in, metadata, archived_at, created_at, updated_at
+      select id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
       from assistant_conversations
       where org_id = ${input.orgId}
         and actor_id = ${input.actorId}
@@ -203,6 +321,115 @@ export class PostgresAssistantStore implements AssistantStore {
     `;
     const row = (rows as unknown as readonly AssistantConversationRow[])[0];
     return row === undefined ? null : rowToConversation(row);
+  }
+
+  async listConversations(
+    input: AssistantListConversationsInput,
+  ): Promise<AssistantConversationListPage> {
+    const query = input.query?.trim() ?? "";
+    const pattern = query.length === 0 ? null : `%${escapeLike(query)}%`;
+    // Fetch one extra row to compute the keyset cursor.
+    const fetchLimit = input.limit + 1;
+    const rows = (await this.sql`
+      with conversation_summary as (
+        select
+          c.id, c.org_id, c.actor_id, c.title, c.memory_opt_in, c.pinned_at,
+          c.metadata, c.archived_at, c.created_at, c.updated_at,
+          coalesce(stats.message_count, 0) as message_count,
+          stats.preview,
+          greatest(c.updated_at, coalesce(stats.last_message_at, c.updated_at)) as last_activity_at
+        from assistant_conversations c
+        left join lateral (
+          select
+            count(*) as message_count,
+            max(m.created_at) as last_message_at,
+            (
+              select m2.content
+              from assistant_messages m2
+              where m2.conversation_id = c.id
+              order by m2.created_at desc, m2.id desc
+              limit 1
+            ) as preview
+          from assistant_messages m
+          where m.conversation_id = c.id
+        ) stats on true
+        where c.org_id = ${input.orgId}
+          and c.actor_id = ${input.actorId}
+          and c.archived_at is null
+          and (${input.pinnedOnly ?? false} = false or c.pinned_at is not null)
+          and (
+            ${pattern}::text is null
+            or c.title ilike ${pattern}
+            or coalesce(stats.preview, '') ilike ${pattern}
+          )
+      )
+      select *
+      from conversation_summary
+      where (${input.cursor ?? null}::timestamptz is null
+        or last_activity_at < ${input.cursor ?? null}::timestamptz)
+      order by (pinned_at is not null) desc, pinned_at desc nulls last, last_activity_at desc, id desc
+      limit ${fetchLimit}
+    `) as unknown as readonly AssistantConversationListRow[];
+    const hasMore = rows.length > input.limit;
+    const page = rows.slice(0, input.limit).map(rowToConversationListItem);
+    const nextCursor = hasMore ? (page[page.length - 1]?.updatedAt ?? null) : null;
+    return { items: page, nextCursor };
+  }
+
+  async setConversationPinned(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+    readonly pinned: boolean;
+  }): Promise<AssistantConversation | null> {
+    const rows = await this.sql`
+      update assistant_conversations
+      set pinned_at = ${input.pinned ? this.sql`coalesce(pinned_at, now())` : this.sql`null`},
+          updated_at = now()
+      where org_id = ${input.orgId}
+        and actor_id = ${input.actorId}
+        and id = ${input.conversationId}
+        and archived_at is null
+      returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
+    `;
+    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
+    return row === undefined ? null : rowToConversation(row);
+  }
+
+  async renameConversation(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+    readonly title: string;
+  }): Promise<AssistantConversation | null> {
+    const rows = await this.sql`
+      update assistant_conversations
+      set title = ${input.title}, updated_at = now()
+      where org_id = ${input.orgId}
+        and actor_id = ${input.actorId}
+        and id = ${input.conversationId}
+        and archived_at is null
+      returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
+    `;
+    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
+    return row === undefined ? null : rowToConversation(row);
+  }
+
+  async deleteConversation(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+  }): Promise<boolean> {
+    const rows = await this.sql`
+      update assistant_conversations
+      set archived_at = now(), updated_at = now()
+      where org_id = ${input.orgId}
+        and actor_id = ${input.actorId}
+        and id = ${input.conversationId}
+        and archived_at is null
+      returning id
+    `;
+    return (rows as unknown as readonly { readonly id: string }[]).length > 0;
   }
 
   async listMessages(input: {
@@ -276,7 +503,7 @@ export class PostgresAssistantStore implements AssistantStore {
         and actor_id = ${input.actorId}
         and id = ${input.conversationId}
         and archived_at is null
-      returning id, org_id, actor_id, title, memory_opt_in, metadata, archived_at, created_at, updated_at
+      returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
     `;
     const row = (rows as unknown as readonly AssistantConversationRow[])[0];
     return row === undefined ? null : rowToConversation(row);
@@ -344,10 +571,27 @@ function rowToConversation(row: AssistantConversationRow): AssistantConversation
     actorId: row.actor_id,
     title: row.title,
     memoryOptIn: row.memory_opt_in,
+    pinnedAt: row.pinned_at?.toISOString() ?? null,
     metadata: row.metadata,
     archivedAt: row.archived_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function rowToConversationListItem(
+  row: AssistantConversationListRow,
+): AssistantConversationListItem {
+  return {
+    id: row.id,
+    title: row.title,
+    pinned: row.pinned_at !== null,
+    pinnedAt: row.pinned_at?.toISOString() ?? null,
+    memoryOptIn: row.memory_opt_in,
+    updatedAt: row.last_activity_at.toISOString(),
+    createdAt: row.created_at.toISOString(),
+    messageCount: Number(row.message_count),
+    preview: row.preview === null ? null : truncatePreview(row.preview),
   };
 }
 
@@ -377,6 +621,33 @@ function rowToMemoryPreference(row: AssistantMemoryPreferenceRow): AssistantMemo
 
 function memoryPreferenceKey(orgId: string, actorId: string): string {
   return `${orgId}:${actorId}`;
+}
+
+/** Collapse whitespace and clip a message body to a thread-list preview. */
+function truncatePreview(content: string): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  return normalized.length > PREVIEW_MAX_LENGTH
+    ? `${normalized.slice(0, PREVIEW_MAX_LENGTH - 1)}…`
+    : normalized;
+}
+
+/** Escape SQL LIKE wildcards so user search input is matched literally. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+/** Pinned conversations first (newest pin first), then by recency, then id. */
+function sortConversationListItems(
+  left: AssistantConversationListItem,
+  right: AssistantConversationListItem,
+): number {
+  if (left.pinned !== right.pinned) {
+    return left.pinned ? -1 : 1;
+  }
+  if (left.pinned && right.pinned && left.pinnedAt !== right.pinnedAt) {
+    return (right.pinnedAt ?? "").localeCompare(left.pinnedAt ?? "");
+  }
+  return right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id);
 }
 
 function toSqlJson(value: unknown): postgres.JSONValue {

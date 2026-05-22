@@ -5,6 +5,9 @@ import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { DriveStore } from "./store.js";
 import type { DriveEntryRecord, DriveSearchHit, DriveUploadRecord, DriveVersionRecord } from "./types.js";
+import type { DocsStore } from "../docs/store.js";
+import type { SheetsStore } from "../sheets/store.js";
+import type { SlidesStore } from "../slides/store.js";
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.unknown()).default({});
@@ -32,6 +35,7 @@ const listSchema = z.object({
   folderId: uuidSchema.nullable().optional(),
   includeTrashed: z.boolean().default(false),
   limit: z.number().int().positive().max(250).default(100),
+  app: z.string().optional(),
 });
 
 const shareSchema = z.object({
@@ -61,6 +65,12 @@ const searchSchema = z.object({
   limit: z.number().int().positive().max(100).default(50),
 });
 
+const createSchema = z.object({
+  kind: z.enum(["folder", "document", "spreadsheet", "presentation"]),
+  folderId: uuidSchema.nullable().optional(),
+  name: z.string().min(1).max(255),
+});
+
 const genericObjectJsonSchema = {
   type: "object",
   additionalProperties: true,
@@ -75,10 +85,87 @@ export interface CreateDriveToolDefinitionsOptions {
    * upload.
    */
   readonly classifyResource?: ResourceClassifier;
+  /**
+   * Docs store — required to handle `drive.create` with `kind:"document"`.
+   * When omitted, creating a document via `drive.create` throws.
+   */
+  readonly docsStore?: Pick<DocsStore, "create">;
+  /**
+   * Sheets store — required to handle `drive.create` with `kind:"spreadsheet"`.
+   * When omitted, creating a spreadsheet via `drive.create` throws.
+   */
+  readonly sheetsStore?: Pick<SheetsStore, "createSheet">;
+  /**
+   * Slides store — required to handle `drive.create` with `kind:"presentation"`.
+   * When omitted, creating a presentation via `drive.create` throws.
+   */
+  readonly slidesStore?: Pick<SlidesStore, "createDeck">;
 }
 
 export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOptions): readonly ToolDefinition[] {
   return [
+    defineTool<z.output<typeof createSchema>, unknown>({
+      id: "drive.create",
+      description: "Create a new Drive folder, document, spreadsheet, or presentation.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(createSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const { orgId, id: actorId } = ctx.actor;
+        const folderId = input.folderId ?? null;
+        switch (input.kind) {
+          case "folder": {
+            const folder = await options.store.createFolder({
+              orgId,
+              actorId,
+              name: input.name,
+              ...(folderId !== null ? { parentFolderId: folderId } : {}),
+            });
+            return serializeEntry(folder);
+          }
+          case "document": {
+            const docsStore = options.docsStore;
+            if (docsStore === undefined) {
+              throw new Error("drive.create: docsStore is required for kind='document'");
+            }
+            const doc = await docsStore.create({
+              orgId,
+              actorId,
+              title: input.name,
+              folderId,
+            });
+            return { id: doc.id, app: "docs" };
+          }
+          case "spreadsheet": {
+            const sheetsStore = options.sheetsStore;
+            if (sheetsStore === undefined) {
+              throw new Error("drive.create: sheetsStore is required for kind='spreadsheet'");
+            }
+            const sheet = await sheetsStore.createSheet({
+              orgId,
+              actorId,
+              title: input.name,
+              folderId,
+            });
+            return { id: sheet.id, app: "sheets" };
+          }
+          case "presentation": {
+            const slidesStore = options.slidesStore;
+            if (slidesStore === undefined) {
+              throw new Error("drive.create: slidesStore is required for kind='presentation'");
+            }
+            const deck = await slidesStore.createDeck({
+              orgId,
+              actorId,
+              title: input.name,
+              folderId,
+            });
+            return { id: deck.id, app: "slides" };
+          }
+        }
+      },
+    }),
     defineTool<z.output<typeof uploadSchema>, unknown>({
       id: "drive.upload",
       description: "Prepare a Drive file upload and return the target storage key and presigned upload URL when available.",
@@ -139,6 +226,7 @@ export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOp
           folderId: input.folderId ?? null,
           includeTrashed: input.includeTrashed,
           limit: input.limit,
+          ...(input.app === undefined ? {} : { app: input.app }),
         })).map(serializeEntry),
       }),
     }),

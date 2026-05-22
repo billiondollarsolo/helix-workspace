@@ -357,6 +357,50 @@ export interface WebhookInboundVerifier {
   verify(input: InboundWebhookRequest): Promise<InboundWebhookEvent>;
 }
 
+/**
+ * A single outbound mail message handed to an {@link OutboundMailProvider}.
+ * Provider-neutral: adapters translate this into their wire format (SES
+ * SendRawEmail, the Mailgun HTTP API, an SMTP envelope, the Postmark API, ...).
+ */
+export interface OutboundMailMessage {
+  readonly from: { readonly address: string; readonly name?: string };
+  readonly to: readonly { readonly address: string; readonly name?: string }[];
+  readonly cc: readonly { readonly address: string; readonly name?: string }[];
+  readonly bcc: readonly { readonly address: string; readonly name?: string }[];
+  readonly subject: string;
+  readonly text: string;
+  readonly html?: string;
+  readonly replyTo?: string;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly attachments?: readonly {
+    readonly filename?: string;
+    readonly contentType?: string;
+    readonly content: Uint8Array;
+  }[];
+}
+
+/** Result of an {@link OutboundMailProvider} delivery attempt. */
+export interface OutboundMailDelivery {
+  /** Provider-assigned message id, when the provider returns one. */
+  readonly providerMessageId?: string;
+  /** Structured, non-secret provider response metadata. */
+  readonly metadata?: JsonObject;
+}
+
+/**
+ * Pluggable outbound mail delivery provider. Each adapter (SES, Mailgun, an
+ * SMTP relay, Postmark) implements this so outbound dispatch is provider-
+ * agnostic and org-admin-selectable.
+ */
+export interface OutboundMailProvider {
+  /** Stable provider kind (`ses` | `mailgun` | `smtp` | `postmark`). */
+  readonly kind: string;
+  /** Human-readable provider instance name (for diagnostics / audit). */
+  readonly name: string;
+  /** Deliver one message, returning the provider message id when available. */
+  send(message: OutboundMailMessage): Promise<OutboundMailDelivery>;
+}
+
 export interface AICapability {
   chat(request: ChatRequest, ctx?: Partial<AICallContext>): Promise<ChatResponse>;
   /**

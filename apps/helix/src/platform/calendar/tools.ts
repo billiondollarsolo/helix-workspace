@@ -8,6 +8,7 @@ import type {
   CalendarAttendeeRecord,
   CalendarEventRecord,
   CalendarFreeBusyStore,
+  CalendarListEntry,
 } from "./types.js";
 import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
 
@@ -83,6 +84,8 @@ const findTimeSchema = z.object({
   stepMinutes: z.number().int().positive().max(240).default(15),
   limit: z.number().int().positive().max(100).default(10),
 });
+
+const calendarsListSchema = z.object({});
 
 const genericObjectJsonSchema = {
   type: "object",
@@ -280,6 +283,28 @@ export function createCalendarToolDefinitions(
         ).map(serializeEvent),
       }),
     }),
+    defineTool<z.output<typeof calendarsListSchema>, unknown>({
+      id: "calendar.calendars.list",
+      description:
+        "List the calendars visible to the current actor — calendars they own (My calendars) and calendars they are a member of (Team) — with colour and visibility.",
+      permission: "calendar.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(calendarsListSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (_input, ctx) => {
+        const calendars = (
+          await options.store.listCalendarsForActor({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+          })
+        ).map(serializeCalendarEntry);
+        return {
+          calendars,
+          mine: calendars.filter((calendar) => calendar.group === "mine"),
+          team: calendars.filter((calendar) => calendar.group === "team"),
+        };
+      },
+    }),
     defineTool<z.output<typeof findTimeSchema>, unknown>({
       id: "calendar.find-time",
       description: "Find free meeting slots for calendar attendees.",
@@ -398,6 +423,24 @@ async function sendInvitations(
     ...(options.rsvpBaseUrl === undefined ? {} : { rsvpBaseUrl: options.rsvpBaseUrl }),
   });
   return queued?.length ?? 0;
+}
+
+function serializeCalendarEntry(entry: CalendarListEntry) {
+  return {
+    id: entry.id,
+    name: entry.name,
+    description: entry.description,
+    timezone: entry.timezone,
+    color: entry.color,
+    ownerActorId: entry.ownerActorId,
+    ownerDisplayName: entry.ownerDisplayName,
+    role: entry.role,
+    visible: entry.visible,
+    group: entry.group,
+    writable: entry.writable,
+    sortOrder: entry.sortOrder,
+    eventCount: entry.eventCount,
+  };
 }
 
 function serializeEvent(event: CalendarEventRecord) {

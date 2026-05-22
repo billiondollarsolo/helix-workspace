@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
 import * as Y from "yjs";
+import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import { exportDocsDocument } from "./export/index.js";
 import type {
   DocsCommentProjection,
@@ -811,23 +812,6 @@ async function grantThreadAccess(
   await sql`
     insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
     values (${input.orgId}, ${input.actorId}, 'thread', ${input.threadId}, ${input.role}, ${input.grantedByActorId})
-    on conflict do nothing
-  `;
-}
-
-async function grantObjectAccess(
-  sql: SqlLike,
-  input: {
-    readonly orgId: string;
-    readonly objectId: string;
-    readonly actorId: string;
-    readonly role: string;
-    readonly grantedByActorId: string;
-  },
-): Promise<void> {
-  await sql`
-    insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
-    values (${input.orgId}, ${input.actorId}, 'object', ${input.objectId}, ${input.role}, ${input.grantedByActorId})
     on conflict do nothing
   `;
 }

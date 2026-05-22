@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject, StorageClient } from "@helix/sdk-types";
 import { computeAuditHash } from "../audit/hash.js";
+import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import type {
   DriveAutoTagWrite,
   DriveEnrichmentProjectionStore,
@@ -67,6 +68,7 @@ export interface DriveStore {
     readonly folderId?: string | null;
     readonly includeTrashed?: boolean;
     readonly limit?: number;
+    readonly app?: string | null;
   }): Promise<readonly DriveEntryRecord[]>;
   share(input: {
     readonly orgId: string;
@@ -109,6 +111,7 @@ export interface DriveStore {
     readonly folderId?: string | null;
     readonly limit?: number;
   }): Promise<readonly DriveSearchHit[]>;
+  createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord>;
 }
 
 export interface DriveFolderCreateInput {
@@ -341,6 +344,7 @@ export class PostgresDriveStore
     readonly folderId?: string | null;
     readonly includeTrashed?: boolean;
     readonly limit?: number;
+    readonly app?: string | null;
   }): Promise<readonly DriveEntryRecord[]> {
     if (input.folderId !== undefined && input.folderId !== null) {
       await requireFolderAccess(this.sql, input.orgId, input.actorId, input.folderId);
@@ -366,6 +370,7 @@ export class PostgresDriveStore
         and o.kind = 'file'
         and coalesce(o.metadata->>'folderId', '') = coalesce(${input.folderId ?? null}::text, '')
         and (${input.includeTrashed ?? false} or o.deleted_at is null)
+        and (${input.app ?? null}::text is null or coalesce(o.metadata->>'app', 'file') = ${input.app ?? null})
         and (
           o.owner_actor_id = ${input.actorId}
           or exists (
@@ -579,7 +584,7 @@ export class PostgresDriveStore
         returning *, (select max(version_number) from drive_versions v where v.object_id = objects.id) as version_number
       `) as unknown as readonly DriveSearchRow[];
       if (rows[0] !== undefined) {
-        await syncDocsDeletedAt(tx, input.orgId, input.objectId, "trash");
+        await syncTargetDeletedAt(tx, input.orgId, input.objectId, "trash");
         await appendDriveActivity(tx, {
           orgId: input.orgId,
           actorId: input.actorId,
@@ -617,9 +622,9 @@ export class PostgresDriveStore
       `) as unknown as readonly { readonly storage_key: string }[];
       await tx`delete from permissions where resource_type = 'object' and resource_id = ${input.objectId}`;
       await tx`delete from drive_versions where object_id = ${input.objectId}`;
-      if (stringMetadata(object.metadata, "app") === "docs") {
-        await syncDocsDeletedAt(tx, input.orgId, input.objectId, "trash");
-      }
+      // syncTargetDeletedAt no-ops when the object has no linked app, so it is
+      // called unconditionally here — matching the trash and restore paths.
+      await syncTargetDeletedAt(tx, input.orgId, input.objectId, "trash");
       const deleted = await tx`
         delete from objects
         where id = ${input.objectId} and org_id = ${input.orgId} and kind = 'file'
@@ -874,7 +879,7 @@ export class PostgresDriveStore
         returning *, (select max(version_number) from drive_versions v where v.object_id = objects.id) as version_number
       `) as unknown as readonly DriveSearchRow[];
       if (rows[0] !== undefined && input.restore) {
-        await syncDocsDeletedAt(tx, input.orgId, input.objectId, "restore");
+        await syncTargetDeletedAt(tx, input.orgId, input.objectId, "restore");
       }
       await appendDriveActivity(tx, {
         orgId: input.orgId,
@@ -945,27 +950,28 @@ function canReadObjectSql(sql: SqlLike, actorId: string): postgres.PendingQuery<
   `;
 }
 
-async function syncDocsDeletedAt(
+async function syncTargetDeletedAt(
   sql: SqlLike,
   orgId: string,
   objectId: string,
   action: "restore" | "trash",
 ): Promise<void> {
-  await sql`
-    update docs_documents
-    set
-      deleted_at = ${action === "restore" ? null : new Date()},
-      updated_at = now()
-    where id = ${objectId}
-      and org_id = ${orgId}
-      and exists (
-        select 1
-        from objects o
-        where o.id = ${objectId}
-          and o.org_id = ${orgId}
-          and o.metadata->>'app' = 'docs'
-      )
-  `;
+  const deletedAt = action === "restore" ? null : new Date();
+  const rows = (await sql`
+    select metadata->>'app' as app from objects
+    where id = ${objectId} and org_id = ${orgId}
+  `) as unknown as readonly { readonly app: string | null }[];
+  const app = rows[0]?.app ?? null;
+  if (app === "docs") {
+    await sql`update docs_documents set deleted_at = ${deletedAt}, updated_at = now()
+              where id = ${objectId} and org_id = ${orgId}`;
+  } else if (app === "sheets") {
+    await sql`update sheets set deleted_at = ${deletedAt}, updated_at = now()
+              where id = ${objectId} and org_id = ${orgId}`;
+  } else if (app === "slides") {
+    await sql`update slide_decks set deleted_at = ${deletedAt}, updated_at = now()
+              where id = ${objectId} and org_id = ${orgId}`;
+  }
 }
 
 function canReadFolderSql(sql: SqlLike, actorId: string): postgres.PendingQuery<postgres.Row[]> {
@@ -980,23 +986,6 @@ function canReadFolderSql(sql: SqlLike, actorId: string): postgres.PendingQuery<
           and (p.expires_at is null or p.expires_at > now())
       )
     )
-  `;
-}
-
-async function grantObjectAccess(
-  sql: SqlLike,
-  input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly objectId: string;
-    readonly role: string;
-    readonly grantedByActorId: string;
-  },
-): Promise<void> {
-  await sql`
-    insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
-    values (${input.orgId}, ${input.actorId}, 'object', ${input.objectId}, ${input.role}, ${input.grantedByActorId})
-    on conflict do nothing
   `;
 }
 
@@ -1112,6 +1101,7 @@ function mapFolderEntry(row: DriveFolderRow): DriveEntryRecord {
     name: row.name,
     folderId: row.parent_folder_id,
     ownerActorId: row.owner_actor_id,
+    app: null,
     metadata: row.metadata,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
@@ -1130,6 +1120,7 @@ function mapObjectEntry(row: DriveSearchRow): DriveEntryRecord {
     name: stringMetadata(row.metadata, "name") ?? row.storage_key,
     folderId: nullableStringMetadata(row.metadata, "folderId"),
     ownerActorId: row.owner_actor_id,
+    app: stringMetadata(row.metadata, "app") ?? null,
     mimeType: row.mime_type,
     byteSize: row.byte_size,
     sha256: row.sha256,

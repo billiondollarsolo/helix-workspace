@@ -158,6 +158,111 @@ describe("meet flow", () => {
       hiddenRoom.id,
     );
   });
+
+  it("lists scheduled and recent meetings with host, attendees, join code, and recording refs", async () => {
+    const store = new InMemoryMeetStore();
+    store.registerActor(actorId, { displayName: "Ada Lovelace", email: "ada@example.com" });
+    store.registerActor(participantActorId, { displayName: "Mira Okafor" });
+    const registry = createToolRegistry();
+    registerMeetTools(registry, { store, jwtSecret: "test-secret" });
+    const actor = userActor(["meet.read", "meet.write"]);
+
+    const scheduled = await store.createRoom({
+      orgId,
+      actorId,
+      subject: "Q3 Roadmap working session",
+      jitsiDomain: "meet.helix.test",
+      participantActorIds: [participantActorId],
+      status: "scheduled",
+      scheduledStartAt: new Date("2026-05-22T10:00:00.000Z"),
+      scheduledEndAt: new Date("2026-05-22T11:30:00.000Z"),
+    });
+    const recent = await store.createRoom({
+      orgId,
+      actorId,
+      subject: "Eng standup",
+      jitsiDomain: "meet.helix.test",
+    });
+    await store.attachRecording({
+      orgId,
+      roomId: recent.id,
+      storageKey: "recordings/eng-standup.mp4",
+      byteSize: 1024,
+    });
+    await store.attachSummary({
+      orgId,
+      roomId: recent.id,
+      body: "Standup recap: shipped auth fix, blocked on staging cert.",
+    });
+    await store.endRoom({ orgId, actorId, roomId: recent.id });
+
+    const listed = await registry.invoke<{
+      readonly meetings: readonly { readonly id: string; readonly status: string }[];
+      readonly scheduled: readonly {
+        readonly id: string;
+        readonly code: string;
+        readonly attendeeCount: number;
+        readonly durationSeconds: number | null;
+        readonly host: { readonly displayName: string | null } | null;
+      }[];
+      readonly recent: readonly {
+        readonly id: string;
+        readonly recorded: boolean;
+        readonly summaries: readonly { readonly body: string }[];
+      }[];
+    }>("meet.meetings.list", { limit: 20 }, { actor });
+
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) {
+      throw new Error(listed.error);
+    }
+    expect(listed.output.scheduled).toHaveLength(1);
+    expect(listed.output.scheduled[0]).toMatchObject({
+      id: scheduled.id,
+      attendeeCount: 2,
+      durationSeconds: 5400,
+    });
+    expect(listed.output.scheduled[0]?.host?.displayName).toBe("Ada Lovelace");
+    expect(listed.output.scheduled[0]?.code).toMatch(/^[a-z0-9-]+$/);
+    expect(listed.output.recent).toEqual([
+      expect.objectContaining({
+        id: recent.id,
+        recorded: true,
+        summaries: [
+          expect.objectContaining({
+            body: "Standup recap: shipped auth fix, blocked on staging cert.",
+          }),
+        ],
+      }),
+    ]);
+    // Scheduled meetings sort ahead of recent ones.
+    expect(listed.output.meetings[0]?.id).toBe(scheduled.id);
+  });
+
+  it("creates a scheduled room via the create-room tool when a schedule window is given", async () => {
+    const store = new InMemoryMeetStore();
+    const registry = createToolRegistry();
+    registerMeetTools(registry, { store, jwtSecret: "test-secret" });
+    const actor = userActor(["meet.read", "meet.write"]);
+
+    const created = await registry.invoke<{ readonly id: string; readonly status: string }>(
+      "meet.create-room",
+      {
+        subject: "1:1 with Jonas",
+        jitsiDomain: "meet.helix.test",
+        scheduledStartAt: "2026-05-22T15:00:00.000Z",
+        scheduledEndAt: "2026-05-22T15:30:00.000Z",
+      },
+      { actor },
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error);
+    }
+    expect(created.output.status).toBe("scheduled");
+    const stored = await store.getRoomForActor({ orgId, actorId, roomId: created.output.id });
+    expect(stored?.scheduledStartAt?.toISOString()).toBe("2026-05-22T15:00:00.000Z");
+  });
 });
 
 function userActor(scopes: readonly string[]): Actor {

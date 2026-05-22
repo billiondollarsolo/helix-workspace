@@ -1,6 +1,111 @@
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
+import type { MailCategoryTab } from "./category.js";
 
 export const mailPluginId = "com.helix.core.mail";
+
+/**
+ * Logical mail folders surfaced in the UI's left rail. These are *views* over
+ * the per-actor thread state rather than physical containers — e.g. `starred`
+ * is "threads with starred = true", `archive` is "threads with archived_at set".
+ */
+export type MailFolderId =
+  | "inbox"
+  | "starred"
+  | "snoozed"
+  | "sent"
+  | "drafts"
+  | "archive"
+  | "spam"
+  | "trash";
+
+export const MAIL_FOLDER_IDS = [
+  "inbox",
+  "starred",
+  "snoozed",
+  "sent",
+  "drafts",
+  "archive",
+  "spam",
+  "trash",
+] as const satisfies readonly MailFolderId[];
+
+export interface MailFolderSummary {
+  readonly id: MailFolderId;
+  /** Human-readable folder name. */
+  readonly label: string;
+  /** Threads in this folder (filtered to the active actor). */
+  readonly total: number;
+  /** Unread threads in this folder. */
+  readonly unread: number;
+}
+
+export interface MailLabelRecord {
+  readonly id: string;
+  readonly orgId: string;
+  /** `null` for a shared/org label, otherwise the owning actor. */
+  readonly ownerActorId: string | null;
+  /** Stable slug stored on `mail_thread_state.labels`. */
+  readonly slug: string;
+  readonly name: string;
+  /** Hex display colour. */
+  readonly color: string;
+  readonly sortOrder: number;
+  /** Threads visible to the actor currently carrying this label. */
+  readonly threadCount: number;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+/** A single row in the UI thread list — sender/subject/preview/time + flags. */
+export interface MailThreadRowRecord {
+  readonly threadId: string;
+  /** Most-recent message in the thread. */
+  readonly messageId: string;
+  readonly subject: string;
+  /** Display name of the most-recent sender, falling back to the address. */
+  readonly from: string;
+  readonly fromEmail: string;
+  /** Truncated body preview of the most-recent message. */
+  readonly preview: string;
+  /** ISO timestamp of the last activity. */
+  readonly time: string;
+  readonly unread: boolean;
+  readonly starred: boolean;
+  readonly hasAttachment: boolean;
+  /** Number of messages in the thread. */
+  readonly messageCount: number;
+  /** Labels currently applied to the thread (slugs). */
+  readonly labels: readonly string[];
+  /** Derived category tab. */
+  readonly category: MailCategoryTab;
+  readonly folder: MailFolderId;
+  readonly snoozedUntil: string | null;
+}
+
+export interface MailThreadListRequest {
+  readonly orgId: string;
+  readonly actorId: string;
+  /** Folder view; defaults to `inbox`. */
+  readonly folder?: MailFolderId | undefined;
+  /** Category-tab filter; only meaningful for `inbox`. */
+  readonly tab?: MailCategoryTab | undefined;
+  /** Restrict to threads carrying this label slug. */
+  readonly label?: string | undefined;
+  /** Free-text query over subject + body. */
+  readonly query?: string | undefined;
+  readonly limit?: number | undefined;
+  readonly offset?: number | undefined;
+  /** Evaluation "now" — controls snooze expiry. Defaults to the current time. */
+  readonly now?: Date | undefined;
+}
+
+export interface MailThreadListResult {
+  readonly threads: readonly MailThreadRowRecord[];
+  /** Total matching threads before `limit`/`offset` were applied. */
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
 
 export type MailDirection = "inbound" | "outbound";
 
@@ -96,6 +201,8 @@ export interface MailThreadStatePatch {
   readonly snoozedUntil?: Date | undefined;
   readonly readAt?: Date | null | undefined;
   readonly starred?: boolean | undefined;
+  /** Stamps (or, when `null`, clears) the per-actor Spam-folder routing flag. */
+  readonly spamAt?: Date | null | undefined;
 }
 
 export interface MailVacationRecord {

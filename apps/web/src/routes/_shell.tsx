@@ -1,18 +1,26 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { AppShell } from "@/components/shell";
-import { workspaceSummaryQueryOptions } from "@/features/workspace/queries";
+import { getSessionUser } from "@/lib/auth";
 
 export const Route = createFileRoute("/_shell")({
-  loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(workspaceSummaryQueryOptions());
+  // Auth gate: every workspace surface lives under `_shell`. Resolve the
+  // Better-Auth session before loading and bounce unauthenticated visitors
+  // to the login page.
+  beforeLoad: async () => {
+    const user = await getSessionUser();
+    if (user === null) {
+      // TanStack Router signals navigation by throwing a redirect.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw redirect({ to: "/login" });
+    }
   },
   component: AppShell,
   pendingComponent: () => (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <div className="w-16 shrink-0 border-r border-sidebar-border bg-sidebar" />
-      <div className="workspace-frame flex-1">
-        <div className="top-bar" />
-        <div className="route-skeleton" />
+    <div className="app">
+      <div className="rail" />
+      <div className="workspace">
+        <div className="topbar" />
+        <div className="workspace-body" />
       </div>
     </div>
   ),

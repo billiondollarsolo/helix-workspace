@@ -117,6 +117,7 @@ export interface DriveEntryRecord {
   readonly name: string;
   readonly folderId: string | null;
   readonly ownerActorId: string | null;
+  readonly app: string | null;
   readonly mimeType?: string | undefined;
   readonly byteSize?: number | undefined;
   readonly sha256?: string | null | undefined;

@@ -1,2111 +1,2816 @@
+/* Helix Mail — production surface.
+   Recreated from the design handoff (app-mail.jsx): folder/label sidebar,
+   category tab bar, ThreadRow list with live operator search, thread view
+   with AI summary + inline composer, and the bottom-right compose modal.
+
+   Data: wired to the real Mail backend via TanStack Query —
+   `mail.folders.list` / `mail.labels.list` back the sidebar, `mail.threads.list`
+   backs the thread list (folder + category tab + label filter + operator
+   query + pagination), `mail.thread.get` backs the thread view, and the
+   write tools (`mail.send`, `mail.reply`, `mail.archive`, `mail.snooze`,
+   `mail.delete`, `mail.read.set`, `mail.star.set`, `mail.label.apply`) back
+   the row + thread actions. The typed `mail-seed.ts` is kept ONLY as an
+   offline/error fallback when a query fails. */
+
+import "./mail-shell.css";
 import {
-  Archive,
-  ArrowLeft,
-  BadgeCheck,
-  Clock,
-  Edit3,
-  Filter,
-  Inbox,
-  Info,
-  MailOpen,
-  MoreHorizontal,
-  Paperclip,
-  Reply,
-  RotateCcw,
-  Search,
-  Send,
-  Star,
-  Tag,
-  Trash2,
-  Users,
-  X,
-} from "lucide-react";
-import { SuggestionSlot } from "@helix/sdk-web";
-import { useDebouncedValue } from "@tanstack/react-pacer/debouncer";
-import { useForm, useStore as useFormStore } from "@tanstack/react-form";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { z } from "zod";
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Icons, type IconName } from "@/components/icons";
+import { Avatar } from "@/components/ui/avatar";
+import { SurfaceFrame } from "@/components/shell";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
+  applyMailLabels,
   archiveMailThread,
   createMailFilter,
-  deleteMailFilter,
   deleteMailThread,
   replyToMail,
   sendMail,
-  setMailVacation,
   setMailThreadRead,
   setMailThreadStarred,
   snoozeMailThread,
-  updateMailFilter,
-  type MailApiAddress,
-  type MailFilterActions,
-  type MailFilterCriteria,
-  type MailFilterRecord,
-  type MailSearchHit,
+  spamMailThread,
+  type MailAttachment,
+  type MailFolderKey,
+  type MailFolderSummary,
+  type MailLabelSummary,
+  type MailSendInput,
   type MailThreadDetail,
-  type MailVacationSettings,
+  type MailThreadRow,
 } from "./api";
 import {
-  setMailComposerDraft,
-  setMailDensity,
-  toggleSelectedMailMessage,
-  toggleSelectedMailThread,
-  updateMailComposerDraft,
-  useMailUiStore,
-  type MailComposerDraft,
-  type MailDensity,
-} from "./mail-store";
+  MAIL_EMPTY_STATES,
+  MAIL_FOLDERS,
+  MAIL_LABELS,
+  MAIL_TABS,
+  MAIL_THREADS,
+  type MailTabId,
+} from "./mail-seed";
 import {
-  defaultMailSearchState,
-  mailFiltersQueryOptions,
-  mailQueryKeys,
-  mailSearchInputFromState,
-  mailSearchQueryOptions,
+  mailFoldersQueryOptions,
+  mailLabelsQueryOptions,
   mailThreadQueryOptions,
-  mailVacationQueryOptions,
-  type MailRouteLabel,
-  type MailRouteMailbox,
-  type MailSearchState,
+  mailThreadsQueryOptions,
 } from "./queries";
 
-type MailboxId = MailRouteMailbox;
-type LabelId = MailRouteLabel;
-type ThreadStatus = "ready" | "loading" | "error";
-type FilterSaveStatus = "idle" | "saving" | "saved" | "error";
-type VacationSaveStatus = "idle" | "saving" | "saved" | "error";
-
-interface MailThreadRouteState {
-  readonly messageId?: string;
-  readonly threadId?: string;
+function cx(...parts: Array<string | false | null | undefined>): string {
+  return parts.filter(Boolean).join(" ");
 }
 
-interface MailParticipant {
-  readonly name: string;
-  readonly email: string;
-}
+/* ----------------------------------------------------------- icons + time */
 
-interface MailMessage {
-  readonly id: string;
-  readonly from: MailParticipant;
-  readonly to: readonly MailParticipant[];
-  readonly sentAt: string;
-  readonly body: string;
-}
-
-interface MailThread {
-  readonly id: string;
-  readonly subject: string;
-  readonly preview: string;
-  readonly participants: readonly MailParticipant[];
-  readonly messages: readonly MailMessage[];
-  readonly labels: readonly string[];
-  readonly mailbox: MailboxId;
-  readonly lastActivity: string;
-  readonly unread: boolean;
-  readonly starred: boolean;
-  readonly snoozedUntil?: string | null;
-  readonly hasAttachment: boolean;
-  readonly priority: "normal" | "high";
-}
-
-type ComposerDraft = MailComposerDraft;
-
-const mailboxItems: ReadonlyArray<{
-  readonly id: MailboxId;
-  readonly label: string;
-  readonly icon: typeof Inbox;
-}> = [
-  { id: "inbox", label: "Inbox", icon: Inbox },
-  { id: "starred", label: "Starred", icon: Star },
-  { id: "sent", label: "Sent", icon: Send },
-  { id: "drafts", label: "Drafts", icon: Edit3 },
-  { id: "archive", label: "Archive", icon: Archive },
-];
-
-const labelItems: ReadonlyArray<{
-  readonly id: LabelId;
-  readonly label: string;
-  readonly color: string;
-}> = [
-  { id: "planning", label: "Planning", color: "#0f766e" },
-  { id: "finance", label: "Finance", color: "#4f46e5" },
-  { id: "support", label: "Support", color: "#ca8a04" },
-  { id: "team", label: "Team", color: "#be123c" },
-];
-
-const directory: readonly MailParticipant[] = [
-  { name: "Maya Chen", email: "maya@helix.local" },
-  { name: "Sam Patel", email: "sam@helix.local" },
-  { name: "Jordan Lee", email: "jordan@helix.local" },
-  { name: "Riley Brooks", email: "riley@helix.local" },
-  { name: "Ari Morgan", email: "ari@helix.local" },
-];
-
-const emptyDraft: ComposerDraft = {
-  mode: "new",
-  to: [],
-  cc: [],
-  bcc: [],
-  subject: "",
-  body: "",
+/** Static folder → icon map; the backend `mail.folders.list` is icon-free. */
+const FOLDER_ICONS: Readonly<Record<MailFolderKey, IconName>> = {
+  inbox: "Inbox",
+  starred: "Star",
+  snoozed: "Snooze",
+  sent: "Send",
+  drafts: "EditPen",
+  archive: "Archive",
+  spam: "Bell",
+  trash: "Trash",
 };
 
-const defaultVacationSettings: MailVacationSettings = {
-  enabled: false,
-  subject: "Out of office",
-  body: "Thanks for your message. I am away right now and will reply when I return.",
-  startsAt: null,
-  endsAt: null,
-};
-
-const sampleMailThreads: readonly MailThread[] = [
-  sampleMailThread({
-    id: "sample-mail-1",
-    from: directory[1]!,
-    subject: "[AlphaBravoCompany/remotedialer] Run failed: Renovate - main (237b1a7)",
-    preview:
-      "Renovate workflow run needs attention before the dependency update window closes.",
-    labels: ["team", "support"],
-    lastActivity: "3:46 AM",
-    unread: true,
-    hasAttachment: false,
-    priority: "high",
-  }),
-  sampleMailThread({
-    id: "sample-mail-2",
-    from: { name: "Annie Thai", email: "annie@example.com" },
-    subject: "Request to Revisit Compensation for Expanded HR Responsibilities",
-    preview:
-      "Hi Harriet, I wanted to follow up regarding my current role and overall compensation.",
-    labels: ["team"],
-    lastActivity: "7:32 AM",
-    unread: false,
-    hasAttachment: false,
-    priority: "normal",
-  }),
-  sampleMailThread({
-    id: "sample-mail-3",
-    from: { name: "Nick Johnson", email: "nick@example.com" },
-    subject: "Invitation: 8am first tee time - $72 - Moccasin Run",
-    preview: "Moccasin Run at Fri Aug 28, 2026 8am - 12:50pm ET.",
-    labels: ["planning"],
-    lastActivity: "May 18",
-    unread: false,
-    hasAttachment: true,
-    priority: "normal",
-  }),
-  sampleMailThread({
-    id: "sample-mail-4",
-    from: { name: "Ally Bank", email: "alerts@ally.example" },
-    subject: "A recent debit is above the transaction amount you set",
-    preview: "No action is needed. We just wanted to let you know.",
-    labels: ["finance"],
-    lastActivity: "May 18",
-    unread: true,
-    hasAttachment: false,
-    priority: "high",
-  }),
-  sampleMailThread({
-    id: "sample-mail-5",
-    from: { name: "Morgan Ryann", email: "morgan@example.com" },
-    subject: "Resume - forwarded message",
-    preview: "Forwarded message from Morgan Ryann with the updated resume attached.",
-    labels: ["team"],
-    lastActivity: "May 17",
-    unread: false,
-    hasAttachment: true,
-    priority: "normal",
-  }),
-  sampleMailThread({
-    id: "sample-mail-6",
-    from: { name: "Board Plantations Two", email: "board@example.com" },
-    subject: "Please Read -- Community Information",
-    preview: "Board of Directors update, meeting agenda, and maintenance schedule.",
-    labels: ["support"],
-    lastActivity: "May 16",
-    unread: true,
-    hasAttachment: false,
-    priority: "normal",
-  }),
-  sampleMailThread({
-    id: "sample-mail-7",
-    from: { name: "Me", email: "maya@helix.local" },
-    subject: "Annie Sadie relationship reminder",
-    preview: "Personal reminder and follow-up notes for next week.",
-    labels: ["planning"],
-    mailbox: "sent",
-    lastActivity: "May 15",
-    unread: false,
-    hasAttachment: false,
-    priority: "normal",
-  }),
-  sampleMailThread({
-    id: "sample-mail-8",
-    from: { name: "Ari Morgan", email: "ari@helix.local" },
-    subject: "Q3 vendor renewal checklist",
-    preview: "Shared checklist covering contracts, owners, and approval timing.",
-    labels: ["finance", "team"],
-    lastActivity: "May 14",
-    unread: false,
-    hasAttachment: true,
-    priority: "normal",
-  }),
+/** Folder display order in the left rail. */
+const FOLDER_ORDER: readonly MailFolderKey[] = [
+  "inbox",
+  "starred",
+  "snoozed",
+  "sent",
+  "drafts",
+  "archive",
+  "trash",
 ];
 
-const vacationSubjectSchema = z.string().max(120, "Subject must be 120 characters or fewer.");
-const vacationBodySchema = z.string().max(2000, "Reply must be 2,000 characters or fewer.");
+/** Renders an ISO timestamp into a compact, mailbox-style display string. */
+function formatThreadTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+  const dayMs = 24 * 60 * 60 * 1000;
+  const diffDays = Math.round((now.getTime() - date.getTime()) / dayMs);
+  if (diffDays === 1) {
+    return "Yesterday";
+  }
+  if (diffDays > 1 && diffDays < 7) {
+    return date.toLocaleDateString(undefined, { weekday: "short" });
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 
-export function MailShell({
-  initialMessageId,
-  initialThreadId,
-  onSearchStateChange,
-  onThreadRouteStateChange,
-  searchState,
-}: {
-  readonly initialMessageId?: string;
-  readonly initialThreadId?: string;
-  readonly onSearchStateChange?: (state: MailSearchState) => void;
-  readonly onThreadRouteStateChange?: (
-    state: MailThreadRouteState,
-    searchState: MailSearchState,
-  ) => void;
-  readonly searchState?: MailSearchState;
-} = {}) {
-  const queryClient = useQueryClient();
-  const [mailbox, setMailbox] = useState<MailboxId>(
-    searchState?.mailbox ?? defaultMailSearchState.mailbox,
-  );
-  const [selectedLabel, setSelectedLabel] = useState<LabelId | "all">(
-    searchState?.label ?? defaultMailSearchState.label,
-  );
-  const [query, setQuery] = useState(searchState?.query ?? defaultMailSearchState.query);
-  const [unreadOnly, setUnreadOnly] = useState(
-    searchState?.unreadOnly ?? defaultMailSearchState.unreadOnly,
-  );
-  const [priorityOnly, setPriorityOnly] = useState(
-    searchState?.priorityOnly ?? defaultMailSearchState.priorityOnly,
-  );
-  const [attachmentsOnly, setAttachmentsOnly] = useState(
-    searchState?.attachmentsOnly ?? defaultMailSearchState.attachmentsOnly,
-  );
-  const density = useMailUiStore((state) => state.density);
-  const selectedMessageIds = useMailUiStore((state) => state.selectedMessageIds);
-  const selectedThreadIds = useMailUiStore((state) => state.selectedThreadIds);
-  const composer = useMailUiStore((state) => state.composerDraft);
-  const [status, setStatus] = useState<ThreadStatus>("ready");
-  const [selectedThreadId, setSelectedThreadId] = useState(initialThreadId ?? "");
-  const [queuedSend, setQueuedSend] = useState<ComposerDraft | null>(null);
-  const [threads, setThreads] = useState<readonly MailThread[]>(sampleMailThreads);
-  const [filterSaveStatus, setFilterSaveStatus] = useState<FilterSaveStatus>("idle");
-  const [optimisticFilters, setOptimisticFilters] = useState<readonly MailFilterRecord[]>([]);
-  const [deletedFilterIds, setDeletedFilterIds] = useState<readonly string[]>([]);
-  const [vacationSaveStatus, setVacationSaveStatus] = useState<VacationSaveStatus>("idle");
-  const currentSearchState = useMemo(
-    () => ({
-      query,
-      label: selectedLabel,
-      mailbox,
-      unreadOnly,
-      priorityOnly,
-      attachmentsOnly,
-    }),
-    [attachmentsOnly, mailbox, priorityOnly, query, selectedLabel, unreadOnly],
-  );
-  const [debouncedQuery] = useDebouncedValue(query, { wait: 300 });
-  const debouncedSearchState = useMemo(
-    () => ({
-      ...currentSearchState,
-      query: debouncedQuery,
-    }),
-    [currentSearchState, debouncedQuery],
-  );
-  const searchInput = useMemo(
-    () => mailSearchInputFromState(debouncedSearchState),
-    [debouncedSearchState],
-  );
-  const mailSearchQuery = useQuery(mailSearchQueryOptions(searchInput));
-  const mailFiltersQuery = useQuery(mailFiltersQueryOptions());
-  const mailThreadQuery = useQuery({
-    ...mailThreadQueryOptions(selectedThreadId),
-    enabled: selectedThreadId.length > 0,
-  });
-  const mailVacationQuery = useQuery(mailVacationQueryOptions());
-  const vacationSettings = mailVacationQuery.data ?? defaultVacationSettings;
-  const vacationSettingsAvailable = !mailVacationQuery.isPending && !mailVacationQuery.isError;
+/* ----------------------------------------------------------- seed fallback */
 
-  useEffect(() => {
-    setSelectedThreadId(initialThreadId ?? "");
-  }, [initialThreadId]);
+/** Seed folder summaries — used only when `mail.folders.list` fails. */
+const FALLBACK_FOLDERS: readonly MailFolderSummary[] = MAIL_FOLDERS.map((folder) => ({
+  id: folder.id,
+  label: folder.label,
+  total: folder.count ?? 0,
+  unread: folder.count ?? 0,
+}));
 
-  useEffect(() => {
-    if (searchState === undefined) {
-      return;
-    }
-    setMailbox(searchState.mailbox);
-    setSelectedLabel(searchState.label);
-    setQuery(searchState.query);
-    setUnreadOnly(searchState.unreadOnly);
-    setPriorityOnly(searchState.priorityOnly);
-    setAttachmentsOnly(searchState.attachmentsOnly);
-  }, [
-    searchState?.attachmentsOnly,
-    searchState?.label,
-    searchState?.mailbox,
-    searchState?.priorityOnly,
-    searchState?.query,
-    searchState?.unreadOnly,
-  ]);
+/** Seed labels — used only when `mail.labels.list` fails. */
+const FALLBACK_LABELS: readonly MailLabelSummary[] = MAIL_LABELS.map((label, index) => ({
+  id: label.id,
+  slug: label.id,
+  name: label.label,
+  color: label.color,
+  sortOrder: index,
+  threadCount: 0,
+  shared: true,
+}));
 
-  const updateSearchState = (
-    update: Partial<MailSearchState> | ((state: MailSearchState) => MailSearchState),
-    options: { readonly clearThread?: boolean } = {},
-  ) => {
-    const next =
-      typeof update === "function"
-        ? update(currentSearchState)
-        : { ...currentSearchState, ...update };
-    setMailbox(next.mailbox);
-    setSelectedLabel(next.label);
-    setQuery(next.query);
-    setUnreadOnly(next.unreadOnly);
-    setPriorityOnly(next.priorityOnly);
-    setAttachmentsOnly(next.attachmentsOnly);
-    if (options.clearThread === true) {
-      setSelectedThreadId("");
-      onThreadRouteStateChange?.({}, next);
-      return;
-    }
-    onSearchStateChange?.(next);
-  };
-
-  const openThread = (threadId: string) => {
-    setSelectedThreadId(threadId);
-    onThreadRouteStateChange?.({ threadId }, currentSearchState);
-  };
-
-  const closeThread = () => {
-    setSelectedThreadId("");
-    onThreadRouteStateChange?.({}, currentSearchState);
-  };
-
-  useEffect(() => {
-    if (mailSearchQuery.data === undefined) {
-      return;
-    }
-
-    const nextThreads = mailSearchQuery.data.map(mailSearchHitToThread);
-    const displayThreads = nextThreads.length > 0 ? nextThreads : sampleMailThreads;
-    setThreads(displayThreads);
-    setSelectedThreadId((current) => (current.length > 0 ? current : ""));
-  }, [mailSearchQuery.data]);
-
-  useEffect(() => {
-    if (mailSearchQuery.isError) {
-      setThreads((current) => (current.length > 0 ? current : sampleMailThreads));
-    }
-  }, [mailSearchQuery.isError]);
-
-  useEffect(() => {
-    const thread = mailThreadQuery.data;
-    if (thread === undefined || thread === null) {
-      return;
-    }
-    setThreads((current) => upsertThread(current, mailThreadDetailToThread(thread)));
-  }, [mailThreadQuery.data]);
-
-  const filteredThreads = useMemo(
-    () =>
-      threads.filter((thread) => {
-        const inMailbox = mailbox === "starred" ? thread.starred : thread.mailbox === mailbox;
-        const inLabel = selectedLabel === "all" || thread.labels.includes(selectedLabel);
-        const visibleNow =
-          thread.snoozedUntil === undefined ||
-          thread.snoozedUntil === null ||
-          new Date(thread.snoozedUntil).getTime() <= Date.now();
-        const queryText =
-          `${thread.subject} ${thread.preview} ${thread.participants.map((participant) => participant.name).join(" ")}`.toLowerCase();
-        const matchesQuery = queryText.includes(debouncedQuery.trim().toLowerCase());
-        return (
-          inMailbox &&
-          inLabel &&
-          visibleNow &&
-          matchesQuery &&
-          (!unreadOnly || thread.unread) &&
-          (!priorityOnly || thread.priority === "high") &&
-          (!attachmentsOnly || thread.hasAttachment)
-        );
-      }),
-    [attachmentsOnly, debouncedQuery, mailbox, priorityOnly, selectedLabel, threads, unreadOnly],
-  );
-
-  const selectedThread =
-    selectedThreadId.length > 0
-      ? filteredThreads.find((thread) => thread.id === selectedThreadId)
-      : undefined;
-  const selectedThreadContext = selectedThread
-    ? {
-        resource: {
-          id: selectedThread.id,
-          type: "mail.thread",
-          label: selectedThread.subject,
-        },
-        metadata: {
-          labels: selectedThread.labels,
-          unread: selectedThread.unread,
-          priority: selectedThread.priority,
-        },
+/** Seed threads projected into the backend row shape — used only on failure. */
+function fallbackThreadRows(
+  folder: MailFolderKey,
+  tab: MailTabId,
+  label: string | null,
+  query: string,
+): readonly MailThreadRow[] {
+  const trimmed = query.trim().toLowerCase();
+  const tokens = trimmed === "" ? [] : (trimmed.match(/\S+/g) ?? []);
+  return MAIL_THREADS.filter((thread) => {
+    if (folder === "starred") {
+      if (thread.starred !== true) {
+        return false;
       }
-    : undefined;
-
-  const openComposer = (draft: ComposerDraft = emptyDraft) => setMailComposerDraft(draft);
-  const canSaveFilter = query.trim().length > 0 || attachmentsOnly || selectedLabel !== "all";
-  const savedFilters = useMemo(
-    () =>
-      mergeMailFilters(mailFiltersQuery.data ?? [], optimisticFilters).filter(
-        (filter) => !deletedFilterIds.includes(filter.id),
-      ),
-    [deletedFilterIds, mailFiltersQuery.data, optimisticFilters],
-  );
-
-  const replyToThread = (thread: MailThread) => {
-    openComposer({
-      mode: "reply",
-      threadId: thread.id,
-      to: [thread.messages[thread.messages.length - 1]?.from ?? thread.participants[0]!],
-      cc: [],
-      bcc: [],
-      subject: thread.subject.startsWith("Re:") ? thread.subject : `Re: ${thread.subject}`,
-      body: "",
-    });
-  };
-
-  const queueSend = (draft: ComposerDraft) => {
-    setQueuedSend(draft);
-    setMailComposerDraft(null);
-    const message = {
-      to: draft.to.map(participantToApiAddress),
-      cc: draft.cc.map(participantToApiAddress),
-      bcc: draft.bcc.map(participantToApiAddress),
-      subject: draft.subject,
-      bodyText: draft.body,
-    };
-    void (
-      draft.mode === "reply" && draft.threadId !== undefined
-        ? replyToMail({ ...message, threadId: draft.threadId })
-        : sendMail(message)
-    ).catch(() => {});
-  };
-
-  const resetFilters = () => {
-    updateSearchState({
-      query: defaultMailSearchState.query,
-      label: defaultMailSearchState.label,
-      unreadOnly: defaultMailSearchState.unreadOnly,
-      priorityOnly: defaultMailSearchState.priorityOnly,
-      attachmentsOnly: defaultMailSearchState.attachmentsOnly,
-    });
-  };
-
-  const saveCurrentFilter = () => {
-    const subjectContains = query.trim();
-    const criteria = {
-      ...(subjectContains.length === 0 ? {} : { subjectContains }),
-      ...(attachmentsOnly ? { hasAttachment: true } : {}),
-    };
-    const actions = selectedLabel === "all" ? {} : { applyLabels: [selectedLabel] };
-    if (Object.keys(criteria).length === 0 && Object.keys(actions).length === 0) {
-      return;
+    } else if (folder !== "inbox") {
+      return false;
+    } else if (thread.tab !== tab) {
+      return false;
     }
+    if (label != null && !thread.labels.includes(label)) {
+      return false;
+    }
+    if (tokens.length > 0) {
+      const haystack = [thread.from, thread.subject, thread.preview, thread.body ?? ""]
+        .join(" ")
+        .toLowerCase();
+      if (!tokens.every((token) => haystack.includes(token))) {
+        return false;
+      }
+    }
+    return true;
+  }).map((thread) => ({
+    threadId: thread.id,
+    messageId: thread.id,
+    subject: thread.subject,
+    from: thread.from,
+    fromEmail: thread.fromEmail ?? "",
+    preview: thread.preview,
+    time: thread.time,
+    unread: thread.unread === true,
+    starred: thread.starred === true,
+    hasAttachment: thread.hasAttachment === true,
+    messageCount: thread.count ?? 1,
+    labels: thread.labels,
+    category: thread.tab,
+    folder,
+    snoozedUntil: null,
+  }));
+}
 
-    setFilterSaveStatus("saving");
-    const optimisticFilter = optimisticMailFilter({
-      name: `Mail filter: ${subjectContains || selectedLabel}`,
-      criteria,
-      actions,
-    });
-    setOptimisticFilters((current) => mergeMailFilters(current, [optimisticFilter]));
-    void createMailFilter({
-      name: optimisticFilter.name,
-      criteria,
-      actions,
-    })
-      .then((filter) => {
-        setOptimisticFilters((current) =>
-          mergeMailFilters(
-            current.filter((item) => item.id !== optimisticFilter.id),
-            [isMailFilterRecord(filter) ? filter : optimisticFilter],
-          ),
-        );
-        setFilterSaveStatus("saved");
-      })
-      .catch(() => setFilterSaveStatus("error"));
-  };
+/* ----------------------------------------------------------------- sidebar */
 
-  const toggleSavedFilter = (filter: MailFilterRecord) => {
-    const nextFilter = { ...filter, enabled: !filter.enabled, updatedAt: new Date().toISOString() };
-    setOptimisticFilters((current) => mergeMailFilters(current, [nextFilter]));
-    void updateMailFilter({ id: filter.id, enabled: nextFilter.enabled })
-      .then((updatedFilter) => {
-        setOptimisticFilters((current) =>
-          mergeMailFilters(current, [
-            isMailFilterRecord(updatedFilter) ? updatedFilter : nextFilter,
-          ]),
-        );
-      })
-      .catch(() => {});
-  };
+interface MailSidebarProps {
+  readonly folder: MailFolderKey;
+  readonly onFolder: (folder: MailFolderKey) => void;
+  readonly onCompose: () => void;
+  readonly folders: readonly MailFolderSummary[];
+  readonly labels: readonly MailLabelSummary[];
+  readonly activeLabel: string | null;
+  readonly onLabel: (label: string | null) => void;
+}
 
-  const removeSavedFilter = (filter: MailFilterRecord) => {
-    setDeletedFilterIds((current) =>
-      current.includes(filter.id) ? current : [...current, filter.id],
-    );
-    setOptimisticFilters((current) => current.filter((item) => item.id !== filter.id));
-    void deleteMailFilter(filter.id).catch(() => {});
-  };
-
-  const saveVacationSettings = (settings: MailVacationSettings) => {
-    setVacationSaveStatus("saving");
-    void setMailVacation(settings)
-      .then((vacation) => {
-        queryClient.setQueryData(mailQueryKeys.vacation(), vacation);
-        setVacationSaveStatus("saved");
-      })
-      .catch(() => setVacationSaveStatus("error"));
-  };
+function MailSidebar({
+  folder,
+  onFolder,
+  onCompose,
+  folders,
+  labels,
+  activeLabel,
+  onLabel,
+}: MailSidebarProps) {
+  const byId = new Map(folders.map((entry) => [entry.id, entry]));
+  const ordered = FOLDER_ORDER.map((id) => byId.get(id)).filter(
+    (entry): entry is MailFolderSummary => entry != null,
+  );
 
   return (
-    <section className="mail-page">
-      <aside className="mail-sidebar" aria-label="Mail navigation">
-        <button className="mail-compose-button" onClick={() => openComposer()} type="button">
-          <Edit3 aria-hidden="true" size={17} />
-          Compose
-        </button>
-
-        <nav className="mail-nav" aria-label="Mailboxes">
-          {mailboxItems.map((item) => {
-            const Icon = item.icon;
-            const count =
-              item.id === "starred"
-                ? threads.filter((thread) => thread.starred).length
-                : threads.filter((thread) => thread.mailbox === item.id).length;
-            return (
-              <button
-                aria-current={mailbox === item.id ? "page" : undefined}
-                className={mailbox === item.id ? "mail-nav-item active" : "mail-nav-item"}
-                key={item.id}
-                onClick={() => {
-                  updateSearchState({ mailbox: item.id }, { clearThread: true });
-                }}
-                type="button"
-              >
-                <Icon aria-hidden="true" size={17} />
-                <span>{item.label}</span>
-                <strong>{count}</strong>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="mail-labels" aria-label="Labels">
-          <div className="mail-section-title">
-            <Tag aria-hidden="true" size={15} />
-            <span>Labels</span>
-          </div>
-          <button
-            className={selectedLabel === "all" ? "mail-label active" : "mail-label"}
-            onClick={() => updateSearchState({ label: "all" }, { clearThread: true })}
-            type="button"
-          >
-            <span className="mail-label-swatch all" aria-hidden="true" />
-            All labels
-          </button>
-          {labelItems.map((label) => (
+    <aside
+      style={{
+        width: 184,
+        flexShrink: 0,
+        borderRight: "1px solid var(--border)",
+        background: "var(--surface)",
+        display: "flex",
+        flexDirection: "column",
+        padding: "10px 8px",
+        minHeight: 0,
+      }}
+    >
+      <button
+        type="button"
+        className="btn primary lg"
+        style={{ width: "100%", marginBottom: 12 }}
+        onClick={onCompose}
+      >
+        <Icons.EditPen /> Compose
+      </button>
+      <div style={{ overflowY: "auto", flex: 1 }}>
+        {ordered.map((entry) => {
+          const Icon = Icons[FOLDER_ICONS[entry.id]];
+          const active = folder === entry.id;
+          const badge = entry.id === "inbox" ? entry.unread : entry.total;
+          return (
             <button
-              className={selectedLabel === label.id ? "mail-label active" : "mail-label"}
-              key={label.id}
-              onClick={() => updateSearchState({ label: label.id }, { clearThread: true })}
+              key={entry.id}
               type="button"
+              onClick={() => {
+                onFolder(entry.id);
+              }}
+              aria-current={active ? "true" : undefined}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                height: "var(--rd-list-row-h)",
+                padding: "0 10px",
+                borderRadius: 6,
+                fontSize: "var(--rd-row-fs)",
+                background: active ? "var(--accent-soft)" : "transparent",
+                color: active ? "var(--accent)" : "var(--text)",
+                fontWeight: active ? 600 : 400,
+              }}
+            >
+              <Icon />
+              <span style={{ flex: 1, textAlign: "left" }}>{entry.label}</span>
+              {badge > 0 && (
+                <span style={{ fontSize: 11, color: "var(--text-3)" }}>{badge}</span>
+              )}
+            </button>
+          );
+        })}
+        <div className="section-label">Labels</div>
+        {labels.map((label) => {
+          const active = activeLabel === label.slug;
+          return (
+            <button
+              key={label.id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => {
+                onLabel(active ? null : label.slug);
+              }}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                height: "var(--rd-list-row-h)",
+                padding: "0 10px",
+                borderRadius: 6,
+                fontSize: "var(--rd-row-fs)",
+                background: active ? "var(--accent-soft)" : "transparent",
+                color: active ? "var(--accent)" : "var(--text)",
+                fontWeight: active ? 600 : 400,
+              }}
             >
               <span
-                className="mail-label-swatch"
-                style={{ background: label.color }}
-                aria-hidden="true"
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 2,
+                  background: label.color,
+                  flexShrink: 0,
+                }}
               />
-              {label.label}
-            </button>
-          ))}
-        </div>
-      </aside>
-
-      <div
-        className={selectedThread ? "mail-workspace reading" : "mail-workspace"}
-        role="main"
-        aria-labelledby="mail-title"
-      >
-        <header className="mail-header">
-          <div>
-            <h1 id="mail-title">Mail</h1>
-            <p>{filteredThreads.length} threads</p>
-          </div>
-          <div className="mail-header-actions">
-            <VacationSettingsControl
-              available={vacationSettingsAvailable}
-              onSave={saveVacationSettings}
-              settings={vacationSettings}
-              status={vacationSaveStatus}
-            />
-            <button
-              className="helix-button helix-button-secondary"
-              onClick={() => setStatus(status === "loading" ? "ready" : "loading")}
-              type="button"
-            >
-              <RotateCcw aria-hidden="true" size={16} />
-              {status === "loading" ? "Done" : "Sync"}
-            </button>
-            <button
-              className="icon-button"
-              aria-label="More mail actions"
-              onClick={() => setStatus("error")}
-              type="button"
-            >
-              <MoreHorizontal aria-hidden="true" size={17} />
-            </button>
-          </div>
-        </header>
-
-        <div className="mail-filters" aria-label="Mail filters">
-          <label className="mail-search">
-            <Search aria-hidden="true" size={17} />
-            <input
-              value={query}
-              onChange={(event) => updateSearchState({ query: event.target.value })}
-              placeholder="Search mail"
-            />
-          </label>
-          <button
-            className={unreadOnly ? "mail-filter active" : "mail-filter"}
-            onClick={() =>
-              updateSearchState((current) => ({ ...current, unreadOnly: !current.unreadOnly }))
-            }
-            type="button"
-          >
-            Unread
-          </button>
-          <button
-            className={priorityOnly ? "mail-filter active" : "mail-filter"}
-            onClick={() =>
-              updateSearchState((current) => ({ ...current, priorityOnly: !current.priorityOnly }))
-            }
-            type="button"
-          >
-            Priority
-          </button>
-          <button
-            className={attachmentsOnly ? "mail-filter active" : "mail-filter"}
-            onClick={() =>
-              updateSearchState((current) => ({
-                ...current,
-                attachmentsOnly: !current.attachmentsOnly,
-              }))
-            }
-            type="button"
-          >
-            <Paperclip aria-hidden="true" size={15} />
-            Attachments
-          </button>
-          <button
-            aria-label="Save current mail filter"
-            className={filterSaveStatus === "saved" ? "mail-filter active" : "mail-filter"}
-            disabled={!canSaveFilter || filterSaveStatus === "saving"}
-            onClick={saveCurrentFilter}
-            type="button"
-          >
-            <Filter aria-hidden="true" size={15} />
-            {filterSaveStatus === "saving" ? "Saving" : "Save filter"}
-          </button>
-          <div className="mail-density" role="group" aria-label="Density">
-            <button
-              className={density === "comfortable" ? "active" : undefined}
-              onClick={() => setMailDensity("comfortable")}
-              type="button"
-            >
-              Comfort
-            </button>
-            <button
-              className={density === "compact" ? "active" : undefined}
-              onClick={() => setMailDensity("compact")}
-              type="button"
-            >
-              Compact
-            </button>
-          </div>
-        </div>
-
-        {selectedThread ? null : (
-          <>
-            <div className="mail-list-toolbar" aria-label="Mail list actions">
-              <div>
-                <label className="mail-toolbar-check">
-                  <input aria-label="Select all visible mail" type="checkbox" />
-                </label>
-                <button className="icon-button" aria-label="Refresh mail" type="button">
-                  <RotateCcw aria-hidden="true" size={16} />
-                </button>
-                <button className="icon-button" aria-label="More list actions" type="button">
-                  <MoreHorizontal aria-hidden="true" size={17} />
-                </button>
-              </div>
-              <span>
-                1-50 of {filteredThreads.length === 0 ? "0" : String(filteredThreads.length)}
-              </span>
-            </div>
-
-            <div className="mail-category-tabs" aria-label="Inbox categories">
-              <button className="active" type="button">
-                <Inbox aria-hidden="true" size={17} />
-                <span>Primary</span>
-              </button>
-              <button type="button">
-                <Tag aria-hidden="true" size={17} />
-                <span>Promotions</span>
-                <strong>11 new</strong>
-              </button>
-              <button type="button">
-                <Users aria-hidden="true" size={17} />
-                <span>Social</span>
-              </button>
-              <button type="button">
-                <Info aria-hidden="true" size={17} />
-                <span>Updates</span>
-                <strong>10 new</strong>
-              </button>
-            </div>
-
-            <div className="mail-happening-soon" aria-label="Happening soon">
-              <header>
-                <strong>Happening soon</strong>
-                <button aria-label="Dismiss happening soon" className="icon-button" type="button">
-                  <X aria-hidden="true" size={16} />
-                </button>
-              </header>
-              <div>
-                <span className="mail-package-preview" aria-hidden="true" />
-                <strong>3 items from Amazon</strong>
-                <span>Expected tomorrow</span>
-                <button className="helix-button" type="button">
-                  View order
-                </button>
-                <button aria-label="More order actions" className="icon-button" type="button">
-                  <MoreHorizontal aria-hidden="true" size={17} />
-                </button>
-              </div>
-            </div>
-          </>
-        )}
-
-        <div className={selectedThread ? "mail-split reading" : "mail-split"}>
-          {selectedThread ? (
-            <ReaderPanel
-              onArchive={(thread) => {
-                setThreads((current) =>
-                  current.map((item) =>
-                    item.id === thread.id ? { ...item, mailbox: "archive", unread: false } : item,
-                  ),
-                );
-                closeThread();
-                void archiveMailThread(thread.id).catch(() => {});
-              }}
-              onBack={closeThread}
-              onCompose={openComposer}
-              onDelete={(thread) => {
-                setThreads((current) => current.filter((item) => item.id !== thread.id));
-                closeThread();
-                void deleteMailThread(thread.id).catch(() => {});
-              }}
-              onMarkRead={(thread, unread) => {
-                setThreads((current) =>
-                  current.map((item) => (item.id === thread.id ? { ...item, unread } : item)),
-                );
-                void setMailThreadRead({ threadId: thread.id, unread }).catch(() => {});
-              }}
-              onReply={replyToThread}
-              onSnooze={(thread) => {
-                const until = tomorrowIso();
-                setThreads((current) =>
-                  current.map((item) =>
-                    item.id === thread.id ? { ...item, snoozedUntil: until } : item,
-                  ),
-                );
-                void snoozeMailThread({ threadId: thread.id, until }).catch(() => {});
-              }}
-              onStar={(thread, starred) => {
-                setThreads((current) =>
-                  current.map((item) => (item.id === thread.id ? { ...item, starred } : item)),
-                );
-                void setMailThreadStarred({ threadId: thread.id, starred }).catch(() => {});
-              }}
-              focusedMessageId={initialMessageId}
-              onToggleMessageSelected={toggleSelectedMailMessage}
-              selectedMessageIds={selectedMessageIds}
-              thread={selectedThread}
-              threadContext={selectedThreadContext}
-            />
-          ) : (
-            <ThreadList
-              density={density}
-              onRetry={() => {
-                setStatus("ready");
-                void queryClient.invalidateQueries({ queryKey: mailQueryKeys.search(searchInput) });
-              }}
-              onSelect={openThread}
-              onToggleThreadSelected={toggleSelectedMailThread}
-              onReset={resetFilters}
-              selectedThreadId={selectedThreadId}
-              selectedThreadIds={selectedThreadIds}
-              status={threadListStatus(
-                status,
-                mailSearchQuery.isFetching,
-                mailSearchQuery.isError,
-                threads,
+              <span style={{ flex: 1, textAlign: "left" }}>{label.name}</span>
+              {label.threadCount > 0 && (
+                <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                  {label.threadCount}
+                </span>
               )}
-              threads={filteredThreads}
-            />
-          )}
-        </div>
-        <MailFilterTable
-          filters={savedFilters}
-          isLoading={mailFiltersQuery.isLoading}
-          listUnavailable={mailFiltersQuery.isError}
-          onDelete={removeSavedFilter}
-          onToggle={toggleSavedFilter}
-        />
-      </div>
-
-      {composer ? (
-        <Composer draft={composer} onClose={() => setMailComposerDraft(null)} onSend={queueSend} />
-      ) : null}
-      {queuedSend ? (
-        <UndoSend
-          draft={queuedSend}
-          onDismiss={() => setQueuedSend(null)}
-          onUndo={() => {
-            setMailComposerDraft(queuedSend);
-            setQueuedSend(null);
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            height: "var(--rd-list-row-h)",
+            padding: "0 10px",
+            borderRadius: 6,
+            fontSize: "var(--rd-row-fs)",
+            color: "var(--text-3)",
           }}
-        />
-      ) : null}
-    </section>
+        >
+          <Icons.Plus />
+          <span>New label</span>
+        </button>
+        <div className="section-label">Filters</div>
+        <div style={{ padding: "0 10px" }}>
+          <span className="chip" style={{ fontSize: 10 }}>
+            has:attachment
+          </span>
+        </div>
+      </div>
+    </aside>
   );
 }
 
-function VacationSettingsControl({
-  available,
-  onSave,
-  settings,
-  status,
-}: {
-  readonly available: boolean;
-  readonly onSave: (settings: MailVacationSettings) => void;
-  readonly settings: MailVacationSettings;
-  readonly status: VacationSaveStatus;
-}) {
-  const [open, setOpen] = useState(false);
-  const vacationForm = useForm({
-    defaultValues: settings,
-    onSubmit: ({ value }) => save(value),
-  });
-  const settingsSignatureRef = useRef(vacationSettingsSignature(settings));
-  const vacationEnabled = useFormStore(vacationForm.store, (state) => state.values.enabled);
+/* --------------------------------------------------------------- thread row */
 
-  useEffect(() => {
-    const settingsSignature = vacationSettingsSignature(settings);
-    if (settingsSignatureRef.current === settingsSignature) {
-      return;
-    }
-    settingsSignatureRef.current = settingsSignature;
-    vacationForm.reset(settings);
-  }, [settings, vacationForm]);
+interface ThreadRowProps {
+  readonly thread: MailThreadRow;
+  readonly checked: boolean;
+  readonly selected: boolean;
+  readonly labelColors: ReadonlyMap<string, MailLabelSummary>;
+  readonly onClick: () => void;
+  readonly onToggleStar: () => void;
+  readonly onToggleCheck: (event: React.MouseEvent) => void;
+  readonly onArchive: () => void;
+  readonly onDelete: () => void;
+  readonly onSnooze: () => void;
+  readonly onToggleRead: () => void;
+  readonly busy: boolean;
+}
 
-  const save = (patch: Partial<MailVacationSettings>) => {
-    const current = vacationForm.state.values;
-    const next = {
-      ...current,
-      ...patch,
-      subject: (patch.subject ?? current.subject).trim() || defaultVacationSettings.subject,
-      body: (patch.body ?? current.body).trim() || defaultVacationSettings.body,
-    };
-    vacationForm.reset(next);
-    onSave(next);
-  };
+function ThreadRow({
+  thread,
+  checked,
+  selected,
+  labelColors,
+  onClick,
+  onToggleStar,
+  onToggleCheck,
+  onArchive,
+  onDelete,
+  onSnooze,
+  onToggleRead,
+  busy,
+}: ThreadRowProps) {
+  const labels = thread.labels
+    .map((slug) => labelColors.get(slug))
+    .filter((label): label is MailLabelSummary => label != null);
 
   return (
-    <div className="mail-vacation-control" style={{ position: "relative" }}>
+    <div
+      className="mail-thread-row"
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "20px 20px 24px minmax(0, 200px) minmax(0, 1fr) auto",
+        alignItems: "center",
+        columnGap: 12,
+        padding: "var(--rd-row-py) 16px",
+        borderBottom: "1px solid var(--border)",
+        cursor: "pointer",
+        background: checked
+          ? "var(--accent-soft)"
+          : selected
+            ? "var(--accent-soft)"
+            : "transparent",
+        transition: "background 0.08s",
+        fontSize: "var(--rd-row-fs)",
+        minHeight: "var(--rd-list-row-h)",
+      }}
+      onMouseEnter={(event) => {
+        if (!checked && !selected) {
+          event.currentTarget.style.background = "var(--hover)";
+        }
+      }}
+      onMouseLeave={(event) => {
+        if (!checked && !selected) {
+          event.currentTarget.style.background = "transparent";
+        }
+      }}
+    >
+      <input
+        type="checkbox"
+        aria-label={`Select ${thread.subject}`}
+        checked={checked}
+        onChange={() => undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleCheck(event);
+        }}
+        style={{ accentColor: "var(--accent)", margin: 0 }}
+      />
       <button
-        className={vacationEnabled ? "mail-filter active" : "mail-filter"}
-        disabled={!available || status === "saving"}
-        onClick={() => save({ enabled: !vacationEnabled })}
         type="button"
+        aria-label={thread.starred ? "Unstar" : "Star"}
+        aria-pressed={thread.starred}
+        disabled={busy}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleStar();
+        }}
+        style={{
+          width: 18,
+          height: 18,
+          display: "grid",
+          placeItems: "center",
+          color: thread.starred ? "#f59e0b" : "var(--text-3)",
+        }}
       >
-        <Clock aria-hidden="true" size={15} />
-        {status === "saving" ? "Saving" : vacationEnabled ? "Vacation on" : "Vacation off"}
+        <Icons.Star />
       </button>
-      <button
-        aria-expanded={open}
-        aria-label="Vacation settings"
-        className="icon-button"
-        disabled={!available}
-        onClick={() => setOpen((current) => !current)}
-        type="button"
+      <Avatar name={thread.from.split(",")[0] ?? thread.from} size={22} />
+      <span
+        className="truncate"
+        style={{
+          fontWeight: thread.unread ? 600 : 500,
+          color: thread.unread ? "var(--text)" : "var(--text-2)",
+        }}
       >
-        <MoreHorizontal aria-hidden="true" size={16} />
-      </button>
-      {open ? (
-        <form
-          aria-label="Vacation settings"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void vacationForm.handleSubmit();
-          }}
+        {thread.from}
+        {thread.messageCount > 1 && (
+          <span style={{ color: "var(--text-3)", fontWeight: 400 }}>
+            {" "}
+            ({thread.messageCount})
+          </span>
+        )}
+      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        {labels.map((label) => (
+          <span
+            key={label.id}
+            style={{
+              fontSize: 10,
+              padding: "0 5px",
+              height: 16,
+              lineHeight: "16px",
+              borderRadius: 3,
+              fontWeight: 500,
+              flexShrink: 0,
+              background: `${label.color}1f`,
+              color: label.color,
+            }}
+          >
+            {label.name}
+          </span>
+        ))}
+        <span className="truncate" style={{ minWidth: 0 }}>
+          <span
+            style={{
+              fontWeight: thread.unread ? 600 : 500,
+              color: thread.unread ? "var(--text)" : "var(--text-2)",
+            }}
+          >
+            {thread.subject}
+          </span>
+          <span style={{ color: "var(--text-3)", fontWeight: 400 }}>
+            {" "}
+            — {thread.preview}
+          </span>
+        </span>
+      </div>
+      {/* Date + inline hover actions cell */}
+      <div className="mail-thread-row-meta">
+        <span
+          className="mail-thread-row-date"
           style={{
-            background: "var(--panel)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius)",
-            boxShadow: "0 14px 34px #0000001f",
-            display: "grid",
-            gap: 8,
-            padding: 10,
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 8px)",
-            width: 280,
-            zIndex: 30,
+            fontSize: 11,
+            fontWeight: thread.unread ? 600 : 400,
+            color: thread.unread ? "var(--text-2)" : "var(--text-3)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
           }}
         >
-          <vacationForm.Field
-            name="subject"
-            validators={{
-              onChange: validateStringWith(vacationSubjectSchema),
-              onSubmit: validateStringWith(vacationSubjectSchema),
+          {thread.hasAttachment && <Icons.Paperclip />}
+          <span>{formatThreadTime(thread.time)}</span>
+        </span>
+        {/* Hover action strip — visible on :hover / :focus-within via CSS */}
+        <div
+          className="mail-thread-row-actions"
+          role="toolbar"
+          aria-label={`Actions for ${thread.subject}`}
+        >
+          <button
+            type="button"
+            className="mail-row-action-btn"
+            aria-label="Archive"
+            title="Archive"
+            tabIndex={0}
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onArchive();
             }}
           >
-            {(field) => (
-              <label style={{ display: "grid", gap: 4 }}>
-                <span style={{ color: "var(--muted-foreground)", fontSize: 12, fontWeight: 800 }}>
-                  Subject
-                </span>
-                <input
-                  aria-label="Vacation subject"
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  value={field.state.value}
-                  style={{
-                    background: "var(--background)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 6,
-                    minHeight: 34,
-                    padding: "0 8px",
-                  }}
-                />
-                <FieldErrors errors={field.state.meta.errors} />
-              </label>
-            )}
-          </vacationForm.Field>
-          <vacationForm.Field
-            name="body"
-            validators={{
-              onChange: validateStringWith(vacationBodySchema),
-              onSubmit: validateStringWith(vacationBodySchema),
+            <Icons.Archive />
+          </button>
+          <button
+            type="button"
+            className="mail-row-action-btn"
+            aria-label="Delete"
+            title="Delete"
+            tabIndex={0}
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete();
             }}
           >
-            {(field) => (
-              <label style={{ display: "grid", gap: 4 }}>
-                <span style={{ color: "var(--muted-foreground)", fontSize: 12, fontWeight: 800 }}>
-                  Reply
-                </span>
-                <textarea
-                  aria-label="Vacation reply"
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  value={field.state.value}
-                  rows={4}
-                  style={{
-                    background: "var(--background)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 6,
-                    padding: 8,
-                    resize: "vertical",
-                  }}
-                />
-                <FieldErrors errors={field.state.meta.errors} />
-              </label>
-            )}
-          </vacationForm.Field>
-          <div
-            style={{
-              alignItems: "center",
-              display: "flex",
-              gap: 8,
-              justifyContent: "space-between",
+            <Icons.Trash />
+          </button>
+          <button
+            type="button"
+            className="mail-row-action-btn"
+            aria-label={thread.unread ? "Mark read" : "Mark unread"}
+            title={thread.unread ? "Mark read" : "Mark unread"}
+            tabIndex={0}
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleRead();
             }}
           >
-            <span
-              style={{
-                color: status === "error" ? "var(--danger)" : "var(--muted-foreground)",
-                fontSize: 12,
-              }}
-            >
-              {!available
-                ? "Vacation unavailable"
-                : status === "saved"
-                  ? "Saved"
-                  : status === "error"
-                    ? "Save failed"
-                    : ""}
-            </span>
-            <button className="helix-button" disabled={status === "saving"} type="submit">
-              Save
-            </button>
-          </div>
-        </form>
-      ) : null}
+            {thread.unread ? <Icons.Eye /> : <Icons.Mail />}
+          </button>
+          <button
+            type="button"
+            className="mail-row-action-btn"
+            aria-label="Snooze"
+            title="Snooze"
+            tabIndex={0}
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSnooze();
+            }}
+          >
+            <Icons.Snooze />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
-function validateStringWith(schema: z.ZodString) {
-  return ({ value }: { readonly value: string }) => {
-    const result = schema.safeParse(value);
-    return result.success ? undefined : result.error.issues[0]?.message;
-  };
+/* -------------------------------------------------------------- empty state */
+
+function EmptyState({
+  icon,
+  title,
+  body,
+  children,
+}: {
+  readonly icon: ReactNode;
+  readonly title: string;
+  readonly body: ReactNode;
+  readonly children?: ReactNode;
+}) {
+  return (
+    <div className="empty" style={{ padding: 64 }}>
+      {icon}
+      <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{title}</div>
+      <div>{body}</div>
+      {children}
+    </div>
+  );
 }
 
-function FieldErrors({ errors }: { readonly errors: readonly unknown[] }) {
-  const messages = errors.filter((error): error is string => typeof error === "string");
-  return messages.length === 0 ? null : (
-    <span role="alert" style={{ color: "var(--danger)", fontSize: 12 }}>
-      {messages.join(" ")}
+/* --------------------------------------------------------------- thread list */
+
+type SelectAllSubset = "all" | "none" | "read" | "unread" | "starred" | "unstarred";
+
+interface ThreadListProps {
+  readonly tab: MailTabId;
+  readonly onTab: (tab: MailTabId) => void;
+  readonly selected: string | null;
+  readonly onSelect: (id: string) => void;
+  readonly threads: readonly MailThreadRow[];
+  readonly folder: MailFolderKey;
+  readonly query: string;
+  readonly onClearQuery: () => void;
+  readonly labelColors: ReadonlyMap<string, MailLabelSummary>;
+  readonly labels: readonly MailLabelSummary[];
+  readonly folders: readonly MailFolderSummary[];
+  readonly total: number;
+  readonly offset: number;
+  readonly limit: number;
+  readonly onPage: (offset: number) => void;
+  readonly isLoading: boolean;
+  readonly isError: boolean;
+  readonly onToggleStar: (thread: MailThreadRow) => void;
+  readonly pendingThreadId: string | null;
+  // Row-level mutations
+  readonly onArchive: (threadId: string) => void;
+  readonly onDelete: (threadId: string) => void;
+  readonly onSnooze: (threadId: string) => void;
+  readonly onToggleRead: (thread: MailThreadRow) => void;
+  // Bulk
+  readonly checkedIds: ReadonlySet<string>;
+  readonly onCheckedChange: (ids: ReadonlySet<string>) => void;
+  readonly onBulkArchive: (ids: ReadonlySet<string>) => void;
+  readonly onBulkDelete: (ids: ReadonlySet<string>) => void;
+  readonly onBulkSpam: (ids: ReadonlySet<string>) => void;
+  readonly onBulkRead: (ids: ReadonlySet<string>, unread: boolean) => void;
+  readonly onBulkSnooze: (ids: ReadonlySet<string>) => void;
+  readonly onBulkMove: (ids: ReadonlySet<string>, folderId: MailFolderKey) => void;
+  readonly onBulkLabel: (
+    ids: ReadonlySet<string>,
+    labelSlug: string,
+    add: boolean,
+  ) => void;
+  // New toolbar actions
+  readonly onRefresh: () => void;
+  readonly onMarkAllRead: () => void;
+  readonly onBulkStar: (ids: ReadonlySet<string>) => void;
+  readonly onBulkFilterLike: (ids: ReadonlySet<string>) => void;
+}
+
+/* -------------------------------------------------------------- pager controls */
+
+interface PagerControlsProps {
+  readonly total: number;
+  readonly offset: number;
+  readonly limit: number;
+  readonly threadCount: number;
+  readonly isLoading: boolean;
+  readonly onPage: (offset: number) => void;
+}
+
+function PagerControls({ total, offset, limit, threadCount, isLoading, onPage }: PagerControlsProps) {
+  const rangeStart = total === 0 ? 0 : offset + 1;
+  const rangeEnd = offset + threadCount;
+  return (
+    <span
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      <span>
+        {total === 0
+          ? "No results"
+          : `${String(rangeStart)}–${String(rangeEnd)} of ${String(total)}`}
+      </span>
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="Newer"
+        disabled={offset === 0 || isLoading}
+        onClick={() => {
+          onPage(Math.max(0, offset - limit));
+        }}
+      >
+        <Icons.ChevronLeft />
+      </button>
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="Older"
+        disabled={offset + limit >= total || isLoading}
+        onClick={() => {
+          onPage(offset + limit);
+        }}
+      >
+        <Icons.ChevronRight />
+      </button>
     </span>
   );
 }
 
-function MailFilterTable({
-  filters,
-  isLoading,
-  listUnavailable,
-  onDelete,
-  onToggle,
-}: {
-  readonly filters: readonly MailFilterRecord[];
-  readonly isLoading: boolean;
-  readonly listUnavailable: boolean;
-  readonly onDelete: (filter: MailFilterRecord) => void;
-  readonly onToggle: (filter: MailFilterRecord) => void;
-}) {
-  const columns = useMemo<ColumnDef<MailFilterRecord>[]>(
-    () => [
-      {
-        id: "status",
-        header: "Status",
-        cell: ({ row }) => (row.original.enabled ? "Enabled" : "Paused"),
-      },
-      {
-        id: "name",
-        header: "Name",
-        cell: ({ row }) => <strong>{row.original.name}</strong>,
-      },
-      {
-        id: "criteria",
-        header: "Criteria",
-        cell: ({ row }) => describeFilterCriteria(row.original.criteria),
-      },
-      {
-        id: "actions",
-        header: "Actions",
-        cell: ({ row }) => describeFilterActions(row.original.actions),
-      },
-      {
-        id: "priority",
-        header: "Priority",
-        cell: ({ row }) => row.original.priority,
-      },
-      {
-        id: "controls",
-        header: "Manage",
-        cell: ({ row }) => {
-          const filter = row.original;
-          return (
-            <span style={{ display: "inline-flex", gap: 6 }}>
-              <button
-                aria-label={`${filter.enabled ? "Disable" : "Enable"} mail filter ${filter.name}`}
-                className="mail-filter"
-                onClick={() => onToggle(filter)}
-                type="button"
-              >
-                {filter.enabled ? "Disable" : "Enable"}
-              </button>
-              <button
-                aria-label={`Delete mail filter ${filter.name}`}
-                className="icon-button danger"
-                onClick={() => onDelete(filter)}
-                type="button"
-              >
-                <Trash2 aria-hidden="true" size={15} />
-              </button>
-            </span>
-          );
-        },
-      },
-    ],
-    [onDelete, onToggle],
-  );
-  const data = useMemo(() => [...filters], [filters]);
-  const table = useReactTable({
-    columns,
-    data,
-    getCoreRowModel: getCoreRowModel(),
-  });
-  const rows = table.getRowModel().rows;
-
-  return (
-    <section
-      aria-label="Saved mail filters"
-      style={{
-        borderTop: "1px solid var(--border)",
-        display: "grid",
-        gap: 8,
-        padding: 12,
-      }}
-    >
-      <header style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <h2 style={{ fontSize: 16, margin: 0 }}>Saved filters</h2>
-          <p style={{ color: "var(--muted-foreground)", fontSize: 12, margin: "3px 0 0" }}>
-            {listUnavailable
-              ? "Showing locally saved filters until the backend list tool is available."
-              : `${String(filters.length)} configured`}
-          </p>
-        </div>
-      </header>
-      <Table aria-label="Saved mail filters table">
-        <TableHeader>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <TableHead key={header.id}>
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(header.column.columnDef.header, header.getContext())}
-                </TableHead>
-              ))}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {rows.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={columns.length}>
-                {isLoading ? "Loading mail filters..." : "No saved mail filters."}
-              </TableCell>
-            </TableRow>
-          ) : (
-            rows.map((row) => (
-              <TableRow key={row.id}>
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
-    </section>
-  );
-}
-
-function vacationSettingsSignature(settings: MailVacationSettings) {
-  return JSON.stringify({
-    body: settings.body,
-    enabled: settings.enabled,
-    endsAt: settings.endsAt,
-    startsAt: settings.startsAt,
-    subject: settings.subject,
-  });
-}
-
 function ThreadList({
-  density,
-  onRetry,
-  onReset,
+  tab,
+  onTab,
+  selected,
   onSelect,
-  onToggleThreadSelected,
-  selectedThreadId,
-  selectedThreadIds,
-  status,
   threads,
-}: {
-  readonly density: MailDensity;
-  readonly onRetry: () => void;
-  readonly onReset: () => void;
-  readonly onSelect: (threadId: string) => void;
-  readonly onToggleThreadSelected: (threadId: string) => void;
-  readonly selectedThreadId: string | undefined;
-  readonly selectedThreadIds: readonly string[];
-  readonly status: ThreadStatus;
-  readonly threads: readonly MailThread[];
-}) {
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const estimatedRowSize = density === "compact" ? 32 : 40;
-  const rowVirtualizer = useVirtualizer({
-    count: threads.length,
-    getScrollElement: () => listRef.current,
-    estimateSize: () => estimatedRowSize,
-    overscan: 8,
-  });
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const rowsToRender =
-    virtualRows.length > 0
-      ? virtualRows
-      : threads.map((_, index) => ({
-          index,
-          key: index,
-          size: estimatedRowSize,
-          start: index * estimatedRowSize,
-        }));
-  const virtualHeight = rowVirtualizer.getTotalSize() || threads.length * estimatedRowSize;
+  folder,
+  query,
+  onClearQuery,
+  labelColors,
+  labels,
+  folders,
+  total,
+  offset,
+  limit,
+  onPage,
+  isLoading,
+  isError,
+  onToggleStar,
+  pendingThreadId,
+  onArchive,
+  onDelete,
+  onSnooze,
+  onToggleRead,
+  checkedIds,
+  onCheckedChange,
+  onBulkArchive,
+  onBulkDelete,
+  onBulkSpam,
+  onBulkRead,
+  onBulkSnooze,
+  onBulkMove,
+  onBulkLabel,
+  onRefresh,
+  onMarkAllRead,
+  onBulkStar,
+  onBulkFilterLike,
+}: ThreadListProps) {
+  const emptyState = MAIL_EMPTY_STATES[folder];
+  const isEmptyFolder = emptyState != null && threads.length === 0 && !isLoading;
+  const noResults =
+    query.trim() !== "" && threads.length === 0 && !isEmptyFolder && !isLoading;
 
-  if (status === "loading") {
-    return (
-      <div
-        className="mail-thread-list"
-        role="region"
-        aria-label="Thread list"
-        aria-busy="true"
-        tabIndex={0}
+  // Select-all dropdown state
+  const [selectDropOpen, setSelectDropOpen] = useState(false);
+  const selectDropRef = useRef<HTMLDivElement>(null);
+
+  // Idle toolbar "More" menu
+  const [idleMoreOpen, setIdleMoreOpen] = useState(false);
+  const idleMoreRef = useRef<HTMLDivElement>(null);
+
+  // Bulk menus
+  const [moveMenuOpen, setMoveMenuOpen] = useState(false);
+  const [labelsMenuOpen, setLabelsMenuOpen] = useState(false);
+  const [bulkMoreOpen, setBulkMoreOpen] = useState(false);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
+  const labelsMenuRef = useRef<HTMLDivElement>(null);
+  const bulkMoreRef = useRef<HTMLDivElement>(null);
+
+  // Shift-click tracking: last checked index (by threadId)
+  const lastCheckedRef = useRef<string | null>(null);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        selectDropRef.current &&
+        !selectDropRef.current.contains(e.target as Node)
+      ) {
+        setSelectDropOpen(false);
+      }
+      if (
+        idleMoreRef.current &&
+        !idleMoreRef.current.contains(e.target as Node)
+      ) {
+        setIdleMoreOpen(false);
+      }
+      if (
+        moveMenuRef.current &&
+        !moveMenuRef.current.contains(e.target as Node)
+      ) {
+        setMoveMenuOpen(false);
+      }
+      if (
+        labelsMenuRef.current &&
+        !labelsMenuRef.current.contains(e.target as Node)
+      ) {
+        setLabelsMenuOpen(false);
+      }
+      if (
+        bulkMoreRef.current &&
+        !bulkMoreRef.current.contains(e.target as Node)
+      ) {
+        setBulkMoreOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  const hasBulk = checkedIds.size > 0;
+  const allChecked = threads.length > 0 && threads.every((t) => checkedIds.has(t.threadId));
+  const someChecked = !allChecked && checkedIds.size > 0;
+
+  function applySelectSubset(subset: SelectAllSubset) {
+    let next: ReadonlySet<string>;
+    switch (subset) {
+      case "all":
+        next = new Set(threads.map((t) => t.threadId));
+        break;
+      case "none":
+        next = new Set();
+        break;
+      case "read":
+        next = new Set(threads.filter((t) => !t.unread).map((t) => t.threadId));
+        break;
+      case "unread":
+        next = new Set(threads.filter((t) => t.unread).map((t) => t.threadId));
+        break;
+      case "starred":
+        next = new Set(threads.filter((t) => t.starred).map((t) => t.threadId));
+        break;
+      case "unstarred":
+        next = new Set(threads.filter((t) => !t.starred).map((t) => t.threadId));
+        break;
+    }
+    onCheckedChange(next);
+    setSelectDropOpen(false);
+    lastCheckedRef.current = null;
+  }
+
+  function handleMasterCheckbox() {
+    if (allChecked) {
+      onCheckedChange(new Set());
+    } else {
+      onCheckedChange(new Set(threads.map((t) => t.threadId)));
+    }
+    lastCheckedRef.current = null;
+  }
+
+  function handleRowCheck(thread: MailThreadRow, event: React.MouseEvent) {
+    const idx = threads.findIndex((t) => t.threadId === thread.threadId);
+    if (event.shiftKey && lastCheckedRef.current !== null) {
+      const lastIdx = threads.findIndex((t) => t.threadId === lastCheckedRef.current);
+      if (lastIdx !== -1) {
+        const lo = Math.min(idx, lastIdx);
+        const hi = Math.max(idx, lastIdx);
+        const rangeIds = threads.slice(lo, hi + 1).map((t) => t.threadId);
+        const next = new Set(checkedIds);
+        for (const id of rangeIds) {
+          next.add(id);
+        }
+        onCheckedChange(next);
+        lastCheckedRef.current = thread.threadId;
+        return;
+      }
+    }
+    const next = new Set(checkedIds);
+    if (next.has(thread.threadId)) {
+      next.delete(thread.threadId);
+    } else {
+      next.add(thread.threadId);
+    }
+    onCheckedChange(next);
+    lastCheckedRef.current = thread.threadId;
+  }
+
+  // Determine if a majority are unread to decide the bulk read button label
+  const checkedUnreadCount = threads.filter(
+    (t) => checkedIds.has(t.threadId) && t.unread,
+  ).length;
+  const bulkReadLabel =
+    checkedUnreadCount >= checkedIds.size / 2 ? "Mark read" : "Mark unread";
+  const bulkReadUnread = !(checkedUnreadCount >= checkedIds.size / 2);
+
+  const SELECT_SUBSETS: Array<{ label: string; value: SelectAllSubset }> = [
+    { label: "All", value: "all" },
+    { label: "None", value: "none" },
+    { label: "Read", value: "read" },
+    { label: "Unread", value: "unread" },
+    { label: "Starred", value: "starred" },
+    { label: "Unstarred", value: "unstarred" },
+  ];
+
+  /* ---- Master checkbox + caret (shared by both toolbar states) ---- */
+  const masterCheckboxSection = (
+    <div className="mail-select-all-wrap" ref={selectDropRef}>
+      <input
+        type="checkbox"
+        style={{ accentColor: "var(--accent)" }}
+        aria-label={hasBulk ? "Deselect all" : "Select all"}
+        checked={allChecked}
+        ref={(el) => {
+          if (el) {
+            el.indeterminate = someChecked;
+          }
+        }}
+        onChange={hasBulk ? () => { onCheckedChange(new Set()); } : handleMasterCheckbox}
+      />
+      <button
+        type="button"
+        className="mail-select-caret"
+        aria-label="Select subset"
+        aria-haspopup="listbox"
+        aria-expanded={selectDropOpen}
+        onClick={() => {
+          setSelectDropOpen((v) => !v);
+        }}
       >
-        {Array.from({ length: 7 }, (_, index) => (
-          <div className="mail-thread-skeleton" key={index}>
-            <span />
-            <span />
-            <span />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (status === "error") {
-    return (
-      <div className="mail-thread-list offline" role="alert" aria-label="Thread list" tabIndex={0}>
-        <div className="mail-offline-banner">
-          <Filter aria-hidden="true" size={16} />
-          <strong>Mailbox unavailable</strong>
-          <span>Mail search could not reach the backend. Check your connection and try again.</span>
-          <button className="helix-button" onClick={onRetry} type="button">
-            Retry
-          </button>
+        <Icons.ChevronDown size={10} />
+      </button>
+      {selectDropOpen && (
+        <div
+          className="mail-select-dropdown"
+          role="listbox"
+          aria-label="Select subset"
+        >
+          {SELECT_SUBSETS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              className="mail-select-dropdown-item"
+              role="option"
+              aria-selected={false}
+              onClick={() => {
+                applySelectSubset(item.value);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
-        {Array.from({ length: 12 }, (_, index) => (
-          <div className="mail-thread-placeholder" key={index}>
-            <span />
-            <span />
-            <span />
-            <span />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (threads.length === 0) {
-    return (
-      <div className="mail-state-panel">
-        <MailOpen aria-hidden="true" size={20} />
-        <h2>No threads</h2>
-        <p>Nothing matches the current mailbox and filters.</p>
-        <button className="helix-button helix-button-secondary" onClick={onReset} type="button">
-          Clear filters
-        </button>
-      </div>
-    );
-  }
+      )}
+    </div>
+  );
 
   return (
     <div
-      ref={listRef}
-      className={density === "compact" ? "mail-thread-list compact" : "mail-thread-list"}
-      role="region"
-      aria-label="Thread list"
-      tabIndex={0}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        background: "var(--surface)",
+        display: "flex",
+        flexDirection: "column",
+      }}
     >
-      <div className="mail-thread-virtual-spacer" style={{ height: `${String(virtualHeight)}px` }}>
-        {rowsToRender.map((virtualRow) => {
-          const thread = threads[virtualRow.index];
-          if (thread === undefined) {
-            return null;
-          }
-          const selectedForMultiSelect = selectedThreadIds.includes(thread.id);
+      {/* ---- Single persistent toolbar strip (above the category tabs, Gmail-style) ---- */}
+      <div className="mail-toolbar-strip" role="toolbar" aria-label={hasBulk ? "Bulk actions" : "Toolbar"}>
+        {/* Left section — swaps based on selection state */}
+        <div className="mail-toolbar-left">
+          {masterCheckboxSection}
+
+          {!hasBulk ? (
+            /* Idle state left section */
+            <>
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Refresh"
+                onClick={onRefresh}
+              >
+                <Icons.Refresh /> Refresh
+              </button>
+              {query.trim() !== "" && (
+                <span
+                  style={{
+                    marginLeft: 4,
+                    fontSize: 11,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <span>Filtering by</span>
+                  <span
+                    className="chip accent"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                  >
+                    {query}
+                    <button
+                      type="button"
+                      onClick={onClearQuery}
+                      aria-label="Clear search"
+                      style={{ display: "inline-flex" }}
+                    >
+                      <Icons.X size={10} />
+                    </button>
+                  </span>
+                </span>
+              )}
+              <div className="mail-menu-wrap" ref={idleMoreRef}>
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="More actions"
+                  aria-haspopup="menu"
+                  aria-expanded={idleMoreOpen}
+                  onClick={() => { setIdleMoreOpen((v) => !v); }}
+                >
+                  <Icons.More />
+                </button>
+                {idleMoreOpen && (
+                  <div className="mail-menu-dropdown" role="menu" aria-label="More toolbar actions">
+                    <button
+                      type="button"
+                      className="mail-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        onMarkAllRead();
+                        setIdleMoreOpen(false);
+                      }}
+                    >
+                      Mark all as read
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            /* Active (bulk) state left section */
+            <>
+              <span className="mail-bulk-toolbar-count">
+                {String(checkedIds.size)} selected
+              </span>
+              <div className="v-divider mail-toolbar-divider" />
+              {/* Destructive group */}
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Archive selected"
+                onClick={() => { onBulkArchive(checkedIds); }}
+              >
+                <Icons.Archive /> Archive
+              </button>
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Report spam"
+                onClick={() => { onBulkSpam(checkedIds); }}
+              >
+                <Icons.Bell /> Report spam
+              </button>
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Delete selected"
+                onClick={() => { onBulkDelete(checkedIds); }}
+              >
+                <Icons.Trash /> Delete
+              </button>
+              <div className="v-divider mail-toolbar-divider" />
+              {/* State group */}
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label={bulkReadLabel}
+                onClick={() => { onBulkRead(checkedIds, bulkReadUnread); }}
+              >
+                <Icons.Eye /> {bulkReadLabel}
+              </button>
+              <button
+                type="button"
+                className="mail-bulk-btn"
+                aria-label="Snooze selected"
+                onClick={() => { onBulkSnooze(checkedIds); }}
+              >
+                <Icons.Snooze /> Snooze
+              </button>
+              <div className="v-divider mail-toolbar-divider" />
+              {/* Organize group */}
+              <div className="mail-menu-wrap" ref={moveMenuRef}>
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="Move to"
+                  aria-haspopup="menu"
+                  aria-expanded={moveMenuOpen}
+                  onClick={() => {
+                    setMoveMenuOpen((v) => !v);
+                    setLabelsMenuOpen(false);
+                    setBulkMoreOpen(false);
+                  }}
+                >
+                  <Icons.Folder /> Move to <Icons.ChevronDown size={10} />
+                </button>
+                {moveMenuOpen && (
+                  <div className="mail-menu-dropdown" role="menu" aria-label="Move to folder">
+                    {folders.map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        className="mail-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          onBulkMove(checkedIds, f.id);
+                          setMoveMenuOpen(false);
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="mail-menu-wrap" ref={labelsMenuRef}>
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="Labels"
+                  aria-haspopup="menu"
+                  aria-expanded={labelsMenuOpen}
+                  onClick={() => {
+                    setLabelsMenuOpen((v) => !v);
+                    setMoveMenuOpen(false);
+                    setBulkMoreOpen(false);
+                  }}
+                >
+                  <Icons.Tag /> Labels <Icons.ChevronDown size={10} />
+                </button>
+                {labelsMenuOpen && (
+                  <div className="mail-menu-dropdown" role="menu" aria-label="Apply label">
+                    {labels.map((lbl) => {
+                      const applied = threads
+                        .filter((t) => checkedIds.has(t.threadId))
+                        .every((t) => t.labels.includes(lbl.slug));
+                      return (
+                        <button
+                          key={lbl.id}
+                          type="button"
+                          className="mail-menu-item"
+                          role="menuitemcheckbox"
+                          aria-checked={applied}
+                          onClick={() => {
+                            onBulkLabel(checkedIds, lbl.slug, !applied);
+                            setLabelsMenuOpen(false);
+                          }}
+                        >
+                          <span
+                            className="mail-menu-label-dot"
+                            style={{ background: lbl.color }}
+                          />
+                          {lbl.name}
+                          {applied && (
+                            <Icons.Check
+                              className="mail-menu-item-check"
+                              style={{ marginLeft: "auto" }}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {/* Bulk "More" menu */}
+              <div className="mail-menu-wrap" ref={bulkMoreRef}>
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="More bulk actions"
+                  aria-haspopup="menu"
+                  aria-expanded={bulkMoreOpen}
+                  onClick={() => {
+                    setBulkMoreOpen((v) => !v);
+                    setMoveMenuOpen(false);
+                    setLabelsMenuOpen(false);
+                  }}
+                >
+                  <Icons.More />
+                </button>
+                {bulkMoreOpen && (
+                  <div className="mail-menu-dropdown" role="menu" aria-label="More bulk actions menu">
+                    <button
+                      type="button"
+                      className="mail-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        onBulkStar(checkedIds);
+                        setBulkMoreOpen(false);
+                      }}
+                    >
+                      Add star
+                    </button>
+                    <button
+                      type="button"
+                      className="mail-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        onBulkFilterLike(checkedIds);
+                        setBulkMoreOpen(false);
+                      }}
+                    >
+                      Filter messages like these
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Right section — pager, never moves */}
+        <div className="mail-toolbar-right">
+          <PagerControls
+            total={total}
+            offset={offset}
+            limit={limit}
+            threadCount={threads.length}
+            isLoading={isLoading}
+            onPage={onPage}
+          />
+        </div>
+      </div>
+
+      <div className="tabs" role="tablist" aria-label="Mail categories">
+        {MAIL_TABS.map((entry) => {
+          const Icon = Icons[entry.icon];
           return (
-            <div
-              className={
-                thread.id === selectedThreadId ? "mail-thread-row selected" : "mail-thread-row"
-              }
-              key={thread.id}
-              style={{
-                height: `${String(virtualRow.size)}px`,
-                transform: `translateY(${String(virtualRow.start)}px)`,
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === entry.id}
+              className={cx("tab", tab === entry.id && "active")}
+              onClick={() => {
+                onTab(entry.id);
               }}
             >
-              <span className="mail-thread-select">
-                <input
-                  aria-label={`Select thread ${thread.subject}`}
-                  checked={selectedForMultiSelect}
-                  onChange={() => onToggleThreadSelected(thread.id)}
-                  type="checkbox"
-                />
-                <span
-                  className={thread.unread ? "mail-unread-dot unread" : "mail-unread-dot"}
-                  aria-hidden="true"
-                />
-              </span>
-              <button
-                aria-pressed={thread.id === selectedThreadId}
-                className="mail-thread-main"
-                onClick={() => onSelect(thread.id)}
-                type="button"
-              >
-                <strong className="mail-thread-sender">
-                  {thread.participants.map((participant) => participant.name).join(", ")}
-                </strong>
-                <span className="mail-thread-summary">
-                  {thread.starred ? <Star aria-label="Starred" size={14} /> : null}
-                  <span className="mail-thread-subject">{thread.subject}</span>
-                  <span className="mail-thread-preview">{thread.preview}</span>
-                </span>
-                <time className="mail-thread-date">{thread.lastActivity}</time>
-                <span className="mail-thread-tags">
-                  {thread.labels.map((labelId) => {
-                    const label = labelItems.find((item) => item.id === labelId);
-                    return label ? (
-                      <span key={label.id}>
-                        <span style={{ background: label.color }} aria-hidden="true" />
-                        {label.label}
-                      </span>
-                    ) : null;
-                  })}
-                  {thread.hasAttachment ? (
-                    <span>
-                      <Paperclip aria-hidden="true" size={12} />
-                      Files
-                    </span>
-                  ) : null}
-                </span>
-              </button>
-            </div>
+              <Icon /> {entry.label}
+            </button>
           );
         })}
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {isError && (
+          <div
+            style={{
+              margin: "8px 16px 0",
+              fontSize: 11,
+              color: "var(--danger)",
+            }}
+          >
+            Could not load mail from the server — showing offline data.
+          </div>
+        )}
+        {isLoading && (
+          <EmptyState
+            icon={<Icons.Inbox />}
+            title="Loading mail…"
+            body="Fetching your threads."
+          />
+        )}
+        {!isLoading && noResults && (
+          <EmptyState
+            icon={<Icons.Search />}
+            title={`No results for "${query}"`}
+            body={
+              <>
+                Try a different search or remove an operator like{" "}
+                <span className="mono">from:</span> or{" "}
+                <span className="mono">has:attachment</span>.
+              </>
+            }
+          >
+            <button
+              type="button"
+              className="btn sm"
+              style={{ marginTop: 8 }}
+              onClick={onClearQuery}
+            >
+              Clear search
+            </button>
+          </EmptyState>
+        )}
+        {!isLoading &&
+          isEmptyFolder &&
+          emptyState != null &&
+          (() => {
+            const Icon = Icons[emptyState.icon];
+            return (
+              <EmptyState
+                icon={<Icon />}
+                title={emptyState.title}
+                body={emptyState.body}
+              />
+            );
+          })()}
+        {!isLoading &&
+          !noResults &&
+          !isEmptyFolder &&
+          threads.map((thread) => (
+            <ThreadRow
+              key={thread.threadId}
+              thread={thread}
+              checked={checkedIds.has(thread.threadId)}
+              selected={selected === thread.threadId}
+              labelColors={labelColors}
+              onClick={() => {
+                onSelect(thread.threadId);
+              }}
+              onToggleStar={() => {
+                onToggleStar(thread);
+              }}
+              onToggleCheck={(event) => {
+                handleRowCheck(thread, event);
+              }}
+              onArchive={() => {
+                onArchive(thread.threadId);
+              }}
+              onDelete={() => {
+                onDelete(thread.threadId);
+              }}
+              onSnooze={() => {
+                onSnooze(thread.threadId);
+              }}
+              onToggleRead={() => {
+                onToggleRead(thread);
+              }}
+              busy={pendingThreadId === thread.threadId}
+            />
+          ))}
       </div>
     </div>
   );
 }
 
-function ReaderPanel({
-  focusedMessageId,
-  onArchive,
-  onBack,
-  onCompose,
-  onDelete,
-  onMarkRead,
-  onReply,
-  onSnooze,
-  onStar,
-  onToggleMessageSelected,
-  selectedMessageIds,
-  thread,
-  threadContext,
-}: {
-  readonly focusedMessageId: string | undefined;
-  readonly onArchive: (thread: MailThread) => void;
-  readonly onBack: () => void;
-  readonly onCompose: (draft?: ComposerDraft) => void;
-  readonly onDelete: (thread: MailThread) => void;
-  readonly onMarkRead: (thread: MailThread, unread: boolean) => void;
-  readonly onReply: (thread: MailThread) => void;
-  readonly onSnooze: (thread: MailThread) => void;
-  readonly onStar: (thread: MailThread, starred: boolean) => void;
-  readonly onToggleMessageSelected: (messageId: string) => void;
-  readonly selectedMessageIds: readonly string[];
-  readonly thread: MailThread | undefined;
-  readonly threadContext: Parameters<typeof SuggestionSlot>[0]["context"];
-}) {
-  const focusedMessageRef = useRef<HTMLElement | null>(null);
+/* --------------------------------------------------------------- thread view */
 
-  useEffect(() => {
-    if (focusedMessageId === undefined || focusedMessageRef.current === null) {
-      return;
-    }
-    if (!thread?.messages.some((message) => message.id === focusedMessageId)) {
-      return;
-    }
+type ReplyMode = "reply" | "replyAll" | "forward";
 
-    focusedMessageRef.current.focus({ preventScroll: true });
-    focusedMessageRef.current.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [focusedMessageId, thread?.id, thread?.messages]);
-
-  if (!thread) {
-    return (
-      <section className="mail-reader empty" aria-label="Message reader" tabIndex={0}>
-        <MailOpen aria-hidden="true" size={24} />
-        <h2>No message selected</h2>
-      </section>
-    );
-  }
-
-  return (
-    <section className="mail-reader" aria-label="Message reader" tabIndex={0}>
-      <header className="mail-reader-header">
-        <button className="icon-button" aria-label="Back to inbox" onClick={onBack} type="button">
-          <ArrowLeft aria-hidden="true" size={18} />
-        </button>
-        <div>
-          <h2>{thread.subject}</h2>
-          <div className="mail-reader-meta">
-            {thread.labels.map((labelId) => {
-              const label = labelItems.find((item) => item.id === labelId);
-              return label ? (
-                <span key={label.id}>
-                  <span style={{ background: label.color }} aria-hidden="true" />
-                  {label.label}
-                </span>
-              ) : null;
-            })}
-          </div>
-        </div>
-        <div className="mail-reader-actions">
-          <button
-            className="icon-button"
-            aria-label={thread.starred ? "Unstar thread" : "Star thread"}
-            onClick={() => onStar(thread, !thread.starred)}
-            type="button"
-          >
-            <Star aria-hidden="true" size={17} />
-          </button>
-          <button
-            className="icon-button"
-            aria-label={thread.unread ? "Mark thread read" : "Mark thread unread"}
-            onClick={() => onMarkRead(thread, !thread.unread)}
-            type="button"
-          >
-            <BadgeCheck aria-hidden="true" size={17} />
-          </button>
-          <button
-            className="icon-button"
-            aria-label="Snooze thread"
-            onClick={() => onSnooze(thread)}
-            type="button"
-          >
-            <Clock aria-hidden="true" size={17} />
-          </button>
-          <button
-            className="icon-button"
-            aria-label="Archive thread"
-            onClick={() => onArchive(thread)}
-            type="button"
-          >
-            <Archive aria-hidden="true" size={17} />
-          </button>
-          <button
-            className="icon-button"
-            aria-label="Delete thread"
-            onClick={() => onDelete(thread)}
-            type="button"
-          >
-            <Trash2 aria-hidden="true" size={17} />
-          </button>
-          <button className="helix-button" onClick={() => onReply(thread)} type="button">
-            <Reply aria-hidden="true" size={16} />
-            Reply
-          </button>
-        </div>
-      </header>
-
-      <SuggestionSlot
-        className="mail-suggestion-slot"
-        context={threadContext}
-        emptyFallback={<div className="mail-suggestion-empty">No thread summary</div>}
-        loadingFallback={<div className="mail-suggestion-empty">Loading summary</div>}
-        slotId="mail.summarize-thread"
-      />
-
-      <div className="mail-message-stack">
-        {thread.messages.map((message) => {
-          const isFocused = message.id === focusedMessageId;
-          const selectedForMultiSelect = selectedMessageIds.includes(message.id);
-          return (
-            <article
-              aria-current={isFocused ? "true" : undefined}
-              className={isFocused ? "mail-message focused" : "mail-message"}
-              data-message-id={message.id}
-              key={message.id}
-              ref={(element) => {
-                if (isFocused) {
-                  focusedMessageRef.current = element;
-                }
-              }}
-              tabIndex={isFocused ? -1 : undefined}
-            >
-              <header>
-                <input
-                  aria-label={`Select message from ${message.from.name}`}
-                  checked={selectedForMultiSelect}
-                  onChange={() => onToggleMessageSelected(message.id)}
-                  type="checkbox"
-                />
-                <div className="mail-avatar" aria-hidden="true">
-                  {initialsFor(message.from.name)}
-                </div>
-                <div>
-                  <strong>{message.from.name}</strong>
-                  <span>{message.from.email}</span>
-                </div>
-                <time>{message.sentAt}</time>
-              </header>
-              <p>{message.body}</p>
-              <dl>
-                <div>
-                  <dt>To</dt>
-                  <dd>{message.to.map((recipient) => recipient.email).join(", ")}</dd>
-                </div>
-              </dl>
-            </article>
-          );
-        })}
-      </div>
-
-      <SuggestionSlot
-        className="mail-suggestion-slot"
-        context={threadContext}
-        emptyFallback={<div className="mail-suggestion-empty">No reply suggestions</div>}
-        loadingFallback={<div className="mail-suggestion-empty">Loading replies</div>}
-        slotId="mail.suggest-reply"
-      />
-
-      <button className="mail-inline-reply" onClick={() => onReply(thread)} type="button">
-        <Reply aria-hidden="true" size={16} />
-        Reply
-      </button>
-      <button className="mail-inline-reply secondary" onClick={() => onCompose()} type="button">
-        <Edit3 aria-hidden="true" size={16} />
-        New message
-      </button>
-    </section>
-  );
+interface ThreadViewProps {
+  readonly row: MailThreadRow;
+  readonly detail: MailThreadDetail | null | undefined;
+  readonly isLoading: boolean;
+  readonly isError: boolean;
+  readonly labelColors: ReadonlyMap<string, MailLabelSummary>;
+  readonly onClose: () => void;
+  readonly onArchive: () => void;
+  readonly onDelete: () => void;
+  readonly onSnooze: () => void;
+  readonly onToggleLabel: () => void;
+  readonly actionBusy: boolean;
+  readonly actionError: string | null;
 }
 
-function Composer({
-  draft,
+function ThreadView({
+  row,
+  detail,
+  isLoading,
+  isError,
+  labelColors,
   onClose,
-  onSend,
-}: {
-  readonly draft: ComposerDraft;
-  readonly onClose: () => void;
-  readonly onSend: (draft: ComposerDraft) => void;
-}) {
-  const [field, setField] = useState<"to" | "cc" | "bcc">("to");
-  const editor = useEditor({
-    extensions: [StarterKit],
-    content: draft.body,
-    immediatelyRender: false,
-    editorProps: {
-      attributes: {
-        "aria-label": "Message body",
-        class: "mail-body-input",
-        "data-placeholder": "Write a message",
-      },
+  onArchive,
+  onDelete,
+  onSnooze,
+  onToggleLabel,
+  actionBusy,
+  actionError,
+}: ThreadViewProps) {
+  const [aiSummary, setAiSummary] = useState(false);
+  const [replyMode, setReplyMode] = useState<ReplyMode | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [replyTo, setReplyTo] = useState("");
+  const [replyFailed, setReplyFailed] = useState(false);
+  const senderName = row.from.split(",")[0] ?? row.from;
+  const subject = detail?.subject ?? row.subject;
+  const labels = (detail?.labels ?? row.labels)
+    .map((slug) => labelColors.get(slug))
+    .filter((label): label is MailLabelSummary => label != null);
+  const messages = detail?.messages ?? [];
+  const participantCount = detail?.participants.length ?? row.messageCount;
+
+  const replyMutation = useMutation({
+    mutationFn: (input: MailSendInput) => replyToMail({ ...input, threadId: row.threadId }),
+    onMutate: () => {
+      setReplyFailed(false);
     },
-    onUpdate: ({ editor: currentEditor }) => {
-      const body = currentEditor.getText({ blockSeparator: "\n" });
-      updateMailComposerDraft({ body });
+    onError: () => {
+      setReplyFailed(true);
+    },
+    onSuccess: () => {
+      setReplyMode(null);
+      setReplyText("");
+      setReplyTo("");
     },
   });
 
-  const currentRecipients = draft[field];
-  const canSend =
-    draft.to.length > 0 && draft.subject.trim().length > 0 && draft.body.trim().length > 0;
+  const closeReply = useCallback(() => {
+    setReplyMode(null);
+    setReplyText("");
+    setReplyTo("");
+    setReplyFailed(false);
+  }, []);
 
-  useEffect(() => {
-    if (editor !== null && editor.getText({ blockSeparator: "\n" }) !== draft.body) {
-      editor.commands.setContent(draft.body, { emitUpdate: false });
+  const handleReplySend = useCallback(() => {
+    const fallbackAddress = detail?.messages.at(-1)?.from?.address ?? row.fromEmail;
+    const recipients =
+      replyMode === "forward"
+        ? parseRecipients(replyTo)
+        : fallbackAddress.trim() === ""
+          ? []
+          : [{ address: fallbackAddress }];
+    if (recipients.length === 0 || replyText.trim() === "") {
+      return;
     }
-  }, [draft, editor]);
+    replyMutation.mutate({
+      to: recipients,
+      subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
+      bodyText: replyText,
+    });
+  }, [detail, replyMode, replyMutation, replyText, replyTo, row.fromEmail, subject]);
 
   return (
-    <section className="mail-composer" aria-labelledby="mail-composer-title">
-      <header>
-        <h2 id="mail-composer-title">{draft.mode === "reply" ? "Reply" : "New message"}</h2>
-        <button className="icon-button" aria-label="Close composer" onClick={onClose} type="button">
-          <X aria-hidden="true" size={17} />
-        </button>
-      </header>
-
-      <div className="mail-recipient-tabs" role="tablist" aria-label="Recipient fields">
-        {(["to", "cc", "bcc"] as const).map((item) => (
-          <button
-            className={field === item ? "active" : undefined}
-            key={item}
-            onClick={() => setField(item)}
-            type="button"
-          >
-            {item.toUpperCase()}
-          </button>
-        ))}
-      </div>
-
-      <RecipientChips
-        recipients={currentRecipients}
-        onAdd={(recipient) =>
-          updateMailComposerDraft({ [field]: [...currentRecipients, recipient] })
-        }
-        onRemove={(email) =>
-          updateMailComposerDraft({
-            [field]: currentRecipients.filter((recipient) => recipient.email !== email),
-          })
-        }
-      />
-
-      <input
-        aria-label="Subject"
-        className="mail-subject-input"
-        onChange={(event) => updateMailComposerDraft({ subject: event.target.value })}
-        placeholder="Subject"
-        value={draft.subject}
-      />
-
-      <SuggestionSlot
-        className="mail-suggestion-slot compact"
-        context={{
-          resource: draft.threadId
-            ? {
-                id: draft.threadId,
-                type: "mail.thread",
-                label: draft.subject,
-              }
-            : undefined,
-          metadata: {
-            subject: draft.subject,
-            recipientCount: draft.to.length,
-          },
+    <div
+      className="flex-1"
+      style={{ display: "flex", flexDirection: "column", background: "var(--surface)" }}
+    >
+      <div
+        style={{
+          height: 44,
+          display: "flex",
+          alignItems: "center",
+          padding: "0 12px",
+          gap: 4,
+          borderBottom: "1px solid var(--border)",
+          flexShrink: 0,
         }}
-        emptyFallback={<div className="mail-suggestion-empty">No compose suggestions</div>}
-        loadingFallback={<div className="mail-suggestion-empty">Loading compose help</div>}
-        slotId="mail.compose-help"
-      />
-
-      <SuggestionSlot
-        className="mail-suggestion-slot compact"
-        context={{
-          metadata: {
-            bodyLength: draft.body.length,
-          },
-        }}
-        emptyFallback={null}
-        loadingFallback={<div className="mail-suggestion-empty">Loading subjects</div>}
-        slotId="mail.subject-from-body"
-      />
-
-      <div className="mail-body-editor" data-placeholder="Write a message">
-        <EditorContent
-          editor={editor}
-          onInput={(event) => {
-            const body = event.currentTarget.textContent ?? "";
-            updateMailComposerDraft({ body });
-          }}
-        />
-      </div>
-
-      <footer>
-        <button className="helix-button helix-button-secondary" onClick={onClose} type="button">
-          Discard
+      >
+        <button type="button" className="icon-btn" aria-label="Back" onClick={onClose}>
+          <Icons.ArrowLeft />
         </button>
         <button
-          className="helix-button"
-          disabled={!canSend}
-          onClick={() => onSend(draft)}
           type="button"
+          className="icon-btn"
+          aria-label="Archive"
+          disabled={actionBusy}
+          onClick={onArchive}
         >
-          <Send aria-hidden="true" size={16} />
-          Send
+          <Icons.Archive />
         </button>
-      </footer>
-    </section>
-  );
-}
-
-function threadListStatus(
-  status: ThreadStatus,
-  isFetching: boolean,
-  isError: boolean,
-  threads: readonly MailThread[],
-): ThreadStatus {
-  if (status !== "ready") {
-    return status;
-  }
-  if (isFetching && threads.length === 0) {
-    return "loading";
-  }
-  if (isError && threads.length === 0) {
-    return "error";
-  }
-  return "ready";
-}
-
-function RecipientChips({
-  onAdd,
-  onRemove,
-  recipients,
-}: {
-  readonly onAdd: (recipient: MailParticipant) => void;
-  readonly onRemove: (email: string) => void;
-  readonly recipients: readonly MailParticipant[];
-}) {
-  const [value, setValue] = useState("");
-  const [open, setOpen] = useState(false);
-  const normalized = value.trim().toLowerCase();
-  const suggestions = directory.filter(
-    (person) =>
-      !recipients.some((recipient) => recipient.email === person.email) &&
-      (person.name.toLowerCase().includes(normalized) ||
-        person.email.toLowerCase().includes(normalized)),
-  );
-
-  const addRecipient = (recipient: MailParticipant) => {
-    onAdd(recipient);
-    setValue("");
-    setOpen(false);
-  };
-
-  const addTypedRecipient = () => {
-    if (!normalized) {
-      return;
-    }
-
-    const existing = directory.find(
-      (person) =>
-        person.email.toLowerCase() === normalized || person.name.toLowerCase() === normalized,
-    );
-    addRecipient(
-      existing ?? {
-        name: value.trim(),
-        email: normalized.includes("@") ? normalized : `${normalized}@helix.local`,
-      },
-    );
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter" || event.key === ",") {
-      event.preventDefault();
-      addTypedRecipient();
-    }
-
-    if (event.key === "Backspace" && value.length === 0 && recipients.length > 0) {
-      onRemove(recipients[recipients.length - 1]!.email);
-    }
-  };
-
-  return (
-    <div className="mail-recipient-combobox">
-      <div className="mail-recipient-chips">
-        {recipients.map((recipient) => (
-          <span className="mail-recipient-chip" key={recipient.email}>
-            {recipient.name}
-            <button
-              aria-label={`Remove ${recipient.name}`}
-              onClick={() => onRemove(recipient.email)}
-              type="button"
-            >
-              <X aria-hidden="true" size={12} />
-            </button>
-          </span>
-        ))}
-        <input
-          aria-label="Add recipient"
-          onBlur={() => setOpen(false)}
-          onChange={(event) => {
-            setValue(event.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={handleKeyDown}
-          placeholder={recipients.length === 0 ? "Recipients" : ""}
-          value={value}
-        />
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Delete"
+          disabled={actionBusy}
+          onClick={onDelete}
+        >
+          <Icons.Trash />
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Snooze"
+          disabled={actionBusy}
+          onClick={onSnooze}
+        >
+          <Icons.Snooze />
+        </button>
+        <div className="v-divider" style={{ height: 18, margin: "0 4px" }} />
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Label"
+          disabled={actionBusy}
+          onClick={onToggleLabel}
+        >
+          <Icons.Tag />
+        </button>
+        <button type="button" className="icon-btn" aria-label="More actions">
+          <Icons.MoreV />
+        </button>
+        <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-3)" }}>
+          {messages.length > 0 ? `${String(messages.length)} messages` : ""}
+        </span>
+        <button type="button" className="icon-btn" aria-label="Previous conversation">
+          <Icons.ChevronLeft />
+        </button>
+        <button type="button" className="icon-btn" aria-label="Next conversation">
+          <Icons.ChevronRight />
+        </button>
       </div>
-      {open && suggestions.length > 0 ? (
-        <div className="mail-recipient-menu" role="listbox">
-          {suggestions.slice(0, 4).map((person) => (
-            <button
-              key={person.email}
-              onMouseDown={() => addRecipient(person)}
-              role="option"
-              type="button"
+      <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
+        <div style={{ maxWidth: 880, margin: "0 auto", padding: "20px 32px" }}>
+          <div style={{ marginBottom: 16 }}>
+            <h1
+              style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 600, lineHeight: 1.35 }}
             >
-              <BadgeCheck aria-hidden="true" size={15} />
-              <span>{person.name}</span>
-              <small>{person.email}</small>
+              {subject}
+            </h1>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {labels.map((label) => (
+                <span
+                  key={label.id}
+                  style={{
+                    fontSize: 11,
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    fontWeight: 500,
+                    background: `${label.color}20`,
+                    color: label.color,
+                  }}
+                >
+                  {label.name}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {isError && (
+            <div style={{ marginBottom: 12, fontSize: 11, color: "var(--danger)" }}>
+              Could not load the full conversation — showing the list preview.
+            </div>
+          )}
+          {actionError != null && (
+            <div style={{ marginBottom: 12, fontSize: 11, color: "var(--danger)" }}>
+              {actionError}
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="btn sm"
+            style={{ marginBottom: 16 }}
+            onClick={() => {
+              setAiSummary((value) => !value);
+            }}
+          >
+            <Icons.Sparkles />{" "}
+            {aiSummary ? "Hide AI summary" : "Summarize with Helix AI"}
+          </button>
+          {aiSummary && (
+            <div
+              style={{
+                background: "var(--accent-soft)",
+                border: "1px solid var(--accent-soft-border)",
+                borderRadius: 8,
+                padding: 12,
+                fontSize: 12,
+                marginBottom: 16,
+                lineHeight: 1.55,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontWeight: 600,
+                  marginBottom: 6,
+                  color: "var(--accent)",
+                }}
+              >
+                <Icons.Sparkles /> Summary
+              </div>
+              {senderName} is asking for sign-off on this thread. Key open items and
+              requested next steps are highlighted below — review before replying.
+              <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => {
+                    setReplyMode("reply");
+                  }}
+                >
+                  Draft reply
+                </button>
+                <button type="button" className="btn sm">
+                  Schedule meeting
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isLoading && messages.length === 0 && (
+            <div
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: 16,
+                marginBottom: 12,
+                fontSize: 13,
+                color: "var(--text-3)",
+              }}
+            >
+              Loading conversation…
+            </div>
+          )}
+
+          {(messages.length > 0
+            ? messages
+            : [
+                {
+                  id: row.messageId,
+                  from: { address: row.fromEmail, name: senderName },
+                  to: [],
+                  cc: [],
+                  bcc: [],
+                  sentAt: row.time,
+                  body: row.preview,
+                  bodyFormat: "plain" as const,
+                  hasAttachment: row.hasAttachment,
+                },
+              ]
+          ).map((message) => {
+            const msgSender = message.from?.name ?? message.from?.address ?? senderName;
+            return (
+              <div
+                key={message.id}
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  padding: 16,
+                  marginBottom: 12,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                  <Avatar name={msgSender} size={32} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "baseline",
+                        gap: 6,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>{msgSender}</span>
+                      <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                        {message.from?.address ?? row.fromEmail}
+                      </span>
+                      <span
+                        style={{
+                          marginLeft: "auto",
+                          fontSize: 11,
+                          color: "var(--text-3)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {formatThreadTime(message.sentAt)}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-3)",
+                        marginBottom: 12,
+                      }}
+                    >
+                      to{" "}
+                      {message.to.length > 0
+                        ? message.to
+                            .map((addr) => addr.name ?? addr.address)
+                            .join(", ")
+                        : "me"}
+                    </div>
+                    <div
+                      style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 }}
+                    >
+                      {message.body}
+                    </div>
+                    {message.hasAttachment && (
+                      <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+                        <div
+                          style={{
+                            border: "1px solid var(--border)",
+                            borderRadius: 6,
+                            padding: "8px 10px",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontSize: 12,
+                          }}
+                        >
+                          <Icons.Doc />
+                          <div>
+                            <div style={{ fontWeight: 500 }}>Attachment</div>
+                            <div style={{ fontSize: 10, color: "var(--text-3)" }}>
+                              View in conversation
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setReplyMode("reply");
+              }}
+            >
+              <Icons.Reply /> Reply
             </button>
-          ))}
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setReplyMode("replyAll");
+              }}
+            >
+              <Icons.Reply /> Reply all
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setReplyMode("forward");
+              }}
+            >
+              <Icons.Forward /> Forward
+            </button>
+            <button type="button" className="btn">
+              <Icons.Sparkles /> Smart reply
+            </button>
+          </div>
+
+          {replyMode != null && (
+            <div
+              style={{
+                marginTop: 16,
+                background: "var(--surface)",
+                border: "1px solid var(--accent-soft-border)",
+                borderRadius: 8,
+                padding: 0,
+                boxShadow: "0 0 0 3px var(--accent-soft)",
+              }}
+            >
+              <div
+                style={{
+                  padding: "8px 14px",
+                  borderBottom: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 12,
+                }}
+              >
+                {replyMode === "forward" ? <Icons.Forward /> : <Icons.Reply />}
+                <span style={{ fontWeight: 600 }}>
+                  {replyMode === "reply" && `Replying to ${senderName}`}
+                  {replyMode === "replyAll" &&
+                    `Replying all (${String(participantCount)} people)`}
+                  {replyMode === "forward" && `Forwarding "${subject}"`}
+                </span>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  style={{ marginLeft: "auto" }}
+                  onClick={closeReply}
+                  aria-label="Close reply"
+                >
+                  <Icons.X />
+                </button>
+              </div>
+              {replyMode === "forward" && (
+                <div
+                  style={{
+                    padding: "8px 14px",
+                    borderBottom: "1px solid var(--border)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ fontSize: 12, color: "var(--text-3)", width: 50 }}>
+                    To
+                  </span>
+                  <input
+                    className="input"
+                    aria-label="Forward recipients"
+                    placeholder="Add recipients"
+                    value={replyTo}
+                    onChange={(event) => {
+                      setReplyTo(event.target.value);
+                    }}
+                    style={{ flex: 1, border: "none", height: 26 }}
+                  />
+                </div>
+              )}
+              <textarea
+                value={replyText}
+                onChange={(event) => {
+                  setReplyText(event.target.value);
+                }}
+                placeholder="Write your reply…"
+                aria-label="Reply body"
+                style={{
+                  width: "100%",
+                  minHeight: 120,
+                  padding: 14,
+                  border: "none",
+                  outline: "none",
+                  background: "transparent",
+                  fontSize: 13,
+                  lineHeight: 1.55,
+                  resize: "vertical",
+                  fontFamily: "inherit",
+                }}
+              />
+              {replyFailed && (
+                <div
+                  style={{
+                    margin: "0 14px 8px",
+                    fontSize: 11,
+                    color: "var(--danger)",
+                  }}
+                >
+                  Could not send reply. Try again.
+                </div>
+              )}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "8px 12px",
+                  borderTop: "1px solid var(--border)",
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={replyMutation.isPending || replyText.trim() === ""}
+                  onClick={handleReplySend}
+                >
+                  <Icons.Send /> {replyMutation.isPending ? "Sending…" : "Send"}
+                </button>
+                <button type="button" className="icon-btn" aria-label="Attach">
+                  <Icons.Paperclip />
+                </button>
+                <button type="button" className="icon-btn" aria-label="Insert link">
+                  <Icons.Link />
+                </button>
+                <button type="button" className="icon-btn" aria-label="Emoji">
+                  <Icons.Smile />
+                </button>
+                <button type="button" className="icon-btn" aria-label="AI assist">
+                  <Icons.Sparkles />
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  style={{ marginLeft: "auto" }}
+                  onClick={closeReply}
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
 
-function UndoSend({
-  draft,
-  onDismiss,
-  onUndo,
-}: {
-  readonly draft: ComposerDraft;
-  readonly onDismiss: () => void;
-  readonly onUndo: () => void;
-}) {
-  return (
-    <div className="mail-undo-send" role="status">
-      <Clock aria-hidden="true" size={17} />
-      <span>Queued to send</span>
-      <strong>{draft.subject}</strong>
-      <button onClick={onUndo} type="button">
-        Undo
-      </button>
-      <button aria-label="Dismiss undo send" onClick={onDismiss} type="button">
-        <X aria-hidden="true" size={15} />
-      </button>
-    </div>
-  );
+/* ------------------------------------------------------------------ compose */
+
+interface ComposeProps {
+  readonly onClose: () => void;
+  readonly onSent: () => void;
 }
 
-function initialsFor(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+/** Parses a comma/semicolon-separated recipient string into addresses. */
+function parseRecipients(raw: string): MailSendInput["to"] {
+  return raw
+    .split(/[,;]/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((address) => ({ address }));
 }
 
-function mailSearchHitToThread(hit: MailSearchHit): MailThread {
-  const participant = apiAddressToParticipant(hit.from) ?? { name: "Unknown sender", email: "" };
-  return {
-    id: hit.threadId,
-    subject: hit.subject,
-    preview: hit.preview,
-    participants: [participant],
-    messages: [
-      {
-        id: hit.messageId,
-        from: participant,
-        to: [],
-        sentAt: displayDate(hit.sentAt),
-        body: hit.preview,
-      },
-    ],
-    labels: hit.labels,
-    mailbox: "inbox",
-    lastActivity: displayDate(hit.sentAt),
-    unread: hit.unread ?? false,
-    starred: hit.starred ?? false,
-    hasAttachment: false,
-    priority: "normal",
-  };
-}
-
-function mailThreadDetailToThread(thread: MailThreadDetail): MailThread {
-  const messages = thread.messages.map((message) => ({
-    id: message.id,
-    from: apiAddressToParticipant(message.from) ?? { name: "Unknown sender", email: "" },
-    to: message.to.map(apiAddressToParticipant).filter(isMailParticipant),
-    sentAt: displayDate(message.sentAt),
-    body: message.body,
-  }));
-  return {
-    id: thread.id,
-    subject: thread.subject,
-    preview: thread.preview,
-    participants: thread.participants.map(apiAddressToParticipant).filter(isMailParticipant),
-    messages,
-    labels: thread.labels,
-    mailbox:
-      thread.archivedAt === null ? (thread.direction === "outbound" ? "sent" : "inbox") : "archive",
-    lastActivity: displayDate(thread.lastActivity),
-    unread: thread.unread,
-    starred: thread.starred,
-    snoozedUntil: thread.snoozedUntil,
-    hasAttachment: thread.messages.some((message) => message.hasAttachment),
-    priority: "normal",
-  };
-}
-
-function sampleMailThread(input: {
-  readonly id: string;
-  readonly from: MailParticipant;
-  readonly subject: string;
-  readonly preview: string;
-  readonly labels: readonly string[];
-  readonly lastActivity: string;
-  readonly unread: boolean;
-  readonly hasAttachment: boolean;
-  readonly priority: "normal" | "high";
-  readonly mailbox?: MailboxId;
-}): MailThread {
-  return {
-    id: input.id,
-    subject: input.subject,
-    preview: input.preview,
-    participants: [input.from],
-    messages: [
-      {
-        id: `${input.id}-message-1`,
-        from: input.from,
-        to: [{ name: "Maya Chen", email: "maya@helix.local" }],
-        sentAt: input.lastActivity,
-        body: `${input.preview}\n\nThis sample message is available locally so the mailbox layout stays populated while backend mail tools are unavailable.`,
-      },
-    ],
-    labels: input.labels,
-    mailbox: input.mailbox ?? "inbox",
-    lastActivity: input.lastActivity,
-    unread: input.unread,
-    starred: input.priority === "high",
-    hasAttachment: input.hasAttachment,
-    priority: input.priority,
-  };
-}
-
-function tomorrowIso() {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  return date.toISOString();
-}
-
-function upsertThread(threads: readonly MailThread[], next: MailThread): readonly MailThread[] {
-  return threads.some((thread) => thread.id === next.id)
-    ? threads.map((thread) => (thread.id === next.id ? next : thread))
-    : [next, ...threads];
-}
-
-function mergeMailFilters(
-  base: readonly MailFilterRecord[],
-  overrides: readonly MailFilterRecord[],
-): readonly MailFilterRecord[] {
-  const merged = new Map(base.map((filter) => [filter.id, filter]));
-  for (const filter of overrides) {
-    merged.set(filter.id, filter);
-  }
-  return [...merged.values()].sort((left, right) => {
-    const priorityDelta = left.priority - right.priority;
-    return priorityDelta === 0 ? left.createdAt.localeCompare(right.createdAt) : priorityDelta;
+/**
+ * Reads a File into a base-64 string asynchronously.
+ * Strips the "data:<type>;base64," prefix produced by FileReader so the
+ * backend receives a plain base-64 payload.
+ */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("FileReader did not return a string"));
+        return;
+      }
+      // "data:<mime>;base64,<data>" → keep only <data>
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => {
+      reject(reader.error ?? new Error("FileReader error"));
+    };
+    reader.readAsDataURL(file);
   });
 }
 
-function optimisticMailFilter(input: {
-  readonly name: string;
-  readonly criteria: MailFilterCriteria;
-  readonly actions: MailFilterActions;
-}): MailFilterRecord {
-  const now = new Date().toISOString();
-  return {
-    id: `local-${now}`,
-    name: input.name,
-    enabled: true,
-    priority: 100,
-    criteria: input.criteria,
-    actions: input.actions,
-    createdAt: now,
-    updatedAt: now,
-  };
-}
+function Compose({ onClose, onSent }: ComposeProps) {
+  const [to, setTo] = useState("");
+  const [cc, setCc] = useState("");
+  const [bcc, setBcc] = useState("");
+  const [showCc, setShowCc] = useState(false);
+  const [showBcc, setShowBcc] = useState(false);
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [scheduling, setScheduling] = useState(false);
+  const [sendFailed, setSendFailed] = useState(false);
+  const [attachments, setAttachments] = useState<readonly MailAttachment[]>([]);
+  /** Drag-enter depth counter — incremented on dragenter, decremented on
+   *  dragleave.  The overlay shows while > 0, which prevents flickering when
+   *  the cursor moves over child elements (each child fires its own enter/leave
+   *  pair without the counter ever reaching zero). */
+  const dragDepth = useRef(0);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-function describeFilterCriteria(criteria: MailFilterCriteria): string {
-  const parts = [
-    criteria.fromContains === undefined ? undefined : `from contains ${criteria.fromContains}`,
-    criteria.toContains === undefined ? undefined : `to contains ${criteria.toContains}`,
-    criteria.subjectContains === undefined
-      ? undefined
-      : `subject contains ${criteria.subjectContains}`,
-    criteria.bodyContains === undefined ? undefined : `body contains ${criteria.bodyContains}`,
-    criteria.hasAttachment ? "has attachments" : undefined,
-  ].filter(isString);
-  return parts.length === 0 ? "All mail" : parts.join(", ");
-}
+  const sendMutation = useMutation({
+    mutationFn: (input: MailSendInput) => sendMail(input),
+    onMutate: () => {
+      setSendFailed(false);
+    },
+    onError: () => {
+      setSendFailed(true);
+    },
+    onSuccess: () => {
+      onSent();
+      onClose();
+    },
+  });
 
-function describeFilterActions(actions: MailFilterActions): string {
-  const parts = [
-    actions.applyLabels === undefined || actions.applyLabels.length === 0
-      ? undefined
-      : `label ${actions.applyLabels.join(", ")}`,
-    actions.archive ? "archive" : undefined,
-    actions.delete ? "delete" : undefined,
-    actions.snoozeUntil === undefined ? undefined : `snooze until ${actions.snoozeUntil}`,
-  ].filter(isString);
-  return parts.length === 0 ? "No automatic action" : parts.join(", ");
-}
+  const recipients = parseRecipients(to);
+  const canSend = recipients.length > 0 && !sendMutation.isPending;
 
-function isMailFilterRecord(value: unknown): value is MailFilterRecord {
+  const handleSend = useCallback(() => {
+    if (recipients.length === 0) {
+      return;
+    }
+    sendMutation.mutate({
+      to: recipients,
+      cc: parseRecipients(cc),
+      bcc: parseRecipients(bcc),
+      subject,
+      bodyText: body,
+      attachments: attachments.length > 0 ? attachments : undefined,
+    });
+  }, [attachments, bcc, body, cc, recipients, sendMutation, subject]);
+
+  /** Convert a FileList (from picker or drop) into MailAttachment records and
+   *  append them to the current attachment list. */
+  const attachFiles = useCallback(async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    const resolved = await Promise.all(
+      fileArray.map(async (file) => {
+        const content = await fileToBase64(file);
+        const attachment: MailAttachment = {
+          filename: file.name,
+          contentType: file.type !== "" ? file.type : "application/octet-stream",
+          content,
+        };
+        return attachment;
+      }),
+    );
+    setAttachments((prev) => [...prev, ...resolved]);
+  }, []);
+
+  const handleDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepth.current += 1;
+    if (dragDepth.current === 1) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    // Setting dropEffect signals to the browser that a drop is accepted.
+    event.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepth.current -= 1;
+    if (dragDepth.current <= 0) {
+      dragDepth.current = 0;
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      dragDepth.current = 0;
+      setIsDragOver(false);
+      const { files } = event.dataTransfer;
+      if (files.length > 0) {
+        void attachFiles(files);
+      }
+    },
+    [attachFiles],
+  );
+
+  const handleFileInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const { files } = event.target;
+      if (files !== null && files.length > 0) {
+        void attachFiles(files);
+      }
+      // Reset the input so the same file can be re-selected if removed.
+      event.target.value = "";
+    },
+    [attachFiles],
+  );
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments((prev) => prev.filter((_, idx) => idx !== index));
+  }, []);
+
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "id" in value &&
-    "name" in value &&
-    "enabled" in value
+    <div
+      className="compose compose-drop-root"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragOver && (
+        <div className="compose-drop-overlay" aria-label="Drop files to attach">
+          <Icons.Paperclip />
+          Drop files to attach
+        </div>
+      )}
+      {/* Hidden file input — triggered by the Attach toolbar button */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        aria-label="Attach files"
+        style={{ display: "none" }}
+        onChange={handleFileInputChange}
+      />
+      <div className="compose-header">
+        <span>New message</span>
+        <div style={{ display: "flex", gap: 2 }}>
+          <button type="button" className="icon-btn" aria-label="Minimize">
+            <Icons.ChevronDown />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <Icons.X />
+          </button>
+        </div>
+      </div>
+      <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: "4px 0",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <span style={{ fontSize: 12, color: "var(--text-3)", width: 50 }}>To</span>
+          <input
+            value={to}
+            onChange={(event) => {
+              setTo(event.target.value);
+            }}
+            aria-label="To"
+            style={{
+              flex: 1,
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              fontSize: 13,
+            }}
+          />
+          <button
+            type="button"
+            aria-pressed={showCc}
+            onClick={() => {
+              setShowCc((value) => !value);
+            }}
+            style={{ fontSize: 11, color: "var(--text-3)" }}
+          >
+            Cc
+          </button>
+          <span style={{ margin: "0 6px", color: "var(--text-3)" }}>·</span>
+          <button
+            type="button"
+            aria-pressed={showBcc}
+            onClick={() => {
+              setShowBcc((value) => !value);
+            }}
+            style={{ fontSize: 11, color: "var(--text-3)" }}
+          >
+            Bcc
+          </button>
+        </div>
+        {showCc && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "4px 0",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "var(--text-3)", width: 50 }}>Cc</span>
+            <input
+              value={cc}
+              onChange={(event) => {
+                setCc(event.target.value);
+              }}
+              aria-label="Cc"
+              style={{
+                flex: 1,
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                fontSize: 13,
+              }}
+            />
+          </div>
+        )}
+        {showBcc && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "4px 0",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "var(--text-3)", width: 50 }}>Bcc</span>
+            <input
+              value={bcc}
+              onChange={(event) => {
+                setBcc(event.target.value);
+              }}
+              aria-label="Bcc"
+              style={{
+                flex: 1,
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                fontSize: 13,
+              }}
+            />
+          </div>
+        )}
+        <div style={{ padding: "4px 0" }}>
+          <input
+            value={subject}
+            onChange={(event) => {
+              setSubject(event.target.value);
+            }}
+            placeholder="Subject"
+            aria-label="Subject"
+            style={{
+              width: "100%",
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              fontSize: 13,
+              fontWeight: 500,
+            }}
+          />
+        </div>
+      </div>
+      <textarea
+        value={body}
+        onChange={(event) => {
+          setBody(event.target.value);
+        }}
+        placeholder="Write your message…"
+        aria-label="Message body"
+        style={{
+          width: "100%",
+          minHeight: 200,
+          padding: 14,
+          border: "none",
+          outline: "none",
+          background: "transparent",
+          fontSize: 13,
+          lineHeight: 1.55,
+          resize: "none",
+          fontFamily: "inherit",
+        }}
+      />
+      {attachments.length > 0 && (
+        <div className="compose-attachments" aria-label="Attached files">
+          {attachments.map((attachment, index) => (
+            <div key={`${attachment.filename}-${String(index)}`} className="compose-attachment-chip">
+              <Icons.Paperclip />
+              <span title={attachment.filename}>{attachment.filename}</span>
+              <button
+                type="button"
+                aria-label={`Remove attachment ${attachment.filename}`}
+                onClick={() => {
+                  removeAttachment(index);
+                }}
+              >
+                <Icons.X size={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {sendFailed && (
+        <div style={{ margin: "0 14px 8px", fontSize: 11, color: "var(--danger)" }}>
+          Could not send message. Try again.
+        </div>
+      )}
+      {scheduling && (
+        <div
+          style={{
+            margin: "0 14px 8px",
+            padding: 10,
+            background: "var(--accent-soft)",
+            borderRadius: 6,
+            border: "1px solid var(--accent-soft-border)",
+            fontSize: 12,
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--accent)" }}>
+            Schedule send
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="btn sm">
+              Tomorrow 8:00 AM
+            </button>
+            <button type="button" className="btn sm">
+              Monday 8:00 AM
+            </button>
+            <button type="button" className="btn sm">
+              Pick date &amp; time
+            </button>
+          </div>
+        </div>
+      )}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "8px 12px",
+          borderTop: "1px solid var(--border)",
+        }}
+      >
+        <div style={{ display: "flex" }}>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!canSend}
+            onClick={handleSend}
+          >
+            <Icons.Send /> {sendMutation.isPending ? "Sending…" : "Send"}
+          </button>
+          <button
+            type="button"
+            className="btn primary icon"
+            aria-label="Schedule send"
+            style={{
+              borderLeft: "1px solid rgba(255,255,255,0.2)",
+              marginLeft: 1,
+              borderRadius: "0 6px 6px 0",
+            }}
+            onClick={() => {
+              setScheduling((value) => !value);
+            }}
+          >
+            <Icons.ChevronDown />
+          </button>
+        </div>
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Attach"
+          onClick={() => {
+            fileInputRef.current?.click();
+          }}
+        >
+          <Icons.Paperclip />
+        </button>
+        <button type="button" className="icon-btn" aria-label="Insert link">
+          <Icons.Link />
+        </button>
+        <button type="button" className="icon-btn" aria-label="Emoji">
+          <Icons.Smile />
+        </button>
+        <button type="button" className="icon-btn" aria-label="Insert image">
+          <Icons.Image />
+        </button>
+        <button type="button" className="icon-btn" aria-label="AI assist">
+          <Icons.Sparkles />
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Discard draft"
+          style={{ marginLeft: "auto" }}
+          onClick={onClose}
+        >
+          <Icons.Trash />
+        </button>
+      </div>
+    </div>
   );
 }
 
-function isString(value: string | undefined): value is string {
-  return value !== undefined;
-}
+/* ------------------------------------------------------------------- shell */
 
-function participantToApiAddress(participant: MailParticipant): MailApiAddress {
-  return {
-    address: participant.email,
-    ...(participant.name.length === 0 ? {} : { name: participant.name }),
-  };
-}
+const PAGE_SIZE = 50;
 
-function apiAddressToParticipant(address: MailApiAddress | undefined): MailParticipant | undefined {
-  if (address === undefined) {
-    return undefined;
-  }
-  return {
-    name: address.name ?? address.address,
-    email: address.address,
-  };
-}
+export function MailShell() {
+  const queryClient = useQueryClient();
+  const [folder, setFolder] = useState<MailFolderKey>("inbox");
+  const [tab, setTab] = useState<MailTabId>("primary");
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // Checked (bulk-select) thread IDs
+  const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set());
 
-function isMailParticipant(value: MailParticipant | undefined): value is MailParticipant {
-  return value !== undefined;
-}
+  const foldersQuery = useQuery(mailFoldersQueryOptions());
+  const labelsQuery = useQuery(mailLabelsQueryOptions());
 
-function displayDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat("en", {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(date);
+  const threadsInput = useMemo(
+    () => ({
+      folder,
+      tab: folder === "inbox" ? tab : undefined,
+      label: activeLabel ?? undefined,
+      query: query.trim() === "" ? undefined : query.trim(),
+      limit: PAGE_SIZE,
+      offset,
+    }),
+    [activeLabel, folder, offset, query, tab],
+  );
+  const threadsQuery = useQuery(mailThreadsQueryOptions(threadsInput));
+
+  const folders = foldersQuery.isError
+    ? FALLBACK_FOLDERS
+    : (foldersQuery.data ?? FALLBACK_FOLDERS);
+  const labels = labelsQuery.isError
+    ? FALLBACK_LABELS
+    : (labelsQuery.data ?? FALLBACK_LABELS);
+
+  const threadsResult = threadsQuery.data;
+  const threads = threadsQuery.isError
+    ? fallbackThreadRows(folder, tab, activeLabel, query)
+    : (threadsResult?.threads ?? []);
+  const total = threadsQuery.isError
+    ? threads.length
+    : (threadsResult?.total ?? 0);
+
+  const labelColors = useMemo(
+    () => new Map(labels.map((label) => [label.slug, label])),
+    [labels],
+  );
+
+  const selectedRow = useMemo(
+    () => threads.find((thread) => thread.threadId === selected) ?? null,
+    [selected, threads],
+  );
+
+  const threadDetailQuery = useQuery({
+    ...mailThreadQueryOptions(selected ?? ""),
+    enabled: selected != null,
+  });
+
+  const invalidateLists = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["mail", "threads"] });
+    void queryClient.invalidateQueries({ queryKey: ["mail", "folders"] });
+    void queryClient.invalidateQueries({ queryKey: ["mail", "labels"] });
+  }, [queryClient]);
+
+  const clearActionError = useCallback(() => {
+    setActionError(null);
+  }, []);
+
+  const starMutation = useMutation({
+    mutationFn: (input: { readonly threadId: string; readonly starred: boolean }) =>
+      setMailThreadStarred(input),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not update the star. Try again.");
+    },
+    onSuccess: invalidateLists,
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: (threadId: string) => archiveMailThread(threadId),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not archive the thread. Try again.");
+    },
+    onSuccess: () => {
+      invalidateLists();
+      setSelected(null);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (threadId: string) => deleteMailThread(threadId),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not delete the thread. Try again.");
+    },
+    onSuccess: () => {
+      invalidateLists();
+      setSelected(null);
+    },
+  });
+
+  const snoozeMutation = useMutation({
+    mutationFn: (threadId: string) =>
+      snoozeMailThread({
+        threadId,
+        until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not snooze the thread. Try again.");
+    },
+    onSuccess: () => {
+      invalidateLists();
+      setSelected(null);
+    },
+  });
+
+  const readMutation = useMutation({
+    mutationFn: (input: { readonly threadId: string; readonly unread: boolean }) =>
+      setMailThreadRead(input),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not update the read state. Try again.");
+    },
+    onSuccess: invalidateLists,
+  });
+
+  const labelMutation = useMutation({
+    mutationFn: (input: {
+      readonly threadId: string;
+      readonly add?: readonly string[];
+      readonly remove?: readonly string[];
+    }) => applyMailLabels(input),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not update labels. Try again.");
+    },
+    onSuccess: invalidateLists,
+  });
+
+  const spamMutation = useMutation({
+    mutationFn: (threadId: string) => spamMailThread(threadId),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not report spam. Try again.");
+    },
+    onSuccess: () => {
+      invalidateLists();
+      setSelected(null);
+    },
+  });
+
+  const filterMutation = useMutation({
+    mutationFn: (input: { readonly from: string }) =>
+      createMailFilter({
+        name: `From ${input.from}`,
+        enabled: true,
+        criteria: { fromContains: input.from },
+      }),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not create filter. Try again.");
+    },
+    onSuccess: () => {
+      // Brief success acknowledgement — clear any previous error
+      clearActionError();
+    },
+  });
+
+  const handleSelect = useCallback(
+    (id: string) => {
+      setSelected(id);
+      const row = threads.find((thread) => thread.threadId === id);
+      if (row?.unread === true) {
+        readMutation.mutate({ threadId: id, unread: false });
+      }
+    },
+    [readMutation, threads],
+  );
+
+  // Row-level hover actions
+  const handleRowArchive = useCallback(
+    (threadId: string) => {
+      archiveMutation.mutate(threadId);
+    },
+    [archiveMutation],
+  );
+
+  const handleRowDelete = useCallback(
+    (threadId: string) => {
+      deleteMutation.mutate(threadId);
+    },
+    [deleteMutation],
+  );
+
+  const handleRowSnooze = useCallback(
+    (threadId: string) => {
+      snoozeMutation.mutate(threadId);
+    },
+    [snoozeMutation],
+  );
+
+  const handleRowToggleRead = useCallback(
+    (thread: MailThreadRow) => {
+      readMutation.mutate({ threadId: thread.threadId, unread: !thread.unread });
+    },
+    [readMutation],
+  );
+
+  // Bulk actions — apply to all checked IDs, then clear selection
+  const handleBulkArchive = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        archiveMutation.mutate(threadId);
+      }
+      setCheckedIds(new Set());
+    },
+    [archiveMutation],
+  );
+
+  const handleBulkDelete = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        deleteMutation.mutate(threadId);
+      }
+      setCheckedIds(new Set());
+    },
+    [deleteMutation],
+  );
+
+  const handleBulkSpam = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        spamMutation.mutate(threadId);
+      }
+      setCheckedIds(new Set());
+    },
+    [spamMutation],
+  );
+
+  const handleBulkRead = useCallback(
+    (ids: ReadonlySet<string>, unread: boolean) => {
+      for (const threadId of ids) {
+        readMutation.mutate({ threadId, unread });
+      }
+      setCheckedIds(new Set());
+    },
+    [readMutation],
+  );
+
+  const handleBulkSnooze = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        snoozeMutation.mutate(threadId);
+      }
+      setCheckedIds(new Set());
+    },
+    [snoozeMutation],
+  );
+
+  const handleBulkMove = useCallback(
+    (ids: ReadonlySet<string>, folderId: MailFolderKey) => {
+      // Move is implemented via archive (if target is archive) or a label move.
+      // For now we use archiveMailThread for "archive" and delete for "trash".
+      for (const threadId of ids) {
+        if (folderId === "archive") {
+          archiveMutation.mutate(threadId);
+        } else if (folderId === "trash") {
+          deleteMutation.mutate(threadId);
+        } else if (folderId === "spam") {
+          spamMutation.mutate(threadId);
+        }
+      }
+      setCheckedIds(new Set());
+    },
+    [archiveMutation, deleteMutation, spamMutation],
+  );
+
+  const handleBulkLabel = useCallback(
+    (ids: ReadonlySet<string>, labelSlug: string, add: boolean) => {
+      for (const threadId of ids) {
+        labelMutation.mutate({
+          threadId,
+          ...(add ? { add: [labelSlug] } : { remove: [labelSlug] }),
+        });
+      }
+      setCheckedIds(new Set());
+    },
+    [labelMutation],
+  );
+
+  const handleRefresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["mail", "threads"] });
+  }, [queryClient]);
+
+  const handleMarkAllRead = useCallback(() => {
+    const unreadThreads = threads.filter((t) => t.unread);
+    for (const thread of unreadThreads) {
+      readMutation.mutate({ threadId: thread.threadId, unread: false });
+    }
+  }, [readMutation, threads]);
+
+  const handleBulkStar = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        starMutation.mutate({ threadId, starred: true });
+      }
+      setCheckedIds(new Set());
+    },
+    [starMutation],
+  );
+
+  const handleBulkFilterLike = useCallback(
+    (ids: ReadonlySet<string>) => {
+      const firstId = [...ids][0];
+      if (firstId === undefined) {
+        return;
+      }
+      const firstThread = threads.find((t) => t.threadId === firstId);
+      if (firstThread === undefined) {
+        return;
+      }
+      filterMutation.mutate({ from: firstThread.fromEmail || firstThread.from });
+      setCheckedIds(new Set());
+    },
+    [filterMutation, threads],
+  );
+
+  const actionBusy =
+    archiveMutation.isPending ||
+    deleteMutation.isPending ||
+    snoozeMutation.isPending ||
+    labelMutation.isPending ||
+    spamMutation.isPending;
+
+  return (
+    <>
+      <SurfaceFrame
+        title="Mail"
+        icon={<Icons.Mail />}
+        searchPlaceholder="Search mail (try from:mira, has:attachment, label:urgent)"
+        searchValue={query}
+        onSearchChange={(next) => {
+          setQuery(next);
+          setOffset(0);
+        }}
+        actions={
+          <button type="button" className="btn">
+            <Icons.Filter /> Filters
+          </button>
+        }
+      >
+        <div style={{ display: "contents" }}>
+          <MailSidebar
+            folder={folder}
+            onFolder={(next) => {
+              setFolder(next);
+              setSelected(null);
+              setOffset(0);
+              setCheckedIds(new Set());
+            }}
+            onCompose={() => {
+              setComposeOpen(true);
+            }}
+            folders={folders}
+            labels={labels}
+            activeLabel={activeLabel}
+            onLabel={(next) => {
+              setActiveLabel(next);
+              setSelected(null);
+              setOffset(0);
+              setCheckedIds(new Set());
+            }}
+          />
+          {selectedRow != null ? (
+            <ThreadView
+              row={selectedRow}
+              detail={threadDetailQuery.data}
+              isLoading={threadDetailQuery.isLoading}
+              isError={threadDetailQuery.isError}
+              labelColors={labelColors}
+              onClose={() => {
+                setSelected(null);
+              }}
+              onArchive={() => {
+                archiveMutation.mutate(selectedRow.threadId);
+              }}
+              onDelete={() => {
+                deleteMutation.mutate(selectedRow.threadId);
+              }}
+              onSnooze={() => {
+                snoozeMutation.mutate(selectedRow.threadId);
+              }}
+              onToggleLabel={() => {
+                const firstLabel = labels[0];
+                if (firstLabel === undefined) {
+                  return;
+                }
+                const applied = (
+                  threadDetailQuery.data?.labels ?? selectedRow.labels
+                ).includes(firstLabel.slug);
+                labelMutation.mutate({
+                  threadId: selectedRow.threadId,
+                  ...(applied
+                    ? { remove: [firstLabel.slug] }
+                    : { add: [firstLabel.slug] }),
+                });
+              }}
+              actionBusy={actionBusy}
+              actionError={actionError}
+            />
+          ) : (
+            <ThreadList
+              tab={tab}
+              onTab={(next) => {
+                setTab(next);
+                setOffset(0);
+              }}
+              selected={selected}
+              onSelect={handleSelect}
+              threads={threads}
+              folder={folder}
+              query={query}
+              onClearQuery={() => {
+                setQuery("");
+                setOffset(0);
+              }}
+              labelColors={labelColors}
+              labels={labels}
+              folders={folders}
+              total={total}
+              offset={offset}
+              limit={PAGE_SIZE}
+              onPage={setOffset}
+              isLoading={threadsQuery.isLoading}
+              isError={threadsQuery.isError}
+              onToggleStar={(thread) => {
+                starMutation.mutate({
+                  threadId: thread.threadId,
+                  starred: !thread.starred,
+                });
+              }}
+              pendingThreadId={
+                starMutation.isPending
+                  ? (starMutation.variables?.threadId ?? null)
+                  : null
+              }
+              onArchive={handleRowArchive}
+              onDelete={handleRowDelete}
+              onSnooze={handleRowSnooze}
+              onToggleRead={handleRowToggleRead}
+              checkedIds={checkedIds}
+              onCheckedChange={setCheckedIds}
+              onBulkArchive={handleBulkArchive}
+              onBulkDelete={handleBulkDelete}
+              onBulkSpam={handleBulkSpam}
+              onBulkRead={handleBulkRead}
+              onBulkSnooze={handleBulkSnooze}
+              onBulkMove={handleBulkMove}
+              onBulkLabel={handleBulkLabel}
+              onRefresh={handleRefresh}
+              onMarkAllRead={handleMarkAllRead}
+              onBulkStar={handleBulkStar}
+              onBulkFilterLike={handleBulkFilterLike}
+            />
+          )}
+        </div>
+      </SurfaceFrame>
+      {composeOpen && (
+        <Compose
+          onClose={() => {
+            setComposeOpen(false);
+          }}
+          onSent={invalidateLists}
+        />
+      )}
+    </>
+  );
 }

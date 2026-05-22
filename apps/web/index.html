@@ -4,18 +4,40 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
+      // Apply the Helix appearance settings (theme / density / accent) before
+      // first paint to avoid a flash of the wrong theme. Mirrors
+      // src/components/settings-store.ts; that store re-applies on hydration.
       (() => {
-        const key = "helix-color-mode";
-        const stored = localStorage.getItem(key);
-        const mode = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
-        const resolved =
-          mode === "system"
-            ? matchMedia("(prefers-color-scheme: dark)").matches
-              ? "dark"
-              : "light"
-            : mode;
-        document.documentElement.classList.add(resolved);
-        document.documentElement.dataset.colorMode = mode;
+        const ACCENT_HUE = {
+          "#7c3aed": 290,
+          "#2563eb": 250,
+          "#0891b2": 220,
+          "#059669": 150,
+          "#dc2626": 25,
+          "#ea580c": 50,
+          "#db2777": 350,
+          "#475569": 260,
+        };
+        let theme = "light";
+        let density = "compact";
+        let accent = "#7c3aed";
+        try {
+          const raw = localStorage.getItem("helix-appearance");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed.theme === "dark") theme = "dark";
+            if (parsed.density === "comfortable") density = "comfortable";
+            if (typeof parsed.accent === "string" && parsed.accent in ACCENT_HUE) {
+              accent = parsed.accent;
+            }
+          }
+        } catch (_) {
+          /* localStorage unavailable — fall back to defaults */
+        }
+        const root = document.documentElement;
+        root.setAttribute("data-theme", theme);
+        root.setAttribute("data-density", density);
+        root.style.setProperty("--accent-h", String(ACCENT_HUE[accent]));
       })();
     </script>
     <title>Helix Workspace</title>

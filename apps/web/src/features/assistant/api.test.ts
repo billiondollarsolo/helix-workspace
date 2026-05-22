@@ -3,9 +3,13 @@ import {
   assistantToolDecisionUrl,
   assistantToolPendingId,
   decideAssistantToolCall,
+  deleteAssistantConversation,
   forgetAssistantMemory,
   isAssistantBackendConversationId,
+  listAssistantConversations,
+  renameAssistantConversation,
   sendAssistantChat,
+  setAssistantConversationPinned,
   streamAssistantChat,
 } from "./api";
 
@@ -353,6 +357,145 @@ describe("assistant memory API", () => {
     await expect(forgetAssistantMemory({}, fetchImpl)).rejects.toThrow(
       "Memory backend rejected the request.",
     );
+  });
+});
+
+describe("assistant conversation list API", () => {
+  it("lists conversations, forwarding the trimmed search query", async () => {
+    const page = {
+      items: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          title: "Atlas renewal",
+          pinned: true,
+          pinnedAt: "2026-05-21T09:00:00.000Z",
+          memoryOptIn: false,
+          updatedAt: "2026-05-21T09:30:00.000Z",
+          createdAt: "2026-05-20T09:00:00.000Z",
+          messageCount: 4,
+          preview: "Atlas is a $420K ARR account.",
+        },
+      ],
+      nextCursor: null,
+    };
+    const fetchImpl = vi.fn(() => Promise.resolve(Response.json(page)));
+
+    await expect(
+      listAssistantConversations({ query: "  atlas  ", limit: 25 }, fetchImpl),
+    ).resolves.toEqual(page);
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/assistant.conversations.list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "atlas", limit: 25 }),
+    });
+  });
+
+  it("omits an empty search query and defaults the limit", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(Response.json({ items: [], nextCursor: null })),
+    );
+
+    await listAssistantConversations({ query: "   " }, fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/assistant.conversations.list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ limit: 50 }),
+    });
+  });
+
+  it("pins and unpins conversations through the matching tool endpoints", async () => {
+    const record = {
+      id: "00000000-0000-4000-8000-000000000001",
+      title: "Atlas renewal",
+      pinnedAt: "2026-05-21T09:00:00.000Z",
+      memoryOptIn: false,
+      updatedAt: "2026-05-21T09:30:00.000Z",
+      createdAt: "2026-05-20T09:00:00.000Z",
+    };
+    const pinFetch = vi.fn(() => Promise.resolve(Response.json(record)));
+    await setAssistantConversationPinned(
+      { conversationId: record.id, pinned: true },
+      pinFetch,
+    );
+    expect(pinFetch).toHaveBeenCalledWith(
+      "/api/tools/assistant.conversation.pin",
+      expect.objectContaining({ body: JSON.stringify({ conversationId: record.id }) }),
+    );
+
+    const unpinFetch = vi.fn(() =>
+      Promise.resolve(Response.json({ ...record, pinnedAt: null })),
+    );
+    await setAssistantConversationPinned(
+      { conversationId: record.id, pinned: false },
+      unpinFetch,
+    );
+    expect(unpinFetch).toHaveBeenCalledWith(
+      "/api/tools/assistant.conversation.unpin",
+      expect.anything(),
+    );
+  });
+
+  it("renames a conversation with a trimmed title", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          id: "00000000-0000-4000-8000-000000000001",
+          title: "New title",
+          pinnedAt: null,
+          memoryOptIn: false,
+          updatedAt: "2026-05-21T09:30:00.000Z",
+          createdAt: "2026-05-20T09:00:00.000Z",
+        }),
+      ),
+    );
+
+    await renameAssistantConversation(
+      { conversationId: "00000000-0000-4000-8000-000000000001", title: "  New title  " },
+      fetchImpl,
+    );
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/assistant.conversation.rename", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId: "00000000-0000-4000-8000-000000000001",
+        title: "New title",
+      }),
+    });
+  });
+
+  it("deletes a conversation through assistant.conversation.delete", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(Response.json({ conversationId: "x", deleted: true })),
+    );
+
+    await deleteAssistantConversation(
+      { conversationId: "00000000-0000-4000-8000-000000000001" },
+      fetchImpl,
+    );
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/assistant.conversation.delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: "00000000-0000-4000-8000-000000000001" }),
+    });
+  });
+
+  it("surfaces a HelixError envelope message from a failed conversation tool", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        Response.json(
+          { error: { code: "not_found", message: "Unknown assistant conversation." } },
+          { status: 404 },
+        ),
+      ),
+    );
+
+    await expect(
+      deleteAssistantConversation({ conversationId: "missing" }, fetchImpl),
+    ).rejects.toThrow("Unknown assistant conversation.");
   });
 });
 

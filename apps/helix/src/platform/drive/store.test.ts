@@ -1,0 +1,244 @@
+/**
+ * Integration tests for PostgresDriveStore — specifically the trash/restore
+ * cascade to linked content tables (docs_documents, sheets, slide_decks).
+ *
+ * Requires a live PostgreSQL instance with all migrations applied.
+ * Connection is read from the DATABASE_URL environment variable.
+ *
+ * Tests are skipped automatically when DATABASE_URL is not set, so the
+ * unit-test suite stays green in environments without a database.
+ */
+
+import postgres from "postgres";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PostgresDriveStore } from "./store.js";
+
+// Deterministic UUIDs in the f100… range to avoid collision with demo seed
+// data (0000...) and the migration test (f000...).
+const TEST_ORG_ID = "f1000000-0000-4000-8000-000000000001";
+const TEST_ACTOR_ID = "f1000000-0000-4000-8000-000000000002";
+const TEST_SHEET_ID = "f1000000-0000-4000-8000-000000000010";
+const TEST_DECK_ID = "f1000000-0000-4000-8000-000000000020";
+const TEST_DOC_ID = "f1000000-0000-4000-8000-000000000030";
+
+function createSql(): postgres.Sql {
+  const url =
+    process.env.DATABASE_URL ?? "postgres://helix:helix_dev_password@localhost:28432/helix";
+  return postgres(url, { max: 2, prepare: false });
+}
+
+describe(
+  "PostgresDriveStore — syncTargetDeletedAt cascade",
+  {
+    skip: !process.env.DATABASE_URL,
+  },
+  () => {
+    let sql: postgres.Sql;
+    let store: PostgresDriveStore;
+
+    beforeAll(async () => {
+      sql = createSql();
+      store = new PostgresDriveStore(sql);
+
+      // Seed a test actor so FK constraints are satisfied.
+      await sql`
+        insert into actors (id, org_id, type, display_name, scopes)
+        values (${TEST_ACTOR_ID}, ${TEST_ORG_ID}, 'user', 'Drive Store Test Actor', '{}')
+        on conflict (id) do nothing
+      `;
+
+      // --- Sheet: objects row + sheets row with same PK ---
+      await sql`
+        insert into sheets (id, org_id, owner_actor_id, title)
+        values (${TEST_SHEET_ID}, ${TEST_ORG_ID}, ${TEST_ACTOR_ID}, 'Test Sheet')
+        on conflict (id) do nothing
+      `;
+      await sql`
+        insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, metadata)
+        values (
+          ${TEST_SHEET_ID}, ${TEST_ORG_ID}, ${TEST_ACTOR_ID},
+          'file', ${'drive/test/sheet'}, ${'application/vnd.helix.sheet'}, ${0},
+          ${sql.json({ app: 'sheets', name: 'Test Sheet', folderId: null, status: 'ready' })}
+        )
+        on conflict (id) do nothing
+      `;
+      await sql`
+        insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
+        values (${TEST_ORG_ID}, ${TEST_ACTOR_ID}, 'object', ${TEST_SHEET_ID}, 'owner', ${TEST_ACTOR_ID})
+        on conflict do nothing
+      `;
+
+      // --- Deck: objects row + slide_decks row with same PK ---
+      await sql`
+        insert into slide_decks (id, org_id, owner_actor_id, title)
+        values (${TEST_DECK_ID}, ${TEST_ORG_ID}, ${TEST_ACTOR_ID}, 'Test Deck')
+        on conflict (id) do nothing
+      `;
+      await sql`
+        insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, metadata)
+        values (
+          ${TEST_DECK_ID}, ${TEST_ORG_ID}, ${TEST_ACTOR_ID},
+          'file', ${'drive/test/deck'}, ${'application/vnd.helix.slides'}, ${0},
+          ${sql.json({ app: 'slides', name: 'Test Deck', folderId: null, status: 'ready' })}
+        )
+        on conflict (id) do nothing
+      `;
+      await sql`
+        insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
+        values (${TEST_ORG_ID}, ${TEST_ACTOR_ID}, 'object', ${TEST_DECK_ID}, 'owner', ${TEST_ACTOR_ID})
+        on conflict do nothing
+      `;
+
+      // --- Doc: objects row + docs_documents row with same PK ---
+      await sql`
+        insert into docs_documents (id, org_id, owner_actor_id, title)
+        values (${TEST_DOC_ID}, ${TEST_ORG_ID}, ${TEST_ACTOR_ID}, 'Test Doc')
+        on conflict (id) do nothing
+      `;
+      await sql`
+        insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, metadata)
+        values (
+          ${TEST_DOC_ID}, ${TEST_ORG_ID}, ${TEST_ACTOR_ID},
+          'file', ${'drive/test/doc'}, ${'application/vnd.helix.doc'}, ${0},
+          ${sql.json({ app: 'docs', name: 'Test Doc', folderId: null, status: 'ready' })}
+        )
+        on conflict (id) do nothing
+      `;
+      await sql`
+        insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
+        values (${TEST_ORG_ID}, ${TEST_ACTOR_ID}, 'object', ${TEST_DOC_ID}, 'owner', ${TEST_ACTOR_ID})
+        on conflict do nothing
+      `;
+    });
+
+    afterAll(async () => {
+      // Clean up in dependency order.
+      await sql`delete from outbox where payload->>'actorId' = ${TEST_ACTOR_ID}`;
+      await sql`delete from activity where actor_id = ${TEST_ACTOR_ID}`;
+      await sql`delete from permissions where resource_id in (${TEST_SHEET_ID}, ${TEST_DECK_ID}, ${TEST_DOC_ID})`;
+      await sql`delete from objects where id in (${TEST_SHEET_ID}, ${TEST_DECK_ID}, ${TEST_DOC_ID})`;
+      await sql`delete from sheets where id = ${TEST_SHEET_ID}`;
+      await sql`delete from slide_decks where id = ${TEST_DECK_ID}`;
+      await sql`delete from docs_documents where id = ${TEST_DOC_ID}`;
+      await sql`delete from actors where id = ${TEST_ACTOR_ID}`;
+      await sql.end();
+    });
+
+    // Helper: reset deleted_at on all three content rows before each sub-test.
+    async function resetDeletedAt() {
+      await sql`
+        update objects set deleted_at = null, updated_at = now()
+        where id in (${TEST_SHEET_ID}, ${TEST_DECK_ID}, ${TEST_DOC_ID})
+      `;
+      await sql`update sheets set deleted_at = null where id = ${TEST_SHEET_ID}`;
+      await sql`update slide_decks set deleted_at = null where id = ${TEST_DECK_ID}`;
+      await sql`update docs_documents set deleted_at = null where id = ${TEST_DOC_ID}`;
+    }
+
+    it("trash sets sheets.deleted_at when object has metadata.app='sheets'", async () => {
+      await resetDeletedAt();
+
+      const result = await store.trash({
+        orgId: TEST_ORG_ID,
+        actorId: TEST_ACTOR_ID,
+        objectId: TEST_SHEET_ID,
+      });
+
+      expect(result).not.toBeNull();
+
+      const rows = await sql<{ deleted_at: Date | null }[]>`
+        select deleted_at from sheets where id = ${TEST_SHEET_ID}
+      `;
+      expect(rows[0]?.deleted_at).not.toBeNull();
+    });
+
+    it("restore clears sheets.deleted_at when object has metadata.app='sheets'", async () => {
+      // Ensure we start with a trashed state.
+      await sql`update objects set deleted_at = now(), updated_at = now() where id = ${TEST_SHEET_ID}`;
+      await sql`update sheets set deleted_at = now() where id = ${TEST_SHEET_ID}`;
+
+      const result = await store.restore({
+        orgId: TEST_ORG_ID,
+        actorId: TEST_ACTOR_ID,
+        objectId: TEST_SHEET_ID,
+      });
+
+      expect(result).not.toBeNull();
+
+      const rows = await sql<{ deleted_at: Date | null }[]>`
+        select deleted_at from sheets where id = ${TEST_SHEET_ID}
+      `;
+      expect(rows[0]?.deleted_at).toBeNull();
+    });
+
+    it("trash sets slide_decks.deleted_at when object has metadata.app='slides'", async () => {
+      await resetDeletedAt();
+
+      const result = await store.trash({
+        orgId: TEST_ORG_ID,
+        actorId: TEST_ACTOR_ID,
+        objectId: TEST_DECK_ID,
+      });
+
+      expect(result).not.toBeNull();
+
+      const rows = await sql<{ deleted_at: Date | null }[]>`
+        select deleted_at from slide_decks where id = ${TEST_DECK_ID}
+      `;
+      expect(rows[0]?.deleted_at).not.toBeNull();
+    });
+
+    it("restore clears slide_decks.deleted_at when object has metadata.app='slides'", async () => {
+      await sql`update objects set deleted_at = now(), updated_at = now() where id = ${TEST_DECK_ID}`;
+      await sql`update slide_decks set deleted_at = now() where id = ${TEST_DECK_ID}`;
+
+      const result = await store.restore({
+        orgId: TEST_ORG_ID,
+        actorId: TEST_ACTOR_ID,
+        objectId: TEST_DECK_ID,
+      });
+
+      expect(result).not.toBeNull();
+
+      const rows = await sql<{ deleted_at: Date | null }[]>`
+        select deleted_at from slide_decks where id = ${TEST_DECK_ID}
+      `;
+      expect(rows[0]?.deleted_at).toBeNull();
+    });
+
+    it("trash sets docs_documents.deleted_at when object has metadata.app='docs'", async () => {
+      await resetDeletedAt();
+
+      const result = await store.trash({
+        orgId: TEST_ORG_ID,
+        actorId: TEST_ACTOR_ID,
+        objectId: TEST_DOC_ID,
+      });
+
+      expect(result).not.toBeNull();
+
+      const rows = await sql<{ deleted_at: Date | null }[]>`
+        select deleted_at from docs_documents where id = ${TEST_DOC_ID}
+      `;
+      expect(rows[0]?.deleted_at).not.toBeNull();
+    });
+
+    it("restore clears docs_documents.deleted_at when object has metadata.app='docs'", async () => {
+      await sql`update objects set deleted_at = now(), updated_at = now() where id = ${TEST_DOC_ID}`;
+      await sql`update docs_documents set deleted_at = now() where id = ${TEST_DOC_ID}`;
+
+      const result = await store.restore({
+        orgId: TEST_ORG_ID,
+        actorId: TEST_ACTOR_ID,
+        objectId: TEST_DOC_ID,
+      });
+
+      expect(result).not.toBeNull();
+
+      const rows = await sql<{ deleted_at: Date | null }[]>`
+        select deleted_at from docs_documents where id = ${TEST_DOC_ID}
+      `;
+      expect(rows[0]?.deleted_at).toBeNull();
+    });
+  },
+);

@@ -4,150 +4,215 @@ import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { preloadMeetRouteData, validateMeetRouteSearch } from "@/routes/_shell/meet";
+import { ShellOverlayContext } from "@/components/shell";
 import { MeetShell } from "./meet-shell";
-import { meetQueryKeys } from "./queries";
-
-const roomId = "33333333-3333-4333-8333-333333333333";
-const listRoomId = "55555555-5555-4555-8555-555555555555";
-const endedRoomId = "99999999-9999-4999-8999-999999999999";
+import { MeetCall, formatElapsed } from "./meet-call";
+import { MeetCallTile } from "./meet-call-tile";
+import type { MeetCallSession } from "./meet-shell";
+import {
+  CALL_PARTICIPANTS,
+  RECENT_MEETINGS,
+  SCHEDULED_MEETINGS,
+} from "./meet-seed";
+import * as authModule from "@/lib/auth";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-describe("MeetShell backend tool integration", () => {
+const noopOverlays = {
+  openNotifications: () => undefined,
+  openPalette: () => undefined,
+  openSettings: () => undefined,
+};
+
+/* A live `meet.meetings.list` payload covering Today (active) + Recent. */
+const meetingsPayload = {
+  meetings: [] as unknown[],
+  active: [
+    {
+      id: "room-1",
+      threadId: "thread-1",
+      roomName: "atlas-sync",
+      subject: "Atlas weekly sync",
+      title: "Atlas weekly sync",
+      jitsiDomain: "meet.localhost",
+      status: "active",
+      code: "atl-asly-snc",
+      host: { actorId: "a1", displayName: "Mira Okafor", email: null, role: "owner" },
+      attendees: [],
+      attendeeCount: 4,
+      startedAt: "2026-05-21T09:00:00.000Z",
+      endedAt: null,
+      scheduledStartAt: null,
+      scheduledEndAt: null,
+      durationSeconds: null,
+      recorded: false,
+      recordingArtifacts: [],
+      summaries: [],
+      createdAt: "2026-05-21T09:00:00.000Z",
+      updatedAt: "2026-05-21T09:00:00.000Z",
+    },
+  ],
+  scheduled: [] as unknown[],
+  recent: [
+    {
+      id: "room-2",
+      threadId: "thread-2",
+      roomName: "eng-standup",
+      subject: "Eng standup",
+      title: "Eng standup",
+      jitsiDomain: "meet.localhost",
+      status: "ended",
+      code: "eng-stnd-up0",
+      host: { actorId: "a1", displayName: "Mira Okafor", email: null, role: "owner" },
+      attendees: [],
+      attendeeCount: 8,
+      startedAt: "2026-05-21T08:00:00.000Z",
+      endedAt: "2026-05-21T08:27:00.000Z",
+      scheduledStartAt: null,
+      scheduledEndAt: null,
+      durationSeconds: 1620,
+      recorded: true,
+      recordingArtifacts: [],
+      summaries: [],
+      createdAt: "2026-05-21T08:00:00.000Z",
+      updatedAt: "2026-05-21T08:27:00.000Z",
+    },
+  ],
+};
+meetingsPayload.meetings = [...meetingsPayload.active, ...meetingsPayload.recent];
+
+function mockTools(handlers: Record<string, () => unknown>) {
+  return vi.spyOn(authModule, "authenticatedFetch").mockImplementation((input) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    const toolId = url.replace("/api/tools/", "");
+    const handler = handlers[toolId];
+    if (handler === undefined) {
+      return Promise.resolve(Response.json({ error: `no mock for ${toolId}` }, { status: 500 }));
+    }
+    return Promise.resolve(Response.json(handler() as object));
+  });
+}
+
+function renderWithClient(node: React.ReactNode, root: Root) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  act(() => {
+    root.render(
+      <QueryClientProvider client={client}>
+        <ShellOverlayContext.Provider value={noopOverlays}>{node}</ShellOverlayContext.Provider>
+      </QueryClientProvider>,
+    );
+  });
+}
+
+function flush() {
+  return act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+/* Repeatedly flush microtasks until the container shows `text` (or give up). */
+async function waitForText(container: HTMLElement, text: string) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (container.textContent?.includes(text) ?? false) {
+      return;
+    }
+    await flush();
+  }
+  throw new Error(`Timed out waiting for text: ${text}`);
+}
+
+/* Set a controlled input's value through React's native value tracker. */
+function setReactInputValue(input: HTMLInputElement, value: string) {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  if (descriptor?.set !== undefined) {
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- invoking a known setter
+    Reflect.apply(descriptor.set, input, [value]);
+  } else {
+    input.value = value;
+  }
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+const liveSession: MeetCallSession = {
+  roomId: "room-1",
+  roomName: "atlas-sync",
+  subject: "Atlas weekly sync",
+  code: "atl-asly-snc",
+  jitsiDomain: "meet.localhost",
+  token: "jwt-token",
+  joinUrl: "https://meet.localhost/atlas-sync?jwt=jwt-token",
+  startedAtMs: Date.now() - 32 * 60 * 1000,
+};
+
+const offlineSession: MeetCallSession = {
+  roomId: "",
+  roomName: "qfk-uvtn-pxs",
+  subject: "Q3 Roadmap working session",
+  code: "qfk-uvtn-pxs",
+  jitsiDomain: "meet.localhost",
+  token: null,
+  joinUrl: null,
+  startedAtMs: Date.now(),
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("formatElapsed", () => {
+  it("formats sub-hour durations as M:SS", () => {
+    expect(formatElapsed(32 * 60 + 14)).toBe("32:14");
+    expect(formatElapsed(9)).toBe("0:09");
+  });
+
+  it("formats hour-plus durations as H:MM:SS", () => {
+    expect(formatElapsed(3661)).toBe("1:01:01");
+  });
+
+  it("clamps negative input to zero", () => {
+    expect(formatElapsed(-5)).toBe("0:00");
+  });
+});
+
+describe("Meet seed data (offline fallback)", () => {
+  it("has one in-progress meeting in the Today list", () => {
+    expect(SCHEDULED_MEETINGS.filter((meeting) => meeting.inProgress)).toHaveLength(1);
+  });
+
+  it("gives every scheduled meeting a meeting code", () => {
+    for (const meeting of SCHEDULED_MEETINGS) {
+      expect(meeting.code.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("seeds three recent meetings, two recorded", () => {
+    expect(RECENT_MEETINGS).toHaveLength(3);
+    expect(RECENT_MEETINGS.filter((meeting) => meeting.recorded)).toHaveLength(2);
+  });
+
+  it("has exactly one active speaker and one local user", () => {
+    expect(CALL_PARTICIPANTS.filter((participant) => participant.speaking)).toHaveLength(1);
+    expect(CALL_PARTICIPANTS.filter((participant) => participant.you)).toHaveLength(1);
+  });
+});
+
+describe("MeetShell hub", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let queryClient: QueryClient;
-  let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-          staleTime: 0,
-        },
-      },
-    });
-    fetchMock = vi.fn<typeof fetch>((input, init) => {
-      if (input === "/api/tools/meet.room.list") {
-        const body =
-          typeof init?.body === "string"
-            ? (JSON.parse(init.body) as { status?: "active" | "ended" })
-            : {};
-        const activeRoom = {
-          id: listRoomId,
-          orgId: "22222222-2222-4222-8222-222222222222",
-          threadId: "66666666-6666-4666-8666-666666666666",
-          roomName: "backend-daily-standup",
-          subject: "Backend daily standup",
-          jitsiDomain: "meet.helix.test",
-          status: "active",
-          createdByActorId: "11111111-1111-4111-8111-111111111111",
-          startedAt: "2026-05-20T12:00:00.000Z",
-          endedAt: null,
-          metadata: {},
-          recordingArtifacts: [
-            {
-              objectId: "77777777-7777-4777-8777-777777777777",
-              messageId: "88888888-8888-4888-8888-888888888888",
-              storageKey: "recordings/backend-daily-standup.mp4",
-              mimeType: "video/mp4",
-              byteSize: 2_097_152,
-              createdAt: "2026-05-20T12:45:00.000Z",
-              startedAt: "2026-05-20T12:00:00.000Z",
-              endedAt: "2026-05-20T12:30:00.000Z",
-              metadata: { source: "jibri" },
-            },
-          ],
-          createdAt: "2026-05-20T12:00:00.000Z",
-          updatedAt: "2026-05-20T12:00:00.000Z",
-        };
-        const endedRoom = {
-          id: endedRoomId,
-          orgId: "22222222-2222-4222-8222-222222222222",
-          threadId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-          roomName: "backend-retro",
-          subject: "Backend retro",
-          jitsiDomain: "meet.helix.test",
-          status: "ended",
-          createdByActorId: "11111111-1111-4111-8111-111111111111",
-          startedAt: "2026-05-20T10:00:00.000Z",
-          endedAt: "2026-05-20T11:00:00.000Z",
-          metadata: {},
-          recordingArtifacts: [],
-          createdAt: "2026-05-20T10:00:00.000Z",
-          updatedAt: "2026-05-20T11:00:00.000Z",
-        };
-        const rooms =
-          body.status === "active"
-            ? [activeRoom]
-            : body.status === "ended"
-              ? [endedRoom]
-              : [activeRoom, endedRoom];
-        return Promise.resolve(
-          Response.json({
-            rooms,
-          }),
-        );
-      }
-      if (input === "/api/tools/meet.create-room") {
-        return Promise.resolve(
-          Response.json({
-            id: roomId,
-            orgId: "22222222-2222-4222-8222-222222222222",
-            threadId: "44444444-4444-4444-8444-444444444444",
-            roomName: "backend-launch-review",
-            subject: "Backend launch review",
-            jitsiDomain: "meet.helix.test",
-            status: "active",
-            createdByActorId: "11111111-1111-4111-8111-111111111111",
-            startedAt: "2026-05-20T12:00:00.000Z",
-            endedAt: null,
-            metadata: {},
-            createdAt: "2026-05-20T12:00:00.000Z",
-            updatedAt: "2026-05-20T12:00:00.000Z",
-          }),
-        );
-      }
-      if (input === "/api/tools/meet.mint-token") {
-        return Promise.resolve(
-          Response.json({
-            roomId,
-            roomName: "backend-launch-review",
-            jitsiDomain: "meet.helix.test",
-            token: "jwt",
-            joinUrl:
-              "https://meet.helix.test/backend-launch-review?jwt=jwt&config.prejoinPageEnabled=false",
-            expiresAt: "2026-05-20T13:00:00.000Z",
-          }),
-        );
-      }
-      if (input === "/api/tools/meet.end-room") {
-        return Promise.resolve(
-          Response.json({
-            id: roomId,
-            threadId: "44444444-4444-4444-8444-444444444444",
-            roomName: "backend-launch-review",
-            subject: "Backend launch review",
-            jitsiDomain: "meet.helix.test",
-            status: "ended",
-            createdByActorId: "11111111-1111-4111-8111-111111111111",
-            startedAt: "2026-05-20T12:00:00.000Z",
-            endedAt: "2026-05-20T13:00:00.000Z",
-            metadata: {},
-            createdAt: "2026-05-20T12:00:00.000Z",
-            updatedAt: "2026-05-20T13:00:00.000Z",
-          }),
-        );
-      }
-      return Promise.resolve(Response.json({}));
-    });
-    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
@@ -155,227 +220,254 @@ describe("MeetShell backend tool integration", () => {
       root.unmount();
     });
     container.remove();
-    vi.unstubAllGlobals();
   });
 
-  it("loads the initial backend Meet room list", async () => {
-    renderMeet();
-    await waitForText("Backend daily standup");
-    await waitForText("Backend-created Jitsi room.");
-    await waitForText("backend-daily-standup.mp4");
-    await waitForText("30 min");
-    await waitForText("2.0 MB - video/mp4");
-
-    const roomList = container.querySelector(".meet-room-list");
-    expect(roomList?.getAttribute("role")).toBe("region");
-    expect(roomList?.getAttribute("aria-label")).toBe("Room list");
-    expect(roomList?.getAttribute("tabindex")).toBe("0");
-    expect(container.textContent).not.toContain("Launch readiness");
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/tools/meet.room.list");
+  it("renders backend meetings from meet.meetings.list", async () => {
+    mockTools({ "meet.meetings.list": () => meetingsPayload });
+    renderWithClient(<MeetShell />, root);
+    await waitForText(container, "Atlas weekly sync");
+    expect(container.textContent).toContain("Start a call");
+    expect(container.textContent).toContain("Eng standup");
   });
 
-  it("preloads the route-derived Meet room list", async () => {
-    expect(validateMeetRouteSearch({ room: endedRoomId, status: "live" })).toEqual({
-      room: endedRoomId,
-      status: "active",
+  it("falls back to seed data when meet.meetings.list errors", async () => {
+    vi.spyOn(authModule, "authenticatedFetch").mockResolvedValue(
+      Response.json({ error: "boom" }, { status: 500 }),
+    );
+    renderWithClient(<MeetShell />, root);
+    await waitForText(container, "Offline data");
+    expect(container.textContent).toContain("Q3 Roadmap working session");
+  });
+
+  it("starts an instant meeting via meet.create-room + meet.mint-token", async () => {
+    const fetchSpy = mockTools({
+      "meet.meetings.list": () => meetingsPayload,
+      "meet.create-room": () => ({
+        id: "room-new",
+        threadId: "t",
+        roomName: "instant-room",
+        subject: "Instant meeting",
+        jitsiDomain: "meet.localhost",
+        status: "active",
+        createdByActorId: "a1",
+        startedAt: "2026-05-21T10:00:00.000Z",
+        endedAt: null,
+        createdAt: "2026-05-21T10:00:00.000Z",
+        updatedAt: "2026-05-21T10:00:00.000Z",
+      }),
+      "meet.mint-token": () => ({
+        roomId: "room-new",
+        roomName: "instant-room",
+        jitsiDomain: "meet.localhost",
+        token: "jwt",
+        joinUrl: "https://meet.localhost/instant-room?jwt=jwt",
+        expiresAt: "2026-05-21T11:00:00.000Z",
+      }),
     });
-    expect(validateMeetRouteSearch({ room: "", status: "unknown" })).toEqual({});
-
-    await preloadMeetRouteData(queryClient, { room: endedRoomId, status: "ended" });
-
-    expect(queryClient.getQueryData(meetQueryKeys.rooms({ status: "ended", limit: 50 }))).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: endedRoomId, status: "ended" })]),
+    renderWithClient(<MeetShell />, root);
+    await waitForText(container, "Atlas weekly sync");
+    const startButton = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Start instant meeting"),
     );
-    expect(toolCallBody("meet.room.list")).toEqual({ status: "ended", limit: 50 });
+    act(() => {
+      startButton?.click();
+    });
+    await waitForText(container, "REC");
+    expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.create-room", expect.anything());
+    expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.mint-token", expect.anything());
+    // Entered the in-call view, with the live Jitsi embed.
+    expect(container.querySelector("iframe")).not.toBeNull();
   });
 
-  it("selects the route room and consumes the route status filter", async () => {
-    renderMeet({ initialRoomId: endedRoomId, roomsQueryInput: { status: "ended", limit: 50 } });
-    await waitForText("Backend retro");
-    await waitForText("Ended");
-
-    expect(container.querySelector(".meet-room-row.selected")?.textContent).toContain(
-      "Backend retro",
+  it("opens the schedule dialog and calls meet.create-room with a window", async () => {
+    const fetchSpy = mockTools({
+      "meet.meetings.list": () => meetingsPayload,
+      "meet.create-room": () => ({
+        id: "room-sched",
+        threadId: "t",
+        roomName: "sched-room",
+        subject: "Planning",
+        jitsiDomain: "meet.localhost",
+        status: "scheduled",
+        createdByActorId: "a1",
+        startedAt: "2026-05-22T10:00:00.000Z",
+        endedAt: null,
+        createdAt: "2026-05-21T10:00:00.000Z",
+        updatedAt: "2026-05-21T10:00:00.000Z",
+      }),
+    });
+    renderWithClient(<MeetShell />, root);
+    await flush();
+    const scheduleButton = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Schedule for later"),
     );
-    expect(container.textContent).not.toContain("Backend daily standup");
-    expect(toolCallBody("meet.room.list")).toEqual({ status: "ended", limit: 50 });
-  });
-
-  it("renders a backend empty state without sample Meet rooms", async () => {
-    fetchMock.mockImplementation((input) => {
-      if (input === "/api/tools/meet.room.list") {
-        return Promise.resolve(Response.json({ rooms: [] }));
+    act(() => {
+      scheduleButton?.click();
+    });
+    const titleInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Meeting title"]',
+    );
+    expect(titleInput).not.toBeNull();
+    act(() => {
+      if (titleInput) {
+        setReactInputValue(titleInput, "Planning");
       }
-      return Promise.resolve(Response.json({}));
     });
-
-    renderMeet();
-    await waitForText("No meeting rooms");
-
-    expect(container.textContent).not.toContain("Launch readiness");
-    expect(container.textContent).not.toContain("Design review");
-    expect(container.textContent).not.toContain("Customer briefing");
-  });
-
-  it("creates a backend Meet room, mints a join token, and ends the room", async () => {
-    renderMeet();
-    await waitForText("Backend daily standup");
-
-    await typeInput("#meet-room-name", "Backend launch review");
-    await typeInput("#meet-room-slug", "backend-launch-review");
-    await clickButton("Create room");
-    await waitForText("Backend launch review");
-
-    expect(toolCallBody("meet.create-room")).toMatchObject({
-      subject: "Backend launch review",
-      roomName: "helix-backend-launch-review",
-      jitsiDomain: "meet.jit.si",
-    });
-
-    await clickButton("Join");
-    await waitForText("meet.helix.test");
-    expect(toolCallBody("meet.mint-token")).toEqual({
-      roomId,
-      expiresInSeconds: 3600,
-      moderator: true,
-    });
-    const iframe = await waitForMeetIframe();
-    expect(iframe.getAttribute("src")).toBe(
-      "https://meet.helix.test/backend-launch-review?jwt=jwt&config.prejoinPageEnabled=false",
+    const submit = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Schedule",
     );
-    expect(iframe.getAttribute("allow")).toBe("camera; microphone; fullscreen; display-capture");
-    expect(iframe.getAttribute("title")).toBe("Backend launch review Jitsi room");
-
-    await clickButton("End");
-    await waitForText("Ended");
-    expect(toolCallBody("meet.end-room")).toEqual({ roomId });
-    expect(container.querySelector(".meet-iframe")).toBeNull();
-    await waitForText("Ready to join");
-  });
-
-  it("blocks Meet room creation when the room name is blank", async () => {
-    renderMeet();
-    await waitForText("Backend daily standup");
-
-    await clickButton("Create room");
-    await waitForText("Room name is required.");
-
-    const roomNameInput = container.querySelector("#meet-room-name");
-    expect(roomNameInput).toBeInstanceOf(HTMLInputElement);
-    expect(roomNameInput?.getAttribute("aria-invalid")).toBe("true");
-    expect(fetchMock.mock.calls.some((call) => call[0] === "/api/tools/meet.create-room")).toBe(
-      false,
+    act(() => {
+      submit?.click();
+    });
+    await flush();
+    expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.create-room", expect.anything());
+    const createCall = fetchSpy.mock.calls.find(
+      (call) => call[0] === "/api/tools/meet.create-room",
     );
+    const body = JSON.parse((createCall?.[1]?.body as string) ?? "{}") as Record<string, unknown>;
+    expect(body.scheduledStartAt).toBeDefined();
+    expect(body.scheduledEndAt).toBeDefined();
+  });
+});
+
+describe("MeetCall", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
   });
 
-  it("creates labelled Offline/local rooms when backend creation is unavailable", async () => {
-    fetchMock.mockRejectedValue(new Error("offline"));
-
-    renderMeet();
-    await typeInput("#meet-room-name", "Offline room");
-    await clickButton("Create room");
-
-    await waitForText("Offline room");
-    await waitForText("Meet backend unavailable");
-    await waitForText("Offline/local");
-    await waitForText("Local room available while Meet backend is offline.");
-    expect(container.textContent).not.toContain("Launch readiness");
-
-    await clickButton("Join");
-    await waitForText("Live");
-    await clickButton("End");
-    await waitForText("Ended");
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
   });
 
-  function renderMeet(props: React.ComponentProps<typeof MeetShell> = {}) {
+  it("embeds the live Jitsi room when a token was minted", () => {
+    renderWithClient(<MeetCall session={liveSession} onLeave={() => undefined} />, root);
+    const iframe = container.querySelector("iframe");
+    expect(iframe).not.toBeNull();
+    expect(iframe?.getAttribute("src")).toBe(liveSession.joinUrl);
+    expect(container.textContent).toContain("helix.meet/atl-asly-snc");
+  });
+
+  it("renders the offline-fallback seed stage without a token", () => {
+    renderWithClient(<MeetCall session={offlineSession} onLeave={() => undefined} />, root);
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.textContent).toContain("Q3 Roadmap working session");
+  });
+
+  it("ends the room via meet.end-room when leaving a live call", async () => {
+    const fetchSpy = mockTools({
+      "meet.end-room": () => ({ ...meetingsPayload.recent[0], status: "ended" }),
+    });
+    const onLeave = vi.fn();
+    renderWithClient(<MeetCall session={liveSession} onLeave={onLeave} />, root);
+    const leaveButton = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Leave"),
+    );
+    act(() => {
+      leaveButton?.click();
+    });
+    await flush();
+    expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.end-room", expect.anything());
+    expect(onLeave).toHaveBeenCalled();
+  });
+
+  it("leaves an offline call without calling meet.end-room", async () => {
+    const fetchSpy = vi.spyOn(authModule, "authenticatedFetch");
+    const onLeave = vi.fn();
+    renderWithClient(<MeetCall session={offlineSession} onLeave={onLeave} />, root);
+    const leaveButton = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Leave"),
+    );
+    act(() => {
+      leaveButton?.click();
+    });
+    await flush();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(onLeave).toHaveBeenCalled();
+  });
+
+  it("toggles the in-call chat panel", () => {
+    renderWithClient(<MeetCall session={offlineSession} onLeave={() => undefined} />, root);
+    expect(container.querySelector('[aria-label="In-call messages"]')).toBeNull();
+    const chatButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Show in-call messages"]',
+    );
+    act(() => {
+      chatButton?.click();
+    });
+    expect(container.querySelector('[aria-label="In-call messages"]')).not.toBeNull();
+  });
+
+  it("flips the mic control to a danger state when muted", () => {
+    renderWithClient(<MeetCall session={offlineSession} onLeave={() => undefined} />, root);
+    const muteButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Mute microphone"]',
+    );
+    act(() => {
+      muteButton?.click();
+    });
+    expect(container.querySelector('button[aria-label="Unmute microphone"]')).not.toBeNull();
+  });
+});
+
+describe("MeetCallTile", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("marks the active speaker tile", () => {
     act(() => {
       root.render(
-        <QueryClientProvider client={queryClient}>
-          <MeetShell {...props} />
-        </QueryClientProvider>,
+        <MeetCallTile
+          participant={{
+            id: "p2",
+            name: "Mira Okafor",
+            muted: false,
+            video: true,
+            speaking: true,
+          }}
+        />,
       );
     });
-  }
+    expect(container.querySelector('[data-speaking="true"]')).not.toBeNull();
+  });
 
-  async function clickButton(text: string) {
-    const buttons = Array.from(container.querySelectorAll("button"));
-    const button =
-      buttons.find(
-        (candidate) =>
-          candidate.classList.contains("helix-button") && candidate.textContent?.includes(text),
-      ) ?? buttons.find((candidate) => candidate.textContent?.includes(text));
-    if (!(button instanceof HTMLButtonElement)) {
-      throw new Error(`Button not found: ${text}`);
-    }
+  it("renders a raised-hand badge", () => {
     act(() => {
-      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      root.render(
+        <MeetCallTile
+          participant={{
+            id: "p6",
+            name: "Sasha Levin",
+            muted: false,
+            video: false,
+            speaking: false,
+            hand: true,
+          }}
+        />,
+      );
     });
-    await flush();
-  }
-
-  async function typeInput(selector: string, value: string) {
-    const input = container.querySelector(selector);
-    if (!(input instanceof HTMLInputElement)) {
-      throw new Error(`Input not found: ${selector}`);
-    }
-    act(() => {
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")
-        ?.set as ((this: HTMLInputElement, value: string) => void) | undefined;
-      if (valueSetter !== undefined) {
-        Reflect.apply(valueSetter, input, [value]);
-      }
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await flush();
-  }
-
-  function toolCallBody(toolId: string) {
-    const call = fetchMock.mock.calls.find((candidate) => candidate[0] === `/api/tools/${toolId}`);
-    const body = call?.[1]?.body;
-    if (typeof body !== "string") {
-      throw new Error(`Expected ${toolId} JSON body.`);
-    }
-    return JSON.parse(body) as unknown;
-  }
-
-  async function waitForText(text: string) {
-    await waitFor(() => expect(container.textContent).toContain(text));
-  }
-
-  async function waitForMeetIframe() {
-    await waitFor(() => {
-      const iframe = container.querySelector(".meet-iframe");
-      expect(iframe).toBeInstanceOf(HTMLIFrameElement);
-    });
-    const iframe = container.querySelector(".meet-iframe");
-    if (!(iframe instanceof HTMLIFrameElement)) {
-      throw new Error("Expected Meet iframe.");
-    }
-    return iframe;
-  }
-
-  async function waitFor(assertion: () => void | Promise<void>) {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      try {
-        await flush();
-        await assertion();
-        return;
-      } catch (error) {
-        lastError = error;
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        });
-      }
-    }
-    throw lastError;
-  }
-
-  async function flush() {
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
+    expect(
+      container.querySelector('[aria-label="Sasha Levin raised their hand"]'),
+    ).not.toBeNull();
+  });
 });

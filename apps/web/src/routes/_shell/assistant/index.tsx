@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { assistantConversationListQueryOptions } from "@/features/assistant/queries";
+import { AssistantSurface } from "@/features/assistant/assistant-surface";
 
 export const Route = createFileRoute("/_shell/assistant/")({
-  loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(assistantConversationListQueryOptions());
-  },
+  component: AssistantSurface,
 });

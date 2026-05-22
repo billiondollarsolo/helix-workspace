@@ -14,6 +14,26 @@ const createConversationSchema = z.object({
   metadata: metadataSchema,
 });
 
+const listConversationsSchema = z.object({
+  query: z.string().trim().min(1).max(200).optional(),
+  pinnedOnly: z.boolean().default(false),
+  limit: z.number().int().positive().max(100).default(50),
+  cursor: z.string().datetime().optional(),
+});
+
+const pinConversationSchema = z.object({
+  conversationId: uuidSchema,
+});
+
+const renameConversationSchema = z.object({
+  conversationId: uuidSchema,
+  title: z.string().trim().min(1).max(200),
+});
+
+const deleteConversationSchema = z.object({
+  conversationId: uuidSchema,
+});
+
 const chatSchema = z.object({
   conversationId: uuidSchema.optional(),
   message: z.string().min(1).max(100_000),
@@ -73,6 +93,105 @@ export function createAssistantToolDefinitions(
           ...(input.memoryOptIn === undefined ? {} : { memoryOptIn: input.memoryOptIn }),
           metadata: toJsonObject(input.metadata),
         }),
+    }),
+    defineTool<z.output<typeof listConversationsSchema>, unknown>({
+      id: "assistant.conversations.list",
+      description:
+        "List the current actor's assistant conversations for the thread list: " +
+        "pinned-first, with optional search and keyset pagination.",
+      permission: "assistant.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(listConversationsSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) =>
+        options.store.listConversations({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          ...(input.query === undefined ? {} : { query: input.query }),
+          pinnedOnly: input.pinnedOnly,
+          limit: input.limit,
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+        }),
+    }),
+    defineTool<z.output<typeof pinConversationSchema>, unknown>({
+      id: "assistant.conversation.pin",
+      description: "Pin an assistant conversation to the top of the thread list.",
+      permission: "assistant.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(pinConversationSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const conversation = await options.store.setConversationPinned({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          conversationId: input.conversationId,
+          pinned: true,
+        });
+        if (conversation === null) {
+          throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
+        }
+        return conversation;
+      },
+    }),
+    defineTool<z.output<typeof pinConversationSchema>, unknown>({
+      id: "assistant.conversation.unpin",
+      description: "Unpin an assistant conversation.",
+      permission: "assistant.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(pinConversationSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const conversation = await options.store.setConversationPinned({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          conversationId: input.conversationId,
+          pinned: false,
+        });
+        if (conversation === null) {
+          throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
+        }
+        return conversation;
+      },
+    }),
+    defineTool<z.output<typeof renameConversationSchema>, unknown>({
+      id: "assistant.conversation.rename",
+      description: "Rename an assistant conversation.",
+      permission: "assistant.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(renameConversationSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const conversation = await options.store.renameConversation({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          conversationId: input.conversationId,
+          title: input.title,
+        });
+        if (conversation === null) {
+          throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
+        }
+        return conversation;
+      },
+    }),
+    defineTool<z.output<typeof deleteConversationSchema>, unknown>({
+      id: "assistant.conversation.delete",
+      description: "Delete (archive) an assistant conversation and remove it from the thread list.",
+      permission: "assistant.write",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(deleteConversationSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const deleted = await options.store.deleteConversation({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          conversationId: input.conversationId,
+        });
+        if (!deleted) {
+          throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
+        }
+        return { conversationId: input.conversationId, deleted: true };
+      },
     }),
     defineTool<z.output<typeof chatSchema>, unknown>({
       id: "assistant.chat",

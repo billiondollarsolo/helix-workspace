@@ -4,7 +4,11 @@ import { createToolRegistry } from "../tool-registry.js";
 import type { CalendarInvitationSender } from "./ics.js";
 import type { CalendarStore } from "./store.js";
 import { registerCalendarTools } from "./tools.js";
-import type { CalendarEventRecord, CalendarFindTimeSlot } from "./types.js";
+import type {
+  CalendarEventRecord,
+  CalendarFindTimeSlot,
+  CalendarListEntry,
+} from "./types.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
@@ -235,6 +239,82 @@ describe("calendar tools", () => {
       },
     ]);
   });
+
+  it("registers a read-safe calendar.calendars.list tool", () => {
+    const registry = createToolRegistry();
+    registerCalendarTools(registry, { store: new FakeCalendarStore() });
+
+    expect(registry.get("calendar.calendars.list")).toMatchObject({
+      id: "calendar.calendars.list",
+      permission: "calendar.read",
+      sideEffects: "read",
+    });
+    expect(registry.get("calendar.calendars.list")?.confirmationRequired).toBeUndefined();
+  });
+
+  it("lists the actor's calendars partitioned into My calendars and Team", async () => {
+    const actor: Actor = {
+      id: actorId,
+      orgId,
+      type: "user",
+      displayName: "Alex Park",
+      scopes: ["calendar.read"],
+    };
+    const store = new FakeCalendarStore();
+    store.calendars = [
+      {
+        id: calendarId,
+        orgId,
+        name: "Alex Park",
+        description: null,
+        timezone: "UTC",
+        color: "#4f46e5",
+        ownerActorId: actorId,
+        ownerDisplayName: "Alex Park",
+        role: "owner",
+        visible: true,
+        group: "mine",
+        writable: true,
+        sortOrder: 0,
+        eventCount: 12,
+      },
+      {
+        id: "55555555-5555-4555-8555-555555555555",
+        orgId,
+        name: "Mira Okafor",
+        description: "Team calendar",
+        timezone: "UTC",
+        color: "#7c3aed",
+        ownerActorId: "66666666-6666-4666-8666-666666666666",
+        ownerDisplayName: "Mira Okafor",
+        role: "reader",
+        visible: false,
+        group: "team",
+        writable: false,
+        sortOrder: 100,
+        eventCount: 4,
+      },
+    ];
+    const registry = createToolRegistry();
+    registerCalendarTools(registry, { store });
+
+    const result = await registry.invoke("calendar.calendars.list", {}, { actor });
+    expect(result.ok).toBe(true);
+    const output = result.ok
+      ? (result.output as {
+          calendars: unknown[];
+          mine: { id: string }[];
+          team: { id: string; visible: boolean }[];
+        })
+      : { calendars: [], mine: [], team: [] };
+    expect(output.calendars).toHaveLength(2);
+    expect(output.mine).toEqual([
+      expect.objectContaining({ id: calendarId, role: "owner", writable: true, color: "#4f46e5" }),
+    ]);
+    expect(output.team).toEqual([
+      expect.objectContaining({ group: "team", visible: false, color: "#7c3aed" }),
+    ]);
+  });
 });
 
 class FakeCalendarStore implements CalendarStore {
@@ -317,6 +397,12 @@ class FakeCalendarStore implements CalendarStore {
 
   async authenticateAppPassword(): Promise<Actor | null> {
     return null;
+  }
+
+  calendars: CalendarListEntry[] = [];
+
+  async listCalendarsForActor(): Promise<readonly CalendarListEntry[]> {
+    return this.calendars;
   }
 }
 

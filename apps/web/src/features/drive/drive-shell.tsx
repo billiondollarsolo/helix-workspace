@@ -15,7 +15,8 @@
    (`DRIVE_FOLDERS_SEED` / `DRIVE_FILES_SEED`) is used only as an offline
    fallback when the backend listing yields nothing AND the query errored. */
 
-import { type ChangeEvent, type CSSProperties, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type CSSProperties, type DragEvent, useMemo, useRef, useState } from "react";
+import "./drive-shell.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
@@ -371,10 +372,18 @@ export function DriveShell() {
         onSelectFile={onSelectFile}
         onOpenFolder={openFolder}
         onUpload={onPickFile}
+        onDropFiles={(droppedFiles) => {
+          for (const file of droppedFiles) {
+            uploadMutation.mutate(file);
+          }
+        }}
+        onNewItem={onNewItem}
         loading={itemsQuery.isLoading}
         error={itemsQuery.isError && !usingSeed ? itemsQuery.error : null}
         uploadError={uploadMutation.isError ? uploadMutation.error : null}
         onRetry={() => void invalidateDrive()}
+        uploading={uploadMutation.isPending}
+        creating={createMutation.isPending}
       />
       {selectedFile !== null ? (
         <DriveDetailsPanel
@@ -680,10 +689,14 @@ function DriveMain({
   onSelectFile,
   onOpenFolder,
   onUpload,
+  onDropFiles,
+  onNewItem,
   loading,
   error,
   uploadError,
   onRetry,
+  uploading,
+  creating,
 }: {
   readonly view: DriveView;
   readonly onViewChange: (view: DriveView) => void;
@@ -696,16 +709,75 @@ function DriveMain({
   readonly onSelectFile: (id: string) => void;
   readonly onOpenFolder: (folder: DriveFolderItem) => void;
   readonly onUpload: () => void;
+  readonly onDropFiles: (files: readonly File[]) => void;
+  readonly onNewItem: (kind: DriveCreateKind) => void;
   readonly loading: boolean;
   readonly error: Error | null;
   readonly uploadError: Error | null;
   readonly onRetry: () => void;
+  readonly uploading: boolean;
+  readonly creating: boolean;
 }) {
   const gridFiles = useMemo(() => files.filter((file) => file.type !== "folder"), [files]);
   const isEmpty = !loading && error === null && folders.length === 0 && files.length === 0;
 
+  // Drag-and-drop: track enter depth with a counter so child element re-enters
+  // don't flash the overlay off/on.
+  const dragDepthRef = useRef(0);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    if (dragDepthRef.current === 1) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepthRef.current -= 1;
+    if (dragDepthRef.current === 0) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    // Signal that we accept drop
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragOver(false);
+    const dropped = Array.from(event.dataTransfer.files);
+    if (dropped.length > 0) {
+      onDropFiles(dropped);
+    }
+  };
+
+  // Current folder name for the overlay label
+  const currentFolderName =
+    trail.length > 0 ? (trail[trail.length - 1]?.name ?? "My Drive") : "My Drive";
+
+  // FAB menu state
+  const [fabMenuOpen, setFabMenuOpen] = useState(false);
+  const busy = uploading || creating;
+
+  const handleFabMenuItem = (action: () => void) => {
+    setFabMenuOpen(false);
+    action();
+  };
+
   return (
     <div
+      data-testid="drive-main"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
       style={{
         flex: 1,
         display: "flex",
@@ -713,8 +785,21 @@ function DriveMain({
         padding: 24,
         overflowY: "auto",
         minWidth: 0,
+        position: "relative",
       }}
     >
+      {/* Drop overlay */}
+      {isDragOver ? (
+        <div className="drive-drop-overlay" data-testid="drive-drop-overlay" aria-hidden="true">
+          <span className="drive-drop-overlay-icon">
+            <Icons.Upload size={40} />
+          </span>
+          <span className="drive-drop-overlay-label">
+            Drop files to upload to {currentFolderName}
+          </span>
+        </div>
+      ) : null}
+
       <div style={{ display: "flex", alignItems: "center", marginBottom: 16, gap: 12 }}>
         <DriveBreadcrumb scope={scope} trail={trail} onNavigate={onNavigateCrumb} />
         <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
@@ -861,6 +946,93 @@ function DriveMain({
           )}
         </>
       )}
+
+      {/* Floating Action Button (+ FAB) — bottom-right, same menu as the sidebar "New" button */}
+      <div className="drive-fab-wrapper">
+        {fabMenuOpen ? (
+          <>
+            {/* Backdrop to close FAB menu on outside click */}
+            <div
+              aria-hidden="true"
+              style={{ position: "fixed", inset: 0, zIndex: 99 }}
+              onClick={() => setFabMenuOpen(false)}
+            />
+            <div
+              role="menu"
+              className="drive-fab-menu"
+              data-testid="drive-fab-menu"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setFabMenuOpen(false);
+                }
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(() => onNewItem("folder"))}
+              >
+                <Icons.Folder />
+                New folder
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(() => onNewItem("document"))}
+              >
+                <Icons.Doc />
+                Document
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(() => onNewItem("spreadsheet"))}
+              >
+                <Icons.Sheet />
+                Spreadsheet
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(() => onNewItem("presentation"))}
+              >
+                <Icons.Image />
+                Presentation
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="btn"
+                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                onClick={() => handleFabMenuItem(onUpload)}
+              >
+                <Icons.Upload />
+                Upload file
+              </button>
+            </div>
+          </>
+        ) : null}
+        <button
+          type="button"
+          className="drive-fab"
+          data-testid="drive-fab"
+          aria-label="New"
+          aria-haspopup="menu"
+          aria-expanded={fabMenuOpen}
+          disabled={busy}
+          onClick={() => setFabMenuOpen((prev) => !prev)}
+        >
+          <Icons.Plus size={24} />
+        </button>
+      </div>
     </div>
   );
 }

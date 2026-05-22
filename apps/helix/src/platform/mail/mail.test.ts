@@ -25,6 +25,8 @@ import type {
 } from "./store.js";
 import type {
   MailFilterRecord,
+  MailFolderSummary,
+  MailLabelRecord,
   MailMessageInput,
   MailOutboundRecord,
   MailOutboundStatus,
@@ -32,10 +34,14 @@ import type {
   MailSearchRequest,
   MailThreadDetail,
   MailThreadGetRequest,
+  MailThreadListRequest,
+  MailThreadListResult,
+  MailThreadRowRecord,
   MailThreadStatePatch,
   MailVacationRecord,
   StoredMailMessage,
 } from "./types.js";
+import { classifyMailCategory } from "./category.js";
 
 const orgId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
@@ -349,8 +355,10 @@ describe("mail tools", () => {
       "mail.filter.create",
       "mail.filter.delete",
       "mail.filter.update",
+      "mail.folders.list",
       "mail.inbound.accept",
       "mail.label.apply",
+      "mail.labels.list",
       "mail.outbound.get",
       "mail.read.set",
       "mail.reply",
@@ -359,6 +367,7 @@ describe("mail tools", () => {
       "mail.snooze",
       "mail.star.set",
       "mail.thread.get",
+      "mail.threads.list",
       "mail.vacation.get",
       "mail.vacation.set",
     ]);
@@ -641,6 +650,190 @@ describe("mail tools", () => {
       { actor: internalActor },
     );
     expect(repliedDenied).toMatchObject({ ok: false, statusCode: 403 });
+  });
+
+  it("registers mail.threads.list / mail.folders.list / mail.labels.list as read-safe tools", () => {
+    const registry = createToolRegistry();
+    registerMailTools(registry, { store: new InMemoryMailStore() });
+
+    for (const id of ["mail.threads.list", "mail.folders.list", "mail.labels.list"]) {
+      expect(registry.get(id)).toMatchObject({
+        id,
+        permission: "mail.read",
+        sideEffects: "read",
+      });
+      expect(registry.get(id)?.confirmationRequired).toBeUndefined();
+    }
+  });
+
+  it("lists threads for a folder, applying tab/label/query filters and pagination", async () => {
+    const store = new InMemoryMailStore();
+    const registry = createToolRegistry();
+    registerMailTools(registry, { store });
+
+    const actor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      displayName: "Alice",
+      email: "alice@example.com",
+      scopes: ["mail.read"],
+    };
+
+    const baseRow: MailThreadRowRecord = {
+      threadId,
+      messageId,
+      subject: "Q3 roadmap",
+      from: "Mira Okafor",
+      fromEmail: "mira@helix.io",
+      preview: "Roadmap sign-off",
+      time: "2026-05-20T10:42:00.000Z",
+      unread: true,
+      starred: true,
+      hasAttachment: true,
+      messageCount: 3,
+      labels: ["team"],
+      category: "primary",
+      folder: "inbox",
+      snoozedUntil: null,
+    };
+    store.threadRows = [
+      baseRow,
+      {
+        ...baseRow,
+        threadId: "00000000-0000-4000-8000-0000000000b1",
+        subject: "GitHub PR merged",
+        preview: "daniel-cho merged a pull request",
+        labels: [],
+        category: "updates",
+      },
+      {
+        ...baseRow,
+        threadId: "00000000-0000-4000-8000-0000000000b2",
+        subject: "Archived note",
+        folder: "archive",
+      },
+    ];
+
+    type ThreadsOutput = {
+      readonly threads: readonly { readonly subject: string; readonly category: string }[];
+      readonly total: number;
+      readonly limit: number;
+      readonly offset: number;
+    };
+
+    const inbox = await registry.invoke<ThreadsOutput>(
+      "mail.threads.list",
+      { folder: "inbox" },
+      { actor },
+    );
+    expect(inbox).toMatchObject({ ok: true, output: { total: 2, limit: 50, offset: 0 } });
+    expect(inbox.ok && inbox.output.threads).toHaveLength(2);
+
+    const updatesTab = await registry.invoke<ThreadsOutput>(
+      "mail.threads.list",
+      { folder: "inbox", tab: "updates" },
+      { actor },
+    );
+    expect(updatesTab.ok && updatesTab.output.threads).toEqual([
+      expect.objectContaining({ subject: "GitHub PR merged", category: "updates" }),
+    ]);
+
+    const teamLabel = await registry.invoke<ThreadsOutput>(
+      "mail.threads.list",
+      { folder: "inbox", label: "team" },
+      { actor },
+    );
+    expect(teamLabel.ok && teamLabel.output.total).toBe(1);
+
+    const queried = await registry.invoke<ThreadsOutput>(
+      "mail.threads.list",
+      { folder: "inbox", query: "roadmap" },
+      { actor },
+    );
+    expect(queried.ok && queried.output.total).toBe(1);
+
+    const archive = await registry.invoke<ThreadsOutput>(
+      "mail.threads.list",
+      { folder: "archive" },
+      { actor },
+    );
+    expect(archive.ok && archive.output.total).toBe(1);
+  });
+
+  it("lists folders with counts and labels with colours", async () => {
+    const store = new InMemoryMailStore();
+    const registry = createToolRegistry();
+    registerMailTools(registry, { store });
+
+    const actor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      displayName: "Alice",
+      email: "alice@example.com",
+      scopes: ["mail.read"],
+    };
+
+    store.folders = [
+      { id: "inbox", label: "Inbox", total: 24, unread: 6 },
+      { id: "starred", label: "Starred", total: 7, unread: 0 },
+    ];
+    store.labels = [
+      {
+        id: "00000000-0000-4000-8000-0000000000c1",
+        orgId,
+        ownerActorId: null,
+        slug: "team",
+        name: "Team",
+        color: "#7c3aed",
+        sortOrder: 10,
+        threadCount: 4,
+        createdAt: now(),
+        updatedAt: now(),
+      },
+    ];
+
+    const folders = await registry.invoke("mail.folders.list", {}, { actor });
+    expect(folders).toMatchObject({
+      ok: true,
+      output: { folders: [{ id: "inbox", total: 24, unread: 6 }, { id: "starred", total: 7 }] },
+    });
+
+    const labels = await registry.invoke("mail.labels.list", {}, { actor });
+    expect(labels).toMatchObject({
+      ok: true,
+      output: {
+        labels: [{ slug: "team", name: "Team", color: "#7c3aed", threadCount: 4, shared: true }],
+      },
+    });
+  });
+});
+
+describe("mail category classification", () => {
+  it("buckets senders into Primary / Updates / Promotions / Social", () => {
+    expect(
+      classifyMailCategory({ fromAddress: "mira@helix.io", subject: "Q3 roadmap" }),
+    ).toBe("primary");
+    expect(
+      classifyMailCategory({ fromAddress: "notifications@github.com", subject: "PR merged" }),
+    ).toBe("updates");
+    expect(
+      classifyMailCategory({ fromAddress: "no-reply@helix.io", subject: "Receipt" }),
+    ).toBe("updates");
+    expect(
+      classifyMailCategory({ fromAddress: "hello@figma.com", subject: "Config 2026 — early bird" }),
+    ).toBe("primary");
+    expect(
+      classifyMailCategory({
+        fromAddress: "hello@figma.com",
+        subject: "Config 2026 — early bird",
+        hasListUnsubscribe: true,
+      }),
+    ).toBe("promotions");
+    expect(
+      classifyMailCategory({ fromAddress: "notify@linkedin.com", subject: "5 profile views" }),
+    ).toBe("social");
   });
 });
 
@@ -963,6 +1156,39 @@ class InMemoryMailStore implements MailStore {
 
   async getThread(input: MailThreadGetRequest) {
     return this.thread?.id === input.threadId ? this.thread : null;
+  }
+
+  threadRows: MailThreadRowRecord[] = [];
+  folders: MailFolderSummary[] = [];
+  labels: MailLabelRecord[] = [];
+
+  async listThreads(input: MailThreadListRequest): Promise<MailThreadListResult> {
+    const folder = input.folder ?? "inbox";
+    const matched = this.threadRows.filter(
+      (row) =>
+        row.folder === folder &&
+        (input.tab === undefined || row.category === input.tab) &&
+        (input.label === undefined || row.labels.includes(input.label)) &&
+        (input.query === undefined ||
+          row.subject.toLowerCase().includes(input.query.toLowerCase()) ||
+          row.preview.toLowerCase().includes(input.query.toLowerCase())),
+    );
+    const limit = input.limit ?? 50;
+    const offset = input.offset ?? 0;
+    return {
+      threads: matched.slice(offset, offset + limit),
+      total: matched.length,
+      limit,
+      offset,
+    };
+  }
+
+  async listFolders(): Promise<readonly MailFolderSummary[]> {
+    return this.folders;
+  }
+
+  async listLabels(): Promise<readonly MailLabelRecord[]> {
+    return this.labels;
   }
 
   private updateOutbound(

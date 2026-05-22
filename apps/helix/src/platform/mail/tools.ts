@@ -7,12 +7,17 @@ import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { MailStore } from "./store.js";
 import { ingestRawMail, type MailAuthenticationSummary } from "./ingest.js";
 import { MailSendService } from "./outbound.js";
+import { MAIL_CATEGORY_TABS } from "./category.js";
 import type {
   MailFilterActions,
   MailFilterCriteria,
+  MailFolderSummary,
+  MailLabelRecord,
   MailOutboundEnvelope,
   MailOutboundRecord,
+  MailThreadRowRecord,
 } from "./types.js";
+import { MAIL_FOLDER_IDS } from "./types.js";
 
 const uuidSchema = z.string().uuid();
 const emailSchema = z.string().email();
@@ -146,6 +151,21 @@ const searchSchema = z.object({
 const outboundGetSchema = z.object({
   id: z.string().min(1),
 });
+
+const folderEnum = z.enum(MAIL_FOLDER_IDS);
+const categoryEnum = z.enum(MAIL_CATEGORY_TABS);
+
+const threadsListSchema = z.object({
+  folder: folderEnum.default("inbox"),
+  tab: categoryEnum.optional(),
+  label: z.string().min(1).optional(),
+  query: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(200).default(50),
+  offset: z.number().int().min(0).default(0),
+});
+
+const foldersListSchema = z.object({});
+const labelsListSchema = z.object({});
 
 const genericObjectJsonSchema = {
   type: "object",
@@ -544,6 +564,67 @@ export function createMailToolDefinitions(
         })),
       }),
     }),
+    defineTool<z.output<typeof threadsListSchema>, unknown>({
+      id: "mail.threads.list",
+      description:
+        "List mail threads for a folder view (Inbox/Starred/Snoozed/Sent/Drafts/Archive/Trash), optionally filtered by category tab, label, and query. Returns the UI thread-row projection.",
+      permission: "mail.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(threadsListSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const result = await options.store.listThreads({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          folder: input.folder,
+          ...(input.tab === undefined ? {} : { tab: input.tab }),
+          ...(input.label === undefined ? {} : { label: input.label }),
+          ...(input.query === undefined ? {} : { query: input.query }),
+          limit: input.limit,
+          offset: input.offset,
+        });
+        return {
+          threads: result.threads.map(serializeThreadRow),
+          total: result.total,
+          limit: result.limit,
+          offset: result.offset,
+        };
+      },
+    }),
+    defineTool<z.output<typeof foldersListSchema>, unknown>({
+      id: "mail.folders.list",
+      description:
+        "List mail folders with per-folder thread and unread counts for the current actor.",
+      permission: "mail.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(foldersListSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (_input, ctx) => ({
+        folders: (
+          await options.store.listFolders({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+          })
+        ).map(serializeFolder),
+      }),
+    }),
+    defineTool<z.output<typeof labelsListSchema>, unknown>({
+      id: "mail.labels.list",
+      description:
+        "List mail labels (org-shared and actor-owned) with display colours and live thread counts.",
+      permission: "mail.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(labelsListSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (_input, ctx) => ({
+        labels: (
+          await options.store.listLabels({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+          })
+        ).map(serializeLabel),
+      }),
+    }),
     defineTool<z.output<typeof outboundGetSchema>, unknown>({
       id: "mail.outbound.get",
       description: "Read an outbound mail delivery record for the current actor.",
@@ -793,6 +874,49 @@ function serializeVacation(vacation: {
     metadata: vacation.metadata,
     createdAt: vacation.createdAt.toISOString(),
     updatedAt: vacation.updatedAt.toISOString(),
+  };
+}
+
+function serializeThreadRow(row: MailThreadRowRecord) {
+  return {
+    threadId: row.threadId,
+    messageId: row.messageId,
+    subject: row.subject,
+    from: row.from,
+    fromEmail: row.fromEmail,
+    preview: row.preview,
+    time: row.time,
+    unread: row.unread,
+    starred: row.starred,
+    hasAttachment: row.hasAttachment,
+    messageCount: row.messageCount,
+    labels: [...row.labels],
+    category: row.category,
+    folder: row.folder,
+    snoozedUntil: row.snoozedUntil,
+  };
+}
+
+function serializeFolder(folder: MailFolderSummary) {
+  return {
+    id: folder.id,
+    label: folder.label,
+    total: folder.total,
+    unread: folder.unread,
+  };
+}
+
+function serializeLabel(label: MailLabelRecord) {
+  return {
+    id: label.id,
+    slug: label.slug,
+    name: label.name,
+    color: label.color,
+    sortOrder: label.sortOrder,
+    threadCount: label.threadCount,
+    shared: label.ownerActorId === null,
+    createdAt: label.createdAt.toISOString(),
+    updatedAt: label.updatedAt.toISOString(),
   };
 }
 

@@ -6,7 +6,9 @@ import {
   addAccessTokenSearchParam,
   authenticatedFetch,
   clearStoredAccessToken,
-  requestOAuthClientCredentialsToken,
+  getSessionUser,
+  signInWithEmail,
+  signOut,
   storeAccessToken,
 } from "./auth";
 
@@ -16,70 +18,88 @@ describe("web auth helpers", () => {
     vi.restoreAllMocks();
   });
 
-  it("attaches a stored bearer token to API requests", async () => {
-    storeAccessToken("token-1");
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(Response.json({ ok: true }));
+  it("sends the session cookie on backend requests", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
 
     await authenticatedFetch("/api/tools/mail.search", {
       method: "POST",
       headers: { "content-type": "application/json" },
     });
 
+    expect(fetchMock.mock.calls[0]?.[1]?.credentials).toBe("include");
+  });
+
+  it("attaches a stored fallback bearer token when present", async () => {
+    storeAccessToken("token-1");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
+
+    await authenticatedFetch("/api/tools/mail.search", { method: "POST" });
+
     const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(headers.get("authorization")).toBe("Bearer token-1");
-    expect(headers.get("content-type")).toBe("application/json");
+    expect(fetchMock.mock.calls[0]?.[1]?.credentials).toBe("include");
   });
 
-  it("keeps requests unchanged when no token is stored", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(Response.json({ ok: true }));
-    const init = { method: "POST", headers: { "content-type": "application/json" } };
-
-    await authenticatedFetch("/api/tools/mail.search", init);
-
-    expect(fetchMock).toHaveBeenCalledWith("/api/tools/mail.search", init);
-  });
-
-  it("adds access_token to websocket URLs", () => {
+  it("adds a fallback access_token to websocket URLs only when stored", () => {
+    expect(addAccessTokenSearchParam("ws://localhost/ws/chat")).toBe("ws://localhost/ws/chat");
     window.localStorage.setItem(HELIX_ACCESS_TOKEN_STORAGE_KEY, "ws-token");
-
     expect(addAccessTokenSearchParam("ws://localhost/ws/chat")).toBe(
       "ws://localhost/ws/chat?access_token=ws-token",
     );
   });
 
-  it("mints and normalizes OAuth client credentials tokens", async () => {
+  it("signs in with email and password against Better-Auth", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({
-        access_token: "token-1",
-        token_type: "Bearer",
-        expires_in: 3600,
-        scope: "platform.read",
+        user: {
+          id: "login-1",
+          email: "admin@helix.local",
+          name: "Avery Park",
+          actorId: "actor-1",
+        },
       }),
     );
 
-    const token = await requestOAuthClientCredentialsToken(
-      {
-        clientId: "client-1",
-        clientSecret: "secret-1",
-        scope: "platform.read",
-      },
+    const user = await signInWithEmail(
+      { email: "admin@helix.local", password: "helix-admin-password" },
       fetchMock,
     );
 
-    expect(token.accessToken).toBe("token-1");
+    expect(user.actorId).toBe("actor-1");
     const call = fetchMock.mock.calls[0];
-    expect(call?.[0]).toBe("/oauth/token");
+    expect(call?.[0]).toBe("/api/auth/sign-in/email");
     expect(call?.[1]?.method).toBe("POST");
-    expect(new Headers(call?.[1]?.headers).get("authorization")).toBe(
-      "Basic Y2xpZW50LTE6c2VjcmV0LTE=",
+    expect(call?.[1]?.credentials).toBe("include");
+  });
+
+  it("throws a clear error on bad credentials", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ message: "Invalid email or password" }, { status: 401 }));
+
+    await expect(
+      signInWithEmail({ email: "x@helix.local", password: "wrong" }, fetchMock),
+    ).rejects.toThrow("Invalid email or password");
+  });
+
+  it("returns null when there is no active session", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json(null));
+    expect(await getSessionUser(fetchMock)).toBeNull();
+  });
+
+  it("resolves the session user when authenticated", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ user: { id: "login-1", email: "a@helix.local", name: "A", actor_id: "ac" } }),
     );
-    expect(call?.[1]?.body).toBeInstanceOf(URLSearchParams);
-    expect((call?.[1]?.body as URLSearchParams | undefined)?.toString()).toBe(
-      "grant_type=client_credentials&scope=platform.read",
-    );
+    const user = await getSessionUser(fetchMock);
+    expect(user?.actorId).toBe("ac");
+  });
+
+  it("posts to the Better-Auth sign-out endpoint", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ success: true }));
+    await signOut(fetchMock);
+    const call = fetchMock.mock.calls[0];
+    expect(call?.[0]).toBe("/api/auth/sign-out");
+    expect(call?.[1]?.method).toBe("POST");
   });
 });

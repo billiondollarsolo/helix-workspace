@@ -108,11 +108,28 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
   { scope: "docs.write", description: "Create and modify documents.", surfaces: ["agent"] },
   { scope: "docs.comment", description: "Comment on documents.", surfaces: ["agent"] },
 
+  // Sheets.
+  { scope: "sheets.read", description: "Read spreadsheets, tabs, and cell data.", surfaces: ["agent"] },
+  {
+    scope: "sheets.write",
+    description: "Create and modify spreadsheets, tabs, and cells.",
+    surfaces: ["agent"],
+  },
+
+  // Slides.
+  { scope: "slides.read", description: "Read presentation decks and slides.", surfaces: ["agent"] },
+  {
+    scope: "slides.write",
+    description: "Create and modify presentation decks and slides.",
+    surfaces: ["agent"],
+  },
+
   // Meet.
   { scope: "meet.read", description: "Read meeting rooms and join tokens.", surfaces: ["agent"] },
   { scope: "meet.write", description: "Create and end meeting rooms.", surfaces: ["agent"] },
 
   // Assistant.
+  { scope: "assistant.read", description: "Read assistant conversations and history.", surfaces: ["agent"] },
   { scope: "assistant.write", description: "Use the assistant and run conversations.", surfaces: ["agent"] },
   { scope: "assistant.memory", description: "Read and erase assistant memory.", surfaces: ["agent"] },
 

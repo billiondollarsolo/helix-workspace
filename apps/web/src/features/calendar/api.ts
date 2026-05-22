@@ -121,6 +121,32 @@ export interface CalendarFindTimeSlot {
   }[];
 }
 
+export type CalendarApiMembershipRole = "owner" | "editor" | "viewer";
+
+/** A calendar as returned by `calendar.calendars.list` for the sidebar. */
+export interface CalendarApiCalendar {
+  readonly id: string;
+  readonly orgId?: string;
+  readonly name: string;
+  readonly description?: string | null;
+  readonly timezone?: string;
+  readonly color: string;
+  readonly ownerActorId?: string;
+  readonly ownerDisplayName?: string | null;
+  readonly role: CalendarApiMembershipRole;
+  readonly visible: boolean;
+  readonly group: "mine" | "team";
+  readonly writable?: boolean;
+  readonly sortOrder?: number;
+  readonly eventCount?: number;
+}
+
+export interface CalendarListCalendarsOutput {
+  readonly calendars: readonly CalendarApiCalendar[];
+  readonly mine: readonly CalendarApiCalendar[];
+  readonly team: readonly CalendarApiCalendar[];
+}
+
 export async function createCalendarEvent(
   input: CalendarCreateEventInput,
   fetchImpl: CalendarApiFetch = authenticatedFetch,
@@ -227,6 +253,18 @@ export async function listCalendarEvents(
   );
 
   return output.events ?? [];
+}
+
+export async function listCalendars(
+  fetchImpl: CalendarApiFetch = authenticatedFetch,
+): Promise<readonly CalendarApiCalendar[]> {
+  const output = await callCalendarTool<{ readonly calendars?: readonly CalendarApiCalendar[] }>(
+    "calendar.calendars.list",
+    {},
+    fetchImpl,
+  );
+
+  return output.calendars ?? [];
 }
 
 async function callCalendarTool<Output>(

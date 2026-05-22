@@ -39,6 +39,7 @@ describe("PostgresBetterAuthActorStore", () => {
       type: "user",
       email: "person@example.com",
       displayName: "Person",
+      scopes: [],
       metadata,
     });
     expect(recording.calls[0]?.text).toContain("metadata -> 'betterAuth' ->> 'userId'");
@@ -94,7 +95,9 @@ describe("PostgresBetterAuthActorStore", () => {
 
     expect(actor.id).toBe("actor-1");
     expect(recording.calls[0]?.text).toContain("insert into actors");
-    expect(recording.calls[0]?.text).toContain("returning id, org_id, type, email, display_name, metadata");
+    expect(recording.calls[0]?.text).toContain(
+      "returning id, org_id, type, email, display_name, scopes, metadata",
+    );
     expect(recording.calls[0]?.values).toEqual([
       "org-1",
       "user",
@@ -181,6 +184,7 @@ describe("PostgresBetterAuthActorStore", () => {
       orgId: "22222222-2222-4222-8222-222222222222",
       type: "user",
       displayName: "Person",
+      scopes: [],
       email: "person@example.com",
     });
     expect(links).toEqual(["auth-user-1:11111111-1111-4111-8111-111111111111"]);
@@ -233,6 +237,7 @@ class InMemoryBetterAuthActorStore {
       type: "user" as const,
       email: input.email,
       displayName: input.displayName,
+      scopes: [] as readonly string[],
       metadata: input.metadata,
     };
   }
@@ -248,6 +253,7 @@ class InMemoryBetterAuthActorStore {
       type: "user" as const,
       email: null,
       displayName: input.authUserId,
+      scopes: [] as readonly string[],
       metadata: input.metadata,
     };
   }

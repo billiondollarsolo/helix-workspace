@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { prefetchAdminDashboardQueries } from "@/features/admin/admin-dashboard";
+import { AdminConsole } from "@/features/admin/admin-console";
 
 export const Route = createFileRoute("/_shell/admin/")({
-  loader: async ({ context }) => {
-    await prefetchAdminDashboardQueries(context.queryClient);
-  },
+  component: AdminConsole,
 });

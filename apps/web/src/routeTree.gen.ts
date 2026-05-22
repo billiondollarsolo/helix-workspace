@@ -9,13 +9,12 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as OauthConsentRouteImport } from './routes/oauth.consent'
-import { Route as ShellSettingsIndexRouteImport } from './routes/_shell/settings/index'
-import { Route as ShellSearchIndexRouteImport } from './routes/_shell/search/index'
+import { Route as ShellSlidesIndexRouteImport } from './routes/_shell/slides/index'
+import { Route as ShellSheetsIndexRouteImport } from './routes/_shell/sheets/index'
 import { Route as ShellMeetIndexRouteImport } from './routes/_shell/meet/index'
 import { Route as ShellMailIndexRouteImport } from './routes/_shell/mail/index'
 import { Route as ShellDriveIndexRouteImport } from './routes/_shell/drive/index'
@@ -24,13 +23,7 @@ import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
 import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar/index'
 import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
 import { Route as ShellAdminIndexRouteImport } from './routes/_shell/admin/index'
-import { Route as ShellSettingsAdminRouteImport } from './routes/_shell/settings/admin'
 
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -50,90 +43,61 @@ const OauthConsentRoute = OauthConsentRouteImport.update({
   path: '/oauth/consent',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ShellSettingsIndexRoute = ShellSettingsIndexRouteImport.update({
-  id: '/settings/',
-  path: '/settings/',
+const ShellSlidesIndexRoute = ShellSlidesIndexRouteImport.update({
+  id: '/slides/',
+  path: '/slides/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/settings/index.lazy').then((d) => d.Route),
-)
-const ShellSearchIndexRoute = ShellSearchIndexRouteImport.update({
-  id: '/search/',
-  path: '/search/',
+} as any)
+const ShellSheetsIndexRoute = ShellSheetsIndexRouteImport.update({
+  id: '/sheets/',
+  path: '/sheets/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/search/index.lazy').then((d) => d.Route),
-)
+} as any)
 const ShellMeetIndexRoute = ShellMeetIndexRouteImport.update({
   id: '/meet/',
   path: '/meet/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/meet/index.lazy').then((d) => d.Route),
-)
+} as any)
 const ShellMailIndexRoute = ShellMailIndexRouteImport.update({
   id: '/mail/',
   path: '/mail/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/mail/index.lazy').then((d) => d.Route),
-)
+} as any)
 const ShellDriveIndexRoute = ShellDriveIndexRouteImport.update({
   id: '/drive/',
   path: '/drive/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/drive/index.lazy').then((d) => d.Route),
-)
+} as any)
 const ShellDocsIndexRoute = ShellDocsIndexRouteImport.update({
   id: '/docs/',
   path: '/docs/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/docs/index.lazy').then((d) => d.Route),
-)
+} as any)
 const ShellChatIndexRoute = ShellChatIndexRouteImport.update({
   id: '/chat/',
   path: '/chat/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/chat/index.lazy').then((d) => d.Route),
-)
+} as any)
 const ShellCalendarIndexRoute = ShellCalendarIndexRouteImport.update({
   id: '/calendar/',
   path: '/calendar/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/calendar/index.lazy').then((d) => d.Route),
-)
+} as any)
 const ShellAssistantIndexRoute = ShellAssistantIndexRouteImport.update({
   id: '/assistant/',
   path: '/assistant/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/assistant/index.lazy').then((d) => d.Route),
-)
+} as any)
 const ShellAdminIndexRoute = ShellAdminIndexRouteImport.update({
   id: '/admin/',
   path: '/admin/',
   getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/admin/index.lazy').then((d) => d.Route),
-)
-const ShellSettingsAdminRoute = ShellSettingsAdminRouteImport.update({
-  id: '/settings/admin',
-  path: '/settings/admin',
-  getParentRoute: () => ShellRoute,
-} as any).lazy(() =>
-  import('./routes/_shell/settings/admin.lazy').then((d) => d.Route),
-)
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
-  '/signup': typeof SignupRoute
   '/oauth/consent': typeof OauthConsentRoute
-  '/settings/admin': typeof ShellSettingsAdminRoute
   '/admin/': typeof ShellAdminIndexRoute
   '/assistant/': typeof ShellAssistantIndexRoute
   '/calendar/': typeof ShellCalendarIndexRoute
@@ -142,15 +106,13 @@ export interface FileRoutesByFullPath {
   '/drive/': typeof ShellDriveIndexRoute
   '/mail/': typeof ShellMailIndexRoute
   '/meet/': typeof ShellMeetIndexRoute
-  '/search/': typeof ShellSearchIndexRoute
-  '/settings/': typeof ShellSettingsIndexRoute
+  '/sheets/': typeof ShellSheetsIndexRoute
+  '/slides/': typeof ShellSlidesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
-  '/signup': typeof SignupRoute
   '/oauth/consent': typeof OauthConsentRoute
-  '/settings/admin': typeof ShellSettingsAdminRoute
   '/admin': typeof ShellAdminIndexRoute
   '/assistant': typeof ShellAssistantIndexRoute
   '/calendar': typeof ShellCalendarIndexRoute
@@ -159,17 +121,15 @@ export interface FileRoutesByTo {
   '/drive': typeof ShellDriveIndexRoute
   '/mail': typeof ShellMailIndexRoute
   '/meet': typeof ShellMeetIndexRoute
-  '/search': typeof ShellSearchIndexRoute
-  '/settings': typeof ShellSettingsIndexRoute
+  '/sheets': typeof ShellSheetsIndexRoute
+  '/slides': typeof ShellSlidesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_shell': typeof ShellRouteWithChildren
   '/login': typeof LoginRoute
-  '/signup': typeof SignupRoute
   '/oauth/consent': typeof OauthConsentRoute
-  '/_shell/settings/admin': typeof ShellSettingsAdminRoute
   '/_shell/admin/': typeof ShellAdminIndexRoute
   '/_shell/assistant/': typeof ShellAssistantIndexRoute
   '/_shell/calendar/': typeof ShellCalendarIndexRoute
@@ -178,17 +138,15 @@ export interface FileRoutesById {
   '/_shell/drive/': typeof ShellDriveIndexRoute
   '/_shell/mail/': typeof ShellMailIndexRoute
   '/_shell/meet/': typeof ShellMeetIndexRoute
-  '/_shell/search/': typeof ShellSearchIndexRoute
-  '/_shell/settings/': typeof ShellSettingsIndexRoute
+  '/_shell/sheets/': typeof ShellSheetsIndexRoute
+  '/_shell/slides/': typeof ShellSlidesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/login'
-    | '/signup'
     | '/oauth/consent'
-    | '/settings/admin'
     | '/admin/'
     | '/assistant/'
     | '/calendar/'
@@ -197,15 +155,13 @@ export interface FileRouteTypes {
     | '/drive/'
     | '/mail/'
     | '/meet/'
-    | '/search/'
-    | '/settings/'
+    | '/sheets/'
+    | '/slides/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
-    | '/signup'
     | '/oauth/consent'
-    | '/settings/admin'
     | '/admin'
     | '/assistant'
     | '/calendar'
@@ -214,16 +170,14 @@ export interface FileRouteTypes {
     | '/drive'
     | '/mail'
     | '/meet'
-    | '/search'
-    | '/settings'
+    | '/sheets'
+    | '/slides'
   id:
     | '__root__'
     | '/'
     | '/_shell'
     | '/login'
-    | '/signup'
     | '/oauth/consent'
-    | '/_shell/settings/admin'
     | '/_shell/admin/'
     | '/_shell/assistant/'
     | '/_shell/calendar/'
@@ -232,27 +186,19 @@ export interface FileRouteTypes {
     | '/_shell/drive/'
     | '/_shell/mail/'
     | '/_shell/meet/'
-    | '/_shell/search/'
-    | '/_shell/settings/'
+    | '/_shell/sheets/'
+    | '/_shell/slides/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ShellRoute: typeof ShellRouteWithChildren
   LoginRoute: typeof LoginRoute
-  SignupRoute: typeof SignupRoute
   OauthConsentRoute: typeof OauthConsentRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -281,18 +227,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OauthConsentRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_shell/settings/': {
-      id: '/_shell/settings/'
-      path: '/settings'
-      fullPath: '/settings/'
-      preLoaderRoute: typeof ShellSettingsIndexRouteImport
+    '/_shell/slides/': {
+      id: '/_shell/slides/'
+      path: '/slides'
+      fullPath: '/slides/'
+      preLoaderRoute: typeof ShellSlidesIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/search/': {
-      id: '/_shell/search/'
-      path: '/search'
-      fullPath: '/search/'
-      preLoaderRoute: typeof ShellSearchIndexRouteImport
+    '/_shell/sheets/': {
+      id: '/_shell/sheets/'
+      path: '/sheets'
+      fullPath: '/sheets/'
+      preLoaderRoute: typeof ShellSheetsIndexRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/meet/': {
@@ -351,18 +297,10 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellAdminIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/settings/admin': {
-      id: '/_shell/settings/admin'
-      path: '/settings/admin'
-      fullPath: '/settings/admin'
-      preLoaderRoute: typeof ShellSettingsAdminRouteImport
-      parentRoute: typeof ShellRoute
-    }
   }
 }
 
 interface ShellRouteChildren {
-  ShellSettingsAdminRoute: typeof ShellSettingsAdminRoute
   ShellAdminIndexRoute: typeof ShellAdminIndexRoute
   ShellAssistantIndexRoute: typeof ShellAssistantIndexRoute
   ShellCalendarIndexRoute: typeof ShellCalendarIndexRoute
@@ -371,12 +309,11 @@ interface ShellRouteChildren {
   ShellDriveIndexRoute: typeof ShellDriveIndexRoute
   ShellMailIndexRoute: typeof ShellMailIndexRoute
   ShellMeetIndexRoute: typeof ShellMeetIndexRoute
-  ShellSearchIndexRoute: typeof ShellSearchIndexRoute
-  ShellSettingsIndexRoute: typeof ShellSettingsIndexRoute
+  ShellSheetsIndexRoute: typeof ShellSheetsIndexRoute
+  ShellSlidesIndexRoute: typeof ShellSlidesIndexRoute
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
-  ShellSettingsAdminRoute: ShellSettingsAdminRoute,
   ShellAdminIndexRoute: ShellAdminIndexRoute,
   ShellAssistantIndexRoute: ShellAssistantIndexRoute,
   ShellCalendarIndexRoute: ShellCalendarIndexRoute,
@@ -385,8 +322,8 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellDriveIndexRoute: ShellDriveIndexRoute,
   ShellMailIndexRoute: ShellMailIndexRoute,
   ShellMeetIndexRoute: ShellMeetIndexRoute,
-  ShellSearchIndexRoute: ShellSearchIndexRoute,
-  ShellSettingsIndexRoute: ShellSettingsIndexRoute,
+  ShellSheetsIndexRoute: ShellSheetsIndexRoute,
+  ShellSlidesIndexRoute: ShellSlidesIndexRoute,
 }
 
 const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
@@ -395,7 +332,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ShellRoute: ShellRouteWithChildren,
   LoginRoute: LoginRoute,
-  SignupRoute: SignupRoute,
   OauthConsentRoute: OauthConsentRoute,
 }
 export const routeTree = rootRouteImport

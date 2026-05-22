@@ -1,20 +1,24 @@
 export const HELIX_ACCESS_TOKEN_STORAGE_KEY = "helix.accessToken";
 
-export interface OAuthClientCredentialsInput {
-  readonly clientId: string;
-  readonly clientSecret: string;
-  readonly scope?: string;
-}
-
-export interface OAuthTokenResponse {
-  readonly accessToken: string;
-  readonly tokenType: "Bearer";
-  readonly expiresIn: number;
-  readonly scope: string;
-}
-
 export type AuthFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+export interface SignInInput {
+  readonly email: string;
+  readonly password: string;
+}
+
+export interface SessionUser {
+  readonly id: string;
+  readonly email: string;
+  readonly name: string;
+  readonly actorId: string | null;
+}
+
+/**
+ * Optional client-credentials access token, kept only as a fallback for
+ * non-browser/test contexts. Browser auth now rides the Better-Auth session
+ * cookie (`helix_session`), so a stored token is no longer required.
+ */
 export function getStoredAccessToken(): string | null {
   if (typeof window === "undefined") {
     return null;
@@ -37,20 +41,30 @@ export function clearStoredAccessToken(): void {
   window.localStorage.removeItem(HELIX_ACCESS_TOKEN_STORAGE_KEY);
 }
 
+/**
+ * Fetch wrapper for backend (`/api`, `/oauth`, `/trpc`, SSE) requests.
+ * Always sends the Better-Auth session cookie via `credentials: "include"`
+ * so the backend's `actorFromAuthenticatedRequest` resolves the actor from
+ * the session. A stored client-credentials bearer token, if present, is
+ * still attached as an optional fallback.
+ */
 export function authenticatedFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
   const token = getStoredAccessToken();
-  if (token === null) {
-    return fetch(input, init);
-  }
   return fetch(input, {
     ...init,
-    headers: headersWithBearer(init?.headers, token),
+    credentials: "include",
+    ...(token === null ? {} : { headers: headersWithBearer(init?.headers, token) }),
   });
 }
 
+/**
+ * Appends a fallback `access_token` to realtime (WS/SSE) URLs. The session
+ * cookie rides the WebSocket handshake automatically through the Vite proxy,
+ * so this is only used when a fallback bearer token is stored.
+ */
 export function addAccessTokenSearchParam(url: string): string {
   const token = getStoredAccessToken();
   if (token === null) {
@@ -64,40 +78,59 @@ export function addAccessTokenSearchParam(url: string): string {
   return parsed.toString();
 }
 
-export async function requestOAuthClientCredentialsToken(
-  input: OAuthClientCredentialsInput,
+/** Signs in with email + password via Better-Auth. Sets the session cookie. */
+export async function signInWithEmail(
+  input: SignInInput,
   fetchImpl: AuthFetch = fetch,
-): Promise<OAuthTokenResponse> {
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    ...(input.scope === undefined || input.scope.trim().length === 0
-      ? {}
-      : { scope: input.scope.trim() }),
-  });
-  const response = await fetchImpl("/oauth/token", {
+): Promise<SessionUser> {
+  const response = await fetchImpl("/api/auth/sign-in/email", {
     method: "POST",
-    headers: {
-      authorization: `Basic ${base64Encode(`${input.clientId}:${input.clientSecret}`)}`,
-      "content-type": "application/x-www-form-urlencoded",
-    },
-    body,
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: input.email, password: input.password }),
   });
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(
-      errorMessageFromOutput(output) ??
-        `OAuth token request failed with ${String(response.status)}`,
-    );
+    throw new Error(errorMessageFromOutput(output) ?? "Invalid email or password.");
   }
-  if (!isOAuthTokenOutput(output)) {
-    throw new Error("OAuth token response was missing required fields.");
+  const user = sessionUserFromOutput(output);
+  if (user === null) {
+    throw new Error("Sign-in response was missing the user record.");
   }
-  return {
-    accessToken: output.access_token,
-    tokenType: output.token_type,
-    expiresIn: output.expires_in,
-    scope: output.scope,
-  };
+  return user;
+}
+
+/** Returns the current Better-Auth session user, or null when unauthenticated. */
+export async function getSessionUser(fetchImpl: AuthFetch = fetch): Promise<SessionUser | null> {
+  const response = await fetchImpl("/api/auth/get-session", {
+    method: "GET",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const output: unknown = await response.json().catch(() => null);
+  if (output === null || (typeof output === "object" && Object.keys(output).length === 0)) {
+    return null;
+  }
+  return sessionUserFromOutput(output);
+}
+
+/** Signs the current session out via Better-Auth and clears any fallback token. */
+export async function signOut(fetchImpl: AuthFetch = fetch): Promise<void> {
+  try {
+    // A non-empty JSON body is required: Fastify rejects an empty body when
+    // the content-type is application/json.
+    await fetchImpl("/api/auth/sign-out", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+  } finally {
+    clearStoredAccessToken();
+  }
 }
 
 function headersWithBearer(headers: HeadersInit | undefined, token: string): Headers {
@@ -108,36 +141,43 @@ function headersWithBearer(headers: HeadersInit | undefined, token: string): Hea
   return next;
 }
 
-function isOAuthTokenOutput(value: unknown): value is {
-  readonly access_token: string;
-  readonly token_type: "Bearer";
-  readonly expires_in: number;
-  readonly scope: string;
-} {
-  return (
-    isRecord(value) &&
-    typeof value.access_token === "string" &&
-    value.token_type === "Bearer" &&
-    typeof value.expires_in === "number" &&
-    typeof value.scope === "string"
-  );
+function sessionUserFromOutput(output: unknown): SessionUser | null {
+  if (!isRecord(output)) {
+    return null;
+  }
+  const user = isRecord(output.user) ? output.user : output;
+  if (typeof user.id !== "string") {
+    return null;
+  }
+  return {
+    id: user.id,
+    email: typeof user.email === "string" ? user.email : "",
+    name: typeof user.name === "string" ? user.name : "",
+    actorId:
+      typeof user.actorId === "string"
+        ? user.actorId
+        : typeof user.actor_id === "string"
+          ? user.actor_id
+          : null,
+  };
 }
 
 function errorMessageFromOutput(output: unknown): string | undefined {
-  return isRecord(output) && typeof output.error_description === "string"
-    ? output.error_description
-    : isRecord(output) && typeof output.error === "string"
-      ? output.error
-      : undefined;
+  if (!isRecord(output)) {
+    return undefined;
+  }
+  if (typeof output.message === "string") {
+    return output.message;
+  }
+  if (typeof output.error === "string") {
+    return output.error;
+  }
+  if (isRecord(output.error) && typeof output.error.message === "string") {
+    return output.error.message;
+  }
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function base64Encode(value: string): string {
-  if (typeof btoa === "function") {
-    return btoa(value);
-  }
-  throw new Error("Base64 encoding is unavailable in this runtime.");
 }

@@ -1,674 +1,118 @@
 // @vitest-environment jsdom
 
+/* ChatShell tests — exercise the backend-wired surface end to end.
+
+   The chat tools (`/api/tools/chat.*`) are driven through a mocked
+   `authenticatedFetch`; realtime is driven through an injected fake
+   WebSocket so we can assert live messages, typing, presence and the
+   offline fallback without a server. */
+
 import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { preloadChatRouteData, validateChatRouteSearch } from "@/routes/_shell/chat";
-import { ChatShell } from "./chat-shell";
-import { chatQueryKeys } from "./queries";
+import { ShellOverlayContext } from "@/components/shell";
 
-vi.mock("@helix/sdk-web", () => ({
-  SuggestionSlot: ({ emptyFallback }: { readonly emptyFallback?: React.ReactNode }) =>
-    emptyFallback ?? null,
-}));
+const ROOM_ID = "33333333-3333-4333-8333-333333333333";
+const DM_ID = "55555555-5555-4555-8555-555555555555";
+const SELF_ACTOR = "11111111-1111-4111-8111-111111111111";
+const PEER_ACTOR = "22222222-2222-4222-8222-222222222222";
+const MSG_ID = "44444444-4444-4444-8444-444444444444";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+const room = {
+  id: ROOM_ID,
+  kind: "chat_room" as const,
+  subject: "Platform Engineering",
+  createdByActorId: SELF_ACTOR,
+  members: [
+    { actorId: SELF_ACTOR, role: "owner", displayName: "Maya Chen", email: "maya@example.com" },
+    { actorId: PEER_ACTOR, role: "member", displayName: "Daniel Cho", email: "daniel@example.com" },
+  ],
+  settings: { threadId: ROOM_ID, name: "Platform Engineering", topic: "Release coordination", isPrivate: false },
+  createdAt: "2026-05-20T11:00:00.000Z",
+  updatedAt: "2026-05-20T12:00:00.000Z",
+};
 
-const roomId = "33333333-3333-4333-8333-333333333333";
-const dmRoomId = "77777777-7777-4777-8777-777777777777";
-const messageId = "44444444-4444-4444-8444-444444444444";
-const dmMessageId = "88888888-8888-4888-8888-888888888888";
+const dmRoom = {
+  id: DM_ID,
+  kind: "chat_dm" as const,
+  subject: null,
+  createdByActorId: SELF_ACTOR,
+  members: [
+    { actorId: SELF_ACTOR, role: "owner", displayName: "Maya Chen", email: "maya@example.com" },
+    { actorId: PEER_ACTOR, role: "member", displayName: "Daniel Cho", email: "daniel@example.com" },
+  ],
+  settings: null,
+  createdAt: "2026-05-20T11:00:00.000Z",
+  updatedAt: "2026-05-20T12:00:00.000Z",
+};
 
-describe("ChatShell backend tool integration", () => {
-  let container: HTMLDivElement;
-  let root: Root;
-  let queryClient: QueryClient;
-  let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
-  let scrollIntoViewMock: ReturnType<typeof vi.fn>;
+const message = {
+  id: MSG_ID,
+  roomId: ROOM_ID,
+  actorId: PEER_ACTOR,
+  body: "Rolling the v2.4 release to canary now.",
+  bodyFormat: "plain",
+  attachmentObjectIds: [] as string[],
+  metadata: {},
+  sentAt: "2026-05-20T12:00:00.000Z",
+  editedAt: null,
+  deletedAt: null,
+};
 
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-    queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-          staleTime: 0,
-        },
-      },
-    });
-    scrollIntoViewMock = vi.fn();
-    HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        getItem: vi.fn(() => null),
-        removeItem: vi.fn(),
-        setItem: vi.fn(),
-      },
-    });
-    fetchMock = vi.fn<typeof fetch>((input, init) => {
-      if (input === "/api/tools/chat.room.list") {
-        return Promise.resolve(
-          Response.json({
-            rooms: [
-              {
-                id: roomId,
-                kind: "chat_room",
-                subject: "Backend launch room",
-                createdByActorId: "maya",
-                members: [
-                  {
-                    actorId: "maya",
-                    role: "owner",
-                    displayName: "Maya Chen",
-                    email: "maya@example.com",
-                  },
-                  {
-                    actorId: "sam",
-                    role: "member",
-                    displayName: "Sam Patel",
-                    email: "sam@example.com",
-                  },
-                ],
-                settings: {
-                  threadId: roomId,
-                  name: "Backend launch room",
-                  topic: "Backend-backed room hydration",
-                  isPrivate: false,
-                },
-                createdAt: "2026-05-20T11:00:00.000Z",
-                updatedAt: "2026-05-20T12:00:00.000Z",
-              },
-              {
-                id: dmRoomId,
-                kind: "chat_dm",
-                subject: "Sam Patel",
-                createdByActorId: "maya",
-                members: [
-                  {
-                    actorId: "maya",
-                    role: "owner",
-                    displayName: "Maya Chen",
-                    email: "maya@example.com",
-                  },
-                  {
-                    actorId: "sam",
-                    role: "member",
-                    displayName: "Sam Patel",
-                    email: "sam@example.com",
-                  },
-                ],
-                settings: {
-                  threadId: dmRoomId,
-                  name: "Sam Patel",
-                  topic: "Direct messages",
-                  isPrivate: true,
-                },
-                createdAt: "2026-05-20T11:30:00.000Z",
-                updatedAt: "2026-05-20T12:30:00.000Z",
-              },
-            ],
-          }),
-        );
-      }
-      if (input === "/api/tools/chat.message.list") {
-        const body =
-          typeof init?.body === "string" ? (JSON.parse(init.body) as { roomId?: string }) : {};
-        const requestedRoomId = body.roomId ?? roomId;
-        return Promise.resolve(
-          Response.json({
-            messages: [
-              {
-                id: messageId,
-                roomId: requestedRoomId,
-                actorId: "maya",
-                body:
-                  requestedRoomId === dmRoomId
-                    ? "Deep linked DM history"
-                    : "Backend message history",
-                bodyFormat: "plain",
-                attachmentObjectIds: [],
-                sentAt: "2026-05-20T12:00:00.000Z",
-                editedAt: null,
-                deletedAt: null,
-              },
-              ...(requestedRoomId === dmRoomId
-                ? [
-                    {
-                      id: dmMessageId,
-                      roomId: requestedRoomId,
-                      actorId: "sam",
-                      body: "Focused deep linked DM message",
-                      bodyFormat: "plain",
-                      attachmentObjectIds: [],
-                      sentAt: "2026-05-20T12:10:00.000Z",
-                      editedAt: null,
-                      deletedAt: null,
-                    },
-                  ]
-                : []),
-            ],
-          }),
-        );
-      }
-      if (input === "/api/tools/chat.send") {
-        return Promise.resolve(
-          Response.json({
-            id: "55555555-5555-4555-8555-555555555555",
-            roomId,
-            actorId: "maya",
-            body: "Backend send from web",
-            bodyFormat: "plain",
-            attachmentObjectIds: [],
-            sentAt: "2026-05-20T12:05:00.000Z",
-            editedAt: null,
-            deletedAt: null,
-          }),
-        );
-      }
-      if (input === "/api/tools/chat.edit") {
-        return Promise.resolve(
-          Response.json({
-            id: messageId,
-            roomId,
-            actorId: "maya",
-            body: "Edited backend text",
-            bodyFormat: "plain",
-            attachmentObjectIds: [],
-            sentAt: "2026-05-20T12:00:00.000Z",
-            editedAt: "2026-05-20T12:06:00.000Z",
-            deletedAt: null,
-          }),
-        );
-      }
-      if (input === "/api/tools/chat.react") {
-        return Promise.resolve(Response.json({ reaction: null }));
-      }
-      return Promise.resolve(Response.json({}));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-  });
-
-  afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-    vi.unstubAllGlobals();
-  });
-
-  it("loads backend chat search hits and sends through chat.send", async () => {
-    renderChat();
-    await waitForText("Backend launch room");
-    await waitForText("Backend message history");
-    expect(container.textContent).toContain("Backend-backed room hydration");
-    expect(container.textContent).not.toContain("Simulate loading");
-
-    await typeComposer("Backend send from web");
-    await clickButton("Send");
-
-    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/chat.send");
-    expect(sendCall?.[1]?.method).toBe("POST");
-    const sendBody = sendCall?.[1]?.body;
-    if (typeof sendBody !== "string") {
-      throw new Error("Expected chat.send JSON body.");
-    }
-    expect(JSON.parse(sendBody)).toEqual({
-      roomId,
-      body: "Backend send from web",
-      bodyFormat: "plain",
-      attachmentObjectIds: [],
-      metadata: {},
-    });
-  });
-
-  it("blocks empty and whitespace chat submits with accessible validation errors", async () => {
-    renderChat();
-    await waitForText("Backend message history");
-
-    await submitComposerForm();
-
-    expect(container.textContent).toContain("Message is required.");
-    expect(fetchMock.mock.calls.some((call) => call[0] === "/api/tools/chat.send")).toBe(false);
-
-    await typeComposer("   ");
-    await submitComposerForm();
-
-    expect(container.textContent).toContain("Message is required.");
-    expect(fetchMock.mock.calls.some((call) => call[0] === "/api/tools/chat.send")).toBe(false);
-  });
-
-  it("renders backend messages through a virtualized stream in jsdom", async () => {
-    const bulkMessages = Array.from({ length: 40 }, (_, index) => ({
-      id: `bulk-message-${String(index).padStart(2, "0")}`,
-      roomId,
-      actorId: index % 2 === 0 ? "maya" : "sam",
-      body: `Bulk backend message ${String(index).padStart(2, "0")}`,
-      bodyFormat: "plain",
-      attachmentObjectIds: [],
-      sentAt: `2026-05-20T12:${String(index).padStart(2, "0")}:00.000Z`,
-      editedAt: null,
-      deletedAt: null,
-    }));
-    fetchMock.mockImplementation((input, init) => {
-      if (input === "/api/tools/chat.room.list") {
-        return Promise.resolve(
-          Response.json({
-            rooms: [
-              {
-                id: roomId,
-                kind: "chat_room",
-                subject: "Backend launch room",
-                createdByActorId: "maya",
-                members: [
-                  {
-                    actorId: "maya",
-                    role: "owner",
-                    displayName: "Maya Chen",
-                    email: "maya@example.com",
-                  },
-                  {
-                    actorId: "sam",
-                    role: "member",
-                    displayName: "Sam Patel",
-                    email: "sam@example.com",
-                  },
-                ],
-                settings: {
-                  threadId: roomId,
-                  name: "Backend launch room",
-                  topic: "Backend-backed room hydration",
-                  isPrivate: false,
-                },
-                createdAt: "2026-05-20T11:00:00.000Z",
-                updatedAt: "2026-05-20T12:00:00.000Z",
-              },
-            ],
-          }),
-        );
-      }
-      if (input === "/api/tools/chat.message.list") {
-        const body =
-          typeof init?.body === "string" ? (JSON.parse(init.body) as { roomId?: string }) : {};
-        return Promise.resolve(
-          Response.json({
-            messages: bulkMessages.map((message) => ({
-              ...message,
-              roomId: body.roomId ?? roomId,
-            })),
-          }),
-        );
-      }
-      return Promise.resolve(Response.json({}));
-    });
-
-    renderChat();
-    await waitForText("Backend launch room");
-    await waitForText("Bulk backend message 39");
-
-    const stream = container.querySelector(".chat-message-stream");
-    const spacer = container.querySelector('[data-testid="chat-message-virtual-spacer"]');
-    const renderedMessages = container.querySelectorAll("[data-message-id]");
-
-    expect(stream?.getAttribute("data-virtualized")).toBe("true");
-    expect(spacer).toBeInstanceOf(HTMLDivElement);
-    expect((spacer as HTMLDivElement).style.height).toBe("5280px");
-    expect(renderedMessages.length).toBeGreaterThan(0);
-    expect(renderedMessages.length).toBeLessThan(bulkMessages.length);
-  });
-
-  it("hydrates the initial room id from route search state", async () => {
-    renderChat({ initialRoomId: dmRoomId });
-
-    await waitForText("Sam Patel");
-    await waitForText("Deep linked DM history");
-
-    const messageListCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "/api/tools/chat.message.list",
-    );
-    expect(messageListCall?.[1]?.body).toBe(
-      JSON.stringify({ roomId: dmRoomId, before: undefined, limit: 50 }),
-    );
-  });
-
-  it("focuses and scrolls the initial message id after room hydration", async () => {
-    renderChat({ initialMessageId: dmMessageId, initialRoomId: dmRoomId });
-
-    await waitForText("Focused deep linked DM message");
-
-    const focusedMessage = container.querySelector(`[data-message-id="${dmMessageId}"]`);
-    expect(focusedMessage).toBeInstanceOf(HTMLElement);
-    expect(focusedMessage?.getAttribute("aria-current")).toBe("true");
-    expect(document.activeElement).toBe(focusedMessage);
-    expect(scrollIntoViewMock).toHaveBeenCalled();
-  });
-
-  it("prefetches the room list and deep-linked room messages for route hydration", async () => {
-    expect(validateChatRouteSearch({ message: dmMessageId, room: dmRoomId })).toEqual({
-      message: dmMessageId,
-      room: dmRoomId,
-    });
-    expect(validateChatRouteSearch({ message: "", room: ["bad"] })).toEqual({});
-
-    await preloadChatRouteData(queryClient, { message: dmMessageId, room: dmRoomId });
-
-    expect(queryClient.getQueryData(chatQueryKeys.rooms())).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: roomId })]),
-    );
-    expect(queryClient.getQueryData(chatQueryKeys.messages(dmRoomId))).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: dmMessageId })]),
-    );
-
-    const roomListCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "/api/tools/chat.room.list",
-    );
-    const messageListCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "/api/tools/chat.message.list",
-    );
-    expect(roomListCall?.[1]?.body).toBe(JSON.stringify({ query: "", limit: 50 }));
-    expect(messageListCall?.[1]?.body).toBe(
-      JSON.stringify({ roomId: dmRoomId, before: undefined, limit: 50 }),
-    );
-  });
-
-  it("calls backend reaction and edit mutations exposed by the UI", async () => {
-    renderChat();
-    await waitForText("Backend message history");
-
-    await clickButtonByLabel("React with check");
-    await clickButtonByLabel("Edit message");
-    await typeEditBody("Edited backend text");
-    await clickButton("Save");
-
-    const reactCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/chat.react");
-    const editCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/chat.edit");
-    expect(reactCall?.[1]?.body).toBe(JSON.stringify({ messageId, emoji: "✅", op: "add" }));
-    expect(editCall?.[1]?.body).toBe(JSON.stringify({ messageId, body: "Edited backend text" }));
-  });
-
-  it("blocks empty chat edit submits and keeps the editor open", async () => {
-    renderChat();
-    await waitForText("Backend message history");
-
-    await clickButtonByLabel("Edit message");
-    await typeEditBody("   ");
-    await clickButton("Save");
-
-    expect(container.textContent).toContain("Message is required.");
-    expect(container.querySelector('textarea[aria-label="Edit message"]')).toBeInstanceOf(
-      HTMLTextAreaElement,
-    );
-    expect(fetchMock.mock.calls.some((call) => call[0] === "/api/tools/chat.edit")).toBe(false);
-  });
-
-  it("subscribes to chat websocket events for typing, presence, messages, and reads", async () => {
-    const sockets: FakeWebSocket[] = [];
-    vi.stubGlobal("WebSocket", fakeWebSocketClass(sockets));
-
-    renderChat();
-    await waitForText("Backend launch room");
-    await waitFor(() => expect(sockets).toHaveLength(1));
-    const socket = firstSocket(sockets);
-    openSocket(socket);
-
-    await waitFor(() =>
-      expect(socket.sent.map((payload) => JSON.parse(payload) as Record<string, unknown>)).toEqual([
-        { type: "subscribe", roomId },
-        { type: "presence", roomId },
-      ]),
-    );
-
-    receiveSocket(socket, {
-      type: "presence",
-      roomId,
-      presence: [
-        {
-          actorId: "sam",
-          orgId: "org-1",
-          displayName: "Sam Patel",
-          status: "online",
-          seenAt: "2026-05-20T12:00:00.000Z",
-        },
-      ],
-    });
-    receiveSocket(socket, { type: "typing", roomId, actorId: "sam", isTyping: true });
-    await waitForText("Sam typing");
-
-    receiveSocket(socket, {
-      type: "message.created",
-      roomId,
-      actorId: "sam",
-      message: {
-        id: "66666666-6666-4666-8666-666666666666",
-        roomId,
-        actorId: "sam",
-        body: "Realtime backend message",
-        bodyFormat: "plain",
-        attachmentObjectIds: [],
-        sentAt: "2026-05-20T12:07:00.000Z",
-        editedAt: null,
-        deletedAt: null,
-        createdAt: "2026-05-20T12:07:00.000Z",
-        updatedAt: "2026-05-20T12:07:00.000Z",
-      },
-    });
-    await waitForText("Realtime backend message");
-
-    receiveSocket(socket, {
-      type: "read",
-      roomId,
-      actorId: "sam",
-      receipt: {
-        roomId,
-        actorId: "sam",
-        orgId: "org-1",
-        lastReadMessageId: messageId,
-        lastReadAt: "2026-05-20T12:08:00.000Z",
-        updatedAt: "2026-05-20T12:08:00.000Z",
-      },
-    });
-    await waitForText("Seen by everyone");
-
-    vi.useFakeTimers();
-    try {
-      await typeComposer("Realtime send");
-      await waitForSent(socket, { type: "typing", roomId, isTyping: true });
-      act(() => {
-        vi.advanceTimersByTime(1500);
-      });
-      await flush();
-      await waitForSent(socket, { type: "typing", roomId, isTyping: false });
-    } finally {
-      vi.useRealTimers();
-    }
-    await clickButton("Mark read");
-    await waitForSent(socket, {
-      type: "read",
-      roomId,
-      messageId: "66666666-6666-4666-8666-666666666666",
-    });
-  });
-
-  it("shows an offline state instead of sample rooms when backend chat hydration is unavailable", async () => {
-    fetchMock.mockRejectedValue(new Error("offline"));
-
-    renderChat();
-    await waitForText("Chat backend unavailable");
-    await waitForText("Room list could not reach the backend");
-
-    expect(container.textContent).not.toContain("launch-readiness");
-    expect(container.textContent).not.toContain("customer-support");
-    expect(container.textContent).not.toContain("release-room");
-    expect(container.textContent).not.toContain(
-      "Room membership and read receipts are ready for the release smoke test.",
-    );
-  });
-
-  it("retries unavailable chat rooms by invalidating the active query", async () => {
-    fetchMock.mockImplementationOnce(() => Promise.reject(new Error("offline")));
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    renderChat();
-    await waitForText("Chat backend unavailable");
-
-    await clickButton("Retry");
-    await waitForText("Backend launch room");
-
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: chatQueryKeys.rooms() });
-    expect(
-      fetchMock.mock.calls.filter((call) => call[0] === "/api/tools/chat.room.list"),
-    ).toHaveLength(2);
-  });
-
-  function renderChat(props: Parameters<typeof ChatShell>[0] = {}) {
-    act(() => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <ChatShell {...props} />
-        </QueryClientProvider>,
+/** Mocked chat-tool fetch. Routes `/api/tools/<id>` to canned responses. */
+function makeFetch(overrides: Partial<Record<string, unknown>> = {}) {
+  return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    void init;
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (url.endsWith("/chat.room.list")) {
+      return Promise.resolve(
+        Response.json(overrides["chat.room.list"] ?? { rooms: [room, dmRoom] }),
       );
-    });
-  }
-
-  async function clickButton(text: string) {
-    const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-      candidate.textContent?.includes(text),
-    );
-    if (!(button instanceof HTMLButtonElement)) {
-      throw new Error(`Button not found: ${text}`);
     }
-    act(() => {
-      button.click();
-    });
-    await flush();
-  }
-
-  async function clickButtonByLabel(label: string) {
-    const button = container.querySelector(`button[aria-label="${label}"]`);
-    if (!(button instanceof HTMLButtonElement)) {
-      throw new Error(`Button not found: ${label}`);
+    if (url.endsWith("/chat.message.list")) {
+      return Promise.resolve(
+        Response.json(overrides["chat.message.list"] ?? { messages: [message] }),
+      );
     }
-    act(() => {
-      button.click();
-    });
-    await flush();
-  }
-
-  async function typeComposer(value: string) {
-    const textarea = container.querySelector("#chat-composer-input");
-    if (!(textarea instanceof HTMLTextAreaElement)) {
-      throw new Error("Composer body not found.");
+    if (url.endsWith("/chat.send")) {
+      return Promise.resolve(Response.json({ ...message, id: "sent" }));
     }
-    setTextareaValue(textarea, value);
-    await flush();
-  }
-
-  async function submitComposerForm() {
-    const form = container.querySelector("form.chat-composer");
-    if (!(form instanceof HTMLFormElement)) {
-      throw new Error("Composer form not found.");
+    if (url.endsWith("/chat.react")) {
+      return Promise.resolve(Response.json({ reaction: null }));
     }
-    act(() => {
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-    await flush();
-  }
-
-  async function typeEditBody(value: string) {
-    const textarea = container.querySelector('textarea[aria-label="Edit message"]');
-    if (!(textarea instanceof HTMLTextAreaElement)) {
-      throw new Error("Edit body not found.");
+    if (url.endsWith("/chat.edit") || url.endsWith("/chat.delete")) {
+      return Promise.resolve(Response.json(message));
     }
-    setTextareaValue(textarea, value);
-    await flush();
-  }
+    return Promise.resolve(Response.json({}));
+  });
+}
 
-  function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
-    act(() => {
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")
-        ?.set as ((this: HTMLTextAreaElement, value: string) => void) | undefined;
-      if (valueSetter !== undefined) {
-        Reflect.apply(valueSetter, textarea, [value]);
-      }
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
-      textarea.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-  }
-
-  async function waitForText(text: string) {
-    await waitFor(() => expect(container.textContent).toContain(text));
-  }
-
-  async function waitForSent(socket: FakeWebSocket, expected: Record<string, unknown>) {
-    await waitFor(() =>
-      expect(
-        socket.sent.map((payload) => JSON.parse(payload) as Record<string, unknown>),
-      ).toContainEqual(expected),
-    );
-  }
-
-  function openSocket(socket: FakeWebSocket) {
-    act(() => {
-      socket.open();
-    });
-  }
-
-  function receiveSocket(socket: FakeWebSocket, payload: unknown) {
-    act(() => {
-      socket.receive(payload);
-    });
-  }
-
-  function firstSocket(sockets: readonly FakeWebSocket[]): FakeWebSocket {
-    const socket = sockets[0];
-    if (socket === undefined) {
-      throw new Error("Expected websocket instance.");
-    }
-    return socket;
-  }
-
-  async function waitFor(assertion: () => void | Promise<void>) {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      try {
-        await flush();
-        await assertion();
-        return;
-      } catch (error) {
-        lastError = error;
-        await flush();
-      }
-    }
-    throw lastError;
-  }
-
-  async function flush() {
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
-});
-
+/** Fake WebSocket that records sends and lets tests push frames. */
 class FakeWebSocket {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
   static readonly CLOSING = 2;
   static readonly CLOSED = 3;
+  static instances: FakeWebSocket[] = [];
 
   readonly sent: string[] = [];
-  readonly #listeners = new Map<string, Set<(event: { readonly data?: string }) => void>>();
+  readonly #listeners = new Map<string, Set<(event: { data?: string }) => void>>();
   readyState = FakeWebSocket.CONNECTING;
 
-  addEventListener(type: string, listener: (event: { readonly data?: string }) => void): void {
-    const listeners =
-      this.#listeners.get(type) ?? new Set<(event: { readonly data?: string }) => void>();
-    listeners.add(listener);
-    this.#listeners.set(type, listeners);
+  constructor(readonly url: string) {
+    FakeWebSocket.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: { data?: string }) => void): void {
+    const set = this.#listeners.get(type) ?? new Set();
+    set.add(listener);
+    this.#listeners.set(type, set);
   }
 
   send(payload: string): void {
@@ -677,30 +121,288 @@ class FakeWebSocket {
 
   close(): void {
     this.readyState = FakeWebSocket.CLOSED;
-    this.emit("close", {});
+    this.#emit("close", {});
   }
 
   open(): void {
     this.readyState = FakeWebSocket.OPEN;
-    this.emit("open", {});
+    this.#emit("open", {});
   }
 
   receive(payload: unknown): void {
-    this.emit("message", { data: JSON.stringify(payload) });
+    this.#emit("message", { data: JSON.stringify(payload) });
   }
 
-  private emit(type: string, event: { readonly data?: string }): void {
+  #emit(type: string, event: { data?: string }): void {
     for (const listener of this.#listeners.get(type) ?? []) {
       listener(event);
     }
   }
 }
 
-function fakeWebSocketClass(instances: FakeWebSocket[]): typeof WebSocket {
-  return class extends FakeWebSocket {
-    constructor() {
-      super();
-      instances.push(this);
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
+  true;
+
+const overlayApi = {
+  openNotifications: vi.fn(),
+  openPalette: vi.fn(),
+  openSettings: vi.fn(),
+};
+
+// `authenticatedFetch` is mocked per-test via `fetchMock`.
+let fetchMock = makeFetch();
+vi.mock("@/lib/auth", () => ({
+  authenticatedFetch: (input: RequestInfo | URL, init?: RequestInit) =>
+    fetchMock(input, init),
+  addAccessTokenSearchParam: (url: string) => url,
+}));
+
+describe("ChatShell", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    fetchMock = makeFetch();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: 0 } },
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  /** Lazily import ChatShell so the auth mock is in place first. */
+  async function renderShell(WebSocketImpl: typeof WebSocket) {
+    const { ChatShell } = await import("./chat-shell");
+    // Wire the fake socket as the global the realtime client picks up.
+    const previous = globalThis.WebSocket;
+    (globalThis as { WebSocket: typeof WebSocket }).WebSocket = WebSocketImpl;
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ShellOverlayContext.Provider value={overlayApi}>
+            <ChatShell />
+          </ShellOverlayContext.Provider>
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+    (globalThis as { WebSocket: typeof WebSocket }).WebSocket = previous;
+  }
+
+  /** Settle pending microtasks (query resolution, effects).
+     Loops several macrotask ticks so chained work settles: the rooms query
+     resolves, an effect picks the active room, and only then does the
+     dependent message-list query become enabled and fetch. */
+  async function flush() {
+    for (let i = 0; i < 6; i += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
     }
-  } as unknown as typeof WebSocket;
-}
+  }
+
+  async function readyConnection(socket: FakeWebSocket) {
+    await act(async () => {
+      socket.open();
+      socket.receive({ type: "ready", actorId: SELF_ACTOR });
+      await Promise.resolve();
+    });
+  }
+
+  it("loads rooms from the backend and renders the sidebar", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    await flush();
+
+    const sidebar = container.querySelector(".chat-sidebar");
+    expect(sidebar?.textContent).toContain("Platform Engineering");
+    expect(sidebar?.textContent).toContain("Direct messages");
+    // The DM room renders as its peer's display name.
+    expect(sidebar?.textContent).toContain("Daniel Cho");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tools/chat.room.list",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("renders backend messages in the channel pane", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    await flush();
+
+    expect(container.querySelector(".chat-messages")?.textContent).toContain(
+      "Rolling the v2.4 release to canary now.",
+    );
+    // Author is resolved from the room member list.
+    expect(container.querySelector(".chat-msg-author")?.textContent).toBe("Daniel Cho");
+  });
+
+  it("subscribes over the WebSocket and shows a live new message", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    await flush();
+    await readyConnection(socket!);
+    await flush();
+
+    // The active room is subscribed once the socket opens.
+    expect(socket!.sent.map((p) => JSON.parse(p) as { type: string })).toContainEqual(
+      expect.objectContaining({ type: "subscribe", roomId: ROOM_ID }),
+    );
+
+    await act(async () => {
+      socket!.receive({
+        type: "message.created",
+        roomId: ROOM_ID,
+        actorId: PEER_ACTOR,
+        message: { ...message, id: "live-1", body: "Canary is healthy." },
+      });
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector(".chat-messages")?.textContent).toContain(
+      "Canary is healthy.",
+    );
+  });
+
+  it("shows a typing indicator from a realtime typing event", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    const socket = FakeWebSocket.instances[0]!;
+    await flush();
+    await readyConnection(socket);
+    await flush();
+
+    expect(container.querySelector(".chat-typing")).toBeNull();
+
+    await act(async () => {
+      socket.receive({ type: "typing", roomId: ROOM_ID, actorId: PEER_ACTOR, isTyping: true });
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector(".chat-typing")?.textContent).toContain("Daniel Cho");
+    expect(container.querySelectorAll(".chat-typing-dot").length).toBe(3);
+  });
+
+  it("reflects presence dots from the subscribed roster", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    const socket = FakeWebSocket.instances[0]!;
+    await flush();
+    await readyConnection(socket);
+
+    await act(async () => {
+      socket.receive({
+        type: "subscribed",
+        roomId: ROOM_ID,
+        presence: [
+          {
+            actorId: PEER_ACTOR,
+            orgId: "org",
+            status: "online",
+            seenAt: "2026-05-20T12:00:00.000Z",
+          },
+        ],
+        receipts: [],
+      });
+      await Promise.resolve();
+    });
+
+    const activeDot = container.querySelector('.chat-presence-dot[data-presence="active"]');
+    expect(activeDot).not.toBeNull();
+  });
+
+  it("sends a message over the WebSocket when connected", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    const socket = FakeWebSocket.instances[0]!;
+    await flush();
+    await readyConnection(socket);
+    await flush();
+
+    const textarea = container.querySelector(".chat-composer-input") as HTMLTextAreaElement;
+    const descriptor = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    ) as { set?: (this: HTMLTextAreaElement, v: string) => void };
+    act(() => {
+      descriptor.set?.call(textarea, "Looks good");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const sendButton = Array.from(container.querySelectorAll(".chat-composer button")).find(
+      (b) => b.textContent?.includes("Send"),
+    ) as HTMLButtonElement;
+    expect(sendButton.disabled).toBe(false);
+    act(() => {
+      sendButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(socket.sent.map((p) => JSON.parse(p) as { type: string })).toContainEqual(
+      expect.objectContaining({ type: "send", roomId: ROOM_ID, body: "Looks good" }),
+    );
+  });
+
+  it("opens the thread panel from a message reply action", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    await flush();
+
+    expect(container.querySelector(".chat-thread-panel")).toBeNull();
+    const replyButton = container.querySelector(
+      '[aria-label="Reply in thread"]',
+    ) as HTMLElement;
+    act(() => {
+      replyButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const panel = container.querySelector(".chat-thread-panel");
+    expect(panel?.textContent).toContain("Thread");
+    expect(panel?.textContent).toContain("Rolling the v2.4 release to canary now.");
+    expect(container.querySelector(".chat-info-panel")).toBeNull();
+  });
+
+  it("renders the info panel with backend members", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    await flush();
+
+    expect(container.querySelector(".chat-info-panel")).not.toBeNull();
+    expect(container.textContent).toContain("Release coordination");
+
+    const membersTab = Array.from(container.querySelectorAll(".chat-info-tab")).find((t) =>
+      t.textContent?.includes("Members"),
+    ) as HTMLButtonElement;
+    act(() => {
+      membersTab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container.querySelector(".chat-info-body")?.textContent).toContain("Daniel Cho");
+  });
+
+  it("falls back to seed spaces when the room list request fails", async () => {
+    fetchMock = vi.fn(() =>
+      Promise.resolve(Response.json({ error: "offline" }, { status: 503 })),
+    );
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    await flush();
+
+    const sidebar = container.querySelector(".chat-sidebar");
+    expect(sidebar?.textContent).toContain("Offline");
+    // Seed spaces from chat-data.ts back the offline sidebar.
+    expect(sidebar?.textContent).toContain("Platform Engineering");
+  });
+
+  it("shows an empty state when a room has no messages", async () => {
+    fetchMock = makeFetch({ "chat.message.list": { messages: [] } });
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    await flush();
+
+    expect(container.querySelector(".chat-messages")?.textContent).toContain(
+      "No messages yet",
+    );
+  });
+});

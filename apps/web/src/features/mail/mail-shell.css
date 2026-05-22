@@ -1,0 +1,72 @@
+/* Mail feature styles — tokens only; all values resolve to the foundation
+   CSS custom properties defined in src/styles.css.
+   Owned by the mail feature; do NOT add rules here for other surfaces. */
+
+/* ============================================================
+   Compose drag-and-drop overlay
+   ============================================================ */
+
+/**
+ * Full-bleed overlay that appears while the user drags files over the
+ * Composer.  The `position: absolute` + `inset: 0` covers the entire
+ * .mail-composer panel regardless of its scroll position.  pointer-events
+ * stay enabled so the overlay can receive dragover/dragleave/drop events
+ * without flickering when the cursor crosses child elements.
+ */
+.mail-composer-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border: 2px dashed var(--primary);
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: all;
+}
+
+/* ============================================================
+   Composer attachment chips
+   ============================================================ */
+
+.mail-composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px 2px;
+}
+
+.mail-composer-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  font-size: 11px;
+  max-width: 200px;
+}
+
+.mail-composer-attachment-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-composer-attachment-chip button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted-foreground);
+}
+
+.mail-composer-attachment-chip button:hover {
+  color: var(--destructive);
+}

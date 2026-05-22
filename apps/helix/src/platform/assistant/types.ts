@@ -19,10 +19,48 @@ export interface AssistantConversation {
   readonly actorId: string;
   readonly title: string | null;
   readonly memoryOptIn: boolean;
+  /** ISO timestamp the conversation was pinned, or null when not pinned. */
+  readonly pinnedAt: string | null;
   readonly metadata: JsonObject;
   readonly archivedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/**
+ * A conversation projected for the Assistant UI thread list: identity, pin
+ * state, last-activity timestamp, and a preview derived from the latest message.
+ */
+export interface AssistantConversationListItem {
+  readonly id: string;
+  readonly title: string | null;
+  readonly pinned: boolean;
+  readonly pinnedAt: string | null;
+  readonly memoryOptIn: boolean;
+  /** Last-activity timestamp (most recent message or the conversation itself). */
+  readonly updatedAt: string;
+  readonly createdAt: string;
+  readonly messageCount: number;
+  /** Truncated text of the most recent message, or null for an empty conversation. */
+  readonly preview: string | null;
+}
+
+export interface AssistantListConversationsInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  /** Case-insensitive substring matched against the title and last message. */
+  readonly query?: string;
+  /** When true, return only pinned conversations. */
+  readonly pinnedOnly?: boolean;
+  readonly limit: number;
+  /** Keyset cursor: exclude conversations at/before this `updatedAt` ISO timestamp. */
+  readonly cursor?: string;
+}
+
+export interface AssistantConversationListPage {
+  readonly items: readonly AssistantConversationListItem[];
+  /** Cursor for the next page, or null when the last page has been returned. */
+  readonly nextCursor: string | null;
 }
 
 export interface AssistantMessage {
@@ -70,6 +108,33 @@ export interface AssistantStore {
     readonly actorId: string;
     readonly conversationId: string;
   }): Promise<AssistantConversation | null>;
+  /**
+   * List the actor's non-archived conversations for the UI thread list, ordered
+   * pinned-first then by recency, with optional search and keyset pagination.
+   */
+  listConversations(
+    input: AssistantListConversationsInput,
+  ): Promise<AssistantConversationListPage>;
+  /** Pin (`pinned: true`) or unpin a conversation; returns null when not found. */
+  setConversationPinned(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+    readonly pinned: boolean;
+  }): Promise<AssistantConversation | null>;
+  /** Rename a conversation; returns null when not found. */
+  renameConversation(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+    readonly title: string;
+  }): Promise<AssistantConversation | null>;
+  /** Soft-delete (archive) a conversation; returns false when not found. */
+  deleteConversation(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+  }): Promise<boolean>;
   listMessages(input: {
     readonly orgId: string;
     readonly conversationId: string;

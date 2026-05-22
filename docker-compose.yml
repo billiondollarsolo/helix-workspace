@@ -42,6 +42,13 @@ services:
       MAIL_SMTP_RECEIVER_ENABLED: ${MAIL_SMTP_RECEIVER_ENABLED:-true}
       MAIL_SMTP_RECEIVER_HOST: ${MAIL_SMTP_RECEIVER_HOST:-0.0.0.0}
       MAIL_SMTP_RECEIVER_PORT: ${MAIL_SMTP_RECEIVER_PORT:-2525}
+      MAIL_SPAMD_ENABLED: ${MAIL_SPAMD_ENABLED:-false}
+      MAIL_SPAMD_HOST: ${MAIL_SPAMD_HOST:-spamd}
+      MAIL_SPAMD_PORT: ${MAIL_SPAMD_PORT:-783}
+      MAIL_SPAMD_THRESHOLD: ${MAIL_SPAMD_THRESHOLD:-5.0}
+      MAIL_CLAMAV_ENABLED: ${MAIL_CLAMAV_ENABLED:-false}
+      MAIL_CLAMAV_HOST: ${MAIL_CLAMAV_HOST:-clamav}
+      MAIL_CLAMAV_PORT: ${MAIL_CLAMAV_PORT:-3310}
       HELIX_DRIVE_OFFICE_PREVIEW_URL: ${HELIX_DRIVE_OFFICE_PREVIEW_URL:-http://drive-preview-libreoffice:8080}
       CERBOS_HTTP_URL: http://cerbos:3592
       HELIX_OBSERVABILITY_ENABLED: ${HELIX_OBSERVABILITY_ENABLED:-false}
@@ -178,6 +185,37 @@ services:
     ports:
       - "${MAILPIT_SMTP_PORT:-28457}:1025"
       - "${MAILPIT_WEB_PORT:-28458}:8025"
+    restart: unless-stopped
+
+  # SpamAssassin spamd daemon. Inbound mail ingest scores each received message
+  # over the spamd TCP protocol when MAIL_SPAMD_ENABLED=true. Opt-in via the
+  # `mail-security` compose profile.
+  spamd:
+    image: instantlinux/spamassassin:latest
+    profiles: ["mail-security"]
+    command: ["spamd", "--allowed-ips=0.0.0.0/0", "--listen=0.0.0.0:783", "--max-children=4"]
+    ports:
+      - "${MAIL_SPAMD_PORT_PUBLISHED:-28459}:783"
+    volumes:
+      - spamd-data:/var/lib/spamassassin
+    restart: unless-stopped
+
+  # ClamAV clamd daemon. Inbound mail ingest scans each message over the clamd
+  # INSTREAM TCP protocol when MAIL_CLAMAV_ENABLED=true. Opt-in via the
+  # `mail-security` compose profile.
+  clamav:
+    image: clamav/clamav:latest
+    profiles: ["mail-security"]
+    ports:
+      - "${MAIL_CLAMAV_PORT_PUBLISHED:-28460}:3310"
+    volumes:
+      - clamav-data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 6
+      start_period: 120s
     restart: unless-stopped
 
   drive-preview-libreoffice:
@@ -404,3 +442,5 @@ volumes:
   tempo-data:
   loki-data:
   grafana-data:
+  spamd-data:
+  clamav-data:

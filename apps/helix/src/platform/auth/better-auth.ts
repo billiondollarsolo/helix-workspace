@@ -28,6 +28,7 @@ export interface ActorUserRecord {
   readonly type: "user";
   readonly email: string | null;
   readonly displayName: string;
+  readonly scopes: readonly string[];
   readonly metadata: JsonObject;
 }
 
@@ -110,6 +111,7 @@ interface ActorUserRow {
   readonly type: "user";
   readonly email: string | null;
   readonly display_name: string;
+  readonly scopes: readonly string[] | null;
   readonly metadata: JsonObject;
 }
 
@@ -118,7 +120,7 @@ export class PostgresBetterAuthActorStore implements BetterAuthActorStore {
 
   async findUserActorByBetterAuthId(authUserId: string): Promise<ActorUserRecord | null> {
     const selectedRows = await this.sql`
-      select id, org_id, type, email, display_name, metadata
+      select id, org_id, type, email, display_name, scopes, metadata
       from actors
       where type = 'user'
         and disabled_at is null
@@ -131,7 +133,7 @@ export class PostgresBetterAuthActorStore implements BetterAuthActorStore {
 
   async findUserActorByEmail(orgId: string, email: string): Promise<ActorUserRecord | null> {
     const selectedRows = await this.sql`
-      select id, org_id, type, email, display_name, metadata
+      select id, org_id, type, email, display_name, scopes, metadata
       from actors
       where org_id = ${orgId}
         and type = 'user'
@@ -164,7 +166,7 @@ export class PostgresBetterAuthActorStore implements BetterAuthActorStore {
         ${input.displayName},
         ${this.sql.json(input.metadata)}
       )
-      returning id, org_id, type, email, display_name, metadata
+      returning id, org_id, type, email, display_name, scopes, metadata
     `;
     const rows = insertedRows as unknown as readonly ActorUserRow[];
     const actor = rowToActorUser(rows[0]);
@@ -186,7 +188,7 @@ export class PostgresBetterAuthActorStore implements BetterAuthActorStore {
       where id = ${input.actorId}
         and type = 'user'
         and disabled_at is null
-      returning id, org_id, type, email, display_name, metadata
+      returning id, org_id, type, email, display_name, scopes, metadata
     `;
     const rows = updatedRows as unknown as readonly ActorUserRow[];
     const actor = rowToActorUser(rows[0]);
@@ -308,6 +310,7 @@ function rowToActorUser(row: ActorUserRow | undefined): ActorUserRecord | null {
     type: row.type,
     email: row.email,
     displayName: row.display_name,
+    scopes: row.scopes ?? [],
     metadata: row.metadata,
   };
 }
@@ -318,6 +321,9 @@ function toActor(record: ActorUserRecord): Actor {
     orgId: record.orgId,
     type: "user",
     displayName: record.displayName,
+    // Carry the actor's scopes so session-authenticated requests are
+    // authorized identically to bearer-token (OAuth) requests.
+    scopes: record.scopes,
     ...(record.email === null ? {} : { email: record.email }),
   };
 }

@@ -10,7 +10,12 @@ import type {
   CreateCalendarEventInput,
   UpdateCalendarEventInput,
 } from "./store.js";
-import type { CalendarAttendeeRecord, CalendarEventRecord, CalendarFindTimeSlot } from "./types.js";
+import type {
+  CalendarAttendeeRecord,
+  CalendarEventRecord,
+  CalendarFindTimeSlot,
+  CalendarListEntry,
+} from "./types.js";
 
 describe("CalDAV calendar routes", () => {
   it("serves CalDAV discovery properties and respects PROPFIND depth", async () => {
@@ -1032,6 +1037,10 @@ class FakeCalendarStore implements CalendarStore {
       (this.allowedScopes.includes(input.requiredScope) || this.allowedScopes.includes("caldav"))
       ? this.actor
       : null;
+  }
+
+  async listCalendarsForActor(): Promise<readonly CalendarListEntry[]> {
+    return [];
   }
 
   requireEvent(eventId: string): CalendarEventRecord {

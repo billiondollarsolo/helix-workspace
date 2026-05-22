@@ -41,6 +41,8 @@ import type {
   MailEnrichmentRecord,
   MailEnrichmentWrite,
   MailFilterRecord,
+  MailFolderSummary,
+  MailLabelRecord,
   MailMessageInput,
   MailOutboundRecord,
   MailOutboundStatus,
@@ -50,6 +52,8 @@ import type {
   MailSearchRequest,
   MailThreadDetail,
   MailThreadGetRequest,
+  MailThreadListRequest,
+  MailThreadListResult,
   MailThreadStatePatch,
   MailVacationRecord,
   StoredMailMessage,
@@ -665,6 +669,20 @@ class InMemoryMailPlatformStore
   private isUnread(actorId: string, threadId: string, sentAt: Date): boolean {
     const readAt = this.#states.get(threadStateKey(actorId, threadId))?.readAt;
     return readAt === undefined || readAt === null || readAt < sentAt;
+  }
+
+  async listThreads(input: MailThreadListRequest): Promise<MailThreadListResult> {
+    const limit = input.limit ?? 50;
+    const offset = input.offset ?? 0;
+    return { threads: [], total: 0, limit, offset };
+  }
+
+  async listFolders(): Promise<readonly MailFolderSummary[]> {
+    return [];
+  }
+
+  async listLabels(): Promise<readonly MailLabelRecord[]> {
+    return [];
   }
 
   async getMailSearchRecord(messageId: string): Promise<MailSearchRecord | null> {

@@ -28,6 +28,7 @@ import type {
   CalendarFindTimeSlot,
   CalendarFreeBusyEvent,
   CalendarFreeBusyRequest,
+  CalendarListEntry,
   CalendarSearchProjectionStore,
   CalendarSearchRecord,
 } from "./types.js";
@@ -366,6 +367,10 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
 
   async authenticateAppPassword(): Promise<Actor | null> {
     return null;
+  }
+
+  async listCalendarsForActor(): Promise<readonly CalendarListEntry[]> {
+    return [];
   }
 
   async listCalendarFreeBusyEvents(input: CalendarFreeBusyRequest): Promise<readonly CalendarFreeBusyEvent[]> {

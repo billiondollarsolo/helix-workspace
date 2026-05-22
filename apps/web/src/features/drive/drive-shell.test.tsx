@@ -459,4 +459,250 @@ describe("DriveShell", () => {
       expect(createCall?.body).toMatchObject({ kind: "folder", folderId: null });
     });
   });
+
+  describe("drag-and-drop upload", () => {
+    /** Build a minimal DataTransfer-like object for drop events. */
+    function makeDataTransfer(files: File[]): DataTransfer {
+      const fileListLike = Object.assign(files, {
+        item: (i: number) => files[i] ?? null,
+      }) as unknown as FileList;
+      const itemsLike = [] as unknown as DataTransferItemList;
+      return {
+        files: fileListLike,
+        items: itemsLike,
+        types: ["Files"],
+        dropEffect: "copy",
+        effectAllowed: "all",
+        clearData: () => undefined,
+        getData: () => "",
+        setData: () => undefined,
+        setDragImage: () => undefined,
+      };
+    }
+
+    function fireDragEvent(
+      element: Element,
+      type: string,
+      dataTransfer?: DataTransfer,
+    ) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      if (dataTransfer !== undefined) {
+        Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+      }
+      element.dispatchEvent(event);
+    }
+
+    it("shows the drop overlay when files are dragged over the main area", async () => {
+      render();
+      await settle();
+
+      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
+      expect(main).not.toBeNull();
+
+      // No overlay before drag
+      expect(container.querySelector('[data-testid="drive-drop-overlay"]')).toBeNull();
+
+      act(() => {
+        fireDragEvent(main!, "dragenter", makeDataTransfer([]));
+      });
+
+      expect(container.querySelector('[data-testid="drive-drop-overlay"]')).not.toBeNull();
+
+      // After dragleave the overlay disappears
+      act(() => {
+        fireDragEvent(main!, "dragleave", makeDataTransfer([]));
+      });
+      expect(container.querySelector('[data-testid="drive-drop-overlay"]')).toBeNull();
+    });
+
+    it("calls uploadDriveFile for each dropped file with the current folderId", async () => {
+      // Stub crypto.subtle.digest (not available in jsdom)
+      const digestSpy = vi.spyOn(crypto.subtle, "digest").mockResolvedValue(new ArrayBuffer(32));
+
+      fetchMock.mockImplementation((input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const body: unknown =
+          typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url !== "/api/auth/get-session") {
+          toolCalls.push({ url, body });
+        }
+        if (url === "/api/auth/get-session") {
+          return Promise.resolve(Response.json({}));
+        }
+        if (url === "/api/tools/drive.list") {
+          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
+        }
+        if (url === "/api/tools/drive.upload") {
+          return Promise.resolve(
+            Response.json({
+              objectId: "new-obj",
+              orgId: "org-1",
+              ownerActorId: "actor-1",
+              name: "test.txt",
+              folderId: null,
+              storageKey: "drive/test.txt",
+              mimeType: "text/plain",
+              byteSize: 4,
+              sha256: "a".repeat(64),
+              status: "prepared",
+              uploadUrl: null,
+              metadata: {},
+              createdAt: "2026-05-21T00:00:00.000Z",
+              updatedAt: "2026-05-21T00:00:00.000Z",
+            }),
+          );
+        }
+        if (url === "/api/tools/drive.finalize") {
+          return Promise.resolve(
+            Response.json({
+              id: "ver-1",
+              orgId: "org-1",
+              objectId: "new-obj",
+              versionNumber: 1,
+              storageKey: "drive/test.txt",
+              mimeType: "text/plain",
+              byteSize: 4,
+              sha256: "a".repeat(64),
+              metadata: {},
+              createdByActorId: "actor-1",
+              createdAt: "2026-05-21T00:00:00.000Z",
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({}));
+      });
+
+      render();
+      await settle();
+
+      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
+      expect(main).not.toBeNull();
+
+      const file1 = new File(["test"], "file1.txt", { type: "text/plain" });
+      const file2 = new File(["data"], "file2.txt", { type: "text/plain" });
+      const dt = makeDataTransfer([file1, file2]);
+
+      act(() => {
+        fireDragEvent(main!, "dragenter", dt);
+      });
+      act(() => {
+        fireDragEvent(main!, "drop", dt);
+      });
+      await settle();
+
+      // Both files should have triggered drive.upload calls
+      const uploadCalls = toolCalls.filter((c) => c.url === "/api/tools/drive.upload");
+      expect(uploadCalls.length).toBe(2);
+      // Both should target the root folderId (null) since we're at the root
+      for (const call of uploadCalls) {
+        expect((call.body as { folderId: unknown }).folderId).toBeNull();
+      }
+
+      digestSpy.mockRestore();
+    });
+  });
+
+  describe("FAB (floating action button)", () => {
+    it("renders the FAB in the drive main area", async () => {
+      render();
+      await settle();
+
+      const fab = container.querySelector<HTMLButtonElement>('[data-testid="drive-fab"]');
+      expect(fab).not.toBeNull();
+      expect(fab?.getAttribute("aria-label")).toBe("New");
+    });
+
+    it("clicking the FAB opens a menu with the same items as the sidebar New button", async () => {
+      render();
+      await settle();
+
+      const fab = container.querySelector<HTMLButtonElement>('[data-testid="drive-fab"]');
+      expect(fab).not.toBeNull();
+
+      // Menu not shown initially
+      expect(container.querySelector('[data-testid="drive-fab-menu"]')).toBeNull();
+
+      act(() => {
+        fab?.click();
+      });
+
+      const menu = container.querySelector('[data-testid="drive-fab-menu"]');
+      expect(menu).not.toBeNull();
+      const menuText = menu?.textContent ?? "";
+      expect(menuText).toContain("New folder");
+      expect(menuText).toContain("Document");
+      expect(menuText).toContain("Spreadsheet");
+      expect(menuText).toContain("Presentation");
+      expect(menuText).toContain("Upload file");
+    });
+
+    it("clicking a FAB menu item (Document) fires drive.create with kind:document", async () => {
+      fetchMock.mockImplementation((input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const body: unknown =
+          typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url !== "/api/auth/get-session") {
+          toolCalls.push({ url, body });
+        }
+        if (url === "/api/auth/get-session") {
+          return Promise.resolve(Response.json({}));
+        }
+        if (url === "/api/tools/drive.list") {
+          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
+        }
+        if (url === "/api/tools/drive.create") {
+          return Promise.resolve(Response.json({ id: "doc-fab-id", app: "docs" }));
+        }
+        return Promise.resolve(Response.json({}));
+      });
+
+      render();
+      await settle();
+
+      const fab = container.querySelector<HTMLButtonElement>('[data-testid="drive-fab"]');
+      act(() => {
+        fab?.click();
+      });
+
+      const documentItem = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+      ).find((btn) => btn.textContent?.trim() === "Document");
+      expect(documentItem).not.toBeNull();
+
+      act(() => {
+        documentItem?.click();
+      });
+      await settle();
+
+      const createCall = toolCalls.find((c) => c.url === "/api/tools/drive.create");
+      expect(createCall).not.toBeUndefined();
+      expect(createCall?.body).toMatchObject({ kind: "document", folderId: null });
+
+      // Menu closes after selection
+      expect(container.querySelector('[data-testid="drive-fab-menu"]')).toBeNull();
+
+      // Should navigate to the new doc's editor
+      expect(navigateMock).toHaveBeenCalledWith({ to: "/docs", search: { doc: "doc-fab-id" } });
+    });
+
+    it("FAB menu closes when escape is pressed", async () => {
+      render();
+      await settle();
+
+      const fab = container.querySelector<HTMLButtonElement>('[data-testid="drive-fab"]');
+      act(() => {
+        fab?.click();
+      });
+      expect(container.querySelector('[data-testid="drive-fab-menu"]')).not.toBeNull();
+
+      const menu = container.querySelector<HTMLDivElement>('[data-testid="drive-fab-menu"]');
+      act(() => {
+        const escEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
+        menu?.dispatchEvent(escEvent);
+      });
+      expect(container.querySelector('[data-testid="drive-fab-menu"]')).toBeNull();
+    });
+  });
 });

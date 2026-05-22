@@ -21,6 +21,33 @@ export interface CalendarRecord {
   readonly updatedAt: Date;
 }
 
+export type CalendarMembershipRole = "owner" | "writer" | "reader";
+
+/**
+ * A calendar as it appears in an actor's sidebar calendar-list. Combines the
+ * calendar record with the actor's membership: their role, whether the calendar
+ * is currently toggled visible, and any per-actor colour override. `group`
+ * partitions the list into "My calendars" (owned) and "Team" (subscribed).
+ */
+export interface CalendarListEntry {
+  readonly id: string;
+  readonly orgId: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly timezone: string;
+  /** Effective colour — the actor's override, else the calendar's colour. */
+  readonly color: string;
+  readonly ownerActorId: string;
+  readonly ownerDisplayName: string | null;
+  readonly role: CalendarMembershipRole;
+  readonly visible: boolean;
+  readonly group: "mine" | "team";
+  /** True when the actor may create/update events on this calendar. */
+  readonly writable: boolean;
+  readonly sortOrder: number;
+  readonly eventCount: number;
+}
+
 export interface CalendarAttendeeRecord {
   readonly id?: string | undefined;
   readonly orgId?: string | undefined;

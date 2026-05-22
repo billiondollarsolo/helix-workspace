@@ -54,6 +54,24 @@ export const mailOutboundStatus = pgEnum("mail_outbound_status", [
   "sent",
   "failed",
 ]);
+export const mailOutboundProviderKind = pgEnum("mail_outbound_provider_kind", [
+  "ses",
+  "mailgun",
+  "smtp",
+  "postmark",
+]);
+export const mailDkimKeyStatus = pgEnum("mail_dkim_key_status", [
+  "active",
+  "retiring",
+  "retired",
+]);
+export const mailRoutingActionKind = pgEnum("mail_routing_action_kind", [
+  "forward",
+  "alias",
+  "drop",
+  "tag",
+  "mailbox",
+]);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -671,6 +689,7 @@ export const mailThreadState = pgTable(
     snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
     readAt: timestamp("read_at", { withTimezone: true }),
     starred: boolean("starred").default(false).notNull(),
+    spamAt: timestamp("spam_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
@@ -682,6 +701,7 @@ export const mailThreadState = pgTable(
       table.actorId,
       table.starred,
     ),
+    spamIdx: index("mail_thread_state_spam_idx").on(table.orgId, table.actorId, table.spamAt),
   }),
 );
 
@@ -714,6 +734,160 @@ export const mailOutboundMessages = pgTable(
   (table) => ({
     actorStatusIdx: index("mail_outbound_actor_status_idx").on(table.actorId, table.status),
     outboxIdx: index("mail_outbound_outbox_idx").on(table.outboxId),
+  }),
+);
+
+export const mailOutboundProviders = pgTable(
+  "mail_outbound_providers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    name: text("name").notNull(),
+    kind: mailOutboundProviderKind("kind").notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    isDefault: boolean("is_default").default(false).notNull(),
+    config: jsonb("config").default({}).notNull(),
+    secretRef: text("secret_ref"),
+    createdBy: uuid("created_by"),
+    ...timestamps,
+  },
+  (table) => ({
+    orgIdx: index("mail_outbound_providers_org_idx").on(table.orgId, table.createdAt),
+    orgNameIdx: uniqueIndex("mail_outbound_providers_org_name_idx").on(table.orgId, table.name),
+    orgDefaultIdx: uniqueIndex("mail_outbound_providers_org_default_idx")
+      .on(table.orgId)
+      .where(sql`${table.isDefault}`),
+  }),
+);
+
+export const mailSendingDomains = pgTable(
+  "mail_sending_domains",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    domain: text("domain").notNull(),
+    isDefault: boolean("is_default").default(false).notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    providerId: uuid("provider_id").references(() => mailOutboundProviders.id, {
+      onDelete: "set null",
+    }),
+    createdBy: uuid("created_by"),
+    ...timestamps,
+  },
+  (table) => ({
+    orgDomainIdx: uniqueIndex("mail_sending_domains_org_domain_idx").on(table.orgId, table.domain),
+    orgIdx: index("mail_sending_domains_org_idx").on(table.orgId, table.createdAt),
+    orgDefaultIdx: uniqueIndex("mail_sending_domains_org_default_idx")
+      .on(table.orgId)
+      .where(sql`${table.isDefault}`),
+  }),
+);
+
+export const mailDkimKeys = pgTable(
+  "mail_dkim_keys",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    domainId: uuid("domain_id")
+      .references(() => mailSendingDomains.id, { onDelete: "cascade" })
+      .notNull(),
+    selector: text("selector").notNull(),
+    status: mailDkimKeyStatus("status").default("active").notNull(),
+    algorithm: text("algorithm").default("rsa-sha256").notNull(),
+    keyBits: integer("key_bits").default(2048).notNull(),
+    privateKeyPem: text("private_key_pem").notNull(),
+    publicKeyPem: text("public_key_pem").notNull(),
+    dnsRecord: text("dns_record").notNull(),
+    rotatedAt: timestamp("rotated_at", { withTimezone: true }),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    createdBy: uuid("created_by"),
+    ...timestamps,
+  },
+  (table) => ({
+    domainSelectorIdx: uniqueIndex("mail_dkim_keys_domain_selector_idx").on(
+      table.domainId,
+      table.selector,
+    ),
+    orgIdx: index("mail_dkim_keys_org_idx").on(table.orgId, table.domainId, table.status),
+    domainActiveIdx: uniqueIndex("mail_dkim_keys_domain_active_idx")
+      .on(table.domainId)
+      .where(sql`${table.status} = 'active'`),
+  }),
+);
+
+export const mailDmarcReports = pgTable(
+  "mail_dmarc_reports",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    domain: text("domain").notNull(),
+    orgName: text("org_name").default("").notNull(),
+    reportId: text("report_id").notNull(),
+    dateRangeBegin: timestamp("date_range_begin", { withTimezone: true }).notNull(),
+    dateRangeEnd: timestamp("date_range_end", { withTimezone: true }).notNull(),
+    policyP: text("policy_p").default("none").notNull(),
+    policySp: text("policy_sp"),
+    policyPct: integer("policy_pct"),
+    totalMessages: integer("total_messages").default(0).notNull(),
+    passMessages: integer("pass_messages").default(0).notNull(),
+    failMessages: integer("fail_messages").default(0).notNull(),
+    raw: jsonb("raw").default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueIdx: uniqueIndex("mail_dmarc_reports_unique_idx").on(
+      table.orgId,
+      table.domain,
+      table.orgName,
+      table.reportId,
+    ),
+    orgDomainIdx: index("mail_dmarc_reports_org_domain_idx").on(
+      table.orgId,
+      table.domain,
+      table.dateRangeEnd,
+    ),
+  }),
+);
+
+export const mailDmarcReportRecords = pgTable(
+  "mail_dmarc_report_records",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    reportId: uuid("report_id")
+      .references(() => mailDmarcReports.id, { onDelete: "cascade" })
+      .notNull(),
+    orgId: uuid("org_id").notNull(),
+    sourceIp: text("source_ip").notNull(),
+    messageCount: integer("message_count").default(0).notNull(),
+    disposition: text("disposition").default("none").notNull(),
+    dkimResult: text("dkim_result").default("fail").notNull(),
+    spfResult: text("spf_result").default("fail").notNull(),
+    headerFrom: text("header_from").default("").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    reportIdx: index("mail_dmarc_report_records_report_idx").on(table.reportId),
+    orgIdx: index("mail_dmarc_report_records_org_idx").on(table.orgId, table.sourceIp),
+  }),
+);
+
+export const mailInboundRoutingRules = pgTable(
+  "mail_inbound_routing_rules",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    name: text("name").notNull(),
+    isEnabled: boolean("is_enabled").default(true).notNull(),
+    priority: integer("priority").default(100).notNull(),
+    match: jsonb("match").default({}).notNull(),
+    actionKind: mailRoutingActionKind("action_kind").notNull(),
+    action: jsonb("action").default({}).notNull(),
+    createdBy: uuid("created_by"),
+    ...timestamps,
+  },
+  (table) => ({
+    orgIdx: index("mail_inbound_routing_rules_org_idx").on(table.orgId, table.priority),
+    orgNameIdx: uniqueIndex("mail_inbound_routing_rules_org_name_idx").on(table.orgId, table.name),
   }),
 );
 
@@ -863,6 +1037,103 @@ export const docsSuggestions = pgTable(
       table.status,
     ),
     orgCreatedIdx: index("docs_suggestions_org_created_idx").on(table.orgId, table.createdAt),
+  }),
+);
+
+export const sheets = pgTable(
+  "sheets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    ownerActorId: uuid("owner_actor_id").references(() => actors.id),
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+    title: text("title").notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => ({
+    orgUpdatedIdx: index("sheets_org_updated_idx").on(table.orgId, table.updatedAt),
+    ownerIdx: index("sheets_owner_idx").on(table.ownerActorId, table.deletedAt),
+  }),
+);
+
+export const sheetTabs = pgTable(
+  "sheet_tabs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    sheetId: uuid("sheet_id")
+      .references(() => sheets.id, { onDelete: "cascade" })
+      .notNull(),
+    name: text("name").notNull(),
+    position: integer("position").default(0).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => ({
+    sheetPositionIdx: index("sheet_tabs_sheet_position_idx").on(table.sheetId, table.position),
+    orgIdx: index("sheet_tabs_org_idx").on(table.orgId),
+  }),
+);
+
+export const sheetCells = pgTable(
+  "sheet_cells",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    sheetTabId: uuid("sheet_tab_id")
+      .references(() => sheetTabs.id, { onDelete: "cascade" })
+      .notNull(),
+    row: integer("row").notNull(),
+    col: integer("col").notNull(),
+    value: text("value").default("").notNull(),
+    format: jsonb("format").default({}).notNull(),
+    ...timestamps,
+  },
+  (table) => ({
+    tabCoordIdx: uniqueIndex("sheet_cells_tab_coord_idx").on(table.sheetTabId, table.row, table.col),
+    orgIdx: index("sheet_cells_org_idx").on(table.orgId),
+  }),
+);
+
+export const slideDecks = pgTable(
+  "slide_decks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    title: text("title").notNull(),
+    ownerActorId: uuid("owner_actor_id").references(() => actors.id),
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+    metadata: jsonb("metadata").default({}).notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => ({
+    orgUpdatedIdx: index("slide_decks_org_updated_idx").on(table.orgId, table.updatedAt),
+    ownerIdx: index("slide_decks_owner_idx").on(table.ownerActorId),
+  }),
+);
+
+export const slides = pgTable(
+  "slides",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    deckId: uuid("deck_id")
+      .references(() => slideDecks.id, { onDelete: "cascade" })
+      .notNull(),
+    position: integer("position").notNull(),
+    layout: text("layout").notNull(),
+    content: jsonb("content").default({}).notNull(),
+    speakerNotes: text("speaker_notes").default("").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    deckPositionIdx: uniqueIndex("slides_deck_position_idx").on(table.deckId, table.position),
+    orgDeckIdx: index("slides_org_deck_idx").on(table.orgId, table.deckId),
   }),
 );
 

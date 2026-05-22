@@ -209,6 +209,8 @@ export async function listDrive(
     readonly folderId?: string | null;
     readonly includeTrashed?: boolean;
     readonly limit?: number;
+    /** Filter to entries owned by a specific editor app: "docs" | "sheets" | "slides". */
+    readonly app?: string | null;
   } = {},
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<readonly DriveApiEntry[]> {
@@ -218,6 +220,7 @@ export async function listDrive(
       folderId: input.folderId ?? null,
       includeTrashed: input.includeTrashed ?? false,
       limit: input.limit ?? 100,
+      ...(input.app === undefined || input.app === null ? {} : { app: input.app }),
     },
     fetchImpl,
   );

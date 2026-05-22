@@ -32,6 +32,7 @@ const listSchema = z.object({
   folderId: uuidSchema.nullable().optional(),
   includeTrashed: z.boolean().default(false),
   limit: z.number().int().positive().max(250).default(100),
+  app: z.string().optional(),
 });
 
 const shareSchema = z.object({
@@ -139,6 +140,7 @@ export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOp
           folderId: input.folderId ?? null,
           includeTrashed: input.includeTrashed,
           limit: input.limit,
+          ...(input.app === undefined ? {} : { app: input.app }),
         })).map(serializeEntry),
       }),
     }),

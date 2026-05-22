@@ -68,6 +68,7 @@ export interface DriveStore {
     readonly folderId?: string | null;
     readonly includeTrashed?: boolean;
     readonly limit?: number;
+    readonly app?: string | null;
   }): Promise<readonly DriveEntryRecord[]>;
   share(input: {
     readonly orgId: string;
@@ -342,6 +343,7 @@ export class PostgresDriveStore
     readonly folderId?: string | null;
     readonly includeTrashed?: boolean;
     readonly limit?: number;
+    readonly app?: string | null;
   }): Promise<readonly DriveEntryRecord[]> {
     if (input.folderId !== undefined && input.folderId !== null) {
       await requireFolderAccess(this.sql, input.orgId, input.actorId, input.folderId);
@@ -367,6 +369,7 @@ export class PostgresDriveStore
         and o.kind = 'file'
         and coalesce(o.metadata->>'folderId', '') = coalesce(${input.folderId ?? null}::text, '')
         and (${input.includeTrashed ?? false} or o.deleted_at is null)
+        and (${input.app ?? null}::text is null or coalesce(o.metadata->>'app', 'file') = ${input.app ?? null})
         and (
           o.owner_actor_id = ${input.actorId}
           or exists (
@@ -1097,6 +1100,7 @@ function mapFolderEntry(row: DriveFolderRow): DriveEntryRecord {
     name: row.name,
     folderId: row.parent_folder_id,
     ownerActorId: row.owner_actor_id,
+    app: null,
     metadata: row.metadata,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
@@ -1115,6 +1119,7 @@ function mapObjectEntry(row: DriveSearchRow): DriveEntryRecord {
     name: stringMetadata(row.metadata, "name") ?? row.storage_key,
     folderId: nullableStringMetadata(row.metadata, "folderId"),
     ownerActorId: row.owner_actor_id,
+    app: stringMetadata(row.metadata, "app") ?? null,
     mimeType: row.mime_type,
     byteSize: row.byte_size,
     sha256: row.sha256,

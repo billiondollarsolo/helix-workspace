@@ -510,6 +510,7 @@ function driveEntry(id: string, name: string, mimeType: string): DriveEntryRecor
     name,
     folderId: null,
     ownerActorId: "agent-mcp",
+    app: null,
     mimeType,
     byteSize: 16,
     sha256: null,

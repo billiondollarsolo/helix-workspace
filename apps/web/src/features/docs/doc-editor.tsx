@@ -37,9 +37,9 @@ import {
 import type { DocsCollabPeer, DocsCollabStatus } from "./collab-provider";
 import {
   DOC_AI_SUGGESTIONS,
-  DOC_OUTLINE,
   SLASH_ITEMS,
   type DocSummary,
+  type OutlineEntry,
 } from "./data";
 import {
   docsCommentsQueryOptions,
@@ -85,13 +85,53 @@ the board. Each owner has time blocked for async input.</p>
 <li>Brightline — flexible, will follow Northwind</li></ul>
 `;
 
+/**
+ * Derives the current list of headings (h1/h2/h3) from a Tiptap editor's
+ * ProseMirror document state and re-derives it whenever the document changes.
+ */
+function useOutline(editor: Editor | null): readonly OutlineEntry[] {
+  const [outline, setOutline] = useState<readonly OutlineEntry[]>([]);
+
+  useEffect(() => {
+    if (editor === null) {
+      setOutline([]);
+      return;
+    }
+
+    const derive = () => {
+      const entries: OutlineEntry[] = [];
+      editor.state.doc.forEach((node) => {
+        if (node.type.name === "heading") {
+          const level = (node.attrs as { level: number }).level as 1 | 2 | 3;
+          const text = node.textContent;
+          if (text.length > 0) {
+            entries.push({ level, text });
+          }
+        }
+      });
+      setOutline(entries);
+    };
+
+    // Derive immediately (covers the case where content is already loaded).
+    derive();
+
+    // Re-derive on every document change.
+    editor.on("update", derive);
+    return () => {
+      editor.off("update", derive);
+    };
+  }, [editor]);
+
+  return outline;
+}
+
 export function DocEditor({ document, onBack, onShare, embedded = false }: DocEditorProps) {
   const queryClient = useQueryClient();
   const backendDocId = isBackendDocsDocumentId(document.id) ? document.id : null;
 
   const [showOutline, setShowOutline] = useState(true);
   const [rightRail, setRightRail] = useState<RightRail | null>("comments");
-  const [activeOutline, setActiveOutline] = useState("Open decisions");
+  const [activeOutline, setActiveOutline] = useState("");
   const [title, setTitle] = useState(document.title);
   const [editingTitle, setEditingTitle] = useState(false);
   const [suggestionMode, setSuggestionMode] = useState(false);
@@ -105,6 +145,8 @@ export function DocEditor({ document, onBack, onShare, embedded = false }: DocEd
     fallbackContent: FALLBACK_BODY,
     editable: !suggestionMode,
   });
+
+  const outline = useOutline(collab.editor);
 
   useEffect(() => {
     setTitle(document.title);
@@ -156,7 +198,9 @@ export function DocEditor({ document, onBack, onShare, embedded = false }: DocEd
     <div style={{ display: "flex", flex: 1, minHeight: 0, background: "var(--bg)" }}>
       {showOutline ? (
         <OutlineRail
+          outline={outline}
           activeOutline={activeOutline}
+          editor={collab.editor}
           onSelect={setActiveOutline}
           onCollapse={() => setShowOutline(false)}
         />
@@ -239,14 +283,49 @@ export function DocEditor({ document, onBack, onShare, embedded = false }: DocEd
 }
 
 function OutlineRail({
+  outline,
   activeOutline,
+  editor,
   onSelect,
   onCollapse,
 }: {
+  readonly outline: readonly OutlineEntry[];
   readonly activeOutline: string;
+  readonly editor: Editor | null;
   readonly onSelect: (text: string) => void;
   readonly onCollapse: () => void;
 }) {
+  /**
+   * Scroll the nth heading of the given level+text into view in the editor.
+   * We find the heading node by walking the ProseMirror document; `editor.commands.focus(pos)`
+   * moves the cursor there and the browser scrolls it into view.
+   */
+  const scrollToHeading = (entry: OutlineEntry, index: number) => {
+    if (editor === null) {
+      return;
+    }
+    let found = 0;
+    let targetPos: number | null = null;
+    editor.state.doc.forEach((node, offset) => {
+      if (targetPos !== null) {
+        return;
+      }
+      if (
+        node.type.name === "heading" &&
+        (node.attrs as { level: number }).level === entry.level &&
+        node.textContent === entry.text
+      ) {
+        if (found === index) {
+          targetPos = offset + 1; // +1 to enter the node
+        }
+        found += 1;
+      }
+    });
+    if (targetPos !== null) {
+      editor.commands.focus(targetPos);
+    }
+  };
+
   return (
     <aside
       aria-label="Document outline"
@@ -281,31 +360,47 @@ function OutlineRail({
           <Icons.ChevronLeft />
         </button>
       </div>
-      {DOC_OUTLINE.map((entry) => {
-        const active = entry.text === activeOutline;
-        return (
-          <button
-            key={entry.text}
-            type="button"
-            aria-current={active ? "true" : undefined}
-            onClick={() => onSelect(entry.text)}
-            style={{
-              display: "block",
-              width: "100%",
-              textAlign: "left",
-              padding: "3px 8px",
-              paddingLeft: 8 + (entry.level - 1) * 12,
-              fontSize: 12,
-              color: active ? "var(--accent)" : "var(--text-2)",
-              fontWeight: active ? 500 : 400,
-              borderRadius: 4,
-              background: active ? "var(--accent-soft)" : "transparent",
-            }}
-          >
-            {entry.text}
-          </button>
-        );
-      })}
+      {outline.length === 0 ? (
+        <p
+          data-testid="outline-empty-hint"
+          style={{ fontSize: 11, color: "var(--text-3)", margin: 0, lineHeight: 1.5 }}
+        >
+          Headings you add will appear here.
+        </p>
+      ) : (
+        outline.map((entry, index) => {
+          const active = entry.text === activeOutline;
+          return (
+            <button
+              // Using index here is fine because outline entries are rendered in
+              // document order and the same heading text at the same level will
+              // share a position.  We include the level to make the key more
+              // unique when the document has repeated headings.
+              key={`${String(entry.level)}-${entry.text}-${String(index)}`}
+              type="button"
+              aria-current={active ? "true" : undefined}
+              onClick={() => {
+                onSelect(entry.text);
+                scrollToHeading(entry, index);
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "3px 8px",
+                paddingLeft: 8 + (entry.level - 1) * 12,
+                fontSize: 12,
+                color: active ? "var(--accent)" : "var(--text-2)",
+                fontWeight: active ? 500 : 400,
+                borderRadius: 4,
+                background: active ? "var(--accent-soft)" : "transparent",
+              }}
+            >
+              {entry.text}
+            </button>
+          );
+        })
+      )}
     </aside>
   );
 }
@@ -374,8 +469,8 @@ function TitleBar({
       ) : (
         <button
           type="button"
-          className="truncate docs-title-button"
-          title="Rename document"
+          className="truncate docs-title-button docs-title-rename-btn"
+          title="Click to rename"
           onClick={onStartEditing}
           style={{
             fontSize: 13,
@@ -387,9 +482,19 @@ function TitleBar({
             border: "1px solid transparent",
             cursor: "text",
             maxWidth: "60%",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
           }}
         >
-          {title}
+          <span className="truncate">{title}</span>
+          <span
+            className="docs-title-pencil"
+            aria-hidden="true"
+            style={{ flexShrink: 0, opacity: 0, transition: "opacity 0.15s" }}
+          >
+            <Icons.EditPen size={12} />
+          </span>
         </button>
       )}
       <SavedChip status={status} renamePending={renamePending} />

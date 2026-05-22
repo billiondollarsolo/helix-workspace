@@ -113,17 +113,6 @@ export interface OutlineEntry {
   readonly text: string;
 }
 
-export const DOC_OUTLINE: readonly OutlineEntry[] = [
-  { level: 1, text: "Q3 Roadmap" },
-  { level: 2, text: "Context" },
-  { level: 2, text: "Open decisions" },
-  { level: 3, text: "Atlas migration timing" },
-  { level: 3, text: "Platform hiring" },
-  { level: 3, text: "Pricing tier" },
-  { level: 2, text: "Risks & dependencies" },
-  { level: 2, text: "Timeline" },
-  { level: 2, text: "Appendix" },
-];
 
 export interface DocComment {
   readonly id: string;

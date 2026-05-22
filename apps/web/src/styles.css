@@ -1209,3 +1209,17 @@ a {
 .collaboration-carets__selection {
   border-radius: 2px;
 }
+
+/* ============================================================
+   Docs — editable title button affordance
+   ============================================================ */
+.docs-title-rename-btn:hover,
+.docs-title-rename-btn:focus-visible {
+  border-color: var(--border) !important;
+  background: var(--hover) !important;
+  outline: none;
+}
+.docs-title-rename-btn:hover .docs-title-pencil,
+.docs-title-rename-btn:focus-visible .docs-title-pencil {
+  opacity: 1 !important;
+}

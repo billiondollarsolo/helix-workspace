@@ -165,6 +165,23 @@ export async function exportDocsDocument(
   );
 }
 
+export async function updateDocsTitle(
+  input: {
+    readonly docId: string;
+    readonly title: string;
+  },
+  fetchImpl: DocsApiFetch = authenticatedFetch,
+): Promise<DocsApiDocument> {
+  return callDocsTool<DocsApiDocument>(
+    "docs.update-title",
+    {
+      docId: input.docId,
+      title: input.title,
+    },
+    fetchImpl,
+  );
+}
+
 export async function getDocsDocument(
   input: {
     readonly docId: string;
@@ -178,6 +195,67 @@ export async function getDocsDocument(
     },
     fetchImpl,
   );
+}
+
+/**
+ * A comment surfaced for the rail.
+ *
+ * Backend gap: the Docs platform exposes `docs.comment.create` but no
+ * `docs.comment.list` tool — open comments are only retrievable through
+ * `docs.export` with `includeComments: true`, which appends a `## Comments`
+ * section (`- Author: body`). {@link listDocsComments} parses that section so
+ * the rail can render real backend comments until a list tool ships.
+ */
+export interface DocsCommentSummary {
+  readonly id: string;
+  readonly author: string;
+  readonly body: string;
+}
+
+export async function listDocsComments(
+  input: { readonly docId: string },
+  fetchImpl: DocsApiFetch = authenticatedFetch,
+): Promise<readonly DocsCommentSummary[]> {
+  const exported = await exportDocsDocument(
+    { docId: input.docId, format: "markdown", includeComments: true },
+    fetchImpl,
+  );
+  return parseExportedComments(exported.text ?? decodeBase64Text(exported.contentBase64));
+}
+
+function decodeBase64Text(value: string): string {
+  try {
+    return typeof atob === "function"
+      ? atob(value)
+      : Buffer.from(value, "base64").toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** Pulls `- Author: body` lines out of an exported doc's `## Comments` block. */
+export function parseExportedComments(markdown: string): readonly DocsCommentSummary[] {
+  const lines = markdown.split(/\r?\n/u);
+  const start = lines.findIndex((line) => /^##\s+Comments\s*$/u.test(line));
+  if (start === -1) {
+    return [];
+  }
+  const comments: DocsCommentSummary[] = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (/^#{1,6}\s/u.test(line)) {
+      break;
+    }
+    const match = /^-\s+(.+?):\s+([\s\S]*)$/u.exec(line.trim());
+    if (match !== null) {
+      comments.push({
+        id: `comment-${String(index)}`,
+        author: match[1] ?? "Unknown",
+        body: match[2] ?? "",
+      });
+    }
+  }
+  return comments;
 }
 
 export async function createDocsComment(

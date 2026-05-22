@@ -13,7 +13,14 @@
    offline/error fallback when a query fails. */
 
 import "./mail-shell.css";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons, type IconName } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
@@ -27,6 +34,7 @@ import {
   setMailThreadRead,
   setMailThreadStarred,
   snoozeMailThread,
+  spamMailThread,
   type MailAttachment,
   type MailFolderKey,
   type MailFolderSummary,
@@ -332,19 +340,31 @@ function MailSidebar({
 
 interface ThreadRowProps {
   readonly thread: MailThreadRow;
+  readonly checked: boolean;
   readonly selected: boolean;
   readonly labelColors: ReadonlyMap<string, MailLabelSummary>;
   readonly onClick: () => void;
   readonly onToggleStar: () => void;
+  readonly onToggleCheck: (event: React.MouseEvent) => void;
+  readonly onArchive: () => void;
+  readonly onDelete: () => void;
+  readonly onSnooze: () => void;
+  readonly onToggleRead: () => void;
   readonly busy: boolean;
 }
 
 function ThreadRow({
   thread,
+  checked,
   selected,
   labelColors,
   onClick,
   onToggleStar,
+  onToggleCheck,
+  onArchive,
+  onDelete,
+  onSnooze,
+  onToggleRead,
   busy,
 }: ThreadRowProps) {
   const labels = thread.labels
@@ -353,6 +373,7 @@ function ThreadRow({
 
   return (
     <div
+      className="mail-thread-row"
       role="button"
       tabIndex={0}
       onClick={onClick}
@@ -370,18 +391,22 @@ function ThreadRow({
         padding: "var(--rd-row-py) 16px",
         borderBottom: "1px solid var(--border)",
         cursor: "pointer",
-        background: selected ? "var(--accent-soft)" : "transparent",
+        background: checked
+          ? "var(--accent-soft)"
+          : selected
+            ? "var(--accent-soft)"
+            : "transparent",
         transition: "background 0.08s",
         fontSize: "var(--rd-row-fs)",
         minHeight: "var(--rd-list-row-h)",
       }}
       onMouseEnter={(event) => {
-        if (!selected) {
+        if (!checked && !selected) {
           event.currentTarget.style.background = "var(--hover)";
         }
       }}
       onMouseLeave={(event) => {
-        if (!selected) {
+        if (!checked && !selected) {
           event.currentTarget.style.background = "transparent";
         }
       }}
@@ -389,8 +414,11 @@ function ThreadRow({
       <input
         type="checkbox"
         aria-label={`Select ${thread.subject}`}
+        checked={checked}
+        onChange={() => undefined}
         onClick={(event) => {
           event.stopPropagation();
+          onToggleCheck(event);
         }}
         style={{ accentColor: "var(--accent)", margin: 0 }}
       />
@@ -463,20 +491,86 @@ function ThreadRow({
           </span>
         </span>
       </div>
-      <span
-        style={{
-          fontSize: 11,
-          fontWeight: thread.unread ? 600 : 400,
-          color: thread.unread ? "var(--text-2)" : "var(--text-3)",
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {thread.hasAttachment && <Icons.Paperclip />}
-        <span>{formatThreadTime(thread.time)}</span>
-      </span>
+      {/* Date + inline hover actions cell */}
+      <div className="mail-thread-row-meta">
+        <span
+          className="mail-thread-row-date"
+          style={{
+            fontSize: 11,
+            fontWeight: thread.unread ? 600 : 400,
+            color: thread.unread ? "var(--text-2)" : "var(--text-3)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {thread.hasAttachment && <Icons.Paperclip />}
+          <span>{formatThreadTime(thread.time)}</span>
+        </span>
+        {/* Hover action strip — visible on :hover / :focus-within via CSS */}
+        <div
+          className="mail-thread-row-actions"
+          role="toolbar"
+          aria-label={`Actions for ${thread.subject}`}
+        >
+          <button
+            type="button"
+            className="mail-row-action-btn"
+            aria-label="Archive"
+            title="Archive"
+            tabIndex={0}
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onArchive();
+            }}
+          >
+            <Icons.Archive />
+          </button>
+          <button
+            type="button"
+            className="mail-row-action-btn"
+            aria-label="Delete"
+            title="Delete"
+            tabIndex={0}
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete();
+            }}
+          >
+            <Icons.Trash />
+          </button>
+          <button
+            type="button"
+            className="mail-row-action-btn"
+            aria-label={thread.unread ? "Mark read" : "Mark unread"}
+            title={thread.unread ? "Mark read" : "Mark unread"}
+            tabIndex={0}
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleRead();
+            }}
+          >
+            {thread.unread ? <Icons.Eye /> : <Icons.Mail />}
+          </button>
+          <button
+            type="button"
+            className="mail-row-action-btn"
+            aria-label="Snooze"
+            title="Snooze"
+            tabIndex={0}
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSnooze();
+            }}
+          >
+            <Icons.Snooze />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -506,6 +600,8 @@ function EmptyState({
 
 /* --------------------------------------------------------------- thread list */
 
+type SelectAllSubset = "all" | "none" | "read" | "unread" | "starred" | "unstarred";
+
 interface ThreadListProps {
   readonly tab: MailTabId;
   readonly onTab: (tab: MailTabId) => void;
@@ -516,6 +612,8 @@ interface ThreadListProps {
   readonly query: string;
   readonly onClearQuery: () => void;
   readonly labelColors: ReadonlyMap<string, MailLabelSummary>;
+  readonly labels: readonly MailLabelSummary[];
+  readonly folders: readonly MailFolderSummary[];
   readonly total: number;
   readonly offset: number;
   readonly limit: number;
@@ -524,6 +622,25 @@ interface ThreadListProps {
   readonly isError: boolean;
   readonly onToggleStar: (thread: MailThreadRow) => void;
   readonly pendingThreadId: string | null;
+  // Row-level mutations
+  readonly onArchive: (threadId: string) => void;
+  readonly onDelete: (threadId: string) => void;
+  readonly onSnooze: (threadId: string) => void;
+  readonly onToggleRead: (thread: MailThreadRow) => void;
+  // Bulk
+  readonly checkedIds: ReadonlySet<string>;
+  readonly onCheckedChange: (ids: ReadonlySet<string>) => void;
+  readonly onBulkArchive: (ids: ReadonlySet<string>) => void;
+  readonly onBulkDelete: (ids: ReadonlySet<string>) => void;
+  readonly onBulkSpam: (ids: ReadonlySet<string>) => void;
+  readonly onBulkRead: (ids: ReadonlySet<string>, unread: boolean) => void;
+  readonly onBulkSnooze: (ids: ReadonlySet<string>) => void;
+  readonly onBulkMove: (ids: ReadonlySet<string>, folderId: MailFolderKey) => void;
+  readonly onBulkLabel: (
+    ids: ReadonlySet<string>,
+    labelSlug: string,
+    add: boolean,
+  ) => void;
 }
 
 function ThreadList({
@@ -536,6 +653,8 @@ function ThreadList({
   query,
   onClearQuery,
   labelColors,
+  labels,
+  folders,
   total,
   offset,
   limit,
@@ -544,6 +663,19 @@ function ThreadList({
   isError,
   onToggleStar,
   pendingThreadId,
+  onArchive,
+  onDelete,
+  onSnooze,
+  onToggleRead,
+  checkedIds,
+  onCheckedChange,
+  onBulkArchive,
+  onBulkDelete,
+  onBulkSpam,
+  onBulkRead,
+  onBulkSnooze,
+  onBulkMove,
+  onBulkLabel,
 }: ThreadListProps) {
   const emptyState = MAIL_EMPTY_STATES[folder];
   const isEmptyFolder = emptyState != null && threads.length === 0 && !isLoading;
@@ -551,6 +683,131 @@ function ThreadList({
     query.trim() !== "" && threads.length === 0 && !isEmptyFolder && !isLoading;
   const rangeStart = total === 0 ? 0 : offset + 1;
   const rangeEnd = offset + threads.length;
+
+  // Select-all dropdown state
+  const [selectDropOpen, setSelectDropOpen] = useState(false);
+  const selectDropRef = useRef<HTMLDivElement>(null);
+
+  // Bulk menus
+  const [moveMenuOpen, setMoveMenuOpen] = useState(false);
+  const [labelsMenuOpen, setLabelsMenuOpen] = useState(false);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
+  const labelsMenuRef = useRef<HTMLDivElement>(null);
+
+  // Shift-click tracking: last checked index (by threadId)
+  const lastCheckedRef = useRef<string | null>(null);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        selectDropRef.current &&
+        !selectDropRef.current.contains(e.target as Node)
+      ) {
+        setSelectDropOpen(false);
+      }
+      if (
+        moveMenuRef.current &&
+        !moveMenuRef.current.contains(e.target as Node)
+      ) {
+        setMoveMenuOpen(false);
+      }
+      if (
+        labelsMenuRef.current &&
+        !labelsMenuRef.current.contains(e.target as Node)
+      ) {
+        setLabelsMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  const hasBulk = checkedIds.size > 0;
+  const allChecked = threads.length > 0 && threads.every((t) => checkedIds.has(t.threadId));
+  const someChecked = !allChecked && checkedIds.size > 0;
+
+  function applySelectSubset(subset: SelectAllSubset) {
+    let next: ReadonlySet<string>;
+    switch (subset) {
+      case "all":
+        next = new Set(threads.map((t) => t.threadId));
+        break;
+      case "none":
+        next = new Set();
+        break;
+      case "read":
+        next = new Set(threads.filter((t) => !t.unread).map((t) => t.threadId));
+        break;
+      case "unread":
+        next = new Set(threads.filter((t) => t.unread).map((t) => t.threadId));
+        break;
+      case "starred":
+        next = new Set(threads.filter((t) => t.starred).map((t) => t.threadId));
+        break;
+      case "unstarred":
+        next = new Set(threads.filter((t) => !t.starred).map((t) => t.threadId));
+        break;
+    }
+    onCheckedChange(next);
+    setSelectDropOpen(false);
+    lastCheckedRef.current = null;
+  }
+
+  function handleMasterCheckbox() {
+    if (allChecked) {
+      onCheckedChange(new Set());
+    } else {
+      onCheckedChange(new Set(threads.map((t) => t.threadId)));
+    }
+    lastCheckedRef.current = null;
+  }
+
+  function handleRowCheck(thread: MailThreadRow, event: React.MouseEvent) {
+    const idx = threads.findIndex((t) => t.threadId === thread.threadId);
+    if (event.shiftKey && lastCheckedRef.current !== null) {
+      const lastIdx = threads.findIndex((t) => t.threadId === lastCheckedRef.current);
+      if (lastIdx !== -1) {
+        const lo = Math.min(idx, lastIdx);
+        const hi = Math.max(idx, lastIdx);
+        const rangeIds = threads.slice(lo, hi + 1).map((t) => t.threadId);
+        const next = new Set(checkedIds);
+        for (const id of rangeIds) {
+          next.add(id);
+        }
+        onCheckedChange(next);
+        lastCheckedRef.current = thread.threadId;
+        return;
+      }
+    }
+    const next = new Set(checkedIds);
+    if (next.has(thread.threadId)) {
+      next.delete(thread.threadId);
+    } else {
+      next.add(thread.threadId);
+    }
+    onCheckedChange(next);
+    lastCheckedRef.current = thread.threadId;
+  }
+
+  // Determine if a majority are unread to decide the bulk read button label
+  const checkedUnreadCount = threads.filter(
+    (t) => checkedIds.has(t.threadId) && t.unread,
+  ).length;
+  const bulkReadLabel =
+    checkedUnreadCount >= checkedIds.size / 2 ? "Mark read" : "Mark unread";
+  const bulkReadUnread = !(checkedUnreadCount >= checkedIds.size / 2);
+
+  const SELECT_SUBSETS: Array<{ label: string; value: SelectAllSubset }> = [
+    { label: "All", value: "all" },
+    { label: "None", value: "none" },
+    { label: "Read", value: "read" },
+    { label: "Unread", value: "unread" },
+    { label: "Starred", value: "starred" },
+    { label: "Unstarred", value: "unstarred" },
+  ];
 
   return (
     <div
@@ -581,94 +838,302 @@ function ThreadList({
           );
         })}
       </div>
-      <div
-        style={{
-          height: 36,
-          display: "flex",
-          alignItems: "center",
-          padding: "0 16px",
-          gap: 8,
-          borderBottom: "1px solid var(--border)",
-          color: "var(--text-3)",
-          fontSize: 12,
-        }}
-      >
-        <input
-          type="checkbox"
-          style={{ accentColor: "var(--accent)" }}
-          aria-label="Select all"
-        />
-        <button type="button" className="icon-btn" aria-label="Filter">
-          <Icons.Filter />
-        </button>
-        <button type="button" className="icon-btn" aria-label="More actions">
-          <Icons.More />
-        </button>
-        {query.trim() !== "" && (
-          <span
-            style={{
-              marginLeft: 4,
-              fontSize: 11,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            <span>Filtering by</span>
-            <span
-              className="chip accent"
-              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-            >
-              {query}
-              <button
-                type="button"
-                onClick={onClearQuery}
-                aria-label="Clear search"
-                style={{ display: "inline-flex" }}
-              >
-                <Icons.X size={10} />
-              </button>
-            </span>
-          </span>
-        )}
-        <span
+
+      {/* ---- Normal toolbar (no selection) ---- */}
+      {!hasBulk && (
+        <div
           style={{
-            marginLeft: "auto",
+            height: 36,
             display: "flex",
             alignItems: "center",
-            gap: 4,
-            whiteSpace: "nowrap",
+            padding: "0 16px",
+            gap: 8,
+            borderBottom: "1px solid var(--border)",
+            color: "var(--text-3)",
+            fontSize: 12,
           }}
         >
-          <span>
-            {total === 0
-              ? "No results"
-              : `${String(rangeStart)}–${String(rangeEnd)} of ${String(total)}`}
+          {/* Master checkbox + select-all caret */}
+          <div className="mail-select-all-wrap" ref={selectDropRef}>
+            <input
+              type="checkbox"
+              style={{ accentColor: "var(--accent)" }}
+              aria-label="Select all"
+              checked={allChecked}
+              ref={(el) => {
+                if (el) {
+                  el.indeterminate = someChecked;
+                }
+              }}
+              onChange={handleMasterCheckbox}
+            />
+            <button
+              type="button"
+              className="mail-select-caret"
+              aria-label="Select subset"
+              aria-haspopup="listbox"
+              aria-expanded={selectDropOpen}
+              onClick={() => {
+                setSelectDropOpen((v) => !v);
+              }}
+            >
+              <Icons.ChevronDown size={10} />
+            </button>
+            {selectDropOpen && (
+              <div
+                className="mail-select-dropdown"
+                role="listbox"
+                aria-label="Select subset"
+              >
+                {SELECT_SUBSETS.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    className="mail-select-dropdown-item"
+                    role="option"
+                    aria-selected={false}
+                    onClick={() => {
+                      applySelectSubset(item.value);
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="button" className="icon-btn" aria-label="Filter">
+            <Icons.Filter />
+          </button>
+          <button type="button" className="icon-btn" aria-label="More actions">
+            <Icons.More />
+          </button>
+          {query.trim() !== "" && (
+            <span
+              style={{
+                marginLeft: 4,
+                fontSize: 11,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span>Filtering by</span>
+              <span
+                className="chip accent"
+                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+              >
+                {query}
+                <button
+                  type="button"
+                  onClick={onClearQuery}
+                  aria-label="Clear search"
+                  style={{ display: "inline-flex" }}
+                >
+                  <Icons.X size={10} />
+                </button>
+              </span>
+            </span>
+          )}
+          <span
+            style={{
+              marginLeft: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span>
+              {total === 0
+                ? "No results"
+                : `${String(rangeStart)}–${String(rangeEnd)} of ${String(total)}`}
+            </span>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Newer"
+              disabled={offset === 0 || isLoading}
+              onClick={() => {
+                onPage(Math.max(0, offset - limit));
+              }}
+            >
+              <Icons.ChevronLeft />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Older"
+              disabled={offset + limit >= total || isLoading}
+              onClick={() => {
+                onPage(offset + limit);
+              }}
+            >
+              <Icons.ChevronRight />
+            </button>
           </span>
+        </div>
+      )}
+
+      {/* ---- Bulk-action toolbar ---- */}
+      {hasBulk && (
+        <div className="mail-bulk-toolbar" role="toolbar" aria-label="Bulk actions">
+          <input
+            type="checkbox"
+            style={{ accentColor: "var(--accent)" }}
+            aria-label="Deselect all"
+            checked={allChecked}
+            ref={(el) => {
+              if (el) {
+                el.indeterminate = someChecked;
+              }
+            }}
+            onChange={() => {
+              onCheckedChange(new Set());
+            }}
+          />
+          <span className="mail-bulk-toolbar-count">
+            {String(checkedIds.size)} selected
+          </span>
+          <div className="v-divider" style={{ height: 18, margin: "0 2px" }} />
           <button
             type="button"
-            className="icon-btn"
-            aria-label="Newer"
-            disabled={offset === 0 || isLoading}
+            className="mail-bulk-btn"
+            aria-label="Archive selected"
             onClick={() => {
-              onPage(Math.max(0, offset - limit));
+              onBulkArchive(checkedIds);
             }}
           >
-            <Icons.ChevronLeft />
+            <Icons.Archive /> Archive
           </button>
           <button
             type="button"
-            className="icon-btn"
-            aria-label="Older"
-            disabled={offset + limit >= total || isLoading}
+            className="mail-bulk-btn"
+            aria-label="Report spam"
             onClick={() => {
-              onPage(offset + limit);
+              onBulkSpam(checkedIds);
             }}
           >
-            <Icons.ChevronRight />
+            <Icons.Bell /> Report spam
           </button>
-        </span>
-      </div>
+          <button
+            type="button"
+            className="mail-bulk-btn"
+            aria-label="Delete selected"
+            onClick={() => {
+              onBulkDelete(checkedIds);
+            }}
+          >
+            <Icons.Trash /> Delete
+          </button>
+          <button
+            type="button"
+            className="mail-bulk-btn"
+            aria-label={bulkReadLabel}
+            onClick={() => {
+              onBulkRead(checkedIds, bulkReadUnread);
+            }}
+          >
+            <Icons.Eye /> {bulkReadLabel}
+          </button>
+          <button
+            type="button"
+            className="mail-bulk-btn"
+            aria-label="Snooze selected"
+            onClick={() => {
+              onBulkSnooze(checkedIds);
+            }}
+          >
+            <Icons.Snooze /> Snooze
+          </button>
+          {/* Move to menu */}
+          <div className="mail-menu-wrap" ref={moveMenuRef}>
+            <button
+              type="button"
+              className="mail-bulk-btn"
+              aria-label="Move to"
+              aria-haspopup="menu"
+              aria-expanded={moveMenuOpen}
+              onClick={() => {
+                setMoveMenuOpen((v) => !v);
+                setLabelsMenuOpen(false);
+              }}
+            >
+              <Icons.Folder /> Move to <Icons.ChevronDown size={10} />
+            </button>
+            {moveMenuOpen && (
+              <div className="mail-menu-dropdown" role="menu" aria-label="Move to folder">
+                {folders.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className="mail-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      onBulkMove(checkedIds, f.id);
+                      setMoveMenuOpen(false);
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* Labels menu */}
+          <div className="mail-menu-wrap" ref={labelsMenuRef}>
+            <button
+              type="button"
+              className="mail-bulk-btn"
+              aria-label="Labels"
+              aria-haspopup="menu"
+              aria-expanded={labelsMenuOpen}
+              onClick={() => {
+                setLabelsMenuOpen((v) => !v);
+                setMoveMenuOpen(false);
+              }}
+            >
+              <Icons.Tag /> Labels <Icons.ChevronDown size={10} />
+            </button>
+            {labelsMenuOpen && (
+              <div className="mail-menu-dropdown" role="menu" aria-label="Apply label">
+                {labels.map((lbl) => {
+                  // A label is "applied" if ALL checked threads have it
+                  const applied = threads
+                    .filter((t) => checkedIds.has(t.threadId))
+                    .every((t) => t.labels.includes(lbl.slug));
+                  return (
+                    <button
+                      key={lbl.id}
+                      type="button"
+                      className="mail-menu-item"
+                      role="menuitemcheckbox"
+                      aria-checked={applied}
+                      onClick={() => {
+                        onBulkLabel(checkedIds, lbl.slug, !applied);
+                        setLabelsMenuOpen(false);
+                      }}
+                    >
+                      <span
+                        className="mail-menu-label-dot"
+                        style={{ background: lbl.color }}
+                      />
+                      {lbl.name}
+                      {applied && (
+                        <Icons.Check
+                          className="mail-menu-item-check"
+                          style={{ marginLeft: "auto" }}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div style={{ flex: 1, overflowY: "auto" }}>
         {isError && (
           <div
@@ -730,6 +1195,7 @@ function ThreadList({
             <ThreadRow
               key={thread.threadId}
               thread={thread}
+              checked={checkedIds.has(thread.threadId)}
               selected={selected === thread.threadId}
               labelColors={labelColors}
               onClick={() => {
@@ -737,6 +1203,21 @@ function ThreadList({
               }}
               onToggleStar={() => {
                 onToggleStar(thread);
+              }}
+              onToggleCheck={(event) => {
+                handleRowCheck(thread, event);
+              }}
+              onArchive={() => {
+                onArchive(thread.threadId);
+              }}
+              onDelete={() => {
+                onDelete(thread.threadId);
+              }}
+              onSnooze={() => {
+                onSnooze(thread.threadId);
+              }}
+              onToggleRead={() => {
+                onToggleRead(thread);
               }}
               busy={pendingThreadId === thread.threadId}
             />
@@ -1756,6 +2237,8 @@ export function MailShell() {
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Checked (bulk-select) thread IDs
+  const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set());
 
   const foldersQuery = useQuery(mailFoldersQueryOptions());
   const labelsQuery = useQuery(mailLabelsQueryOptions());
@@ -1886,6 +2369,18 @@ export function MailShell() {
     onSuccess: invalidateLists,
   });
 
+  const spamMutation = useMutation({
+    mutationFn: (threadId: string) => spamMailThread(threadId),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not report spam. Try again.");
+    },
+    onSuccess: () => {
+      invalidateLists();
+      setSelected(null);
+    },
+  });
+
   const handleSelect = useCallback(
     (id: string) => {
       setSelected(id);
@@ -1897,11 +2392,123 @@ export function MailShell() {
     [readMutation, threads],
   );
 
+  // Row-level hover actions
+  const handleRowArchive = useCallback(
+    (threadId: string) => {
+      archiveMutation.mutate(threadId);
+    },
+    [archiveMutation],
+  );
+
+  const handleRowDelete = useCallback(
+    (threadId: string) => {
+      deleteMutation.mutate(threadId);
+    },
+    [deleteMutation],
+  );
+
+  const handleRowSnooze = useCallback(
+    (threadId: string) => {
+      snoozeMutation.mutate(threadId);
+    },
+    [snoozeMutation],
+  );
+
+  const handleRowToggleRead = useCallback(
+    (thread: MailThreadRow) => {
+      readMutation.mutate({ threadId: thread.threadId, unread: !thread.unread });
+    },
+    [readMutation],
+  );
+
+  // Bulk actions — apply to all checked IDs, then clear selection
+  const handleBulkArchive = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        archiveMutation.mutate(threadId);
+      }
+      setCheckedIds(new Set());
+    },
+    [archiveMutation],
+  );
+
+  const handleBulkDelete = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        deleteMutation.mutate(threadId);
+      }
+      setCheckedIds(new Set());
+    },
+    [deleteMutation],
+  );
+
+  const handleBulkSpam = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        spamMutation.mutate(threadId);
+      }
+      setCheckedIds(new Set());
+    },
+    [spamMutation],
+  );
+
+  const handleBulkRead = useCallback(
+    (ids: ReadonlySet<string>, unread: boolean) => {
+      for (const threadId of ids) {
+        readMutation.mutate({ threadId, unread });
+      }
+      setCheckedIds(new Set());
+    },
+    [readMutation],
+  );
+
+  const handleBulkSnooze = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        snoozeMutation.mutate(threadId);
+      }
+      setCheckedIds(new Set());
+    },
+    [snoozeMutation],
+  );
+
+  const handleBulkMove = useCallback(
+    (ids: ReadonlySet<string>, folderId: MailFolderKey) => {
+      // Move is implemented via archive (if target is archive) or a label move.
+      // For now we use archiveMailThread for "archive" and delete for "trash".
+      for (const threadId of ids) {
+        if (folderId === "archive") {
+          archiveMutation.mutate(threadId);
+        } else if (folderId === "trash") {
+          deleteMutation.mutate(threadId);
+        } else if (folderId === "spam") {
+          spamMutation.mutate(threadId);
+        }
+      }
+      setCheckedIds(new Set());
+    },
+    [archiveMutation, deleteMutation, spamMutation],
+  );
+
+  const handleBulkLabel = useCallback(
+    (ids: ReadonlySet<string>, labelSlug: string, add: boolean) => {
+      for (const threadId of ids) {
+        labelMutation.mutate({
+          threadId,
+          ...(add ? { add: [labelSlug] } : { remove: [labelSlug] }),
+        });
+      }
+      setCheckedIds(new Set());
+    },
+    [labelMutation],
+  );
+
   const actionBusy =
     archiveMutation.isPending ||
     deleteMutation.isPending ||
     snoozeMutation.isPending ||
-    labelMutation.isPending;
+    labelMutation.isPending ||
+    spamMutation.isPending;
 
   return (
     <>
@@ -1927,6 +2534,7 @@ export function MailShell() {
               setFolder(next);
               setSelected(null);
               setOffset(0);
+              setCheckedIds(new Set());
             }}
             onCompose={() => {
               setComposeOpen(true);
@@ -1938,6 +2546,7 @@ export function MailShell() {
               setActiveLabel(next);
               setSelected(null);
               setOffset(0);
+              setCheckedIds(new Set());
             }}
           />
           {selectedRow != null ? (
@@ -1994,6 +2603,8 @@ export function MailShell() {
                 setOffset(0);
               }}
               labelColors={labelColors}
+              labels={labels}
+              folders={folders}
               total={total}
               offset={offset}
               limit={PAGE_SIZE}
@@ -2011,6 +2622,19 @@ export function MailShell() {
                   ? (starMutation.variables?.threadId ?? null)
                   : null
               }
+              onArchive={handleRowArchive}
+              onDelete={handleRowDelete}
+              onSnooze={handleRowSnooze}
+              onToggleRead={handleRowToggleRead}
+              checkedIds={checkedIds}
+              onCheckedChange={setCheckedIds}
+              onBulkArchive={handleBulkArchive}
+              onBulkDelete={handleBulkDelete}
+              onBulkSpam={handleBulkSpam}
+              onBulkRead={handleBulkRead}
+              onBulkSnooze={handleBulkSnooze}
+              onBulkMove={handleBulkMove}
+              onBulkLabel={handleBulkLabel}
             />
           )}
         </div>

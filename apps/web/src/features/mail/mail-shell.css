@@ -3,6 +3,245 @@
    Owned by the mail feature; do NOT add rules here for other surfaces. */
 
 /* ============================================================
+   Thread row hover actions
+   ============================================================ */
+
+/**
+ * The date/attachment cell in a thread row is position:relative so the
+ * hover-action strip can overlay it.  The strip is hidden by default and
+ * becomes visible when the row receives :hover or contains a focused button.
+ */
+.mail-thread-row {
+  position: relative;
+}
+
+.mail-thread-row-meta {
+  /* The date + paperclip cell */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  position: relative;
+}
+
+.mail-thread-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 2px 4px;
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+  /* Ensure it renders above sibling text */
+  z-index: 1;
+}
+
+.mail-thread-row:hover .mail-thread-row-actions,
+.mail-thread-row-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* When the row is hovered, dim the date text so the actions feel "replaceing"
+   it (Gmail pattern). */
+.mail-thread-row:hover .mail-thread-row-date,
+.mail-thread-row-actions:focus-within ~ .mail-thread-row-date {
+  opacity: 0;
+}
+
+/* Row hover action buttons */
+.mail-row-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  color: var(--text-3);
+  background: transparent;
+  transition: background 0.08s, color 0.08s;
+  flex-shrink: 0;
+}
+
+.mail-row-action-btn:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+
+.mail-row-action-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ============================================================
+   Bulk-action toolbar (replaces the normal list column header)
+   ============================================================ */
+
+.mail-bulk-toolbar {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  flex-shrink: 0;
+}
+
+.mail-bulk-toolbar-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+.mail-bulk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  transition: background 0.08s, color 0.08s;
+  white-space: nowrap;
+}
+
+.mail-bulk-btn:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+
+.mail-bulk-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ============================================================
+   Select-all dropdown (caret next to master checkbox)
+   ============================================================ */
+
+.mail-select-all-wrap {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.mail-select-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.08s;
+}
+
+.mail-select-caret:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+
+.mail-select-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 130px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  z-index: 50;
+  padding: 4px 0;
+  outline: none;
+}
+
+.mail-select-dropdown-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: transparent;
+  transition: background 0.07s, color 0.07s;
+  text-align: left;
+}
+
+.mail-select-dropdown-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* ============================================================
+   Labels / Move-to dropdown menus (bulk toolbar)
+   ============================================================ */
+
+.mail-menu-wrap {
+  position: relative;
+}
+
+.mail-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  z-index: 50;
+  padding: 4px 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.mail-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: transparent;
+  transition: background 0.07s, color 0.07s;
+  text-align: left;
+}
+
+.mail-menu-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.mail-menu-item-check {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.mail-menu-label-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ============================================================
    Compose drag-and-drop overlay
    ============================================================ */
 

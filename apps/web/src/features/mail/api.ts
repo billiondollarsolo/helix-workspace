@@ -326,6 +326,13 @@ export async function deleteMailThread(
   await callMailTool("mail.delete", { threadId }, fetchImpl);
 }
 
+export async function spamMailThread(
+  threadId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callMailTool("mail.spam", { threadId }, fetchImpl);
+}
+
 export async function snoozeMailThread(
   input: { readonly threadId: string; readonly until: string },
   fetchImpl: MailApiFetch = authenticatedFetch,

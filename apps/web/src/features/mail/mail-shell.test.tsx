@@ -634,4 +634,392 @@ describe("MailShell", () => {
     });
     expect(container.querySelector(".compose-drop-overlay")).toBeNull();
   });
+
+  /* ============================================================
+     Feature: per-row hover actions
+     ============================================================ */
+
+  it("row hover Archive button fires mail.archive for that thread", async () => {
+    render();
+    await flush();
+    // The hover action toolbar is in the DOM (opacity:0 via CSS — pointer events
+    // are disabled in the browser, but in jsdom we can click directly).
+    clickAriaButton("Archive");
+    await flush();
+    const archiveCalls = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/api/tools/mail.archive",
+    );
+    expect(archiveCalls.length).toBeGreaterThanOrEqual(1);
+    const body = JSON.parse(
+      typeof (archiveCalls[0]?.[1] as RequestInit).body === "string"
+        ? ((archiveCalls[0]?.[1] as RequestInit).body as string)
+        : "{}",
+    ) as { readonly threadId: string };
+    expect(body.threadId).toBe("thread-1");
+  });
+
+  it("row hover Delete button fires mail.delete for that thread", async () => {
+    render();
+    await flush();
+    clickAriaButton("Delete");
+    await flush();
+    const deleteCalls = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/api/tools/mail.delete",
+    );
+    expect(deleteCalls.length).toBeGreaterThanOrEqual(1);
+    const body = JSON.parse(
+      typeof (deleteCalls[0]?.[1] as RequestInit).body === "string"
+        ? ((deleteCalls[0]?.[1] as RequestInit).body as string)
+        : "{}",
+    ) as { readonly threadId: string };
+    expect(body.threadId).toBe("thread-1");
+  });
+
+  it("row hover Mark-read button fires mail.read.set to mark the thread read", async () => {
+    render();
+    await flush();
+    // The default threadRow has unread:true, so the button label is "Mark read"
+    clickAriaButton("Mark read");
+    await flush();
+    const readCalls = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/api/tools/mail.read.set",
+    );
+    expect(readCalls.length).toBeGreaterThanOrEqual(1);
+    const body = JSON.parse(
+      typeof (readCalls[0]?.[1] as RequestInit).body === "string"
+        ? ((readCalls[0]?.[1] as RequestInit).body as string)
+        : "{}",
+    ) as { readonly threadId: string; readonly unread: boolean };
+    expect(body.threadId).toBe("thread-1");
+    expect(body.unread).toBe(false);
+  });
+
+  it("row hover Snooze button fires mail.snooze for that thread", async () => {
+    render();
+    await flush();
+    clickAriaButton("Snooze");
+    await flush();
+    const snoozeCalls = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/api/tools/mail.snooze",
+    );
+    expect(snoozeCalls.length).toBeGreaterThanOrEqual(1);
+    const body = JSON.parse(
+      typeof (snoozeCalls[0]?.[1] as RequestInit).body === "string"
+        ? ((snoozeCalls[0]?.[1] as RequestInit).body as string)
+        : "{}",
+    ) as { readonly threadId: string };
+    expect(body.threadId).toBe("thread-1");
+  });
+
+  /* ============================================================
+     Feature: bulk-select toolbar — applies to all selected threads
+     ============================================================ */
+
+  /**
+   * Helper: set up a multi-thread inbox so we can select >1 row.
+   * Returns a fetchMock override that serves 3 threads.
+   */
+  function setupThreeThreads() {
+    const rows = [
+      threadRow({ threadId: "t1", subject: "Thread A", unread: true, starred: true }),
+      threadRow({ threadId: "t2", subject: "Thread B", unread: false, starred: false }),
+      threadRow({ threadId: "t3", subject: "Thread C", unread: true, starred: false }),
+    ];
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : (input instanceof URL ? input.href : input.url);
+      if (url.endsWith("/mail.threads.list")) {
+        return Promise.resolve(
+          Response.json({ threads: rows, total: 3, limit: 50, offset: 0 }),
+        );
+      }
+      return defaultFetch(input, init);
+    });
+    return rows;
+  }
+
+  it("bulk Archive applies mail.archive to every checked thread then clears selection", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    // Check all three rows via the master checkbox (Select all).
+    const masterCheckbox = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Select all"]',
+    );
+    if (masterCheckbox === null) {
+      throw new Error("Master checkbox not found");
+    }
+    act(() => {
+      masterCheckbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    // The bulk toolbar should now be visible.
+    expect(container.textContent).toContain("3 selected");
+
+    // Click "Archive" in the bulk toolbar.
+    clickAriaButton("Archive selected");
+    await flush();
+
+    // mail.archive must have been called once for each of the 3 threads.
+    const archiveCalls = fetchMock.mock.calls
+      .filter((call) => call[0] === "/api/tools/mail.archive")
+      .map((call) => {
+        const body = JSON.parse(
+          typeof (call[1] as RequestInit).body === "string"
+            ? ((call[1] as RequestInit).body as string)
+            : "{}",
+        ) as { readonly threadId: string };
+        return body.threadId;
+      });
+
+    expect(archiveCalls).toContain("t1");
+    expect(archiveCalls).toContain("t2");
+    expect(archiveCalls).toContain("t3");
+
+    // After the action, the bulk toolbar should no longer show "selected".
+    expect(container.textContent).not.toContain("selected");
+  });
+
+  it("bulk Report spam applies mail.spam to every checked thread", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    // Select only t1 and t2 by clicking their individual checkboxes.
+    const checkboxes = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    ).filter((cb) => cb.ariaLabel?.startsWith("Select ") && cb.ariaLabel !== "Select all");
+
+    // Click first two thread checkboxes.
+    act(() => {
+      checkboxes[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    act(() => {
+      checkboxes[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    clickAriaButton("Report spam");
+    await flush();
+
+    const spamCalls = fetchMock.mock.calls
+      .filter((call) => call[0] === "/api/tools/mail.spam")
+      .map((call) => {
+        const body = JSON.parse(
+          typeof (call[1] as RequestInit).body === "string"
+            ? ((call[1] as RequestInit).body as string)
+            : "{}",
+        ) as { readonly threadId: string };
+        return body.threadId;
+      });
+
+    expect(spamCalls).toHaveLength(2);
+  });
+
+  it("bulk Delete applies mail.delete to every checked thread", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    const masterCheckbox = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Select all"]',
+    );
+    if (masterCheckbox === null) {
+      throw new Error("Master checkbox not found");
+    }
+    act(() => {
+      masterCheckbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    clickAriaButton("Delete selected");
+    await flush();
+
+    const deleteCalls = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/api/tools/mail.delete",
+    );
+    expect(deleteCalls).toHaveLength(3);
+  });
+
+  /* ============================================================
+     Feature: select-all dropdown subsets
+     ============================================================ */
+
+  it("select-all dropdown 'Read' selects only read (non-unread) threads", async () => {
+    // Provide 3 threads: t1 unread, t2 read, t3 unread.
+    setupThreeThreads();
+    render();
+    await flush();
+
+    // Open the caret dropdown.
+    clickAriaButton("Select subset");
+
+    // Click "Read".
+    clickButtonText("Read");
+    await flush();
+
+    // The bulk toolbar should show "1 selected" (only t2 is read).
+    expect(container.textContent).toContain("1 selected");
+  });
+
+  it("select-all dropdown 'Unread' selects only unread threads", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    clickAriaButton("Select subset");
+    clickButtonText("Unread");
+    await flush();
+
+    // t1 and t3 are unread.
+    expect(container.textContent).toContain("2 selected");
+  });
+
+  it("select-all dropdown 'Starred' selects only starred threads", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    clickAriaButton("Select subset");
+
+    // Click the "Starred" item inside the dropdown (not the sidebar folder button).
+    const dropdownItems = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".mail-select-dropdown-item"),
+    );
+    const starredItem = dropdownItems.find((btn) => btn.textContent?.trim() === "Starred");
+    if (starredItem === undefined) {
+      throw new Error("Starred dropdown item not found");
+    }
+    act(() => {
+      starredItem.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    // Only t1 is starred.
+    expect(container.textContent).toContain("1 selected");
+  });
+
+  it("select-all dropdown 'Unstarred' selects only un-starred threads", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    clickAriaButton("Select subset");
+    clickButtonText("Unstarred");
+    await flush();
+
+    // t2 and t3 are not starred.
+    expect(container.textContent).toContain("2 selected");
+  });
+
+  it("select-all dropdown 'All' checks every visible thread", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    clickAriaButton("Select subset");
+    clickButtonText("All");
+    await flush();
+
+    expect(container.textContent).toContain("3 selected");
+  });
+
+  it("select-all dropdown 'None' clears selection when threads are checked", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    // Use the "All" option while no threads are selected (caret is visible in
+    // the normal toolbar, before bulk kicks in).
+    clickAriaButton("Select subset");
+    const allItem = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".mail-select-dropdown-item"),
+    ).find((btn) => btn.textContent?.trim() === "All");
+    if (allItem === undefined) {
+      throw new Error("'All' dropdown item not found");
+    }
+    act(() => {
+      allItem.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    expect(container.textContent).toContain("3 selected");
+
+    // The bulk toolbar now shows a "Deselect all" checkbox — clicking it clears
+    // the selection.  The caret dropdown is part of the normal toolbar which
+    // is replaced by the bulk toolbar while rows are selected.
+    const deselectCheckbox = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Deselect all"]',
+    );
+    if (deselectCheckbox === null) {
+      throw new Error("Deselect all checkbox not found");
+    }
+    act(() => {
+      deselectCheckbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    // Selection cleared — bulk toolbar gone.
+    expect(container.textContent).not.toContain("selected");
+  });
+
+  /* ============================================================
+     Feature: shift-click range select
+     ============================================================ */
+
+  it("shift-clicking a row checkbox selects the contiguous range from the last click", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    // Get the three individual row checkboxes (not the master "Select all" one).
+    const rowCheckboxes = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    ).filter((cb) => cb.ariaLabel?.startsWith("Select ") && cb.ariaLabel !== "Select all");
+
+    expect(rowCheckboxes).toHaveLength(3);
+
+    // Click first checkbox normally.
+    act(() => {
+      rowCheckboxes[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    expect(container.textContent).toContain("1 selected");
+
+    // Shift-click the third checkbox — should select rows 0, 1, and 2.
+    act(() => {
+      rowCheckboxes[2]?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, shiftKey: true }),
+      );
+    });
+    await flush();
+
+    expect(container.textContent).toContain("3 selected");
+  });
+
+  it("shift-clicking in the middle of an already-selected range extends to that row", async () => {
+    setupThreeThreads();
+    render();
+    await flush();
+
+    const rowCheckboxes = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    ).filter((cb) => cb.ariaLabel?.startsWith("Select ") && cb.ariaLabel !== "Select all");
+
+    // Click row 0 first.
+    act(() => {
+      rowCheckboxes[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    // Shift-click row 1 — extends range to rows 0 and 1.
+    act(() => {
+      rowCheckboxes[1]?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, shiftKey: true }),
+      );
+    });
+    await flush();
+
+    expect(container.textContent).toContain("2 selected");
+  });
 });

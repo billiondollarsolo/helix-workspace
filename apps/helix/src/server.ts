@@ -166,19 +166,52 @@ import {
 import type { SiemAuditFormat } from "./platform/audit/siem-format.js";
 import type { SiemSyslogTransport } from "./platform/audit/siem-syslog.js";
 import {
+  ClamavScanner,
+  getClamavScannerConfig,
+  getSpamdScannerConfig,
   NodemailerMailTransport,
   OutboundMailDispatcher,
   OutboundMailWorker,
   PostgresMailStore,
+  PostgresMailDkimKeyStore,
+  PostgresMailDmarcReportStore,
+  PostgresMailRoutingRuleStore,
+  PostgresOutboundProviderStore,
+  PostgresSendingDomainStore,
   MailAdminStatusService,
   registerMailAdminRoutes,
+  registerMailDeliveryAdminRoutes,
   registerMailEnrichments,
   registerMailIndexer,
   registerMailTools,
+  resolveOutboundTransport,
   SmtpMailReceiver,
+  SpamdScanner,
   type SmtpReceiverOptions,
 } from "./platform/mail/index.js";
 import { PostgresMeetStore, registerMeetRoutes, registerMeetTools } from "./platform/meet/index.js";
+import { PostgresSheetsStore, registerSheets } from "./platform/sheets/index.js";
+import { PostgresSlidesStore, registerSlides } from "./platform/slides/index.js";
+import {
+  PostgresGroupsStore,
+  registerAdminGroupsRoutes,
+} from "./platform/admin/groups.js";
+import {
+  PostgresSecurityPoliciesStore,
+  registerAdminSecurityPoliciesRoutes,
+} from "./platform/admin/security-policies.js";
+import {
+  PostgresOAuthAppsStore,
+  registerAdminOAuthAppsRoutes,
+} from "./platform/admin/oauth-apps.js";
+import {
+  PostgresBillingStore,
+  registerAdminBillingRoutes,
+} from "./platform/admin/billing.js";
+import {
+  PostgresDomainsStore,
+  registerAdminDomainsRoutes,
+} from "./platform/admin/domains.js";
 import { OutboxWorker } from "./platform/outbox/outbox.js";
 import { PostgresOutboxStore } from "./platform/outbox/postgres-store.js";
 import { registerPluginAdminRoutes } from "./platform/plugins/admin-routes.js";
@@ -1030,15 +1063,24 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // process (enabled org-wide AND in the booting role's app set).
   const mailAppRegistered = coreApps.shouldRegister("mail");
   const outboundMailConfig = mailAppRegistered ? getOutboundMailConfig(process.env) : undefined;
-  const outboundMailWorker =
+  // Resolve the org's configured outbound provider (SES/Mailgun/SMTP/Postmark)
+  // when one is set; otherwise fall back to the env-configured SMTP relay.
+  const outboundMailOrgId =
+    process.env.HELIX_DEFAULT_ORG_ID ?? "00000000-0000-0000-0000-000000000000";
+  const outboundMailTransport =
     outboundMailConfig === undefined
+      ? undefined
+      : await resolveOutboundTransport({
+          orgId: outboundMailOrgId,
+          providerStore: new PostgresOutboundProviderStore(sql),
+          fallbackTransport: new NodemailerMailTransport(outboundMailConfig),
+        });
+  const outboundMailWorker =
+    outboundMailTransport === undefined
       ? undefined
       : new OutboundMailWorker({
           events: eventBus,
-          dispatcher: new OutboundMailDispatcher(
-            mailStore,
-            new NodemailerMailTransport(outboundMailConfig),
-          ),
+          dispatcher: new OutboundMailDispatcher(mailStore, outboundMailTransport),
           onError: (error) => {
             app.log.error({ error }, "Outbound mail dispatch error");
           },
@@ -1046,6 +1088,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const smtpMailReceiverConfig = mailAppRegistered
     ? getSmtpMailReceiverConfig(process.env)
     : undefined;
+  // Config-gated inbound content scanners: spamd (SpamAssassin) and ClamAV.
+  const spamdScannerConfig = getSpamdScannerConfig(process.env);
+  const clamavScannerConfig = getClamavScannerConfig(process.env);
   const smtpMailReceiver =
     smtpMailReceiverConfig === undefined
       ? undefined
@@ -1053,6 +1098,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           store: mailStore,
           orgId: smtpMailReceiverConfig.orgId,
           logger: app.log,
+          scanners: {
+            ...(spamdScannerConfig
+              ? { spam: new SpamdScanner(spamdScannerConfig) }
+              : {}),
+            ...(clamavScannerConfig
+              ? { antivirus: new ClamavScanner(clamavScannerConfig) }
+              : {}),
+          },
         });
   const outboundWebhookWorker = new OutboundWebhookWorker({
     store: webhookStore,
@@ -1270,10 +1323,18 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
     });
   }
+  // Wave-1 backend domains. Sheets and Slides stores are instantiated here so
+  // they can be shared with the drive.create tool (unified "New" entry-point)
+  // and their own domain tool registrations below.
+  const sheetsStore = new PostgresSheetsStore(sql);
+  const slidesStore = new PostgresSlidesStore(sql);
   if (coreApps.shouldRegister("drive")) {
     registerDriveTools(tools, {
       store: driveStore,
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
+      docsStore: docsStore,
+      sheetsStore: sheetsStore,
+      slidesStore: slidesStore,
     });
   }
   const calendarInvitationSender = createMailCalendarInvitationSender({
@@ -1304,6 +1365,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (runtimeSearchEngine !== undefined) {
     registerSearchTools(tools, { engine: runtimeSearchEngine });
   }
+  // Register the Sheets and Slides domain tools using the stores instantiated above.
+  registerSheets({
+    registry: tools,
+    store: sheetsStore,
+    ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
+  });
+  registerSlides(tools, { store: slidesStore });
   const assistantOrchestrator = new AssistantOrchestrator({
     store: assistantStore,
     ai: assistantAi,
@@ -1440,6 +1508,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       }),
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     });
+    await registerMailDeliveryAdminRoutes(app, {
+      providerStore: new PostgresOutboundProviderStore(sql),
+      domainStore: new PostgresSendingDomainStore(sql),
+      dkimStore: new PostgresMailDkimKeyStore(sql),
+      dmarcStore: new PostgresMailDmarcReportStore(sql),
+      routingStore: new PostgresMailRoutingRuleStore(sql),
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      auditSink: auditStore,
+    });
   }
   // Core-app enablement admin API: org admins view/toggle which core apps are
   // enabled org-wide. Toggling writes `config.modules[appId].enabled` through
@@ -1462,6 +1539,33 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerAdminUsersRoutes(app, {
     store: adminUsersStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+  });
+  // Wave-1 admin console: Groups & OUs, security policies, OAuth apps,
+  // billing, and domain/DNS management. Each route group writes through the
+  // immutable audit store so admin-console changes are tamper-evidently logged.
+  await registerAdminGroupsRoutes(app, {
+    store: new PostgresGroupsStore(sql),
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    auditSink: auditStore,
+  });
+  await registerAdminSecurityPoliciesRoutes(app, {
+    store: new PostgresSecurityPoliciesStore(sql),
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    auditSink: auditStore,
+  });
+  await registerAdminOAuthAppsRoutes(app, {
+    store: new PostgresOAuthAppsStore(sql),
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    auditSink: auditStore,
+  });
+  await registerAdminBillingRoutes(app, {
+    store: new PostgresBillingStore(sql),
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+  });
+  await registerAdminDomainsRoutes(app, {
+    store: new PostgresDomainsStore(sql),
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    auditSink: auditStore,
   });
   await registerBackupAdminRoutes(app, {
     service: new ScriptedBackupAdminService({

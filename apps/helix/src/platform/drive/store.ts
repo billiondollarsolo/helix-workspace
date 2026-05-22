@@ -111,6 +111,7 @@ export interface DriveStore {
     readonly folderId?: string | null;
     readonly limit?: number;
   }): Promise<readonly DriveSearchHit[]>;
+  createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord>;
 }
 
 export interface DriveFolderCreateInput {

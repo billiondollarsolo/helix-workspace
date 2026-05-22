@@ -952,27 +952,7 @@ function ThreadList({
         flexDirection: "column",
       }}
     >
-      <div className="tabs" role="tablist" aria-label="Mail categories">
-        {MAIL_TABS.map((entry) => {
-          const Icon = Icons[entry.icon];
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === entry.id}
-              className={cx("tab", tab === entry.id && "active")}
-              onClick={() => {
-                onTab(entry.id);
-              }}
-            >
-              <Icon /> {entry.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ---- Single persistent toolbar strip ---- */}
+      {/* ---- Single persistent toolbar strip (above the category tabs, Gmail-style) ---- */}
       <div className="mail-toolbar-strip" role="toolbar" aria-label={hasBulk ? "Bulk actions" : "Toolbar"}>
         {/* Left section — swaps based on selection state */}
         <div className="mail-toolbar-left">
@@ -1238,6 +1218,26 @@ function ThreadList({
             onPage={onPage}
           />
         </div>
+      </div>
+
+      <div className="tabs" role="tablist" aria-label="Mail categories">
+        {MAIL_TABS.map((entry) => {
+          const Icon = Icons[entry.icon];
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === entry.id}
+              className={cx("tab", tab === entry.id && "active")}
+              onClick={() => {
+                onTab(entry.id);
+              }}
+            >
+              <Icon /> {entry.label}
+            </button>
+          );
+        })}
       </div>
 
       <div style={{ flex: 1, overflowY: "auto" }}>

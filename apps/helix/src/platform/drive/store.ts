@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject, StorageClient } from "@helix/sdk-types";
 import { computeAuditHash } from "../audit/hash.js";
+import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import type {
   DriveAutoTagWrite,
   DriveEnrichmentProjectionStore,
@@ -981,23 +982,6 @@ function canReadFolderSql(sql: SqlLike, actorId: string): postgres.PendingQuery<
           and (p.expires_at is null or p.expires_at > now())
       )
     )
-  `;
-}
-
-async function grantObjectAccess(
-  sql: SqlLike,
-  input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly objectId: string;
-    readonly role: string;
-    readonly grantedByActorId: string;
-  },
-): Promise<void> {
-  await sql`
-    insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
-    values (${input.orgId}, ${input.actorId}, 'object', ${input.objectId}, ${input.role}, ${input.grantedByActorId})
-    on conflict do nothing
   `;
 }
 

@@ -622,9 +622,9 @@ export class PostgresDriveStore
       `) as unknown as readonly { readonly storage_key: string }[];
       await tx`delete from permissions where resource_type = 'object' and resource_id = ${input.objectId}`;
       await tx`delete from drive_versions where object_id = ${input.objectId}`;
-      if (stringMetadata(object.metadata, "app") !== undefined) {
-        await syncTargetDeletedAt(tx, input.orgId, input.objectId, "trash");
-      }
+      // syncTargetDeletedAt no-ops when the object has no linked app, so it is
+      // called unconditionally here — matching the trash and restore paths.
+      await syncTargetDeletedAt(tx, input.orgId, input.objectId, "trash");
       const deleted = await tx`
         delete from objects
         where id = ${input.objectId} and org_id = ${input.orgId} and kind = 'file'

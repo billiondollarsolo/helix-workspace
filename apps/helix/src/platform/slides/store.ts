@@ -151,7 +151,7 @@ export class PostgresSlidesStore implements SlidesStore {
           ${deck.id}, ${input.orgId}, ${input.actorId}, 'file',
           ${`slides/${input.orgId}/${deck.id}`},
           'application/vnd.helix.presentation', 0, null,
-          ${tx.json(toSqlJson({ ...(input.metadata ?? {}), app: "slides", deckId: deck.id, name: input.title, title: input.title, folderId: input.folderId ?? null }))}
+          ${tx.json(toSqlJson({ ...(input.metadata ?? {}), app: "slides", deckId: deck.id, name: input.title.trim(), title: input.title.trim(), folderId: input.folderId ?? null }))}
         )
         on conflict (id) do update set metadata = excluded.metadata, updated_at = now()
       `;

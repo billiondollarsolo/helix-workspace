@@ -14,6 +14,7 @@
     "db:seed:oauth": "tsx src/db/seed-local-oauth.ts",
     "db:seed:smoke-agent": "tsx src/db/seed-live-smoke-oauth.ts",
     "db:seed:workspace": "tsx src/db/seed-workspace.ts",
+    "db:seed:workspace:large": "tsx src/db/seed-workspace-large.ts",
     "db:verify:demo": "tsx src/db/verify-local-demo.ts",
     "dev": "tsx watch src/index.ts",
     "lint": "eslint src --max-warnings=0",

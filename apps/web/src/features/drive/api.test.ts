@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  deleteDriveObject,
+  driveDownloadResult,
   finalizeDriveUpload,
   listDrive,
   prepareDriveUpload,
   searchDrive,
   shareDrive,
   trashDriveObject,
+  type DriveApiEntry,
 } from "./api";
 import { driveItemsInputFromRouteSearch, validateDriveRouteSearch } from "./queries";
 
@@ -186,6 +189,97 @@ describe("drive API", () => {
     });
   });
 
+  it("approves a confirmation-gated share inline and uses the executed output", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            status: "pending_confirmation",
+            pending: { id: "55555555-5555-4555-8555-555555555555" },
+          },
+          { status: 202 },
+        ),
+      )
+      .mockResolvedValueOnce(Response.json({ status: "executed", output: { shared: true } }));
+
+    await expect(
+      shareDrive(
+        {
+          objectId: "33333333-3333-4333-8333-333333333333",
+          actorIds: ["66666666-6666-4666-8666-666666666666"],
+        },
+        fetchImpl,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/drive.share", expect.anything());
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "/api/tools/pending/55555555-5555-4555-8555-555555555555/approve",
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+  });
+
+  it("approves a confirmation-gated permanent delete inline", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            status: "pending_confirmation",
+            pending: { id: "55555555-5555-4555-8555-555555555555" },
+          },
+          { status: 202 },
+        ),
+      )
+      .mockResolvedValueOnce(Response.json({ status: "executed", output: { deleted: true } }));
+
+    await expect(
+      deleteDriveObject("33333333-3333-4333-8333-333333333333", fetchImpl),
+    ).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces the Helix error envelope message", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        Response.json(
+          { error: { code: "forbidden", message: "missing drive scope", traceId: "t1" } },
+          { status: 403 },
+        ),
+      ),
+    );
+
+    await expect(listDrive({}, fetchImpl)).rejects.toThrow("missing drive scope");
+  });
+
+  it("resolves a download URL from the entry preview or the WebDAV path", () => {
+    const base: DriveApiEntry = {
+      id: "obj-1",
+      type: "file",
+      name: "report.pdf",
+      folderId: null,
+      ownerActorId: null,
+      mimeType: "application/pdf",
+      deletedAt: null,
+      createdAt: "2026-05-20T12:00:00.000Z",
+      updatedAt: "2026-05-20T12:00:00.000Z",
+    };
+    expect(driveDownloadResult(base).url).toBe("/dav/obj-1");
+    expect(
+      driveDownloadResult({
+        ...base,
+        preview: {
+          kind: "pdf",
+          status: "available",
+          mimeType: "application/pdf",
+          url: "https://cdn.example/report.pdf",
+        },
+      }).url,
+    ).toBe("https://cdn.example/report.pdf");
+  });
+
   it("surfaces backend tool errors", async () => {
     const fetchImpl = vi.fn(() =>
       Promise.resolve(Response.json({ error: "missing drive scope" }, { status: 403 })),
@@ -234,6 +328,7 @@ describe("drive route search", () => {
       includeTrashed: true,
       query: "budget",
       limit: 50,
+      scope: "trash",
     });
   });
 
@@ -255,6 +350,7 @@ describe("drive route search", () => {
       includeTrashed: false,
       query: "",
       limit: 100,
+      scope: "my",
     });
   });
 
@@ -269,6 +365,7 @@ describe("drive route search", () => {
       includeTrashed: true,
       query: "",
       limit: 100,
+      scope: "trash",
     });
   });
 });

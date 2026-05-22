@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
+import { getSessionUser } from "@/lib/auth";
 import { listDrive, searchDrive, type DriveApiEntry, type DriveApiSearchHit } from "./api";
 
 export interface DriveSuggestions {
@@ -44,11 +45,23 @@ export function driveSuggestionsQueryOptions() {
   });
 }
 
+/** Drive listing scopes that drive the left sidebar. */
+export type DriveScope = "my" | "shared" | "recent" | "starred" | "trash";
+
+export const DRIVE_SCOPE_IDS: readonly DriveScope[] = [
+  "my",
+  "shared",
+  "recent",
+  "starred",
+  "trash",
+];
+
 export interface DriveItemsQueryInput {
   readonly folderId?: string | null;
   readonly includeTrashed?: boolean;
   readonly query?: string;
   readonly limit?: number;
+  readonly scope?: DriveScope;
 }
 
 export interface DriveRouteSearch {
@@ -74,6 +87,7 @@ export const defaultDriveItemsInput = {
   includeTrashed: false,
   query: "",
   limit: 100,
+  scope: "my",
 } as const satisfies DriveItemsQueryInput;
 
 export const driveQueryKeys = {
@@ -81,11 +95,13 @@ export const driveQueryKeys = {
     [
       "drive",
       "items",
+      input.scope ?? "my",
       input.folderId ?? "root",
       input.includeTrashed ?? false,
       input.query?.trim() ?? "",
       input.limit ?? 100,
     ] as const,
+  all: ["drive"] as const,
 };
 
 const nonEmptyStringParam = z.string().trim().min(1).optional().catch(undefined);
@@ -124,33 +140,116 @@ export function driveItemsInputFromRouteSearch(search: DriveRouteSearch): DriveI
     includeTrashed: search.includeTrashed === true,
     query,
     limit: query.length > 0 ? 50 : 100,
+    scope: search.includeTrashed === true ? "trash" : "my",
   };
+}
+
+/** A search hit promoted into an entry-shaped record for unified rendering. */
+export function entryFromSearchHit(hit: DriveApiSearchHit): DriveApiEntry {
+  return {
+    id: hit.objectId,
+    type: "file",
+    name: hit.name,
+    folderId: hit.folderId,
+    ownerActorId: null,
+    mimeType: hit.mimeType,
+    byteSize: hit.byteSize,
+    sha256: hit.sha256,
+    ...(hit.previewMetadata === undefined ? {} : { preview: hit.previewMetadata }),
+    deletedAt: null,
+    createdAt: hit.updatedAt,
+    updatedAt: hit.updatedAt,
+  };
+}
+
+/**
+ * Apply scope-specific client-side filtering to a Drive entry list.
+ *
+ *  - `my`      — entries in the active folder (already folder-scoped upstream).
+ *  - `shared`  — entries owned by someone other than the current actor.
+ *  - `recent`  — every entry, sorted by most-recent activity (cap 50).
+ *  - `starred` — entries flagged via `metadata.starred`.
+ *  - `trash`   — trashed entries.
+ */
+export function applyDriveScope(
+  entries: readonly DriveApiEntry[],
+  scope: DriveScope,
+  currentActorId: string | null,
+): readonly DriveApiEntry[] {
+  if (scope === "trash") {
+    return entries.filter((entry) => entry.deletedAt !== null);
+  }
+
+  const live = entries.filter((entry) => entry.deletedAt === null);
+
+  switch (scope) {
+    case "shared":
+      return live.filter(
+        (entry) =>
+          currentActorId !== null &&
+          entry.ownerActorId !== null &&
+          entry.ownerActorId !== currentActorId,
+      );
+    case "starred":
+      return live.filter((entry) => entry.metadata?.starred === true);
+    case "recent":
+      return [...live]
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+        .slice(0, 50);
+    case "my":
+    default:
+      return live;
+  }
+}
+
+/** Query for the current session actor id — used for scope filtering + owner labels. */
+export function driveActorQueryOptions() {
+  return queryOptions({
+    queryKey: ["drive", "actor"],
+    queryFn: async (): Promise<{ readonly actorId: string | null; readonly name: string }> => {
+      const user = await getSessionUser();
+      return { actorId: user?.actorId ?? null, name: user?.name ?? "You" };
+    },
+    staleTime: 5 * 60_000,
+    throwOnError: false,
+  });
 }
 
 export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriveItemsInput) {
   const normalizedQuery = input.query?.trim() ?? "";
+  const scope: DriveScope = input.scope ?? "my";
   return queryOptions({
-    queryKey: driveQueryKeys.items(input),
+    queryKey: driveQueryKeys.items({ ...input, scope }),
     queryFn: async (): Promise<DriveItemsQueryResult> => {
       if (normalizedQuery.length > 0) {
         return {
           mode: "search",
           hits: await searchDrive({
             query: normalizedQuery,
-            folderId: input.folderId ?? null,
+            folderId: scope === "my" ? (input.folderId ?? null) : null,
             limit: input.limit ?? 50,
           }),
         };
       }
 
-      return {
-        mode: "list",
-        entries: await listDrive({
-          folderId: input.folderId ?? null,
-          includeTrashed: input.includeTrashed ?? false,
-          limit: input.limit ?? 100,
-        }),
-      };
+      // `my` + `trash` are folder-scoped views — `drive.list` returns the
+      // folders and files of the active folder. The other scopes (Recent /
+      // Shared / Starred) are cross-folder file views, so they ride
+      // `drive.search` with an empty query, which returns every visible file
+      // ordered by recency. Folder-scope filtering then happens client-side.
+      if (scope === "my" || scope === "trash") {
+        return {
+          mode: "list",
+          entries: await listDrive({
+            folderId: input.folderId ?? null,
+            includeTrashed: scope === "trash",
+            limit: input.limit ?? 100,
+          }),
+        };
+      }
+
+      const hits = await searchDrive({ query: "", folderId: null, limit: input.limit ?? 100 });
+      return { mode: "list", entries: hits.map(entryFromSearchHit) };
     },
     throwOnError: false,
   });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { type DriveApiEntry } from "./api";
-import { deriveDriveSuggestions } from "./queries";
+import { type DriveApiEntry, type DriveApiSearchHit } from "./api";
+import { applyDriveScope, deriveDriveSuggestions, entryFromSearchHit } from "./queries";
 
 function makeEntry(overrides: Partial<DriveApiEntry> & Pick<DriveApiEntry, "id" | "type" | "updatedAt">): DriveApiEntry {
   return {
@@ -163,5 +163,83 @@ describe("deriveDriveSuggestions", () => {
     // f-recently-updated has newer updatedAt, so it comes first
     expect(result.folders[0]?.id).toBe("f-recently-updated");
     expect(result.folders[1]?.id).toBe("f-recently-created");
+  });
+});
+
+describe("applyDriveScope", () => {
+  const entries: DriveApiEntry[] = [
+    makeEntry({
+      id: "mine",
+      type: "file",
+      updatedAt: "2026-05-20T10:00:00.000Z",
+      ownerActorId: "actor-self",
+    }),
+    makeEntry({
+      id: "theirs",
+      type: "file",
+      updatedAt: "2026-05-21T10:00:00.000Z",
+      ownerActorId: "actor-other",
+    }),
+    makeEntry({
+      id: "starred",
+      type: "file",
+      updatedAt: "2026-05-19T10:00:00.000Z",
+      ownerActorId: "actor-self",
+      metadata: { starred: true },
+    }),
+    makeEntry({
+      id: "trashed",
+      type: "file",
+      updatedAt: "2026-05-18T10:00:00.000Z",
+      deletedAt: "2026-05-18T11:00:00.000Z",
+    }),
+  ];
+
+  it("returns only entries owned by others for the shared scope", () => {
+    const result = applyDriveScope(entries, "shared", "actor-self");
+    expect(result.map((e) => e.id)).toEqual(["theirs"]);
+  });
+
+  it("returns only metadata-starred entries for the starred scope", () => {
+    const result = applyDriveScope(entries, "starred", "actor-self");
+    expect(result.map((e) => e.id)).toEqual(["starred"]);
+  });
+
+  it("sorts live entries by recency for the recent scope", () => {
+    const result = applyDriveScope(entries, "recent", "actor-self");
+    expect(result.map((e) => e.id)).toEqual(["theirs", "mine", "starred"]);
+  });
+
+  it("returns only trashed entries for the trash scope", () => {
+    const result = applyDriveScope(entries, "trash", "actor-self");
+    expect(result.map((e) => e.id)).toEqual(["trashed"]);
+  });
+
+  it("returns every live entry for the my scope", () => {
+    const result = applyDriveScope(entries, "my", "actor-self");
+    expect(result.map((e) => e.id).sort()).toEqual(["mine", "starred", "theirs"]);
+  });
+});
+
+describe("entryFromSearchHit", () => {
+  it("promotes a search hit into a file-shaped entry", () => {
+    const hit: DriveApiSearchHit = {
+      objectId: "obj-9",
+      name: "Spec.pdf",
+      mimeType: "application/pdf",
+      byteSize: 512,
+      sha256: "abc",
+      folderId: "folder-1",
+      preview: "Spec preview",
+      updatedAt: "2026-05-20T10:00:00.000Z",
+    };
+    const entry = entryFromSearchHit(hit);
+    expect(entry).toMatchObject({
+      id: "obj-9",
+      type: "file",
+      name: "Spec.pdf",
+      folderId: "folder-1",
+      deletedAt: null,
+    });
   });
 });

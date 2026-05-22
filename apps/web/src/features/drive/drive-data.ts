@@ -24,6 +24,8 @@ export interface DriveFileItem {
   readonly owner: string;
   readonly modified: string;
   readonly size: string;
+  /** Editor app that owns this file: "docs" | "sheets" | "slides" | null (plain upload). */
+  readonly app: string | null;
 }
 
 /** Type-colored icon metadata, keyed by file type. */
@@ -57,6 +59,7 @@ export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
     owner: "Mira Okafor",
     modified: "10 min ago",
     size: "—",
+    app: null,
   },
   {
     id: "seed-file-q3-forecast",
@@ -65,6 +68,7 @@ export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
     owner: "Naveen Iyer",
     modified: "1 hour ago",
     size: "184 KB",
+    app: null,
   },
   {
     id: "seed-file-brand-mark",
@@ -73,6 +77,7 @@ export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
     owner: "Priya Anand",
     modified: "2 hours ago",
     size: "12.4 MB",
+    app: null,
   },
   {
     id: "seed-file-atlas-deck",
@@ -81,6 +86,7 @@ export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
     owner: "Rumi Tanaka",
     modified: "Yesterday",
     size: "4.1 MB",
+    app: null,
   },
   {
     id: "seed-file-onboarding-mocks",
@@ -89,6 +95,7 @@ export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
     owner: "Priya Anand",
     modified: "Yesterday",
     size: "8.9 MB",
+    app: null,
   },
   {
     id: "seed-file-onsite-recording",
@@ -97,6 +104,7 @@ export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
     owner: "Daniel Cho",
     modified: "Monday",
     size: "1.2 GB",
+    app: null,
   },
   {
     id: "seed-file-eu-dpa",
@@ -105,6 +113,7 @@ export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
     owner: "Iris Lambert",
     modified: "Last week",
     size: "92 KB",
+    app: null,
   },
   {
     id: "seed-file-brand-photography",
@@ -113,6 +122,7 @@ export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
     owner: "Owen Hart",
     modified: "Last week",
     size: "—",
+    app: null,
   },
   {
     id: "seed-file-salary-bands",
@@ -121,6 +131,7 @@ export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
     owner: "Sasha Levin",
     modified: "Last week",
     size: "76 KB",
+    app: null,
   },
 ];
 
@@ -218,5 +229,6 @@ export function fileItemFromEntry(entry: DriveApiEntry): DriveFileItem {
     owner: entry.ownerActorId ?? "Unknown owner",
     modified: formatModified(entry.updatedAt),
     size: formatByteSize(entry.byteSize),
+    app: entry.app ?? null,
   };
 }

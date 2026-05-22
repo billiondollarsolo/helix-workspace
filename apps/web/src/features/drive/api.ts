@@ -25,6 +25,8 @@ export interface DriveApiEntry {
   readonly name: string;
   readonly folderId: string | null;
   readonly ownerActorId: string | null;
+  /** Editor app that owns this file: "docs" | "sheets" | "slides" | null (plain upload). */
+  readonly app?: string | null;
   readonly mimeType?: string;
   readonly byteSize?: number;
   readonly sha256?: string | null;

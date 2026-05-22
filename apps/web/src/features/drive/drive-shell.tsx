@@ -106,6 +106,15 @@ function editorDestinationFor(app: string, id: string): EditorDestination | null
   }
 }
 
+/** Icon + colour override for app-typed file entries. */
+const APP_ICON_META: Record<string, { readonly icon: keyof typeof Icons; readonly color: string }> =
+  {
+    docs: { icon: "Doc", color: "#2563eb" },
+    sheets: { icon: "Sheet", color: "#059669" },
+    // No distinct Slides icon — reuse Image (same as the "New > Presentation" menu item).
+    slides: { icon: "Image", color: "#ea580c" },
+  };
+
 /** A folder in the breadcrumb trail. `null` id is the scope root. */
 interface DriveCrumb {
   readonly id: string | null;
@@ -287,6 +296,23 @@ export function DriveShell() {
     [files, selectedFileId],
   );
 
+  /**
+   * Called when the user clicks a file entry. If the entry is owned by an
+   * editor app (docs/sheets/slides) navigate straight into the editor;
+   * otherwise open the details panel as usual.
+   */
+  const onSelectFile = (id: string) => {
+    const entry = entryById.get(id);
+    if (entry?.app != null) {
+      const destination = editorDestinationFor(entry.app, id);
+      if (destination !== null) {
+        void navigate({ to: destination.to, search: destination.search });
+        return;
+      }
+    }
+    setSelectedFileId(id);
+  };
+
   const openFolder = (folder: DriveFolderItem) => {
     setSelectedFileId(null);
     setTrail((prev) => [...prev, { id: folder.id, name: folder.name }]);
@@ -342,7 +368,7 @@ export function DriveShell() {
         folders={folders}
         files={files}
         selectedFileId={selectedFileId}
-        onSelectFile={setSelectedFileId}
+        onSelectFile={onSelectFile}
         onOpenFolder={openFolder}
         onUpload={onPickFile}
         loading={itemsQuery.isLoading}
@@ -924,7 +950,8 @@ function DriveFileCard({
   readonly selected: boolean;
   readonly onSelect: () => void;
 }) {
-  const meta = DRIVE_FILE_META[file.type];
+  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
+  const meta = appMeta ?? DRIVE_FILE_META[file.type];
   const FileIcon = Icons[meta.icon];
   return (
     <button
@@ -987,7 +1014,8 @@ function DriveFileRow({
   readonly onSelect: () => void;
   readonly onOpenFolder: () => void;
 }) {
-  const meta = DRIVE_FILE_META[file.type];
+  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
+  const meta = appMeta ?? DRIVE_FILE_META[file.type];
   const FileIcon = Icons[meta.icon];
   return (
     <button
@@ -1064,7 +1092,8 @@ function DriveDetailsPanel({
   readonly onShare: (id: string, actorIds: readonly string[]) => void;
   readonly shareDone: boolean;
 }) {
-  const meta = DRIVE_FILE_META[file.type];
+  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
+  const meta = appMeta ?? DRIVE_FILE_META[file.type];
   const FileIcon = Icons[meta.icon];
   const [shareInput, setShareInput] = useState("");
 

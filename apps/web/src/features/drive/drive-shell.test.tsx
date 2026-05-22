@@ -238,6 +238,96 @@ describe("DriveShell", () => {
     expect(text).toContain(DRIVE_FILES_SEED[0]?.name ?? "");
   });
 
+  describe("app-typed file entries open their editor", () => {
+    function makeAppEntries(): readonly DriveApiEntry[] {
+      return [
+        entry({ id: "doc-entry-1", type: "file", name: "My Doc", app: "docs" }),
+        entry({ id: "sheet-entry-1", type: "file", name: "My Sheet", app: "sheets" }),
+        entry({ id: "deck-entry-1", type: "file", name: "My Deck", app: "slides" }),
+        entry({ id: "plain-file-1", type: "file", name: "Plain.pdf", mimeType: "application/pdf" }),
+      ];
+    }
+
+    function setupFetch(entries: readonly DriveApiEntry[]) {
+      fetchMock.mockImplementation((input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const body: unknown =
+          typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url !== "/api/auth/get-session") {
+          toolCalls.push({ url, body });
+        }
+        if (url === "/api/auth/get-session") {
+          return Promise.resolve(Response.json({}));
+        }
+        if (url === "/api/tools/drive.list") {
+          return Promise.resolve(Response.json({ entries }));
+        }
+        return Promise.resolve(Response.json({}));
+      });
+    }
+
+    function findFileButton(name: string): HTMLButtonElement | null {
+      return (
+        Array.from(container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")).find(
+          (button) => button.textContent?.includes(name),
+        ) ?? null
+      );
+    }
+
+    it("clicking a docs entry navigates to /docs with ?doc=<id>", async () => {
+      setupFetch(makeAppEntries());
+      render();
+      await settle();
+
+      const docButton = findFileButton("My Doc");
+      expect(docButton).not.toBeNull();
+      act(() => { docButton?.click(); });
+
+      expect(navigateMock).toHaveBeenCalledWith({ to: "/docs", search: { doc: "doc-entry-1" } });
+    });
+
+    it("clicking a sheets entry navigates to /sheets with ?sheet=<id>", async () => {
+      setupFetch(makeAppEntries());
+      render();
+      await settle();
+
+      const sheetButton = findFileButton("My Sheet");
+      expect(sheetButton).not.toBeNull();
+      act(() => { sheetButton?.click(); });
+
+      expect(navigateMock).toHaveBeenCalledWith({ to: "/sheets", search: { sheet: "sheet-entry-1" } });
+    });
+
+    it("clicking a slides entry navigates to /slides with ?deck=<id>", async () => {
+      setupFetch(makeAppEntries());
+      render();
+      await settle();
+
+      const deckButton = findFileButton("My Deck");
+      expect(deckButton).not.toBeNull();
+      act(() => { deckButton?.click(); });
+
+      expect(navigateMock).toHaveBeenCalledWith({ to: "/slides", search: { deck: "deck-entry-1" } });
+    });
+
+    it("clicking a plain file (no app) opens the details panel instead of navigating", async () => {
+      setupFetch(makeAppEntries());
+      render();
+      await settle();
+
+      const plainButton = findFileButton("Plain.pdf");
+      expect(plainButton).not.toBeNull();
+      act(() => { plainButton?.click(); });
+
+      // No navigation should happen
+      expect(navigateMock).not.toHaveBeenCalled();
+      // Details panel should be open
+      const panel = container.querySelector('aside[aria-label="File details"]');
+      expect(panel).not.toBeNull();
+    });
+  });
+
   describe("New dropdown", () => {
     it('clicking "New" opens a menu with the expected items', async () => {
       render();

@@ -1,4 +1,5 @@
 import { authenticatedFetch } from "@/lib/auth";
+import { callTool } from "@/lib/tool-call";
 
 export interface MailApiAddress {
   readonly address: string;
@@ -469,26 +470,5 @@ async function callMailTool<Output = unknown>(
   input: unknown,
   fetchImpl: MailApiFetch,
 ): Promise<Output> {
-  const response = await fetchImpl(`/api/tools/${toolId}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const output: unknown = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
-    );
-  }
-
-  return output as Output;
-}
-
-function errorMessageFromOutput(output: unknown): string | undefined {
-  return isRecord(output) && typeof output.error === "string" ? output.error : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return callTool<Output>(toolId, input, { fetchImpl });
 }

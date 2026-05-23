@@ -7,6 +7,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { AdminConsole } from "./admin-console";
 
+/** TopBar calls `sessionUserQueryOptions()` → fetch("/api/auth/get-session").
+ * That would consume the per-test fetchMock Response before the AdminUsers
+ * query reads it, so we stub the session query to a resolved null instead. */
+vi.mock("@/lib/auth", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/auth")>("@/lib/auth");
+  return {
+    ...actual,
+    sessionUserQueryOptions: () => ({
+      queryKey: ["auth", "session"],
+      queryFn: () => Promise.resolve(null),
+      staleTime: 30_000,
+      throwOnError: false,
+    }),
+  };
+});
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
@@ -138,7 +154,7 @@ describe("AdminConsole", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the Overview section with stat cards by default", async () => {
+  it("renders the Overview placeholder by default (telemetry not yet wired)", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify(apiUsers), {
         status: 200,
@@ -149,9 +165,7 @@ describe("AdminConsole", () => {
     await render(createElement(AdminConsole));
 
     expect(container.textContent).toContain("Workspace overview");
-    expect(container.textContent).toContain("Active users");
-    expect(container.textContent).toContain("Sign-in activity (7 days)");
-    expect(container.textContent).toContain("Security recommendations");
+    expect(container.textContent).toContain("Telemetry not yet wired");
   });
 
   it("navigates to each admin section from the sidebar", async () => {
@@ -168,9 +182,11 @@ describe("AdminConsole", () => {
     expect(container.textContent).toContain("Organizational Units");
 
     await clickButton("Security");
-    expect(container.textContent).toContain("Security policies");
+    // The Security section now renders real policies only. With fetch mocked
+    // to return the users payload, the policies query errors and the section
+    // surfaces its error banner rather than fabricated reference cards.
     await waitFor(() => {
-      expect(container.textContent).toContain("Multi-factor authentication");
+      expect(container.textContent).toContain("Security policies unavailable");
     });
 
     await clickButton("Apps");
@@ -179,16 +195,27 @@ describe("AdminConsole", () => {
     });
 
     await clickButton("Billing");
+    // The billing section now renders real-data only. With fetch mocked to
+    // return the users payload, the billing account query errors and the
+    // section renders its error banner instead of fabricated rows.
     await waitFor(() => {
-      expect(container.textContent).toContain("Business Plus");
+      expect(container.textContent).toContain("Billing & licenses");
     });
 
     await clickButton("Audit log");
-    expect(container.textContent).toContain("policy.update");
+    // The audit section now renders the live AuditLogList component, which
+    // fetches from /api/admin/audit-log. The mocked fetch returns the users
+    // payload here, so we assert on stable surface chrome rather than rows.
+    await waitFor(() => {
+      expect(container.textContent).toContain("Recent immutable activity records");
+    });
 
     await clickButton("Domain");
+    // The Domain section now renders real domains only. With fetch mocked to
+    // return the users payload, the domains query errors and the section
+    // surfaces its error banner rather than fabricated DNS records.
     await waitFor(() => {
-      expect(container.textContent).toContain("DKIM");
+      expect(container.textContent).toContain("Domains unavailable");
     });
   });
 
@@ -223,7 +250,7 @@ describe("AdminConsole", () => {
     expect(requestedUsers).toBe(true);
   });
 
-  it("falls back to seeded directory when the users API returns no rows", async () => {
+  it("shows the empty-state row when the users API returns no rows", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ users: [], nextCursor: null }), {
         status: 200,
@@ -235,13 +262,13 @@ describe("AdminConsole", () => {
     await clickButton("Users");
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Priya Anand");
+      expect(container.textContent).toContain("No users match the current filters.");
     });
   });
 
-  it("filters users by search query", async () => {
+  it("filters users by search query (using real API rows)", async () => {
     fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ users: [], nextCursor: null }), {
+      new Response(JSON.stringify(apiUsers), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -251,7 +278,8 @@ describe("AdminConsole", () => {
     await clickButton("Users");
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Priya Anand");
+      expect(container.textContent).toContain("Mira Okafor");
+      expect(container.textContent).toContain("Marcus Bell");
     });
 
     const search = container.querySelector<HTMLInputElement>(
@@ -266,12 +294,12 @@ describe("AdminConsole", () => {
     });
 
     expect(container.textContent).toContain("Marcus Bell");
-    expect(container.textContent).not.toContain("Priya Anand");
+    expect(container.textContent).not.toContain("Mira Okafor");
   });
 
   it("shows bulk actions when users are selected", async () => {
     fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ users: [], nextCursor: null }), {
+      new Response(JSON.stringify(apiUsers), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -281,7 +309,7 @@ describe("AdminConsole", () => {
     await clickButton("Users");
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Priya Anand");
+      expect(container.textContent).toContain("Mira Okafor");
     });
 
     const selectAll = container.querySelector<HTMLInputElement>(

@@ -11,6 +11,7 @@ import {
   calendarEventsInputFromRouteSearch,
   calendarRouteSearchFromState,
   calendarRouteStateFromSearch,
+  defaultCalendarRouteState,
   validateCalendarRouteSearch,
 } from "./queries";
 
@@ -287,29 +288,31 @@ describe("calendar route search", () => {
   });
 
   it("round-trips shell route state while omitting default params", () => {
+    // A non-default date so the round-trip preserves it in the search params.
+    const customDate = "2027-01-15";
     const routeState = calendarRouteStateFromSearch({
       event: "evt-2",
-      date: "2026-05-22",
+      date: customDate,
       view: "month",
       q: "launch",
     });
 
     expect(routeState).toEqual({
       eventId: "evt-2",
-      date: "2026-05-22",
+      date: customDate,
       view: "month",
       query: "launch",
     });
     expect(calendarRouteSearchFromState(routeState)).toEqual({
       event: "evt-2",
-      date: "2026-05-22",
+      date: customDate,
       view: "month",
       q: "launch",
     });
     expect(
       calendarRouteSearchFromState({
         eventId: "",
-        date: "2026-05-20",
+        date: defaultCalendarRouteState.date,
         view: "week",
         query: "",
       }),

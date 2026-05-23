@@ -19,7 +19,7 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
     <div className="launcher" onClick={(event) => event.stopPropagation()}>
       <div
         style={{
-          fontSize: 11,
+          fontSize: "var(--text-caption)",
           color: "var(--text-3)",
           fontWeight: 600,
           textTransform: "uppercase",

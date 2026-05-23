@@ -176,8 +176,8 @@ export const LOCAL_DEMO_SEARCH_DOCUMENTS = [
     expectedAttributes: {
       threadId: LOCAL_DEMO_IDS.mailPlanningThread,
       messageId: LOCAL_DEMO_IDS.mailPlanningMessage,
-      from: "annie@helix.local",
-      fromName: "Annie Thai",
+      from: "maya@helix.local",
+      fromName: "Maya Sharma",
       labels: ["inbox", "important"],
       direction: "inbound",
     },

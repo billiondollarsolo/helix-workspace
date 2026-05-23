@@ -18,7 +18,8 @@ import {
   SidePanelRail,
   type SideTool,
 } from "@/components/shell/side-panel";
-import { UNREAD_NOTIFICATION_COUNT } from "@/components/shell/notifications-panel";
+import { useQuery } from "@tanstack/react-query";
+import { unreadCountQuery } from "@/features/notifications/api";
 
 export interface SurfaceFrameProps {
   /** Surface name shown in the TopBar. */
@@ -49,6 +50,9 @@ export function SurfaceFrame({
   children,
 }: SurfaceFrameProps) {
   const [sideTool, setSideTool] = useState<SideTool | null>(null);
+  // Live unread count for the bell badge. Polls every 30s and refreshes when
+  // notifications.mark-read / mark-all-read run (queryClient invalidation).
+  const { data: unreadData } = useQuery(unreadCountQuery());
 
   return (
     <div className="workspace">
@@ -57,7 +61,7 @@ export function SurfaceFrame({
         icon={icon}
         searchPlaceholder={searchPlaceholder}
         actions={actions}
-        notifUnread={UNREAD_NOTIFICATION_COUNT}
+        notifUnread={unreadData?.count ?? 0}
         searchValue={searchValue}
         onSearchChange={onSearchChange}
       />

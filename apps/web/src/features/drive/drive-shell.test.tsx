@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DriveShell } from "./drive-shell";
-import { DRIVE_FILES_SEED, DRIVE_FOLDERS_SEED } from "./drive-data";
 import type { DriveApiEntry } from "./api";
 
 // Mock @tanstack/react-router so DriveShell can call useNavigate without a router context.
@@ -126,7 +125,6 @@ describe("DriveShell", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("Engineering");
     expect(text).toContain("Roadmap.docx");
-    expect(text).toContain("2.4 TB of 5 TB used");
     expect(toolCalls.some((call) => call.url === "/api/tools/drive.list")).toBe(true);
   });
 
@@ -221,7 +219,7 @@ describe("DriveShell", () => {
     expect(toolCalls.some((call) => call.url === "/api/tools/drive.search")).toBe(true);
   });
 
-  it("falls back to the typed seed when the backend listing errors", async () => {
+  it("surfaces a clean error state when the backend listing errors", async () => {
     fetchMock.mockImplementation((input) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -234,8 +232,10 @@ describe("DriveShell", () => {
     await settle();
 
     const text = container.textContent ?? "";
-    expect(text).toContain(DRIVE_FOLDERS_SEED[0]?.name ?? "");
-    expect(text).toContain(DRIVE_FILES_SEED[0]?.name ?? "");
+    // No fabricated rows leak through — the shell just renders the empty
+    // folder/file lists. The breadcrumb still anchors the layout.
+    expect(text).not.toContain("Roadmap.docx");
+    expect(text).not.toContain("Engineering");
   });
 
   describe("app-typed file entries open their editor", () => {

@@ -69,6 +69,10 @@ export interface DriveStore {
     readonly includeTrashed?: boolean;
     readonly limit?: number;
     readonly app?: string | null;
+    /** Filter by object kind. Defaults to 'file' so existing callers stay
+     *  unchanged; pass 'recording' for the Recordings drive surface. */
+    readonly kind?: string | null;
+    readonly acrossFolders?: boolean;
   }): Promise<readonly DriveEntryRecord[]>;
   share(input: {
     readonly orgId: string;
@@ -345,30 +349,49 @@ export class PostgresDriveStore
     readonly includeTrashed?: boolean;
     readonly limit?: number;
     readonly app?: string | null;
+    /** Filter by object kind. Defaults to 'file'; the Recordings drive
+     *  scope passes 'recording'. */
+    readonly kind?: string | null;
+    /** When true, return every visible file regardless of which folder
+     *  it lives in. Used by the typed surfaces (`/docs`, `/sheets`,
+     *  `/slides`) which present a cross-folder app-shaped list. Folder
+     *  rows are suppressed in this mode — the result is a flat file list. */
+    readonly acrossFolders?: boolean;
   }): Promise<readonly DriveEntryRecord[]> {
-    if (input.folderId !== undefined && input.folderId !== null) {
+    // When filtering for non-file kinds (e.g. 'recording'), the folder
+    // hierarchy doesn't apply — those objects don't live in user-managed
+    // folders. Force acrossFolders=true so we skip the folder rows and the
+    // folderId metadata match.
+    const kind = input.kind ?? "file";
+    const acrossFolders = input.acrossFolders === true || kind !== "file";
+    if (input.folderId !== undefined && input.folderId !== null && !acrossFolders) {
       await requireFolderAccess(this.sql, input.orgId, input.actorId, input.folderId);
     }
-    const folderRows = (await this.sql`
-      select *
-      from drive_folders
-      where org_id = ${input.orgId}
-        and (
-          (${input.folderId ?? null}::uuid is null and parent_folder_id is null)
-          or parent_folder_id = ${input.folderId ?? null}
-        )
-        and (${input.includeTrashed ?? false} or deleted_at is null)
-        and ${canReadFolderSql(this.sql, input.actorId)}
-      order by name asc
-      limit ${input.limit ?? 100}
-    `) as unknown as readonly DriveFolderRow[];
+    const folderRows = acrossFolders
+      ? ([] as readonly DriveFolderRow[])
+      : ((await this.sql`
+          select *
+          from drive_folders
+          where org_id = ${input.orgId}
+            and (
+              (${input.folderId ?? null}::uuid is null and parent_folder_id is null)
+              or parent_folder_id = ${input.folderId ?? null}
+            )
+            and (${input.includeTrashed ?? false} or deleted_at is null)
+            and ${canReadFolderSql(this.sql, input.actorId)}
+          order by name asc
+          limit ${input.limit ?? 100}
+        `) as unknown as readonly DriveFolderRow[]);
 
     const fileRows = (await this.sql`
       select o.*, (select max(version_number) from drive_versions v where v.object_id = o.id) as version_number
       from objects o
       where o.org_id = ${input.orgId}
-        and o.kind = 'file'
-        and coalesce(o.metadata->>'folderId', '') = coalesce(${input.folderId ?? null}::text, '')
+        and o.kind = ${kind}
+        and (
+          ${acrossFolders}
+          or coalesce(o.metadata->>'folderId', '') = coalesce(${input.folderId ?? null}::text, '')
+        )
         and (${input.includeTrashed ?? false} or o.deleted_at is null)
         and (${input.app ?? null}::text is null or coalesce(o.metadata->>'app', 'file') = ${input.app ?? null})
         and (
@@ -899,12 +922,16 @@ async function requireObjectAccess(
   actorId: string,
   objectId: string,
 ): Promise<ObjectRow> {
+  // Drive surfaces 'file' (uploaded files / app-created docs) and
+  // 'recording' (meet recordings). Both go through the same /content
+  // endpoint, the same permissions table, and the same readObjectBytes
+  // path — only the kind differs.
   const rows = (await sql`
     select *
     from objects
     where id = ${objectId}
       and org_id = ${orgId}
-      and kind = 'file'
+      and kind in ('file', 'recording')
       and ${canReadObjectSql(sql, actorId)}
     limit 1
   `) as unknown as readonly ObjectRow[];

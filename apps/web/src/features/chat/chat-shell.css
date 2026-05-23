@@ -8,26 +8,20 @@
   min-width: 0;
 }
 
-/* ---- Spaces sidebar (240px) ------------------------------------ */
-
-.chat-sidebar {
-  width: 240px;
-  flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-  padding: 8px;
-  overflow-y: auto;
-}
+/* ---- Spaces sidebar ------------------------------------ */
+/* Chat-specific rules layered on top of `.surf-sidebar` /
+ * `.surf-nav-row` from `apps/web/src/styles.css`. Apply BOTH
+ * class names in the JSX (className="surf-sidebar chat-sidebar"). */
 
 .chat-sidebar-section {
   display: flex;
   align-items: center;
-  font-size: 10px;
+  font-size: var(--text-overline);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-3);
-  padding: 8px 8px 4px;
+  padding: var(--section-label-py) var(--nav-row-px) var(--section-label-mb);
 }
 
 .chat-sidebar-section:not(:first-child) {
@@ -38,29 +32,6 @@
   margin-left: auto;
   width: 18px;
   height: 18px;
-}
-
-.chat-nav-row {
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  text-align: left;
-  color: var(--text);
-  background: transparent;
-  transition: background 0.1s;
-}
-
-.chat-nav-row-dm {
-  height: 30px;
-}
-
-.chat-nav-row:hover {
-  background: var(--hover);
 }
 
 .chat-nav-row[data-selected="true"] {
@@ -80,7 +51,7 @@
 .chat-unread-badge {
   background: var(--accent);
   color: var(--accent-fg);
-  font-size: 10px;
+  font-size: var(--text-chip);
   padding: 0 5px;
   border-radius: 10px;
   min-width: 16px;
@@ -138,12 +109,12 @@
 
 .chat-channel-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--text-body);
   color: var(--text);
 }
 
 .chat-channel-meta {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
@@ -176,7 +147,7 @@
 }
 
 .chat-day-label {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
@@ -210,18 +181,18 @@
 }
 
 .chat-msg-author {
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   font-weight: 600;
   color: var(--text);
 }
 
 .chat-msg-time {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
 .chat-msg-line {
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   line-height: 1.5;
   margin-top: 2px;
   color: var(--text);
@@ -245,7 +216,7 @@
   border-radius: 999px;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--text-caption);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -269,7 +240,7 @@
 
 .chat-thread-link {
   margin-top: 6px;
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--accent);
   font-weight: 500;
   display: inline-flex;
@@ -316,7 +287,7 @@
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
@@ -401,7 +372,7 @@
   border: none;
   outline: none;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   resize: none;
   font-family: inherit;
   color: var(--text);
@@ -430,13 +401,13 @@
 }
 
 .chat-thread-title {
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   font-weight: 600;
   color: var(--text);
 }
 
 .chat-thread-sub {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
@@ -458,25 +429,25 @@
 }
 
 .chat-thread-author {
-  font-size: 12px;
+  font-size: var(--text-meta);
   font-weight: 600;
   color: var(--text);
 }
 
 .chat-thread-time {
-  font-size: 10px;
+  font-size: var(--text-chip);
   color: var(--text-3);
 }
 
 .chat-thread-line {
-  font-size: 12px;
+  font-size: var(--text-meta);
   line-height: 1.5;
   color: var(--text);
 }
 
 .chat-thread-divider {
   padding: 12px 0 8px;
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
@@ -504,7 +475,7 @@
   border: none;
   outline: none;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--text-meta);
   resize: none;
   font-family: inherit;
   color: var(--text);
@@ -524,7 +495,7 @@
 }
 
 .chat-thread-also {
-  font-size: 10px;
+  font-size: var(--text-chip);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -559,7 +530,7 @@
 .chat-info-tab {
   flex: 1;
   height: 34px;
-  font-size: 11px;
+  font-size: var(--text-caption);
   padding: 0;
   justify-content: center;
 }
@@ -571,14 +542,14 @@
 }
 
 .chat-info-about {
-  font-size: 12px;
+  font-size: var(--text-meta);
   color: var(--text-2);
   line-height: 1.55;
   margin-bottom: 12px;
 }
 
 .chat-info-created {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
   margin-bottom: 6px;
 }
@@ -599,7 +570,7 @@
   align-items: center;
   gap: 8px;
   padding: 4px 0;
-  font-size: 12px;
+  font-size: var(--text-meta);
 }
 
 .chat-info-member-text {
@@ -613,7 +584,7 @@
 }
 
 .chat-info-member-role {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
@@ -622,7 +593,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 0;
-  font-size: 12px;
+  font-size: var(--text-meta);
   color: var(--text-2);
   border-top: 1px solid var(--border);
 }
@@ -642,7 +613,7 @@
 }
 
 .chat-info-file-meta {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
@@ -650,7 +621,7 @@
   background: var(--surface-2);
   padding: 10px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--text-meta);
   color: var(--text);
 }
 
@@ -663,7 +634,7 @@
 }
 
 .chat-info-empty {
-  font-size: 12px;
+  font-size: var(--text-meta);
   color: var(--text-3);
 }
 
@@ -674,7 +645,7 @@
 
 .chat-banner {
   padding: 6px 16px;
-  font-size: 12px;
+  font-size: var(--text-meta);
   color: var(--warn, #9a6700);
   background: var(--warn-soft, #fff4d6);
   border-bottom: 1px solid var(--border);
@@ -682,7 +653,7 @@
 
 .chat-sidebar-state {
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--text-meta);
   color: var(--text-3);
 }
 
@@ -694,7 +665,7 @@
 .chat-messages-state {
   margin: auto;
   padding: 32px 16px;
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   color: var(--text-3);
   text-align: center;
 }
@@ -707,7 +678,7 @@
 }
 
 .chat-msg-edited {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
@@ -733,7 +704,7 @@
   align-items: center;
   gap: 3px;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-3);
 }
 
@@ -756,7 +727,7 @@
 .chat-reaction-pick {
   border: none;
   background: transparent;
-  font-size: 16px;
+  font-size: var(--text-h3);
   line-height: 1;
   padding: 4px;
   border-radius: 6px;

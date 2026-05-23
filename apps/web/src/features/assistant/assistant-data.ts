@@ -50,15 +50,6 @@ export interface AssistantChatMessage {
   readonly errored?: boolean;
 }
 
-export const ASSISTANT_THREADS: readonly AssistantThread[] = [
-  { id: "th1", title: "Summarize unread inbox", time: "10m ago" },
-  { id: "th2", title: "Draft Q3 board update narrative", time: "1h ago", pinned: true },
-  { id: "th3", title: "Find time with Mira this week", time: "3h ago" },
-  { id: "th4", title: "Compare Atlas and Northwind contracts", time: "Yesterday" },
-  { id: "th5", title: "Brainstorm onboarding hooks", time: "Yesterday" },
-  { id: "th6", title: "Help me prep 1:1 with Jonas", time: "2 days ago" },
-];
-
 export const ASSISTANT_QUICK_PROMPTS: readonly AssistantQuickPrompt[] = [
   {
     icon: "Mail",
@@ -90,84 +81,6 @@ export const ASSISTANT_QUICK_PROMPTS: readonly AssistantQuickPrompt[] = [
     title: "Draft something new",
     sub: "Email · doc · slide · post",
     color: "#db2777",
-  },
-];
-
-/** The opening seeded conversation shown when a pinned/recent thread is open. */
-export const ASSISTANT_SEED_CONVERSATION: readonly AssistantChatMessage[] = [
-  {
-    id: "seed-1",
-    role: "user",
-    text: "What's the most important thing I missed while I was off yesterday?",
-    time: "10:31 AM",
-  },
-  {
-    id: "seed-2",
-    role: "assistant",
-    text: "Three things I'd flag from your inbox and calendar yesterday:",
-    time: "10:31 AM",
-    blocks: [
-      {
-        kind: "list",
-        title: "Atlas renewal — early sign",
-        items: [
-          "Caroline Reyes (Atlas VP Ops) emailed Rumi about locking in 2027 pricing.",
-          "Rumi forwarded it to you at 4:12 PM with a question: should we counter at a higher floor?",
-          "Atlas is a $420K ARR account. The renewal isn't due until September, so there's leverage if you want to use it.",
-        ],
-      },
-      {
-        kind: "list",
-        title: "Auth incident postmortem",
-        items: [
-          "Daniel published the 05/15 postmortem. Root cause was a stale TLS cert in the staging mesh that propagated to prod.",
-          "Action items are owned and dated; no decisions needed from you.",
-        ],
-      },
-      {
-        kind: "list",
-        title: "Q3 roadmap",
-        items: [
-          "Mira added a new open decision to the doc: do we hold the new pricing tier or revise. She wants async input by Friday.",
-          "Priya commented asking whether to list customers inline or in a linked sheet.",
-        ],
-      },
-      {
-        kind: "actions",
-        items: [
-          { label: "Open Atlas thread", icon: "Mail", target: "mail" },
-          { label: "Open postmortem doc", icon: "Doc", target: "docs" },
-          { label: "Open Q3 Roadmap", icon: "Doc", target: "docs" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "seed-3",
-    role: "user",
-    text: "Draft a reply to Rumi suggesting we hold the line on pricing.",
-    time: "10:34 AM",
-  },
-  {
-    id: "seed-4",
-    role: "assistant",
-    text: "Here's a draft. I kept it brief and gave Rumi clear language to take back to Caroline:",
-    time: "10:34 AM",
-    blocks: [
-      {
-        kind: "draft",
-        title: "Re: Atlas Holdings — they want to renew early",
-        body: "Hi Rumi,\n\nLet's hold the current pricing floor for now. Atlas is a strategic account and locking them in early is valuable, but the floor matters more than the timing — every renewal we discount sets a precedent the rest of the book expects.\n\nA few things you can lean on with Caroline:\n\n• We're already at their pricing tier ceiling — they're getting good value.\n• If they want certainty, we can offer a 24-month commit at current rate (not a discount).\n• If they push, escalate to me — I'd rather take the call than concede on day one.\n\nLet me know how she responds.\n\nAlex",
-      },
-      {
-        kind: "actions",
-        items: [
-          { label: "Send as draft", icon: "Send" },
-          { label: "Open in Mail to edit", icon: "Mail" },
-          { label: "Regenerate", icon: "Sparkles" },
-        ],
-      },
-    ],
   },
 ];
 

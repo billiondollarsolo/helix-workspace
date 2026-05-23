@@ -10,7 +10,7 @@ export const Route = createFileRoute("/login")({
     if (user !== null) {
       // TanStack Router signals navigation by throwing a redirect.
       // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: "/mail", search: { message: undefined, thread: undefined } });
+      throw redirect({ to: "/mail", search: {} });
     }
   },
   component: LoginRoute,
@@ -33,7 +33,7 @@ function LoginRoute() {
     setError(null);
     try {
       await signInWithEmail({ email: nextEmail.trim(), password: nextPassword });
-      await navigate({ to: "/mail", search: { message: undefined, thread: undefined } });
+      await navigate({ to: "/mail", search: {} });
     } catch (caught) {
       setStatus("idle");
       setError(caught instanceof Error ? caught.message : "Sign in failed.");

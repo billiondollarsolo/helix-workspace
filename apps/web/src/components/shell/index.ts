@@ -12,10 +12,7 @@ export {
   SidePanelRail,
   type SideTool,
 } from "@/components/shell/side-panel";
-export {
-  NotificationsPanel,
-  UNREAD_NOTIFICATION_COUNT,
-} from "@/components/shell/notifications-panel";
+export { NotificationsPanel } from "@/components/shell/notifications-panel";
 export { CommandPalette } from "@/components/shell/command-palette";
 export { SettingsPage } from "@/components/shell/settings-page";
 export {

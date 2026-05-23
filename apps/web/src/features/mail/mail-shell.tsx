@@ -22,6 +22,7 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Icons, type IconName } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import { SurfaceFrame } from "@/components/shell";
@@ -46,10 +47,7 @@ import {
 } from "./api";
 import {
   MAIL_EMPTY_STATES,
-  MAIL_FOLDERS,
-  MAIL_LABELS,
   MAIL_TABS,
-  MAIL_THREADS,
   type MailTabId,
 } from "./mail-seed";
 import {
@@ -113,77 +111,6 @@ function formatThreadTime(value: string): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/* ----------------------------------------------------------- seed fallback */
-
-/** Seed folder summaries — used only when `mail.folders.list` fails. */
-const FALLBACK_FOLDERS: readonly MailFolderSummary[] = MAIL_FOLDERS.map((folder) => ({
-  id: folder.id,
-  label: folder.label,
-  total: folder.count ?? 0,
-  unread: folder.count ?? 0,
-}));
-
-/** Seed labels — used only when `mail.labels.list` fails. */
-const FALLBACK_LABELS: readonly MailLabelSummary[] = MAIL_LABELS.map((label, index) => ({
-  id: label.id,
-  slug: label.id,
-  name: label.label,
-  color: label.color,
-  sortOrder: index,
-  threadCount: 0,
-  shared: true,
-}));
-
-/** Seed threads projected into the backend row shape — used only on failure. */
-function fallbackThreadRows(
-  folder: MailFolderKey,
-  tab: MailTabId,
-  label: string | null,
-  query: string,
-): readonly MailThreadRow[] {
-  const trimmed = query.trim().toLowerCase();
-  const tokens = trimmed === "" ? [] : (trimmed.match(/\S+/g) ?? []);
-  return MAIL_THREADS.filter((thread) => {
-    if (folder === "starred") {
-      if (thread.starred !== true) {
-        return false;
-      }
-    } else if (folder !== "inbox") {
-      return false;
-    } else if (thread.tab !== tab) {
-      return false;
-    }
-    if (label != null && !thread.labels.includes(label)) {
-      return false;
-    }
-    if (tokens.length > 0) {
-      const haystack = [thread.from, thread.subject, thread.preview, thread.body ?? ""]
-        .join(" ")
-        .toLowerCase();
-      if (!tokens.every((token) => haystack.includes(token))) {
-        return false;
-      }
-    }
-    return true;
-  }).map((thread) => ({
-    threadId: thread.id,
-    messageId: thread.id,
-    subject: thread.subject,
-    from: thread.from,
-    fromEmail: thread.fromEmail ?? "",
-    preview: thread.preview,
-    time: thread.time,
-    unread: thread.unread === true,
-    starred: thread.starred === true,
-    hasAttachment: thread.hasAttachment === true,
-    messageCount: thread.count ?? 1,
-    labels: thread.labels,
-    category: thread.tab,
-    folder,
-    snoozedUntil: null,
-  }));
-}
-
 /* ----------------------------------------------------------------- sidebar */
 
 interface MailSidebarProps {
@@ -211,18 +138,7 @@ function MailSidebar({
   );
 
   return (
-    <aside
-      style={{
-        width: 184,
-        flexShrink: 0,
-        borderRight: "1px solid var(--border)",
-        background: "var(--surface)",
-        display: "flex",
-        flexDirection: "column",
-        padding: "10px 8px",
-        minHeight: 0,
-      }}
-    >
+    <aside className="surf-sidebar">
       <button
         type="button"
         className="btn primary lg"
@@ -240,97 +156,40 @@ function MailSidebar({
             <button
               key={entry.id}
               type="button"
-              onClick={() => {
-                onFolder(entry.id);
-              }}
-              aria-current={active ? "true" : undefined}
-              style={{
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                height: "var(--rd-list-row-h)",
-                padding: "0 10px",
-                borderRadius: 6,
-                fontSize: "var(--rd-row-fs)",
-                background: active ? "var(--accent-soft)" : "transparent",
-                color: active ? "var(--accent)" : "var(--text)",
-                fontWeight: active ? 600 : 400,
-              }}
+              onClick={() => onFolder(entry.id)}
+              aria-current={active ? "page" : undefined}
+              className="surf-nav-row"
             >
               <Icon />
-              <span style={{ flex: 1, textAlign: "left" }}>{entry.label}</span>
-              {badge > 0 && (
-                <span style={{ fontSize: 11, color: "var(--text-3)" }}>{badge}</span>
-              )}
+              <span className="label">{entry.label}</span>
+              {badge > 0 && <span className="count">{badge}</span>}
             </button>
           );
         })}
-        <div className="section-label">Labels</div>
+        <div className="surf-section-label">Labels</div>
         {labels.map((label) => {
           const active = activeLabel === label.slug;
           return (
             <button
               key={label.id}
               type="button"
-              aria-pressed={active}
-              onClick={() => {
-                onLabel(active ? null : label.slug);
-              }}
-              style={{
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                height: "var(--rd-list-row-h)",
-                padding: "0 10px",
-                borderRadius: 6,
-                fontSize: "var(--rd-row-fs)",
-                background: active ? "var(--accent-soft)" : "transparent",
-                color: active ? "var(--accent)" : "var(--text)",
-                fontWeight: active ? 600 : 400,
-              }}
+              aria-current={active ? "page" : undefined}
+              onClick={() => onLabel(active ? null : label.slug)}
+              className="surf-nav-row"
             >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 2,
-                  background: label.color,
-                  flexShrink: 0,
-                }}
-              />
-              <span style={{ flex: 1, textAlign: "left" }}>{label.name}</span>
-              {label.threadCount > 0 && (
-                <span style={{ fontSize: 11, color: "var(--text-3)" }}>
-                  {label.threadCount}
-                </span>
-              )}
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: label.color, flexShrink: 0 }} />
+              <span className="label">{label.name}</span>
+              {label.threadCount > 0 && <span className="count">{label.threadCount}</span>}
             </button>
           );
         })}
-        <button
-          type="button"
-          style={{
-            width: "100%",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            height: "var(--rd-list-row-h)",
-            padding: "0 10px",
-            borderRadius: 6,
-            fontSize: "var(--rd-row-fs)",
-            color: "var(--text-3)",
-          }}
-        >
+        <button type="button" className="surf-nav-row" style={{ color: "var(--text-3)" }}>
           <Icons.Plus />
-          <span>New label</span>
+          <span className="label">New label</span>
         </button>
-        <div className="section-label">Filters</div>
-        <div style={{ padding: "0 10px" }}>
-          <span className="chip" style={{ fontSize: 10 }}>
-            has:attachment
-          </span>
+        <div className="surf-section-label">Filters</div>
+        <div style={{ padding: "0 var(--nav-row-px)" }}>
+          <span className="chip">has:attachment</span>
         </div>
       </div>
     </aside>
@@ -463,7 +322,7 @@ function ThreadRow({
           <span
             key={label.id}
             style={{
-              fontSize: 10,
+              fontSize: "var(--text-chip)",
               padding: "0 5px",
               height: 16,
               lineHeight: "16px",
@@ -497,7 +356,7 @@ function ThreadRow({
         <span
           className="mail-thread-row-date"
           style={{
-            fontSize: 11,
+            fontSize: "var(--text-caption)",
             fontWeight: thread.unread ? 600 : 400,
             color: thread.unread ? "var(--text-2)" : "var(--text-3)",
             display: "flex",
@@ -592,7 +451,7 @@ function EmptyState({
   return (
     <div className="empty" style={{ padding: 64 }}>
       {icon}
-      <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{title}</div>
+      <div style={{ fontSize: "var(--text-body)", fontWeight: 500, color: "var(--text)" }}>{title}</div>
       <div>{body}</div>
       {children}
     </div>
@@ -973,7 +832,7 @@ function ThreadList({
                 <span
                   style={{
                     marginLeft: 4,
-                    fontSize: 11,
+                    fontSize: "var(--text-caption)",
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
@@ -1245,7 +1104,7 @@ function ThreadList({
           <div
             style={{
               margin: "8px 16px 0",
-              fontSize: 11,
+              fontSize: "var(--text-caption)",
               color: "var(--danger)",
             }}
           >
@@ -1478,7 +1337,7 @@ function ThreadView({
         <button type="button" className="icon-btn" aria-label="More actions">
           <Icons.MoreV />
         </button>
-        <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-3)" }}>
+        <span style={{ marginLeft: "auto", fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
           {messages.length > 0 ? `${String(messages.length)} messages` : ""}
         </span>
         <button type="button" className="icon-btn" aria-label="Previous conversation">
@@ -1492,7 +1351,7 @@ function ThreadView({
         <div style={{ maxWidth: 880, margin: "0 auto", padding: "20px 32px" }}>
           <div style={{ marginBottom: 16 }}>
             <h1
-              style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 600, lineHeight: 1.35 }}
+              style={{ margin: "0 0 8px", fontSize: "var(--text-h2)", fontWeight: 600, lineHeight: 1.35 }}
             >
               {subject}
             </h1>
@@ -1501,7 +1360,7 @@ function ThreadView({
                 <span
                   key={label.id}
                   style={{
-                    fontSize: 11,
+                    fontSize: "var(--text-caption)",
                     padding: "2px 6px",
                     borderRadius: 4,
                     fontWeight: 500,
@@ -1516,12 +1375,12 @@ function ThreadView({
           </div>
 
           {isError && (
-            <div style={{ marginBottom: 12, fontSize: 11, color: "var(--danger)" }}>
+            <div style={{ marginBottom: 12, fontSize: "var(--text-caption)", color: "var(--danger)" }}>
               Could not load the full conversation — showing the list preview.
             </div>
           )}
           {actionError != null && (
-            <div style={{ marginBottom: 12, fontSize: 11, color: "var(--danger)" }}>
+            <div style={{ marginBottom: 12, fontSize: "var(--text-caption)", color: "var(--danger)" }}>
               {actionError}
             </div>
           )}
@@ -1544,7 +1403,7 @@ function ThreadView({
                 border: "1px solid var(--accent-soft-border)",
                 borderRadius: 8,
                 padding: 12,
-                fontSize: 12,
+                fontSize: "var(--text-meta)",
                 marginBottom: 16,
                 lineHeight: 1.55,
               }}
@@ -1588,7 +1447,7 @@ function ThreadView({
                 borderRadius: 8,
                 padding: 16,
                 marginBottom: 12,
-                fontSize: 13,
+                fontSize: "var(--text-body-sm)",
                 color: "var(--text-3)",
               }}
             >
@@ -1635,14 +1494,14 @@ function ThreadView({
                         flexWrap: "wrap",
                       }}
                     >
-                      <span style={{ fontWeight: 600, fontSize: 13 }}>{msgSender}</span>
-                      <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+                      <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>{msgSender}</span>
+                      <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
                         {message.from?.address ?? row.fromEmail}
                       </span>
                       <span
                         style={{
                           marginLeft: "auto",
-                          fontSize: 11,
+                          fontSize: "var(--text-caption)",
                           color: "var(--text-3)",
                           whiteSpace: "nowrap",
                         }}
@@ -1652,7 +1511,7 @@ function ThreadView({
                     </div>
                     <div
                       style={{
-                        fontSize: 11,
+                        fontSize: "var(--text-caption)",
                         color: "var(--text-3)",
                         marginBottom: 12,
                       }}
@@ -1665,7 +1524,7 @@ function ThreadView({
                         : "me"}
                     </div>
                     <div
-                      style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 }}
+                      style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-body-sm)", lineHeight: 1.6 }}
                     >
                       {message.body}
                     </div>
@@ -1679,13 +1538,13 @@ function ThreadView({
                             display: "flex",
                             alignItems: "center",
                             gap: 8,
-                            fontSize: 12,
+                            fontSize: "var(--text-meta)",
                           }}
                         >
                           <Icons.Doc />
                           <div>
                             <div style={{ fontWeight: 500 }}>Attachment</div>
-                            <div style={{ fontSize: 10, color: "var(--text-3)" }}>
+                            <div style={{ fontSize: "var(--text-chip)", color: "var(--text-3)" }}>
                               View in conversation
                             </div>
                           </div>
@@ -1749,7 +1608,7 @@ function ThreadView({
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
-                  fontSize: 12,
+                  fontSize: "var(--text-meta)",
                 }}
               >
                 {replyMode === "forward" ? <Icons.Forward /> : <Icons.Reply />}
@@ -1779,7 +1638,7 @@ function ThreadView({
                     gap: 8,
                   }}
                 >
-                  <span style={{ fontSize: 12, color: "var(--text-3)", width: 50 }}>
+                  <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
                     To
                   </span>
                   <input
@@ -1808,7 +1667,7 @@ function ThreadView({
                   border: "none",
                   outline: "none",
                   background: "transparent",
-                  fontSize: 13,
+                  fontSize: "var(--text-body-sm)",
                   lineHeight: 1.55,
                   resize: "vertical",
                   fontFamily: "inherit",
@@ -1818,7 +1677,7 @@ function ThreadView({
                 <div
                   style={{
                     margin: "0 14px 8px",
-                    fontSize: 11,
+                    fontSize: "var(--text-caption)",
                     color: "var(--danger)",
                   }}
                 >
@@ -2080,7 +1939,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <span style={{ fontSize: 12, color: "var(--text-3)", width: 50 }}>To</span>
+          <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>To</span>
           <input
             value={to}
             onChange={(event) => {
@@ -2092,7 +1951,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
               border: "none",
               outline: "none",
               background: "transparent",
-              fontSize: 13,
+              fontSize: "var(--text-body-sm)",
             }}
           />
           <button
@@ -2101,7 +1960,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
             onClick={() => {
               setShowCc((value) => !value);
             }}
-            style={{ fontSize: 11, color: "var(--text-3)" }}
+            style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
           >
             Cc
           </button>
@@ -2112,7 +1971,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
             onClick={() => {
               setShowBcc((value) => !value);
             }}
-            style={{ fontSize: 11, color: "var(--text-3)" }}
+            style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
           >
             Bcc
           </button>
@@ -2126,7 +1985,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
               borderBottom: "1px solid var(--border)",
             }}
           >
-            <span style={{ fontSize: 12, color: "var(--text-3)", width: 50 }}>Cc</span>
+            <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>Cc</span>
             <input
               value={cc}
               onChange={(event) => {
@@ -2138,7 +1997,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
                 border: "none",
                 outline: "none",
                 background: "transparent",
-                fontSize: 13,
+                fontSize: "var(--text-body-sm)",
               }}
             />
           </div>
@@ -2152,7 +2011,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
               borderBottom: "1px solid var(--border)",
             }}
           >
-            <span style={{ fontSize: 12, color: "var(--text-3)", width: 50 }}>Bcc</span>
+            <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>Bcc</span>
             <input
               value={bcc}
               onChange={(event) => {
@@ -2164,7 +2023,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
                 border: "none",
                 outline: "none",
                 background: "transparent",
-                fontSize: 13,
+                fontSize: "var(--text-body-sm)",
               }}
             />
           </div>
@@ -2182,7 +2041,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
               border: "none",
               outline: "none",
               background: "transparent",
-              fontSize: 13,
+              fontSize: "var(--text-body-sm)",
               fontWeight: 500,
             }}
           />
@@ -2202,7 +2061,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
           border: "none",
           outline: "none",
           background: "transparent",
-          fontSize: 13,
+          fontSize: "var(--text-body-sm)",
           lineHeight: 1.55,
           resize: "none",
           fontFamily: "inherit",
@@ -2228,7 +2087,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
         </div>
       )}
       {sendFailed && (
-        <div style={{ margin: "0 14px 8px", fontSize: 11, color: "var(--danger)" }}>
+        <div style={{ margin: "0 14px 8px", fontSize: "var(--text-caption)", color: "var(--danger)" }}>
           Could not send message. Try again.
         </div>
       )}
@@ -2240,7 +2099,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
             background: "var(--accent-soft)",
             borderRadius: 6,
             border: "1px solid var(--accent-soft-border)",
-            fontSize: 12,
+            fontSize: "var(--text-meta)",
           }}
         >
           <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--accent)" }}>
@@ -2335,12 +2194,36 @@ const PAGE_SIZE = 50;
 
 export function MailShell() {
   const queryClient = useQueryClient();
-  const [folder, setFolder] = useState<MailFolderKey>("inbox");
-  const [tab, setTab] = useState<MailTabId>("primary");
-  const [activeLabel, setActiveLabel] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const navigate = useNavigate();
+  // URL-hydrated initial values — back button restores the prior view.
+  const urlSearch: Partial<{ folder: string; tab: MailTabId; thread: string; q: string; label: string }> =
+    useSearch({ strict: false });
+  const [folder, setFolder] = useState<MailFolderKey>(
+    ((urlSearch.folder as MailFolderKey | undefined) ?? "inbox"),
+  );
+  const [tab, setTab] = useState<MailTabId>(urlSearch.tab ?? "primary");
+  const [activeLabel, setActiveLabel] = useState<string | null>(urlSearch.label ?? null);
+  const [selected, setSelected] = useState<string | null>(urlSearch.thread ?? null);
   const [composeOpen, setComposeOpen] = useState(false);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(urlSearch.q ?? "");
+
+  // Whenever the local state changes, push it into the URL. Empty/default
+  // values are stripped to keep URLs clean. Replace=false so the back
+  // button traverses each drill-down. The URL is the SOURCE OF TRUTH for
+  // links and history; component state mirrors it.
+  useEffect(() => {
+    void navigate({
+      to: "/mail",
+      search: {
+        ...(folder === "inbox" ? {} : { folder }),
+        ...(tab === "primary" ? {} : { tab }),
+        ...(selected ? { thread: selected } : {}),
+        ...(query.length === 0 ? {} : { q: query }),
+        ...(activeLabel ? { label: activeLabel } : {}),
+      },
+      replace: false,
+    });
+  }, [folder, tab, selected, query, activeLabel]);
   const [offset, setOffset] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
   // Checked (bulk-select) thread IDs
@@ -2362,20 +2245,12 @@ export function MailShell() {
   );
   const threadsQuery = useQuery(mailThreadsQueryOptions(threadsInput));
 
-  const folders = foldersQuery.isError
-    ? FALLBACK_FOLDERS
-    : (foldersQuery.data ?? FALLBACK_FOLDERS);
-  const labels = labelsQuery.isError
-    ? FALLBACK_LABELS
-    : (labelsQuery.data ?? FALLBACK_LABELS);
+  const folders = foldersQuery.data ?? [];
+  const labels = labelsQuery.data ?? [];
 
   const threadsResult = threadsQuery.data;
-  const threads = threadsQuery.isError
-    ? fallbackThreadRows(folder, tab, activeLabel, query)
-    : (threadsResult?.threads ?? []);
-  const total = threadsQuery.isError
-    ? threads.length
-    : (threadsResult?.total ?? 0);
+  const threads = threadsResult?.threads ?? [];
+  const total = threadsResult?.total ?? 0;
 
   const labelColors = useMemo(
     () => new Map(labels.map((label) => [label.slug, label])),

@@ -7,8 +7,7 @@
    the real `assistant.conversations.list` tool via TanStack Query, with
    pin/unpin/rename/delete and memory-forget all hitting `POST /api/tools/...`.
    Live replies stream from `streamAssistantChat`; selecting a past thread
-   reopens it and continues the same backend conversation. The typed seed
-   conversation/threads are an offline fallback only. */
+   reopens it and continues the same backend conversation. */
 
 import {
   useCallback,
@@ -42,14 +41,13 @@ import {
   ASSISTANT_ERROR_FALLBACK,
   ASSISTANT_MODELS,
   ASSISTANT_QUICK_PROMPTS,
-  ASSISTANT_THREADS,
   assistantNowTime,
   type AssistantBlock,
   type AssistantChatMessage,
   type AssistantThread,
 } from "@/features/assistant/assistant-data";
 
-const USER_NAME = "Alex Park";
+const USER_NAME = "You";
 
 /** Maps a backend conversation list item to the seed thread shape. */
 function toThread(item: AssistantConversationListItem): AssistantThread {
@@ -107,18 +105,14 @@ export function AssistantSurface() {
     void queryClient.invalidateQueries({ queryKey: [ASSISTANT_QUERY_ROOT, "conversations"] });
   }, [queryClient]);
 
-  /* The backend list is the source of truth; the typed seed is an offline
-     fallback shown only when the list query fails with no cached data. */
-  const offline = conversationsQuery.isError && conversationsQuery.data === undefined;
-  const threads: readonly AssistantThread[] = useMemo(() => {
-    if (conversationsQuery.data !== undefined) {
-      return conversationsQuery.data.items.map(toThread);
-    }
-    if (offline) {
-      return ASSISTANT_THREADS;
-    }
-    return [];
-  }, [conversationsQuery.data, offline]);
+  /* The backend list is the source of truth. On error or while loading the
+     sidebar renders an empty list (the surface shows its own loading/error
+     affordances elsewhere). */
+  const threads: readonly AssistantThread[] = useMemo(
+    () =>
+      conversationsQuery.data !== undefined ? conversationsQuery.data.items.map(toThread) : [],
+    [conversationsQuery.data],
+  );
 
   const send = useCallback(
     (raw: string) => {
@@ -316,7 +310,7 @@ export function AssistantSurface() {
         threadId={threadId}
         threads={threads}
         loading={conversationsQuery.isLoading}
-        offline={offline}
+        errored={conversationsQuery.isError}
         search={search}
         onSearchChange={setSearch}
         onSelect={openThread}
@@ -423,7 +417,7 @@ const noticeStyle: CSSProperties = {
   justifyContent: "space-between",
   gap: 12,
   padding: "8px 32px",
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
   color: "var(--text-2)",
   background: "var(--surface-2)",
   borderBottom: "1px solid var(--border)",
@@ -435,7 +429,7 @@ interface AssistantThreadListProps {
   readonly threadId: string | null;
   readonly threads: readonly AssistantThread[];
   readonly loading: boolean;
-  readonly offline: boolean;
+  readonly errored: boolean;
   readonly search: string;
   readonly onSearchChange: (value: string) => void;
   readonly onSelect: (id: string) => void;
@@ -451,7 +445,7 @@ function AssistantThreadList({
   threadId,
   threads,
   loading,
-  offline,
+  errored,
   search,
   onSearchChange,
   onSelect,
@@ -494,8 +488,8 @@ function AssistantThreadList({
         {loading && threads.length === 0 && (
           <div style={threadEmptyStyle}>Loading chats…</div>
         )}
-        {offline && (
-          <div style={threadEmptyStyle}>Offline — showing example chats.</div>
+        {errored && threads.length === 0 && (
+          <div style={threadEmptyStyle}>Chats unavailable — try again later.</div>
         )}
         {pinned.length > 0 && (
           <>
@@ -580,7 +574,7 @@ const sectionLabelStyle: CSSProperties = { padding: "8px 4px 6px" };
 
 const threadEmptyStyle: CSSProperties = {
   padding: "12px 6px",
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
   color: "var(--text-3)",
 };
 
@@ -648,12 +642,12 @@ function ThreadItem({
       >
         <span
           className="truncate"
-          style={{ fontSize: 12, fontWeight: active ? 600 : 500 }}
+          style={{ fontSize: "var(--text-meta)", fontWeight: active ? 600 : 500 }}
         >
           {thread.pinned === true ? "📌 " : ""}
           {thread.title}
         </span>
-        <span style={{ fontSize: 11, color: "var(--text-3)" }}>{thread.time}</span>
+        <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{thread.time}</span>
       </button>
       <button
         type="button"
@@ -746,7 +740,7 @@ const threadMenuItemStyle: CSSProperties = {
   width: "100%",
   padding: "6px 8px",
   borderRadius: 6,
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
   textAlign: "left",
   background: "transparent",
 };
@@ -789,7 +783,7 @@ function RenameDialog({ thread, pending, onCancel, onSubmit }: RenameDialogProps
         </>
       }
     >
-      <label style={{ display: "block", fontSize: 12, marginBottom: 6 }}>
+      <label style={{ display: "block", fontSize: "var(--text-meta)", marginBottom: 6 }}>
         Chat title
       </label>
       <input
@@ -840,7 +834,7 @@ function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProp
         </>
       }
     >
-      <p style={{ fontSize: 13, margin: 0 }}>
+      <p style={{ fontSize: "var(--text-body-sm)", margin: 0 }}>
         Delete <strong>{thread.title}</strong>? This removes it from your thread
         list and can&apos;t be undone.
       </p>
@@ -898,13 +892,13 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
                   <PromptIcon />
                 </span>
                 <span>
-                  <span style={{ display: "block", fontSize: 13, fontWeight: 600 }}>
+                  <span style={{ display: "block", fontSize: "var(--text-body-sm)", fontWeight: 600 }}>
                     {prompt.title}
                   </span>
                   <span
                     style={{
                       display: "block",
-                      fontSize: 11,
+                      fontSize: "var(--text-caption)",
                       color: "var(--text-3)",
                       marginTop: 2,
                     }}
@@ -940,7 +934,7 @@ const heroIconStyle: CSSProperties = {
 };
 
 const heroTitleStyle: CSSProperties = {
-  fontSize: 32,
+  fontSize: "var(--text-display)",
   fontWeight: 700,
   letterSpacing: "-0.02em",
   margin: "0 0 8px",
@@ -948,7 +942,7 @@ const heroTitleStyle: CSSProperties = {
 };
 
 const heroSubheadStyle: CSSProperties = {
-  fontSize: 15,
+  fontSize: "var(--text-body-lg)",
   color: "var(--text-2)",
   margin: "0 0 32px",
 };
@@ -1036,7 +1030,7 @@ const disclaimerRowStyle: CSSProperties = {
 };
 
 const disclaimerStyle: CSSProperties = {
-  fontSize: 11,
+  fontSize: "var(--text-caption)",
   color: "var(--text-3)",
   display: "flex",
   alignItems: "center",
@@ -1123,7 +1117,7 @@ const userBubbleStyle: CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
   maxWidth: 520,
-  fontSize: 13,
+  fontSize: "var(--text-body-sm)",
   lineHeight: 1.55,
   border: "1px solid var(--accent-soft-border)",
   whiteSpace: "pre-wrap",
@@ -1136,7 +1130,7 @@ const assistantRowStyle: CSSProperties = {
 };
 
 const assistantTextStyle: CSSProperties = {
-  fontSize: 13,
+  fontSize: "var(--text-body-sm)",
   lineHeight: 1.6,
   marginBottom: 12,
   whiteSpace: "pre-wrap",
@@ -1176,10 +1170,10 @@ function MessageBlock({ block, onNavigate }: MessageBlockProps) {
   if (block.kind === "list") {
     return (
       <div style={listPanelStyle}>
-        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
+        <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)", marginBottom: 8 }}>
           {block.title}
         </div>
-        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.6 }}>
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: "var(--text-meta)", lineHeight: 1.6 }}>
           {block.items.map((item, index) => (
             <li key={index} style={{ marginBottom: 4 }}>
               {item}
@@ -1251,13 +1245,13 @@ const draftToolbarStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 6,
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
 };
 
 const draftBodyStyle: CSSProperties = {
   padding: "12px 14px",
   whiteSpace: "pre-wrap",
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
   lineHeight: 1.6,
 };
 
@@ -1330,7 +1324,7 @@ function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
               ))}
             </select>
             <div style={{ flex: 1 }} />
-            <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+            <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
               <span className="kbd">↵</span> send · <span className="kbd">⇧↵</span>{" "}
               newline
             </span>
@@ -1365,7 +1359,7 @@ const composerTextareaStyle: CSSProperties = {
   border: "none",
   outline: "none",
   background: "transparent",
-  fontSize: 14,
+  fontSize: "var(--text-body)",
   lineHeight: 1.5,
   resize: "none",
   minHeight: 60,
@@ -1383,7 +1377,7 @@ const composerToolbarStyle: CSSProperties = {
 const composerSelectStyle: CSSProperties = {
   width: "auto",
   height: 26,
-  fontSize: 11,
+  fontSize: "var(--text-caption)",
   padding: "0 24px 0 8px",
   border: "none",
   background: "transparent",

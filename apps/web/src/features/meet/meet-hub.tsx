@@ -8,8 +8,8 @@
    schedule window; "Get meeting link" → `meet.create-room` then a copyable
    join code. Joining a meeting mints a token via `meet.mint-token`.
 
-   Seed data (SCHEDULED_MEETINGS / RECENT_MEETINGS) is used ONLY as an offline
-   fallback when the tool call fails. */
+   On query error we surface a "Meetings unavailable" indicator — never
+   fabricated meeting rows. */
 
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,8 +20,6 @@ import { createMeetRoom, mintMeetToken, type MeetMeetingRecord } from "./api";
 import { meetMeetingsQueryOptions, meetQueryKeys } from "./queries";
 import type { MeetCallSession } from "./meet-shell";
 import {
-  RECENT_MEETINGS,
-  SCHEDULED_MEETINGS,
   meetingToRecent,
   meetingToScheduled,
   type RecentMeeting,
@@ -146,23 +144,18 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
   });
 
   /* Today = backend scheduled + active meetings; Recent = backend ended.
-     If the tool call fails entirely, fall back to the typed seed. */
-  const usingFallback = meetingsQuery.isError;
+     On error we render the error state, never fabricated rows. */
   const data = meetingsQuery.data;
 
-  const scheduled = useMemo<readonly ScheduledMeeting[]>(() => {
-    if (data) {
-      return [...data.active, ...data.scheduled].map(meetingToScheduled);
-    }
-    return usingFallback ? SCHEDULED_MEETINGS : [];
-  }, [data, usingFallback]);
+  const scheduled = useMemo<readonly ScheduledMeeting[]>(
+    () => (data ? [...data.active, ...data.scheduled].map(meetingToScheduled) : []),
+    [data],
+  );
 
-  const recent = useMemo<readonly RecentMeeting[]>(() => {
-    if (data) {
-      return data.recent.map(meetingToRecent);
-    }
-    return usingFallback ? RECENT_MEETINGS : [];
-  }, [data, usingFallback]);
+  const recent = useMemo<readonly RecentMeeting[]>(
+    () => (data ? data.recent.map(meetingToRecent) : []),
+    [data],
+  );
 
   /* Map backend meetings by code/id so a Join click can mint a token. */
   const meetingByRow = useMemo(() => {
@@ -201,8 +194,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
       setActionError("This meeting hasn't started yet.");
       return;
     }
-    // Offline-fallback seed row — enter the in-call view without a token.
-    onEnterCall(offlineSession(meeting.title, meeting.code));
+    setActionError("This meeting is no longer available.");
   }
 
   function handleJoinByCode(event: FormEvent) {
@@ -220,7 +212,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
       joinMutation.mutate(backend);
       return;
     }
-    onEnterCall(offlineSession("Helix meeting", trimmed));
+    setActionError("No active meeting matches that code.");
   }
 
   return (
@@ -239,7 +231,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
             <div style={eyebrowStyle}>Start a call</div>
             <h2
               style={{
-                fontSize: 22,
+                fontSize: "var(--text-h1)",
                 fontWeight: 600,
                 margin: "0 0 16px",
                 letterSpacing: "-0.01em",
@@ -290,8 +282,8 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
             ) : null}
             {linkRoom !== null ? (
               <div style={linkBannerStyle}>
-                <span style={{ fontSize: 12, color: "var(--text-2)" }}>Meeting link ready</span>
-                <code className="mono" style={{ fontSize: 12 }}>
+                <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>Meeting link ready</span>
+                <code className="mono" style={{ fontSize: "var(--text-meta)" }}>
                   helix.meet/{linkRoom.code}
                 </code>
                 <button
@@ -309,7 +301,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
 
           <div className="panel" style={{ padding: 24 }}>
             <div style={eyebrowStyle}>Join with code</div>
-            <h3 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px" }}>
+            <h3 style={{ fontSize: "var(--text-h3)", fontWeight: 600, margin: "0 0 12px" }}>
               Got a meeting code?
             </h3>
             <form style={{ display: "flex", gap: 6 }} onSubmit={handleJoinByCode}>
@@ -327,7 +319,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                 {joinMutation.isPending ? "Joining…" : "Join"}
               </button>
             </form>
-            <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8 }}>
+            <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 8 }}>
               Or paste a meeting link
             </div>
           </div>
@@ -336,13 +328,15 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
         {/* Today's meetings */}
         <div style={{ marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Today</h3>
-            <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-3)" }}>
+            <h3 style={{ fontSize: "var(--text-body)", fontWeight: 600, margin: 0 }}>Today</h3>
+            <span style={{ marginLeft: 8, fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
               {meetingsQuery.isLoading
                 ? "Loading…"
                 : `${String(filteredScheduled.length)} meetings`}
             </span>
-            {usingFallback ? <span style={offlineChipStyle}>Offline data</span> : null}
+            {meetingsQuery.isError ? (
+              <span style={offlineChipStyle}>Meetings unavailable</span>
+            ) : null}
           </div>
           <div className="panel">
             {meetingsQuery.isLoading ? (
@@ -369,14 +363,14 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                   <div>
                     <div
                       style={{
-                        fontSize: 14,
+                        fontSize: "var(--text-body)",
                         fontWeight: 600,
                         fontVariantNumeric: "tabular-nums",
                       }}
                     >
                       {meeting.time}
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>{meeting.duration}</div>
+                    <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{meeting.duration}</div>
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div
@@ -387,7 +381,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                         marginBottom: 4,
                       }}
                     >
-                      <span style={{ fontSize: 13, fontWeight: 500 }}>{meeting.title}</span>
+                      <span style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{meeting.title}</span>
                       {meeting.inProgress ? (
                         <span className="chip danger">
                           <span className="chip-dot" />
@@ -406,7 +400,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                         display: "flex",
                         alignItems: "center",
                         gap: 8,
-                        fontSize: 11,
+                        fontSize: "var(--text-caption)",
                         color: "var(--text-3)",
                       }}
                     >
@@ -416,7 +410,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                       <span>{meeting.attendees} attendees</span>
                     </div>
                   </div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--text-3)" }}>
+                  <div className="mono" style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
                     {meeting.code || "—"}
                   </div>
                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
@@ -447,7 +441,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
         {/* Recent meetings */}
         <div>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Recent</h3>
+            <h3 style={{ fontSize: "var(--text-body)", fontWeight: 600, margin: 0 }}>Recent</h3>
             <button className="btn sm" type="button" style={{ marginLeft: "auto" }}>
               View all
             </button>
@@ -475,11 +469,11 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{meeting.title}</div>
+                    <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{meeting.title}</div>
                   </div>
-                  <span style={{ fontSize: 12, color: "var(--text-2)" }}>{meeting.date}</span>
-                  <span style={{ fontSize: 12, color: "var(--text-2)" }}>{meeting.duration}</span>
-                  <span style={{ fontSize: 12, color: "var(--text-2)" }}>
+                  <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>{meeting.date}</span>
+                  <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>{meeting.duration}</span>
+                  <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
                     {meeting.attendees} people
                   </span>
                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
@@ -517,7 +511,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
 
 function PanelMessage({ children }: { readonly children: React.ReactNode }) {
   return (
-    <div style={{ padding: "28px 16px", textAlign: "center", fontSize: 12, color: "var(--text-3)" }}>
+    <div style={{ padding: "28px 16px", textAlign: "center", fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
       {children}
     </div>
   );
@@ -634,20 +628,6 @@ function ScheduleDialog({
   );
 }
 
-/** An offline-fallback session — no real room, no minted token. */
-function offlineSession(subject: string, code: string): MeetCallSession {
-  return {
-    roomId: "",
-    roomName: code,
-    subject,
-    code,
-    jitsiDomain: DEFAULT_JITSI_DOMAIN,
-    token: null,
-    joinUrl: null,
-    startedAtMs: Date.now(),
-  };
-}
-
 function defaultLocalDateTime(): string {
   const now = new Date(Date.now() + 60 * 60 * 1000);
   now.setMinutes(0, 0, 0);
@@ -662,7 +642,7 @@ function messageOf(error: unknown): string {
 }
 
 const eyebrowStyle = {
-  fontSize: 11,
+  fontSize: "var(--text-caption)",
   fontWeight: 600,
   color: "var(--text-3)",
   textTransform: "uppercase",
@@ -672,13 +652,13 @@ const eyebrowStyle = {
 
 const errorTextStyle = {
   marginTop: 12,
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
   color: "var(--danger, #dc2626)",
 } as const;
 
 const offlineChipStyle = {
   marginLeft: 8,
-  fontSize: 10,
+  fontSize: "var(--text-chip)",
   fontWeight: 600,
   color: "var(--text-3)",
   border: "1px solid var(--border)",
@@ -703,7 +683,7 @@ const fieldLabelStyle = {
   display: "flex",
   flexDirection: "column",
   gap: 4,
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
   fontWeight: 500,
   color: "var(--text-2)",
 } as const;

@@ -7,9 +7,10 @@
    ⌘K command palette. */
 
 import { useEffect, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
-import { CURRENT_USER } from "@/components/people";
+import { sessionUserQueryOptions } from "@/lib/auth";
 import { useShellOverlays } from "@/components/shell/overlay-context";
 import { ProfileMenu } from "@/components/shell/profile-menu";
 import { toggleTheme, useAppearance } from "@/components/settings-store";
@@ -44,6 +45,8 @@ export function TopBar({
   const overlays = useShellOverlays();
   const theme = useAppearance((s) => s.theme);
   const [menuOpen, setMenuOpen] = useState(false);
+  const sessionQuery = useQuery(sessionUserQueryOptions());
+  const avatarName = sessionQuery.data?.name ?? sessionQuery.data?.email ?? "User";
 
   useEffect(() => {
     if (!menuOpen) {
@@ -95,7 +98,7 @@ export function TopBar({
           aria-label="Open command palette"
         >
           <Icons.Search />
-          <span style={{ flex: 1, color: "var(--text-3)", fontSize: 13 }}>
+          <span style={{ flex: 1, color: "var(--text-3)", fontSize: "var(--text-body-sm)" }}>
             {searchPlaceholder}
           </span>
           <span className="kbd">⌘K</span>
@@ -132,7 +135,7 @@ export function TopBar({
                 padding: "0 3px",
                 background: "var(--danger)",
                 color: "white",
-                fontSize: 9,
+                fontSize: "var(--text-overline)",
                 fontWeight: 700,
                 borderRadius: 999,
                 display: "grid",
@@ -170,7 +173,7 @@ export function TopBar({
           aria-haspopup="menu"
           aria-expanded={menuOpen}
         >
-          <Avatar name={CURRENT_USER.name} size={28} />
+          <Avatar name={avatarName} size={28} />
         </button>
       </div>
       <ProfileMenu

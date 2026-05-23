@@ -9,15 +9,15 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
 import { createSheet } from "./api";
 import { sheetsQueryKeys } from "./queries";
-import { SheetEditor } from "./sheet-editor";
 import { SheetsList } from "./sheets-list";
-import { SHEET_TABS } from "./seed";
 
-const DEFAULT_TAB_NAMES = SHEET_TABS.map((tab) => tab.name);
+/** Default tab name(s) for a freshly-created spreadsheet. */
+const DEFAULT_TAB_NAMES = ["Sheet 1"];
 
 export interface SheetsShellProps {
   /** Open straight into the editor for this spreadsheet id (used by Drive). */
@@ -29,12 +29,25 @@ export function SheetsShell({ initialSheetId }: SheetsShellProps = {}) {
   const [query, setQuery] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   useEffect(() => {
     if (initialSheetId !== undefined) {
       setSheetId(initialSheetId);
     }
   }, [initialSheetId]);
+
+  // Phase 5 of the OnlyOffice migration: opening a sheet now navigates to
+  // the OnlyOffice editor (`/edit/:objectId`) instead of mounting the
+  // legacy in-page SheetEditor. Every code path that sets `sheetId` (URL
+  // initial param, list-row click, create-mutation success) funnels
+  // through this effect.
+  useEffect(() => {
+    if (sheetId !== null) {
+      void router.navigate({ to: "/edit/$objectId", params: { objectId: sheetId } });
+      setSheetId(null);
+    }
+  }, [sheetId, router]);
 
   const createMutation = useMutation({
     mutationFn: () => createSheet({ title: "Untitled spreadsheet", tabNames: DEFAULT_TAB_NAMES }),
@@ -50,39 +63,31 @@ export function SheetsShell({ initialSheetId }: SheetsShellProps = {}) {
     },
   });
 
-  const inEditor = sheetId !== null;
-
   return (
     <SurfaceFrame
       title="Sheets"
       icon={<Icons.Sheet />}
       searchPlaceholder="Search spreadsheets"
-      searchValue={inEditor ? undefined : query}
-      onSearchChange={inEditor ? undefined : setQuery}
+      searchValue={query}
+      onSearchChange={setQuery}
       actions={
-        inEditor ? undefined : (
-          <button
-            type="button"
-            className="btn primary"
-            disabled={createMutation.isPending}
-            onClick={() => createMutation.mutate()}
-          >
-            <Icons.Plus /> {createMutation.isPending ? "Creating…" : "New"}
-          </button>
-        )
+        <button
+          type="button"
+          className="btn primary"
+          disabled={createMutation.isPending}
+          onClick={() => createMutation.mutate()}
+        >
+          <Icons.Plus /> {createMutation.isPending ? "Creating…" : "New"}
+        </button>
       }
     >
-      {sheetId === null ? (
-        <SheetsList
-          query={query}
-          onOpen={setSheetId}
-          onCreate={() => createMutation.mutate()}
-          isCreating={createMutation.isPending}
-          createError={createError}
-        />
-      ) : (
-        <SheetEditor sheetId={sheetId} onBack={() => setSheetId(null)} />
-      )}
+      <SheetsList
+        query={query}
+        onOpen={setSheetId}
+        onCreate={() => createMutation.mutate()}
+        isCreating={createMutation.isPending}
+        createError={createError}
+      />
     </SurfaceFrame>
   );
 }

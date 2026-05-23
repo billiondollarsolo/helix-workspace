@@ -8,7 +8,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Icons, type IconName } from "@/components/icons";
 import { APPS } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
-import { PEOPLE } from "@/components/people";
 
 interface PaletteItem {
   group: string;
@@ -78,23 +77,6 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
         icon: "Shield",
         action: () => goto("/admin"),
       },
-      ...PEOPLE.slice(0, 6).map((person) => ({
-        group: "People",
-        title: `Email ${person.name}`,
-        sub: person.role,
-        avatar: person.name,
-        action: () => goto("/mail"),
-      })),
-      ...[
-        "Q3 Roadmap — final draft",
-        "Helix design principles",
-        "Postmortem — Auth incident 05/15",
-      ].map((title): PaletteItem => ({
-        group: "Documents",
-        title,
-        icon: "Doc",
-        action: () => goto("/docs"),
-      })),
     ];
     if (!query) {
       return base;
@@ -203,7 +185,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
               border: "none",
               outline: "none",
               background: "transparent",
-              fontSize: 14,
+              fontSize: "var(--text-body)",
             }}
           />
           <span className="kbd">esc</span>
@@ -213,7 +195,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
             <div key={group}>
               <div
                 style={{
-                  fontSize: 10,
+                  fontSize: "var(--text-chip)",
                   color: "var(--text-3)",
                   fontWeight: 600,
                   textTransform: "uppercase",
@@ -244,7 +226,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                       gap: 10,
                       padding: "8px 12px",
                       borderRadius: 6,
-                      fontSize: 13,
+                      fontSize: "var(--text-body-sm)",
                       textAlign: "left",
                       background: active ? "var(--accent-soft)" : "transparent",
                       color: active ? "var(--accent)" : "var(--text)",
@@ -272,7 +254,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                       {item.sub ? (
                         <div
                           className="truncate"
-                          style={{ fontSize: 11, color: "var(--text-3)" }}
+                          style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
                         >
                           {item.sub}
                         </div>
@@ -297,7 +279,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
             padding: "8px 14px",
             display: "flex",
             gap: 16,
-            fontSize: 11,
+            fontSize: "var(--text-caption)",
             color: "var(--text-3)",
           }}
         >

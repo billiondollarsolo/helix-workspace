@@ -17,7 +17,7 @@ export function SurfacePlaceholder({ title, icon }: SurfacePlaceholderProps) {
     <SurfaceFrame title={title} icon={icon}>
       <div className="flex-1" style={{ overflow: "auto" }}>
         <div className="empty" style={{ minHeight: "100%" }}>
-          <strong style={{ fontSize: 15, color: "var(--text-2)" }}>{title}</strong>
+          <strong style={{ fontSize: "var(--text-body-lg)", color: "var(--text-2)" }}>{title}</strong>
           <div>This surface is being rebuilt on the new Helix design system.</div>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { authenticatedFetch } from "@/lib/auth";
+import { callTool as callSharedTool } from "@/lib/tool-call";
 import type {
   DeliveryListInput,
   InboundWebhook,
@@ -197,16 +197,10 @@ export function generateInlineSecretRef(): string {
 }
 
 async function callTool<Output>(toolId: string, input: unknown): Promise<Output> {
-  const response = await authenticatedFetch(`/api/tools/${encodeURIComponent(toolId)}`, {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(input),
-  });
-  const output = (await response.json().catch(() => ({}))) as { readonly error?: string };
-  if (!response.ok) {
-    throw new Error(output.error ?? `Tool ${toolId} failed with ${String(response.status)}`);
-  }
-  return output as Output;
+  // Routes through the shared lib/tool-call helper so confirmation-gated
+  // webhook tools (e.g. webhook.delete) auto-approve their
+  // pending_confirmation envelope instead of silently no-op'ing.
+  return callSharedTool<Output>(toolId, input);
 }
 
 async function inboundTestHeaders(

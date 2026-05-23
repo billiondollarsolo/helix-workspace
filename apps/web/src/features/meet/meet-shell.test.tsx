@@ -7,13 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { MeetShell } from "./meet-shell";
 import { MeetCall, formatElapsed } from "./meet-call";
-import { MeetCallTile } from "./meet-call-tile";
 import type { MeetCallSession } from "./meet-shell";
-import {
-  CALL_PARTICIPANTS,
-  RECENT_MEETINGS,
-  SCHEDULED_MEETINGS,
-} from "./meet-seed";
 import * as authModule from "@/lib/auth";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -153,7 +147,9 @@ const liveSession: MeetCallSession = {
   startedAtMs: Date.now() - 32 * 60 * 1000,
 };
 
-const offlineSession: MeetCallSession = {
+/** A session that hasn't yet received its minted join URL. Used to verify the
+ *  call view renders a "connecting" placeholder while waiting for the room. */
+const pendingSession: MeetCallSession = {
   roomId: "",
   roomName: "qfk-uvtn-pxs",
   subject: "Q3 Roadmap working session",
@@ -183,28 +179,6 @@ describe("formatElapsed", () => {
   });
 });
 
-describe("Meet seed data (offline fallback)", () => {
-  it("has one in-progress meeting in the Today list", () => {
-    expect(SCHEDULED_MEETINGS.filter((meeting) => meeting.inProgress)).toHaveLength(1);
-  });
-
-  it("gives every scheduled meeting a meeting code", () => {
-    for (const meeting of SCHEDULED_MEETINGS) {
-      expect(meeting.code.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("seeds three recent meetings, two recorded", () => {
-    expect(RECENT_MEETINGS).toHaveLength(3);
-    expect(RECENT_MEETINGS.filter((meeting) => meeting.recorded)).toHaveLength(2);
-  });
-
-  it("has exactly one active speaker and one local user", () => {
-    expect(CALL_PARTICIPANTS.filter((participant) => participant.speaking)).toHaveLength(1);
-    expect(CALL_PARTICIPANTS.filter((participant) => participant.you)).toHaveLength(1);
-  });
-});
-
 describe("MeetShell hub", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -230,13 +204,13 @@ describe("MeetShell hub", () => {
     expect(container.textContent).toContain("Eng standup");
   });
 
-  it("falls back to seed data when meet.meetings.list errors", async () => {
+  it("surfaces an unavailable indicator when meet.meetings.list errors", async () => {
     vi.spyOn(authModule, "authenticatedFetch").mockResolvedValue(
       Response.json({ error: "boom" }, { status: 500 }),
     );
     renderWithClient(<MeetShell />, root);
-    await waitForText(container, "Offline data");
-    expect(container.textContent).toContain("Q3 Roadmap working session");
+    // No fabricated rows — just the surface-level "Meetings unavailable" chip.
+    await waitForText(container, "Meetings unavailable");
   });
 
   it("starts an instant meeting via meet.create-room + meet.mint-token", async () => {
@@ -355,10 +329,10 @@ describe("MeetCall", () => {
     expect(container.textContent).toContain("helix.meet/atl-asly-snc");
   });
 
-  it("renders the offline-fallback seed stage without a token", () => {
-    renderWithClient(<MeetCall session={offlineSession} onLeave={() => undefined} />, root);
+  it("renders a connecting placeholder when no join URL is available yet", () => {
+    renderWithClient(<MeetCall session={pendingSession} onLeave={() => undefined} />, root);
     expect(container.querySelector("iframe")).toBeNull();
-    expect(container.textContent).toContain("Q3 Roadmap working session");
+    expect(container.textContent).toContain("Waiting for the meeting room to connect");
   });
 
   it("ends the room via meet.end-room when leaving a live call", async () => {
@@ -378,10 +352,10 @@ describe("MeetCall", () => {
     expect(onLeave).toHaveBeenCalled();
   });
 
-  it("leaves an offline call without calling meet.end-room", async () => {
+  it("does not call meet.end-room when leaving a pending (no-roomId) session", async () => {
     const fetchSpy = vi.spyOn(authModule, "authenticatedFetch");
     const onLeave = vi.fn();
-    renderWithClient(<MeetCall session={offlineSession} onLeave={onLeave} />, root);
+    renderWithClient(<MeetCall session={pendingSession} onLeave={onLeave} />, root);
     const leaveButton = [...container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("Leave"),
     );
@@ -394,7 +368,7 @@ describe("MeetCall", () => {
   });
 
   it("toggles the in-call chat panel", () => {
-    renderWithClient(<MeetCall session={offlineSession} onLeave={() => undefined} />, root);
+    renderWithClient(<MeetCall session={liveSession} onLeave={() => undefined} />, root);
     expect(container.querySelector('[aria-label="In-call messages"]')).toBeNull();
     const chatButton = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Show in-call messages"]',
@@ -406,7 +380,7 @@ describe("MeetCall", () => {
   });
 
   it("flips the mic control to a danger state when muted", () => {
-    renderWithClient(<MeetCall session={offlineSession} onLeave={() => undefined} />, root);
+    renderWithClient(<MeetCall session={liveSession} onLeave={() => undefined} />, root);
     const muteButton = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Mute microphone"]',
     );
@@ -414,60 +388,5 @@ describe("MeetCall", () => {
       muteButton?.click();
     });
     expect(container.querySelector('button[aria-label="Unmute microphone"]')).not.toBeNull();
-  });
-});
-
-describe("MeetCallTile", () => {
-  let container: HTMLDivElement;
-  let root: Root;
-
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-  });
-
-  afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  });
-
-  it("marks the active speaker tile", () => {
-    act(() => {
-      root.render(
-        <MeetCallTile
-          participant={{
-            id: "p2",
-            name: "Mira Okafor",
-            muted: false,
-            video: true,
-            speaking: true,
-          }}
-        />,
-      );
-    });
-    expect(container.querySelector('[data-speaking="true"]')).not.toBeNull();
-  });
-
-  it("renders a raised-hand badge", () => {
-    act(() => {
-      root.render(
-        <MeetCallTile
-          participant={{
-            id: "p6",
-            name: "Sasha Levin",
-            muted: false,
-            video: false,
-            speaking: false,
-            hand: true,
-          }}
-        />,
-      );
-    });
-    expect(
-      container.querySelector('[aria-label="Sasha Levin raised their hand"]'),
-    ).not.toBeNull();
   });
 });

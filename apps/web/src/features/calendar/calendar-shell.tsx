@@ -10,8 +10,8 @@
    - `calendar.event.create` / `.update` / `.delete` back the Create button,
      drag-to-create, drag-to-move, and the popover's Edit/Delete actions.
    - `calendar.event.respond` backs the popover RSVP buttons.
-   The typed handoff seed (`SEED_EVENTS`) is kept ONLY as an offline fallback
-   shown when the events request fails, so the surface is never blank. */
+   The handoff seed data is gone — only real backend rows render. On error
+   the grid shows an "events unavailable" banner instead of a fake dataset. */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -36,16 +36,13 @@ import {
   type CalendarUpdateEventInput,
 } from "./api";
 import {
-  CALENDAR_CURRENT_USER,
-  CALENDAR_SOURCES,
   GRID_HOURS,
   GRID_HOUR_COUNT,
   GRID_START_HOUR,
   HOUR_HEIGHT,
-  NOW_DECIMAL_HOUR,
-  SEED_EVENTS,
-  TODAY_DAY_INDEX,
-  TODAY_ISO,
+  nowDecimalHour,
+  todayDayIndex,
+  todayIso,
   WEEK_DAY_LABELS,
   dateNumberForDay,
   formatCardTime,
@@ -105,7 +102,7 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
 
   /** Jump the visible window to today. */
   const goToday = () => {
-    updateState({ date: TODAY_ISO });
+    updateState({ date: todayIso() });
   };
 
   /** Shift the visible window by one view-sized step (day/week/month). */
@@ -169,12 +166,11 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
     return data.map((event) => gridEventFromApiEvent(event, calendarColors)).filter(isOnGrid);
   }, [eventsQuery.data, calendarColors]);
 
-  /** True when the backend events request failed -- drives the offline fallback. */
+  /** True when the backend events request failed — drives the error banner. */
   const eventsFailed = eventsQuery.isError;
-  const usingFallback = eventsFailed && backendEvents.length === 0;
 
-  /** Events the grid renders: backend data, else the typed offline seed. */
-  const sourceEvents = usingFallback ? SEED_EVENTS : backendEvents;
+  /** Events the grid renders: backend data only. */
+  const sourceEvents = backendEvents;
 
   /** Hide events that belong to a calendar toggled off in the sidebar. */
   const visibleEvents = useMemo<readonly CalendarGridEvent[]>(() => {
@@ -286,7 +282,7 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
       title: "",
       description: "",
       location: "",
-      date: seed?.date ?? isoDateForWeekDay(TODAY_DAY_INDEX),
+      date: seed?.date ?? isoDateForWeekDay(todayDayIndex()),
       start: seed?.start ?? 9,
       end: seed?.end ?? 10,
     });
@@ -337,7 +333,7 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
   /** Drag-move a backend event to a new day/start, preserving its duration. */
   const moveEvent = (event: CalendarGridEvent, nextDay: number, nextStart: number) => {
     if (event.apiEvent === undefined) {
-      setActionError("Seed events can't be moved while offline.");
+      setActionError("This event can't be moved.");
       return;
     }
     const duration = event.end - event.start;
@@ -387,6 +383,7 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
       />
       <CalendarWeek
         events={events}
+        weekStartIso={weekStartIso}
         selectedEvent={selectedEvent}
         onSelectEvent={(eventId) => updateState({ eventId })}
         onCloseEvent={() => updateState({ eventId: "" })}
@@ -396,8 +393,8 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
         onToday={goToday}
         onShiftWindow={shiftWindow}
         loading={eventsQuery.isLoading}
-        offline={usingFallback}
-        empty={!eventsQuery.isLoading && !usingFallback && events.length === 0}
+        errored={eventsFailed}
+        empty={!eventsQuery.isLoading && !eventsFailed && events.length === 0}
         actionError={actionError}
         onDismissError={clearError}
         onMoveEvent={moveEvent}
@@ -446,9 +443,6 @@ function CalendarSidebar({
   readonly onToggleCalendar: (id: string) => void;
   readonly onCreate: () => void;
 }) {
-  /* Backend calendars when available; otherwise the typed offline seed so the
-     sidebar is never blank. The seed entries are non-interactive markers. */
-  const usingFallback = calendarsError && calendars.length === 0;
   const mineSources = calendars.filter((source) => source.group === "mine");
   const teamSources = calendars.filter((source) => source.group === "team");
 
@@ -471,7 +465,7 @@ function CalendarSidebar({
         />
       ))}
       {entries.length === 0 && (
-        <div style={{ fontSize: 11, color: "var(--text-3)", padding: "4px 0" }}>
+        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", padding: "4px 0" }}>
           No calendars
         </div>
       )}
@@ -479,17 +473,7 @@ function CalendarSidebar({
   );
 
   return (
-    <aside
-      aria-label="Calendar navigation"
-      style={{
-        width: 220,
-        flexShrink: 0,
-        borderRight: "1px solid var(--border)",
-        background: "var(--surface)",
-        padding: 12,
-        overflowY: "auto",
-      }}
-    >
+    <aside aria-label="Calendar navigation" className="surf-sidebar">
       <button
         className="btn primary lg"
         style={{ width: "100%", marginBottom: 16 }}
@@ -520,7 +504,7 @@ function CalendarSidebar({
             border: "none",
             background: "transparent",
             outline: "none",
-            fontSize: 12,
+            fontSize: "var(--text-body)",
             width: "100%",
             color: "var(--text)",
           }}
@@ -532,53 +516,24 @@ function CalendarSidebar({
       <MiniMonth />
 
       {calendarsLoading && (
-        <div style={{ fontSize: 12, color: "var(--text-3)", padding: "8px 0" }}>
-          Loading calendars...
+        <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", padding: "8px 0" }}>
+          Loading calendars…
         </div>
       )}
 
-      {usingFallback && (
+      {calendarsError && !calendarsLoading && (
         <div
-          role="status"
-          style={{ fontSize: 11, color: "var(--text-3)", padding: "4px 0 8px" }}
+          role="alert"
+          style={{ fontSize: "var(--text-caption)", color: "var(--danger)", padding: "4px 0 8px" }}
         >
-          Showing offline calendars -- couldn't reach the server.
+          Calendars unavailable — try again later.
         </div>
       )}
 
-      {!calendarsLoading && !usingFallback && (
+      {!calendarsLoading && !calendarsError && (
         <>
           {renderGroup("My calendars", mineSources, "8px 0 4px")}
           {renderGroup("Team", teamSources, "12px 0 4px")}
-        </>
-      )}
-
-      {!calendarsLoading && usingFallback && (
-        <>
-          <div className="section-label" style={{ padding: "8px 0 4px" }}>
-            My calendars
-          </div>
-          {CALENDAR_SOURCES.filter((source) => source.group === "mine").map((source) => (
-            <CalendarCheck
-              key={source.id}
-              checked={source.defaultEnabled}
-              color={source.color}
-              name={source.name}
-              onToggle={() => undefined}
-            />
-          ))}
-          <div className="section-label" style={{ padding: "12px 0 4px" }}>
-            Team
-          </div>
-          {CALENDAR_SOURCES.filter((source) => source.group === "team").map((source) => (
-            <CalendarCheck
-              key={source.id}
-              checked={source.defaultEnabled}
-              color={source.color}
-              name={source.name}
-              onToggle={() => undefined}
-            />
-          ))}
         </>
       )}
     </aside>
@@ -603,7 +558,9 @@ function CalendarCheck({
         alignItems: "center",
         gap: 8,
         padding: "4px 0",
-        fontSize: 12,
+        // Calendar list row — same scale as primary sidebar nav across
+        // the app (mail/drive/chat) for cross-surface consistency.
+        fontSize: "var(--text-body)",
         cursor: "pointer",
       }}
     >
@@ -624,7 +581,7 @@ function MiniMonth() {
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 600 }}>May 2026</span>
+        <span style={{ fontSize: "var(--text-meta)", fontWeight: 600 }}>May 2026</span>
         <div style={{ marginLeft: "auto", display: "flex" }}>
           <button aria-label="Previous month" className="icon-btn" type="button">
             <Icons.ChevronLeft />
@@ -639,7 +596,7 @@ function MiniMonth() {
           display: "grid",
           gridTemplateColumns: "repeat(7, 1fr)",
           gap: 1,
-          fontSize: 10,
+          fontSize: "var(--text-chip)",
           textAlign: "center",
           color: "var(--text-3)",
           marginBottom: 4,
@@ -654,7 +611,7 @@ function MiniMonth() {
           display: "grid",
           gridTemplateColumns: "repeat(7, 1fr)",
           gap: 1,
-          fontSize: 11,
+          fontSize: "var(--text-caption)",
           textAlign: "center",
         }}
       >
@@ -693,6 +650,7 @@ function MiniMonth() {
 
 function CalendarWeek({
   events,
+  weekStartIso,
   selectedEvent,
   onSelectEvent,
   onCloseEvent,
@@ -702,7 +660,7 @@ function CalendarWeek({
   onToday,
   onShiftWindow,
   loading,
-  offline,
+  errored,
   empty,
   actionError,
   onDismissError,
@@ -715,6 +673,7 @@ function CalendarWeek({
   deletePending,
 }: {
   readonly events: readonly CalendarGridEvent[];
+  readonly weekStartIso: string;
   readonly selectedEvent: CalendarGridEvent | null;
   readonly onSelectEvent: (eventId: string) => void;
   readonly onCloseEvent: () => void;
@@ -724,7 +683,7 @@ function CalendarWeek({
   readonly onToday: () => void;
   readonly onShiftWindow: (direction: -1 | 1) => void;
   readonly loading: boolean;
-  readonly offline: boolean;
+  readonly errored: boolean;
   readonly empty: boolean;
   readonly actionError: string | null;
   readonly onDismissError: () => void;
@@ -792,9 +751,9 @@ function CalendarWeek({
             <Icons.ChevronRight />
           </button>
         </div>
-        <span style={{ fontSize: 14, fontWeight: 600 }}>{windowLabel}</span>
+        <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>{windowLabel}</span>
         {loading && (
-          <span role="status" style={{ fontSize: 12, color: "var(--text-3)" }}>
+          <span role="status" style={{ fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
             Loading...
           </span>
         )}
@@ -813,19 +772,19 @@ function CalendarWeek({
         </div>
       </div>
 
-      {offline && (
+      {errored && (
         <div
-          role="status"
+          role="alert"
           style={{
             flexShrink: 0,
             padding: "6px 16px",
-            fontSize: 12,
+            fontSize: "var(--text-meta)",
             background: "var(--surface-2)",
             borderBottom: "1px solid var(--border)",
-            color: "var(--text-2)",
+            color: "var(--danger)",
           }}
         >
-          Showing offline sample events -- couldn't reach the calendar server.
+          Calendar events unavailable — try again later.
         </div>
       )}
 
@@ -838,7 +797,7 @@ function CalendarWeek({
             alignItems: "center",
             gap: 8,
             padding: "6px 16px",
-            fontSize: 12,
+            fontSize: "var(--text-meta)",
             background: "var(--surface-2)",
             borderBottom: "1px solid var(--border)",
             color: "var(--danger)",
@@ -868,7 +827,7 @@ function CalendarWeek({
       >
         <div />
         {WEEK_DAY_LABELS.map((label, index) => {
-          const isToday = index === TODAY_DAY_INDEX;
+          const isToday = index === todayDayIndex();
           return (
             <div
               key={label}
@@ -880,7 +839,7 @@ function CalendarWeek({
             >
               <div
                 style={{
-                  fontSize: 10,
+                  fontSize: "var(--text-chip)",
                   color: "var(--text-3)",
                   textTransform: "uppercase",
                   letterSpacing: ".06em",
@@ -890,7 +849,7 @@ function CalendarWeek({
               </div>
               <div
                 style={{
-                  fontSize: 18,
+                  fontSize: "var(--text-h2)",
                   fontWeight: 600,
                   marginTop: 2,
                   display: "inline-grid",
@@ -902,7 +861,7 @@ function CalendarWeek({
                   color: isToday ? "var(--accent-fg)" : "var(--text)",
                 }}
               >
-                {dateNumberForDay(index)}
+                {dateNumberForDay(weekStartIso, index)}
               </div>
             </div>
           );
@@ -926,7 +885,7 @@ function CalendarWeek({
               key={hour}
               style={{
                 height: HOUR_HEIGHT,
-                fontSize: 10,
+                fontSize: "var(--text-chip)",
                 color: "var(--text-3)",
                 textAlign: "right",
                 paddingRight: 8,
@@ -961,7 +920,7 @@ function CalendarWeek({
               pointerEvents: "none",
             }}
           >
-            <span style={{ fontSize: 13, color: "var(--text-3)" }}>
+            <span style={{ fontSize: "var(--text-body-sm)", color: "var(--text-3)" }}>
               No events this week.
             </span>
           </div>
@@ -1084,7 +1043,7 @@ function DayColumn({
         />
       ))}
 
-      {dayIndex === TODAY_DAY_INDEX && <NowLine />}
+      {dayIndex === todayDayIndex() && <NowLine />}
     </div>
   );
 }
@@ -1165,7 +1124,7 @@ function EventCard({
         color: "#ffffff",
         borderRadius: 4,
         padding: "4px 6px",
-        fontSize: 11,
+        fontSize: "var(--text-caption)",
         lineHeight: 1.3,
         overflow: "hidden",
         boxShadow: selected
@@ -1179,7 +1138,7 @@ function EventCard({
       type="button"
     >
       <div style={{ fontWeight: 600 }}>{event.title}</div>
-      <div style={{ opacity: 0.85, fontSize: 10 }}>
+      <div style={{ opacity: 0.85, fontSize: "var(--text-chip)" }}>
         {formatCardTime(event.start)}
         {event.location !== undefined && ` · ${event.location}`}
       </div>
@@ -1196,7 +1155,7 @@ function NowLine() {
         position: "absolute",
         left: 0,
         right: 0,
-        top: (NOW_DECIMAL_HOUR - GRID_START_HOUR) * HOUR_HEIGHT,
+        top: (nowDecimalHour() - GRID_START_HOUR) * HOUR_HEIGHT,
         borderTop: "2px solid var(--danger)",
         zIndex: 2,
       }}
@@ -1319,17 +1278,17 @@ function CalendarEventPopover({
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4, lineHeight: 1.3 }}>
+          <div style={{ fontSize: "var(--text-body-lg)", fontWeight: 600, marginBottom: 4, lineHeight: 1.3 }}>
             {event.title}
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-2)" }}>
+          <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
             {formatEventDateLabel(event.date)} · {formatHour(event.start)} -{" "}
             {formatHour(event.end)}
           </div>
           {hasConferencing && (
             <div
               style={{
-                fontSize: 12,
+                fontSize: "var(--text-meta)",
                 color: "var(--text-2)",
                 marginTop: 4,
                 display: "flex",
@@ -1382,7 +1341,7 @@ function CalendarEventPopover({
             display: "flex",
             alignItems: "center",
             gap: 8,
-            fontSize: 12,
+            fontSize: "var(--text-meta)",
           }}
         >
           <span>Delete this event?</span>
@@ -1419,11 +1378,11 @@ function CalendarEventPopover({
             alignItems: "center",
             gap: 8,
             padding: "4px 0",
-            fontSize: 12,
+            fontSize: "var(--text-meta)",
           }}
         >
-          <Avatar name={CALENDAR_CURRENT_USER} size={22} />
-          <span>{CALENDAR_CURRENT_USER} (you)</span>
+          <Avatar name="You" size={22} />
+          <span>You</span>
         </div>
         {apiAttendees.length > 0
           ? apiAttendees.map((attendee) => (
@@ -1434,7 +1393,7 @@ function CalendarEventPopover({
                       alignItems: "center",
                       gap: 8,
                       padding: "4px 0",
-                      fontSize: 12,
+                      fontSize: "var(--text-meta)",
                     }}
                   >
                     <Avatar
@@ -1458,7 +1417,7 @@ function CalendarEventPopover({
                       alignItems: "center",
                       gap: 8,
                       padding: "4px 0",
-                      fontSize: 12,
+                      fontSize: "var(--text-meta)",
                     }}
                   >
                     <Avatar name={name} size={22} />
@@ -1577,7 +1536,7 @@ function CalendarEventDialog({
         }}
       >
         <div style={{ display: "flex", alignItems: "center" }}>
-          <span style={{ fontSize: 15, fontWeight: 600 }}>
+          <span style={{ fontSize: "var(--text-body-lg)", fontWeight: 600 }}>
             {draft.mode === "create" ? "Create event" : "Edit event"}
           </span>
           <button
@@ -1591,7 +1550,7 @@ function CalendarEventDialog({
           </button>
         </div>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
           <span>Title</span>
           <input
             autoFocus
@@ -1605,7 +1564,7 @@ function CalendarEventDialog({
           />
         </label>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
           <span>Date</span>
           <input
             value={value.date}
@@ -1619,7 +1578,7 @@ function CalendarEventDialog({
 
         <div style={{ display: "flex", gap: 8 }}>
           <label
-            style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, flex: 1 }}
+            style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)", flex: 1 }}
           >
             <span>Start</span>
             <input
@@ -1635,7 +1594,7 @@ function CalendarEventDialog({
             />
           </label>
           <label
-            style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, flex: 1 }}
+            style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)", flex: 1 }}
           >
             <span>End</span>
             <input
@@ -1652,7 +1611,7 @@ function CalendarEventDialog({
           </label>
         </div>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
           <span>Location</span>
           <input
             value={value.location}
@@ -1666,7 +1625,7 @@ function CalendarEventDialog({
         </label>
 
         {writableCalendars.length > 0 && (
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
             <span>Calendar</span>
             <select
               value={value.calendarId ?? ""}
@@ -1687,7 +1646,7 @@ function CalendarEventDialog({
           </label>
         )}
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
           <span>Description</span>
           <textarea
             value={value.description}
@@ -1727,7 +1686,7 @@ const dialogInputStyle = {
   background: "var(--surface-2)",
   color: "var(--text)",
   padding: "6px 8px",
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
   outline: "none",
 } as const;
 

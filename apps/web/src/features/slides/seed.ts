@@ -1,7 +1,11 @@
-/* Helix Slides — seed data.
-   Ported verbatim from the design handoff (app-slides.jsx → DECKS / SLIDES).
-   There is no Slides backend; this typed seed module stands in for the
-   `GET /api/decks` + `…/slides` endpoints called out in the handoff. */
+/* Helix Slides — shared types, conversion helpers, and layout options.
+ *
+ * The seed `DECKS` / `SLIDES` / `SPEAKER_NOTES` arrays that lived here have
+ * been removed. The list, editor, and speaker-notes panel render only live
+ * data from the Slides tools (`slides.deck.*`, `slides.slide.*`). What
+ * remains here are the type unions per layout, conversions between Slide
+ * and SlideContent shapes, and the static `SLIDE_LAYOUT_OPTIONS` list that
+ * drives the editor's layout `<select>`. */
 
 /** A deck row in the Slides list view. */
 export interface SlideDeck {
@@ -200,150 +204,6 @@ export function emptySlideContent(layout: SlideLayout): SlideContent {
 export function contentToSlide(id: SlideId, content: SlideContent): Slide {
   return { ...content, id };
 }
-
-/** Seeded decks for the list view (mock for `GET /api/decks`). */
-export const DECKS: readonly SlideDeck[] = [
-  {
-    id: "s1",
-    title: "Q3 All-Hands narrative",
-    owner: "Alex Park",
-    modified: "2 hours ago",
-    slides: 18,
-    shared: 24,
-  },
-  {
-    id: "s2",
-    title: "Helix Workspace launch",
-    owner: "Owen Hart",
-    modified: "Yesterday",
-    slides: 32,
-    shared: 8,
-  },
-  {
-    id: "s3",
-    title: "Board update — May 2026",
-    owner: "Mira Okafor",
-    modified: "2 days ago",
-    slides: 14,
-    shared: 6,
-  },
-  {
-    id: "s4",
-    title: "Engineering onsite",
-    owner: "Jonas Reichert",
-    modified: "Last week",
-    slides: 22,
-    shared: 4,
-  },
-  {
-    id: "s5",
-    title: "Design principles",
-    owner: "Priya Anand",
-    modified: "Last week",
-    slides: 28,
-    shared: 12,
-  },
-];
-
-/** Seeded slides for the editor (mock for `GET /api/decks/:id/slides`).
-   Layout definitions kept verbatim from the handoff. */
-export const SLIDES: readonly Slide[] = [
-  {
-    id: 1,
-    layout: "title",
-    eyebrow: "All-Hands · May 2026",
-    title: "Building the workspace people actually want",
-    subtitle: "Q3 — what we shipped, what's next, and where we need help",
-    bg: "accent",
-  },
-  {
-    id: 2,
-    layout: "agenda",
-    title: "Agenda",
-    items: [
-      "Where we are",
-      "Q3 priorities",
-      "Customer signal",
-      "Hiring",
-      "What we need from you",
-    ],
-  },
-  {
-    id: 3,
-    layout: "stats",
-    title: "Where we are",
-    subtitle: "Three numbers from the last 90 days",
-    stats: [
-      {
-        value: "+38%",
-        label: "DAU vs last quarter",
-        note: "Driven by Mail + Docs adoption",
-      },
-      { value: "94%", label: "Customers on MFA", note: "Target was 90" },
-      {
-        value: "$1.4M",
-        label: "New ARR in pipeline",
-        note: "Q3 close to date",
-      },
-    ],
-  },
-  {
-    id: 4,
-    layout: "split",
-    title: "What customers are telling us",
-    left:
-      "The fastest growing request — and the one we keep hearing in win/loss interviews — is unified search across Mail, Docs, and Drive. Customers want one place to find everything.",
-    rightKind: "quote",
-    rightContent:
-      "\"We spend more time looking for the deck than writing it. If Helix can fix that, we don't need anything else.\"",
-    quoteWho: "VP Operations, Atlas Holdings",
-  },
-  {
-    id: 5,
-    layout: "bullets",
-    title: "Q3 priorities",
-    items: [
-      "Unified search across all surfaces (P0)",
-      "Helix AI in the side panel of every app (P0)",
-      "Atlas Holdings migration to v2 platform (P1)",
-      "New region rollout — Frankfurt (P1)",
-      "Cost per active user down 22% (P2)",
-    ],
-  },
-  {
-    id: 6,
-    layout: "image",
-    title: "Helix AI side panel",
-    note: "Demo screenshot — Mail with Helix AI panel open, summarizing inbox",
-  },
-  {
-    id: 7,
-    layout: "split",
-    title: "Hiring",
-    left:
-      "Five open roles across Platform and Product Engineering. Senior engineers, an EM, an SRE, and a platform PM. Onsite loops start next week.",
-    rightKind: "list",
-    rightContent: [
-      "Senior Engineer × 2",
-      "Engineering Manager",
-      "Site Reliability Engineer",
-      "Platform PM",
-    ],
-  },
-  {
-    id: 8,
-    layout: "title",
-    eyebrow: "Closing",
-    title: "Thank you",
-    subtitle: "Questions to Mira, Jonas, or me — async or in #all-helix",
-    bg: "neutral",
-  },
-];
-
-/** Speaker-notes seed, keyed by slide id. Mirrors the handoff default note. */
-export const SPEAKER_NOTES: Readonly<Record<number, string>> = {
-  1: "Welcome everyone. Quick recap of where we are, then I'll hand to Jonas for Q3 priorities and Sasha for hiring.",
-};
 
 /** Layout options for the editor's layout `<select>`. */
 export const SLIDE_LAYOUT_OPTIONS: ReadonlyArray<{

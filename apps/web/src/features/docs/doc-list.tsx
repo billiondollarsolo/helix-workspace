@@ -2,12 +2,10 @@
    the main pane (Recent grid with striped thumbnails + All-documents table).
    Ported from the design handoff (app-docs.jsx → DocsSidebar + DocList). */
 
-import type { CSSProperties } from "react";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import {
   DOC_FOLDERS,
-  DOC_TAG_FOLDERS,
   DOC_TEMPLATES,
   FOLDER_EMPTY_STATES,
   type DocFolderId,
@@ -26,6 +24,8 @@ export interface DocListProps {
   readonly onOpenDoc: (id: string) => void;
   /** True when the Docs backend could not be reached. */
   readonly isBackendUnavailable: boolean;
+  /** True while the documents query is in flight (first paint, no data yet). */
+  readonly isLoading?: boolean;
   /** True while a `docs.create` request is in flight. */
   readonly isCreating?: boolean;
 }
@@ -38,6 +38,7 @@ export function DocList({
   onNewDoc,
   onOpenDoc,
   isBackendUnavailable,
+  isLoading = false,
   isCreating = false,
 }: DocListProps) {
   const visible = filterDocuments(documents, folder, query);
@@ -61,8 +62,8 @@ export function DocList({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>{heading}</h1>
-          <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-3)" }}>
+          <h1 style={{ margin: 0, fontSize: "var(--text-h2)", fontWeight: 600 }}>{heading}</h1>
+          <span style={{ marginLeft: 8, fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
             {visible.length} item{visible.length === 1 ? "" : "s"}
           </span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -77,25 +78,37 @@ export function DocList({
 
         {isBackendUnavailable ? (
           <div
-            role="status"
+            role="alert"
             style={{
               display: "flex",
               alignItems: "center",
               gap: 8,
               padding: "8px 12px",
               marginBottom: 16,
-              fontSize: 12,
+              fontSize: "var(--text-meta)",
               color: "var(--text-2)",
               background: "var(--warning-soft)",
               borderRadius: 6,
             }}
           >
             <Icons.Globe />
-            Docs backend unavailable — showing seeded documents only.
+            Docs unavailable — try again later.
           </div>
         ) : null}
 
-        {visible.length === 0 ? (
+        {isLoading && visible.length === 0 ? (
+          <div
+            role="status"
+            style={{
+              padding: 32,
+              textAlign: "center",
+              color: "var(--text-3)",
+              fontSize: "var(--text-body-sm)",
+            }}
+          >
+            Loading documents…
+          </div>
+        ) : visible.length === 0 ? (
           <EmptyState folder={folder} hasQuery={query.trim().length > 0} />
         ) : (
           <>
@@ -128,7 +141,7 @@ export function DocList({
                   display: "grid",
                   gridTemplateColumns: "1fr 160px 140px 80px 32px",
                   padding: "8px 16px",
-                  fontSize: 11,
+                  fontSize: "var(--text-caption)",
                   color: "var(--text-3)",
                   fontWeight: 600,
                   textTransform: "uppercase",
@@ -154,7 +167,7 @@ export function DocList({
                     padding: "0 16px",
                     height: 36,
                     alignItems: "center",
-                    fontSize: 12,
+                    fontSize: "var(--text-meta)",
                     width: "100%",
                     textAlign: "left",
                     borderBottom: "1px solid var(--border)",
@@ -162,7 +175,8 @@ export function DocList({
                 >
                   <span className="row gap-2" style={{ minWidth: 0 }}>
                     <Icons.Doc />
-                    <span className="truncate">{document.title}</span>
+                    <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{document.title}</span>
+                    {document.formatLabel ? <DocFormatChip label={document.formatLabel} /> : null}
                   </span>
                   <span className="row gap-2" style={{ minWidth: 0 }}>
                     <Avatar name={document.owner} size={18} />
@@ -199,19 +213,7 @@ function DocsSidebar({
   readonly isCreating?: boolean;
 }) {
   return (
-    <aside
-      aria-label="Docs navigation"
-      style={{
-        width: 200,
-        flexShrink: 0,
-        borderRight: "1px solid var(--border)",
-        background: "var(--surface)",
-        display: "flex",
-        flexDirection: "column",
-        padding: "10px 8px",
-        minHeight: 0,
-      }}
-    >
+    <aside aria-label="Docs navigation" className="surf-sidebar">
       <button
         className="btn primary lg"
         type="button"
@@ -231,51 +233,19 @@ function DocsSidebar({
               type="button"
               aria-current={selected ? "page" : undefined}
               onClick={() => onFolder(entry.id)}
-              style={folderRowStyle(selected)}
+              className="surf-nav-row"
             >
               <Icon />
-              <span style={{ flex: 1, textAlign: "left" }}>{entry.label}</span>
+              <span className="label">{entry.label}</span>
             </button>
           );
         })}
 
-        <div className="section-label">Folders</div>
-        {DOC_TAG_FOLDERS.map((tag) => {
-          const selected = folder === tag.id;
-          return (
-            <button
-              key={tag.id}
-              type="button"
-              aria-current={selected ? "page" : undefined}
-              onClick={() => onFolder(tag.id)}
-              style={folderRowStyle(selected)}
-            >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 2,
-                  background: tag.color,
-                  flexShrink: 0,
-                }}
-              />
-              <span style={{ flex: 1, textAlign: "left" }}>{tag.label}</span>
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          style={{ ...folderRowStyle(false), color: "var(--text-3)" }}
-        >
-          <Icons.Plus />
-          <span>New folder</span>
-        </button>
-
-        <div className="section-label">Templates</div>
+        <div className="surf-section-label">Templates</div>
         {DOC_TEMPLATES.map((template) => (
-          <button key={template} type="button" style={folderRowStyle(false)}>
+          <button key={template} type="button" className="surf-nav-row">
             <Icons.Doc />
-            <span style={{ flex: 1, textAlign: "left" }}>{template}</span>
+            <span className="label">{template}</span>
           </button>
         ))}
       </nav>
@@ -339,12 +309,49 @@ function RecentCard({
         ))}
       </div>
       <div>
-        <div className="truncate" style={{ fontSize: 12, fontWeight: 500, marginBottom: 2 }}>
-          {document.title}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 2,
+          }}
+        >
+          <div className="truncate" style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}>
+            {document.title}
+          </div>
+          {document.formatLabel ? <DocFormatChip label={document.formatLabel} /> : null}
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-3)" }}>{document.modified}</div>
+        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{document.modified}</div>
       </div>
     </button>
+  );
+}
+
+/** Small uppercase chip showing the doc's original format (e.g. "MD",
+ *  "DOCX"). Lives next to the doc title in both the recent-cards grid and
+ *  the all-documents table so the user can tell formats apart at a glance. */
+function DocFormatChip({ label }: { readonly label: string }) {
+  return (
+    <span
+      aria-label={`Format: ${label}`}
+      style={{
+        flexShrink: 0,
+        padding: "0 5px",
+        height: 16,
+        lineHeight: "16px",
+        borderRadius: 3,
+        fontSize: "var(--text-overline)",
+        fontWeight: 700,
+        letterSpacing: ".04em",
+        color: "var(--accent)",
+        background: "var(--accent-soft)",
+        border: "1px solid var(--accent)33",
+        textTransform: "uppercase",
+      }}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -380,27 +387,14 @@ function EmptyState({
       }}
     >
       <Icon size={24} />
-      <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{state.title}</div>
+      <div style={{ fontSize: "var(--text-body)", fontWeight: 500, color: "var(--text)" }}>{state.title}</div>
       <div>{state.body}</div>
     </div>
   );
 }
 
-function folderRowStyle(selected: boolean): CSSProperties {
-  return {
-    width: "100%",
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    height: 30,
-    padding: "0 10px",
-    borderRadius: 6,
-    fontSize: 13,
-    background: selected ? "var(--accent-soft)" : "transparent",
-    color: selected ? "var(--accent)" : "var(--text)",
-    fontWeight: selected ? 600 : 400,
-  };
-}
+// `folderRowStyle` was removed in favor of the shared `.surf-nav-row`
+// class — same look across drive/mail/docs/calendar/chat/sheets/slides.
 
 /** Applies the active folder + search query to the document list. */
 export function filterDocuments(
@@ -419,8 +413,6 @@ export function filterDocuments(
     rows = rows.filter((document) => document.starred);
   } else if (folder === "trash") {
     rows = [];
-  } else if (DOC_TAG_FOLDERS.some((tag) => tag.id === folder)) {
-    rows = rows.filter((document) => document.folder === folder);
   }
 
   const normalized = query.trim().toLowerCase();
@@ -436,9 +428,5 @@ function headingForFolder(folder: string): string {
   if (folder === "" || folder === "all") {
     return "Documents";
   }
-  const known = DOC_FOLDERS.find((entry) => entry.id === folder);
-  if (known !== undefined) {
-    return known.label;
-  }
-  return DOC_TAG_FOLDERS.find((tag) => tag.id === folder)?.label ?? "Documents";
+  return DOC_FOLDERS.find((entry) => entry.id === folder)?.label ?? "Documents";
 }

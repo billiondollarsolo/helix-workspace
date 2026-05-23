@@ -5,11 +5,10 @@
 import type { CSSProperties } from "react";
 import { useState } from "react";
 import { useRouter } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons, type IconComponent } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
-import { CURRENT_USER } from "@/components/people";
-import { signOut } from "@/lib/auth";
+import { sessionUserQueryOptions, signOut } from "@/lib/auth";
 import {
   ACCENT_OPTIONS,
   setAppearance,
@@ -70,7 +69,7 @@ function segmentButton(selected: boolean): CSSProperties {
     flex: 1,
     height: 28,
     borderRadius: 4,
-    fontSize: 12,
+    fontSize: "var(--text-meta)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -89,6 +88,9 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [signingOut, setSigningOut] = useState(false);
+  const sessionQuery = useQuery(sessionUserQueryOptions());
+  const displayName = sessionQuery.data?.name ?? sessionQuery.data?.email ?? "Signed in";
+  const displayEmail = sessionQuery.data?.email ?? "";
 
   if (!open) {
     return null;
@@ -157,11 +159,11 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <Avatar name={CURRENT_USER.name} size={36} />
+        <Avatar name={displayName} size={36} />
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>{CURRENT_USER.name}</div>
-          <div className="truncate" style={{ fontSize: 11, color: "var(--text-3)" }}>
-            {CURRENT_USER.email}
+          <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>{displayName}</div>
+          <div className="truncate" style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+            {displayEmail}
           </div>
         </div>
       </div>
@@ -170,7 +172,7 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
       <div style={{ padding: "8px 12px 10px" }}>
         <div
           style={{
-            fontSize: 10,
+            fontSize: "var(--text-chip)",
             fontWeight: 600,
             textTransform: "uppercase",
             letterSpacing: ".06em",
@@ -183,7 +185,7 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
 
         {/* Mode */}
         <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>Mode</div>
+          <div style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 4 }}>Mode</div>
           <div style={segmentWrap}>
             {modeOptions.map((option) => {
               const Ico = option.icon;
@@ -205,7 +207,7 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
 
         {/* Density */}
         <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>Density</div>
+          <div style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 4 }}>Density</div>
           <div style={segmentWrap}>
             {densityOptions.map((option) => {
               const selected = density === option.v;
@@ -226,7 +228,7 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
 
         {/* Accent */}
         <div>
-          <div style={{ fontSize: 11, color: "var(--text-2)", marginBottom: 6 }}>
+          <div style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 6 }}>
             Accent color
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -258,7 +260,7 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                fontSize: 12,
+                fontSize: "var(--text-meta)",
                 color: "var(--text)",
                 textAlign: "left",
               }}
@@ -288,7 +290,7 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
             display: "flex",
             alignItems: "center",
             gap: 10,
-            fontSize: 12,
+            fontSize: "var(--text-meta)",
             color: "var(--danger)",
             textAlign: "left",
             cursor: signingOut ? "default" : "pointer",

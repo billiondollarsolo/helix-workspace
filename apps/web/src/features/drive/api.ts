@@ -25,6 +25,11 @@ export interface DriveApiEntry {
   readonly name: string;
   readonly folderId: string | null;
   readonly ownerActorId: string | null;
+  /** Owner's display name, resolved server-side via `actors.display_name`.
+   *  When present, the UI should show this instead of the raw owner UUID. */
+  readonly ownerDisplayName?: string;
+  /** Owner's email, when known. */
+  readonly ownerEmail?: string;
   /** Editor app that owns this file: "docs" | "sheets" | "slides" | null (plain upload). */
   readonly app?: string | null;
   readonly mimeType?: string;
@@ -211,6 +216,13 @@ export async function listDrive(
     readonly limit?: number;
     /** Filter to entries owned by a specific editor app: "docs" | "sheets" | "slides". */
     readonly app?: string | null;
+    /** Filter by object kind. Defaults server-side to 'file'; pass
+     *  'recording' for the Recordings drive scope. */
+    readonly kind?: "file" | "recording";
+    /** When true, return every visible file across all folders. Folder
+     *  rows are suppressed (the result is a flat file list). Used by
+     *  /docs, /sheets, /slides which present app-shaped cross-folder lists. */
+    readonly acrossFolders?: boolean;
   } = {},
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<readonly DriveApiEntry[]> {
@@ -221,6 +233,8 @@ export async function listDrive(
       includeTrashed: input.includeTrashed ?? false,
       limit: input.limit ?? 100,
       ...(input.app === undefined || input.app === null ? {} : { app: input.app }),
+      ...(input.kind === undefined ? {} : { kind: input.kind }),
+      ...(input.acrossFolders === undefined ? {} : { acrossFolders: input.acrossFolders }),
     },
     fetchImpl,
   );
@@ -276,16 +290,77 @@ export interface DriveDownloadResult {
 }
 
 /**
- * Resolve a downloadable URL for a Drive file. Prefers the entry's preview
- * URL when the backend produced one; otherwise falls back to the WebDAV
- * content path served at `/dav/<objectId>` which streams the latest version.
+ * Resolve where the "Open" / "Download" buttons should point for a Drive
+ * entry. Native editor files (docs / sheets / slides) open in their
+ * in-app editor; raw binaries (PDFs, images, DOCX, XLSX, etc.) stream
+ * through the session-cookie-authed content endpoint.
+ *
+ * (The historical `/dav/<id>` URL never existed as a backend route —
+ * `/dav/*` is reserved for CalDAV / CardDAV / WebDAV with app-password
+ * Basic Auth, not the in-browser SPA.)
  */
 export function driveDownloadResult(entry: DriveApiEntry): DriveDownloadResult {
+  const editorUrl = inAppEditorUrl(entry);
+  // For raw files, point "Open" at the browser-renderable preview endpoint
+  // (`/preview`) — it returns HTML for DOCX/XLSX, forwards PDFs / images
+  // / text directly, and shows a friendly placeholder + download link for
+  // formats the browser can't display.
+  const url =
+    editorUrl ?? entry.preview?.url ?? `/api/drive/objects/${entry.id}/preview`;
   return {
-    url: entry.preview?.url ?? `/dav/${entry.id}`,
+    url,
     name: entry.name,
     mimeType: entry.mimeType ?? entry.preview?.mimeType ?? "application/octet-stream",
   };
+}
+
+/** Resolve the in-app editor URL for a drive entry, or null when the file
+ *  isn't natively editable.
+ *
+ *  Priority:
+ *   1. Native Helix editors (.helixdoc / .helixsheet / .helixdeck) — these
+ *      use the in-app Tiptap / sheets / slides surfaces.
+ *   2. OOXML (DOCX / XLSX / PPTX) — opens in the OnlyOffice editor
+ *      at `/edit/:objectId`.
+ *   3. Everything else — return null so the caller falls back to the
+ *      read-only preview endpoint. */
+function inAppEditorUrl(entry: DriveApiEntry): string | null {
+  if (entry.app === "docs") {
+    return `/docs?doc=${encodeURIComponent(entry.id)}`;
+  }
+  if (entry.app === "sheets") {
+    return `/sheets?sheet=${encodeURIComponent(entry.id)}`;
+  }
+  if (entry.app === "slides") {
+    return `/slides?deck=${encodeURIComponent(entry.id)}`;
+  }
+  // OOXML formats — opened via OnlyOffice Document Server (Phase 3).
+  const mime = entry.mimeType ?? "";
+  const name = entry.name.toLowerCase();
+  const isOoxml =
+    mime.includes("wordprocessingml") ||
+    mime.includes("spreadsheetml") ||
+    mime.includes("presentationml") ||
+    name.endsWith(".docx") ||
+    name.endsWith(".xlsx") ||
+    name.endsWith(".pptx") ||
+    name.endsWith(".doc") ||
+    name.endsWith(".xls") ||
+    name.endsWith(".ppt");
+  if (isOoxml) {
+    return `/edit/${encodeURIComponent(entry.id)}`;
+  }
+  return null;
+}
+
+/**
+ * Distinct URL specifically for the "Download" button — always streams the
+ * raw bytes, never opens the editor. For native editor docs the bytes are
+ * the Yjs state, which the API will return with the
+ * `application/vnd.helix.*` mime type so the browser saves it as a file.
+ */
+export function driveRawDownloadUrl(entry: DriveApiEntry): string {
+  return `/api/drive/objects/${entry.id}/content?download=1`;
 }
 
 export async function trashDriveObject(

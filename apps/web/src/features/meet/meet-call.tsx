@@ -9,13 +9,11 @@
    loads the `meet.mint-token` join URL, and Leave ends the room through
    `meet.end-room`. */
 
-import { useMemo, useRef, useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { endMeetRoom } from "./api";
 import { meetCallElapsedQueryOptions, meetQueryKeys } from "./queries";
-import { CALL_MESSAGES, CALL_PARTICIPANTS, type MeetCallParticipant } from "./meet-seed";
-import { MeetCallTile } from "./meet-call-tile";
 import type { MeetCallSession } from "./meet-shell";
 
 const DARK_BORDER = "#27272d";
@@ -57,8 +55,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
   const elapsedQuery = useQuery(meetCallElapsedQueryOptions(callStartRef.current));
   const elapsed = elapsedQuery.data ?? 0;
 
-  /* A real room + minted token → embed the live Jitsi call. Otherwise the
-     offline-fallback seed stage renders. */
+  /* A real room + minted token → embed the live Jitsi call. */
   const hasLiveRoom = session.roomId.length > 0;
   const embedUrl = session.joinUrl;
 
@@ -80,21 +77,6 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
       setLeaveError(error instanceof Error ? error.message : "Could not end the meeting.");
     },
   });
-
-  /* Reflect the local user's live mic/camera/hand state onto their tile. */
-  const participants = useMemo<readonly MeetCallParticipant[]>(
-    () =>
-      CALL_PARTICIPANTS.map((participant) =>
-        participant.you
-          ? { ...participant, muted: !micOn, video: camOn, hand: handRaised }
-          : participant,
-      ),
-    [micOn, camOn, handRaised],
-  );
-
-  const speaker =
-    participants.find((participant) => participant.speaking) ?? participants[1];
-  const others = participants.filter((participant) => participant.id !== speaker?.id);
 
   return (
     <div
@@ -133,7 +115,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           <span className="chip-dot" />
           REC
         </span>
-        <span style={{ fontSize: 12, color: "#a1a1aa" }}>helix.meet/{session.code}</span>
+        <span style={{ fontSize: "var(--text-meta)", color: "#a1a1aa" }}>helix.meet/{session.code}</span>
         <div
           style={{
             marginLeft: "auto",
@@ -141,7 +123,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             alignItems: "center",
             gap: 8,
             color: "#a1a1aa",
-            fontSize: 12,
+            fontSize: "var(--text-meta)",
           }}
         >
           <span style={{ fontVariantNumeric: "tabular-nums" }} aria-label="Elapsed time">
@@ -180,23 +162,20 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
               }}
             />
           ) : (
-            <>
-              <div style={{ flex: 1, minHeight: 0 }}>
-                {speaker ? <MeetCallTile participant={speaker} big /> : null}
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(5, 1fr)",
-                  gap: 8,
-                  flexShrink: 0,
-                }}
-              >
-                {others.map((participant) => (
-                  <MeetCallTile key={participant.id} participant={participant} />
-                ))}
-              </div>
-            </>
+            <div
+              role="status"
+              style={{
+                flex: 1,
+                display: "grid",
+                placeItems: "center",
+                background: DARK_PANEL,
+                borderRadius: 8,
+                color: "#a1a1aa",
+                fontSize: "var(--text-body-sm)",
+              }}
+            >
+              Waiting for the meeting room to connect…
+            </div>
           )}
         </div>
 
@@ -222,7 +201,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
               }}
             >
               <Icons.Chat />
-              <span style={{ fontWeight: 600, fontSize: 13 }}>In-call messages</span>
+              <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>In-call messages</span>
               <button
                 className="icon-btn"
                 style={{ marginLeft: "auto" }}
@@ -235,23 +214,18 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                 <Icons.X />
               </button>
             </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-              {CALL_MESSAGES.map((message) => (
-                <div key={message.id} style={{ marginBottom: 12 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "baseline",
-                      gap: 6,
-                      marginBottom: 2,
-                    }}
-                  >
-                    <span style={{ fontSize: 12, fontWeight: 500 }}>{message.name}</span>
-                    <span style={{ fontSize: 10, color: "#71717a" }}>{message.time}</span>
-                  </div>
-                  <div style={{ fontSize: 12, lineHeight: 1.5 }}>{message.text}</div>
-                </div>
-              ))}
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: 12,
+                display: "grid",
+                placeItems: "center",
+                color: "#71717a",
+                fontSize: "var(--text-meta)",
+              }}
+            >
+              In-call messages aren&rsquo;t available yet.
             </div>
             <div style={{ padding: 10, borderTop: `1px solid ${DARK_BORDER}` }}>
               <input
@@ -266,7 +240,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                   background: DARK_BG,
                   color: "#ededee",
                   outline: "none",
-                  fontSize: 12,
+                  fontSize: "var(--text-meta)",
                 }}
               />
             </div>
@@ -376,7 +350,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             style={{
               position: "absolute",
               left: 16,
-              fontSize: 11,
+              fontSize: "var(--text-caption)",
               color: "#f87171",
             }}
           >
@@ -396,14 +370,14 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           <button
             className="btn sm"
             type="button"
-            aria-label={`${String(participants.length)} participants`}
+            aria-label="Participants"
             style={{
               background: "transparent",
               borderColor: DARK_BORDER,
               color: "#ededee",
             }}
           >
-            <Icons.Users /> {participants.length}
+            <Icons.Users />
           </button>
         </div>
       </div>

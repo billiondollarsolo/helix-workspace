@@ -19,6 +19,14 @@ import {
   type AdminUser,
 } from "@/features/admin/admin-users";
 import { MailAdminSection } from "@/features/admin/mail-admin";
+import { AdminServicesOverview } from "@/features/admin/admin-services";
+import { AppPasswordsManagement } from "@/features/admin/app-passwords-management";
+import { AgentCredentialsManagement } from "@/features/admin/agent-credentials-management";
+import { AICostLimitsManagement } from "@/features/admin/ai-cost-limits-management";
+import { AIObservabilityDashboard } from "@/features/admin/ai-observability";
+import { CoreAppsManagement } from "@/features/admin/core-apps-management";
+import { AuditLogList } from "@/features/admin/audit-log";
+import { WebhookManagement } from "@/features/webhooks/webhook-management";
 import {
   addGroupMember,
   createGroup,
@@ -73,23 +81,8 @@ import {
 } from "@/features/admin/domains-api";
 import {
   ADMIN_NAV,
-  AUDIT_EVENTS,
-  BILLING_PLAN,
-  DOMAIN_DNS_RECORDS,
-  GROUPS_DATA,
-  NEXT_INVOICE,
-  OAUTH_APPS,
-  OVERVIEW_STATS,
-  RECENT_ADMIN_EVENTS,
-  RECENT_INVOICES,
-  SECURITY_RECOMMENDATIONS,
-  SECURITY_SECTIONS,
-  SIGN_IN_ACTIVITY,
-  USERS_DATA,
-  WORKSPACE_META,
   type AdminSectionId,
   type DirectoryUser,
-  type StatCardData,
   type UserStatus,
 } from "@/features/admin/admin-console-data";
 
@@ -104,7 +97,7 @@ const INPUT_STYLE: React.CSSProperties = {
   background: "var(--surface)",
   color: "var(--text)",
   padding: "0 8px",
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
 };
 
 function StateBanner({
@@ -120,7 +113,7 @@ function StateBanner({
       style={{
         padding: "10px 12px",
         borderRadius: 6,
-        fontSize: 12,
+        fontSize: "var(--text-meta)",
         marginBottom: 12,
         background:
           kind === "error" ? "var(--danger-soft, var(--surface-2))" : "var(--surface-2)",
@@ -139,7 +132,7 @@ function EmptyRow({ children }: { children: ReactNode }) {
       style={{
         padding: 32,
         textAlign: "center",
-        fontSize: 13,
+        fontSize: "var(--text-body-sm)",
         color: "var(--text-3)",
       }}
     >
@@ -228,7 +221,7 @@ function PageHeading({
   return (
     <div style={{ marginBottom: subtitle ? 20 : 16 }}>
       <div style={{ display: "flex", alignItems: "center" }}>
-        <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>{title}</h1>
+        <h1 style={{ fontSize: "var(--text-h2)", fontWeight: 600, margin: 0 }}>{title}</h1>
         {meta}
         {actions ? (
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -238,7 +231,7 @@ function PageHeading({
       </div>
       {subtitle ? (
         <div
-          style={{ fontSize: 13, color: "var(--text-3)", marginTop: 4 }}
+          style={{ fontSize: "var(--text-body-sm)", color: "var(--text-3)", marginTop: 4 }}
         >
           {subtitle}
         </div>
@@ -248,7 +241,7 @@ function PageHeading({
 }
 
 const HEADER_CELL: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: "var(--text-caption)",
   color: "var(--text-3)",
   fontWeight: 600,
   textTransform: "uppercase",
@@ -259,174 +252,29 @@ const HEADER_CELL: React.CSSProperties = {
 /* Overview                                                           */
 /* ------------------------------------------------------------------ */
 
-function StatCard({ label, value, delta, deltaPositive, icon }: StatCardData) {
-  const Icon = Icons[icon];
-  return (
-    <div className="panel" style={{ padding: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ ...HEADER_CELL }}>{label}</span>
-        <span style={{ marginLeft: "auto", color: "var(--text-3)" }}>
-          <Icon />
-        </span>
-      </div>
-      <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em" }}>
-        {value}
-      </div>
-      {delta ? (
-        <div
-          style={{
-            fontSize: 11,
-            color: deltaPositive ? "var(--success)" : "var(--danger)",
-            marginTop: 4,
-          }}
-        >
-          {delta}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function AdminOverview() {
   return (
     <PageScroll>
-      <PageHeading
-        title="Workspace overview"
-        subtitle={`${WORKSPACE_META.domain} · ${WORKSPACE_META.plan} · ${WORKSPACE_META.licenses} licenses`}
-      />
-
+      <PageHeading title="Workspace overview" />
       <div
+        className="panel"
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gap: 12,
-          marginBottom: 20,
+          padding: 32,
+          textAlign: "center",
+          color: "var(--text-3)",
+          fontSize: "var(--text-body-sm)",
+          lineHeight: 1.6,
         }}
       >
-        {OVERVIEW_STATS.map((stat) => (
-          <StatCard key={stat.label} {...stat} />
-        ))}
-      </div>
-
-      <div
-        style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}
-      >
-        <div className="panel" style={{ padding: 16 }}>
-          <div
-            style={{ display: "flex", alignItems: "center", marginBottom: 12 }}
-          >
-            <span style={{ fontWeight: 600, fontSize: 13 }}>
-              Sign-in activity (7 days)
-            </span>
-            <button type="button" className="btn sm" style={{ marginLeft: "auto" }}>
-              View all
-            </button>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-end",
-              gap: 6,
-              height: 160,
-              padding: "12px 0",
-            }}
-          >
-            {SIGN_IN_ACTIVITY.map((bar, index) => (
-              <div
-                key={`${bar.day}-${index}`}
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 4,
-                  height: "100%",
-                }}
-              >
-                <div
-                  style={{
-                    width: "100%",
-                    height: `${bar.value}%`,
-                    background: "var(--accent)",
-                    borderRadius: "3px 3px 0 0",
-                    opacity: bar.projected ? 0.4 : 0.9,
-                    marginTop: "auto",
-                  }}
-                />
-                <span style={{ fontSize: 10, color: "var(--text-3)" }}>
-                  {bar.day}
-                </span>
-              </div>
-            ))}
-          </div>
+        <div style={{ fontSize: "var(--text-body)", fontWeight: 600, color: "var(--text-2)", marginBottom: 6 }}>
+          Telemetry not yet wired
         </div>
-
-        <div className="panel" style={{ padding: 16 }}>
-          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12 }}>
-            Recent admin events
-          </div>
-          {RECENT_ADMIN_EVENTS.map((event) => (
-            <div
-              key={`${event.who}-${event.what}`}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "6px 0",
-                fontSize: 12,
-              }}
-            >
-              <Avatar name={event.who} size={20} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="truncate">
-                  <span style={{ fontWeight: 500 }}>{event.who}</span>{" "}
-                  <span style={{ color: "var(--text-3)" }}>{event.what}</span>
-                </div>
-              </div>
-              <span style={{ fontSize: 11, color: "var(--text-3)" }}>
-                {event.when}
-              </span>
-            </div>
-          ))}
+        <div>
+          Sign-in activity, recent admin events, and security recommendations
+          will appear here once the workspace-overview telemetry endpoints are
+          implemented. Use the sidebar to manage users, groups, security
+          policies, services, and other live admin surfaces.
         </div>
-      </div>
-
-      <div className="panel" style={{ padding: 16, marginTop: 12 }}>
-        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12 }}>
-          Security recommendations
-        </div>
-        {SECURITY_RECOMMENDATIONS.map((rec, index) => (
-          <div
-            key={rec.title}
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 10,
-              padding: "10px 0",
-              borderTop: index ? "1px solid var(--border)" : "none",
-            }}
-          >
-            <span className={`chip ${rec.severity}`} style={{ marginTop: 2 }}>
-              <span className="chip-dot" />
-              {rec.severity}
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 500 }}>{rec.title}</div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-3)",
-                  marginTop: 2,
-                }}
-              >
-                {rec.desc}
-              </div>
-            </div>
-            <button type="button" className="btn sm">
-              Review
-            </button>
-          </div>
-        ))}
       </div>
     </PageScroll>
   );
@@ -441,23 +289,18 @@ const USERS_GRID = "28px 1fr 100px 130px 90px 60px 110px 32px";
 type StatusFilter = "all" | UserStatus;
 type RoleFilter = "all" | "Admin" | "Member";
 
-/** Project the real admin user API shape onto the design's directory row,
- *  enriching with seed fields the API does not return. */
+/** Project the real admin user API shape onto the directory row.
+ *  Fields the API doesn't expose (dept enrichment, MFA, last-active) render
+ *  as "—" rather than fabricated values. */
 function projectAdminUser(user: AdminUser): DirectoryUser {
-  const seed = USERS_DATA.find(
-    (candidate) => candidate.email === (user.email ?? ""),
-  );
-  const status: UserStatus = user.disabledAt
-    ? "suspended"
-    : (seed?.status ?? "active");
   return {
     name: user.displayName || user.email || "Unknown user",
     email: user.email ?? "—",
-    role: seed?.role ?? (user.scopes.includes("admin") ? "Admin" : "Member"),
-    dept: seed?.dept ?? user.type,
-    status,
-    mfa: seed?.mfa ?? false,
-    lastActive: seed?.lastActive ?? "—",
+    role: user.scopes.includes("admin") ? "Admin" : "Member",
+    dept: user.type,
+    status: user.disabledAt ? "suspended" : "active",
+    mfa: false,
+    lastActive: "—",
   };
 }
 
@@ -485,14 +328,10 @@ function AdminUsers() {
 
   const usersQuery = useQuery(adminUsersQueryOptions({ includeDisabled: true }));
 
-  /** Prefer live API rows; fall back to the seeded directory offline. */
-  const directory = useMemo<readonly DirectoryUser[]>(() => {
-    const apiUsers = usersQuery.data?.users ?? [];
-    if (apiUsers.length > 0) {
-      return apiUsers.map(projectAdminUser);
-    }
-    return USERS_DATA;
-  }, [usersQuery.data]);
+  const directory = useMemo<readonly DirectoryUser[]>(
+    () => (usersQuery.data?.users ?? []).map(projectAdminUser),
+    [usersQuery.data],
+  );
 
   const departments = useMemo(
     () => [...new Set(directory.map((user) => user.dept))].sort(),
@@ -549,7 +388,7 @@ function AdminUsers() {
     background: "var(--surface)",
     color: "var(--text)",
     padding: "0 8px",
-    fontSize: 12,
+    fontSize: "var(--text-meta)",
   };
 
   return (
@@ -558,9 +397,9 @@ function AdminUsers() {
         title="Users"
         meta={
           <span
-            style={{ marginLeft: 8, fontSize: 12, color: "var(--text-3)" }}
+            style={{ marginLeft: 8, fontSize: "var(--text-meta)", color: "var(--text-3)" }}
           >
-            {filtered.length} of {WORKSPACE_META.licenses} licenses used
+            {filtered.length} user{filtered.length === 1 ? "" : "s"}
           </span>
         }
         actions={
@@ -639,7 +478,7 @@ function AdminUsers() {
               alignItems: "center",
             }}
           >
-            <span style={{ fontSize: 12 }}>{selected.size} selected</span>
+            <span style={{ fontSize: "var(--text-meta)" }}>{selected.size} selected</span>
             <button type="button" className="btn sm">
               Change role
             </button>
@@ -684,7 +523,7 @@ function AdminUsers() {
             style={{
               padding: 32,
               textAlign: "center",
-              fontSize: 13,
+              fontSize: "var(--text-body-sm)",
               color: "var(--text-3)",
             }}
           >
@@ -722,7 +561,7 @@ function AdminUsers() {
                     </div>
                     <div
                       className="truncate"
-                      style={{ fontSize: 11, color: "var(--text-3)" }}
+                      style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
                     >
                       {user.email}
                     </div>
@@ -841,7 +680,7 @@ function GroupMembershipPanel({ group }: { group: Group }) {
 
   return (
     <div className="panel" style={{ padding: 16, marginBottom: 12 }}>
-      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
+      <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)", marginBottom: 8 }}>
         Members of {group.name}
       </div>
       {membersQuery.isError ? (
@@ -875,7 +714,7 @@ function GroupMembershipPanel({ group }: { group: Group }) {
         </button>
       </form>
       {members.length === 0 ? (
-        <div style={{ fontSize: 12, color: "var(--text-3)", padding: "4px 0" }}>
+        <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", padding: "4px 0" }}>
           {membersQuery.isPending ? "Loading members…" : "No members in this group."}
         </div>
       ) : (
@@ -887,11 +726,11 @@ function GroupMembershipPanel({ group }: { group: Group }) {
               gridTemplateColumns: "1fr 90px 90px",
               alignItems: "center",
               height: 32,
-              fontSize: 12,
+              fontSize: "var(--text-meta)",
               borderTop: "1px solid var(--border)",
             }}
           >
-            <span className="mono truncate" style={{ fontSize: 11 }}>
+            <span className="mono truncate" style={{ fontSize: "var(--text-caption)" }}>
               {member.actorId}
             </span>
             <span>
@@ -964,22 +803,11 @@ function AdminGroups() {
 
   const apiUnits = orgUnitsQuery.data ?? [];
   const apiGroups = groupsQuery.data ?? [];
-  const offline = orgUnitsQuery.isError && groupsQuery.isError;
 
-  /** Live rows when the API responds; fall back to the seed offline. */
-  const rows = useMemo<readonly GroupsRow[]>(() => {
-    if (offline) {
-      return GROUPS_DATA.map((entry, index) => ({
-        key: `seed:${String(index)}`,
-        id: null,
-        name: entry.name,
-        members: entry.members,
-        type: entry.type,
-        indent: entry.indent ?? 0,
-      }));
-    }
-    return [...projectOrgUnitRows(apiUnits), ...projectGroupRows(apiGroups)];
-  }, [offline, apiUnits, apiGroups]);
+  const rows = useMemo<readonly GroupsRow[]>(
+    () => [...projectOrgUnitRows(apiUnits), ...projectGroupRows(apiGroups)],
+    [apiUnits, apiGroups],
+  );
 
   const managedGroup = apiGroups.find((group) => group.id === managedGroupId) ?? null;
 
@@ -1010,9 +838,9 @@ function AdminGroups() {
       {orgUnitsQuery.isPending || groupsQuery.isPending ? (
         <StateBanner kind="loading">Loading groups & organizational units…</StateBanner>
       ) : null}
-      {offline ? (
-        <StateBanner kind="info">
-          Groups API unavailable — showing seeded directory (offline).
+      {orgUnitsQuery.isError || groupsQuery.isError ? (
+        <StateBanner kind="error">
+          Groups & organizational units unavailable — try again later.
         </StateBanner>
       ) : null}
       {createOuMutation.isError ? (
@@ -1096,7 +924,7 @@ function AdminGroups() {
                 padding: "0 16px",
                 height: 38,
                 alignItems: "center",
-                fontSize: 12,
+                fontSize: "var(--text-meta)",
                 borderBottom:
                   index < rows.length - 1 ? "1px solid var(--border)" : "none",
               }}
@@ -1228,7 +1056,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
     >
       <label
         className="row gap-2"
-        style={{ fontSize: 12, color: "var(--text-2)" }}
+        style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}
       >
         <input
           type="checkbox"
@@ -1239,7 +1067,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
         />
         Policy enabled
       </label>
-      <label style={{ fontSize: 11, color: "var(--text-3)" }}>
+      <label style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
         Enforcement
         <select
           aria-label={`Enforcement for ${securityPolicyLabels[policy.policyType]}`}
@@ -1291,7 +1119,6 @@ function AdminSecurity() {
     },
   });
 
-  const offline = policiesQuery.isError;
   const policies = policiesQuery.data ?? [];
 
   const grouped = useMemo(() => {
@@ -1315,50 +1142,16 @@ function AdminSecurity() {
       {policiesQuery.isPending ? (
         <StateBanner kind="loading">Loading security policies…</StateBanner>
       ) : null}
-      {offline ? (
-        <StateBanner kind="info">
-          Security policies API unavailable — showing seeded reference cards (offline).
+      {policiesQuery.isError ? (
+        <StateBanner kind="error">
+          Security policies unavailable — try again later.
         </StateBanner>
       ) : null}
       {updateMutation.isError ? (
         <StateBanner kind="error">{updateMutation.error.message}</StateBanner>
       ) : null}
 
-      {offline ? (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          {SECURITY_SECTIONS.map((section) => (
-            <div key={section.label}>
-              <div className="section-label" style={{ padding: "0 0 8px" }}>
-                {section.label}
-              </div>
-              {section.cards.map((card) => (
-                <div
-                  key={card.title}
-                  className="panel"
-                  style={{ padding: 16, marginBottom: 12 }}
-                >
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <span style={{ fontSize: 14, fontWeight: 600 }}>
-                      {card.title}
-                    </span>
-                    <span className={`chip ${card.on ? "success" : "warning"}`}>
-                      <span className="chip-dot" />
-                      {card.level}
-                    </span>
-                  </div>
-                  <div
-                    style={{ fontSize: 12, color: "var(--text-2)", marginTop: 4 }}
-                  >
-                    {card.desc}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      ) : (
+      {policiesQuery.isError ? null : (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           {(["Authentication", "Access & data"] as const).map((label) => (
             <div key={label}>
@@ -1390,7 +1183,7 @@ function AdminSecurity() {
                             marginBottom: 4,
                           }}
                         >
-                          <span style={{ fontSize: 14, fontWeight: 600 }}>
+                          <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>
                             {securityPolicyLabels[policy.policyType]}
                           </span>
                           <span
@@ -1402,7 +1195,7 @@ function AdminSecurity() {
                         </div>
                         <div
                           className="row gap-2"
-                          style={{ fontSize: 12, color: "var(--text-2)" }}
+                          style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}
                         >
                           <Icons.Key /> {policySettingsSummary(policy)}
                         </div>
@@ -1507,28 +1300,18 @@ function AdminApps() {
     onSuccess: () => invalidate(),
   });
 
-  const offline = appsQuery.isError;
-
-  const rows = useMemo<readonly AppsRow[]>(() => {
-    if (offline) {
-      return OAUTH_APPS.map((app) => ({
-        id: null,
+  const rows = useMemo<readonly AppsRow[]>(
+    () =>
+      (appsQuery.data?.apps ?? []).map((app: OAuthApp) => ({
+        id: app.id,
         name: app.name,
-        scope: app.scope,
-        users: app.users,
+        scope: app.scopeSummary || app.scopes.join(", ") || "—",
+        users: app.userCount,
         risk: app.risk,
-        status: app.state,
-      }));
-    }
-    return (appsQuery.data?.apps ?? []).map((app: OAuthApp) => ({
-      id: app.id,
-      name: app.name,
-      scope: app.scopeSummary || app.scopes.join(", ") || "—",
-      users: app.userCount,
-      risk: app.risk,
-      status: app.status,
-    }));
-  }, [offline, appsQuery.data]);
+        status: app.status,
+      })),
+    [appsQuery.data],
+  );
 
   const mutating = statusMutation.isPending || revokeMutation.isPending;
 
@@ -1581,10 +1364,8 @@ function AdminApps() {
       {appsQuery.isPending ? (
         <StateBanner kind="loading">Loading OAuth apps…</StateBanner>
       ) : null}
-      {offline ? (
-        <StateBanner kind="info">
-          OAuth apps API unavailable — showing seeded apps (offline).
-        </StateBanner>
+      {appsQuery.isError ? (
+        <StateBanner kind="error">OAuth apps unavailable — try again later.</StateBanner>
       ) : null}
       {statusMutation.isError ? (
         <StateBanner kind="error">{statusMutation.error.message}</StateBanner>
@@ -1627,7 +1408,7 @@ function AdminApps() {
                 padding: "0 16px",
                 height: 40,
                 alignItems: "center",
-                fontSize: 12,
+                fontSize: "var(--text-meta)",
                 borderBottom:
                   index < rows.length - 1 ? "1px solid var(--border)" : "none",
               }}
@@ -1642,7 +1423,7 @@ function AdminApps() {
                     border: "1px solid var(--border)",
                     display: "grid",
                     placeItems: "center",
-                    fontSize: 11,
+                    fontSize: "var(--text-caption)",
                     fontWeight: 600,
                   }}
                 >
@@ -1739,7 +1520,6 @@ function AdminBilling() {
   const accountQuery = useQuery(billingAccountQueryOptions());
   const invoicesQuery = useQuery(invoicesQueryOptions());
 
-  const offline = accountQuery.isError;
   const view = accountQuery.data;
   const invoices = invoicesQuery.data?.invoices ?? [];
 
@@ -1747,73 +1527,45 @@ function AdminBilling() {
     <PageScroll>
       <PageHeading title="Billing & licenses" subtitle="" />
 
-      {accountQuery.isPending || invoicesQuery.isPending ? (
+      {accountQuery.isPending ? (
         <StateBanner kind="loading">Loading billing account…</StateBanner>
       ) : null}
-      {offline ? (
-        <StateBanner kind="info">
-          Billing API unavailable — showing seeded plan (offline).
+      {accountQuery.isError ? (
+        <StateBanner kind="error">
+          Billing account unavailable — try again later.
         </StateBanner>
       ) : null}
 
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
-        <div className="panel" style={{ padding: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-            <span className="chip accent">Current plan</span>
-          </div>
-          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em" }}>
-            {view ? view.account.planName : BILLING_PLAN.name}
-          </div>
-          <div style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 16 }}>
-            {view
-              ? `${formatMoney(view.account.pricePerSeatCents, view.account.currency)} per user / month · billed ${view.account.billingCycle}`
-              : BILLING_PLAN.priceLine}
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
-              gap: 12,
-            }}
-          >
-            {view
-              ? view.meters.map((meter) => {
-                  const valueText =
-                    meter.id === "storage"
-                      ? `${formatBytes(meter.used)} / ${formatBytes(meter.limit)}`
-                      : `${new Intl.NumberFormat("en-US").format(meter.used)} / ${new Intl.NumberFormat("en-US").format(meter.limit)}`;
-                  return (
-                    <div key={meter.id}>
-                      <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-                        {METER_LABEL[meter.id]}
-                      </div>
-                      <div style={{ fontWeight: 600, marginTop: 2 }}>{valueText}</div>
-                      <div
-                        style={{
-                          height: 4,
-                          background: "var(--surface-2)",
-                          borderRadius: 2,
-                          marginTop: 6,
-                        }}
-                      >
-                        <div
-                          style={{
-                            height: "100%",
-                            width: `${String(meter.fraction * 100)}%`,
-                            background: "var(--accent)",
-                            borderRadius: 2,
-                          }}
-                        />
-                      </div>
+      {view ? (
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
+          <div className="panel" style={{ padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+              <span className="chip accent">Current plan</span>
+            </div>
+            <div style={{ fontSize: "var(--text-h1)", fontWeight: 700, letterSpacing: "-0.02em" }}>
+              {view.account.planName}
+            </div>
+            <div style={{ fontSize: "var(--text-body-sm)", color: "var(--text-2)", marginBottom: 16 }}>
+              {`${formatMoney(view.account.pricePerSeatCents, view.account.currency)} per user / month · billed ${view.account.billingCycle}`}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: 12,
+              }}
+            >
+              {view.meters.map((meter) => {
+                const valueText =
+                  meter.id === "storage"
+                    ? `${formatBytes(meter.used)} / ${formatBytes(meter.limit)}`
+                    : `${new Intl.NumberFormat("en-US").format(meter.used)} / ${new Intl.NumberFormat("en-US").format(meter.limit)}`;
+                return (
+                  <div key={meter.id}>
+                    <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+                      {METER_LABEL[meter.id]}
                     </div>
-                  );
-                })
-              : BILLING_PLAN.meters.map((meter) => (
-                  <div key={meter.label}>
-                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-                      {meter.label}
-                    </div>
-                    <div style={{ fontWeight: 600, marginTop: 2 }}>{meter.value}</div>
+                    <div style={{ fontWeight: 600, marginTop: 2 }}>{valueText}</div>
                     <div
                       style={{
                         height: 4,
@@ -1825,84 +1577,52 @@ function AdminBilling() {
                       <div
                         style={{
                           height: "100%",
-                          width: `${String(meter.bar * 100)}%`,
+                          width: `${String(meter.fraction * 100)}%`,
                           background: "var(--accent)",
                           borderRadius: 2,
                         }}
                       />
                     </div>
                   </div>
-                ))}
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        <div className="panel" style={{ padding: 20 }}>
-          <div style={{ ...HEADER_CELL, marginBottom: 4 }}>Next invoice</div>
-          <div style={{ fontSize: 24, fontWeight: 700 }}>
-            {view
-              ? formatMoney(view.account.nextInvoiceCents, view.account.currency)
-              : NEXT_INVOICE.amount}
+          <div className="panel" style={{ padding: 20 }}>
+            <div style={{ ...HEADER_CELL, marginBottom: 4 }}>Next invoice</div>
+            <div style={{ fontSize: "var(--text-h1)", fontWeight: 700 }}>
+              {formatMoney(view.account.nextInvoiceCents, view.account.currency)}
+            </div>
+            <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginBottom: 16 }}>
+              {formatDateLabel(view.account.nextInvoiceAt)}
+            </div>
+            <button
+              type="button"
+              className="btn"
+              style={{ width: "100%", marginBottom: 8 }}
+            >
+              <Icons.Credit /> Update payment method
+            </button>
+            <button type="button" className="btn" style={{ width: "100%" }}>
+              <Icons.Download /> Download invoices
+            </button>
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 16 }}>
-            {view ? formatDateLabel(view.account.nextInvoiceAt) : NEXT_INVOICE.date}
-          </div>
-          <button
-            type="button"
-            className="btn"
-            style={{ width: "100%", marginBottom: 8 }}
-          >
-            <Icons.Credit /> Update payment method
-          </button>
-          <button type="button" className="btn" style={{ width: "100%" }}>
-            <Icons.Download /> Download invoices
-          </button>
         </div>
-      </div>
+      ) : null}
 
       <div className="panel" style={{ padding: 16, marginTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-          <span style={{ fontWeight: 600, fontSize: 13 }}>Recent invoices</span>
+          <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>Recent invoices</span>
         </div>
         {invoicesQuery.isError ? (
-          <StateBanner kind="info">
-            Invoices API unavailable — showing seeded invoices (offline).
+          <StateBanner kind="error">
+            Invoices unavailable — try again later.
           </StateBanner>
-        ) : null}
-        {invoicesQuery.isError ? (
-          RECENT_INVOICES.map((invoice, index) => (
-            <div
-              key={invoice.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: INVOICE_GRID,
-                alignItems: "center",
-                height: 32,
-                fontSize: 12,
-                borderTop: index ? "1px solid var(--border)" : "none",
-              }}
-            >
-              <span className="mono">{invoice.id}</span>
-              <span style={{ color: "var(--text-2)" }}>{invoice.date}</span>
-              <span>{invoice.amount}</span>
-              <span>
-                <span className="chip success">
-                  <span className="chip-dot" />
-                  {invoice.status}
-                </span>
-              </span>
-              <button
-                type="button"
-                className="btn sm"
-                style={{ justifySelf: "flex-end" }}
-              >
-                PDF
-              </button>
-            </div>
-          ))
+        ) : invoicesQuery.isPending ? (
+          <EmptyRow>Loading invoices…</EmptyRow>
         ) : invoices.length === 0 ? (
-          <EmptyRow>
-            {invoicesQuery.isPending ? "Loading invoices…" : "No invoices yet."}
-          </EmptyRow>
+          <EmptyRow>No invoices yet.</EmptyRow>
         ) : (
           invoices.map((invoice, index) => (
             <div
@@ -1912,7 +1632,7 @@ function AdminBilling() {
                 gridTemplateColumns: INVOICE_GRID,
                 alignItems: "center",
                 height: 32,
-                fontSize: 12,
+                fontSize: "var(--text-meta)",
                 borderTop: index ? "1px solid var(--border)" : "none",
               }}
             >
@@ -1948,91 +1668,6 @@ function AdminBilling() {
 /* Audit log                                                          */
 /* ------------------------------------------------------------------ */
 
-const AUDIT_GRID = "80px 1fr 1fr 1.4fr 110px 90px";
-
-function AdminAudit() {
-  return (
-    <PageScroll>
-      <PageHeading
-        title="Audit log"
-        actions={
-          <>
-            <button type="button" className="btn">
-              <Icons.Filter /> Filter
-            </button>
-            <button type="button" className="btn">
-              <Icons.Download /> Export
-            </button>
-          </>
-        }
-      />
-      <div className="panel" style={{ overflow: "hidden" }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: AUDIT_GRID,
-            padding: "0 16px",
-            height: 32,
-            alignItems: "center",
-            borderBottom: "1px solid var(--border)",
-            background: "var(--surface-2)",
-            ...HEADER_CELL,
-          }}
-        >
-          <span>Time</span>
-          <span>Actor</span>
-          <span>Action</span>
-          <span>Target</span>
-          <span>IP</span>
-          <span>Severity</span>
-        </div>
-        {AUDIT_EVENTS.map((event, index) => (
-          <div
-            key={`${event.time}-${event.action}`}
-            style={{
-              display: "grid",
-              gridTemplateColumns: AUDIT_GRID,
-              padding: "0 16px",
-              height: 36,
-              alignItems: "center",
-              fontSize: 12,
-              borderBottom:
-                index < AUDIT_EVENTS.length - 1
-                  ? "1px solid var(--border)"
-                  : "none",
-            }}
-          >
-            <span
-              className="mono"
-              style={{ fontSize: 11, color: "var(--text-3)" }}
-            >
-              {event.time}
-            </span>
-            <span className="truncate">{event.actor}</span>
-            <span className="mono" style={{ fontSize: 11 }}>
-              {event.action}
-            </span>
-            <span className="truncate" style={{ color: "var(--text-2)" }}>
-              {event.target}
-            </span>
-            <span
-              className="mono"
-              style={{ fontSize: 11, color: "var(--text-3)" }}
-            >
-              {event.ip}
-            </span>
-            <span>
-              <span className={`chip ${event.severity}`}>
-                <span className="chip-dot" />
-                {event.severity}
-              </span>
-            </span>
-          </div>
-        ))}
-      </div>
-    </PageScroll>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /* Domain                                                             */
@@ -2129,17 +1764,17 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
               padding: "0 16px",
               height: 38,
               alignItems: "center",
-              fontSize: 12,
+              fontSize: "var(--text-meta)",
               borderBottom: "1px solid var(--border)",
             }}
           >
             <span style={{ fontWeight: 600 }}>{record.recordType}</span>
-            <span className="mono" style={{ fontSize: 11 }}>
+            <span className="mono" style={{ fontSize: "var(--text-caption)" }}>
               {record.host}
             </span>
             <span
               className="mono truncate"
-              style={{ fontSize: 11, color: "var(--text-2)" }}
+              style={{ fontSize: "var(--text-caption)", color: "var(--text-2)" }}
             >
               {record.expectedValue}
             </span>
@@ -2247,7 +1882,6 @@ function AdminDomain() {
     onSuccess: () => invalidate(),
   });
 
-  const offline = domainsQuery.isError;
   const domains = domainsQuery.data ?? [];
 
   return (
@@ -2257,10 +1891,8 @@ function AdminDomain() {
       {domainsQuery.isPending ? (
         <StateBanner kind="loading">Loading domains…</StateBanner>
       ) : null}
-      {offline ? (
-        <StateBanner kind="info">
-          Domains API unavailable — showing seeded DNS records (offline).
-        </StateBanner>
+      {domainsQuery.isError ? (
+        <StateBanner kind="error">Domains unavailable — try again later.</StateBanner>
       ) : null}
       {addMutation.isError ? (
         <StateBanner kind="error">{addMutation.error.message}</StateBanner>
@@ -2272,86 +1904,7 @@ function AdminDomain() {
         <StateBanner kind="error">{deleteMutation.error.message}</StateBanner>
       ) : null}
 
-      {offline ? (
-        <>
-          <div
-            className="panel"
-            style={{
-              padding: 16,
-              marginBottom: 16,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-            }}
-          >
-            <span style={{ color: "var(--text-3)" }}>
-              <Icons.Globe />
-            </span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>
-                {WORKSPACE_META.domain}
-              </div>
-              <div style={{ fontSize: 12, color: "var(--text-2)" }}>
-                Primary domain (seeded)
-              </div>
-            </div>
-          </div>
-          <div className="panel" style={{ overflow: "hidden" }}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "80px 200px 1fr 100px",
-                padding: "0 16px",
-                height: 32,
-                alignItems: "center",
-                borderBottom: "1px solid var(--border)",
-                background: "var(--surface-2)",
-                ...HEADER_CELL,
-              }}
-            >
-              <span>Type</span>
-              <span>Host</span>
-              <span>Value</span>
-              <span>Status</span>
-            </div>
-            {DOMAIN_DNS_RECORDS.map((record) => (
-              <div
-                key={`${record.type}-${record.host}`}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "80px 200px 1fr 100px",
-                  padding: "0 16px",
-                  height: 38,
-                  alignItems: "center",
-                  fontSize: 12,
-                  borderBottom: "1px solid var(--border)",
-                }}
-              >
-                <span style={{ fontWeight: 600 }}>{record.type}</span>
-                <span className="mono" style={{ fontSize: 11 }}>
-                  {record.host}
-                </span>
-                <span
-                  className="mono truncate"
-                  style={{ fontSize: 11, color: "var(--text-2)" }}
-                >
-                  {record.value}
-                </span>
-                <span>
-                  <span
-                    className={`chip ${
-                      record.status === "Verified" ? "success" : "warning"
-                    }`}
-                  >
-                    <span className="chip-dot" />
-                    {record.status}
-                  </span>
-                </span>
-              </div>
-            ))}
-          </div>
-        </>
-      ) : (
+      {domainsQuery.isError ? null : (
         <>
           <form
             className="panel"
@@ -2401,10 +1954,10 @@ function AdminDomain() {
                     <Icons.Globe />
                   </span>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>
+                    <div style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>
                       {entry.domain.domain}
                     </div>
-                    <div style={{ fontSize: 12, color: "var(--text-2)" }}>
+                    <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
                       {entry.domain.isPrimary ? "Primary domain" : "Secondary domain"}
                     </div>
                   </div>
@@ -2449,16 +2002,32 @@ function AdminDomain() {
 /* Console                                                            */
 /* ------------------------------------------------------------------ */
 
+/** Wrap a section component in the standard PageScroll container so it picks
+ * up the admin console's flex sizing and scroll behavior. Used for orphan
+ * live components that render their own internal padding but no outer scroll. */
+function withPageScroll(Component: () => ReactNode): () => ReactNode {
+  return function ScrolledSection() {
+    return <PageScroll>{Component()}</PageScroll>;
+  };
+}
+
 const SECTION_CONTENT: Record<AdminSectionId, () => ReactNode> = {
   overview: AdminOverview,
   users: AdminUsers,
   groups: AdminGroups,
   security: AdminSecurity,
   apps: AdminApps,
+  "core-apps": withPageScroll(CoreAppsManagement),
+  services: withPageScroll(AdminServicesOverview),
+  "app-passwords": withPageScroll(AppPasswordsManagement),
+  agents: withPageScroll(AgentCredentialsManagement),
+  "ai-costs": withPageScroll(AICostLimitsManagement),
+  "ai-observability": withPageScroll(AIObservabilityDashboard),
   billing: AdminBilling,
-  audit: AdminAudit,
+  audit: withPageScroll(AuditLogList),
   domain: AdminDomain,
   mail: MailAdminSection,
+  webhooks: withPageScroll(WebhookManagement),
 };
 
 export function AdminConsole() {

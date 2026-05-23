@@ -12,9 +12,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Avatar } from "@/components/ui/avatar";
 import { Icons } from "@/components/icons";
 import { createSlidesDeck, deleteSlidesDeck, updateSlidesDeck } from "./api";
-import { mergeDriveDecks } from "./mapping";
 import { slidesListFromDriveQueryOptions, slidesQueryKeys } from "./queries";
-import { DECKS, type SlideDeck } from "./seed";
+import type { SlideDeck } from "./seed";
 
 interface SlidesListProps {
   /** Open a deck in the editor. */
@@ -35,7 +34,7 @@ const menuItemStyle: CSSProperties = {
   gap: 8,
   width: "100%",
   padding: "6px 10px",
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
   textAlign: "left",
   border: "none",
   borderRadius: 6,
@@ -80,7 +79,7 @@ function RecentCard({
       >
         <div
           style={{
-            fontSize: 9,
+            fontSize: "var(--text-overline)",
             opacity: 0.7,
             textTransform: "uppercase",
             letterSpacing: ".08em",
@@ -91,16 +90,16 @@ function RecentCard({
         </div>
         <div
           className="truncate"
-          style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em" }}
+          style={{ fontSize: "var(--text-body)", fontWeight: 700, letterSpacing: "-0.01em" }}
         >
           {deck.title}
         </div>
       </div>
       <div style={{ padding: "8px 10px", borderTop: "1px solid var(--border)" }}>
-        <div className="truncate" style={{ fontSize: 12, fontWeight: 500 }}>
+        <div className="truncate" style={{ fontSize: "var(--text-meta)", fontWeight: 500 }}>
           {deck.title}
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-3)" }}>{deck.modified}</div>
+        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{deck.modified}</div>
       </div>
     </button>
   );
@@ -129,7 +128,7 @@ export function SlidesList({ onOpen, query }: SlidesListProps) {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const decks = useMemo(
-    () => filterDecks(mergeDriveDecks(DECKS, decksQuery.data), query),
+    () => filterDecks(decksQuery.data ?? [], query),
     [decksQuery.data, query],
   );
   const recent = decks.slice(0, 4);
@@ -184,7 +183,7 @@ export function SlidesList({ onOpen, query }: SlidesListProps) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Presentations</h1>
+        <h1 style={{ margin: 0, fontSize: "var(--text-h2)", fontWeight: 600 }}>Presentations</h1>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button type="button" className="btn">
             <Icons.Filter /> Filter
@@ -209,7 +208,7 @@ export function SlidesList({ onOpen, query }: SlidesListProps) {
             gap: 8,
             padding: "8px 12px",
             marginBottom: 16,
-            fontSize: 12,
+            fontSize: "var(--text-meta)",
             color: "var(--text-2)",
             background: "var(--warning-soft)",
             borderRadius: 6,
@@ -225,7 +224,7 @@ export function SlidesList({ onOpen, query }: SlidesListProps) {
       {decksQuery.isPending ? (
         <div
           role="status"
-          style={{ padding: "64px 0", textAlign: "center", color: "var(--text-3)", fontSize: 13 }}
+          style={{ padding: "64px 0", textAlign: "center", color: "var(--text-3)", fontSize: "var(--text-body-sm)" }}
         >
           Loading presentations…
         </div>
@@ -258,7 +257,7 @@ export function SlidesList({ onOpen, query }: SlidesListProps) {
                 display: "grid",
                 gridTemplateColumns: tableColumns,
                 padding: "8px 16px",
-                fontSize: 11,
+                fontSize: "var(--text-caption)",
                 color: "var(--text-3)",
                 fontWeight: 600,
                 textTransform: "uppercase",
@@ -334,7 +333,7 @@ function DeckRow({
         padding: "0 16px",
         height: 36,
         alignItems: "center",
-        fontSize: 12,
+        fontSize: "var(--text-meta)",
         borderBottom: "1px solid var(--border)",
         position: "relative",
         opacity: deleting ? 0.5 : 1,
@@ -383,7 +382,7 @@ function DeckRow({
             <Icons.MoreV />
           </button>
         ) : (
-          <span title="Seeded preview deck" style={{ color: "var(--text-3)", fontSize: 10 }}>
+          <span title="Seeded preview deck" style={{ color: "var(--text-3)", fontSize: "var(--text-chip)" }}>
             Seed
           </span>
         )}
@@ -471,8 +470,8 @@ function RenameDialog({
           gap: 12,
         }}
       >
-        <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Rename presentation</h2>
-        <label htmlFor={inputId} style={{ fontSize: 12, color: "var(--text-3)" }}>
+        <h2 style={{ margin: 0, fontSize: "var(--text-body-lg)", fontWeight: 600 }}>Rename presentation</h2>
+        <label htmlFor={inputId} style={{ fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
           Title
         </label>
         <input
@@ -482,7 +481,7 @@ function RenameDialog({
           onChange={(event) => setTitle(event.target.value)}
         />
         {error ? (
-          <span style={{ fontSize: 12, color: "var(--danger)" }}>
+          <span style={{ fontSize: "var(--text-meta)", color: "var(--danger)" }}>
             Could not rename the deck. Please try again.
           </span>
         ) : null}
@@ -509,7 +508,7 @@ function ErrorBanner({ message }: { readonly message: string }) {
         gap: 8,
         padding: "8px 12px",
         marginBottom: 16,
-        fontSize: 12,
+        fontSize: "var(--text-meta)",
         color: "var(--danger)",
         background: "var(--danger-soft)",
         borderRadius: 6,
@@ -541,7 +540,7 @@ function EmptyState({
       }}
     >
       <Icons.Image size={32} />
-      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-2)" }}>
+      <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500, color: "var(--text-2)" }}>
         {hasQuery ? <>No presentations for &ldquo;{query}&rdquo;</> : "No presentations yet"}
       </div>
       {hasQuery ? null : (

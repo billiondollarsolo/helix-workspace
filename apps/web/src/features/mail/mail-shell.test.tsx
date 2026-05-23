@@ -431,7 +431,7 @@ describe("MailShell", () => {
     expect(container.textContent).not.toContain("New message");
   });
 
-  it("falls back to offline seed data when mail.threads.list fails", async () => {
+  it("renders an empty thread list when mail.threads.list fails", async () => {
     fetchMock.mockImplementation((input, init) => {
       const url = urlOf(input);
       if (url.endsWith("/mail.threads.list")) {
@@ -441,8 +441,8 @@ describe("MailShell", () => {
     });
     render();
     await flush();
-    expect(container.textContent).toContain("offline data");
-    expect(container.textContent).toContain("Q3 roadmap — final sign-off needed by Friday");
+    // No fabricated rows leak through when the backend fails.
+    expect(container.textContent).not.toContain("Q3 roadmap — final sign-off needed by Friday");
   });
 
   /* ----------------------------------------------------------------- compose: drag-and-drop */

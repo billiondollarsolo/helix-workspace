@@ -5,8 +5,6 @@
 
 import { useState, type ReactNode } from "react";
 import { Icons, type IconName } from "@/components/icons";
-import { Avatar } from "@/components/ui/avatar";
-import { PEOPLE } from "@/components/people";
 
 export type SideTool = "calendar" | "tasks" | "notes" | "contacts" | "ai";
 
@@ -25,7 +23,7 @@ const SIDE_TOOLS: readonly SideToolDef[] = [
 ];
 
 const sectionLabelStyle = {
-  fontSize: 10,
+  fontSize: "var(--text-chip)",
   color: "var(--text-3)",
   fontWeight: 600,
   textTransform: "uppercase" as const,
@@ -36,18 +34,25 @@ const sectionLabelStyle = {
 /* ---------- Mini Calendar ---------- */
 
 function MiniCalendar() {
-  const todayEvents = [
-    { time: "9:30", end: "10:30", title: "1:1 with Jonas", color: "#475569" },
-    { time: "11:00", end: "12:00", title: "Hiring loop debrief", color: "#059669" },
-    { time: "14:00", end: "15:00", title: "Caroline Reyes / Atlas", color: "#0891b2" },
-    { time: "15:30", end: "17:00", title: "Postmortem — auth", color: "#dc2626" },
-  ];
+  const now = new Date();
+  const monthLabel = now.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const todayLabel = now.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  // Render the current month grid (Sunday-first). First-of-month offset
+  // determines how many leading blanks the grid needs.
+  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const leadingBlanks = firstOfMonth.getDay();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const today = now.getDate();
   const days = ["S", "M", "T", "W", "T", "F", "S"];
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div style={{ padding: "12px 14px 6px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>May 2026</span>
+          <span style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>{monthLabel}</span>
           <div style={{ marginLeft: "auto", display: "flex" }}>
             <button type="button" className="icon-btn" aria-label="Previous month">
               <Icons.ChevronLeft />
@@ -62,7 +67,7 @@ function MiniCalendar() {
             display: "grid",
             gridTemplateColumns: "repeat(7, 1fr)",
             gap: 1,
-            fontSize: 10,
+            fontSize: "var(--text-chip)",
             textAlign: "center",
             color: "var(--text-3)",
             marginBottom: 4,
@@ -77,14 +82,14 @@ function MiniCalendar() {
             display: "grid",
             gridTemplateColumns: "repeat(7, 1fr)",
             gap: 1,
-            fontSize: 11,
+            fontSize: "var(--text-caption)",
             textAlign: "center",
           }}
         >
-          {Array.from({ length: 35 }).map((_, index) => {
-            const day = index - 3;
-            const valid = day >= 1 && day <= 31;
-            const today = day === 21;
+          {Array.from({ length: 42 }).map((_, index) => {
+            const day = index - leadingBlanks + 1;
+            const valid = day >= 1 && day <= daysInMonth;
+            const isToday = valid && day === today;
             return (
               <div
                 key={index}
@@ -93,9 +98,9 @@ function MiniCalendar() {
                   display: "grid",
                   placeItems: "center",
                   borderRadius: 999,
-                  color: !valid ? "var(--text-3)" : today ? "white" : "var(--text)",
-                  background: today ? "var(--accent)" : "transparent",
-                  fontWeight: today ? 600 : 400,
+                  color: !valid ? "var(--text-3)" : isToday ? "white" : "var(--text)",
+                  background: isToday ? "var(--accent)" : "transparent",
+                  fontWeight: isToday ? 600 : 400,
                   cursor: valid ? "pointer" : "default",
                 }}
               >
@@ -107,37 +112,18 @@ function MiniCalendar() {
       </div>
       <div style={{ height: 1, background: "var(--border)", margin: "8px 0" }} />
       <div style={{ padding: "0 14px 12px", flex: 1, overflowY: "auto" }}>
-        <div style={sectionLabelStyle}>Today · Thu, May 21</div>
-        {todayEvents.map((event, index) => (
-          <div
-            key={event.title}
-            style={{
-              display: "flex",
-              gap: 10,
-              padding: "6px 0",
-              fontSize: 12,
-              borderTop: index ? "1px solid var(--border)" : "none",
-            }}
-          >
-            <div
-              style={{
-                width: 3,
-                alignSelf: "stretch",
-                background: event.color,
-                borderRadius: 2,
-                flexShrink: 0,
-              }}
-            />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 500 }} className="truncate">
-                {event.title}
-              </div>
-              <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-                {event.time} – {event.end}
-              </div>
-            </div>
-          </div>
-        ))}
+        <div style={sectionLabelStyle}>Today · {todayLabel}</div>
+        <div
+          style={{
+            padding: "16px 0",
+            fontSize: "var(--text-meta)",
+            color: "var(--text-3)",
+            textAlign: "center",
+          }}
+        >
+          Today&rsquo;s events will appear here once the calendar mini-panel is
+          wired to the live agenda.
+        </div>
         <button type="button" className="btn sm" style={{ width: "100%", marginTop: 12 }}>
           <Icons.Plus /> New event
         </button>
@@ -156,14 +142,7 @@ interface MiniTask {
 }
 
 function MiniTasks() {
-  const [tasks, setTasks] = useState<MiniTask[]>([
-    { id: 1, text: "Review Q3 roadmap doc", done: false, list: "Today" },
-    { id: 2, text: "Reply to Atlas — early renewal", done: false, list: "Today" },
-    { id: 3, text: "Approve hiring plan", done: true, list: "Today" },
-    { id: 4, text: "Sign DPA template", done: false, list: "This week" },
-    { id: 5, text: "1:1 prep for Friday", done: false, list: "This week" },
-    { id: 6, text: "Read postmortem", done: true, list: "This week" },
-  ]);
+  const [tasks, setTasks] = useState<MiniTask[]>([]);
   const [adding, setAdding] = useState(false);
   const [newText, setNewText] = useState("");
 
@@ -234,7 +213,7 @@ function MiniTasks() {
                     padding: "6px 4px",
                     borderRadius: 4,
                     cursor: "pointer",
-                    fontSize: 12,
+                    fontSize: "var(--text-meta)",
                     width: "100%",
                     textAlign: "left",
                   }}
@@ -288,18 +267,7 @@ interface MiniNote {
 }
 
 function MiniNotes() {
-  const [notes, setNotes] = useState<MiniNote[]>([
-    {
-      id: 1,
-      title: "Atlas renewal — talking points",
-      body: "Lock current pricing thru 2027. Push for migration window in early Q4. Offer Caroline an exec sync.",
-    },
-    {
-      id: 2,
-      title: "Q3 prep",
-      body: "Three open items: Atlas timing, hiring, pricing tier. Want sign-off Friday.",
-    },
-  ]);
+  const [notes, setNotes] = useState<MiniNote[]>([]);
   const [editing, setEditing] = useState<number | null>(null);
 
   return (
@@ -376,10 +344,10 @@ function MiniNotes() {
                   background: "none",
                 }}
               >
-                <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4 }}>
+                <div style={{ fontWeight: 600, fontSize: "var(--text-meta)", marginBottom: 4 }}>
                   {note.title}
                 </div>
-                <div style={{ fontSize: 11, color: "var(--text-2)", lineHeight: 1.5 }}>
+                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>
                   {note.body || <span style={{ color: "var(--text-3)" }}>Empty note</span>}
                 </div>
               </button>
@@ -402,37 +370,17 @@ function MiniContacts() {
         style={{ marginBottom: 12 }}
         aria-label="Search contacts"
       />
-      <div style={sectionLabelStyle}>Frequent</div>
-      {PEOPLE.slice(0, 8).map((person) => (
-        <div
-          key={person.email}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: "6px 4px",
-            borderRadius: 4,
-            fontSize: 12,
-            cursor: "pointer",
-          }}
-          onMouseEnter={(event) => {
-            event.currentTarget.style.background = "var(--hover)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.background = "transparent";
-          }}
-        >
-          <Avatar name={person.name} size={28} />
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontWeight: 500 }} className="truncate">
-              {person.name}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--text-3)" }} className="truncate">
-              {person.role}
-            </div>
-          </div>
-        </div>
-      ))}
+      <div
+        style={{
+          padding: 24,
+          textAlign: "center",
+          color: "var(--text-3)",
+          fontSize: "var(--text-meta)",
+          lineHeight: 1.5,
+        }}
+      >
+        Contacts directory will appear here once the people API is wired.
+      </div>
     </div>
   );
 }
@@ -444,7 +392,7 @@ function MiniAI() {
     "Summarize my unread inbox",
     "Draft replies to flagged threads",
     "What did I miss while away?",
-    "Find time with Mira this week",
+    "Find time on my calendar this week",
   ];
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -456,14 +404,14 @@ function MiniAI() {
             gap: 8,
             color: "var(--accent)",
             fontWeight: 600,
-            fontSize: 13,
+            fontSize: "var(--text-body-sm)",
             marginBottom: 4,
           }}
         >
           <Icons.Sparkles />
           Helix AI
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
           Your assistant for mail, docs, and the rest of the workspace.
         </div>
       </div>
@@ -481,7 +429,7 @@ function MiniAI() {
               background: "var(--surface-2)",
               border: "1px solid var(--border)",
               borderRadius: 6,
-              fontSize: 12,
+              fontSize: "var(--text-meta)",
               color: "var(--text)",
             }}
           >
@@ -511,7 +459,7 @@ function MiniAI() {
               background: "transparent",
               border: "none",
               outline: "none",
-              fontSize: 12,
+              fontSize: "var(--text-meta)",
             }}
           />
           <button type="button" className="icon-btn" aria-label="Send">
@@ -651,7 +599,7 @@ export function SidePanel({ activeTool, onClose }: SidePanelProps) {
         }}
       >
         <Icon />
-        <span style={{ fontWeight: 600, fontSize: 13 }}>{view.title}</span>
+        <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>{view.title}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 2 }}>
           <button type="button" className="icon-btn" title="Open full" aria-label="Open full">
             <Icons.Grid />

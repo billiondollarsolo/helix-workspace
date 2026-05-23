@@ -4,6 +4,7 @@
    The `fetchImpl` parameter is injected only by tests. */
 
 import { authenticatedFetch } from "@/lib/auth";
+import { callTool } from "@/lib/tool-call";
 
 export type SheetsApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -258,28 +259,9 @@ async function callSheetsTool<Output>(
   input: unknown,
   fetchImpl: SheetsApiFetch,
 ): Promise<Output> {
-  const response = await fetchImpl(`/api/tools/${toolId}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const output: unknown = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
-    );
-  }
-
-  return output as Output;
-}
-
-function errorMessageFromOutput(output: unknown): string | undefined {
-  return isRecord(output) && typeof output.error === "string" ? output.error : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  // Auto-approves pending_confirmation (e.g. sheets.delete) via the shared
+  // helper so user-initiated destructive actions execute on first click.
+  return callTool<Output>(toolId, input, { fetchImpl });
 }
 
 /** True when `value` is a UUID — i.e. a real backend sheet/tab id, not seed. */

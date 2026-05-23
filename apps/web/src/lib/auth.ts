@@ -100,6 +100,23 @@ export async function signInWithEmail(
   return user;
 }
 
+/** TanStack Query keys for session queries. */
+export const sessionQueryKeys = {
+  current: ["auth", "session"] as const,
+};
+
+/** Query options for the current Better-Auth session user. Returns null
+ *  while unauthenticated. Cached across the app so the profile menu, settings
+ *  page, and side panel all read the same source. */
+export function sessionUserQueryOptions() {
+  return {
+    queryKey: sessionQueryKeys.current,
+    queryFn: () => getSessionUser(),
+    staleTime: 30_000,
+    throwOnError: false,
+  } as const;
+}
+
 /** Returns the current Better-Auth session user, or null when unauthenticated. */
 export async function getSessionUser(fetchImpl: AuthFetch = fetch): Promise<SessionUser | null> {
   const response = await fetchImpl("/api/auth/get-session", {

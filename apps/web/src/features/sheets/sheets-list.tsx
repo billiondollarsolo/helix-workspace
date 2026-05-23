@@ -10,9 +10,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import { deleteSheet, isBackendSheetsId } from "./api";
-import { mergeDriveSheets, type SheetListRow } from "./model";
+import type { SheetListRow } from "./model";
 import { sheetsListFromDriveQueryOptions, sheetsQueryKeys } from "./queries";
-import { SHEETS_LIST } from "./seed";
 
 export interface SheetsListProps {
   /** Optional case-insensitive filter applied to the spreadsheet title. */
@@ -47,7 +46,7 @@ const noticeStyle: CSSProperties = {
   gap: 8,
   padding: "8px 12px",
   marginBottom: 16,
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
   color: "var(--text-2)",
   background: "var(--warning-soft)",
   borderRadius: 6,
@@ -78,10 +77,10 @@ export function SheetsList({
     onSettled: () => queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all }),
   });
 
-  const merged = mergeDriveSheets(SHEETS_LIST, sheetsQuery.data);
+  const driveRows = sheetsQuery.data ?? [];
   const sheets: readonly SheetListRow[] = normalized
-    ? merged.filter((sheet) => sheet.title.toLowerCase().includes(normalized))
-    : merged;
+    ? driveRows.filter((sheet) => sheet.title.toLowerCase().includes(normalized))
+    : driveRows;
 
   const createErrorMessage = createError ?? undefined;
   const deleteErrorMessage = deleteError ?? undefined;
@@ -92,7 +91,7 @@ export function SheetsList({
       style={{ overflowY: "auto", padding: "24px 32px", background: "var(--bg)" }}
     >
       <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Spreadsheets</h1>
+        <h1 style={{ margin: 0, fontSize: "var(--text-h2)", fontWeight: 600 }}>Spreadsheets</h1>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button type="button" className="btn">
             <Icons.Filter /> Filter
@@ -181,18 +180,18 @@ export function SheetsList({
                     }}
                   >
                     <div style={thumbStyle}>
-                      <div style={{ fontSize: 6, fontWeight: 600, color: "var(--text-2)" }}>
+                      <div style={{ fontSize: "var(--text-6)", fontWeight: 600, color: "var(--text-2)" }}>
                         {sheet.title.split(" ")[0]}
                       </div>
                     </div>
                     <div>
                       <div
                         className="truncate"
-                        style={{ fontSize: 12, fontWeight: 500, marginBottom: 2 }}
+                        style={{ fontSize: "var(--text-meta)", fontWeight: 500, marginBottom: 2 }}
                       >
                         {sheet.title}
                       </div>
-                      <div style={{ fontSize: 11, color: "var(--text-3)" }}>{sheet.modified}</div>
+                      <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{sheet.modified}</div>
                     </div>
                   </button>
                 ))}
@@ -209,7 +208,7 @@ export function SheetsList({
                 display: "grid",
                 gridTemplateColumns: GRID_COLUMNS,
                 padding: "8px 16px",
-                fontSize: 11,
+                fontSize: "var(--text-caption)",
                 color: "var(--text-3)",
                 fontWeight: 600,
                 textTransform: "uppercase",
@@ -263,7 +262,7 @@ function SheetRow({ sheet, onOpen, onDelete, isDeleting }: SheetRowProps) {
           padding: "0 16px",
           height: 36,
           alignItems: "center",
-          fontSize: 12,
+          fontSize: "var(--text-meta)",
           width: "100%",
           textAlign: "left",
           borderBottom: "1px solid var(--border)",
@@ -330,7 +329,7 @@ function SheetRow({ sheet, onOpen, onDelete, isDeleting }: SheetRowProps) {
               gap: 8,
               width: "100%",
               padding: "6px 8px",
-              fontSize: 12,
+              fontSize: "var(--text-meta)",
               textAlign: "left",
               borderRadius: 4,
               color: canDelete ? "var(--danger)" : "var(--text-3)",

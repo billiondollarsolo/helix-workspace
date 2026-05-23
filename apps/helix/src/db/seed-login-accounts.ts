@@ -51,6 +51,8 @@ const ADMIN_SCOPES = [
   "sheets.write",
   "slides.read",
   "slides.write",
+  "notifications.read",
+  "notifications.write",
   "search.read",
   "tools:read",
   "tools:write",

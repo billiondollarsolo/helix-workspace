@@ -155,6 +155,14 @@ vi.mock("@/lib/auth", () => ({
   authenticatedFetch: (input: RequestInfo | URL, init?: RequestInit) =>
     fetchMock(input, init),
   addAccessTokenSearchParam: (url: string) => url,
+  sessionQueryKeys: { current: ["auth", "session"] },
+  sessionUserQueryOptions: () => ({
+    queryKey: ["auth", "session"],
+    queryFn: () => Promise.resolve(null),
+    staleTime: 30_000,
+    throwOnError: false,
+  }),
+  getSessionUser: () => Promise.resolve(null),
 }));
 
 describe("ChatShell", () => {
@@ -383,7 +391,7 @@ describe("ChatShell", () => {
     expect(container.querySelector(".chat-info-body")?.textContent).toContain("Daniel Cho");
   });
 
-  it("falls back to seed spaces when the room list request fails", async () => {
+  it("shows an offline notice when the room list request fails", async () => {
     fetchMock = vi.fn(() =>
       Promise.resolve(Response.json({ error: "offline" }, { status: 503 })),
     );
@@ -391,9 +399,9 @@ describe("ChatShell", () => {
     await flush();
 
     const sidebar = container.querySelector(".chat-sidebar");
+    // No fabricated rows — just the offline indicator.
     expect(sidebar?.textContent).toContain("Offline");
-    // Seed spaces from chat-data.ts back the offline sidebar.
-    expect(sidebar?.textContent).toContain("Platform Engineering");
+    expect(sidebar?.textContent).toContain("chat rooms unavailable");
   });
 
   it("shows an empty state when a room has no messages", async () => {

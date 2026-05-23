@@ -189,7 +189,16 @@ import {
   SpamdScanner,
   type SmtpReceiverOptions,
 } from "./platform/mail/index.js";
-import { PostgresMeetStore, registerMeetRoutes, registerMeetTools } from "./platform/meet/index.js";
+import {
+  PostgresMeetStore,
+  registerMeetRoutes,
+  registerMeetTools,
+  registerMockRecorderTools,
+} from "./platform/meet/index.js";
+import {
+  PostgresNotificationStore,
+  registerNotificationTools,
+} from "./platform/notifications/index.js";
 import { PostgresSheetsStore, registerSheets } from "./platform/sheets/index.js";
 import { PostgresSlidesStore, registerSlides } from "./platform/slides/index.js";
 import {
@@ -701,6 +710,21 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     // unprefixed path before routing, so a single handler set serves both the
     // versioned surface and the legacy unprefixed aliases.
     rewriteUrl: (request: IncomingMessage) => rewriteVersionedApiUrl(request.url ?? "/"),
+    // Fastify defaults to ~1 MB request bodies. Drive uploads ride a JSON
+    // tool envelope that base64-encodes the file payload, so the JSON
+    // body is ~1.33× the file size. Bump to 128 MB for the API tier so
+    // typical office docs (a few MB), PDFs (tens of MB), and small ZIPs
+    // upload without hitting the default ceiling. Override via
+    // `HELIX_BODY_LIMIT_BYTES` for production hosts that need different
+    // ingress sizing.
+    bodyLimit: Number.parseInt(process.env.HELIX_BODY_LIMIT_BYTES ?? "134217728", 10),
+    // The OnlyOffice integration carries a signed JWT in the URL path
+    // (`/api/onlyoffice/file/<token>`). JWTs routinely run 300-500 chars
+    // and the Fastify default `maxParamLength` is 100 — anything longer
+    // silently 404s instead of reaching the handler. 2 KB is the URL
+    // segment ceiling most reverse proxies tolerate, well above any JWT
+    // we'd realistically issue.
+    maxParamLength: 2048,
   });
 
   const metrics = createPlatformMetrics();
@@ -1335,6 +1359,30 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       docsStore: docsStore,
       sheetsStore: sheetsStore,
       slidesStore: slidesStore,
+      // Owner-display resolver for drive.list responses. Batches actor
+      // id → display_name + email lookups against the actors table so
+      // the UI shows "Avery Park" / "leo@helix.local" instead of raw
+      // UUIDs in the owner column.
+      resolveActorNames: async (ids) => {
+        if (ids.length === 0) return new Map();
+        const rows = (await sql`
+          select id, display_name, email
+          from actors
+          where id in ${sql(ids as string[])}
+        `) as unknown as readonly {
+          readonly id: string;
+          readonly display_name: string | null;
+          readonly email: string | null;
+        }[];
+        const result = new Map<string, { displayName: string; email?: string }>();
+        for (const row of rows) {
+          result.set(row.id, {
+            displayName: row.display_name ?? row.email ?? row.id,
+            ...(row.email === null ? {} : { email: row.email }),
+          });
+        }
+        return result;
+      },
     });
   }
   const calendarInvitationSender = createMailCalendarInvitationSender({
@@ -1360,6 +1408,17 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       jwtAudience: process.env.MEET_JITSI_JWT_AUDIENCE ?? "jitsi",
       jwtSubject: process.env.MEET_JITSI_DOMAIN,
       publicBaseUrl: process.env.PUBLIC_BASE_URL ?? "http://localhost:3000",
+      // Full Jitsi origin (with port). Without this, joinUrls drop the
+      // port and break in dev (Jitsi runs on :28452 via docker compose
+      // --profile meet, not on the default :443).
+      jitsiPublicUrl: process.env.MEET_JITSI_PUBLIC_URL,
+    });
+    // Dev-only stand-in for Jibri on hosts where snd-aloop can't be
+    // loaded (Docker-for-Mac). Same attachRecording flow.
+    registerMockRecorderTools(tools, {
+      meetStore,
+      ...(driveStorage === undefined ? {} : { storage: driveStorage }),
+      bucket: process.env.RUSTFS_BUCKET ?? "helix-objects",
     });
   }
   if (runtimeSearchEngine !== undefined) {
@@ -1387,6 +1446,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       orchestrator: assistantOrchestrator,
     });
   }
+  // Cross-surface notifications. The activity table is the audit chain;
+  // notifications is a per-recipient inbox derived from that activity.
+  registerNotificationTools(tools, {
+    store: new PostgresNotificationStore(sql),
+  });
   registerPluginTools(tools, {
     pluginsDir:
       process.env.HELIX_PLUGINS_DIR ?? fileURLToPath(new URL("../../../plugins", import.meta.url)),
@@ -1651,6 +1715,196 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       store: driveStore,
       appPasswords: appPasswordStore,
     });
+
+    // OnlyOffice DocumentServer integration. Skipped when
+    // HELIX_ONLYOFFICE_ENABLED=false so devs who don't want the ~1 GB
+    // DS container running can opt out via env without touching code.
+    if (process.env.HELIX_ONLYOFFICE_ENABLED !== "false") {
+      const { registerOnlyOfficeRoutes } = await import("./platform/onlyoffice/index.js");
+      await registerOnlyOfficeRoutes(app, {
+        store: driveStore,
+        sql,
+        jwtSecret:
+          process.env.ONLYOFFICE_JWT_SECRET ?? "helix_onlyoffice_dev_secret_change_me",
+        helixInternalUrl:
+          process.env.HELIX_ONLYOFFICE_HELIX_URL ?? "http://host.docker.internal:3000",
+        resolveActor: actorFromAuthenticatedRequest,
+      });
+    }
+
+    // Session-cookie-authenticated content stream for the Web UI. The /dav/*
+    // routes registered above require app-password Basic Auth (the WebDAV
+    // contract). The browser-driven "Open file" action in the Drive UI
+    // needs a path it can hit with the existing helix_session cookie and
+    // have the bytes streamed back. This route fills that gap.
+    app.get<{ Params: { objectId: string } }>(
+      "/api/drive/objects/:objectId/content",
+      async (request, reply) => {
+        const actor = await actorFromAuthenticatedRequest(request);
+        if (actor.id === "anonymous") {
+          return reply.code(401).send({ error: "Authentication required." });
+        }
+        const file = await driveStore.readFile({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          objectId: request.params.objectId,
+        });
+        if (file === null) {
+          return reply.code(404).send({ error: "File not found." });
+        }
+        const inline = (request.query as { download?: string }).download !== "1";
+        const filename = file.entry.name ?? request.params.objectId;
+        // HTTP headers are ISO-8859-1; filenames carry em-dashes / non-ASCII
+        // characters routinely. Send a 7-bit-safe `filename=` plus the
+        // RFC 5987 `filename*=UTF-8''` form so browsers see the real name.
+        const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
+        const utf8Encoded = encodeURIComponent(filename);
+        const disposition =
+          `${inline ? "inline" : "attachment"}; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+
+        // Primary: blob streamed from the storage layer (RustFS in prod).
+        if (file.content !== null) {
+          return reply
+            .header("content-disposition", disposition)
+            .header("content-length", String(file.content.byteLength))
+            .type(file.entry.mimeType ?? "application/octet-stream")
+            .send(Buffer.from(file.content));
+        }
+
+        // Dev/seed fallback: the corpus seed writes binaries inline in
+        // `objects.metadata.inlineBody` (base64) so the UI can be tested
+        // without the RustFS path-style/virtual-host setup. Strictly a dev
+        // affordance — production data always has a backing blob.
+        const meta = (file.entry.metadata ?? {}) as Record<string, unknown>;
+        const inlineBody = typeof meta.inlineBody === "string" ? meta.inlineBody : null;
+        const inlineMime = typeof meta.inlineMime === "string" ? meta.inlineMime : file.entry.mimeType;
+        if (inlineBody !== null) {
+          const bytes = Buffer.from(inlineBody, "base64");
+          return reply
+            .header("content-disposition", disposition)
+            .header("content-length", String(bytes.byteLength))
+            .type(inlineMime ?? "application/octet-stream")
+            .send(bytes);
+        }
+
+        return reply.code(404).send({ error: "File content unavailable." });
+      },
+    );
+
+    /* /api/drive/objects/:id/preview
+     *
+     * Returns a browser-renderable preview of the file:
+     *  - PDF / images / txt / csv / md → forwards to the raw content endpoint
+     *    inline; the browser renders these natively.
+     *  - DOCX → converted to HTML on the fly via mammoth.
+     *  - XLSX → rendered as a stack of HTML tables (one per sheet).
+     *  - PPTX / unknown → wrapped in a small "preview not yet rendered"
+     *    HTML shell with a Download link.
+     *
+     * The UI's "Open" action points here so clicking a file actually opens
+     * something — even for office formats the browser can't display.
+     */
+    app.get<{ Params: { objectId: string } }>(
+      "/api/drive/objects/:objectId/preview",
+      async (request, reply) => {
+        const actor = await actorFromAuthenticatedRequest(request);
+        if (actor.id === "anonymous") {
+          return reply.code(401).send({ error: "Authentication required." });
+        }
+        const file = await driveStore.readFile({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          objectId: request.params.objectId,
+        });
+        if (file === null) {
+          return reply.code(404).send({ error: "File not found." });
+        }
+        const meta = (file.entry.metadata ?? {}) as Record<string, unknown>;
+        const bytes =
+          file.content !== null
+            ? Buffer.from(file.content)
+            : typeof meta.inlineBody === "string"
+              ? Buffer.from(meta.inlineBody, "base64")
+              : null;
+        if (bytes === null) {
+          return reply.code(404).send({ error: "File content unavailable." });
+        }
+        const mime = file.entry.mimeType ?? (typeof meta.inlineMime === "string" ? meta.inlineMime : "");
+        const filename = file.entry.name ?? request.params.objectId;
+        const rawUrl = `/api/drive/objects/${request.params.objectId}/content`;
+
+        // Browser-native formats: serve as-is, inline.
+        if (
+          mime.startsWith("application/pdf") ||
+          mime.startsWith("image/") ||
+          mime.startsWith("video/") ||
+          mime.startsWith("audio/") ||
+          mime.startsWith("text/plain") ||
+          mime.startsWith("text/csv") ||
+          mime.startsWith("text/markdown") ||
+          mime.startsWith("text/html")
+        ) {
+          return reply
+            .header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(filename)}`)
+            .header("content-length", String(bytes.byteLength))
+            .type(mime || "application/octet-stream")
+            .send(bytes);
+        }
+
+        // DOCX → HTML via mammoth.
+        if (mime.includes("wordprocessingml") || filename.toLowerCase().endsWith(".docx")) {
+          const mammothModule: unknown = await import("mammoth");
+          const mammoth = (mammothModule as { default?: { convertToHtml: typeof import("mammoth").convertToHtml } }).default ?? mammothModule;
+          const { value: html, messages } = await (mammoth as typeof import("mammoth")).convertToHtml({ buffer: bytes });
+          return reply
+            .type("text/html; charset=utf-8")
+            .send(wrapPreview(filename, html, messages.map((m) => m.message)));
+        }
+
+        // XLSX → HTML tables via exceljs.
+        if (mime.includes("spreadsheetml") || filename.toLowerCase().endsWith(".xlsx")) {
+          const ExcelJS = (await import("exceljs")).default;
+          const wb = new ExcelJS.Workbook();
+          // exceljs's types want a strict ArrayBuffer; our Buffer is backed
+          // by one, so a narrow .buffer slice works at runtime.
+          await wb.xlsx.load(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+          const tables: string[] = [];
+          wb.eachSheet((sheet) => {
+            const rows: string[] = [];
+            sheet.eachRow((row) => {
+              const cells: string[] = [];
+              row.eachCell({ includeEmpty: true }, (cell) => {
+                const v = cell.value;
+                const text =
+                  v === null || v === undefined
+                    ? ""
+                    : typeof v === "object"
+                      ? JSON.stringify(v)
+                      : String(v);
+                cells.push(`<td>${escapeHtml(text)}</td>`);
+              });
+              rows.push(`<tr>${cells.join("")}</tr>`);
+            });
+            tables.push(`<h2>${escapeHtml(sheet.name)}</h2><table>${rows.join("")}</table>`);
+          });
+          return reply
+            .type("text/html; charset=utf-8")
+            .send(wrapPreview(filename, tables.join("\n"), []));
+        }
+
+        // Unsupported (PPTX, ZIP, binary blobs): show a friendly placeholder
+        // with a Download link so the user can open it in a native app.
+        return reply
+          .type("text/html; charset=utf-8")
+          .send(
+            wrapPreview(
+              filename,
+              `<div class="placeholder"><p>This file (${escapeHtml(mime || "binary")}) doesn't have an in-browser preview yet.</p><p><a class="dl" href="${rawUrl}?download=1">Download to open in a native app</a></p></div>`,
+              [],
+            ),
+          );
+      },
+    );
   }
   if (coreApps.shouldRegister("meet")) {
     await registerMeetRoutes(app, {
@@ -3044,4 +3298,70 @@ function deterministicEmbedding(text: string): readonly number[] {
 
 function countApproximateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
+}
+
+const PREVIEW_CSS = `
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f6f7f9; color: #111; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #16171a; color: #e6e7e8; }
+    .doc { background: #1f2024; box-shadow: 0 1px 4px rgba(0,0,0,.6); }
+    a { color: #8ab4f8; }
+    table { border-color: #2a2c30; }
+    th, td { border-color: #2a2c30; }
+  }
+  header { padding: 12px 20px; border-bottom: 1px solid #e0e2e6; background: #fff; position: sticky; top: 0; }
+  @media (prefers-color-scheme: dark) { header { background: #1f2024; border-color: #2a2c30; } }
+  header h1 { margin: 0; font-size: 14px; font-weight: 600; }
+  header small { color: #6b7280; font-size: 12px; }
+  main { max-width: 880px; margin: 24px auto; padding: 0 16px 64px; }
+  .doc { background: #fff; padding: 48px 56px; border-radius: 6px; line-height: 1.55; font-size: 15px; }
+  .doc h1, .doc h2, .doc h3 { line-height: 1.2; }
+  .doc h1 { font-size: 26px; margin-top: 0; }
+  .doc h2 { font-size: 20px; margin-top: 32px; }
+  .doc h3 { font-size: 16px; margin-top: 24px; }
+  .doc p { margin: 0 0 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 12px 0 24px; }
+  th, td { border: 1px solid #dadce0; padding: 4px 8px; vertical-align: top; text-align: left; }
+  th { background: #f1f3f4; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { th { background: #2a2c30; } }
+  .placeholder { text-align: center; padding: 64px 24px; color: #6b7280; }
+  .dl { display: inline-block; margin-top: 12px; padding: 8px 16px; border-radius: 4px; background: #1a73e8; color: #fff; text-decoration: none; font-weight: 500; }
+  .dl:hover { background: #1762c4; }
+  .warnings { font-size: 12px; color: #9ca3af; margin-top: 8px; padding-left: 20px; }
+`;
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Wrap a converted document fragment in the standard preview HTML shell:
+ *  sticky header with the filename, scrollable body with the doc, a tiny
+ *  list of conversion warnings (if any). Used by all in-browser preview
+ *  paths so DOCX/XLSX/PPTX/placeholder previews share consistent chrome. */
+function wrapPreview(filename: string, body: string, warnings: readonly string[]): string {
+  const safeName = escapeHtml(filename);
+  const warningList =
+    warnings.length === 0
+      ? ""
+      : `<ul class="warnings">${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${safeName}</title>
+<style>${PREVIEW_CSS}</style>
+</head>
+<body>
+  <header><h1>${safeName}</h1><small>Helix Drive preview</small></header>
+  <main><div class="doc">${body}</div>${warningList}</main>
+</body>
+</html>`;
 }

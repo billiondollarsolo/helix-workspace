@@ -36,6 +36,14 @@ const listSchema = z.object({
   includeTrashed: z.boolean().default(false),
   limit: z.number().int().positive().max(250).default(100),
   app: z.string().optional(),
+  /** Filter by object kind. Defaults to 'file'. Pass 'recording' for the
+   *  Recordings drive scope (meeting recording artifacts). */
+  kind: z.enum(["file", "recording"]).optional(),
+  /** When true, return every visible file across all folders (folders
+   *  themselves are suppressed). The /docs, /sheets, /slides surfaces
+   *  use this to present a flat app-shaped list — file in a subfolder
+   *  is still a doc/sheet/slide the user should see in those tabs. */
+  acrossFolders: z.boolean().optional(),
 });
 
 const shareSchema = z.object({
@@ -100,6 +108,16 @@ export interface CreateDriveToolDefinitionsOptions {
    * When omitted, creating a presentation via `drive.create` throws.
    */
   readonly slidesStore?: Pick<SlidesStore, "createDeck">;
+  /**
+   * Resolves a batch of actor ids to display names. When provided, the
+   * `drive.list` handler stamps each entry with `ownerDisplayName` so the
+   * UI can show "Avery Park" / "Leo Whitfield" instead of raw UUIDs in
+   * the owner column of file rows. Optional — when omitted, entries
+   * just carry `ownerActorId` and the UI falls back to displaying that.
+   */
+  readonly resolveActorNames?: (
+    ids: readonly string[],
+  ) => Promise<ReadonlyMap<string, { readonly displayName: string; readonly email?: string }>>;
 }
 
 export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOptions): readonly ToolDefinition[] {
@@ -219,16 +237,43 @@ export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOp
       sideEffects: "read",
       inputSchema: zodToolSchema(listSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) => ({
-        entries: (await options.store.list({
+      handler: async (input, ctx) => {
+        const entries = await options.store.list({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           folderId: input.folderId ?? null,
           includeTrashed: input.includeTrashed,
           limit: input.limit,
           ...(input.app === undefined ? {} : { app: input.app }),
-        })).map(serializeEntry),
-      }),
+          ...(input.kind === undefined ? {} : { kind: input.kind }),
+          ...(input.acrossFolders === undefined ? {} : { acrossFolders: input.acrossFolders }),
+        });
+        const serialized = entries.map(serializeEntry);
+
+        // Decorate each entry with the owner's display name so the UI
+        // can render "Owned by Avery Park" instead of a raw UUID. Single
+        // batched lookup per `drive.list` call.
+        if (options.resolveActorNames === undefined) {
+          return { entries: serialized };
+        }
+        const ownerIds = Array.from(
+          new Set(serialized.map((e) => e.ownerActorId).filter((id): id is string => typeof id === "string")),
+        );
+        if (ownerIds.length === 0) {
+          return { entries: serialized };
+        }
+        const names = await options.resolveActorNames(ownerIds);
+        const enriched = serialized.map((entry) => {
+          const owner = entry.ownerActorId !== null ? names.get(entry.ownerActorId) : undefined;
+          if (owner === undefined) return entry;
+          return {
+            ...entry,
+            ownerDisplayName: owner.displayName,
+            ...(owner.email === undefined ? {} : { ownerEmail: owner.email }),
+          };
+        });
+        return { entries: enriched };
+      },
     }),
     defineTool<z.output<typeof shareSchema>, unknown>({
       id: "drive.share",

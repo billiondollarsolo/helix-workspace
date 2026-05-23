@@ -18,13 +18,14 @@
 import { type ChangeEvent, type CSSProperties, type DragEvent, useMemo, useRef, useState } from "react";
 import "./drive-shell.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import {
   createDriveEntry,
   deleteDriveObject,
   driveDownloadResult,
+  driveRawDownloadUrl,
   moveDriveObject,
   restoreDriveObject,
   shareDrive,
@@ -34,10 +35,7 @@ import {
   type DriveCreateKind,
 } from "./api";
 import {
-  DRIVE_FILES_SEED,
   DRIVE_FILE_META,
-  DRIVE_FOLDERS_SEED,
-  DRIVE_STORAGE,
   fileItemFromEntry,
   folderItemFromEntry,
   formatModified,
@@ -65,6 +63,7 @@ const DRIVE_SCOPES: readonly DriveScopeItem[] = [
   { id: "shared", label: "Shared with me", icon: "Users" },
   { id: "recent", label: "Recent", icon: "History" },
   { id: "starred", label: "Starred", icon: "Star" },
+  { id: "recordings", label: "Recordings", icon: "Video" },
   { id: "trash", label: "Trash", icon: "Trash" },
 ];
 
@@ -73,6 +72,7 @@ const SCOPE_TITLE: Record<DriveScope, string> = {
   shared: "Shared with me",
   recent: "Recent",
   starred: "Starred",
+  recordings: "Recordings",
   trash: "Trash",
 };
 
@@ -125,14 +125,32 @@ interface DriveCrumb {
 /** The Drive surface body. Rendered inside `SurfaceFrame`. */
 export function DriveShell() {
   const navigate = useNavigate();
+  const driveSearch: Partial<{ folder: string | null; scope: DriveScope; q: string; file: string }> =
+    useSearch({ strict: false });
   const queryClient = useQueryClient();
   const [view, setView] = useState<DriveView>("grid");
-  const [scope, setScope] = useState<DriveScope>("my");
+  const [scope, setScope] = useState<DriveScope>(driveSearch.scope ?? "my");
   const [trail, setTrail] = useState<readonly DriveCrumb[]>([]);
-  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(driveSearch.file ?? null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const folderId = trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : null;
+  const folderId = trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : (driveSearch.folder ?? null);
+
+  // Drive URL sync — every state transition (scope, folder, selection)
+  // pushes a fresh `?folder=…&scope=…&file=…` query string, so the back
+  // button restores the previous view and links are shareable.
+  const pushUrl = (next: { folder?: string | null; scope?: DriveScope; file?: string | null }) => {
+    void navigate({
+      to: "/drive",
+      search: (prev) => ({
+        ...(prev as Record<string, unknown>),
+        ...(next.folder === undefined ? {} : { folder: next.folder ?? undefined }),
+        ...(next.scope === undefined ? {} : { scope: next.scope }),
+        ...(next.file === undefined ? {} : { file: next.file ?? undefined }),
+      }),
+      replace: false,
+    });
+  };
 
   const actorQuery = useQuery(driveActorQueryOptions());
   const actorId = actorQuery.data?.actorId ?? null;
@@ -258,30 +276,15 @@ export function DriveShell() {
     }));
   }, [itemsQuery.data, scope, actorId]);
 
-  const usingSeed = useMemo(() => {
-    // Seed only when the backend genuinely failed at the root of My Drive —
-    // never mask a real (legitimately empty) folder or scope.
-    return (
-      itemsQuery.isError &&
-      liveEntries.length === 0 &&
-      scope === "my" &&
-      folderId === null
-    );
-  }, [itemsQuery.isError, liveEntries.length, scope, folderId]);
+  const folders = useMemo<readonly DriveFolderItem[]>(
+    () => liveEntries.filter((e) => e.type === "folder").map(folderItemFromEntry),
+    [liveEntries],
+  );
 
-  const folders = useMemo<readonly DriveFolderItem[]>(() => {
-    if (usingSeed) {
-      return DRIVE_FOLDERS_SEED;
-    }
-    return liveEntries.filter((e) => e.type === "folder").map(folderItemFromEntry);
-  }, [liveEntries, usingSeed]);
-
-  const files = useMemo<readonly DriveFileItem[]>(() => {
-    if (usingSeed) {
-      return DRIVE_FILES_SEED;
-    }
-    return liveEntries.filter((e) => e.type === "file").map(fileItemFromEntry);
-  }, [liveEntries, usingSeed]);
+  const files = useMemo<readonly DriveFileItem[]>(
+    () => liveEntries.filter((e) => e.type === "file").map(fileItemFromEntry),
+    [liveEntries],
+  );
 
   const entryById = useMemo(() => {
     const map = new Map<string, DriveApiEntry>();
@@ -317,17 +320,24 @@ export function DriveShell() {
   const openFolder = (folder: DriveFolderItem) => {
     setSelectedFileId(null);
     setTrail((prev) => [...prev, { id: folder.id, name: folder.name }]);
+    pushUrl({ folder: folder.id, file: null });
   };
 
   const navigateToCrumb = (index: number) => {
     setSelectedFileId(null);
-    setTrail((prev) => (index < 0 ? [] : prev.slice(0, index + 1)));
+    setTrail((prev) => {
+      const next = index < 0 ? [] : prev.slice(0, index + 1);
+      const targetId = next.length > 0 ? (next[next.length - 1]?.id ?? null) : null;
+      pushUrl({ folder: targetId, file: null });
+      return next;
+    });
   };
 
   const onScopeChange = (next: DriveScope) => {
     setScope(next);
     setTrail([]);
     setSelectedFileId(null);
+    pushUrl({ scope: next, folder: null, file: null });
   };
 
   const onPickFile = () => fileInputRef.current?.click();
@@ -379,7 +389,7 @@ export function DriveShell() {
         }}
         onNewItem={onNewItem}
         loading={itemsQuery.isLoading}
-        error={itemsQuery.isError && !usingSeed ? itemsQuery.error : null}
+        error={itemsQuery.isError ? itemsQuery.error : null}
         uploadError={uploadMutation.isError ? uploadMutation.error : null}
         onRetry={() => void invalidateDrive()}
         uploading={uploadMutation.isPending}
@@ -451,16 +461,7 @@ function DriveSidebar({
   };
 
   return (
-    <aside
-      style={{
-        width: 220,
-        flexShrink: 0,
-        borderRight: "1px solid var(--border)",
-        background: "var(--surface)",
-        padding: 12,
-        overflowY: "auto",
-      }}
-    >
+    <aside className="surf-sidebar">
       <div style={{ position: "relative", marginBottom: 12 }}>
         <button
           type="button"
@@ -569,54 +570,13 @@ function DriveSidebar({
             type="button"
             aria-current={active ? "page" : undefined}
             onClick={() => onScopeChange(item.id)}
-            style={{
-              width: "100%",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              height: 28,
-              padding: "0 10px",
-              borderRadius: 6,
-              fontSize: 12,
-              background: active ? "var(--accent-soft)" : "transparent",
-              color: active ? "var(--accent)" : "var(--text)",
-              fontWeight: active ? 600 : 400,
-            }}
+            className="surf-nav-row"
           >
             <Icon />
-            <span>{item.label}</span>
+            <span className="label">{item.label}</span>
           </button>
         );
       })}
-      <div className="section-label">Storage</div>
-      <div style={{ padding: "0 10px" }}>
-        <div
-          role="progressbar"
-          aria-label="Storage used"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(DRIVE_STORAGE.fraction * 100)}
-          style={{
-            height: 4,
-            background: "var(--surface-2)",
-            borderRadius: 2,
-            marginBottom: 6,
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: `${String(Math.round(DRIVE_STORAGE.fraction * 100))}%`,
-              background: "var(--accent)",
-              borderRadius: 2,
-            }}
-          />
-        </div>
-        <div style={{ fontSize: 11, color: "var(--text-3)" }}>{DRIVE_STORAGE.label}</div>
-        <button type="button" className="btn sm" style={{ width: "100%", marginTop: 8 }}>
-          Upgrade
-        </button>
-      </div>
     </aside>
   );
 }
@@ -640,7 +600,7 @@ function DriveBreadcrumb({
         onClick={() => onNavigate(-1)}
         disabled={trail.length === 0}
         style={{
-          fontSize: 20,
+          fontSize: "var(--text-h2)",
           fontWeight: 600,
           color: trail.length === 0 ? "var(--text)" : "var(--accent)",
           background: "transparent",
@@ -661,7 +621,7 @@ function DriveBreadcrumb({
             className="truncate"
             disabled={index === trail.length - 1}
             style={{
-              fontSize: 20,
+              fontSize: "var(--text-h2)",
               fontWeight: 600,
               color: index === trail.length - 1 ? "var(--text)" : "var(--accent)",
               background: "transparent",
@@ -832,7 +792,7 @@ function DriveMain({
         <div
           role="alert"
           style={{
-            fontSize: 12,
+            fontSize: "var(--text-meta)",
             color: "var(--danger, #dc2626)",
             background: "var(--surface-2)",
             border: "1px solid var(--border)",
@@ -878,10 +838,10 @@ function DriveMain({
                   >
                     <Icons.Folder />
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div className="truncate" style={{ fontSize: 12, fontWeight: 500 }}>
+                      <div className="truncate" style={{ fontSize: "var(--text-meta)", fontWeight: 500 }}>
                         {folder.name}
                       </div>
-                      <div style={{ fontSize: 10, color: "var(--text-3)" }}>
+                      <div style={{ fontSize: "var(--text-chip)", color: "var(--text-3)" }}>
                         {folder.itemCount > 0 ? `${String(folder.itemCount)} items` : "Open folder"}
                       </div>
                     </div>
@@ -895,7 +855,7 @@ function DriveMain({
             Files
           </div>
           {gridFiles.length === 0 && view === "grid" ? (
-            <div style={{ fontSize: 12, color: "var(--text-3)", padding: "8px 0" }}>
+            <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", padding: "8px 0" }}>
               No files here yet.
             </div>
           ) : view === "grid" ? (
@@ -918,7 +878,7 @@ function DriveMain({
                   padding: "0 16px",
                   height: 32,
                   alignItems: "center",
-                  fontSize: 11,
+                  fontSize: "var(--text-caption)",
                   color: "var(--text-3)",
                   fontWeight: 600,
                   textTransform: "uppercase",
@@ -1042,7 +1002,7 @@ function DriveLoadingState() {
     <div
       role="status"
       aria-live="polite"
-      style={{ fontSize: 12, color: "var(--text-3)", padding: "32px 0" }}
+      style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", padding: "32px 0" }}
     >
       Loading Drive…
     </div>
@@ -1067,8 +1027,8 @@ function DriveErrorState({
         padding: "32px 0",
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 600 }}>Couldn’t load Drive</div>
-      <div style={{ fontSize: 12, color: "var(--text-3)" }}>{message}</div>
+      <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>Couldn’t load Drive</div>
+      <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)" }}>{message}</div>
       <button type="button" className="btn sm" onClick={onRetry}>
         Try again
       </button>
@@ -1088,6 +1048,7 @@ function DriveEmptyState({
     shared: "Nothing has been shared with you yet.",
     recent: "No recent files.",
     starred: "No starred files yet.",
+    recordings: "No meeting recordings yet. Start a meeting and click Record.",
     trash: "Trash is empty.",
   };
   return (
@@ -1102,7 +1063,7 @@ function DriveEmptyState({
       }}
     >
       <Icons.Drive size={40} />
-      <div style={{ fontSize: 13 }}>{copy[scope]}</div>
+      <div style={{ fontSize: "var(--text-body-sm)" }}>{copy[scope]}</div>
       {scope === "my" ? (
         <button type="button" className="btn sm primary" onClick={onUpload}>
           <Icons.Upload />
@@ -1155,12 +1116,22 @@ function DriveFileCard({
         <FileIcon size={36} />
       </div>
       <div style={{ padding: 10 }}>
-        <div className="truncate" style={{ fontSize: 12, fontWeight: 500, marginBottom: 4 }}>
-          {file.name}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 4,
+          }}
+        >
+          <div className="truncate" style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}>
+            {file.name}
+          </div>
+          {file.formatLabel ? <FormatChip label={file.formatLabel} color={meta.color} /> : null}
         </div>
         <div
           style={{
-            fontSize: 11,
+            fontSize: "var(--text-caption)",
             color: "var(--text-3)",
             display: "flex",
             alignItems: "center",
@@ -1172,6 +1143,33 @@ function DriveFileCard({
         </div>
       </div>
     </button>
+  );
+}
+
+/** Small uppercase chip that shows the file format (e.g. "DOCX", "PDF",
+ *  "MD") so the user can tell file types apart at a glance. Tinted with the
+ *  same accent color as the file's icon. */
+function FormatChip({ label, color }: { readonly label: string; readonly color: string }) {
+  return (
+    <span
+      style={{
+        flexShrink: 0,
+        padding: "0 5px",
+        height: 16,
+        lineHeight: "16px",
+        borderRadius: 3,
+        fontSize: "var(--text-overline)",
+        fontWeight: 700,
+        letterSpacing: ".04em",
+        color,
+        background: "var(--surface-2)",
+        border: `1px solid ${color}33`,
+        textTransform: "uppercase",
+      }}
+      aria-label={`Format: ${label}`}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -1200,18 +1198,19 @@ function DriveFileRow({
         padding: "0 16px",
         height: 36,
         alignItems: "center",
-        fontSize: 12,
+        fontSize: "var(--text-meta)",
         width: "100%",
         textAlign: "left",
         background: selected ? "var(--accent-soft)" : "transparent",
         borderBottom: "1px solid var(--border)",
       }}
     >
-      <div className="row gap-2">
+      <div className="row gap-2" style={{ minWidth: 0 }}>
         <span style={{ color: meta.color, display: "inline-flex" }}>
           <FileIcon />
         </span>
-        <span className="truncate">{file.name}</span>
+        <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{file.name}</span>
+        {file.formatLabel ? <FormatChip label={file.formatLabel} color={meta.color} /> : null}
       </div>
       <div className="row gap-2">
         <Avatar name={file.owner} size={18} />
@@ -1270,11 +1269,13 @@ function DriveDetailsPanel({
   const [shareInput, setShareInput] = useState("");
 
   // Owner label: when the entry is owned by the current actor, show the
-  // session display name; otherwise show the raw owner actor id.
+  // session display name. Otherwise prefer the server-resolved display
+  // name (via `entry.ownerDisplayName`) and fall back to file.owner
+  // which already projects from the same field via fileItemFromEntry.
   const ownerLabel =
     entry?.ownerActorId === null || entry?.ownerActorId === currentActorId
       ? ownerName
-      : (entry?.ownerActorId ?? file.owner);
+      : (entry?.ownerDisplayName ?? entry?.ownerEmail ?? file.owner);
 
   // Recent activity from real entry timestamps.
   const activity = useMemo<
@@ -1326,7 +1327,7 @@ function DriveDetailsPanel({
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <span className="truncate" style={{ fontSize: 13, fontWeight: 600 }}>
+        <span className="truncate" style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>
           Details
         </span>
         <button
@@ -1361,12 +1362,12 @@ function DriveDetailsPanel({
           )}
         </div>
         <div style={{ padding: "12px 14px" }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, wordBreak: "break-word" }}>
+          <div style={{ fontSize: "var(--text-body)", fontWeight: 600, marginBottom: 4, wordBreak: "break-word" }}>
             {file.name}
           </div>
           <div
             className="row gap-2"
-            style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 12 }}
+            style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginBottom: 12 }}
           >
             <span style={{ textTransform: "uppercase" }}>{file.type}</span>
             <span>·</span>
@@ -1377,7 +1378,7 @@ function DriveDetailsPanel({
             <div
               role="alert"
               style={{
-                fontSize: 11,
+                fontSize: "var(--text-caption)",
                 color: "var(--danger, #dc2626)",
                 marginBottom: 10,
               }}
@@ -1390,7 +1391,9 @@ function DriveDetailsPanel({
             <a
               className="btn sm primary"
               href={download?.url ?? "#"}
-              target="_blank"
+              // Native editor URLs (/docs, /sheets, /slides) stay in-tab;
+              // raw downloads pop a new tab so the user keeps their place.
+              target={entry?.app === null || entry?.app === undefined ? "_blank" : "_self"}
               rel="noreferrer"
               aria-disabled={download === null}
               style={{ flex: 1, justifyContent: "center" }}
@@ -1398,11 +1401,16 @@ function DriveDetailsPanel({
               <Icons.Eye />
               Open
             </a>
+            {/* Native editor docs (docs/sheets/slides) carry their content as
+                Yjs state inside the typed table, not as a raw blob in RustFS,
+                so the "Download" stream returns nothing useful. Hide the
+                button for those; the editor surfaces its own export flow. */}
             <a
               className="btn sm"
-              href={download?.url ?? "#"}
+              href={entry === null ? "#" : driveRawDownloadUrl(entry)}
               download={download?.name}
               aria-disabled={download === null}
+              hidden={entry?.app !== null && entry?.app !== undefined}
               style={{ flex: 1, justifyContent: "center" }}
             >
               <Icons.Download />
@@ -1464,7 +1472,7 @@ function DriveDetailsPanel({
             Owner
           </div>
           <div
-            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 12 }}
+            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-meta)", marginBottom: 12 }}
           >
             <Avatar name={ownerLabel} size={24} />
             <span className="truncate">{ownerLabel}</span>
@@ -1472,7 +1480,7 @@ function DriveDetailsPanel({
           <div className="section-label" style={{ padding: "8px 0 4px" }}>
             Modified
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 12 }}>
+          <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginBottom: 12 }}>
             {entry !== null ? formatModified(entry.updatedAt) : file.modified}
           </div>
 
@@ -1486,7 +1494,7 @@ function DriveDetailsPanel({
                 value={shareInput}
                 onChange={(event) => setShareInput(event.target.value)}
                 placeholder="Actor ID(s) to share with"
-                style={{ width: "100%", fontSize: 12, marginBottom: 6 }}
+                style={{ width: "100%", fontSize: "var(--text-meta)", marginBottom: 6 }}
               />
               <button
                 type="button"
@@ -1499,7 +1507,7 @@ function DriveDetailsPanel({
                 Share
               </button>
               {shareDone ? (
-                <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 6 }}>
+                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 6 }}>
                   Access granted.
                 </div>
               ) : null}
@@ -1517,7 +1525,7 @@ function DriveDetailsPanel({
                 alignItems: "center",
                 gap: 8,
                 padding: "4px 0",
-                fontSize: 11,
+                fontSize: "var(--text-caption)",
               }}
             >
               <Avatar name={item.who} size={18} />

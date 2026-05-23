@@ -484,6 +484,41 @@ export class PostgresMeetStore implements MeetStore {
           storageKey: input.storageKey,
         },
       );
+      // Fan out a notification to every actor with access to the meet_room
+      // (host + invited attendees). Same transaction so we don't half-attach.
+      const recipientRows = (await tx`
+        select distinct p.actor_id
+        from permissions p
+        where p.org_id = ${input.orgId}
+          and p.resource_type in ('meet_room', 'thread')
+          and p.resource_id in (${room.id}, ${room.threadId})
+      `) as unknown as readonly { readonly actor_id: string }[];
+      const recipients = recipientRows.map((row) => row.actor_id);
+      if (recipients.length > 0) {
+        // Cast the per-row literals to their column types — Postgres infers
+        // `text` from a JS string param, but the columns are uuid.
+        await tx`
+          insert into notifications (
+            org_id, actor_id, verb, object_type, object_id, summary, body, payload
+          )
+          select
+            ${input.orgId}::uuid,
+            actor_id,
+            'meet.recording.attached',
+            'meet_room',
+            ${room.id}::uuid,
+            ${`Recording is ready for "${room.subject}"`},
+            null,
+            ${tx.json(toSqlJson({
+              threadId: room.threadId,
+              objectId,
+              messageId,
+              storageKey: input.storageKey,
+              roomName: room.roomName,
+            }))}
+          from unnest(${tx.array([...recipients])}::uuid[]) as actor_id
+        `;
+      }
       return {
         roomId: room.id,
         threadId: room.threadId,
@@ -892,7 +927,7 @@ async function grantRecordingObjectAccess(
 ): Promise<void> {
   await sql`
     insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
-    select distinct ${orgId}, actor_id, 'object', ${objectId}, 'reader', ${grantedByActorId}
+    select distinct ${orgId}::uuid, actor_id, 'object', ${objectId}::uuid, 'reader', ${grantedByActorId}::uuid
     from permissions
     where org_id = ${orgId}
       and resource_type in ('meet_room', 'thread')

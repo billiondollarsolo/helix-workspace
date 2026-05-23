@@ -1,4 +1,5 @@
 import { addAccessTokenSearchParam, authenticatedFetch } from "@/lib/auth";
+import { callTool } from "@/lib/tool-call";
 
 export interface ChatSearchHit {
   readonly roomId: string;
@@ -320,24 +321,10 @@ async function callChatTool<Output>(
   input: unknown,
   fetchImpl: ChatApiFetch,
 ): Promise<Output> {
-  const response = await fetchImpl(`/api/tools/${toolId}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const output: unknown = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
-    );
-  }
-
-  return output as Output;
-}
-
-function errorMessageFromOutput(output: unknown): string | undefined {
-  return isRecord(output) && typeof output.error === "string" ? output.error : undefined;
+  // Routes through the shared callTool helper so confirmation-gated tools
+  // (e.g. chat.message.delete) auto-approve their pending_confirmation
+  // instead of silently no-op'ing.
+  return callTool<Output>(toolId, input, { fetchImpl });
 }
 
 function parseChatRealtimeEvent(data: unknown): ChatRealtimeEvent | null {

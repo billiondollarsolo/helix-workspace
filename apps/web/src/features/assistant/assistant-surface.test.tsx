@@ -452,10 +452,10 @@ describe("AssistantSurface", () => {
     expect(container.textContent ?? "").toContain("Configure a provider in Settings");
   });
 
-  it("falls back to seed threads when the conversation list is unreachable", async () => {
+  it("shows an unavailable notice when the conversation list is unreachable", async () => {
     listAssistantConversationsMock.mockRejectedValue(new Error("offline"));
     render();
     await flush();
-    expect(container.textContent ?? "").toContain("Offline — showing example chats.");
+    expect(container.textContent ?? "").toContain("Chats unavailable — try again later.");
   });
 });

@@ -12,14 +12,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
-import { createDocsDocument, type DocsApiDocument } from "./api";
-import { DocEditor } from "./doc-editor";
+import { createDocsDocument } from "./api";
 import { DocList } from "./doc-list";
-import { DOC_LIST, formatModified, type DocSummary } from "./data";
+import type { DocSummary } from "./data";
 import { docsListFromDriveQueryOptions } from "./queries";
-import { ShareDialog } from "./share-dialog";
 
 export interface DocsShellProps {
   /** Open straight into the editor for this document id (used by Drive). */
@@ -34,10 +33,10 @@ export function DocsShell({ initialDocumentId, variant = "standalone" }: DocsShe
   const [folder, setFolder] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [openDocId, setOpenDocId] = useState<string | null>(initialDocumentId ?? null);
-  const [showShare, setShowShare] = useState(false);
 
   const documentsQuery = useQuery(docsListFromDriveQueryOptions({ limit: 100 }));
   const isBackendUnavailable = documentsQuery.isError;
+  const router = useRouter();
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -55,10 +54,23 @@ export function DocsShell({ initialDocumentId, variant = "standalone" }: DocsShe
     },
     onSuccess: (document) => {
       void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
-      // Open the real backend document so the editor connects to its Yjs room.
-      setOpenDocId(document.id);
+      // After Phase 5: open the OnlyOffice editor instead of the in-page
+      // Tiptap editor. The OO editor lives at /edit/:objectId.
+      void router.navigate({ to: "/edit/$objectId", params: { objectId: document.id } });
     },
   });
+
+  // After the .helixdoc → OOXML migration the in-page Tiptap editor is no
+  // longer the destination. Any time something sets `openDocId` we redirect
+  // to the OnlyOffice editor route instead. This keeps every legacy call
+  // site (DocList row click, initialDocumentId from URL search, etc.)
+  // working without rewriting them.
+  useEffect(() => {
+    if (openDocId !== null) {
+      void router.navigate({ to: "/edit/$objectId", params: { objectId: openDocId } });
+      setOpenDocId(null);
+    }
+  }, [openDocId, router]);
 
   useEffect(() => {
     if (initialDocumentId !== undefined) {
@@ -67,25 +79,14 @@ export function DocsShell({ initialDocumentId, variant = "standalone" }: DocsShe
   }, [initialDocumentId]);
 
   const documents = useMemo<readonly DocSummary[]>(
-    () => mergeDriveDocuments(DOC_LIST, documentsQuery.data),
+    () => documentsQuery.data ?? [],
     [documentsQuery.data],
   );
 
-  const openDocument =
-    openDocId === null
-      ? undefined
-      : (documents.find((document) => document.id === openDocId) ??
-        placeholderDocument(openDocId));
-
-  const editor =
-    openDocument !== undefined ? (
-      <DocEditor
-        document={openDocument}
-        embedded={embedded}
-        onBack={() => setOpenDocId(null)}
-        onShare={() => setShowShare(true)}
-      />
-    ) : null;
+  // After Phase 7 (native editor retirement): we no longer render the
+  // in-page DocEditor. The redirect-to-/edit effect above takes care of
+  // navigating away whenever `openDocId` is non-null, so we never reach a
+  // state where a document needs to be rendered here.
 
   function createDocument() {
     if (createMutation.isPending) {
@@ -93,26 +94,18 @@ export function DocsShell({ initialDocumentId, variant = "standalone" }: DocsShe
     }
     createMutation.mutate(undefined, {
       onError: () => {
-        // Backend unavailable — fall back to an offline draft so the editor
-        // still opens (it runs in offline mode for non-UUID ids).
+        // Backend unavailable — fall back to an offline draft so the
+        // editor still opens.
         setOpenDocId(`doc-new-${String(Date.now())}`);
       },
     });
   }
 
   if (embedded) {
-    return (
-      <>
-        {editor}
-        {showShare && openDocument !== undefined ? (
-          <ShareDialog
-            documentTitle={openDocument.title}
-            documentId={openDocument.id}
-            onClose={() => setShowShare(false)}
-          />
-        ) : null}
-      </>
-    );
+    // The drive-embedded variant used to inline the Tiptap editor below
+    // a list. With OnlyOffice taking over, drive consumers should navigate
+    // to /edit/:objectId directly — no embedded editor surface remains.
+    return null;
   }
 
   return (
@@ -135,84 +128,21 @@ export function DocsShell({ initialDocumentId, variant = "standalone" }: DocsShe
         ) : null
       }
     >
-      {openDocId === null ? (
-        <DocList
-          documents={documents}
-          folder={folder}
-          query={query}
-          onFolder={setFolder}
-          onNewDoc={createDocument}
-          onOpenDoc={setOpenDocId}
-          isBackendUnavailable={isBackendUnavailable}
-          isCreating={createMutation.isPending}
-        />
-      ) : (
-        editor
-      )}
-      {showShare && openDocument !== undefined ? (
-        <ShareDialog
-          documentTitle={openDocument.title}
-          documentId={openDocument.id}
-          onClose={() => setShowShare(false)}
-        />
-      ) : null}
+      {/* When openDocId is set, the redirect effect above is mid-flight
+          to /edit/:objectId. Render the list either way — the navigation
+          completes before the next paint. */}
+      <DocList
+        documents={documents}
+        folder={folder}
+        query={query}
+        onFolder={setFolder}
+        onNewDoc={createDocument}
+        onOpenDoc={setOpenDocId}
+        isBackendUnavailable={isBackendUnavailable}
+        isLoading={documentsQuery.isLoading}
+        isCreating={createMutation.isPending}
+      />
     </SurfaceFrame>
   );
 }
 
-/**
- * Merges Drive-sourced `DocSummary` rows over the seed list,
- * de-duplicating by id. Used by `DocsShell` when `docsListFromDriveQueryOptions`
- * succeeds.
- */
-export function mergeDriveDocuments(
-  seed: readonly DocSummary[],
-  driveRows: readonly DocSummary[] | undefined,
-): readonly DocSummary[] {
-  if (driveRows === undefined || driveRows.length === 0) {
-    return seed;
-  }
-  const driveIds = new Set(driveRows.map((row) => row.id));
-  return [...driveRows, ...seed.filter((document) => !driveIds.has(document.id))];
-}
-
-/** Merges live backend documents over the seed list, de-duplicating by id. */
-export function mergeBackendDocuments(
-  seed: readonly DocSummary[],
-  backend: readonly DocsApiDocument[] | undefined,
-): readonly DocSummary[] {
-  if (backend === undefined || backend.length === 0) {
-    return seed;
-  }
-  const backendRows = backend.map(documentFromApi);
-  const backendIds = new Set(backendRows.map((row) => row.id));
-  return [...backendRows, ...seed.filter((document) => !backendIds.has(document.id))];
-}
-
-function documentFromApi(document: DocsApiDocument): DocSummary {
-  return {
-    id: document.id,
-    title: document.title.length > 0 ? document.title : "Untitled document",
-    owner: "Alex Park",
-    modified: formatModified(document.updatedAt),
-    shared: 1,
-    folder: "Product",
-    starred: false,
-    mine: true,
-    source: "backend",
-  };
-}
-
-function placeholderDocument(id: string): DocSummary {
-  return {
-    id,
-    title: "Untitled document",
-    owner: "Alex Park",
-    modified: "Just now",
-    shared: 0,
-    folder: "Product",
-    starred: false,
-    mine: true,
-    source: "local",
-  };
-}

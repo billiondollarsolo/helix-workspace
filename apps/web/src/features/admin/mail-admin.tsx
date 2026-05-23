@@ -79,7 +79,7 @@ function PageHeading({
   return (
     <div style={{ marginBottom: subtitle ? 20 : 16 }}>
       <div style={{ display: "flex", alignItems: "center" }}>
-        <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>{title}</h1>
+        <h1 style={{ fontSize: "var(--text-h2)", fontWeight: 600, margin: 0 }}>{title}</h1>
         {actions ? (
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             {actions}
@@ -87,7 +87,7 @@ function PageHeading({
         ) : null}
       </div>
       {subtitle ? (
-        <div style={{ fontSize: 13, color: "var(--text-3)", marginTop: 4 }}>
+        <div style={{ fontSize: "var(--text-body-sm)", color: "var(--text-3)", marginTop: 4 }}>
           {subtitle}
         </div>
       ) : null}
@@ -96,7 +96,7 @@ function PageHeading({
 }
 
 const HEADER_CELL: CSSProperties = {
-  fontSize: 11,
+  fontSize: "var(--text-caption)",
   color: "var(--text-3)",
   fontWeight: 600,
   textTransform: "uppercase",
@@ -110,7 +110,7 @@ const INPUT_STYLE: CSSProperties = {
   background: "var(--surface)",
   color: "var(--text)",
   padding: "0 8px",
-  fontSize: 12,
+  fontSize: "var(--text-meta)",
 };
 
 function StateBanner({ kind, children }: { kind: "loading" | "error"; children: ReactNode }) {
@@ -120,7 +120,7 @@ function StateBanner({ kind, children }: { kind: "loading" | "error"; children: 
       style={{
         padding: "10px 12px",
         borderRadius: 6,
-        fontSize: 12,
+        fontSize: "var(--text-meta)",
         marginBottom: 12,
         background: kind === "error" ? "var(--danger-soft, var(--surface-2))" : "var(--surface-2)",
         color: kind === "error" ? "var(--danger)" : "var(--text-2)",
@@ -138,7 +138,7 @@ function EmptyRow({ children }: { children: ReactNode }) {
       style={{
         padding: 32,
         textAlign: "center",
-        fontSize: 13,
+        fontSize: "var(--text-body-sm)",
         color: "var(--text-3)",
       }}
     >
@@ -207,7 +207,7 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
     }));
   };
 
-  const fieldLabel: CSSProperties = { fontSize: 11, color: "var(--text-3)", display: "block" };
+  const fieldLabel: CSSProperties = { fontSize: "var(--text-caption)", color: "var(--text-3)", display: "block" };
 
   return (
     <form
@@ -221,7 +221,7 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
         onSubmit({ name: name.trim(), kind, config });
       }}
     >
-      <div style={{ fontWeight: 600, fontSize: 13 }}>Add outbound provider</div>
+      <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>Add outbound provider</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <label>
           <span style={fieldLabel}>Name</span>
@@ -446,7 +446,7 @@ function MailProviders() {
               </span>
               <span
                 className="mono truncate"
-                style={{ fontSize: 11, color: "var(--text-2)" }}
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-2)" }}
               >
                 {configSummary(provider.kind, provider.config)}
               </span>
@@ -586,7 +586,7 @@ function SendingDomains() {
               <span style={{ color: "var(--text-3)" }}>
                 <Icons.Globe />
               </span>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>{domain.domain}</span>
+              <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>{domain.domain}</span>
               <div style={{ display: "flex", gap: 6, marginLeft: 8 }}>
                 <VerificationBadge label="SPF" state={domain.spf} />
                 <VerificationBadge label="DKIM" state={domain.dkim} />
@@ -636,7 +636,7 @@ function SendingDomains() {
             </div>
 
             {domain.dkimKeys.length === 0 ? (
-              <div style={{ fontSize: 12, color: "var(--text-3)", padding: "4px 0" }}>
+              <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", padding: "4px 0" }}>
                 No DKIM keys — generate one to start signing mail.
               </div>
             ) : (
@@ -648,11 +648,11 @@ function SendingDomains() {
                     gridTemplateColumns: "1fr 120px",
                     alignItems: "center",
                     height: 30,
-                    fontSize: 12,
+                    fontSize: "var(--text-meta)",
                     borderTop: "1px solid var(--border)",
                   }}
                 >
-                  <span className="mono" style={{ fontSize: 11 }}>
+                  <span className="mono" style={{ fontSize: "var(--text-caption)" }}>
                     {key.selector}
                   </span>
                   <span style={{ justifySelf: "flex-end" }}>
@@ -733,7 +733,7 @@ function Deliverability() {
               <span style={{ ...HEADER_CELL }}>{card.label}</span>
               <div
                 style={{
-                  fontSize: 24,
+                  fontSize: "var(--text-h1)",
                   fontWeight: 700,
                   letterSpacing: "-0.02em",
                   marginTop: 8,
@@ -788,7 +788,7 @@ function Deliverability() {
               <span style={{ color: "var(--text-2)" }}>{report.domain}</span>
               <span
                 className="mono"
-                style={{ fontSize: 11, color: "var(--text-3)" }}
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
               >
                 {report.rangeStart} → {report.rangeEnd}
               </span>
@@ -829,7 +829,7 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
   const [destination, setDestination] = useState("");
   const [priority, setPriority] = useState("100");
 
-  const fieldLabel: CSSProperties = { fontSize: 11, color: "var(--text-3)", display: "block" };
+  const fieldLabel: CSSProperties = { fontSize: "var(--text-caption)", color: "var(--text-3)", display: "block" };
 
   return (
     <form
@@ -849,7 +849,7 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
         });
       }}
     >
-      <div style={{ fontWeight: 600, fontSize: 13 }}>Add inbound routing rule</div>
+      <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>Add inbound routing rule</div>
       <div
         style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1.4fr 80px", gap: 10 }}
       >
@@ -1022,10 +1022,10 @@ function RoutingRules() {
                 borderBottom: "1px solid var(--border)",
               }}
             >
-              <span className="mono" style={{ fontSize: 11, color: "var(--text-3)" }}>
+              <span className="mono" style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
                 {rule.priority}
               </span>
-              <span className="mono truncate" style={{ fontSize: 11 }}>
+              <span className="mono truncate" style={{ fontSize: "var(--text-caption)" }}>
                 {rule.matchPattern}
               </span>
               <span>
@@ -1117,8 +1117,8 @@ function SpamFiltering() {
               <Icons.Shield />
             </span>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>spamd daemon</div>
-              <div style={{ fontSize: 12, color: "var(--text-2)" }}>
+              <div style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>spamd daemon</div>
+              <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
                 Ruleset {settings.rulesetVersion ?? "—"}
               </div>
             </div>
@@ -1141,32 +1141,32 @@ function SpamFiltering() {
           >
             <div className="panel" style={{ padding: 16 }}>
               <span style={{ ...HEADER_CELL }}>Spam threshold</span>
-              <div style={{ fontSize: 24, fontWeight: 700, marginTop: 8 }}>
+              <div style={{ fontSize: "var(--text-h1)", fontWeight: 700, marginTop: 8 }}>
                 {settings.threshold.toFixed(1)}
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
+              <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}>
                 Score above which mail is tagged as spam
               </div>
             </div>
             <div className="panel" style={{ padding: 16 }}>
               <span style={{ ...HEADER_CELL }}>Reject threshold</span>
-              <div style={{ fontSize: 24, fontWeight: 700, marginTop: 8 }}>
+              <div style={{ fontSize: "var(--text-h1)", fontWeight: 700, marginTop: 8 }}>
                 {settings.rejectThreshold === null || settings.rejectThreshold === undefined
                   ? "—"
                   : settings.rejectThreshold.toFixed(1)}
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
+              <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}>
                 Score above which mail is rejected outright
               </div>
             </div>
             <div className="panel" style={{ padding: 16 }}>
               <span style={{ ...HEADER_CELL }}>Tagged (24h)</span>
-              <div style={{ fontSize: 24, fontWeight: 700, marginTop: 8 }}>
+              <div style={{ fontSize: "var(--text-h1)", fontWeight: 700, marginTop: 8 }}>
                 {settings.taggedLast24h === null || settings.taggedLast24h === undefined
                   ? "—"
                   : new Intl.NumberFormat("en-US").format(settings.taggedLast24h)}
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
+              <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}>
                 Messages flagged as spam in the last day
               </div>
             </div>
@@ -1218,7 +1218,7 @@ export function MailAdminSection() {
               style={{
                 height: 34,
                 padding: "0 12px",
-                fontSize: 13,
+                fontSize: "var(--text-body-sm)",
                 fontWeight: active ? 600 : 400,
                 color: active ? "var(--accent)" : "var(--text-2)",
                 background: "transparent",

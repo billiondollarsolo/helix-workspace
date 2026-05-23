@@ -1,35 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  cellReference,
-  columnLetter,
-  parseCurrency,
-  SHEET_DATA,
-  SHEET_TABS,
-  SHEETS_LIST,
-  sumArr,
-} from "./seed";
-
-describe("sheets seed data", () => {
-  it("exposes the six list spreadsheets with unique ids", () => {
-    expect(SHEETS_LIST).toHaveLength(6);
-    const ids = new Set(SHEETS_LIST.map((sheet) => sheet.id));
-    expect(ids.size).toBe(6);
-  });
-
-  it("provides a grid for every tab", () => {
-    for (const tab of SHEET_TABS) {
-      const grid = SHEET_DATA[tab.id];
-      expect(grid, `grid for ${tab.id}`).toBeDefined();
-      expect(grid!.length).toBeGreaterThan(1);
-    }
-  });
-
-  it("uses the same seven-column header shape across tabs", () => {
-    for (const tab of SHEET_TABS) {
-      expect(SHEET_DATA[tab.id]![0]).toHaveLength(7);
-    }
-  });
-});
+import { cellReference, columnLetter, parseCurrency, sumArr } from "./seed";
 
 describe("parseCurrency", () => {
   it("strips currency punctuation", () => {
@@ -43,10 +13,6 @@ describe("parseCurrency", () => {
 });
 
 describe("sumArr", () => {
-  it("aggregates the Customers ARR column", () => {
-    expect(sumArr(SHEET_DATA.customers!)).toBe(2_160_000);
-  });
-
   it("skips the header row", () => {
     const grid = [
       ["Customer", "ARR"],
@@ -54,6 +20,15 @@ describe("sumArr", () => {
       ["B", "$200"],
     ];
     expect(sumArr(grid)).toBe(300);
+  });
+
+  it("treats non-numeric cells as zero", () => {
+    const grid = [
+      ["Customer", "ARR"],
+      ["A", "$100"],
+      ["B", "n/a"],
+    ];
+    expect(sumArr(grid)).toBe(100);
   });
 });
 

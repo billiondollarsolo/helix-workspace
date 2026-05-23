@@ -1,4 +1,5 @@
 import { authenticatedFetch } from "@/lib/auth";
+import { callTool } from "@/lib/tool-call";
 
 export type AssistantToolDecision = "confirm" | "cancel";
 export type AssistantToolDecisionStatus = "confirmed" | "cancelled";
@@ -405,18 +406,11 @@ async function callAssistantTool<Output>(
   input: unknown,
   fetchImpl: AssistantToolDecisionFetch,
 ): Promise<Output> {
-  const response = await fetchImpl(`/api/tools/${toolId}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const output: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(
-      errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
-    );
-  }
-  return output as Output;
+  // Note: most assistant confirmation flows are handled explicitly through
+  // assistant.confirmation.approve/cancel (the assistant tool-decision UI),
+  // not via tool-level pending_confirmation. But for general tool deletes
+  // / writes the shared callTool helper auto-approves.
+  return callTool<Output>(toolId, input, { fetchImpl });
 }
 
 export function assistantToolDecisionUrl(input: AssistantToolDecisionInput): string {

@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { SheetsApiCell, SheetsApiSheet } from "./api";
+import type { SheetsApiCell } from "./api";
 import {
   diffCellEdit,
   gridFromCells,
   gridToCellEdits,
   MIN_GRID_COLS,
   MIN_GRID_ROWS,
-  mergeBackendSheets,
 } from "./model";
-import { SHEETS_LIST } from "./seed";
 
 function cell(row: number, col: number, value: string): SheetsApiCell {
   return {
@@ -65,30 +63,3 @@ describe("gridToCellEdits", () => {
   });
 });
 
-describe("mergeBackendSheets", () => {
-  const backendRow: SheetsApiSheet = {
-    id: "11111111-1111-4111-8111-111111111111",
-    ownerActorId: null,
-    createdByActorId: null,
-    title: "Backend sheet",
-    metadata: { ownerName: "Rumi Tanaka", shared: 3 },
-    deletedAt: null,
-    createdAt: "2026-05-21T00:00:00.000Z",
-    updatedAt: "2026-05-21T00:00:00.000Z",
-  };
-
-  it("returns seed rows unchanged when the backend yields nothing", () => {
-    const merged = mergeBackendSheets(SHEETS_LIST, undefined);
-    expect(merged).toHaveLength(SHEETS_LIST.length);
-    expect(merged.every((row) => row.source === "seed")).toBe(true);
-  });
-
-  it("merges backend sheets ahead of the seed list", () => {
-    const merged = mergeBackendSheets(SHEETS_LIST, [backendRow]);
-    expect(merged).toHaveLength(SHEETS_LIST.length + 1);
-    expect(merged[0]?.id).toBe(backendRow.id);
-    expect(merged[0]?.source).toBe("backend");
-    expect(merged[0]?.owner).toBe("Rumi Tanaka");
-    expect(merged[0]?.shared).toBe(3);
-  });
-});

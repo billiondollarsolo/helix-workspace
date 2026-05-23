@@ -246,8 +246,8 @@ async function seedActors(
     },
     {
       id: demoIds.colleagueActor,
-      email: "annie@helix.local",
-      displayName: "Annie Thai",
+      email: "maya@helix.local",
+      displayName: "Maya Sharma",
       scopes: ["mail.read", "drive.read", "docs.read", "calendar.read", "chat.read"],
     },
     {
@@ -643,7 +643,7 @@ async function seedCalendar(
     startsAt: timeline.at("2026-05-20T14:00:00.000Z"),
     endsAt: timeline.at("2026-05-20T15:00:00.000Z"),
     attendees: [
-      { actorId: demoIds.colleagueActor, email: "annie@helix.local", displayName: "Annie Thai" },
+      { actorId: demoIds.colleagueActor, email: "maya@helix.local", displayName: "Maya Sharma" },
     ],
   });
   await seedCalendarEvent(sql, {
@@ -659,7 +659,7 @@ async function seedCalendar(
     startsAt: timeline.at("2026-05-21T17:00:00.000Z"),
     endsAt: timeline.at("2026-05-21T17:45:00.000Z"),
     attendees: [
-      { actorId: demoIds.colleagueActor, email: "annie@helix.local", displayName: "Annie Thai" },
+      { actorId: demoIds.colleagueActor, email: "maya@helix.local", displayName: "Maya Sharma" },
       { actorId: demoIds.familyActor, email: "erica@helix.local", displayName: "Erica Johnson" },
     ],
   });
@@ -789,7 +789,7 @@ async function seedMail(
       threadId: demoIds.mailPlanningThread,
       messageId: demoIds.mailPlanningMessage,
       subject: "Request to revisit compensation for expanded responsibilities",
-      from: { address: "annie@helix.local", name: "Annie Thai" },
+      from: { address: "maya@helix.local", name: "Maya Sharma" },
       body: "I wanted to follow up regarding current role scope, platform ownership, and the added backend responsibilities from the Helix rollout.",
       sentAt: timeline.at("2026-05-19T23:32:00.000Z"),
       labels: ["inbox", "important"],

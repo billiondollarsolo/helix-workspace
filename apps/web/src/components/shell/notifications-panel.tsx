@@ -1,12 +1,19 @@
 /* NotificationsPanel — cross-app notification feed.
-   Ported from the design handoff (overlays.jsx → NotificationsPanel).
-   Tabs (All / Unread); each row navigates to the source app on click.
-   Replace NOTIFICATIONS with `GET /api/notifications` + WebSocket. */
+   Wired to the notifications.* helix tools (replaces the prior static stub).
+   Tabs (All / Unread); rows mark themselves read on click and navigate to
+   the source app via the verb→route map below. */
 
 import { useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Icons, type IconComponent } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
+import {
+  notificationsListQuery,
+  useMarkAllRead,
+  useMarkRead,
+  type NotificationItem,
+} from "@/features/notifications/api";
 
 type NotificationKind =
   | "mention"
@@ -15,99 +22,53 @@ type NotificationKind =
   | "calendar"
   | "dm"
   | "approval"
+  | "recording"
   | "system";
 
-interface HelixNotification {
-  id: number;
-  kind: NotificationKind;
-  who: string;
-  what: string;
-  excerpt?: string;
-  time: string;
-  unread: boolean;
-  app?: string;
+const NOTIF_ICONS: Record<NotificationKind, { Icon: IconComponent; bg: string }> = {
+  mention:   { Icon: Icons.Comment,  bg: "#7c3aed" },
+  share:     { Icon: Icons.Drive,    bg: "#7c3aed" },
+  comment:   { Icon: Icons.Comment,  bg: "#0891b2" },
+  calendar:  { Icon: Icons.Calendar, bg: "#ea580c" },
+  dm:        { Icon: Icons.Chat,     bg: "#db2777" },
+  approval:  { Icon: Icons.Shield,   bg: "#dc2626" },
+  recording: { Icon: Icons.Drive,    bg: "#dc2626" },
+  system:    { Icon: Icons.Bell,     bg: "#475569" },
+};
+
+/** Map server-side verbs to the icon kind and the in-app route to open. */
+function kindForVerb(verb: string): NotificationKind {
+  if (verb.startsWith("meet.recording")) return "recording";
+  if (verb.startsWith("meet.")) return "calendar";
+  if (verb.startsWith("calendar.")) return "calendar";
+  if (verb.startsWith("docs.comment") || verb.startsWith("docs.suggestion")) return "comment";
+  if (verb.startsWith("docs.") || verb.startsWith("drive.")) return "share";
+  if (verb.startsWith("chat.")) return "dm";
+  if (verb.startsWith("mail.")) return "mention";
+  if (verb.includes("approval")) return "approval";
+  return "system";
 }
 
-const NOTIFICATIONS: readonly HelixNotification[] = [
-  {
-    id: 1,
-    kind: "mention",
-    who: "Mira Okafor",
-    what: "@mentioned you in Q3 Roadmap",
-    excerpt: "Can you confirm the migration window by Friday?",
-    time: "5m",
-    unread: true,
-    app: "/docs",
-  },
-  {
-    id: 2,
-    kind: "share",
-    who: "Priya Anand",
-    what: "shared Onboarding-mocks-v3.fig with you",
-    time: "20m",
-    unread: true,
-    app: "/drive",
-  },
-  {
-    id: 3,
-    kind: "comment",
-    who: "Jonas Reichert",
-    what: "replied on Q3 Roadmap",
-    excerpt: "+1 — and we should re-level the SRE role.",
-    time: "1h",
-    unread: true,
-    app: "/docs",
-  },
-  {
-    id: 4,
-    kind: "calendar",
-    who: "Calendar",
-    what: "Eng standup in 10 minutes",
-    time: "10m before",
-    unread: false,
-    app: "/calendar",
-  },
-  {
-    id: 5,
-    kind: "dm",
-    who: "Rumi Tanaka",
-    what: "sent you a direct message",
-    excerpt: "Caroline wants to lock in 2027 pricing.",
-    time: "2h",
-    unread: false,
-    app: "/chat",
-  },
-  {
-    id: 6,
-    kind: "approval",
-    who: "Helix Admin",
-    what: "Apollo.io requested high-risk OAuth scopes",
-    time: "Yesterday",
-    unread: false,
-    app: "/admin",
-  },
-  {
-    id: 7,
-    kind: "system",
-    who: "System",
-    what: "Your weekly digest is ready",
-    time: "Yesterday",
-    unread: false,
-  },
-];
+function routeForNotification(item: NotificationItem): string | null {
+  if (item.verb.startsWith("meet.")) {
+    return "/meet";
+  }
+  if (item.verb.startsWith("calendar.")) return "/calendar";
+  if (item.verb.startsWith("docs.")) return "/docs";
+  if (item.verb.startsWith("drive.")) return "/drive";
+  if (item.verb.startsWith("chat.")) return "/chat";
+  if (item.verb.startsWith("mail.")) return "/mail";
+  return null;
+}
 
-/** Unread notification count — exported so the shell can badge the bell. */
-export const UNREAD_NOTIFICATION_COUNT = NOTIFICATIONS.filter((n) => n.unread).length;
-
-const NOTIF_ICONS: Record<NotificationKind, { Icon: IconComponent; bg: string }> = {
-  mention: { Icon: Icons.Comment, bg: "#7c3aed" },
-  share: { Icon: Icons.Drive, bg: "#7c3aed" },
-  comment: { Icon: Icons.Comment, bg: "#0891b2" },
-  calendar: { Icon: Icons.Calendar, bg: "#ea580c" },
-  dm: { Icon: Icons.Chat, bg: "#db2777" },
-  approval: { Icon: Icons.Shield, bg: "#dc2626" },
-  system: { Icon: Icons.Bell, bg: "#475569" },
-};
+function relativeTime(iso: string): string {
+  const created = new Date(iso).getTime();
+  const seconds = Math.max(0, (Date.now() - created) / 1000);
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86_400)}d`;
+}
 
 export interface NotificationsPanelProps {
   open: boolean;
@@ -117,33 +78,27 @@ export interface NotificationsPanelProps {
 export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<"all" | "unread">("all");
+  const { data, isLoading, isError } = useQuery(notificationsListQuery(false));
+  const markRead = useMarkRead();
+  const markAllRead = useMarkAllRead();
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
+    if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
+      if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, onClose]);
 
-  if (!open) {
-    return null;
-  }
+  if (!open) return null;
 
-  const items = NOTIFICATIONS.filter(
-    (n) => filter === "all" || (filter === "unread" && n.unread),
-  );
+  const all = data?.items ?? [];
+  const items = filter === "all" ? all : all.filter((n) => n.unread);
+  const unreadCount = all.filter((n) => n.unread).length;
   const tabs = [
-    { id: "all" as const, label: `All (${NOTIFICATIONS.length})` },
-    {
-      id: "unread" as const,
-      label: `Unread (${NOTIFICATIONS.filter((n) => n.unread).length})`,
-    },
+    { id: "all" as const, label: `All (${all.length})` },
+    { id: "unread" as const, label: `Unread (${unreadCount})` },
   ];
 
   return (
@@ -174,11 +129,13 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <span style={{ fontSize: 14, fontWeight: 600 }}>Notifications</span>
+        <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>Notifications</span>
         <button
           type="button"
           className="btn sm"
           style={{ marginLeft: "auto", marginRight: 4 }}
+          disabled={unreadCount === 0 || markAllRead.isPending}
+          onClick={() => markAllRead.mutate()}
         >
           Mark all read
         </button>
@@ -200,23 +157,39 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
             type="button"
             onClick={() => setFilter(tab.id)}
             className={filter === tab.id ? "tab active" : "tab"}
-            style={{ height: 32, fontSize: 12 }}
+            style={{ height: 32, fontSize: "var(--text-meta)" }}
           >
             {tab.label}
           </button>
         ))}
       </div>
       <div style={{ overflowY: "auto", flex: 1 }}>
+        {isLoading ? (
+          <div className="empty" style={{ padding: 32 }}>
+            <Icons.Bell />
+            <div>Loading…</div>
+          </div>
+        ) : isError ? (
+          <div className="empty" style={{ padding: 32, color: "var(--danger)" }}>
+            <Icons.Bell />
+            <div>Could not load notifications.</div>
+          </div>
+        ) : null}
         {items.map((notification) => {
-          const meta = NOTIF_ICONS[notification.kind];
+          const kind = kindForVerb(notification.verb);
+          const meta = NOTIF_ICONS[kind];
           const { Icon } = meta;
+          const route = routeForNotification(notification);
           return (
             <button
               key={notification.id}
               type="button"
               onClick={() => {
-                if (notification.app) {
-                  void navigate({ to: notification.app });
+                if (notification.unread) {
+                  markRead.mutate([notification.id]);
+                }
+                if (route !== null) {
+                  void navigate({ to: route });
                 }
                 onClose();
               }}
@@ -242,7 +215,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
               }}
             >
               <div style={{ position: "relative", flexShrink: 0 }}>
-                <Avatar name={notification.who} size={32} />
+                <Avatar name={notification.summary} size={32} />
                 <div
                   style={{
                     position: "absolute",
@@ -264,15 +237,14 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
                 </div>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, lineHeight: 1.45 }}>
-                  <span style={{ fontWeight: 600 }}>{notification.who}</span>{" "}
-                  <span style={{ color: "var(--text-2)" }}>{notification.what}</span>
+                <div style={{ fontSize: "var(--text-meta)", lineHeight: 1.45 }}>
+                  <span style={{ fontWeight: 600 }}>{notification.summary}</span>
                 </div>
-                {notification.excerpt ? (
+                {notification.body ? (
                   <div
                     className="truncate"
                     style={{
-                      fontSize: 11,
+                      fontSize: "var(--text-caption)",
                       color: "var(--text-3)",
                       marginTop: 4,
                       padding: "4px 8px",
@@ -281,11 +253,11 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
                       lineHeight: 1.4,
                     }}
                   >
-                    {notification.excerpt}
+                    {notification.body}
                   </div>
                 ) : null}
-                <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
-                  {notification.time} ago
+                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}>
+                  {relativeTime(notification.createdAt)} ago
                 </div>
               </div>
               {notification.unread ? (
@@ -303,7 +275,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
             </button>
           );
         })}
-        {items.length === 0 ? (
+        {!isLoading && !isError && items.length === 0 ? (
           <div className="empty" style={{ padding: 32 }}>
             <Icons.Bell />
             <div>You&apos;re all caught up</div>

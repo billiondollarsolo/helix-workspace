@@ -1,4 +1,5 @@
 import { authenticatedFetch } from "@/lib/auth";
+import { callTool } from "@/lib/tool-call";
 
 export type CalendarApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -272,26 +273,7 @@ async function callCalendarTool<Output>(
   input: unknown,
   fetchImpl: CalendarApiFetch,
 ): Promise<Output> {
-  const response = await fetchImpl(`/api/tools/${toolId}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const output: unknown = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
-    );
-  }
-
-  return output as Output;
-}
-
-function errorMessageFromOutput(output: unknown): string | undefined {
-  return isRecord(output) && typeof output.error === "string" ? output.error : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  // Auto-approves pending_confirmation (e.g. calendar.event.delete) via the
+  // shared callTool helper.
+  return callTool<Output>(toolId, input, { fetchImpl });
 }

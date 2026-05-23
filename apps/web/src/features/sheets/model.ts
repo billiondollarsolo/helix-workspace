@@ -88,39 +88,6 @@ export function listRowFromApi(sheet: SheetsApiSheet): SheetListRow {
   };
 }
 
-/**
- * Merge live backend sheets over the seed list, de-duplicating by id.
- * Backend rows render first; seed rows remain as an offline fallback.
- */
-export function mergeBackendSheets(
-  seed: readonly SheetFile[],
-  backend: readonly SheetsApiSheet[] | undefined,
-): readonly SheetListRow[] {
-  const seedRows: readonly SheetListRow[] = seed.map((sheet) => ({ ...sheet, source: "seed" }));
-  if (backend === undefined || backend.length === 0) {
-    return seedRows;
-  }
-  const backendRows = backend.map(listRowFromApi);
-  const backendIds = new Set(backendRows.map((row) => row.id));
-  return [...backendRows, ...seedRows.filter((row) => !backendIds.has(row.id))];
-}
-
-/**
- * Merge Drive-sourced `SheetListRow` rows over the seed list, de-duplicating
- * by id. Used by `SheetsList` when `sheetsListFromDriveQueryOptions` succeeds.
- */
-export function mergeDriveSheets(
-  seed: readonly SheetFile[],
-  driveRows: readonly SheetListRow[] | undefined,
-): readonly SheetListRow[] {
-  const seedRows: readonly SheetListRow[] = seed.map((sheet) => ({ ...sheet, source: "seed" as const }));
-  if (driveRows === undefined || driveRows.length === 0) {
-    return seedRows;
-  }
-  const driveIds = new Set(driveRows.map((row) => row.id));
-  return [...driveRows, ...seedRows.filter((row) => !driveIds.has(row.id))];
-}
-
 function ownerLabel(metadata: Record<string, unknown>): string {
   const owner = metadata.ownerName;
   return typeof owner === "string" && owner.length > 0 ? owner : "You";

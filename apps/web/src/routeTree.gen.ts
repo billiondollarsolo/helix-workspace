@@ -23,6 +23,7 @@ import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
 import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar/index'
 import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
 import { Route as ShellAdminIndexRouteImport } from './routes/_shell/admin/index'
+import { Route as ShellEditObjectIdRouteImport } from './routes/_shell/edit/$objectId'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -93,11 +94,17 @@ const ShellAdminIndexRoute = ShellAdminIndexRouteImport.update({
   path: '/admin/',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellEditObjectIdRoute = ShellEditObjectIdRouteImport.update({
+  id: '/edit/$objectId',
+  path: '/edit/$objectId',
+  getParentRoute: () => ShellRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/oauth/consent': typeof OauthConsentRoute
+  '/edit/$objectId': typeof ShellEditObjectIdRoute
   '/admin/': typeof ShellAdminIndexRoute
   '/assistant/': typeof ShellAssistantIndexRoute
   '/calendar/': typeof ShellCalendarIndexRoute
@@ -113,6 +120,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/oauth/consent': typeof OauthConsentRoute
+  '/edit/$objectId': typeof ShellEditObjectIdRoute
   '/admin': typeof ShellAdminIndexRoute
   '/assistant': typeof ShellAssistantIndexRoute
   '/calendar': typeof ShellCalendarIndexRoute
@@ -130,6 +138,7 @@ export interface FileRoutesById {
   '/_shell': typeof ShellRouteWithChildren
   '/login': typeof LoginRoute
   '/oauth/consent': typeof OauthConsentRoute
+  '/_shell/edit/$objectId': typeof ShellEditObjectIdRoute
   '/_shell/admin/': typeof ShellAdminIndexRoute
   '/_shell/assistant/': typeof ShellAssistantIndexRoute
   '/_shell/calendar/': typeof ShellCalendarIndexRoute
@@ -147,6 +156,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/oauth/consent'
+    | '/edit/$objectId'
     | '/admin/'
     | '/assistant/'
     | '/calendar/'
@@ -162,6 +172,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/oauth/consent'
+    | '/edit/$objectId'
     | '/admin'
     | '/assistant'
     | '/calendar'
@@ -178,6 +189,7 @@ export interface FileRouteTypes {
     | '/_shell'
     | '/login'
     | '/oauth/consent'
+    | '/_shell/edit/$objectId'
     | '/_shell/admin/'
     | '/_shell/assistant/'
     | '/_shell/calendar/'
@@ -297,10 +309,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellAdminIndexRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/edit/$objectId': {
+      id: '/_shell/edit/$objectId'
+      path: '/edit/$objectId'
+      fullPath: '/edit/$objectId'
+      preLoaderRoute: typeof ShellEditObjectIdRouteImport
+      parentRoute: typeof ShellRoute
+    }
   }
 }
 
 interface ShellRouteChildren {
+  ShellEditObjectIdRoute: typeof ShellEditObjectIdRoute
   ShellAdminIndexRoute: typeof ShellAdminIndexRoute
   ShellAssistantIndexRoute: typeof ShellAssistantIndexRoute
   ShellCalendarIndexRoute: typeof ShellCalendarIndexRoute
@@ -314,6 +334,7 @@ interface ShellRouteChildren {
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
+  ShellEditObjectIdRoute: ShellEditObjectIdRoute,
   ShellAdminIndexRoute: ShellAdminIndexRoute,
   ShellAssistantIndexRoute: ShellAssistantIndexRoute,
   ShellCalendarIndexRoute: ShellCalendarIndexRoute,

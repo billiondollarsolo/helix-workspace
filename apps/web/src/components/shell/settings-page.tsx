@@ -5,9 +5,10 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useDebouncedCallback } from "@tanstack/react-pacer";
+import { useQuery } from "@tanstack/react-query";
 import { Icons, type IconName } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
-import { CURRENT_USER } from "@/components/people";
+import { sessionUserQueryOptions } from "@/lib/auth";
 import {
   ACCENT_OPTIONS,
   FONT_SCALE_OPTIONS,
@@ -38,11 +39,11 @@ function SettingsField({
       }}
     >
       <div>
-        <div style={{ fontSize: 13, fontWeight: 500 }}>{label}</div>
+        <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{label}</div>
         {hint ? (
           <div
             style={{
-              fontSize: 11,
+              fontSize: "var(--text-caption)",
               color: "var(--text-3)",
               marginTop: 2,
               lineHeight: 1.5,
@@ -91,19 +92,21 @@ function Toggle({ defaultOn }: { defaultOn: boolean }) {
   );
 }
 
-const h1Style = { fontSize: 20, fontWeight: 600, margin: "0 0 4px" } as const;
-const subStyle = { fontSize: 13, color: "var(--text-3)", marginBottom: 8 } as const;
+const h1Style = { fontSize: "var(--text-h2)", fontWeight: 600, margin: "0 0 4px" } as const;
+const subStyle = { fontSize: "var(--text-body-sm)", color: "var(--text-3)", marginBottom: 8 } as const;
 
 /* ---------- Profile ---------- */
 
 function ProfileSection() {
+  const sessionQuery = useQuery(sessionUserQueryOptions());
+  const displayName = sessionQuery.data?.name ?? "";
   return (
     <>
       <h1 style={h1Style}>Profile</h1>
       <div style={subStyle}>How you appear across the workspace</div>
       <SettingsField label="Photo" hint="PNG or JPG, max 5 MB">
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <Avatar name={CURRENT_USER.name} size={64} />
+          <Avatar name={displayName || "You"} size={64} />
           <div>
             <button type="button" className="btn sm">
               Upload
@@ -115,18 +118,19 @@ function ProfileSection() {
         </div>
       </SettingsField>
       <SettingsField label="Display name">
-        <input className="input" defaultValue={CURRENT_USER.name} />
+        <input className="input" defaultValue={displayName} key={displayName} />
       </SettingsField>
       <SettingsField label="Pronouns">
-        <input className="input" defaultValue="they/them" />
+        <input className="input" defaultValue="" placeholder="e.g. they/them" />
       </SettingsField>
       <SettingsField label="Job title">
-        <input className="input" defaultValue="Head of Product" />
+        <input className="input" defaultValue="" placeholder="Your role" />
       </SettingsField>
       <SettingsField label="About" hint="A short bio shown on your contact card">
         <textarea
           className="input"
-          defaultValue="Leading product at Helix. Previously at Stripe and Notion."
+          defaultValue=""
+          placeholder="A short bio shown on your contact card"
           rows={3}
           style={{
             height: "auto",
@@ -226,7 +230,7 @@ function AppearanceSection() {
                   }}
                 />
               </div>
-              <span style={{ fontSize: 12, fontWeight: 500 }}>{option.label}</span>
+              <span style={{ fontSize: "var(--text-meta)", fontWeight: 500 }}>{option.label}</span>
             </button>
           ))}
         </div>
@@ -257,7 +261,7 @@ function AppearanceSection() {
                 height: 28,
                 padding: "0 16px",
                 borderRadius: 4,
-                fontSize: 12,
+                fontSize: "var(--text-meta)",
                 background: density === option.v ? "var(--surface)" : "transparent",
                 color: density === option.v ? "var(--text)" : "var(--text-2)",
                 fontWeight: density === option.v ? 600 : 400,
@@ -290,7 +294,7 @@ function AppearanceSection() {
                 height: 28,
                 padding: "0 16px",
                 borderRadius: 4,
-                fontSize: 12,
+                fontSize: "var(--text-meta)",
                 background: fontScale === option.value ? "var(--surface)" : "transparent",
                 color: fontScale === option.value ? "var(--text)" : "var(--text-2)",
                 fontWeight: fontScale === option.value ? 600 : 400,
@@ -372,7 +376,7 @@ function LanguageSection() {
           <input className="input" defaultValue="09:00" style={{ width: 100 }} />
           <span style={{ color: "var(--text-3)" }}>to</span>
           <input className="input" defaultValue="18:00" style={{ width: 100 }} />
-          <span style={{ color: "var(--text-3)", fontSize: 12 }}>Mon–Fri</span>
+          <span style={{ color: "var(--text-3)", fontSize: "var(--text-meta)" }}>Mon–Fri</span>
         </div>
       </SettingsField>
     </>
@@ -414,8 +418,8 @@ function NotifySection() {
           }}
         >
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>{row.label}</div>
-            <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>
+            <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{row.label}</div>
+            <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}>
               {row.desc}
             </div>
           </div>
@@ -436,9 +440,8 @@ function SignatureSection() {
       <SettingsField label="Signature">
         <textarea
           className="input"
-          defaultValue={
-            "—\nAlex Park · Head of Product, Helix\nalex@helix.io · helix.io"
-          }
+          defaultValue=""
+          placeholder="Your email signature"
           rows={5}
           style={{
             height: "auto",
@@ -446,7 +449,7 @@ function SignatureSection() {
             resize: "vertical",
             fontFamily: "inherit",
             lineHeight: 1.5,
-            fontSize: 13,
+            fontSize: "var(--text-body-sm)",
           }}
         />
       </SettingsField>
@@ -518,7 +521,7 @@ function SecuritySection() {
                 alignItems: "center",
                 gap: 10,
                 borderTop: index ? "1px solid var(--border)" : "none",
-                fontSize: 12,
+                fontSize: "var(--text-meta)",
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -530,7 +533,7 @@ function SecuritySection() {
                     </span>
                   ) : null}
                 </div>
-                <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
                   {session.loc} · {session.time}
                 </div>
               </div>
@@ -721,8 +724,8 @@ function AISection() {
                 }}
               />
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{option.name}</div>
-                <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>
+                <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>{option.name}</div>
+                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}>
                   {option.desc}
                 </div>
               </div>
@@ -784,8 +787,8 @@ function AISection() {
             }}
           >
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 500 }}>{feature.label}</div>
-              <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>
+              <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{feature.label}</div>
+              <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}>
                 {feature.desc}
               </div>
             </div>
@@ -804,7 +807,7 @@ function AISection() {
               display: "flex",
               alignItems: "flex-start",
               gap: 10,
-              fontSize: 12,
+              fontSize: "var(--text-meta)",
               cursor: "pointer",
             }}
           >
@@ -825,7 +828,7 @@ function AISection() {
               display: "flex",
               alignItems: "flex-start",
               gap: 10,
-              fontSize: 12,
+              fontSize: "var(--text-meta)",
               cursor: "pointer",
             }}
           >
@@ -887,7 +890,7 @@ function ShortcutsSection() {
   ];
   return (
     <>
-      <h1 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
+      <h1 style={{ fontSize: "var(--text-h2)", fontWeight: 600, margin: "0 0 16px" }}>
         Keyboard shortcuts
       </h1>
       {groups.map((group) => (
@@ -904,7 +907,7 @@ function ShortcutsSection() {
                   alignItems: "center",
                   padding: "8px 14px",
                   borderTop: index ? "1px solid var(--border)" : "none",
-                  fontSize: 12,
+                  fontSize: "var(--text-meta)",
                 }}
               >
                 <span style={{ flex: 1 }}>{desc}</span>
@@ -993,7 +996,7 @@ export function SettingsPage({ open, onClose }: SettingsPageProps) {
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Back">
           <Icons.ArrowLeft />
         </button>
-        <span style={{ fontSize: 14, fontWeight: 600 }}>Settings</span>
+        <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>Settings</span>
         <div style={{ marginLeft: "auto" }}>
           <button type="button" className="btn primary sm" onClick={onClose}>
             Done
@@ -1026,7 +1029,7 @@ export function SettingsPage({ open, onClose }: SettingsPageProps) {
                   height: 32,
                   padding: "0 10px",
                   borderRadius: 6,
-                  fontSize: 13,
+                  fontSize: "var(--text-body-sm)",
                   background: selected ? "var(--accent-soft)" : "transparent",
                   color: selected ? "var(--accent)" : "var(--text)",
                   fontWeight: selected ? 600 : 400,

@@ -1,4 +1,5 @@
 import { addAccessTokenSearchParam, authenticatedFetch } from "@/lib/auth";
+import { callTool } from "@/lib/tool-call";
 
 export type DocsApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -385,25 +386,12 @@ async function callDocsTool<Output>(
   input: unknown,
   fetchImpl: DocsApiFetch,
 ): Promise<Output> {
-  const response = await fetchImpl(`/api/tools/${toolId}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const output: unknown = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
-    );
-  }
-
-  return output as Output;
+  // Shared callTool helper auto-approves pending_confirmation responses
+  // (e.g. docs.delete) so the UI sees the executed output, not a silent
+  // pending envelope.
+  return callTool<Output>(toolId, input, { fetchImpl });
 }
 
-function errorMessageFromOutput(output: unknown): string | undefined {
-  return isRecord(output) && typeof output.error === "string" ? output.error : undefined;
-}
 
 function parseDocsSyncEvent(data: unknown): DocsSyncEvent | null {
   if (typeof data !== "string") {

@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { getSessionUser } from "@/lib/auth";
 import { listDrive } from "@/features/drive/api";
+import { formatLabelFromEntry } from "@/features/drive/drive-data";
 import {
   exportDocsDocument,
   getDocsDocument,
@@ -101,23 +102,30 @@ export function isBackendDocsDocumentId(value: string | undefined): value is str
 }
 
 /**
- * List-page query sourced from `drive.list` filtered by `app:"docs"`.
- * Returns Drive entries mapped to `DocSummary` view-model rows.
- * The editor (`docs.get`) is unaffected — this replaces only the list query.
+ * List-page query sourced from `drive.list`.
+ *
+ * After the .helixdoc → OOXML migration, "docs" means anything word-
+ * processor-shaped the user can see:
+ *  - migrated native Helix docs (now DOCX with `metadata.migratedFromNative`)
+ *  - uploaded DOCX / DOC / RTF / ODT files
+ *  - legacy native Helix docs still flagged `app="docs"` (any that escape
+ *    the migration script — e.g. soft-deleted then restored)
+ *
+ * The editor route (`/edit/:objectId`) opens these via OnlyOffice.
  */
 export function docsListFromDriveQueryOptions(input: { readonly limit?: number } = {}) {
   return queryOptions({
     queryKey: ["docs", "list-from-drive", input.limit ?? 100] as const,
     queryFn: async (): Promise<readonly DocSummary[]> => {
-      const entries = await listDrive({ folderId: null, app: "docs", limit: input.limit ?? 100 });
+      const entries = await listDrive({ folderId: null, acrossFolders: true, limit: input.limit ?? 100 });
       return entries
-        .filter((entry) => entry.type === "file" && entry.app === "docs" && entry.deletedAt === null)
+        .filter((entry) => entry.type === "file" && entry.deletedAt === null && isDocumentLike(entry))
         .map(
           (entry): DocSummary => ({
             id: entry.id,
             title:
               (entry.metadata?.title as string | undefined)?.trim() ||
-              entry.name.replace(/\.doc$/u, "").trim() ||
+              entry.name.replace(/\.(docx?|rtf|odt|helixdoc)$/iu, "").trim() ||
               "Untitled document",
             owner: (entry.metadata?.ownerName as string | undefined) ?? "You",
             modified: formatModified(entry.updatedAt),
@@ -126,9 +134,22 @@ export function docsListFromDriveQueryOptions(input: { readonly limit?: number }
             starred: entry.metadata?.starred === true,
             mine: true,
             source: "backend",
+            formatLabel: formatLabelFromEntry(entry),
           }),
         );
     },
     throwOnError: false,
   });
+}
+
+/** True when a drive entry should appear in the Docs list — DOCX, DOC,
+ *  RTF, ODT, or a legacy native `app="docs"` row. */
+function isDocumentLike(entry: { readonly app?: string | null; readonly mimeType?: string; readonly name: string }): boolean {
+  if (entry.app === "docs") return true;
+  const mime = entry.mimeType ?? "";
+  if (mime.includes("wordprocessingml") || mime === "application/msword" || mime.includes("opendocument.text") || mime === "application/rtf") {
+    return true;
+  }
+  const name = entry.name.toLowerCase();
+  return name.endsWith(".docx") || name.endsWith(".doc") || name.endsWith(".rtf") || name.endsWith(".odt") || name.endsWith(".helixdoc");
 }

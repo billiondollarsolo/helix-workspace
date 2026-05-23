@@ -10,8 +10,8 @@
      Query (`queries.ts` → `api.ts`).
    - New messages, typing indicators, presence dots and read receipts ride the
      `/ws/chat` WebSocket (`use-chat-realtime.ts`).
-   - `chat-data.ts` typed seed is used ONLY as an offline fallback when the
-     backend is unreachable. */
+   - On API error, the sidebar renders an "offline" notice instead of any
+     fabricated rows. */
 
 import {
   useCallback,
@@ -23,6 +23,7 @@ import {
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Avatar } from "@/components/ui/avatar";
 import { Icons } from "@/components/icons";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -54,11 +55,6 @@ import {
   type ChatMessageView,
   type ChatReactionView,
 } from "./view-model";
-import {
-  CHAT_DIRECT_MESSAGES,
-  CHAT_SPACE_ABOUT,
-  CHAT_SPACES,
-} from "./chat-data";
 import "./chat-shell.css";
 
 type InfoTab = "about" | "members" | "files" | "pinned";
@@ -67,9 +63,12 @@ const QUICK_REACTIONS = ["👍", "🎉", "🙏", "👀", "✅"] as const;
 
 export function ChatShell() {
   const queryClient = useQueryClient();
-  const [activeRoomId, setActiveRoomId] = useState<string | undefined>(undefined);
-  const [threadId, setThreadId] = useState<string | null>(null);
-  const [infoTab, setInfoTab] = useState<InfoTab>("about");
+  const navigate = useNavigate();
+  const urlSearch: Partial<{ room: string; thread: string; tab: InfoTab }> =
+    useSearch({ strict: false });
+  const [activeRoomId, setActiveRoomId] = useState<string | undefined>(urlSearch.room);
+  const [threadId, setThreadId] = useState<string | null>(urlSearch.thread ?? null);
+  const [infoTab, setInfoTab] = useState<InfoTab>(urlSearch.tab ?? "about");
   const [search, setSearch] = useState("");
 
   const roomsQuery = useQuery(chatRoomListQueryOptions());
@@ -80,12 +79,27 @@ export function ChatShell() {
   const realtime = useChatRealtime({ roomId: activeRoomId });
   const selfActorId = realtime.selfActorId;
 
-  // Default the selection to the first room once the list resolves.
+  // Default the selection to the first room once the list resolves —
+  // unless the URL already pinned a room (deep link).
   useEffect(() => {
     if (activeRoomId === undefined && rooms.length > 0) {
       setActiveRoomId(rooms[0]?.id);
     }
   }, [activeRoomId, rooms]);
+
+  // URL sync — every chat state change pushes to the URL so deep links
+  // and the back button work. The URL is canonical; state mirrors it.
+  useEffect(() => {
+    void navigate({
+      to: "/chat",
+      search: {
+        ...(activeRoomId === undefined ? {} : { room: activeRoomId }),
+        ...(threadId === null ? {} : { thread: threadId }),
+        ...(infoTab === "about" ? {} : { tab: infoTab }),
+      },
+      replace: false,
+    });
+  }, [activeRoomId, threadId, infoTab]);
 
   const presence = useMemo(
     () => presenceMap(realtime.presence),
@@ -311,9 +325,9 @@ export function ChatShell() {
         <ChatSidebar
           loading={roomsQuery.isLoading}
           offline={offline}
-          spaces={offline && spaces.length === 0 ? offlineSpaces() : spaces}
-          directs={offline && directs.length === 0 ? offlineDirects() : directs}
-          activeRoomId={activeRoomId ?? (offline ? CHAT_SPACES[0]?.id : undefined)}
+          spaces={spaces}
+          directs={directs}
+          activeRoomId={activeRoomId}
           onSelect={(id) => {
             setActiveRoomId(id);
             setThreadId(null);
@@ -385,26 +399,6 @@ export function ChatShell() {
   );
 }
 
-/* Offline fallback — derives sidebar rows from the typed handoff seed. */
-function offlineSpaces() {
-  return CHAT_SPACES.map((s) => ({
-    id: s.id,
-    name: s.name,
-    kind: "chat_room" as const,
-    memberCount: CHAT_SPACE_ABOUT[s.id]?.memberCount ?? 0,
-    unread: s.unread,
-  }));
-}
-
-function offlineDirects() {
-  return CHAT_DIRECT_MESSAGES.map((d) => ({
-    id: d.id,
-    name: d.name,
-    presence: d.presence === "active" ? ("active" as const) : ("offline" as const),
-    unread: d.unread ?? 0,
-  }));
-}
-
 /* ----------------------------------------------------------------
    Spaces sidebar — 240px
    ---------------------------------------------------------------- */
@@ -441,7 +435,7 @@ function ChatSidebar({
   onSelect,
 }: ChatSidebarProps) {
   return (
-    <aside className="chat-sidebar" aria-label="Spaces and direct messages">
+    <aside className="surf-sidebar chat-sidebar" aria-label="Spaces and direct messages">
       <div className="chat-sidebar-section">
         <span>Spaces</span>
         <button
@@ -464,7 +458,7 @@ function ChatSidebar({
             <button
               key={s.id}
               type="button"
-              className="chat-nav-row"
+              className="surf-nav-row chat-nav-row"
               data-selected={selected}
               data-unread={s.unread > 0}
               aria-current={selected ? "true" : undefined}
@@ -504,7 +498,7 @@ function ChatSidebar({
             <button
               key={d.id}
               type="button"
-              className="chat-nav-row chat-nav-row-dm"
+              className="surf-nav-row chat-nav-row"
               data-selected={selected}
               data-unread={d.unread > 0}
               aria-current={selected ? "true" : undefined}
@@ -531,7 +525,7 @@ function ChatSidebar({
 
       {offline ? (
         <p className="chat-sidebar-state chat-sidebar-offline">
-          Offline — showing sample spaces.
+          Offline — chat rooms unavailable.
         </p>
       ) : null}
     </aside>

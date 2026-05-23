@@ -42,29 +42,27 @@ export function isBackendSlidesDeckId(value: string | undefined): value is strin
 }
 
 /**
- * List-page query sourced from `drive.list` filtered by `app:"slides"`.
- * Returns Drive entries mapped to `SlideDeck` view-model rows.
- * The editor (`slides.deck.get`) is unaffected — this replaces only the list query.
+ * List-page query sourced from `drive.list`.
+ *
+ * Returns rows for anything presentation-shaped the user can see:
+ *  - native Helix slide decks (drive entries with `app="slides"`)
+ *  - uploaded PPTX files (`application/vnd.openxmlformats-officedocument.presentationml.presentation`)
+ *
+ * The editor (`slides.deck.get`) is unaffected — this only powers the list page.
  */
 export function slidesListFromDriveQueryOptions(input: { readonly limit?: number } = {}) {
   return queryOptions({
     queryKey: ["slides", "list-from-drive", input.limit ?? 100] as const,
     queryFn: async (): Promise<readonly SlideDeck[]> => {
-      const entries = await listDrive({
-        folderId: null,
-        app: "slides",
-        limit: input.limit ?? 100,
-      });
+      const entries = await listDrive({ folderId: null, limit: input.limit ?? 100 });
       return entries
-        .filter(
-          (entry) => entry.type === "file" && entry.app === "slides" && entry.deletedAt === null,
-        )
+        .filter((entry) => entry.type === "file" && entry.deletedAt === null && isPresentationLike(entry))
         .map(
           (entry): SlideDeck => ({
             id: entry.id,
             title:
               (entry.metadata?.title as string | undefined)?.trim() ||
-              entry.name.replace(/\.slide$/u, "").trim() ||
+              entry.name.replace(/\.(slide|pptx)$/iu, "").trim() ||
               "Untitled deck",
             owner: (entry.metadata?.ownerName as string | undefined) ?? "You",
             modified: formatModified(entry.updatedAt),
@@ -76,4 +74,14 @@ export function slidesListFromDriveQueryOptions(input: { readonly limit?: number
     },
     throwOnError: false,
   });
+}
+
+/** True when a drive entry should appear in the Slides list — a native
+ *  Helix deck OR an uploaded PPTX. */
+function isPresentationLike(entry: { readonly app?: string | null; readonly mimeType?: string; readonly name: string }): boolean {
+  if (entry.app === "slides") return true;
+  const mime = entry.mimeType ?? "";
+  if (mime.includes("presentationml") || mime === "application/vnd.ms-powerpoint") return true;
+  const name = entry.name.toLowerCase();
+  return name.endsWith(".pptx") || name.endsWith(".ppt");
 }

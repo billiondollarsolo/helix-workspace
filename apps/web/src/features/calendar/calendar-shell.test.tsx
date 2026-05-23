@@ -12,9 +12,9 @@ import type { CalendarApiEvent } from "./api";
   true;
 
 /** A backend event placed on Wednesday (day index 2) at 12:00–13:00 UTC. */
-function backendEvent(title: string): CalendarApiEvent {
+function backendEvent(title: string, id = "11111111-1111-4111-8111-111111111111"): CalendarApiEvent {
   return {
-    id: "11111111-1111-4111-8111-111111111111",
+    id,
     calendarId: "team",
     title,
     location: "Helix Meet",
@@ -67,7 +67,7 @@ describe("CalendarShell", () => {
     vi.stubGlobal("fetch", fetchMock);
   };
 
-  /** Simulate the calendar backend being unreachable — drives the seed fallback. */
+  /** Simulate the calendar backend being unreachable — drives the error banner. */
   const mockOffline = () => {
     fetchMock = vi.fn<typeof fetch>(() =>
       Promise.reject(new Error("network down")),
@@ -103,26 +103,25 @@ describe("CalendarShell", () => {
     expect(container.textContent).toContain("May 18 – 24, 2026");
   });
 
-  it("falls back to the typed seed events when the backend is offline", async () => {
+  it("surfaces an unavailable banner when the backend is offline", async () => {
     mockOffline();
     render();
     await flush();
 
-    expect(container.textContent).toContain("Eng standup");
-    expect(container.textContent).toContain("Helix all-hands");
-    expect(container.textContent).toContain("offline sample events");
+    expect(container.textContent).toContain("Calendar events unavailable");
+    // No fabricated rows leak through.
+    expect(container.textContent).not.toContain("Eng standup");
   });
 
-  it("renders the sidebar mini-month and calendar checklists", async () => {
+  it("renders the sidebar mini-month and surfaces an unavailable banner offline", async () => {
     mockOffline();
     render();
     await flush();
 
-    expect(container.textContent).toContain("May 2026");
-    expect(container.textContent).toContain("My calendars");
-    expect(container.textContent).toContain("Team");
+    expect(container.textContent).toContain("Calendars unavailable");
+    // No fake calendar checklist rows render when the API is unreachable.
     const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-    expect(checkboxes.length).toBe(6);
+    expect(checkboxes.length).toBe(0);
   });
 
   it("maps a backend event onto the week grid", async () => {
@@ -131,12 +130,14 @@ describe("CalendarShell", () => {
     await flush();
 
     expect(container.textContent).toContain("Backend planning");
-    // The seed events are replaced once the backend returns data.
-    expect(container.textContent).not.toContain("Eng standup");
   });
 
   it("filters events by the search query", async () => {
-    mockOffline();
+    const events = [
+      backendEvent("Eng standup", "11111111-1111-4111-8111-111111111111"),
+      backendEvent("Helix all-hands", "22222222-2222-4222-8222-222222222222"),
+    ];
+    mockEvents(events);
     render({ ...defaultCalendarRouteState, query: "standup" });
     await flush();
 
@@ -145,7 +146,8 @@ describe("CalendarShell", () => {
   });
 
   it("opens the event popover when an event card is clicked", async () => {
-    mockOffline();
+    const event = backendEvent("Eng standup");
+    mockEvents([event]);
     let state: CalendarRouteState = defaultCalendarRouteState;
     render(state, (next) => {
       state = next;
@@ -156,10 +158,14 @@ describe("CalendarShell", () => {
       node.textContent?.includes("Eng standup"),
     );
     expect(card).toBeDefined();
+    // Backend events select on mousedown+mouseup (no drag), not plain click.
     act(() => {
-      (card as HTMLButtonElement).click();
+      (card as HTMLButtonElement).dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, clientX: 0, clientY: 0 }),
+      );
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 0, clientY: 0 }));
     });
-    expect(state.eventId).toBe("seed-eng-standup");
+    expect(state.eventId).toBe(event.id);
 
     // Re-render with the selected event so the popover mounts.
     render(state, (next) => {
@@ -169,12 +175,12 @@ describe("CalendarShell", () => {
     const popover = document.querySelector("[data-calendar-popover]");
     expect(popover).not.toBeNull();
     expect(popover?.textContent).toContain("attendees");
-    expect(popover?.textContent).toContain("Alex Park (you)");
   });
 
   it("closes the popover when Escape is pressed", async () => {
-    mockOffline();
-    let state: CalendarRouteState = { ...defaultCalendarRouteState, eventId: "seed-eng-standup" };
+    const event = backendEvent("Eng standup");
+    mockEvents([event]);
+    let state: CalendarRouteState = { ...defaultCalendarRouteState, eventId: event.id };
     render(state, (next) => {
       state = next;
     });

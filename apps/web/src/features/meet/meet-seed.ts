@@ -1,7 +1,11 @@
-/* Meet seed data — typed port of the design handoff Meet prototype data
-   (app-sheets-meet-chat.jsx → SCHEDULED_MEETINGS, RECENT_MEETINGS,
-   PARTICIPANTS). Used ONLY as an offline fallback for the Meet hub and in-call
-   view when the `meet.meetings.list` tool is unreachable. */
+/* Meet — view-model types and backend → UI mappers.
+ *
+ * The seed `SCHEDULED_MEETINGS / RECENT_MEETINGS / CALL_PARTICIPANTS /
+ * CALL_MESSAGES / ACTIVE_CALL` arrays that lived here have been removed.
+ * The Hub and in-call views now render only live data from `meet.meetings.list`
+ * / `meet.mint-token`; on error they surface a "Meetings unavailable" state
+ * rather than fabricated rows. What remains are the view-model row types and
+ * the mappers from the real `MeetMeetingRecord` shape onto those types. */
 
 import type { MeetMeetingRecord } from "./api";
 
@@ -59,109 +63,9 @@ export interface MeetCallMessage {
   readonly text: string;
 }
 
-export const SCHEDULED_MEETINGS: readonly ScheduledMeeting[] = [
-  {
-    id: "m1",
-    title: "Q3 Roadmap working session",
-    time: "10:00 AM",
-    duration: "1h 30m",
-    host: "Mira Okafor",
-    attendees: 5,
-    code: "qfk-uvtn-pxs",
-    inProgress: true,
-  },
-  {
-    id: "m2",
-    title: "1:1 with Jonas",
-    time: "11:00 AM",
-    duration: "30m",
-    host: "Jonas Reichert",
-    attendees: 2,
-    code: "rmd-azxc-vbn",
-    soon: true,
-  },
-  {
-    id: "m3",
-    title: "Caroline Reyes / Atlas",
-    time: "2:00 PM",
-    duration: "30m",
-    host: "Rumi Tanaka",
-    attendees: 2,
-    code: "tyu-iopl-kjh",
-  },
-  {
-    id: "m4",
-    title: "Postmortem — auth 05/15",
-    time: "3:30 PM",
-    duration: "1h 30m",
-    host: "Daniel Cho",
-    attendees: 6,
-    code: "wsx-edcr-fvg",
-  },
-];
-
-export const RECENT_MEETINGS: readonly RecentMeeting[] = [
-  {
-    id: "r1",
-    title: "Eng standup",
-    date: "Today, 9:00 AM",
-    duration: "27m",
-    attendees: 8,
-    recorded: true,
-  },
-  {
-    id: "r2",
-    title: "Design review — onboarding",
-    date: "Yesterday, 2:00 PM",
-    duration: "1h 12m",
-    attendees: 5,
-    recorded: true,
-  },
-  {
-    id: "r3",
-    title: "Atlas renewal call",
-    date: "Monday, 11:00 AM",
-    duration: "42m",
-    attendees: 4,
-    recorded: false,
-  },
-];
-
-export const CALL_PARTICIPANTS: readonly MeetCallParticipant[] = [
-  { id: "p1", name: "Alex Park", you: true, muted: false, video: true, speaking: false },
-  { id: "p2", name: "Mira Okafor", muted: false, video: true, speaking: true },
-  { id: "p3", name: "Jonas Reichert", muted: true, video: true, speaking: false },
-  { id: "p4", name: "Priya Anand", muted: false, video: false, speaking: false },
-  { id: "p5", name: "Daniel Cho", muted: true, video: true, speaking: false },
-  { id: "p6", name: "Sasha Levin", muted: false, video: false, speaking: false, hand: true },
-];
-
-export const CALL_MESSAGES: readonly MeetCallMessage[] = [
-  {
-    id: "c1",
-    name: "Mira Okafor",
-    time: "32:01",
-    text: "Quick note — I'll cover Atlas first, then we'll discuss hiring.",
-  },
-  { id: "c2", name: "Jonas Reichert", time: "32:08", text: "Sharing my screen in 2 min" },
-  {
-    id: "c3",
-    name: "Priya Anand",
-    time: "32:12",
-    text: "+1 to starting with Atlas. I have a hard stop at 12.",
-  },
-];
-
-/** The default meeting the in-call view represents (offline fallback). */
-export const ACTIVE_CALL = {
-  title: "Q3 Roadmap working session",
-  code: "qfk-uvtn-pxs",
-} as const;
-
 /* ------------------------------------------------------------------ */
 /* Backend → UI mappers. The hub renders these projections of the real
-   `meet.meetings.list` tool output; seed constants above are the
-   offline fallback only.                                             */
+   `meet.meetings.list` tool output.                                  */
 /* ------------------------------------------------------------------ */
 
 const HOUR_MS = 60 * 60 * 1000;

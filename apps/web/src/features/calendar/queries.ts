@@ -25,27 +25,52 @@ export interface CalendarRouteState {
   readonly query: string;
 }
 
-export const defaultCalendarFindTimeInput = {
-  attendeeEmails: ["sam@helix.test", "elena@helix.test", "jon@helix.test"],
-  windowStartsAt: "2026-05-21T13:00:00.000Z",
-  windowEndsAt: "2026-05-25T22:00:00.000Z",
+/** Compute the Monday of the current week (ISO yyyy-mm-dd). */
+function currentWeekStartIso(): string {
+  const today = new Date();
+  const dow = today.getDay(); // Sun=0..Sat=6
+  const mondayOffset = dow === 0 ? -6 : 1 - dow;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + mondayOffset);
+  return monday.toISOString().slice(0, 10);
+}
+
+/** Compute the Sunday of the current week (ISO yyyy-mm-dd). */
+function currentWeekEndIso(): string {
+  const today = new Date();
+  const dow = today.getDay();
+  const sundayOffset = dow === 0 ? 0 : 7 - dow;
+  const sunday = new Date(today);
+  sunday.setDate(today.getDate() + sundayOffset);
+  return sunday.toISOString().slice(0, 10);
+}
+
+/** Today as an ISO yyyy-mm-dd string. */
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export const defaultCalendarFindTimeInput: CalendarFindTimeInput = {
+  attendeeEmails: [],
+  windowStartsAt: `${todayIso()}T13:00:00.000Z`,
+  windowEndsAt: `${currentWeekEndIso()}T22:00:00.000Z`,
   durationMinutes: 30,
   stepMinutes: 30,
   limit: 3,
-} as const satisfies CalendarFindTimeInput;
+};
 
-export const defaultCalendarEventsInput = {
-  startsAt: "2026-05-18T00:00:00.000Z",
-  endsAt: "2026-05-31T23:59:59.999Z",
+export const defaultCalendarEventsInput: CalendarListEventsInput = {
+  startsAt: `${currentWeekStartIso()}T00:00:00.000Z`,
+  endsAt: `${currentWeekEndIso()}T23:59:59.999Z`,
   limit: 100,
-} as const satisfies CalendarListEventsInput;
+};
 
-export const defaultCalendarRouteState = {
+export const defaultCalendarRouteState: CalendarRouteState = {
   eventId: "",
-  date: "2026-05-20",
+  date: todayIso(),
   view: "week",
   query: "",
-} as const satisfies CalendarRouteState;
+};
 
 export const calendarQueryKeys = {
   /** Stable prefix for invalidating every events window query at once. */

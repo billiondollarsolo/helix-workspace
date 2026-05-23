@@ -46,13 +46,14 @@ export function driveSuggestionsQueryOptions() {
 }
 
 /** Drive listing scopes that drive the left sidebar. */
-export type DriveScope = "my" | "shared" | "recent" | "starred" | "trash";
+export type DriveScope = "my" | "shared" | "recent" | "starred" | "recordings" | "trash";
 
 export const DRIVE_SCOPE_IDS: readonly DriveScope[] = [
   "my",
   "shared",
   "recent",
   "starred",
+  "recordings",
   "trash",
 ];
 
@@ -197,6 +198,17 @@ export function applyDriveScope(
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .slice(0, 50);
     case "my":
+      // "My Drive" should mean files I own — not "everything I have any
+      // visibility on". Files I only have a viewer/editor grant on
+      // belong under "Shared with me". Folders are always included
+      // since they're the navigation scaffolding for the current view.
+      return live.filter(
+        (entry) =>
+          entry.type === "folder" ||
+          currentActorId === null ||
+          entry.ownerActorId === null ||
+          entry.ownerActorId === currentActorId,
+      );
     default:
       return live;
   }
@@ -243,6 +255,20 @@ export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriv
           entries: await listDrive({
             folderId: input.folderId ?? null,
             includeTrashed: scope === "trash",
+            limit: input.limit ?? 100,
+          }),
+        };
+      }
+
+      // Recordings are stored as `kind='recording'` objects, not files, so
+      // drive.search won't find them — go straight to drive.list with the
+      // kind filter so the user sees the meeting recordings they can play.
+      if (scope === "recordings") {
+        return {
+          mode: "list",
+          entries: await listDrive({
+            folderId: null,
+            kind: "recording",
             limit: input.limit ?? 100,
           }),
         };

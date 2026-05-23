@@ -59,42 +59,6 @@ export function slideFromApi(slide: SlidesApiSlide): Slide {
   return contentToSlide(slide.id, slide.content);
 }
 
-/**
- * Merge live backend decks over the seed list, de-duplicating by id. Backend
- * rows come first (newest-updated); seed rows are kept only as an offline
- * fallback and dropped once any backend row shares their id.
- */
-export function mergeBackendDecks(
-  seed: readonly SlideDeck[],
-  backend: readonly SlidesApiDeck[] | undefined,
-): readonly SlideDeck[] {
-  if (backend === undefined) {
-    return seed.map((deck) => ({ ...deck, source: "seed" as const }));
-  }
-  const backendRows = backend.map(deckFromApi);
-  const backendIds = new Set(backendRows.map((row) => row.id));
-  const seedRows = seed
-    .filter((deck) => !backendIds.has(deck.id))
-    .map((deck) => ({ ...deck, source: "seed" as const }));
-  return [...backendRows, ...seedRows];
-}
-
-/**
- * Merge Drive-sourced `SlideDeck` rows over the seed list, de-duplicating by
- * id. Used by `SlidesList` when `slidesListFromDriveQueryOptions` succeeds.
- */
-export function mergeDriveDecks(
-  seed: readonly SlideDeck[],
-  driveRows: readonly SlideDeck[] | undefined,
-): readonly SlideDeck[] {
-  const seedRows = seed.map((deck) => ({ ...deck, source: "seed" as const }));
-  if (driveRows === undefined || driveRows.length === 0) {
-    return seedRows;
-  }
-  const driveIds = new Set(driveRows.map((row) => row.id));
-  return [...driveRows, ...seedRows.filter((deck) => !driveIds.has(deck.id))];
-}
-
 function ownerLabelFromMetadata(metadata: Record<string, unknown>): string {
   const owner = metadata["ownerName"];
   return typeof owner === "string" && owner.length > 0 ? owner : "You";

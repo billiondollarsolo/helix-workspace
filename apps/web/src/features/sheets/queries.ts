@@ -38,25 +38,28 @@ export function sheetTabQueryOptions(tabId: string | null) {
 }
 
 /**
- * List-page query sourced from `drive.list` filtered by `app:"sheets"`.
- * Returns Drive entries mapped to `SheetListRow` view-model rows.
- * The editor (`sheets.get`) is unaffected — this replaces only the list query.
+ * List-page query sourced from `drive.list`.
+ *
+ * Returns rows for anything spreadsheet-shaped the user can see:
+ *  - native Helix sheets (drive entries with `app="sheets"`)
+ *  - uploaded XLSX files (`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`)
+ *  - uploaded CSV files
+ *
+ * The editor (`sheets.get`) is unaffected — this only powers the list page.
  */
 export function sheetsListFromDriveQueryOptions(input: { readonly limit?: number } = {}) {
   return queryOptions({
     queryKey: ["sheets", "list-from-drive", input.limit ?? 100] as const,
     queryFn: async (): Promise<readonly SheetListRow[]> => {
-      const entries = await listDrive({ folderId: null, app: "sheets", limit: input.limit ?? 100 });
+      const entries = await listDrive({ folderId: null, limit: input.limit ?? 100 });
       return entries
-        .filter(
-          (entry) => entry.type === "file" && entry.app === "sheets" && entry.deletedAt === null,
-        )
+        .filter((entry) => entry.type === "file" && entry.deletedAt === null && isSpreadsheetLike(entry))
         .map(
           (entry): SheetListRow => ({
             id: entry.id,
             title:
               (entry.metadata?.title as string | undefined)?.trim() ||
-              entry.name.replace(/\.sheet$/u, "").trim() ||
+              entry.name.replace(/\.(sheet|xlsx|csv)$/iu, "").trim() ||
               "Untitled spreadsheet",
             owner: (entry.metadata?.ownerName as string | undefined) ?? "You",
             modified: formatModified(entry.updatedAt),
@@ -67,4 +70,14 @@ export function sheetsListFromDriveQueryOptions(input: { readonly limit?: number
     },
     throwOnError: false,
   });
+}
+
+/** True when a drive entry should appear in the Sheets list — a native
+ *  Helix sheet OR a raw spreadsheet upload (XLSX, CSV). */
+function isSpreadsheetLike(entry: { readonly app?: string | null; readonly mimeType?: string; readonly name: string }): boolean {
+  if (entry.app === "sheets") return true;
+  const mime = entry.mimeType ?? "";
+  if (mime.includes("spreadsheetml") || mime.startsWith("text/csv")) return true;
+  const name = entry.name.toLowerCase();
+  return name.endsWith(".xlsx") || name.endsWith(".xls") || name.endsWith(".csv");
 }

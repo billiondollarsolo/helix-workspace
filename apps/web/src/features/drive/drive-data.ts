@@ -1,8 +1,6 @@
-/* Drive seed data + mapping helpers.
-   Ports the design handoff DRIVE_FOLDERS / DRIVE_FILES seed as typed values
-   and adapts backend DriveApiEntry rows into the view model the Drive shell
-   renders. The seed is used as an offline fallback when the backend
-   suggestions query yields nothing. */
+/* Drive — view-model types, file-type icon metadata, and mapping helpers
+   from the backend `DriveApiEntry` shape onto the rows the shell renders.
+   No fabricated seed data lives here. */
 
 import type { DriveApiEntry } from "./api";
 
@@ -26,6 +24,8 @@ export interface DriveFileItem {
   readonly size: string;
   /** Editor app that owns this file: "docs" | "sheets" | "slides" | null (plain upload). */
   readonly app: string | null;
+  /** Short uppercase format label for the per-row chip (e.g. "DOCX", "PDF", "MD"). */
+  readonly formatLabel: string;
 }
 
 /** Type-colored icon metadata, keyed by file type. */
@@ -40,110 +40,6 @@ export const DRIVE_FILE_META: Record<
   video: { icon: "Video", color: "#0891b2" },
   folder: { icon: "Folder", color: "#7c3aed" },
 };
-
-/** Seed folders ported from the handoff DRIVE_FOLDERS. */
-export const DRIVE_FOLDERS_SEED: readonly DriveFolderItem[] = [
-  { id: "seed-folder-product", name: "Product", itemCount: 42 },
-  { id: "seed-folder-engineering", name: "Engineering", itemCount: 128 },
-  { id: "seed-folder-design", name: "Design", itemCount: 86 },
-  { id: "seed-folder-sales", name: "Sales", itemCount: 24 },
-  { id: "seed-folder-operations", name: "Operations", itemCount: 36 },
-];
-
-/** Seed files ported from the handoff DRIVE_FILES. */
-export const DRIVE_FILES_SEED: readonly DriveFileItem[] = [
-  {
-    id: "seed-file-q3-roadmap",
-    name: "Q3 Roadmap — final draft",
-    type: "doc",
-    owner: "Mira Okafor",
-    modified: "10 min ago",
-    size: "—",
-    app: null,
-  },
-  {
-    id: "seed-file-q3-forecast",
-    name: "Q3-Forecast.xlsx",
-    type: "sheet",
-    owner: "Naveen Iyer",
-    modified: "1 hour ago",
-    size: "184 KB",
-    app: null,
-  },
-  {
-    id: "seed-file-brand-mark",
-    name: "Helix-brand-mark.fig",
-    type: "design",
-    owner: "Priya Anand",
-    modified: "2 hours ago",
-    size: "12.4 MB",
-    app: null,
-  },
-  {
-    id: "seed-file-atlas-deck",
-    name: "Atlas-renewal-deck.pdf",
-    type: "pdf",
-    owner: "Rumi Tanaka",
-    modified: "Yesterday",
-    size: "4.1 MB",
-    app: null,
-  },
-  {
-    id: "seed-file-onboarding-mocks",
-    name: "Onboarding-mocks-v3.fig",
-    type: "design",
-    owner: "Priya Anand",
-    modified: "Yesterday",
-    size: "8.9 MB",
-    app: null,
-  },
-  {
-    id: "seed-file-onsite-recording",
-    name: "Engineering-onsite-recording.mp4",
-    type: "video",
-    owner: "Daniel Cho",
-    modified: "Monday",
-    size: "1.2 GB",
-    app: null,
-  },
-  {
-    id: "seed-file-eu-dpa",
-    name: "EU-DPA-template.docx",
-    type: "doc",
-    owner: "Iris Lambert",
-    modified: "Last week",
-    size: "92 KB",
-    app: null,
-  },
-  {
-    id: "seed-file-brand-photography",
-    name: "Brand-photography-2026",
-    type: "folder",
-    owner: "Owen Hart",
-    modified: "Last week",
-    size: "—",
-    app: null,
-  },
-  {
-    id: "seed-file-salary-bands",
-    name: "Salary-bands-FY26.xlsx",
-    type: "sheet",
-    owner: "Sasha Levin",
-    modified: "Last week",
-    size: "76 KB",
-    app: null,
-  },
-];
-
-/** People shown in the details panel "Shared with" stack. */
-export const DRIVE_SHARED_WITH: readonly string[] = ["Mira Okafor", "Jonas Reichert", "Priya Anand"];
-
-/** Storage meter copy + fill, ported from the handoff. */
-export const DRIVE_STORAGE = {
-  /** Fraction of quota used, 0–1. */
-  fraction: 0.48,
-  label: "2.4 TB of 5 TB used",
-} as const;
 
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
 
@@ -197,6 +93,69 @@ const MIME_TYPE_MAP: ReadonlyArray<readonly [RegExp, DriveFileType]> = [
   [/word|document|text|markdown|presentation/i, "doc"],
 ];
 
+/** Extract the trailing extension from a filename. Returns the segment after
+ *  the final dot, lowercased, or null when there is no useful extension. */
+function extensionFromName(name: string): string | null {
+  const dot = name.lastIndexOf(".");
+  if (dot < 0 || dot === name.length - 1) {
+    return null;
+  }
+  const ext = name.slice(dot + 1).toLowerCase();
+  if (ext.length === 0 || ext.length > 6 || !/^[a-z0-9]+$/i.test(ext)) {
+    return null;
+  }
+  return ext;
+}
+
+const MIME_TO_LABEL: ReadonlyArray<readonly [RegExp, string]> = [
+  [/application\/pdf/i, "PDF"],
+  [/officedocument\.spreadsheetml/i, "XLSX"],
+  [/officedocument\.wordprocessingml/i, "DOCX"],
+  [/officedocument\.presentationml/i, "PPTX"],
+  [/csv/i, "CSV"],
+  [/markdown/i, "MD"],
+  [/json/i, "JSON"],
+  [/zip|x-zip-compressed/i, "ZIP"],
+  [/jpeg|jpg/i, "JPG"],
+  [/png/i, "PNG"],
+  [/gif/i, "GIF"],
+  [/svg/i, "SVG"],
+  [/mp4|quicktime/i, "VIDEO"],
+  [/text\/plain/i, "TXT"],
+  [/vnd\.helix\.document/i, "DOC"],
+  [/vnd\.helix\.spreadsheet/i, "SHEET"],
+  [/vnd\.helix\.presentation/i, "SLIDES"],
+];
+
+/** Compute the per-row chip label (e.g. "DOCX") from the entry's metadata.
+ *  Prefers `metadata.originalFormat` (the format the file was *imported* from)
+ *  when present, falls back to the filename extension, then mime type, then
+ *  the app key, then a generic "FILE". Always uppercase, max 6 chars. */
+export function formatLabelFromEntry(entry: DriveApiEntry): string {
+  if (entry.type === "folder") {
+    return "";
+  }
+  const meta = entry.metadata ?? {};
+  const original = typeof meta.originalFormat === "string" ? meta.originalFormat : null;
+  if (original && original.length > 0) {
+    return original.toUpperCase().slice(0, 6);
+  }
+  const fromName = extensionFromName(entry.name);
+  if (fromName !== null && fromName !== "helixdoc" && fromName !== "helixsheet" && fromName !== "helixdeck") {
+    return fromName.toUpperCase();
+  }
+  const mime = entry.mimeType ?? "";
+  for (const [pattern, label] of MIME_TO_LABEL) {
+    if (pattern.test(mime)) {
+      return label;
+    }
+  }
+  if (entry.app === "docs") return "DOC";
+  if (entry.app === "sheets") return "SHEET";
+  if (entry.app === "slides") return "SLIDES";
+  return "FILE";
+}
+
 /** Infer a file type category from a backend entry. */
 export function fileTypeFromEntry(entry: DriveApiEntry): DriveFileType {
   if (entry.type === "folder") {
@@ -230,5 +189,6 @@ export function fileItemFromEntry(entry: DriveApiEntry): DriveFileItem {
     modified: formatModified(entry.updatedAt),
     size: formatByteSize(entry.byteSize),
     app: entry.app ?? null,
+    formatLabel: formatLabelFromEntry(entry),
   };
 }

@@ -161,13 +161,56 @@ services:
       RUSTFS_CONSOLE_ENABLE: "true"
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-helixrustfs}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-helix_rustfs_dev_secret}
-      RUSTFS_SERVER_DOMAINS: ${RUSTFS_SERVER_DOMAINS:-localhost,rustfs}
+      # Include the host:port forms — path-style requests from the host
+      # (helix dev server on the host hits http://localhost:28437) carry
+      # `Host: localhost:28437`, and without this RustFS tries to parse
+      # the port-suffixed host as a bucket name and returns
+      # InvalidBucketName.
+      RUSTFS_SERVER_DOMAINS: ${RUSTFS_SERVER_DOMAINS:-localhost,rustfs,localhost:28437,localhost:9000,rustfs:9000}
     ports:
       - "${RUSTFS_API_PORT:-28437}:9000"
       - "${RUSTFS_CONSOLE_PORT:-28438}:9001"
     volumes:
       - rustfs-data:/data
     restart: unless-stopped
+
+  # OnlyOffice Document Server — provides native DOCX/XLSX/PPTX editing in
+  # an iframe with real-time co-authoring. Speaks an iframe + JWT contract
+  # documented at api.onlyoffice.com. Helix integrates by:
+  #   1. /api/onlyoffice/config/:objectId returns a signed iframe config
+  #   2. DS fetches the file via /api/onlyoffice/file/:token (JWT-validated)
+  #   3. DS POSTs save events to /api/onlyoffice/callback/:token
+  # Helix is the system of record; DS never reaches into Helix's DB.
+  # Image is the official AGPL build from github.com/ONLYOFFICE/DocumentServer.
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    environment:
+      # Always require JWT — denies anonymous/unauth'd iframe configs.
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-helix_onlyoffice_dev_secret_change_me}
+      JWT_HEADER: Authorization
+      # Lets us pass the JWT in the request body too, which simplifies the
+      # callback flow where DS POSTs JSON to Helix and we co-locate the
+      # signing token in the same envelope.
+      JWT_IN_BODY: "true"
+      # Console flood prevention — DS is chatty at info level.
+      WOPI_ENABLED: "false"
+    ports:
+      - "${ONLYOFFICE_PORT:-28430}:80"
+    volumes:
+      - onlyoffice-data:/var/www/onlyoffice/Data
+      - onlyoffice-log:/var/log/onlyoffice
+      - onlyoffice-lib:/var/lib/onlyoffice
+    restart: unless-stopped
+    # DS takes ~30s on first boot to bring up its bundled
+    # PostgreSQL/Redis/RabbitMQ. Healthcheck guards against the
+    # api-server connecting before DS is ready to sign requests.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:80/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   cerbos:
     image: ghcr.io/cerbos/cerbos:latest
@@ -269,6 +312,9 @@ services:
       ENABLE_GUESTS: "0"
       ENABLE_XMPP_WEBSOCKET: "1"
       AUTH_TYPE: jwt
+      # Show the in-call "Start recording" button. Without this jitsi-meet
+      # hides the recording menu items even if Jibri is up.
+      ENABLE_RECORDING: "1"
       PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
       TZ: ${TZ:-UTC}
       XMPP_SERVER: jitsi-prosody
@@ -301,6 +347,16 @@ services:
       ENABLE_AUTH: "1"
       ENABLE_GUESTS: "0"
       ENABLE_XMPP_WEBSOCKET: "1"
+      # Provision the recorder.meet.jitsi virtual host + the jibri/recorder
+      # XMPP users that Jibri authenticates as. Required for the recording
+      # to begin at all; absent these, jicofo never finds a Jibri instance.
+      ENABLE_RECORDING: "1"
+      JIBRI_XMPP_USER: ${JIBRI_XMPP_USER:-jibri}
+      JIBRI_XMPP_PASSWORD: ${JIBRI_XMPP_PASSWORD:-helix_dev_jibri_xmpp_password_change_me}
+      JIBRI_BREWERY_MUC: ${JIBRI_BREWERY_MUC:-jibribrewery}
+      JIBRI_RECORDER_USER: ${JIBRI_RECORDER_USER:-recorder}
+      JIBRI_RECORDER_PASSWORD: ${JIBRI_RECORDER_PASSWORD:-helix_dev_jibri_recorder_password_change_me}
+      XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
       PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
       TZ: ${TZ:-UTC}
       XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
@@ -336,6 +392,13 @@ services:
       JICOFO_AUTH_USER: focus
       JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-helix_dev_jicofo_auth_password_change_me}
       JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-helix_dev_jicofo_component_secret_change_me}
+      # Tell jicofo to discover Jibri instances via the recording brewery
+      # MUC. Jibri joins that MUC on startup; jicofo dispatches recording
+      # start/stop IQ messages to whichever Jibri presence is available.
+      ENABLE_RECORDING: "1"
+      JIBRI_BREWERY_MUC: ${JIBRI_BREWERY_MUC:-jibribrewery}
+      JIBRI_PENDING_TIMEOUT: "90"
+      XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
     volumes:
       - ./infra/meet/config/jicofo:/config
     depends_on:
@@ -363,6 +426,64 @@ services:
     depends_on:
       - jitsi-prosody
     restart: unless-stopped
+
+  # ----------------------------------------------------------------------
+  # Jibri — meeting recorder. Joins each meeting as a hidden XMPP client,
+  # opens the conference URL in headless Chrome, captures audio via ALSA
+  # snd-aloop + X11 screen, encodes via ffmpeg, runs finalize.sh on stop.
+  #
+  # IMPORTANT: snd-aloop is a Linux kernel module that must be loaded on
+  # the HOST. On Docker-for-Mac this is impractical (the Linux VM kernel
+  # is not user-modifiable) so Jibri will start but fail to record. For
+  # Mac dev validation, use the `meet-mock-recorder` service below — it
+  # simulates the Jibri webhook contract end-to-end. In Linux prod, make
+  # sure `modprobe snd-aloop` succeeds on the host before bringing this
+  # up.
+  jitsi-jibri:
+    image: jitsi/jibri:stable
+    profiles: ["meet", "recording"]
+    environment:
+      TZ: ${TZ:-UTC}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
+      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
+      XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
+      JIBRI_XMPP_USER: ${JIBRI_XMPP_USER:-jibri}
+      JIBRI_XMPP_PASSWORD: ${JIBRI_XMPP_PASSWORD:-helix_dev_jibri_xmpp_password_change_me}
+      JIBRI_BREWERY_MUC: ${JIBRI_BREWERY_MUC:-jibribrewery}
+      JIBRI_RECORDER_USER: ${JIBRI_RECORDER_USER:-recorder}
+      JIBRI_RECORDER_PASSWORD: ${JIBRI_RECORDER_PASSWORD:-helix_dev_jibri_recorder_password_change_me}
+      JIBRI_RECORDING_DIR: /recordings
+      JIBRI_FINALIZE_RECORDING_SCRIPT_PATH: /jibri-finalize/finalize.sh
+      # finalize.sh reads these to upload to RustFS + notify helix
+      HELIX_INTERNAL_URL: ${HELIX_INTERNAL_URL:-http://helix:3000}
+      HELIX_JITSI_WEBHOOK_SECRET: ${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}
+      RUSTFS_ENDPOINT_INTERNAL: ${RUSTFS_ENDPOINT_INTERNAL:-http://rustfs:9000}
+      RUSTFS_BUCKET: ${RUSTFS_BUCKET:-helix-objects}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-helixrustfs}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-helix_rustfs_dev_secret}
+    volumes:
+      - ./infra/meet/config/jibri:/config
+      - ./infra/meet/finalize:/jibri-finalize:ro
+      - jibri-recordings:/recordings
+      # Required for Jibri's headless Chrome and X server
+      - /dev/shm:/dev/shm
+    shm_size: "2gb"
+    cap_add:
+      - SYS_ADMIN
+    depends_on:
+      - jitsi-prosody
+      - jitsi-jicofo
+      - rustfs
+      - helix
+    restart: unless-stopped
+
+  # Mock recorder lives as a helix admin tool (`meet.mock-record`) rather
+  # than a separate container, so the dev validation path exercises
+  # exactly the same /webhook/jitsi code Jibri's finalize.sh hits. See
+  # apps/helix/src/platform/meet/mock-recorder.ts.
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
@@ -436,6 +557,9 @@ volumes:
   nats-data:
   meili-data:
   rustfs-data:
+  onlyoffice-data:
+  onlyoffice-log:
+  onlyoffice-lib:
   caddy-data:
   caddy-config:
   prometheus-data:

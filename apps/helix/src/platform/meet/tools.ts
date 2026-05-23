@@ -73,6 +73,12 @@ export interface CreateMeetToolDefinitionsOptions {
   readonly jwtAudience?: string | undefined;
   readonly jwtSubject?: string | undefined;
   readonly publicBaseUrl?: string | undefined;
+  /** Full public origin (including port) where the Jitsi instance serves
+   *  the participant UI — e.g. `https://meet.localhost:28452` in dev,
+   *  `https://meet.acme.com` in prod. Used to build the joinUrl. When
+   *  unset, falls back to constructing `https://<jitsiDomain>/<room>`
+   *  without a port. */
+  readonly jitsiPublicUrl?: string | undefined;
 }
 
 export function createMeetToolDefinitions(
@@ -187,7 +193,7 @@ export function createMeetToolDefinitions(
           roomName: room.roomName,
           jitsiDomain: room.jitsiDomain,
           token: minted.token,
-          joinUrl: buildJoinUrl(room.jitsiDomain, room.roomName, minted.token),
+          joinUrl: buildJoinUrl(room.jitsiDomain, room.roomName, minted.token, options.jitsiPublicUrl),
           expiresAt: minted.expiresAt.toISOString(),
         };
       },
@@ -223,8 +229,19 @@ export function registerMeetTools(
   }
 }
 
-export function buildJoinUrl(jitsiDomain: string, roomName: string, token: string): string {
-  const url = new URL(`https://${jitsiDomain}/${encodeURIComponent(roomName)}`);
+export function buildJoinUrl(
+  jitsiDomain: string,
+  roomName: string,
+  token: string,
+  publicUrl?: string,
+): string {
+  // `publicUrl` (env: MEET_JITSI_PUBLIC_URL) is preferred — it carries
+  // the protocol + non-default port (e.g. `https://meet.localhost:28452`),
+  // which `jitsiDomain` alone doesn't. We append the room name to that
+  // origin. Without publicUrl, we fall back to `https://<domain>/<room>`,
+  // which drops the port and breaks dev where Jitsi runs on :28452.
+  const base = publicUrl !== undefined && publicUrl.length > 0 ? publicUrl : `https://${jitsiDomain}`;
+  const url = new URL(`${base.replace(/\/$/, "")}/${encodeURIComponent(roomName)}`);
   url.searchParams.set("jwt", token);
   return url.toString();
 }

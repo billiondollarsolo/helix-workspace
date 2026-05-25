@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
+import type { TenantStorageResolver } from "../storage/index.js";
 import { parseSlideContent } from "./content.js";
 import type {
   SlideContent,
@@ -72,6 +73,85 @@ export interface ReorderSlidesInput {
   readonly slideIds: readonly string[];
 }
 
+export interface SlideOperationLogRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly deckId: string;
+  readonly actorId: string | null;
+  readonly operationId: string;
+  readonly revision: number;
+  readonly baseRevision: number;
+  readonly operation: JsonObject;
+  readonly createdAt: Date;
+}
+
+export interface AppendSlideOperationInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly deckId: string;
+  readonly operationId: string;
+  readonly baseRevision: number;
+  readonly operation: JsonObject;
+}
+
+export type SlideSyncOperation =
+  | {
+      readonly kind: "update-deck";
+      readonly title?: string | undefined;
+      readonly metadata?: JsonObject | undefined;
+    }
+  | {
+      readonly kind: "create-slide";
+      readonly content: SlideContent;
+      readonly speakerNotes?: string | undefined;
+      readonly position?: number | undefined;
+    }
+  | {
+      readonly kind: "update-slide";
+      readonly slideId: string;
+      readonly content?: SlideContent | undefined;
+      readonly speakerNotes?: string | undefined;
+    }
+  | {
+      readonly kind: "delete-slide";
+      readonly slideId: string;
+    }
+  | {
+      readonly kind: "reorder-slides";
+      readonly slideIds: readonly string[];
+    };
+
+export interface ApplySlideOperationInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly deckId: string;
+  readonly operationId: string;
+  readonly baseRevision: number;
+  readonly operation: SlideSyncOperation;
+}
+
+export type ApplySlideOperationResult =
+  | {
+      readonly status: "applied";
+      readonly operationId: string;
+      readonly revision: number;
+      readonly operation: SlideSyncOperation;
+      readonly snapshot: {
+        readonly deck: SlideDeckSummaryRecord;
+        readonly slides: readonly SlideRecord[];
+      };
+    }
+  | {
+      readonly status: "duplicate";
+      readonly operationId: string;
+      readonly revision: number;
+    }
+  | {
+      readonly status: "ahead";
+      readonly operationId: string;
+      readonly revision: number;
+    };
+
 export interface SlidesStore {
   createDeck(input: CreateSlideDeckInput): Promise<SlideDeckSummaryRecord>;
   listDecksForActor(input: ListSlideDecksInput): Promise<ListSlideDecksResult>;
@@ -79,7 +159,10 @@ export interface SlidesStore {
     readonly orgId: string;
     readonly actorId: string;
     readonly deckId: string;
-  }): Promise<{ readonly deck: SlideDeckSummaryRecord; readonly slides: readonly SlideRecord[] } | null>;
+  }): Promise<{
+    readonly deck: SlideDeckSummaryRecord;
+    readonly slides: readonly SlideRecord[];
+  } | null>;
   updateDeck(input: UpdateSlideDeckInput): Promise<SlideDeckSummaryRecord | null>;
   deleteDeck(input: {
     readonly orgId: string;
@@ -90,6 +173,14 @@ export interface SlidesStore {
   updateSlide(input: UpdateSlideInput): Promise<SlideRecord | null>;
   deleteSlide(input: DeleteSlideInput): Promise<boolean>;
   reorderSlides(input: ReorderSlidesInput): Promise<readonly SlideRecord[]>;
+  listOperations(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly deckId: string;
+    readonly afterRevision?: number | undefined;
+  }): Promise<readonly SlideOperationLogRecord[]>;
+  appendOperation(input: AppendSlideOperationInput): Promise<SlideOperationLogRecord>;
+  applyOperation(input: ApplySlideOperationInput): Promise<ApplySlideOperationResult>;
 }
 
 interface SlideDeckRow {
@@ -120,6 +211,18 @@ interface SlideRow {
   readonly updated_at: Date;
 }
 
+interface SlideOperationLogRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly deck_id: string;
+  readonly actor_id: string | null;
+  readonly operation_id: string;
+  readonly revision: number;
+  readonly base_revision: number;
+  readonly operation: JsonObject;
+  readonly created_at: Date;
+}
+
 type SqlLike = postgres.Sql | postgres.TransactionSql;
 
 /**
@@ -129,7 +232,10 @@ type SqlLike = postgres.Sql | postgres.TransactionSql;
  * `outbox` so downstream consumers (search, webhooks) stay consistent.
  */
 export class PostgresSlidesStore implements SlidesStore {
-  constructor(private readonly sql: postgres.Sql) {}
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly options: { readonly storageResolver?: TenantStorageResolver | undefined } = {},
+  ) {}
 
   async createDeck(input: CreateSlideDeckInput): Promise<SlideDeckSummaryRecord> {
     return this.sql.begin(async (tx) => {
@@ -145,16 +251,43 @@ export class PostgresSlidesStore implements SlidesStore {
         returning *
       `) as unknown as readonly SlideDeckRow[];
       const deck = mapDeck(rows[0]);
+      const storageKey = `slides/${input.orgId}/${deck.id}`;
+      const storedSnapshot = await writeSlideDeckStorageSnapshot({
+        resolver: this.options.storageResolver,
+        orgId: input.orgId,
+        key: storageKey,
+        deck,
+      });
+      const versionSnapshot = await writeSlideDeckStorageSnapshot({
+        resolver: this.options.storageResolver,
+        orgId: input.orgId,
+        key: slideDeckSnapshotVersionStorageKey(input.orgId, deck.id, 1),
+        deck,
+      });
       await tx`
         insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
         values (
           ${deck.id}, ${input.orgId}, ${input.actorId}, 'file',
-          ${`slides/${input.orgId}/${deck.id}`},
-          'application/vnd.helix.presentation', 0, null,
+          ${storageKey},
+          'application/vnd.helix.presentation', ${storedSnapshot.byteSize}, ${storedSnapshot.sha256},
           ${tx.json(toSqlJson({ ...(input.metadata ?? {}), app: "slides", deckId: deck.id, name: input.title.trim(), title: input.title.trim(), folderId: input.folderId ?? null }))}
         )
-        on conflict (id) do update set metadata = excluded.metadata, updated_at = now()
+        on conflict (id) do update set
+          byte_size = excluded.byte_size,
+          sha256 = excluded.sha256,
+          metadata = excluded.metadata,
+          updated_at = now()
       `;
+      await insertSlideDeckSnapshotVersion(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        deckId: deck.id,
+        versionNumber: 1,
+        storageKey: slideDeckSnapshotVersionStorageKey(input.orgId, deck.id, 1),
+        byteSize: versionSnapshot.byteSize,
+        sha256: versionSnapshot.sha256,
+        metadata: { app: "slides", title: deck.title, slideCount: 0 },
+      });
       await grantObjectAccess(tx, {
         orgId: input.orgId,
         objectId: deck.id,
@@ -205,7 +338,10 @@ export class PostgresSlidesStore implements SlidesStore {
     readonly orgId: string;
     readonly actorId: string;
     readonly deckId: string;
-  }): Promise<{ readonly deck: SlideDeckSummaryRecord; readonly slides: readonly SlideRecord[] } | null> {
+  }): Promise<{
+    readonly deck: SlideDeckSummaryRecord;
+    readonly slides: readonly SlideRecord[];
+  } | null> {
     const deck = await selectDeckForActor(this.sql, input.orgId, input.actorId, input.deckId);
     if (deck === null) {
       return null;
@@ -254,6 +390,7 @@ export class PostgresSlidesStore implements SlidesStore {
       const countRows = (await tx`
         select count(*)::int as slide_count from slides where deck_id = ${input.deckId}
       `) as unknown as readonly { readonly slide_count: number }[];
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
       return { ...deck, slideCount: countRows[0]?.slide_count ?? 0 };
     });
   }
@@ -332,6 +469,7 @@ export class PostgresSlidesStore implements SlidesStore {
       `) as unknown as readonly SlideRow[];
       const slide = mapSlide(rows[0]);
       await touchDeck(tx, input.orgId, input.deckId);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
       await appendSlidesActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -367,6 +505,7 @@ export class PostgresSlidesStore implements SlidesStore {
       }
       const slide = mapSlide(rows[0]);
       await touchDeck(tx, input.orgId, slide.deckId);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, slide.deckId);
       await appendSlidesActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -394,6 +533,7 @@ export class PostgresSlidesStore implements SlidesStore {
         where deck_id = ${existing.deckId} and position > ${existing.position}
       `;
       await touchDeck(tx, input.orgId, existing.deckId);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, existing.deckId);
       await appendSlidesActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -413,10 +553,7 @@ export class PostgresSlidesStore implements SlidesStore {
       `) as unknown as readonly { readonly id: string }[];
       const currentIds = new Set(currentRows.map((row) => row.id));
       const requested = new Set(input.slideIds);
-      if (
-        currentIds.size !== requested.size ||
-        [...currentIds].some((id) => !requested.has(id))
-      ) {
+      if (currentIds.size !== requested.size || [...currentIds].some((id) => !requested.has(id))) {
         throw new Error("Reorder must list every slide in the deck exactly once.");
       }
 
@@ -442,6 +579,7 @@ export class PostgresSlidesStore implements SlidesStore {
         deckId: input.deckId,
         payload: { order: [...input.slideIds] },
       });
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
       const rows = (await tx`
         select *
         from slides
@@ -451,6 +589,418 @@ export class PostgresSlidesStore implements SlidesStore {
       return rows.map(mapSlide);
     });
   }
+
+  async listOperations(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly deckId: string;
+    readonly afterRevision?: number | undefined;
+  }): Promise<readonly SlideOperationLogRecord[]> {
+    const deck = await selectDeckForActor(this.sql, input.orgId, input.actorId, input.deckId);
+    if (deck === null) {
+      return [];
+    }
+    const rows = (await this.sql`
+      select *
+      from slides_op_log
+      where org_id = ${input.orgId}
+        and deck_id = ${input.deckId}
+        and revision > ${input.afterRevision ?? 0}
+      order by revision asc
+    `) as unknown as readonly SlideOperationLogRow[];
+    return rows.map(mapSlideOperationLog);
+  }
+
+  async appendOperation(input: AppendSlideOperationInput): Promise<SlideOperationLogRecord> {
+    return this.sql.begin(async (tx) => {
+      await requireDeckAccess(tx, input.orgId, input.actorId, input.deckId);
+      const existingRows = (await tx`
+        select *
+        from slides_op_log
+        where org_id = ${input.orgId}
+          and deck_id = ${input.deckId}
+          and operation_id = ${input.operationId}
+        limit 1
+      `) as unknown as readonly SlideOperationLogRow[];
+      if (existingRows[0] !== undefined) {
+        return mapSlideOperationLog(existingRows[0]);
+      }
+      const rows = (await tx`
+        insert into slides_op_log (
+          org_id, deck_id, actor_id, operation_id, revision, base_revision, operation
+        )
+        values (
+          ${input.orgId},
+          ${input.deckId},
+          ${input.actorId},
+          ${input.operationId},
+          (
+            select coalesce(max(revision) + 1, 1)::int
+            from slides_op_log
+            where org_id = ${input.orgId} and deck_id = ${input.deckId}
+          ),
+          ${input.baseRevision},
+          ${tx.json(toSqlJson(input.operation))}
+        )
+        returning *
+      `) as unknown as readonly SlideOperationLogRow[];
+      return mapSlideOperationLog(rows[0]);
+    });
+  }
+
+  async applyOperation(input: ApplySlideOperationInput): Promise<ApplySlideOperationResult> {
+    return this.sql.begin(async (tx) => {
+      await requireDeckAccessForUpdate(tx, input.orgId, input.actorId, input.deckId);
+      const existingRows = (await tx`
+        select *
+        from slides_op_log
+        where org_id = ${input.orgId}
+          and deck_id = ${input.deckId}
+          and operation_id = ${input.operationId}
+        limit 1
+      `) as unknown as readonly SlideOperationLogRow[];
+      if (existingRows[0] !== undefined) {
+        return {
+          status: "duplicate",
+          operationId: input.operationId,
+          revision: existingRows[0].revision,
+        };
+      }
+      const latestRows = (await tx`
+        select coalesce(max(revision), 0)::int as revision
+        from slides_op_log
+        where org_id = ${input.orgId} and deck_id = ${input.deckId}
+      `) as unknown as readonly { readonly revision: number }[];
+      const latestRevision = latestRows[0]?.revision ?? 0;
+      if (input.baseRevision > latestRevision) {
+        return { status: "ahead", operationId: input.operationId, revision: latestRevision };
+      }
+
+      await this.#applySyncOperation(tx, input);
+      const deck = await selectDeckForActor(tx, input.orgId, input.actorId, input.deckId);
+      if (deck === null) {
+        throw new Error(`Unknown or inaccessible presentation: ${input.deckId}`);
+      }
+      const slides = await selectSlidesForDeck(tx, input.orgId, input.deckId);
+      const revision = latestRevision + 1;
+      await tx`
+        insert into slides_op_log (
+          org_id, deck_id, actor_id, operation_id, revision, base_revision, operation
+        )
+        values (
+          ${input.orgId},
+          ${input.deckId},
+          ${input.actorId},
+          ${input.operationId},
+          ${revision},
+          ${input.baseRevision},
+          ${tx.json(toSqlJson(input.operation))}
+        )
+      `;
+      return {
+        status: "applied",
+        operationId: input.operationId,
+        revision,
+        operation: input.operation,
+        snapshot: { deck: { ...deck, slideCount: slides.length }, slides },
+      };
+    });
+  }
+
+  async #applySyncOperation(
+    tx: postgres.TransactionSql,
+    input: ApplySlideOperationInput,
+  ): Promise<void> {
+    switch (input.operation.kind) {
+      case "update-deck": {
+        const existing = await selectDeckForActor(tx, input.orgId, input.actorId, input.deckId);
+        if (existing === null) {
+          throw new Error(`Unknown or inaccessible presentation: ${input.deckId}`);
+        }
+        const nextTitle = input.operation.title ?? existing.title;
+        const nextMetadata = input.operation.metadata ?? existing.metadata;
+        await tx`
+          update slide_decks
+          set
+            title = ${nextTitle},
+            metadata = ${tx.json(toSqlJson(nextMetadata))},
+            updated_at = now()
+          where id = ${input.deckId}
+            and org_id = ${input.orgId}
+            and deleted_at is null
+        `;
+        await appendSlidesActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "slides.deck.updated",
+          deckId: input.deckId,
+          payload: { title: nextTitle },
+        });
+        await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
+        return;
+      }
+      case "create-slide": {
+        const countRows = (await tx`
+          select count(*)::int as slide_count from slides where deck_id = ${input.deckId}
+        `) as unknown as readonly { readonly slide_count: number }[];
+        const slideCount = countRows[0]?.slide_count ?? 0;
+        const targetPosition =
+          input.operation.position === undefined
+            ? slideCount
+            : Math.max(0, Math.min(input.operation.position, slideCount));
+        if (targetPosition < slideCount) {
+          await tx`
+            update slides
+            set position = -1 - position, updated_at = now()
+            where deck_id = ${input.deckId} and position >= ${targetPosition}
+          `;
+          await tx`
+            update slides
+            set position = (-1 - position) + 1, updated_at = now()
+            where deck_id = ${input.deckId} and position < 0
+          `;
+        }
+        const rows = (await tx`
+          insert into slides (org_id, deck_id, position, layout, content, speaker_notes)
+          values (
+            ${input.orgId},
+            ${input.deckId},
+            ${targetPosition},
+            ${input.operation.content.layout},
+            ${tx.json(toSqlJson(input.operation.content))},
+            ${input.operation.speakerNotes ?? ""}
+          )
+          returning *
+        `) as unknown as readonly SlideRow[];
+        const slide = mapSlide(rows[0]);
+        await touchDeck(tx, input.orgId, input.deckId);
+        await appendSlidesActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "slides.slide.created",
+          deckId: input.deckId,
+          payload: { slideId: slide.id, layout: slide.layout, position: slide.position },
+        });
+        await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
+        return;
+      }
+      case "update-slide": {
+        const existing = await selectSlideForActor(
+          tx,
+          input.orgId,
+          input.actorId,
+          input.operation.slideId,
+        );
+        if (existing === null || existing.deckId !== input.deckId) {
+          throw new Error(`Unknown or inaccessible slide: ${input.operation.slideId}`);
+        }
+        const nextContent = input.operation.content ?? existing.content;
+        const nextNotes = input.operation.speakerNotes ?? existing.speakerNotes;
+        await tx`
+          update slides
+          set
+            layout = ${nextContent.layout},
+            content = ${tx.json(toSqlJson(nextContent))},
+            speaker_notes = ${nextNotes},
+            updated_at = now()
+          where id = ${input.operation.slideId}
+            and org_id = ${input.orgId}
+        `;
+        await touchDeck(tx, input.orgId, input.deckId);
+        await appendSlidesActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "slides.slide.updated",
+          deckId: input.deckId,
+          payload: { slideId: input.operation.slideId, layout: nextContent.layout },
+        });
+        await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
+        return;
+      }
+      case "delete-slide": {
+        const existing = await selectSlideForActor(
+          tx,
+          input.orgId,
+          input.actorId,
+          input.operation.slideId,
+        );
+        if (existing === null || existing.deckId !== input.deckId) {
+          throw new Error(`Unknown or inaccessible slide: ${input.operation.slideId}`);
+        }
+        await tx`delete from slides where id = ${input.operation.slideId} and org_id = ${input.orgId}`;
+        await tx`
+          update slides
+          set position = position - 1, updated_at = now()
+          where deck_id = ${input.deckId} and position > ${existing.position}
+        `;
+        await touchDeck(tx, input.orgId, input.deckId);
+        await appendSlidesActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "slides.slide.deleted",
+          deckId: input.deckId,
+          payload: { slideId: input.operation.slideId },
+        });
+        await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
+        return;
+      }
+      case "reorder-slides": {
+        const currentRows = (await tx`
+          select id from slides where deck_id = ${input.deckId} and org_id = ${input.orgId}
+        `) as unknown as readonly { readonly id: string }[];
+        const currentIds = new Set(currentRows.map((row) => row.id));
+        const requested = new Set(input.operation.slideIds);
+        if (
+          currentIds.size !== requested.size ||
+          [...currentIds].some((id) => !requested.has(id))
+        ) {
+          throw new Error("Reorder must list every slide in the deck exactly once.");
+        }
+        await tx`
+          update slides
+          set position = -1 - position, updated_at = now()
+          where deck_id = ${input.deckId} and org_id = ${input.orgId}
+        `;
+        for (const [index, slideId] of input.operation.slideIds.entries()) {
+          await tx`
+            update slides
+            set position = ${index}, updated_at = now()
+            where id = ${slideId} and deck_id = ${input.deckId} and org_id = ${input.orgId}
+          `;
+        }
+        await touchDeck(tx, input.orgId, input.deckId);
+        await appendSlidesActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "slides.slide.reordered",
+          deckId: input.deckId,
+          payload: { order: [...input.operation.slideIds] },
+        });
+        await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
+        return;
+      }
+    }
+  }
+
+  async #refreshStorageSnapshot(
+    sql: SqlLike,
+    orgId: string,
+    actorId: string,
+    deckId: string,
+  ): Promise<void> {
+    if (this.options.storageResolver === undefined) {
+      return;
+    }
+    const deck = await selectDeckById(sql, orgId, deckId);
+    if (deck === null) {
+      return;
+    }
+    const slides = await selectSlidesForDeck(sql, orgId, deckId);
+    const storageKey = `slides/${orgId}/${deckId}`;
+    const versionNumber = await nextDriveVersionNumber(sql, deckId);
+    const versionStorageKey = slideDeckSnapshotVersionStorageKey(orgId, deckId, versionNumber);
+    const storedSnapshot = await writeSlideDeckStorageSnapshot({
+      resolver: this.options.storageResolver,
+      orgId,
+      key: storageKey,
+      deck,
+      slides,
+    });
+    const versionSnapshot = await writeSlideDeckStorageSnapshot({
+      resolver: this.options.storageResolver,
+      orgId,
+      key: versionStorageKey,
+      deck,
+      slides,
+    });
+    await insertSlideDeckSnapshotVersion(sql, {
+      orgId,
+      actorId,
+      deckId,
+      versionNumber,
+      storageKey: versionStorageKey,
+      byteSize: versionSnapshot.byteSize,
+      sha256: versionSnapshot.sha256,
+      metadata: { app: "slides", title: deck.title, slideCount: slides.length },
+    });
+    await sql`
+      update objects
+      set byte_size = ${storedSnapshot.byteSize},
+          sha256 = ${storedSnapshot.sha256},
+          metadata = objects.metadata || ${sql.json(
+            toSqlJson({ app: "slides", deckId, name: deck.title, title: deck.title }),
+          )},
+          updated_at = now()
+      where id = ${deckId} and org_id = ${orgId}
+    `;
+  }
+}
+
+async function nextDriveVersionNumber(sql: SqlLike, objectId: string): Promise<number> {
+  const rows = (await sql`
+    select coalesce(max(version_number) + 1, 1)::int as version_number
+    from drive_versions
+    where object_id = ${objectId}
+  `) as unknown as readonly { readonly version_number: number }[];
+  return rows[0]?.version_number ?? 1;
+}
+
+async function insertSlideDeckSnapshotVersion(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly deckId: string;
+    readonly versionNumber: number;
+    readonly storageKey: string;
+    readonly byteSize: number;
+    readonly sha256: string | null;
+    readonly metadata: JsonObject;
+  },
+): Promise<void> {
+  if (input.sha256 === null) {
+    return;
+  }
+  await sql`
+    insert into drive_versions (
+      org_id, object_id, version_number, storage_key, mime_type, byte_size, sha256, metadata, created_by_actor_id
+    )
+    values (
+      ${input.orgId},
+      ${input.deckId},
+      ${input.versionNumber},
+      ${input.storageKey},
+      'application/vnd.helix.presentation+json',
+      ${input.byteSize},
+      ${input.sha256},
+      ${sql.json(toSqlJson(input.metadata))},
+      ${input.actorId}
+    )
+  `;
+}
+
+function slideDeckSnapshotVersionStorageKey(
+  orgId: string,
+  deckId: string,
+  versionNumber: number,
+): string {
+  return `slides/${orgId}/${deckId}/versions/${String(versionNumber)}`;
+}
+
+async function selectDeckById(
+  sql: SqlLike,
+  orgId: string,
+  deckId: string,
+): Promise<SlideDeckRecord | null> {
+  const rows = (await sql`
+    select *
+    from slide_decks
+    where id = ${deckId}
+      and org_id = ${orgId}
+      and deleted_at is null
+    limit 1
+  `) as unknown as readonly SlideDeckRow[];
+  return rows[0] === undefined ? null : mapDeck(rows[0]);
 }
 
 async function selectDeckForActor(
@@ -483,6 +1033,29 @@ async function requireDeckAccess(
   }
 }
 
+async function requireDeckAccessForUpdate(
+  sql: SqlLike,
+  orgId: string,
+  actorId: string,
+  deckId: string,
+): Promise<void> {
+  const rows = (await sql`
+    select id
+    from slide_decks
+    where id = ${deckId}
+      and org_id = ${orgId}
+      and deleted_at is null
+      and (
+        owner_actor_id = ${actorId}
+        or created_by_actor_id = ${actorId}
+      )
+    for update
+  `) as unknown as readonly { readonly id: string }[];
+  if (rows[0] === undefined) {
+    throw new Error(`Unknown or inaccessible deck: ${deckId}`);
+  }
+}
+
 async function selectSlideForActor(
   sql: SqlLike,
   orgId: string,
@@ -500,6 +1073,21 @@ async function selectSlideForActor(
     limit 1
   `) as unknown as readonly SlideRow[];
   return rows[0] === undefined ? null : mapSlide(rows[0]);
+}
+
+async function selectSlidesForDeck(
+  sql: SqlLike,
+  orgId: string,
+  deckId: string,
+): Promise<readonly SlideRecord[]> {
+  const rows = (await sql`
+    select *
+    from slides
+    where org_id = ${orgId}
+      and deck_id = ${deckId}
+    order by position asc
+  `) as unknown as readonly SlideRow[];
+  return rows.map(mapSlide);
 }
 
 async function touchDeck(sql: SqlLike, orgId: string, deckId: string): Promise<void> {
@@ -553,6 +1141,45 @@ async function appendSlidesActivity(
   `;
 }
 
+async function writeSlideDeckStorageSnapshot(input: {
+  readonly resolver?: TenantStorageResolver | undefined;
+  readonly orgId: string;
+  readonly key: string;
+  readonly deck: SlideDeckRecord;
+  readonly slides?: readonly SlideRecord[] | undefined;
+}): Promise<{ readonly byteSize: number; readonly sha256: string | null }> {
+  if (input.resolver === undefined) {
+    return { byteSize: 0, sha256: null };
+  }
+  const body = encodeSnapshot({
+    app: "slides",
+    version: 1,
+    deck: {
+      id: input.deck.id,
+      orgId: input.deck.orgId,
+      title: input.deck.title,
+      metadata: input.deck.metadata,
+    },
+    slides: (input.slides ?? []).map((slide) => ({
+      id: slide.id,
+      position: slide.position,
+      layout: slide.layout,
+      content: slide.content,
+      speakerNotes: slide.speakerNotes,
+    })),
+  });
+  const storage = await input.resolver({ orgId: input.orgId });
+  if (storage === undefined) {
+    throw new Error("Tenant storage resolver did not resolve storage for slide deck snapshot.");
+  }
+  await storage.client.put({
+    key: input.key,
+    body,
+    contentType: "application/vnd.helix.presentation+json",
+  });
+  return { byteSize: body.byteLength, sha256: sha256Hex(body) };
+}
+
 function mapDeck(row: SlideDeckRow | undefined): SlideDeckRecord {
   if (row === undefined) {
     throw new Error("Expected slide deck row.");
@@ -591,6 +1218,23 @@ function mapSlide(row: SlideRow | undefined): SlideRecord {
   };
 }
 
+function mapSlideOperationLog(row: SlideOperationLogRow | undefined): SlideOperationLogRecord {
+  if (row === undefined) {
+    throw new Error("Expected slide operation log row.");
+  }
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    deckId: row.deck_id,
+    actorId: row.actor_id,
+    operationId: row.operation_id,
+    revision: row.revision,
+    baseRevision: row.base_revision,
+    operation: row.operation,
+    createdAt: row.created_at,
+  };
+}
+
 function normalizeLayout(value: string): SlideLayout {
   switch (value) {
     case "title":
@@ -609,6 +1253,18 @@ function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
+function toJsonObject(value: unknown): JsonObject {
+  return JSON.parse(JSON.stringify(value)) as JsonObject;
+}
+
+function encodeSnapshot(value: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value));
+}
+
+function sha256Hex(value: Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 /* -------------------------------------------------------------------------- */
 /* In-memory store (tests / offline)                                          */
 /* -------------------------------------------------------------------------- */
@@ -625,6 +1281,7 @@ interface InMemoryDeck {
 export class InMemorySlidesStore implements SlidesStore {
   private readonly decks = new Map<string, InMemoryDeck>();
   private readonly slides = new Map<string, SlideRecord>();
+  private readonly operationLog = new Map<string, SlideOperationLogRecord[]>();
 
   async createDeck(input: CreateSlideDeckInput): Promise<SlideDeckSummaryRecord> {
     const now = new Date();
@@ -656,9 +1313,7 @@ export class InMemorySlidesStore implements SlidesStore {
           deck.orgId === input.orgId &&
           deck.deletedAt === null &&
           (deck.ownerActorId === input.actorId || deck.createdByActorId === input.actorId) &&
-          (query === undefined ||
-            query.length === 0 ||
-            deck.title.toLowerCase().includes(query)),
+          (query === undefined || query.length === 0 || deck.title.toLowerCase().includes(query)),
       )
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
     const page = all.slice(input.offset, input.offset + input.limit);
@@ -672,7 +1327,10 @@ export class InMemorySlidesStore implements SlidesStore {
     readonly orgId: string;
     readonly actorId: string;
     readonly deckId: string;
-  }): Promise<{ readonly deck: SlideDeckSummaryRecord; readonly slides: readonly SlideRecord[] } | null> {
+  }): Promise<{
+    readonly deck: SlideDeckSummaryRecord;
+    readonly slides: readonly SlideRecord[];
+  } | null> {
     const deck = this.accessibleDeck(input.orgId, input.actorId, input.deckId);
     if (deck === null) {
       return null;
@@ -782,10 +1440,7 @@ export class InMemorySlidesStore implements SlidesStore {
     const current = this.slidesOf(input.deckId);
     const currentIds = new Set(current.map((slide) => slide.id));
     const requested = new Set(input.slideIds);
-    if (
-      currentIds.size !== requested.size ||
-      [...currentIds].some((id) => !requested.has(id))
-    ) {
+    if (currentIds.size !== requested.size || [...currentIds].some((id) => !requested.has(id))) {
       throw new Error("Reorder must list every slide in the deck exactly once.");
     }
     for (const [index, slideId] of input.slideIds.entries()) {
@@ -798,17 +1453,167 @@ export class InMemorySlidesStore implements SlidesStore {
     return this.slidesOf(input.deckId);
   }
 
+  async listOperations(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly deckId: string;
+    readonly afterRevision?: number | undefined;
+  }): Promise<readonly SlideOperationLogRecord[]> {
+    const deck = this.accessibleDeck(input.orgId, input.actorId, input.deckId);
+    if (deck === null) {
+      return [];
+    }
+    return (this.operationLog.get(input.deckId) ?? []).filter(
+      (operation) => operation.revision > (input.afterRevision ?? 0),
+    );
+  }
+
+  async appendOperation(input: AppendSlideOperationInput): Promise<SlideOperationLogRecord> {
+    const deck = this.accessibleDeck(input.orgId, input.actorId, input.deckId);
+    if (deck === null) {
+      throw new Error(`Unknown or inaccessible deck: ${input.deckId}`);
+    }
+    const existing = (this.operationLog.get(input.deckId) ?? []).find(
+      (operation) => operation.operationId === input.operationId,
+    );
+    if (existing !== undefined) {
+      return existing;
+    }
+    const operations = this.operationLog.get(input.deckId) ?? [];
+    const record: SlideOperationLogRecord = {
+      id: randomUUID(),
+      orgId: input.orgId,
+      deckId: input.deckId,
+      actorId: input.actorId,
+      operationId: input.operationId,
+      revision: operations.length + 1,
+      baseRevision: input.baseRevision,
+      operation: input.operation,
+      createdAt: new Date(),
+    };
+    this.operationLog.set(input.deckId, [...operations, record]);
+    return record;
+  }
+
+  async applyOperation(input: ApplySlideOperationInput): Promise<ApplySlideOperationResult> {
+    const deck = this.accessibleDeck(input.orgId, input.actorId, input.deckId);
+    if (deck === null) {
+      throw new Error(`Unknown or inaccessible deck: ${input.deckId}`);
+    }
+    const operations = this.operationLog.get(input.deckId) ?? [];
+    const existing = operations.find((operation) => operation.operationId === input.operationId);
+    if (existing !== undefined) {
+      return { status: "duplicate", operationId: input.operationId, revision: existing.revision };
+    }
+    const latestRevision = operations.at(-1)?.revision ?? 0;
+    if (input.baseRevision > latestRevision) {
+      return { status: "ahead", operationId: input.operationId, revision: latestRevision };
+    }
+    await this.applySyncOperation(input);
+    const record = await this.appendOperation({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      deckId: input.deckId,
+      operationId: input.operationId,
+      baseRevision: input.baseRevision,
+      operation: toJsonObject(input.operation),
+    });
+    const snapshot = await this.getDeckForActor({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      deckId: input.deckId,
+    });
+    if (snapshot === null) {
+      throw new Error(`Unknown or inaccessible presentation: ${input.deckId}`);
+    }
+    return {
+      status: "applied",
+      operationId: input.operationId,
+      revision: record.revision,
+      operation: input.operation,
+      snapshot,
+    };
+  }
+
+  private async applySyncOperation(input: ApplySlideOperationInput): Promise<void> {
+    switch (input.operation.kind) {
+      case "update-deck": {
+        const deck = await this.updateDeck({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          deckId: input.deckId,
+          ...(input.operation.title === undefined ? {} : { title: input.operation.title }),
+          ...(input.operation.metadata === undefined ? {} : { metadata: input.operation.metadata }),
+        });
+        if (deck === null) {
+          throw new Error(`Unknown or inaccessible presentation: ${input.deckId}`);
+        }
+        return;
+      }
+      case "create-slide":
+        await this.createSlide({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          deckId: input.deckId,
+          content: input.operation.content,
+          ...(input.operation.speakerNotes === undefined
+            ? {}
+            : { speakerNotes: input.operation.speakerNotes }),
+          ...(input.operation.position === undefined ? {} : { position: input.operation.position }),
+        });
+        return;
+      case "update-slide": {
+        const slide = this.accessibleSlide(input.orgId, input.actorId, input.operation.slideId);
+        if (slide === null || slide.deckId !== input.deckId) {
+          throw new Error(`Unknown or inaccessible slide: ${input.operation.slideId}`);
+        }
+        const updated = await this.updateSlide({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          slideId: input.operation.slideId,
+          ...(input.operation.content === undefined ? {} : { content: input.operation.content }),
+          ...(input.operation.speakerNotes === undefined
+            ? {}
+            : { speakerNotes: input.operation.speakerNotes }),
+        });
+        if (updated === null) {
+          throw new Error(`Unknown or inaccessible slide: ${input.operation.slideId}`);
+        }
+        return;
+      }
+      case "delete-slide": {
+        const slide = this.accessibleSlide(input.orgId, input.actorId, input.operation.slideId);
+        if (slide === null || slide.deckId !== input.deckId) {
+          throw new Error(`Unknown or inaccessible slide: ${input.operation.slideId}`);
+        }
+        const deleted = await this.deleteSlide({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          slideId: input.operation.slideId,
+        });
+        if (!deleted) {
+          throw new Error(`Unknown or inaccessible slide: ${input.operation.slideId}`);
+        }
+        return;
+      }
+      case "reorder-slides":
+        await this.reorderSlides({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          deckId: input.deckId,
+          slideIds: input.operation.slideIds,
+        });
+        return;
+    }
+  }
+
   private slidesOf(deckId: string): SlideRecord[] {
     return [...this.slides.values()]
       .filter((slide) => slide.deckId === deckId)
       .sort((left, right) => left.position - right.position);
   }
 
-  private accessibleDeck(
-    orgId: string,
-    actorId: string,
-    deckId: string,
-  ): SlideDeckRecord | null {
+  private accessibleDeck(orgId: string, actorId: string, deckId: string): SlideDeckRecord | null {
     const entry = this.decks.get(deckId);
     if (entry === undefined) {
       return null;
@@ -824,11 +1629,7 @@ export class InMemorySlidesStore implements SlidesStore {
     return deck;
   }
 
-  private accessibleSlide(
-    orgId: string,
-    actorId: string,
-    slideId: string,
-  ): SlideRecord | null {
+  private accessibleSlide(orgId: string, actorId: string, slideId: string): SlideRecord | null {
     const slide = this.slides.get(slideId);
     if (slide === undefined || slide.orgId !== orgId) {
       return null;

@@ -208,7 +208,11 @@ import {
   registerSheets,
   registerSheetsRoutes,
 } from "./platform/sheets/index.js";
-import { PostgresSlidesStore, registerSlides } from "./platform/slides/index.js";
+import {
+  PostgresSlidesStore,
+  registerSlides,
+  registerSlidesRoutes,
+} from "./platform/slides/index.js";
 import {
   PostgresGroupsStore,
   registerAdminGroupsRoutes,
@@ -1738,6 +1742,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     metrics,
     onError: (error) => {
       app.log.error({ error }, "Sheets websocket error");
+    },
+  });
+  await registerSlidesRoutes(app, {
+    store: slidesStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    metrics,
+    onError: (error) => {
+      app.log.error({ error }, "Slides websocket error");
     },
   });
   if (coreApps.shouldRegister("calendar")) {

@@ -21,8 +21,94 @@ export interface SlideStat {
   readonly note: string;
 }
 
+/** Freeform slide object kind persisted in the slide content JSON. */
+export type SlideShapeKind = "text" | "rectangle" | "connector" | "image" | "media";
+
+/** Visual treatment for first-pass freeform shapes. */
+export type SlideShapeTone = "accent" | "light" | "dark";
+
+/** Connector line direction inside the shape's percentage bounding box. */
+export type SlideConnectorDirection = "up" | "down";
+
+/** Connector arrowhead treatment. */
+export type SlideConnectorArrow = "none" | "start" | "end" | "both";
+
+/** Embedded media player type for freeform media shapes. */
+export type SlideMediaType = "video" | "audio";
+
+/** Image placement inside a freeform image shape's percentage box. */
+export type SlideImageFit = "contain" | "cover";
+
+/** Image mask applied inside a freeform image shape's percentage box. */
+export type SlideImageMask = "rectangle" | "rounded" | "circle";
+
+/** First-pass entrance animation for freeform shapes in present mode. */
+export type SlideShapeAnimationType = "fade" | "fly" | "zoom";
+
+/** Direction for fly-in motion path animations. */
+export type SlideShapeMotionPath = "up" | "down" | "left" | "right";
+
+/** Timing curve for entrance animations. */
+export type SlideShapeAnimationEasing = "standard" | "linear" | "easeIn" | "easeOut" | "easeInOut";
+
+export interface SlideShapeAnimation {
+  readonly type: SlideShapeAnimationType;
+  readonly motionPath?: SlideShapeMotionPath;
+  readonly order?: number;
+  readonly durationMs?: number;
+  readonly easing?: SlideShapeAnimationEasing;
+}
+
+/** Slide-level transition applied when advancing through presentation mode. */
+export type SlideTransitionType = "fade" | "slide" | "zoom";
+
+/** Direction for slide-level push/slide transitions. */
+export type SlideTransitionDirection = "left" | "right" | "up" | "down";
+
+export interface SlideTransition {
+  readonly type: SlideTransitionType;
+  readonly direction?: SlideTransitionDirection;
+  readonly durationMs?: number;
+}
+
+/** A percentage-positioned freeform object on top of a typed slide layout. */
+export interface SlideShape {
+  readonly id: string;
+  readonly kind: SlideShapeKind;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly text?: string;
+  readonly tone?: SlideShapeTone;
+  readonly connectorDirection?: SlideConnectorDirection;
+  readonly connectorArrow?: SlideConnectorArrow;
+  readonly imageUrl?: string;
+  readonly imageAlt?: string;
+  readonly imageFit?: SlideImageFit;
+  readonly imageMask?: SlideImageMask;
+  readonly mediaUrl?: string;
+  readonly mediaType?: SlideMediaType;
+  readonly mediaTitle?: string;
+  readonly mediaPosterUrl?: string;
+  readonly mediaCaptionUrl?: string;
+  readonly mediaCaptionLabel?: string;
+  readonly mediaStartSeconds?: number;
+  readonly mediaEndSeconds?: number;
+  readonly mediaAutoplay?: boolean;
+  readonly mediaLoop?: boolean;
+  readonly mediaMuted?: boolean;
+  readonly animation?: SlideShapeAnimation;
+  readonly exitAnimation?: SlideShapeAnimation;
+}
+
+export interface SlideShapeLayer {
+  readonly shapes?: readonly SlideShape[];
+  readonly transition?: SlideTransition;
+}
+
 /** Full-bleed title slide body. */
-export interface TitleSlideContent {
+export interface TitleSlideContent extends SlideShapeLayer {
   readonly layout: "title";
   readonly title: string;
   readonly eyebrow?: string;
@@ -31,14 +117,14 @@ export interface TitleSlideContent {
 }
 
 /** Numbered agenda slide body. */
-export interface AgendaSlideContent {
+export interface AgendaSlideContent extends SlideShapeLayer {
   readonly layout: "agenda";
   readonly title: string;
   readonly items: readonly string[];
 }
 
 /** Three-column statistics slide body. */
-export interface StatsSlideContent {
+export interface StatsSlideContent extends SlideShapeLayer {
   readonly layout: "stats";
   readonly title: string;
   readonly subtitle?: string;
@@ -46,7 +132,7 @@ export interface StatsSlideContent {
 }
 
 /** Two-column slide: prose left, quote or list right. */
-export interface SplitSlideContent {
+export interface SplitSlideContent extends SlideShapeLayer {
   readonly layout: "split";
   readonly title: string;
   readonly left: string;
@@ -56,14 +142,14 @@ export interface SplitSlideContent {
 }
 
 /** Bulleted content slide body. */
-export interface BulletsSlideContent {
+export interface BulletsSlideContent extends SlideShapeLayer {
   readonly layout: "bullets";
   readonly title: string;
   readonly items: readonly string[];
 }
 
 /** Image-placeholder slide body. */
-export interface ImageSlideContent {
+export interface ImageSlideContent extends SlideShapeLayer {
   readonly layout: "image";
   readonly title: string;
   readonly note: string;

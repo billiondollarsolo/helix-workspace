@@ -94,4 +94,18 @@ describe("platform foundation migration", () => {
     expect(sql).toContain("create table if not exists drive_versions");
     expect(sql).toContain("references objects(id)");
   });
+  it("declares durable Slides operation log storage with tenant isolation", async () => {
+    const sql = await readFile(
+      new URL("./migrations/0049_slides_op_log.sql", import.meta.url),
+      "utf8",
+    );
+
+    expect(sql).toContain("create table if not exists slides_op_log");
+    expect(sql).toContain("deck_id uuid not null references slide_decks(id) on delete cascade");
+    expect(sql).toContain("operation_id text not null");
+    expect(sql).toContain("create unique index if not exists slides_op_log_deck_revision_idx");
+    expect(sql).toContain("create unique index if not exists slides_op_log_deck_operation_idx");
+    expect(sql).toContain("alter table slides_op_log enable row level security");
+    expect(sql).toContain("create policy helix_tenant_isolation on slides_op_log");
+  });
 });

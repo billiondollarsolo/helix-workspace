@@ -1177,6 +1177,39 @@ export const slides = pgTable(
   }),
 );
 
+export const slidesOpLog = pgTable(
+  "slides_op_log",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    deckId: uuid("deck_id")
+      .references(() => slideDecks.id, { onDelete: "cascade" })
+      .notNull(),
+    actorId: uuid("actor_id").references(() => actors.id),
+    operationId: text("operation_id").notNull(),
+    revision: integer("revision").notNull(),
+    baseRevision: integer("base_revision").notNull(),
+    operation: jsonb("operation").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    deckRevisionIdx: uniqueIndex("slides_op_log_deck_revision_idx").on(
+      table.deckId,
+      table.revision,
+    ),
+    deckOperationIdx: uniqueIndex("slides_op_log_deck_operation_idx").on(
+      table.deckId,
+      table.operationId,
+    ),
+    orgDeckRevisionIdx: index("slides_op_log_org_deck_revision_idx").on(
+      table.orgId,
+      table.deckId,
+      table.revision,
+    ),
+    orgCreatedIdx: index("slides_op_log_org_created_idx").on(table.orgId, table.createdAt),
+  }),
+);
+
 export const calCalendars = pgTable(
   "cal_calendars",
   {

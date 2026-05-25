@@ -41,6 +41,8 @@
     "cmdk": "latest",
     "lib0": "^0.2.114",
     "lucide-react": "^1.16.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "5.0.375",
     "radix-ui": "^1.4.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

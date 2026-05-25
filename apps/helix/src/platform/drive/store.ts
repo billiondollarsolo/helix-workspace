@@ -11,6 +11,7 @@ import type {
   DriveEnrichmentProjectionStore,
   DriveEnrichmentWrite,
   DriveEntryRecord,
+  DrivePdfFormStateRecord,
   DrivePreview,
   DriveSearchProjectionStore,
   DriveSearchHit,
@@ -155,6 +156,22 @@ export interface DriveStore {
     readonly actorId: string;
     readonly commentId: string;
   }): Promise<DriveCommentRecord | null>;
+  getPdfFormState?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<DrivePdfFormStateRecord | null>;
+  savePdfFormState?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly fieldValues: readonly JsonObject[];
+  }): Promise<DrivePdfFormStateRecord>;
+  clearPdfFormState?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<boolean>;
 }
 
 export interface DriveFolderCreateInput {
@@ -252,7 +269,28 @@ interface DriveCommentProjectionRow extends DriveCommentRow {
   readonly actor_email: string | null;
 }
 
+interface DrivePdfFormStateRow {
+  readonly org_id: string;
+  readonly object_id: string;
+  readonly actor_id: string;
+  readonly field_values: readonly JsonObject[];
+  readonly source_version_number: number | null;
+  readonly source_sha256: string | null;
+  readonly source_byte_size: string | number | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+  readonly current_source_version_number?: number | null;
+  readonly current_source_sha256?: string | null;
+  readonly current_source_byte_size?: string | number | null;
+}
+
 type SqlLike = postgres.Sql | postgres.TransactionSql;
+
+interface PdfFormSourceMetadata {
+  readonly versionNumber: number | null;
+  readonly sha256: string | null;
+  readonly byteSize: number | null;
+}
 
 export class PostgresDriveStore
   implements DriveStore, DriveSearchProjectionStore, DriveEnrichmentProjectionStore
@@ -996,6 +1034,110 @@ export class PostgresDriveStore
     });
   }
 
+  async getPdfFormState(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<DrivePdfFormStateRecord | null> {
+    await requirePdfObjectAccess(this.sql, input.orgId, input.actorId, input.objectId);
+    const rows = (await this.sql`
+      with latest_version as (
+        select version_number, sha256, byte_size
+        from drive_versions
+        where org_id = ${input.orgId}
+          and object_id = ${input.objectId}
+        order by version_number desc
+        limit 1
+      )
+      select
+        s.*,
+        latest_version.version_number as current_source_version_number,
+        latest_version.sha256 as current_source_sha256,
+        latest_version.byte_size as current_source_byte_size
+      from drive_pdf_form_states s
+      left join latest_version on true
+      where s.org_id = ${input.orgId}
+        and s.object_id = ${input.objectId}
+        and s.actor_id = ${input.actorId}
+      limit 1
+    `) as unknown as readonly DrivePdfFormStateRow[];
+    const row = rows[0];
+    return row === undefined ? null : mapDrivePdfFormState(row);
+  }
+
+  async savePdfFormState(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly fieldValues: readonly JsonObject[];
+  }): Promise<DrivePdfFormStateRecord> {
+    return this.sql.begin(async (tx) => {
+      const object = await requirePdfObjectAccess(tx, input.orgId, input.actorId, input.objectId);
+      const source = await pdfFormSourceMetadata(tx, object);
+      const rows = (await tx`
+        insert into drive_pdf_form_states
+          (org_id, object_id, actor_id, field_values, source_version_number, source_sha256, source_byte_size)
+        values (
+          ${input.orgId},
+          ${input.objectId},
+          ${input.actorId},
+          ${tx.json(toSqlJson(input.fieldValues))},
+          ${source.versionNumber},
+          ${source.sha256},
+          ${source.byteSize}
+        )
+        on conflict (org_id, object_id, actor_id)
+        do update set
+          field_values = excluded.field_values,
+          source_version_number = excluded.source_version_number,
+          source_sha256 = excluded.source_sha256,
+          source_byte_size = excluded.source_byte_size,
+          updated_at = now()
+        returning *
+      `) as unknown as readonly DrivePdfFormStateRow[];
+      const state = mapDrivePdfFormState(rows[0], source);
+      await appendDriveActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "drive.pdf_form_state.saved",
+        objectId: input.objectId,
+        payload: {
+          fieldCount: input.fieldValues.length,
+          sourceVersionNumber: source.versionNumber,
+        },
+      });
+      return state;
+    });
+  }
+
+  async clearPdfFormState(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<boolean> {
+    return this.sql.begin(async (tx) => {
+      await requirePdfObjectAccess(tx, input.orgId, input.actorId, input.objectId);
+      const rows = (await tx`
+        delete from drive_pdf_form_states
+        where org_id = ${input.orgId}
+          and object_id = ${input.objectId}
+          and actor_id = ${input.actorId}
+        returning object_id
+      `) as unknown as readonly { readonly object_id: string }[];
+      const cleared = rows.length > 0;
+      if (cleared) {
+        await appendDriveActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "drive.pdf_form_state.cleared",
+          objectId: input.objectId,
+          payload: {},
+        });
+      }
+      return cleared;
+    });
+  }
+
   async getDriveSearchRecord(fileId: string): Promise<DriveSearchRecord | null> {
     const rows = (await this.sql`
       with recursive target as (
@@ -1231,6 +1373,39 @@ async function requireObjectAccess(
   const object = rows[0];
   if (object === undefined) {
     throw new Error(`Unknown or inaccessible Drive object: ${objectId}`);
+  }
+  return object;
+}
+
+async function requirePdfObjectAccess(
+  sql: SqlLike,
+  orgId: string,
+  actorId: string,
+  objectId: string,
+): Promise<ObjectRow> {
+  const rows = (await sql`
+    select *
+    from objects
+    where id = ${objectId}
+      and org_id = ${orgId}
+      and kind = 'file'
+      and mime_type = 'application/pdf'
+      and (
+        objects.owner_actor_id = ${actorId}
+        or exists (
+          select 1 from permissions p
+          where p.resource_type = 'object'
+            and p.resource_id = objects.id
+            and p.org_id = ${orgId}
+            and p.actor_id = ${actorId}
+            and (p.expires_at is null or p.expires_at > now())
+        )
+      )
+    limit 1
+  `) as unknown as readonly ObjectRow[];
+  const object = rows[0];
+  if (object === undefined) {
+    throw new Error(`Unknown or inaccessible Drive PDF object: ${objectId}`);
   }
   return object;
 }
@@ -1698,6 +1873,72 @@ function mapDriveCommentListItem(row: DriveCommentProjectionRow): DriveCommentLi
   };
 }
 
+async function pdfFormSourceMetadata(
+  sql: SqlLike,
+  object: ObjectRow,
+): Promise<PdfFormSourceMetadata> {
+  const rows = (await sql`
+    select version_number, sha256, byte_size
+    from drive_versions
+    where org_id = ${object.org_id}
+      and object_id = ${object.id}
+    order by version_number desc
+    limit 1
+  `) as unknown as readonly {
+    readonly version_number: number;
+    readonly sha256: string;
+    readonly byte_size: string | number;
+  }[];
+  const latest = rows[0];
+  if (latest === undefined) {
+    return {
+      versionNumber: null,
+      sha256: object.sha256,
+      byteSize: numberFromDatabaseLike(object.byte_size),
+    };
+  }
+  return {
+    versionNumber: latest.version_number,
+    sha256: latest.sha256,
+    byteSize: numberFromDatabaseLike(latest.byte_size),
+  };
+}
+
+function mapDrivePdfFormState(
+  row: DrivePdfFormStateRow | undefined,
+  currentSource?: PdfFormSourceMetadata,
+): DrivePdfFormStateRecord {
+  if (row === undefined) {
+    throw new Error("Expected Drive PDF form state row.");
+  }
+  const currentVersionNumber =
+    currentSource?.versionNumber ?? row.current_source_version_number ?? null;
+  const currentSha256 = currentSource?.sha256 ?? row.current_source_sha256 ?? null;
+  const currentByteSize =
+    currentSource?.byteSize ?? numberFromNullableDatabaseLike(row.current_source_byte_size ?? null);
+  return {
+    orgId: row.org_id,
+    objectId: row.object_id,
+    actorId: row.actor_id,
+    fieldValues: jsonObjectArray(row.field_values),
+    sourceVersionNumber: row.source_version_number,
+    sourceSha256: row.source_sha256,
+    sourceByteSize: numberFromNullableDatabaseLike(row.source_byte_size),
+    sourceChanged:
+      (row.source_version_number !== null &&
+        currentVersionNumber !== null &&
+        row.source_version_number !== currentVersionNumber) ||
+      (row.source_sha256 !== null &&
+        currentSha256 !== null &&
+        row.source_sha256 !== currentSha256) ||
+      (row.source_byte_size !== null &&
+        currentByteSize !== null &&
+        numberFromDatabaseLike(row.source_byte_size) !== currentByteSize),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapDriveSearchRecord(row: DriveSearchProjectionRow): DriveSearchRecord {
   const metadata = row.metadata;
   const name = stringMetadata(metadata, "name") ?? row.storage_key;
@@ -1950,4 +2191,25 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
 
 function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
+}
+
+function numberFromDatabaseLike(value: string | number): number {
+  return typeof value === "number" ? value : Number.parseInt(value, 10);
+}
+
+function numberFromNullableDatabaseLike(value: string | number | null): number | null {
+  return value === null ? null : numberFromDatabaseLike(value);
+}
+
+function jsonObjectArray(value: unknown): readonly JsonObject[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const output: JsonObject[] = [];
+  for (const item of value) {
+    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+      output.push(item as JsonObject);
+    }
+  }
+  return output;
 }

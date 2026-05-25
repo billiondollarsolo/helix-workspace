@@ -291,9 +291,8 @@ export interface DriveDownloadResult {
 
 /**
  * Resolve where the "Open" / "Download" buttons should point for a Drive
- * entry. Native editor files (docs / sheets / slides) open in their
- * in-app editor; raw binaries (PDFs, images, DOCX, XLSX, etc.) stream
- * through the session-cookie-authed content endpoint.
+ * entry. Native editor files (docs / sheets / slides) and PDFs open in their
+ * in-app surfaces; other raw binaries stream through the browser preview path.
  *
  * (The historical `/dav/<id>` URL never existed as a backend route —
  * `/dav/*` is reserved for CalDAV / CardDAV / WebDAV with app-password
@@ -301,7 +300,7 @@ export interface DriveDownloadResult {
  */
 export function driveDownloadResult(entry: DriveApiEntry): DriveDownloadResult {
   const editorUrl = inAppEditorUrl(entry);
-  // For raw files, point "Open" at the browser-renderable preview endpoint
+  // For non-native raw files, point "Open" at the browser-renderable preview endpoint
   // (`/preview`) — it returns HTML for DOCX/XLSX, forwards PDFs / images
   // / text directly, and shows a friendly placeholder + download link for
   // formats the browser can't display.
@@ -320,9 +319,10 @@ export function driveDownloadResult(entry: DriveApiEntry): DriveDownloadResult {
  *  Priority:
  *   1. Native Helix editors (.helixdoc / .helixsheet / .helixdeck) — these
  *      use the in-app Tiptap / sheets / slides surfaces.
- *   2. OOXML (DOCX / XLSX / PPTX) — opens in the OnlyOffice editor
+ *   2. Plain PDFs — open in the in-app PDF viewer shell.
+ *   3. OOXML (DOCX / XLSX / PPTX) — opens in the OnlyOffice editor
  *      at `/edit/:objectId`.
- *   3. Everything else — return null so the caller falls back to the
+ *   4. Everything else — return null so the caller falls back to the
  *      read-only preview endpoint. */
 function inAppEditorUrl(entry: DriveApiEntry): string | null {
   if (entry.app === "docs") {
@@ -334,9 +334,17 @@ function inAppEditorUrl(entry: DriveApiEntry): string | null {
   if (entry.app === "slides") {
     return `/slides?deck=${encodeURIComponent(entry.id)}`;
   }
-  // OOXML formats — opened via OnlyOffice Document Server (Phase 3).
   const mime = entry.mimeType ?? "";
   const name = entry.name.toLowerCase();
+  if (
+    mime === "application/pdf" ||
+    ((mime.length === 0 || mime === "application/octet-stream") && name.endsWith(".pdf"))
+  ) {
+    const sourceFolder =
+      entry.folderId === null ? "" : `?folder=${encodeURIComponent(entry.folderId)}`;
+    return `/pdf/${encodeURIComponent(entry.id)}${sourceFolder}`;
+  }
+  // OOXML formats — opened via OnlyOffice Document Server (Phase 3).
   const isOoxml =
     mime.includes("wordprocessingml") ||
     mime.includes("spreadsheetml") ||

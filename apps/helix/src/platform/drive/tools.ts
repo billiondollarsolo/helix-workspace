@@ -8,6 +8,7 @@ import type {
   DriveCommentListItem,
   DriveCommentRecord,
   DriveEntryRecord,
+  DrivePdfFormStateRecord,
   DriveSearchHit,
   DriveUploadRecord,
   DriveVersionRecord,
@@ -92,6 +93,17 @@ const resolveCommentSchema = z.object({
 const updateCommentSchema = z.object({
   commentId: uuidSchema,
   body: z.string().min(1).max(50_000),
+});
+
+const pdfFormFieldValueSchema = z.object({
+  name: z.string().min(1).max(512),
+  type: z.enum(["text", "checkbox", "choice", "signature", "unsupported"]).optional(),
+  value: z.union([z.string().max(50_000), z.boolean()]),
+});
+
+const savePdfFormStateSchema = z.object({
+  objectId: uuidSchema,
+  fields: z.array(pdfFormFieldValueSchema).max(2_000),
 });
 
 const restoreSchema = z.object({
@@ -573,6 +585,67 @@ export function createDriveToolDefinitions(
         return serializeComment(comment);
       },
     }),
+    defineTool<z.output<typeof objectIdSchema>, unknown>({
+      id: "drive.pdfFormState.get",
+      description: "Get the current actor's saved PDF form draft for a Drive object.",
+      permission: "drive.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.getPdfFormState === undefined) {
+          throw new Error("drive.pdfFormState tools require DriveStore PDF form state methods.");
+        }
+        const state = await options.store.getPdfFormState({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.objectId,
+        });
+        return { state: state === null ? null : serializePdfFormState(state) };
+      },
+    }),
+    defineTool<z.output<typeof savePdfFormStateSchema>, unknown>({
+      id: "drive.pdfFormState.save",
+      description: "Save the current actor's PDF form draft for a Drive object.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(savePdfFormStateSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.savePdfFormState === undefined) {
+          throw new Error("drive.pdfFormState tools require DriveStore PDF form state methods.");
+        }
+        return serializePdfFormState(
+          await options.store.savePdfFormState({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            objectId: input.objectId,
+            fieldValues: input.fields.map((field) => toJsonObject(field)),
+          }),
+        );
+      },
+    }),
+    defineTool<z.output<typeof objectIdSchema>, unknown>({
+      id: "drive.pdfFormState.clear",
+      description: "Clear the current actor's saved PDF form draft for a Drive object.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.clearPdfFormState === undefined) {
+          throw new Error("drive.pdfFormState tools require DriveStore PDF form state methods.");
+        }
+        return {
+          objectId: input.objectId,
+          cleared: await options.store.clearPdfFormState({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            objectId: input.objectId,
+          }),
+        };
+      },
+    }),
   ];
 }
 
@@ -628,6 +701,14 @@ function serializeComment(comment: DriveCommentRecord | DriveCommentListItem) {
     resolvedAt: comment.resolvedAt?.toISOString() ?? null,
     createdAt: comment.createdAt.toISOString(),
     updatedAt: comment.updatedAt?.toISOString() ?? null,
+  };
+}
+
+function serializePdfFormState(state: DrivePdfFormStateRecord) {
+  return {
+    ...state,
+    createdAt: state.createdAt.toISOString(),
+    updatedAt: state.updatedAt.toISOString(),
   };
 }
 

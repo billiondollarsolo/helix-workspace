@@ -20,7 +20,10 @@ function createRecordingSql(responses: readonly (readonly unknown[])[] = []): {
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join("?");
     calls.push({ text, values });
-    if (text.includes("objects.owner_actor_id") || text.includes("drive_folders.owner_actor_id")) {
+    if (
+      text.trim().startsWith("(") &&
+      (text.includes("objects.owner_actor_id") || text.includes("drive_folders.owner_actor_id"))
+    ) {
       return { text, values };
     }
     return Promise.resolve(responses[callIndex++] ?? []);
@@ -35,6 +38,46 @@ function createRecordingSql(responses: readonly (readonly unknown[])[] = []): {
 }
 
 describe("PostgresDriveStore comment query shape", () => {
+  it("scopes PDF form state lookups by org, object, actor, and PDF permissions", async () => {
+    const now = new Date("2026-05-20T12:00:00.000Z");
+    const recording = createRecordingSql([
+      [
+        {
+          id: objectId,
+          org_id: orgId,
+          owner_actor_id: actorId,
+          kind: "file",
+          storage_key: "drive/test/report.pdf",
+          mime_type: "application/pdf",
+          byte_size: 128,
+          sha256: "a".repeat(64),
+          metadata: {},
+          deleted_at: null,
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+      [],
+    ]);
+    const store = new PostgresDriveStore(recording.sql);
+
+    await expect(store.getPdfFormState({ orgId, actorId, objectId })).resolves.toBeNull();
+
+    const accessQuery = recording.calls.find((call) =>
+      call.text.includes("mime_type = 'application/pdf'"),
+    );
+    expect(accessQuery?.text).toContain("p.org_id = ?");
+    expect(accessQuery?.values).toEqual(expect.arrayContaining([orgId, actorId, objectId]));
+
+    const stateQuery = recording.calls.find((call) =>
+      call.text.includes("from drive_pdf_form_states s"),
+    );
+    expect(stateQuery?.text).toContain("s.org_id = ?");
+    expect(stateQuery?.text).toContain("s.object_id = ?");
+    expect(stateQuery?.text).toContain("s.actor_id = ?");
+    expect(stateQuery?.values).toEqual(expect.arrayContaining([orgId, objectId, actorId]));
+  });
+
   it("fans out Drive comment mention notifications to matched object collaborators", async () => {
     const now = new Date("2026-05-20T12:00:00.000Z");
     const mentionedActorId = "55555555-5555-4555-8555-555555555555";

@@ -10,6 +10,7 @@ import type {
 import type {
   DriveCommentRecord,
   DriveEntryRecord,
+  DrivePdfFormStateRecord,
   DriveSearchHit,
   DriveUploadRecord,
   DriveVersionRecord,
@@ -56,6 +57,9 @@ describe("drive tools", () => {
       "drive.finalize",
       "drive.list",
       "drive.move",
+      "drive.pdfFormState.clear",
+      "drive.pdfFormState.get",
+      "drive.pdfFormState.save",
       "drive.restore",
       "drive.search",
       "drive.share",
@@ -265,6 +269,91 @@ describe("drive tools", () => {
       actorId,
       commentId: "77777777-7777-4777-8777-777777777777",
     });
+  });
+
+  it("gets, saves, and clears actor-scoped PDF form state", async () => {
+    const store = new FakeDriveStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store });
+    const actor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      scopes: ["drive.read", "drive.write"],
+    };
+
+    await expect(
+      registry.invoke("drive.pdfFormState.get", { objectId }, { actor }),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { state: null },
+    });
+    expect(store.requestedPdfFormStates[0]).toMatchObject({ orgId, actorId, objectId });
+
+    await expect(
+      registry.invoke(
+        "drive.pdfFormState.save",
+        {
+          objectId,
+          fields: [
+            { name: "customer_name", type: "text", value: "Northwind" },
+            { name: "approved", type: "checkbox", value: true },
+            { name: "signer", type: "signature", value: "Ada Lovelace" },
+          ],
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: {
+        objectId,
+        actorId,
+        fieldValues: [
+          { name: "customer_name", type: "text", value: "Northwind" },
+          { name: "approved", type: "checkbox", value: true },
+          { name: "signer", type: "signature", value: "Ada Lovelace" },
+        ],
+        sourceVersionNumber: 3,
+        sourceSha256: sha256,
+        sourceChanged: false,
+        updatedAt: now.toISOString(),
+      },
+    });
+    expect(store.savedPdfFormStates[0]).toMatchObject({
+      orgId,
+      actorId,
+      objectId,
+      fieldValues: [
+        { name: "customer_name", type: "text", value: "Northwind" },
+        { name: "approved", type: "checkbox", value: true },
+        { name: "signer", type: "signature", value: "Ada Lovelace" },
+      ],
+    });
+
+    await expect(
+      registry.invoke("drive.pdfFormState.get", { objectId }, { actor }),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: {
+        state: {
+          objectId,
+          actorId,
+          fieldValues: [
+            { name: "customer_name", type: "text", value: "Northwind" },
+            { name: "approved", type: "checkbox", value: true },
+            { name: "signer", type: "signature", value: "Ada Lovelace" },
+          ],
+        },
+      },
+    });
+
+    await expect(
+      registry.invoke("drive.pdfFormState.clear", { objectId }, { actor }),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { objectId, cleared: true },
+    });
+    expect(store.clearedPdfFormStates[0]).toMatchObject({ orgId, actorId, objectId });
   });
 
   it("normalizes list, share, trash, restore, delete, and search outputs", async () => {
@@ -639,6 +728,10 @@ class FakeDriveStore implements DriveStore {
   readonly reopenedComments: Parameters<NonNullable<DriveStore["reopenComment"]>>[0][] = [];
   readonly updatedComments: Parameters<NonNullable<DriveStore["updateComment"]>>[0][] = [];
   readonly deletedComments: Parameters<NonNullable<DriveStore["deleteComment"]>>[0][] = [];
+  readonly requestedPdfFormStates: Parameters<NonNullable<DriveStore["getPdfFormState"]>>[0][] = [];
+  readonly savedPdfFormStates: Parameters<NonNullable<DriveStore["savePdfFormState"]>>[0][] = [];
+  readonly clearedPdfFormStates: Parameters<NonNullable<DriveStore["clearPdfFormState"]>>[0][] = [];
+  pdfFormState: DrivePdfFormStateRecord | null = null;
 
   async createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord> {
     this.createdFolders.push(input);
@@ -789,6 +882,47 @@ class FakeDriveStore implements DriveStore {
     this.deletedComments.push(input);
     return driveComment({ body: "Review page totals", status: "open" });
   }
+
+  async getPdfFormState(
+    input: Parameters<NonNullable<DriveStore["getPdfFormState"]>>[0],
+  ): Promise<DrivePdfFormStateRecord | null> {
+    this.requestedPdfFormStates.push(input);
+    return this.pdfFormState;
+  }
+
+  async savePdfFormState(
+    input: Parameters<NonNullable<DriveStore["savePdfFormState"]>>[0],
+  ): Promise<DrivePdfFormStateRecord> {
+    this.savedPdfFormStates.push(input);
+    this.pdfFormState = pdfFormState({ fieldValues: input.fieldValues });
+    return this.pdfFormState;
+  }
+
+  async clearPdfFormState(
+    input: Parameters<NonNullable<DriveStore["clearPdfFormState"]>>[0],
+  ): Promise<boolean> {
+    this.clearedPdfFormStates.push(input);
+    const cleared = this.pdfFormState !== null;
+    this.pdfFormState = null;
+    return cleared;
+  }
+}
+
+function pdfFormState(input: {
+  readonly fieldValues: readonly DrivePdfFormStateRecord["fieldValues"][number][];
+}): DrivePdfFormStateRecord {
+  return {
+    orgId,
+    objectId,
+    actorId,
+    fieldValues: input.fieldValues,
+    sourceVersionNumber: 3,
+    sourceSha256: sha256,
+    sourceByteSize: 128,
+    sourceChanged: false,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 function driveComment(

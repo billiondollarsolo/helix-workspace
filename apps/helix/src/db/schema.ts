@@ -1,5 +1,6 @@
 import {
   boolean,
+  bigint,
   cidr,
   customType,
   index,
@@ -937,6 +938,38 @@ export const driveVersions = pgTable(
       table.createdAt,
     ),
     orgObjectIdx: index("drive_versions_org_object_idx").on(table.orgId, table.objectId),
+  }),
+);
+
+export const drivePdfFormStates = pgTable(
+  "drive_pdf_form_states",
+  {
+    orgId: uuid("org_id").notNull(),
+    objectId: uuid("object_id")
+      .references(() => objects.id, { onDelete: "cascade" })
+      .notNull(),
+    actorId: uuid("actor_id")
+      .references(() => actors.id, { onDelete: "cascade" })
+      .notNull(),
+    fieldValues: jsonb("field_values").default([]).notNull(),
+    sourceVersionNumber: integer("source_version_number"),
+    sourceSha256: text("source_sha256"),
+    sourceByteSize: bigint("source_byte_size", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.orgId, table.objectId, table.actorId] }),
+    actorUpdatedIdx: index("drive_pdf_form_states_actor_updated_idx").on(
+      table.orgId,
+      table.actorId,
+      table.updatedAt,
+    ),
+    objectUpdatedIdx: index("drive_pdf_form_states_object_updated_idx").on(
+      table.orgId,
+      table.objectId,
+      table.updatedAt,
+    ),
   }),
 );
 

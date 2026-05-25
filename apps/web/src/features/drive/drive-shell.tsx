@@ -1391,9 +1391,15 @@ function DriveDetailsPanel({
             <a
               className="btn sm primary"
               href={download?.url ?? "#"}
-              // Native editor URLs (/docs, /sheets, /slides) stay in-tab;
-              // raw downloads pop a new tab so the user keeps their place.
-              target={entry?.app === null || entry?.app === undefined ? "_blank" : "_self"}
+              // Native editor URLs and the PDF viewer stay in-tab; raw
+              // previews pop a new tab so the user keeps their place.
+              target={
+                entry?.app === null || entry?.app === undefined
+                  ? download?.url.startsWith("/pdf/") === true
+                    ? "_self"
+                    : "_blank"
+                  : "_self"
+              }
               rel="noreferrer"
               aria-disabled={download === null}
               style={{ flex: 1, justifyContent: "center" }}

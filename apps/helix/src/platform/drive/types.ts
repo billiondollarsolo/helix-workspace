@@ -161,6 +161,19 @@ export interface DriveCommentListItem extends DriveCommentRecord {
   readonly author?: DriveActor | undefined;
 }
 
+export interface DrivePdfFormStateRecord {
+  readonly orgId: string;
+  readonly objectId: string;
+  readonly actorId: string;
+  readonly fieldValues: readonly JsonObject[];
+  readonly sourceVersionNumber: number | null;
+  readonly sourceSha256: string | null;
+  readonly sourceByteSize: number | null;
+  readonly sourceChanged: boolean;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
 export interface DrivePreview {
   readonly kind: DrivePreviewKind;
   readonly status: DrivePreviewStatus;

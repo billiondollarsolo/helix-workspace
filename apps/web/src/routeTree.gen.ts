@@ -23,6 +23,7 @@ import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
 import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar/index'
 import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
 import { Route as ShellAdminIndexRouteImport } from './routes/_shell/admin/index'
+import { Route as ShellPdfObjectIdRouteImport } from './routes/_shell/pdf/$objectId'
 import { Route as ShellEditObjectIdRouteImport } from './routes/_shell/edit/$objectId'
 import { Route as ShellDocsDocumentIdRouteImport } from './routes/_shell/docs/$documentId'
 
@@ -95,6 +96,11 @@ const ShellAdminIndexRoute = ShellAdminIndexRouteImport.update({
   path: '/admin/',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellPdfObjectIdRoute = ShellPdfObjectIdRouteImport.update({
+  id: '/pdf/$objectId',
+  path: '/pdf/$objectId',
+  getParentRoute: () => ShellRoute,
+} as any)
 const ShellEditObjectIdRoute = ShellEditObjectIdRouteImport.update({
   id: '/edit/$objectId',
   path: '/edit/$objectId',
@@ -112,6 +118,7 @@ export interface FileRoutesByFullPath {
   '/oauth/consent': typeof OauthConsentRoute
   '/docs/$documentId': typeof ShellDocsDocumentIdRoute
   '/edit/$objectId': typeof ShellEditObjectIdRoute
+  '/pdf/$objectId': typeof ShellPdfObjectIdRoute
   '/admin/': typeof ShellAdminIndexRoute
   '/assistant/': typeof ShellAssistantIndexRoute
   '/calendar/': typeof ShellCalendarIndexRoute
@@ -129,6 +136,7 @@ export interface FileRoutesByTo {
   '/oauth/consent': typeof OauthConsentRoute
   '/docs/$documentId': typeof ShellDocsDocumentIdRoute
   '/edit/$objectId': typeof ShellEditObjectIdRoute
+  '/pdf/$objectId': typeof ShellPdfObjectIdRoute
   '/admin': typeof ShellAdminIndexRoute
   '/assistant': typeof ShellAssistantIndexRoute
   '/calendar': typeof ShellCalendarIndexRoute
@@ -148,6 +156,7 @@ export interface FileRoutesById {
   '/oauth/consent': typeof OauthConsentRoute
   '/_shell/docs/$documentId': typeof ShellDocsDocumentIdRoute
   '/_shell/edit/$objectId': typeof ShellEditObjectIdRoute
+  '/_shell/pdf/$objectId': typeof ShellPdfObjectIdRoute
   '/_shell/admin/': typeof ShellAdminIndexRoute
   '/_shell/assistant/': typeof ShellAssistantIndexRoute
   '/_shell/calendar/': typeof ShellCalendarIndexRoute
@@ -167,6 +176,7 @@ export interface FileRouteTypes {
     | '/oauth/consent'
     | '/docs/$documentId'
     | '/edit/$objectId'
+    | '/pdf/$objectId'
     | '/admin/'
     | '/assistant/'
     | '/calendar/'
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
     | '/oauth/consent'
     | '/docs/$documentId'
     | '/edit/$objectId'
+    | '/pdf/$objectId'
     | '/admin'
     | '/assistant'
     | '/calendar'
@@ -202,6 +213,7 @@ export interface FileRouteTypes {
     | '/oauth/consent'
     | '/_shell/docs/$documentId'
     | '/_shell/edit/$objectId'
+    | '/_shell/pdf/$objectId'
     | '/_shell/admin/'
     | '/_shell/assistant/'
     | '/_shell/calendar/'
@@ -321,11 +333,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellAdminIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/docs/$documentId': {
-      id: '/_shell/docs/$documentId'
-      path: '/docs/$documentId'
-      fullPath: '/docs/$documentId'
-      preLoaderRoute: typeof ShellDocsDocumentIdRouteImport
+    '/_shell/pdf/$objectId': {
+      id: '/_shell/pdf/$objectId'
+      path: '/pdf/$objectId'
+      fullPath: '/pdf/$objectId'
+      preLoaderRoute: typeof ShellPdfObjectIdRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/edit/$objectId': {
@@ -335,12 +347,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellEditObjectIdRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/docs/$documentId': {
+      id: '/_shell/docs/$documentId'
+      path: '/docs/$documentId'
+      fullPath: '/docs/$documentId'
+      preLoaderRoute: typeof ShellDocsDocumentIdRouteImport
+      parentRoute: typeof ShellRoute
+    }
   }
 }
 
 interface ShellRouteChildren {
   ShellDocsDocumentIdRoute: typeof ShellDocsDocumentIdRoute
   ShellEditObjectIdRoute: typeof ShellEditObjectIdRoute
+  ShellPdfObjectIdRoute: typeof ShellPdfObjectIdRoute
   ShellAdminIndexRoute: typeof ShellAdminIndexRoute
   ShellAssistantIndexRoute: typeof ShellAssistantIndexRoute
   ShellCalendarIndexRoute: typeof ShellCalendarIndexRoute
@@ -356,6 +376,7 @@ interface ShellRouteChildren {
 const ShellRouteChildren: ShellRouteChildren = {
   ShellDocsDocumentIdRoute: ShellDocsDocumentIdRoute,
   ShellEditObjectIdRoute: ShellEditObjectIdRoute,
+  ShellPdfObjectIdRoute: ShellPdfObjectIdRoute,
   ShellAdminIndexRoute: ShellAdminIndexRoute,
   ShellAssistantIndexRoute: ShellAssistantIndexRoute,
   ShellCalendarIndexRoute: ShellCalendarIndexRoute,

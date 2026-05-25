@@ -254,8 +254,8 @@ describe("drive API", () => {
     await expect(listDrive({}, fetchImpl)).rejects.toThrow("missing drive scope");
   });
 
-  it("resolves a download URL from the entry preview or the WebDAV path", () => {
-    const base: DriveApiEntry = {
+  it("resolves PDFs to the native viewer and other raw files to preview URLs", () => {
+    const pdf: DriveApiEntry = {
       id: "obj-1",
       type: "file",
       name: "report.pdf",
@@ -266,10 +266,16 @@ describe("drive API", () => {
       createdAt: "2026-05-20T12:00:00.000Z",
       updatedAt: "2026-05-20T12:00:00.000Z",
     };
-    expect(driveDownloadResult(base).url).toBe("/dav/obj-1");
+    expect(driveDownloadResult(pdf).url).toBe("/pdf/obj-1");
     expect(
       driveDownloadResult({
-        ...base,
+        ...pdf,
+        folderId: "folder-eng",
+      }).url,
+    ).toBe("/pdf/obj-1?folder=folder-eng");
+    expect(
+      driveDownloadResult({
+        ...pdf,
         preview: {
           kind: "pdf",
           status: "available",
@@ -277,7 +283,31 @@ describe("drive API", () => {
           url: "https://cdn.example/report.pdf",
         },
       }).url,
-    ).toBe("https://cdn.example/report.pdf");
+    ).toBe("/pdf/obj-1");
+    expect(
+      driveDownloadResult({
+        ...pdf,
+        id: "text-1",
+        name: "notes.txt",
+        mimeType: "text/plain",
+      }).url,
+    ).toBe("/api/drive/objects/text-1/preview");
+    expect(
+      driveDownloadResult({
+        ...pdf,
+        id: "fake-pdf",
+        name: "notes.pdf",
+        mimeType: "text/plain",
+      }).url,
+    ).toBe("/api/drive/objects/fake-pdf/preview");
+    expect(
+      driveDownloadResult({
+        ...pdf,
+        id: "generic-pdf",
+        name: "scanned-form.pdf",
+        mimeType: "application/octet-stream",
+      }).url,
+    ).toBe("/pdf/generic-pdf");
   });
 
   it("surfaces backend tool errors", async () => {

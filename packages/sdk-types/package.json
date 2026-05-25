@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./editors": {
+      "types": "./dist/editors.d.ts",
+      "default": "./dist/editors.js"
     }
   },
   "types": "./dist/index.d.ts",

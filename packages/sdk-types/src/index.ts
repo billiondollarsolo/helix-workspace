@@ -2,6 +2,7 @@ export * from "./capabilities.js";
 export * from "./config.js";
 export * from "./contributions.js";
 export * from "./core.js";
+export * from "./editors.js";
 export * from "./json.js";
 export * from "./lifecycle.js";
 export * from "./manifest.js";

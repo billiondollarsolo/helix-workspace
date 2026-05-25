@@ -10,12 +10,12 @@
    - New    → `docs.create` — creates a real backend document and opens it.
    When the backend is unavailable the surface falls back to seed data only. */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
-import { createDocsDocument } from "./api";
+import { createDocsDocument, importDocxDocument, migrateDocsDocumentToNative } from "./api";
 import { DocList } from "./doc-list";
 import type { DocSummary } from "./data";
 import { docsListFromDriveQueryOptions } from "./queries";
@@ -32,7 +32,10 @@ export function DocsShell({ initialDocumentId, variant = "standalone" }: DocsShe
   const queryClient = useQueryClient();
   const [folder, setFolder] = useState<string>("all");
   const [query, setQuery] = useState("");
-  const [openDocId, setOpenDocId] = useState<string | null>(initialDocumentId ?? null);
+  const [createError, setCreateError] = useState<Error | null>(null);
+  const [importError, setImportError] = useState<Error | null>(null);
+  const [migrationError, setMigrationError] = useState<Error | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const documentsQuery = useQuery(docsListFromDriveQueryOptions({ limit: 100 }));
   const isBackendUnavailable = documentsQuery.isError;
@@ -43,68 +46,112 @@ export function DocsShell({ initialDocumentId, variant = "standalone" }: DocsShe
       createDocsDocument({
         title: "Untitled document",
         initialMarkdown: "",
+        editorEngine: "helix-native-document",
+        formatVersion: 1,
         metadata: { createdFrom: "web.docs-shell" },
       }),
     onMutate: () => {
+      setCreateError(null);
       // No optimistic cache write — `docs.create` returns the canonical row,
       // which `onSuccess` invalidates the list against.
     },
-    onError: () => {
-      // Surfaced by the caller's `onError` override (offline draft fallback).
+    onError: (error) => {
+      setCreateError(error instanceof Error ? error : new Error("Unknown create error."));
     },
     onSuccess: (document) => {
+      setCreateError(null);
       void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
-      // After Phase 5: open the OnlyOffice editor instead of the in-page
-      // Tiptap editor. The OO editor lives at /edit/:objectId.
-      void router.navigate({ to: "/edit/$objectId", params: { objectId: document.id } });
+      void router.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
+    },
+  });
+  const importMutation = useMutation({
+    onMutate: () => {
+      setImportError(null);
+    },
+    onError: (error) => {
+      setImportError(error instanceof Error ? error : new Error("Unknown import error."));
+    },
+    mutationFn: async (file: File) =>
+      importDocxDocument({
+        filename: file.name,
+        title: titleFromDocxFilename(file.name),
+        contentBase64: base64FromArrayBuffer(await file.arrayBuffer()),
+        metadata: { source: "web.docs-shell.import-docx" },
+      }),
+    onSuccess: (document) => {
+      setImportError(null);
+      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void router.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
+    },
+  });
+  const migrationMutation = useMutation({
+    onMutate: () => {
+      setMigrationError(null);
+    },
+    onError: (error) => {
+      setMigrationError(error instanceof Error ? error : new Error("Unknown migration error."));
+    },
+    mutationFn: (docId: string) => migrateDocsDocumentToNative({ docId }),
+    onSuccess: (document) => {
+      setMigrationError(null);
+      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void router.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
     },
   });
 
-  // After the .helixdoc → OOXML migration the in-page Tiptap editor is no
-  // longer the destination. Any time something sets `openDocId` we redirect
-  // to the OnlyOffice editor route instead. This keeps every legacy call
-  // site (DocList row click, initialDocumentId from URL search, etc.)
-  // working without rewriting them.
-  useEffect(() => {
-    if (openDocId !== null) {
-      void router.navigate({ to: "/edit/$objectId", params: { objectId: openDocId } });
-      setOpenDocId(null);
-    }
-  }, [openDocId, router]);
-
+  // Native Helix documents open in the executable /docs/:documentId shell.
   useEffect(() => {
     if (initialDocumentId !== undefined) {
-      setOpenDocId(initialDocumentId);
+      void router.navigate({ to: "/docs/$documentId", params: { documentId: initialDocumentId } });
     }
-  }, [initialDocumentId]);
+  }, [initialDocumentId, router]);
 
   const documents = useMemo<readonly DocSummary[]>(
     () => documentsQuery.data ?? [],
     [documentsQuery.data],
   );
 
-  // After Phase 7 (native editor retirement): we no longer render the
-  // in-page DocEditor. The redirect-to-/edit effect above takes care of
-  // navigating away whenever `openDocId` is non-null, so we never reach a
-  // state where a document needs to be rendered here.
+  // Document bodies are rendered by the standalone native editor route.
 
   function createDocument() {
     if (createMutation.isPending) {
       return;
     }
-    createMutation.mutate(undefined, {
-      onError: () => {
-        // Backend unavailable — fall back to an offline draft so the
-        // editor still opens.
-        setOpenDocId(`doc-new-${String(Date.now())}`);
-      },
-    });
+    createMutation.mutate();
+  }
+
+  function openDocument(document: DocSummary) {
+    if (isNativeDocument(document)) {
+      void router.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
+      return;
+    }
+    void router.navigate({ to: "/edit/$objectId", params: { objectId: document.id } });
+  }
+
+  function chooseDocxFile() {
+    if (importMutation.isPending) {
+      return;
+    }
+    importInputRef.current?.click();
+  }
+
+  function importDocxFile(file: File | undefined) {
+    if (file === undefined || importMutation.isPending) {
+      return;
+    }
+    importMutation.mutate(file);
+  }
+
+  function migrateLegacyDocument(docId: string) {
+    if (migrationMutation.isPending) {
+      return;
+    }
+    migrationMutation.mutate(docId);
   }
 
   if (embedded) {
-    // The drive-embedded variant used to inline the Tiptap editor below
-    // a list. With OnlyOffice taking over, drive consumers should navigate
-    // to /edit/:objectId directly — no embedded editor surface remains.
+    // Drive opens native documents through /docs/:documentId directly, so the
+    // old embedded list/editor variant no longer mounts an editor surface.
     return null;
   }
 
@@ -116,7 +163,26 @@ export function DocsShell({ initialDocumentId, variant = "standalone" }: DocsShe
       searchValue={query}
       onSearchChange={setQuery}
       actions={
-        openDocId === null ? (
+        <>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            aria-label="Import DOCX"
+            hidden
+            onChange={(event) => {
+              importDocxFile(event.currentTarget.files?.[0]);
+              event.currentTarget.value = "";
+            }}
+          />
+          <button
+            className="btn"
+            type="button"
+            onClick={chooseDocxFile}
+            disabled={importMutation.isPending}
+          >
+            <Icons.Upload /> {importMutation.isPending ? "Importing..." : "Import DOCX"}
+          </button>
           <button
             className="btn primary"
             type="button"
@@ -125,24 +191,45 @@ export function DocsShell({ initialDocumentId, variant = "standalone" }: DocsShe
           >
             <Icons.Plus /> {createMutation.isPending ? "Creating…" : "New"}
           </button>
-        ) : null
+        </>
       }
     >
-      {/* When openDocId is set, the redirect effect above is mid-flight
-          to /edit/:objectId. Render the list either way — the navigation
-          completes before the next paint. */}
       <DocList
         documents={documents}
         folder={folder}
         query={query}
         onFolder={setFolder}
         onNewDoc={createDocument}
-        onOpenDoc={setOpenDocId}
+        onImportDocx={chooseDocxFile}
+        onOpenDoc={openDocument}
         isBackendUnavailable={isBackendUnavailable}
         isLoading={documentsQuery.isLoading}
         isCreating={createMutation.isPending}
+        isImporting={importMutation.isPending}
+        migratingDocumentId={migrationMutation.variables ?? null}
+        createError={createError}
+        importError={importError}
+        migrationError={migrationError}
+        onMigrateDocument={migrateLegacyDocument}
       />
     </SurfaceFrame>
   );
 }
 
+function isNativeDocument(document: DocSummary): boolean {
+  return document.editorEngine === "helix-native-document";
+}
+
+function titleFromDocxFilename(filename: string): string {
+  return filename.replace(/\.docx$/iu, "").trim() || "Imported DOCX";
+}
+
+function base64FromArrayBuffer(buffer: ArrayBuffer): string {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
+}

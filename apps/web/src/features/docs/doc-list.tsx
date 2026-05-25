@@ -21,13 +21,20 @@ export interface DocListProps {
   readonly query: string;
   readonly onFolder: (folder: string) => void;
   readonly onNewDoc: () => void;
-  readonly onOpenDoc: (id: string) => void;
+  readonly onImportDocx: () => void;
+  readonly onOpenDoc: (document: DocSummary) => void;
+  readonly onMigrateDocument?: ((id: string) => void) | undefined;
   /** True when the Docs backend could not be reached. */
   readonly isBackendUnavailable: boolean;
   /** True while the documents query is in flight (first paint, no data yet). */
   readonly isLoading?: boolean;
   /** True while a `docs.create` request is in flight. */
   readonly isCreating?: boolean;
+  readonly isImporting?: boolean;
+  readonly migratingDocumentId?: string | null | undefined;
+  readonly createError?: Error | null;
+  readonly importError?: Error | null;
+  readonly migrationError?: Error | null;
 }
 
 export function DocList({
@@ -36,10 +43,17 @@ export function DocList({
   query,
   onFolder,
   onNewDoc,
+  onImportDocx,
   onOpenDoc,
+  onMigrateDocument,
   isBackendUnavailable,
   isLoading = false,
   isCreating = false,
+  isImporting = false,
+  migratingDocumentId = null,
+  createError = null,
+  importError = null,
+  migrationError = null,
 }: DocListProps) {
   const visible = filterDocuments(documents, folder, query);
   const heading = headingForFolder(folder);
@@ -50,7 +64,9 @@ export function DocList({
         folder={folder}
         onFolder={onFolder}
         onNewDoc={onNewDoc}
+        onImportDocx={onImportDocx}
         isCreating={isCreating}
+        isImporting={isImporting}
       />
       <div
         style={{
@@ -69,6 +85,9 @@ export function DocList({
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <button className="btn" type="button">
               <Icons.Filter /> Filter
+            </button>
+            <button className="btn" type="button" onClick={onImportDocx} disabled={isImporting}>
+              <Icons.Upload /> {isImporting ? "Importing..." : "Import DOCX"}
             </button>
             <button className="btn primary" type="button" onClick={onNewDoc}>
               <Icons.Plus /> New doc
@@ -93,6 +112,66 @@ export function DocList({
           >
             <Icons.Globe />
             Docs unavailable — try again later.
+          </div>
+        ) : null}
+
+        {createError !== null ? (
+          <div
+            role="alert"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 12px",
+              marginBottom: 16,
+              fontSize: "var(--text-meta)",
+              color: "var(--text-2)",
+              background: "var(--warning-soft)",
+              borderRadius: 6,
+            }}
+          >
+            <Icons.Doc />
+            Document creation failed — {createError.message}
+          </div>
+        ) : null}
+
+        {importError !== null ? (
+          <div
+            role="alert"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 12px",
+              marginBottom: 16,
+              fontSize: "var(--text-meta)",
+              color: "var(--text-2)",
+              background: "var(--warning-soft)",
+              borderRadius: 6,
+            }}
+          >
+            <Icons.Upload />
+            DOCX import failed — {importError.message}
+          </div>
+        ) : null}
+
+        {migrationError !== null ? (
+          <div
+            role="alert"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 12px",
+              marginBottom: 16,
+              fontSize: "var(--text-meta)",
+              color: "var(--text-2)",
+              background: "var(--warning-soft)",
+              borderRadius: 6,
+            }}
+          >
+            <Icons.Doc />
+            Migration failed — {migrationError.message}
           </div>
         ) : null}
 
@@ -127,7 +206,7 @@ export function DocList({
                 <RecentCard
                   key={document.id}
                   document={document}
-                  onOpen={() => onOpenDoc(document.id)}
+                  onOpen={() => onOpenDoc(document)}
                 />
               ))}
             </div>
@@ -139,7 +218,7 @@ export function DocList({
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 160px 140px 80px 32px",
+                  gridTemplateColumns: "1fr 160px 140px 80px 96px",
                   padding: "8px 16px",
                   fontSize: "var(--text-caption)",
                   color: "var(--text-3)",
@@ -153,17 +232,27 @@ export function DocList({
                 <span>Owner</span>
                 <span>Modified</span>
                 <span>Shared</span>
-                <span />
+                <span>Action</span>
               </div>
               {visible.map((document) => (
-                <button
+                <div
                   key={document.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   className="list-row"
-                  onClick={() => onOpenDoc(document.id)}
+                  onClick={() => onOpenDoc(document)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) {
+                      return;
+                    }
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpenDoc(document);
+                    }
+                  }}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "1fr 160px 140px 80px 32px",
+                    gridTemplateColumns: "1fr 160px 140px 80px 96px",
                     padding: "0 16px",
                     height: 36,
                     alignItems: "center",
@@ -175,7 +264,9 @@ export function DocList({
                 >
                   <span className="row gap-2" style={{ minWidth: 0 }}>
                     <Icons.Doc />
-                    <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{document.title}</span>
+                    <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
+                      {document.title}
+                    </span>
                     {document.formatLabel ? <DocFormatChip label={document.formatLabel} /> : null}
                   </span>
                   <span className="row gap-2" style={{ minWidth: 0 }}>
@@ -184,14 +275,30 @@ export function DocList({
                   </span>
                   <span style={{ color: "var(--text-2)" }}>{document.modified}</span>
                   <span style={{ color: "var(--text-2)" }}>{document.shared} people</span>
-                  <span
-                    className="icon-btn"
-                    role="presentation"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <Icons.MoreV />
-                  </span>
-                </button>
+                  {isLegacyDocument(document) && onMigrateDocument !== undefined ? (
+                    <button
+                      type="button"
+                      className="btn sm"
+                      aria-label={`Migrate ${document.title} to native editor`}
+                      disabled={migratingDocumentId === document.id}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onMigrateDocument(document.id);
+                      }}
+                    >
+                      <Icons.Doc />{" "}
+                      {migratingDocumentId === document.id ? "Migrating..." : "Migrate"}
+                    </button>
+                  ) : (
+                    <span
+                      className="icon-btn"
+                      role="presentation"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <Icons.MoreV />
+                    </span>
+                  )}
+                </div>
               ))}
             </div>
           </>
@@ -201,16 +308,24 @@ export function DocList({
   );
 }
 
+function isLegacyDocument(document: DocSummary): boolean {
+  return document.editorEngine === "legacy-yjs";
+}
+
 function DocsSidebar({
   folder,
   onFolder,
   onNewDoc,
+  onImportDocx,
   isCreating = false,
+  isImporting = false,
 }: {
   readonly folder: string;
   readonly onFolder: (folder: string) => void;
   readonly onNewDoc: () => void;
+  readonly onImportDocx: () => void;
   readonly isCreating?: boolean;
+  readonly isImporting?: boolean;
 }) {
   return (
     <aside aria-label="Docs navigation" className="surf-sidebar">
@@ -222,6 +337,15 @@ function DocsSidebar({
         style={{ width: "100%", marginBottom: 12 }}
       >
         <Icons.Plus /> {isCreating ? "Creating…" : "New doc"}
+      </button>
+      <button
+        className="btn lg"
+        type="button"
+        onClick={onImportDocx}
+        disabled={isImporting}
+        style={{ width: "100%", marginBottom: 12 }}
+      >
+        <Icons.Upload /> {isImporting ? "Importing..." : "Import DOCX"}
       </button>
       <nav aria-label="Document folders" style={{ overflowY: "auto", flex: 1 }}>
         {DOC_FOLDERS.map((entry) => {
@@ -317,12 +441,17 @@ function RecentCard({
             marginBottom: 2,
           }}
         >
-          <div className="truncate" style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}>
+          <div
+            className="truncate"
+            style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}
+          >
             {document.title}
           </div>
           {document.formatLabel ? <DocFormatChip label={document.formatLabel} /> : null}
         </div>
-        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{document.modified}</div>
+        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+          {document.modified}
+        </div>
       </div>
     </button>
   );
@@ -355,13 +484,7 @@ function DocFormatChip({ label }: { readonly label: string }) {
   );
 }
 
-function EmptyState({
-  folder,
-  hasQuery,
-}: {
-  readonly folder: string;
-  readonly hasQuery: boolean;
-}) {
+function EmptyState({ folder, hasQuery }: { readonly folder: string; readonly hasQuery: boolean }) {
   const fallback = FOLDER_EMPTY_STATES.all;
   const state = hasQuery
     ? {
@@ -387,7 +510,9 @@ function EmptyState({
       }}
     >
       <Icon size={24} />
-      <div style={{ fontSize: "var(--text-body)", fontWeight: 500, color: "var(--text)" }}>{state.title}</div>
+      <div style={{ fontSize: "var(--text-body)", fontWeight: 500, color: "var(--text)" }}>
+        {state.title}
+      </div>
       <div>{state.body}</div>
     </div>
   );

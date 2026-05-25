@@ -1399,6 +1399,227 @@ a {
 .collaboration-carets__selection {
   border-radius: 2px;
 }
+.native-document-editor__content {
+  min-height: 360px;
+  outline: none;
+  color: var(--text-2);
+  font-size: var(--text-body);
+  line-height: 1.7;
+}
+
+.native-document-editor__content .ProseMirror {
+  min-height: 360px;
+  outline: none;
+}
+
+.native-document-editor__content .ProseMirror > * + * {
+  margin-top: 0.85em;
+}
+
+.native-document-editor__content .ProseMirror h1,
+.native-document-editor__content .ProseMirror h2,
+.native-document-editor__content .ProseMirror h3 {
+  color: var(--text-1);
+  line-height: 1.35;
+}
+
+.native-document-editor__content .ProseMirror pre {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-body-sm);
+}
+
+.native-document-anchor-decoration {
+  border-radius: 3px;
+  box-decoration-break: clone;
+  padding: 0 1px;
+}
+
+.native-document-anchor-decoration--comment {
+  background: color-mix(in srgb, #facc15 24%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, #ca8a04 58%, transparent);
+}
+
+.native-document-anchor-decoration--suggestion {
+  background: color-mix(in srgb, #22c55e 18%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, #15803d 58%, transparent);
+}
+
+.native-document-find-decoration {
+  border-radius: 3px;
+  background: color-mix(in srgb, #fde047 34%, transparent);
+  box-decoration-break: clone;
+}
+
+.native-document-find-decoration--active {
+  background: color-mix(in srgb, #facc15 58%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #ca8a04 58%, transparent),
+    inset 0 -2px 0 color-mix(in srgb, #ca8a04 64%, transparent);
+}
+
+.native-document-smart-compose-inline-ghost {
+  margin-left: 4px;
+  color: var(--text-3);
+  font-style: italic;
+  pointer-events: none;
+  opacity: 0.82;
+}
+
+.native-document-token-decoration {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  max-width: 100%;
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  padding: 0 7px;
+  background: var(--surface-2);
+  color: transparent;
+  font-size: 0;
+  line-height: 1.6;
+  vertical-align: baseline;
+  white-space: nowrap;
+  box-decoration-break: clone;
+}
+
+.native-document-token-decoration::after {
+  content: attr(data-native-document-token-label);
+  overflow: hidden;
+  max-width: 28ch;
+  color: var(--text-1);
+  font-size: var(--text-body-sm);
+  text-overflow: ellipsis;
+}
+
+.native-document-token-decoration--chip-person,
+.native-document-token-decoration--chip-doc,
+.native-document-token-decoration--chip-event {
+  border-color: var(--accent-soft-border);
+  background: var(--accent-soft);
+}
+
+.native-document-token-decoration--chip-person:focus-visible,
+.native-document-token-decoration--chip-doc:focus-visible,
+.native-document-token-decoration--chip-event:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.native-document-token-decoration--chip-person::before,
+.native-document-token-decoration--chip-doc::before,
+.native-document-token-decoration--chip-event::before {
+  position: absolute;
+  z-index: 8;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: none;
+  width: max-content;
+  max-width: min(280px, 80vw);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  color: var(--text-1);
+  content: attr(data-native-document-token-card);
+  font-size: var(--text-caption);
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.native-document-token-decoration--chip-person:hover::before,
+.native-document-token-decoration--chip-doc:hover::before,
+.native-document-token-decoration--chip-event:hover::before,
+.native-document-token-decoration--chip-person:focus-visible::before,
+.native-document-token-decoration--chip-doc:focus-visible::before,
+.native-document-token-decoration--chip-event:focus-visible::before {
+  display: block;
+}
+
+.native-document-token-decoration--reference {
+  border-color: color-mix(in srgb, var(--info) 34%, var(--border));
+  background: var(--info-soft);
+}
+
+.native-document-token-decoration--equation {
+  border-color: color-mix(in srgb, var(--success) 34%, var(--border));
+  background: var(--success-soft);
+  font-family: var(--font-mono);
+}
+
+.native-document-token-decoration--field {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+  background: var(--warning-soft);
+}
+
+.native-document-workspace {
+  grid-template-columns: minmax(0, 860px) minmax(220px, 260px);
+}
+
+.native-document-workspace--print-preview {
+  grid-template-columns: minmax(0, 860px);
+  justify-content: center;
+}
+
+.native-document-workspace--print-preview .native-document-side-rail,
+.native-document-workspace--print-preview .native-document-editor__tools,
+.native-document-workspace--print-preview .native-document-editor__status,
+.native-document-workspace--print-preview .native-document-session-facts {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  .native-document-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .native-document-editor__tools {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .native-document-editor__tools label,
+  .native-document-editor__tools output {
+    grid-column: span 2;
+  }
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .native-document-toolbar,
+  .native-document-side-rail,
+  .native-document-editor__tools,
+  .native-document-editor__status,
+  .native-document-session-facts {
+    display: none !important;
+  }
+
+  .native-document-workspace {
+    display: block;
+    width: 100%;
+  }
+
+  .native-document-page {
+    min-height: auto !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  .native-document-editor__content,
+  .native-document-editor__content .ProseMirror {
+    min-height: auto;
+  }
+}
 
 /* ============================================================
    Docs — editable title button affordance

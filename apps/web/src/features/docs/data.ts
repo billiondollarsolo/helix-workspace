@@ -13,13 +13,7 @@
 import type { IconComponent } from "@/components/icons";
 import { Icons } from "@/components/icons";
 
-export type DocFolderId =
-  | "all"
-  | "recent"
-  | "mine"
-  | "shared"
-  | "starred"
-  | "trash";
+export type DocFolderId = "all" | "recent" | "mine" | "shared" | "starred" | "trash";
 
 export interface DocSummary {
   readonly id: string;
@@ -39,6 +33,8 @@ export interface DocSummary {
    *  "PDF") so the user can tell at a glance how the doc was originally
    *  imported. */
   readonly formatLabel: string;
+  readonly editorEngine?: string | undefined;
+  readonly formatVersion?: number | undefined;
 }
 
 export interface DocFolder {
@@ -121,13 +117,32 @@ export function formatModified(value: string): string {
 
 /** Folder-specific empty-state copy for the list view. */
 export const FOLDER_EMPTY_STATES: Readonly<
-  Record<DocFolderId, { readonly icon: IconComponent; readonly title: string; readonly body: string }>
+  Record<
+    DocFolderId,
+    { readonly icon: IconComponent; readonly title: string; readonly body: string }
+  >
 > = {
   all: { icon: Icons.Doc, title: "No documents", body: "Create a doc to get started." },
-  recent: { icon: Icons.History, title: "Nothing recent", body: "Documents you open will appear here." },
-  trash: { icon: Icons.Trash, title: "Trash is empty", body: "Deleted documents appear here for 30 days." },
-  mine: { icon: Icons.Doc, title: "You don't own any docs", body: "Documents you create will appear here." },
-  starred: { icon: Icons.Star, title: "No starred documents", body: "Star a doc to find it here later." },
+  recent: {
+    icon: Icons.History,
+    title: "Nothing recent",
+    body: "Documents you open will appear here.",
+  },
+  trash: {
+    icon: Icons.Trash,
+    title: "Trash is empty",
+    body: "Deleted documents appear here for 30 days.",
+  },
+  mine: {
+    icon: Icons.Doc,
+    title: "You don't own any docs",
+    body: "Documents you create will appear here.",
+  },
+  starred: {
+    icon: Icons.Star,
+    title: "No starred documents",
+    body: "Star a doc to find it here later.",
+  },
   shared: {
     icon: Icons.Users,
     title: "Nothing shared with you yet",

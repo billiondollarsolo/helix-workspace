@@ -8,7 +8,7 @@ import {
   useMemo,
   useState,
   useSyncExternalStore,
-  type ReactNode
+  type ReactNode,
 } from "react";
 import type { ColorMode, ColorModeApi } from "./theme";
 
@@ -73,6 +73,8 @@ export interface CommandItem {
   group?: string;
   keywords?: readonly string[];
   shortcut?: string;
+  disabledReason?: string;
+  order?: number;
   run: () => void | Promise<void>;
 }
 
@@ -138,7 +140,7 @@ export interface WebPlatformHost {
   registerShellRoute(route: ShellRoute): void;
   registerLeftRailItem(item: LeftRailItem): void;
   registerRightRailPanel(panel: PanelExtension): void;
-  registerCommandPaletteItems(items: readonly CommandItem[]): void;
+  registerCommandPaletteItems(items: readonly CommandItem[]): () => void;
   registerSettingsPage(page: SettingsPage): void;
   registerSuggestionSlot(slot: SuggestionSlotDef): void;
   registerSuggestionSlotProvider(slotId: string, provider: SuggestionSlotProvider): void;
@@ -170,12 +172,12 @@ const fallbackActor: Actor = {
   id: "local-user",
   displayName: "Local User",
   email: "user@helix.local",
-  roles: ["admin"]
+  roles: ["admin"],
 };
 
 const fallbackSession: Session = {
   actor: fallbackActor,
-  authenticated: true
+  authenticated: true,
 };
 
 const defaultTokens: PresetTokens = {
@@ -184,7 +186,7 @@ const defaultTokens: PresetTokens = {
   primary: "var(--primary)",
   primaryForeground: "var(--primary-foreground)",
   border: "var(--border)",
-  radius: "var(--radius)"
+  radius: "var(--radius)",
 };
 
 function byOrderThenLabel<T extends { order?: number; label: string }>(left: T, right: T) {
@@ -243,6 +245,18 @@ export function createWebPlatformHost(options: CreateWebPlatformHostOptions): We
         commandItems.set(item.id, item);
       }
       emit();
+      return () => {
+        let changed = false;
+        for (const item of items) {
+          if (commandItems.get(item.id) === item) {
+            commandItems.delete(item.id);
+            changed = true;
+          }
+        }
+        if (changed) {
+          emit();
+        }
+      };
     },
     registerSettingsPage(page) {
       settingsPages.set(page.id, page);
@@ -299,7 +313,7 @@ export function createWebPlatformHost(options: CreateWebPlatformHostOptions): We
       return () => {
         listeners.delete(listener);
       };
-    }
+    },
   };
 
   return host;
@@ -310,7 +324,7 @@ const WebPlatformContext = createContext<WebPlatformHost | null>(null);
 export function WebPlatformProvider({
   children,
   host,
-  useColorMode
+  useColorMode,
 }: {
   children: ReactNode;
   host: WebPlatformHost;
@@ -319,9 +333,9 @@ export function WebPlatformProvider({
   const value = useMemo<WebPlatformHost>(
     () => ({
       ...host,
-      useColorMode
+      useColorMode,
     }),
-    [host, useColorMode]
+    [host, useColorMode],
   );
 
   return <WebPlatformContext.Provider value={value}>{children}</WebPlatformContext.Provider>;
@@ -350,7 +364,7 @@ interface AvailabilityState {
 
 function useAvailableSuggestionProviders(
   providers: readonly SuggestionSlotProvider[],
-  context: SuggestionSlotContext
+  context: SuggestionSlotContext,
 ): AvailabilityState {
   const [state, setState] = useState<AvailabilityState>({ status: "ready", providers });
 
@@ -361,9 +375,11 @@ function useAvailableSuggestionProviders(
 
     void Promise.all(
       providers.map(async (provider) => {
-        const available = await Promise.resolve(provider.available?.(context) ?? true).catch(() => false);
+        const available = await Promise.resolve(provider.available?.(context) ?? true).catch(
+          () => false,
+        );
         return { provider, available };
-      })
+      }),
     ).then((results) => {
       if (!active) {
         return;
@@ -371,7 +387,7 @@ function useAvailableSuggestionProviders(
 
       setState({
         status: "ready",
-        providers: results.filter((result) => result.available).map((result) => result.provider)
+        providers: results.filter((result) => result.available).map((result) => result.provider),
       });
     });
 
@@ -398,13 +414,22 @@ export function SuggestionSlot({
   className,
   emptyFallback = null,
   loadingFallback = null,
-  renderProvider
+  renderProvider,
 }: SuggestionSlotProps) {
-  const selectSlot = useCallback((host: WebPlatformHost) => host.getSuggestionSlot(slotId), [slotId]);
-  const selectProviders = useCallback((host: WebPlatformHost) => host.getSuggestionSlotProviders(slotId), [slotId]);
+  const selectSlot = useCallback(
+    (host: WebPlatformHost) => host.getSuggestionSlot(slotId),
+    [slotId],
+  );
+  const selectProviders = useCallback(
+    (host: WebPlatformHost) => host.getSuggestionSlotProviders(slotId),
+    [slotId],
+  );
   const slot = usePlatformSnapshot(selectSlot);
   const providers = usePlatformSnapshot(selectProviders);
-  const slotContext = useMemo<SuggestionSlotContext>(() => ({ ...context, slotId }), [context, slotId]);
+  const slotContext = useMemo<SuggestionSlotContext>(
+    () => ({ ...context, slotId }),
+    [context, slotId],
+  );
   const availability = useAvailableSuggestionProviders(providers, slotContext);
 
   if (availability.status === "loading") {

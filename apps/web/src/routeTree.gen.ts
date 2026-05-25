@@ -24,6 +24,7 @@ import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar
 import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
 import { Route as ShellAdminIndexRouteImport } from './routes/_shell/admin/index'
 import { Route as ShellEditObjectIdRouteImport } from './routes/_shell/edit/$objectId'
+import { Route as ShellDocsDocumentIdRouteImport } from './routes/_shell/docs/$documentId'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -99,11 +100,17 @@ const ShellEditObjectIdRoute = ShellEditObjectIdRouteImport.update({
   path: '/edit/$objectId',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellDocsDocumentIdRoute = ShellDocsDocumentIdRouteImport.update({
+  id: '/docs/$documentId',
+  path: '/docs/$documentId',
+  getParentRoute: () => ShellRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/oauth/consent': typeof OauthConsentRoute
+  '/docs/$documentId': typeof ShellDocsDocumentIdRoute
   '/edit/$objectId': typeof ShellEditObjectIdRoute
   '/admin/': typeof ShellAdminIndexRoute
   '/assistant/': typeof ShellAssistantIndexRoute
@@ -120,6 +127,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/oauth/consent': typeof OauthConsentRoute
+  '/docs/$documentId': typeof ShellDocsDocumentIdRoute
   '/edit/$objectId': typeof ShellEditObjectIdRoute
   '/admin': typeof ShellAdminIndexRoute
   '/assistant': typeof ShellAssistantIndexRoute
@@ -138,6 +146,7 @@ export interface FileRoutesById {
   '/_shell': typeof ShellRouteWithChildren
   '/login': typeof LoginRoute
   '/oauth/consent': typeof OauthConsentRoute
+  '/_shell/docs/$documentId': typeof ShellDocsDocumentIdRoute
   '/_shell/edit/$objectId': typeof ShellEditObjectIdRoute
   '/_shell/admin/': typeof ShellAdminIndexRoute
   '/_shell/assistant/': typeof ShellAssistantIndexRoute
@@ -156,6 +165,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/oauth/consent'
+    | '/docs/$documentId'
     | '/edit/$objectId'
     | '/admin/'
     | '/assistant/'
@@ -172,6 +182,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/oauth/consent'
+    | '/docs/$documentId'
     | '/edit/$objectId'
     | '/admin'
     | '/assistant'
@@ -189,6 +200,7 @@ export interface FileRouteTypes {
     | '/_shell'
     | '/login'
     | '/oauth/consent'
+    | '/_shell/docs/$documentId'
     | '/_shell/edit/$objectId'
     | '/_shell/admin/'
     | '/_shell/assistant/'
@@ -309,6 +321,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellAdminIndexRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/docs/$documentId': {
+      id: '/_shell/docs/$documentId'
+      path: '/docs/$documentId'
+      fullPath: '/docs/$documentId'
+      preLoaderRoute: typeof ShellDocsDocumentIdRouteImport
+      parentRoute: typeof ShellRoute
+    }
     '/_shell/edit/$objectId': {
       id: '/_shell/edit/$objectId'
       path: '/edit/$objectId'
@@ -320,6 +339,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface ShellRouteChildren {
+  ShellDocsDocumentIdRoute: typeof ShellDocsDocumentIdRoute
   ShellEditObjectIdRoute: typeof ShellEditObjectIdRoute
   ShellAdminIndexRoute: typeof ShellAdminIndexRoute
   ShellAssistantIndexRoute: typeof ShellAssistantIndexRoute
@@ -334,6 +354,7 @@ interface ShellRouteChildren {
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
+  ShellDocsDocumentIdRoute: ShellDocsDocumentIdRoute,
   ShellEditObjectIdRoute: ShellEditObjectIdRoute,
   ShellAdminIndexRoute: ShellAdminIndexRoute,
   ShellAssistantIndexRoute: ShellAssistantIndexRoute,

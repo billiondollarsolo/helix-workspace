@@ -4,18 +4,23 @@
    arrow-key navigation; Enter selects; Escape closes. */
 
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePlatformSnapshot, type CommandItem, type WebPlatformHost } from "@helix/sdk-web";
 import { Icons, type IconName } from "@/components/icons";
 import { APPS } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
 
 interface PaletteItem {
+  id: string;
   group: string;
   title: string;
   sub?: string;
   icon?: IconName;
   avatar?: string;
-  action: () => void;
+  keywords?: readonly string[];
+  shortcut?: string;
+  disabledReason?: string;
+  action: () => void | Promise<void>;
 }
 
 export interface CommandPaletteProps {
@@ -26,6 +31,8 @@ export interface CommandPaletteProps {
 
 export function CommandPalette({ open, onClose, openSettings }: CommandPaletteProps) {
   const navigate = useNavigate();
+  const selectCommands = useCallback((host: WebPlatformHost) => host.getCommandPaletteItems(), []);
+  const registeredCommands = usePlatformSnapshot(selectCommands);
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
 
@@ -39,55 +46,77 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
   const items = useMemo<PaletteItem[]>(() => {
     const base: PaletteItem[] = [
       ...APPS.map((app) => ({
+        id: `app:${app.id}`,
         group: "Apps",
         title: `Go to ${app.name}`,
         icon: app.icon,
+        keywords: [app.name, app.route],
         action: () => goto(app.route),
       })),
-      { group: "Actions", title: "New email", icon: "EditPen", action: () => goto("/mail") },
-      { group: "Actions", title: "New doc", icon: "Doc", action: () => goto("/docs") },
-      { group: "Actions", title: "New sheet", icon: "Sheet", action: () => goto("/sheets") },
       {
+        id: "new-email",
+        group: "Actions",
+        title: "New email",
+        icon: "EditPen",
+        action: () => goto("/mail"),
+      },
+      {
+        id: "new-doc",
+        group: "Actions",
+        title: "New doc",
+        icon: "Doc",
+        action: () => goto("/docs"),
+      },
+      {
+        id: "new-sheet",
+        group: "Actions",
+        title: "New sheet",
+        icon: "Sheet",
+        action: () => goto("/sheets"),
+      },
+      {
+        id: "new-slide-deck",
         group: "Actions",
         title: "New slide deck",
         icon: "Image",
         action: () => goto("/slides"),
       },
       {
+        id: "schedule-meeting",
         group: "Actions",
         title: "Schedule meeting",
         icon: "Calendar",
         action: () => goto("/calendar"),
       },
       {
+        id: "start-meet-call",
         group: "Actions",
         title: "Start a Helix Meet call",
         icon: "Video",
         action: () => goto("/meet"),
       },
       {
+        id: "account-settings",
         group: "Settings",
         title: "Account settings",
         icon: "Settings",
         action: openSettings,
       },
       {
+        id: "admin-console",
         group: "Settings",
         title: "Admin console",
         icon: "Shield",
         action: () => goto("/admin"),
       },
+      ...registeredCommands.map(commandPaletteItemFromPlatformCommand),
     ];
     if (!query) {
       return base;
     }
     const lower = query.toLowerCase();
-    return base.filter(
-      (item) =>
-        item.title.toLowerCase().includes(lower) ||
-        (item.sub ?? "").toLowerCase().includes(lower),
-    );
-  }, [query, goto, openSettings]);
+    return base.filter((item) => paletteItemMatchesQuery(item, lower));
+  }, [query, goto, openSettings, registeredCommands]);
 
   useEffect(() => {
     setIndex(0);
@@ -111,7 +140,11 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
         setIndex((i) => Math.max(0, i - 1));
       }
       if (event.key === "Enter") {
-        items[index]?.action();
+        const item = items[index];
+        if (item === undefined || item.disabledReason !== undefined) {
+          return;
+        }
+        void item.action();
         onClose();
       }
     };
@@ -210,12 +243,18 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                 runningIndex += 1;
                 const Icon = item.icon ? Icons[item.icon] : null;
                 const active = myIndex === index;
+                const disabled = item.disabledReason !== undefined;
                 return (
                   <button
                     key={`${item.group}-${item.title}-${myIndex}`}
                     type="button"
+                    disabled={disabled}
+                    title={item.disabledReason}
                     onClick={() => {
-                      item.action();
+                      if (disabled) {
+                        return;
+                      }
+                      void item.action();
                       onClose();
                     }}
                     onMouseEnter={() => setIndex(myIndex)}
@@ -228,8 +267,10 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                       borderRadius: 6,
                       fontSize: "var(--text-body-sm)",
                       textAlign: "left",
-                      background: active ? "var(--accent-soft)" : "transparent",
-                      color: active ? "var(--accent)" : "var(--text)",
+                      background: active && !disabled ? "var(--accent-soft)" : "transparent",
+                      color: disabled ? "var(--text-3)" : active ? "var(--accent)" : "var(--text)",
+                      opacity: disabled ? 0.72 : 1,
+                      cursor: disabled ? "not-allowed" : "pointer",
                     }}
                   >
                     <span
@@ -251,15 +292,16 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div className="truncate">{item.title}</div>
-                      {item.sub ? (
+                      {item.sub || item.disabledReason ? (
                         <div
                           className="truncate"
                           style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
                         >
-                          {item.sub}
+                          {item.disabledReason ?? item.sub}
                         </div>
                       ) : null}
                     </div>
+                    {item.shortcut ? <span className="kbd">{item.shortcut}</span> : null}
                     {active ? <Icons.ChevronRight /> : null}
                   </button>
                 );
@@ -296,4 +338,29 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
       </div>
     </div>
   );
+}
+
+function commandPaletteItemFromPlatformCommand(command: CommandItem): PaletteItem {
+  return {
+    id: command.id,
+    group: command.group ?? "Actions",
+    title: command.label,
+    sub: command.pluginId,
+    keywords: command.keywords,
+    shortcut: command.shortcut,
+    disabledReason: command.disabledReason,
+    action: command.run,
+  };
+}
+
+function paletteItemMatchesQuery(item: PaletteItem, query: string): boolean {
+  return [
+    item.id,
+    item.group,
+    item.title,
+    item.sub ?? "",
+    item.disabledReason ?? "",
+    item.shortcut ?? "",
+    ...(item.keywords ?? []),
+  ].some((value) => value.toLowerCase().includes(query));
 }

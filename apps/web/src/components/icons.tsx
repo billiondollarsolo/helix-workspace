@@ -316,6 +316,12 @@ const Underline: IconComponent = (p) => (
     <line x1="4" y1="21" x2="20" y2="21" />
   </I>
 );
+const Strikethrough: IconComponent = (p) => (
+  <I {...p}>
+    <path d="M16 4H9.5a3.5 3.5 0 0 0 0 7H14a3.5 3.5 0 0 1 0 7H7" />
+    <line x1="4" y1="12" x2="20" y2="12" />
+  </I>
+);
 const List: IconComponent = (p) => (
   <I {...p}>
     <line x1="8" y1="6" x2="21" y2="6" />
@@ -386,6 +392,14 @@ const Eye: IconComponent = (p) => (
   <I {...p}>
     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
     <circle cx="12" cy="12" r="3" />
+  </I>
+);
+const Print: IconComponent = (p) => (
+  <I {...p}>
+    <path d="M6 9V3h12v6" />
+    <path d="M6 17H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2" />
+    <path d="M6 14h12v7H6z" />
+    <path d="M17 12h.01" />
   </I>
 );
 const EditPen: IconComponent = (p) => (
@@ -618,6 +632,7 @@ export const Icons = {
   Bold,
   Italic,
   Underline,
+  Strikethrough,
   List,
   ListNum,
   Quote,
@@ -628,6 +643,7 @@ export const Icons = {
   H2,
   Divider,
   Eye,
+  Print,
   EditPen,
   Comment,
   History,
@@ -703,6 +719,7 @@ export {
   Bold,
   Italic,
   Underline,
+  Strikethrough,
   List,
   ListNum,
   Quote,
@@ -713,6 +730,7 @@ export {
   H2,
   Divider,
   Eye,
+  Print,
   EditPen,
   Comment,
   History,

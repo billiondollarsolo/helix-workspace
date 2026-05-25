@@ -25,6 +25,7 @@ import { AgentCredentialsManagement } from "@/features/admin/agent-credentials-m
 import { AICostLimitsManagement } from "@/features/admin/ai-cost-limits-management";
 import { AIObservabilityDashboard } from "@/features/admin/ai-observability";
 import { CoreAppsManagement } from "@/features/admin/core-apps-management";
+import { IdentityManagement } from "@/features/admin/identity-management";
 import { AuditLogList } from "@/features/admin/audit-log";
 import { WebhookManagement } from "@/features/webhooks/webhook-management";
 import {
@@ -2016,6 +2017,7 @@ const SECTION_CONTENT: Record<AdminSectionId, () => ReactNode> = {
   users: AdminUsers,
   groups: AdminGroups,
   security: AdminSecurity,
+  identity: withPageScroll(IdentityManagement),
   apps: AdminApps,
   "core-apps": withPageScroll(CoreAppsManagement),
   services: withPageScroll(AdminServicesOverview),

@@ -47,6 +47,7 @@ import { createSqlClient } from "./db/client.js";
 import { OAuthClientManager, OAuthTokenService } from "./platform/auth/oauth.js";
 import { PostgresAdminServiceStatusStore } from "./platform/admin/service-status.js";
 import { AdminServicesCatalog, registerAdminServicesRoutes } from "./platform/admin/services.js";
+import { registerAdminIdentityRoutes } from "./platform/admin/identity.js";
 import {
   PostgresAgentCredentialStore,
   PostgresAuthorizationCodeStore,
@@ -54,6 +55,9 @@ import {
 } from "./platform/auth/postgres-store.js";
 import { AuthorizationCodeService } from "./platform/auth/authorization-code.js";
 import { registerOAuthRoutes } from "./platform/auth/routes.js";
+import { registerTenantSamlRoutes } from "./platform/auth/saml-routes.js";
+import { registerTenantScimRoutes } from "./platform/auth/scim-routes.js";
+import { PostgresTenantIdpConfigStore } from "./platform/auth/tenant-idp-configs.js";
 import {
   appPasswordScopeCatalog,
   PostgresAppPasswordStore,
@@ -254,6 +258,7 @@ import { tierDefaults } from "./platform/config/tier.js";
 import { evaluateTierReadiness } from "./platform/config/tier-readiness.js";
 import { CoreAppRegistrationPlan } from "./platform/apps/core-apps.js";
 import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
+import { PostgresOrgStore } from "./platform/tenancy/index.js";
 import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
 import {
   evaluateAdminMfa,
@@ -812,6 +817,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   };
   const appPasswordStore = new PostgresAppPasswordStore(sql);
   const adminUsersStore = new PostgresAdminUsersStore(sql);
+  const orgStore = new PostgresOrgStore(sql);
+  const tenantIdpConfigStore = new PostgresTenantIdpConfigStore(sql);
   const auditStore = new PostgresAuditStore(sql, {
     onAppend: (record) => {
       metrics.recordAuditActivity({ verb: record.verb, objectType: record.objectType });
@@ -1551,6 +1558,20 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       ? {}
       : { actorResolver: sessionActorResolver }),
   });
+  const publicBaseUrl =
+    process.env.BETTER_AUTH_URL ??
+    process.env.HELIX_PUBLIC_URL ??
+    process.env.PUBLIC_BASE_URL ??
+    "http://localhost:3000";
+  await registerTenantSamlRoutes(app, {
+    orgs: orgStore,
+    idpConfigs: tenantIdpConfigStore,
+    publicBaseUrl,
+  });
+  await registerTenantScimRoutes(app, {
+    orgs: orgStore,
+    documentationUri: process.env.HELIX_SCIM_DOCS_URL ?? "https://docs.helix.example/scim",
+  });
   await registerPlatformConfigAdminRoutes(app, {
     service: platformConfig,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
@@ -1607,6 +1628,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerAdminUsersRoutes(app, {
     store: adminUsersStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+  });
+  await registerAdminIdentityRoutes(app, {
+    idpConfigs: tenantIdpConfigStore,
+    orgs: orgStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    auditSink: auditStore,
+    publicBaseUrl,
   });
   // Wave-1 admin console: Groups & OUs, security policies, OAuth apps,
   // billing, and domain/DNS management. Each route group writes through the

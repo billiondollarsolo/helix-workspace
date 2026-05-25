@@ -60,13 +60,24 @@ const apiUsers = {
   nextCursor: null,
 };
 
+function mockJsonFetch(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, payload: unknown): void {
+  fetchMock.mockImplementation(() =>
+    Promise.resolve(
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ),
+  );
+}
+
 /** Set a React-controlled input's value via the native prototype setter so
  *  the synthetic `input` event reflects the new value. */
 function setInputValue(input: HTMLInputElement, value: string): void {
-  Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    "value",
-  )?.set?.call(input, value);
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
+    input,
+    value,
+  );
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -101,11 +112,7 @@ describe("AdminConsole", () => {
         createElement(
           QueryClientProvider,
           { client: queryClient },
-          createElement(
-            ShellOverlayContext.Provider,
-            { value: overlayApi },
-            node,
-          ),
+          createElement(ShellOverlayContext.Provider, { value: overlayApi }, node),
         ),
       );
       return Promise.resolve();
@@ -155,12 +162,7 @@ describe("AdminConsole", () => {
   });
 
   it("renders the Overview placeholder by default (telemetry not yet wired)", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify(apiUsers), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    mockJsonFetch(fetchMock, apiUsers);
 
     await render(createElement(AdminConsole));
 
@@ -169,12 +171,7 @@ describe("AdminConsole", () => {
   });
 
   it("navigates to each admin section from the sidebar", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify(apiUsers), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    mockJsonFetch(fetchMock, apiUsers);
 
     await render(createElement(AdminConsole));
 
@@ -220,12 +217,7 @@ describe("AdminConsole", () => {
   });
 
   it("wires the Users table to the admin users API", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify(apiUsers), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    mockJsonFetch(fetchMock, apiUsers);
 
     await render(createElement(AdminConsole));
     await clickButton("Users");
@@ -251,12 +243,7 @@ describe("AdminConsole", () => {
   });
 
   it("shows the empty-state row when the users API returns no rows", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ users: [], nextCursor: null }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    mockJsonFetch(fetchMock, { users: [], nextCursor: null });
 
     await render(createElement(AdminConsole));
     await clickButton("Users");
@@ -267,12 +254,7 @@ describe("AdminConsole", () => {
   });
 
   it("filters users by search query (using real API rows)", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify(apiUsers), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    mockJsonFetch(fetchMock, apiUsers);
 
     await render(createElement(AdminConsole));
     await clickButton("Users");
@@ -282,9 +264,7 @@ describe("AdminConsole", () => {
       expect(container.textContent).toContain("Marcus Bell");
     });
 
-    const search = container.querySelector<HTMLInputElement>(
-      'input[aria-label="Filter users"]',
-    );
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="Filter users"]');
     if (!search) {
       throw new Error("Search input not found");
     }
@@ -298,12 +278,7 @@ describe("AdminConsole", () => {
   });
 
   it("shows bulk actions when users are selected", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify(apiUsers), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    mockJsonFetch(fetchMock, apiUsers);
 
     await render(createElement(AdminConsole));
     await clickButton("Users");

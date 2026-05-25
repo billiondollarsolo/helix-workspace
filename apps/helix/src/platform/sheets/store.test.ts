@@ -195,6 +195,74 @@ describe("InMemorySheetsStore", () => {
     ]);
   });
 
+  it("compacts sheet operation logs while preserving revision numbering", async () => {
+    const store = new InMemorySheetsStore();
+    const sheet = await store.createSheet({ orgId, actorId, title: "Compactable" });
+    const tab = sheet.tabs[0];
+    if (tab === undefined) {
+      throw new Error("expected a default tab");
+    }
+
+    await store.appendOperation({
+      orgId,
+      actorId,
+      sheetId: sheet.id,
+      tabId: tab.id,
+      operationId: "op-1",
+      baseRevision: 0,
+      operation: { id: "op-1", baseRevision: 0, changes: [] },
+    });
+    const second = await store.appendOperation({
+      orgId,
+      actorId,
+      sheetId: sheet.id,
+      tabId: tab.id,
+      operationId: "op-2",
+      baseRevision: 1,
+      operation: { id: "op-2", baseRevision: 1, changes: [] },
+    });
+
+    await expect(
+      store.compactOperations({ orgId, actorId, sheetId: sheet.id, retainRevisions: 1 }),
+    ).resolves.toEqual({
+      latestRevision: 2,
+      compactedThroughRevision: 1,
+      deletedCount: 1,
+    });
+    await expect(store.listOperations({ orgId, actorId, sheetId: sheet.id })).resolves.toEqual([
+      second,
+    ]);
+    await expect(
+      store.appendOperation({
+        orgId,
+        actorId,
+        sheetId: sheet.id,
+        tabId: tab.id,
+        operationId: "op-3",
+        baseRevision: 2,
+        operation: { id: "op-3", baseRevision: 2, changes: [] },
+      }),
+    ).resolves.toMatchObject({ revision: 3 });
+    await expect(
+      store.applyOperation({
+        orgId,
+        actorId,
+        sheetId: sheet.id,
+        tabId: tab.id,
+        operation: {
+          id: "op-too-old",
+          baseRevision: 0,
+          changes: [{ kind: "set-cell", row: 0, col: 0, value: "stale" }],
+        },
+      }),
+    ).resolves.toEqual({
+      status: "compacted",
+      operationId: "op-too-old",
+      revision: 3,
+      compactedThroughRevision: 1,
+    });
+  });
+
   it("applies sheet operations through the durable revision path", async () => {
     const store = new InMemorySheetsStore();
     const sheet = await store.createSheet({ orgId, actorId, title: "Collaborative" });

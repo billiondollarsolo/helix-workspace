@@ -22,8 +22,14 @@ export interface RegisterSheetsRoutesOptions {
   readonly store: SheetsStore;
   readonly actorFromRequest: (request: FastifyRequest) => Actor | Promise<Actor>;
   readonly events?: EventBus | undefined;
+  readonly operationLogCompaction?: SheetsOperationLogCompactionOptions | undefined;
   readonly metrics?: WebsocketConnectionMetrics | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
+}
+
+export interface SheetsOperationLogCompactionOptions {
+  readonly compactAfterRevisions: number;
+  readonly retainRevisions: number;
 }
 
 export interface SheetsRouteState {
@@ -104,6 +110,11 @@ const fanoutSchema = z.object({
   operation: inboundSchema.shape.operation,
 });
 
+const defaultOperationLogCompaction: SheetsOperationLogCompactionOptions = {
+  compactAfterRevisions: 1_000,
+  retainRevisions: 500,
+};
+
 export async function registerSheetsRoutes(
   app: FastifyInstance,
   options: RegisterSheetsRoutesOptions,
@@ -178,6 +189,7 @@ export async function handleSheetsSocket(
       room,
       store: options.store,
       events: options.events,
+      operationLogCompaction: options.operationLogCompaction,
       nodeId: state.nodeId,
       onError: options.onError,
     }).catch((error: unknown) => {
@@ -211,6 +223,7 @@ async function handleSheetsMessage(input: {
   readonly room: SheetsRoom;
   readonly store: SheetsStore;
   readonly events?: EventBus | undefined;
+  readonly operationLogCompaction?: SheetsOperationLogCompactionOptions | undefined;
   readonly nodeId: string;
   readonly onError?: ((error: unknown) => void) | undefined;
 }): Promise<void> {
@@ -229,6 +242,18 @@ async function handleSheetsMessage(input: {
         type: "error",
         error: "Operation base revision is ahead of the room revision.",
         revision: result.revision,
+      }),
+    );
+    return;
+  }
+  if (result.status === "compacted") {
+    input.socket.send(
+      JSON.stringify({
+        type: "error",
+        error: "Operation base revision has been compacted; reconnect required.",
+        revision: result.revision,
+        compactedThroughRevision: result.compactedThroughRevision,
+        reconnectRequired: true,
       }),
     );
     return;
@@ -266,6 +291,13 @@ async function handleSheetsMessage(input: {
     tabId: message.tabId,
     revision: result.revision,
     operation: result.operation,
+    onError: input.onError,
+  });
+  await compactSheetsOperationLog({
+    store: input.store,
+    actor: input.actor,
+    room: input.room,
+    compaction: input.operationLogCompaction ?? defaultOperationLogCompaction,
     onError: input.onError,
   });
 }
@@ -404,6 +436,28 @@ async function publishSheetsFanout(input: {
   };
   try {
     await input.events.publish(sheetSyncSubject(input.actor.orgId, input.room.sheetId), payload);
+  } catch (error) {
+    input.onError?.(error);
+  }
+}
+
+async function compactSheetsOperationLog(input: {
+  readonly store: SheetsStore;
+  readonly actor: Actor;
+  readonly room: SheetsRoom;
+  readonly compaction: SheetsOperationLogCompactionOptions;
+  readonly onError?: ((error: unknown) => void) | undefined;
+}): Promise<void> {
+  if (input.room.latestRevision < input.compaction.compactAfterRevisions) {
+    return;
+  }
+  try {
+    await input.store.compactOperations({
+      orgId: input.actor.orgId,
+      actorId: input.actor.id,
+      sheetId: input.room.sheetId,
+      retainRevisions: input.compaction.retainRevisions,
+    });
   } catch (error) {
     input.onError?.(error);
   }

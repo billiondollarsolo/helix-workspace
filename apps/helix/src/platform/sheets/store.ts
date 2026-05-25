@@ -181,6 +181,16 @@ export interface AppendSheetOperationInput {
   readonly operation: SheetOperation;
 }
 
+export interface CompactSheetOperationsInput extends SheetRef {
+  readonly retainRevisions: number;
+}
+
+export interface CompactSheetOperationsResult {
+  readonly latestRevision: number;
+  readonly compactedThroughRevision: number;
+  readonly deletedCount: number;
+}
+
 export type SheetCellOperation =
   | {
       readonly kind: "set-cell";
@@ -264,6 +274,12 @@ export type ApplySheetOperationResult =
       readonly status: "ahead";
       readonly operationId: string;
       readonly revision: number;
+    }
+  | {
+      readonly status: "compacted";
+      readonly operationId: string;
+      readonly revision: number;
+      readonly compactedThroughRevision: number;
     };
 
 /**
@@ -294,6 +310,7 @@ export interface SheetsStore {
   ): Promise<readonly SheetOperationLogRecord[]>;
   appendOperation(input: AppendSheetOperationInput): Promise<SheetOperationLogRecord>;
   applyOperation(input: ApplySheetOperationInput): Promise<ApplySheetOperationResult>;
+  compactOperations(input: CompactSheetOperationsInput): Promise<CompactSheetOperationsResult>;
 }
 
 const MAX_TITLE = 255;
@@ -380,6 +397,45 @@ function isClearingEdit(edit: SheetCellEdit): boolean {
 
 function isEmptyObject(value: JsonObject): boolean {
   return Object.keys(value).length === 0;
+}
+
+function assertRetainedOperationRevisions(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new SheetsValidationError("Retained operation revisions must be a positive integer.");
+  }
+  return value;
+}
+
+function latestSheetOperationRevision(
+  operations: readonly SheetOperationLogRecord[],
+  compactedThroughRevision: number,
+): number {
+  return operations.reduce(
+    (latest, operation) => Math.max(latest, operation.revision),
+    compactedThroughRevision,
+  );
+}
+
+function compactedThroughRevisionFromMetadata(metadata: JsonObject): number {
+  const sync = metadata["sheetsSync"];
+  if (typeof sync !== "object" || sync === null || Array.isArray(sync)) {
+    return 0;
+  }
+  const value = (sync as Record<string, unknown>)["compactedThroughRevision"];
+  return Number.isInteger(value) && typeof value === "number" && value > 0 ? value : 0;
+}
+
+function withSheetSyncMetadata(metadata: JsonObject, compactedThroughRevision: number): JsonObject {
+  const sync = metadata["sheetsSync"];
+  const existing =
+    typeof sync === "object" && sync !== null && !Array.isArray(sync) ? (sync as JsonObject) : {};
+  return {
+    ...metadata,
+    sheetsSync: {
+      ...existing,
+      compactedThroughRevision,
+    },
+  };
 }
 
 interface SheetProtectedRange {
@@ -1256,6 +1312,7 @@ export class InMemorySheetsStore implements SheetsStore {
   readonly #cells = new Map<string, SheetCellRecord>();
   readonly #comments = new Map<string, SheetCommentRecord>();
   readonly #operations = new Map<string, SheetOperationLogRecord[]>();
+  readonly #compactedRevisions = new Map<string, number>();
 
   async createSheet(input: CreateSheetInput): Promise<SheetWithTabs> {
     const title = assertTitle(input.title);
@@ -1631,13 +1688,17 @@ export class InMemorySheetsStore implements SheetsStore {
     if (existing !== undefined) {
       return existing;
     }
+    const latestRevision = latestSheetOperationRevision(
+      operations,
+      this.#compactedRevisions.get(input.sheetId) ?? 0,
+    );
     const operation: SheetOperationLogRecord = {
       orgId: input.orgId,
       sheetId: input.sheetId,
       tabId: input.tabId,
       actorId: input.actorId,
       operationId: input.operationId,
-      revision: operations.length + 1,
+      revision: latestRevision + 1,
       baseRevision: input.baseRevision,
       operation: input.operation,
       createdAt: new Date(),
@@ -1660,12 +1721,21 @@ export class InMemorySheetsStore implements SheetsStore {
         revision: existing.revision,
       };
     }
-    const latestRevision = operations.length;
+    const compactedThroughRevision = this.#compactedRevisions.get(input.sheetId) ?? 0;
+    const latestRevision = latestSheetOperationRevision(operations, compactedThroughRevision);
+    if (input.operation.baseRevision < compactedThroughRevision) {
+      return {
+        status: "compacted",
+        operationId: input.operation.id,
+        revision: latestRevision,
+        compactedThroughRevision,
+      };
+    }
     if (input.operation.baseRevision > latestRevision) {
       return { status: "ahead", operationId: input.operation.id, revision: latestRevision };
     }
     const committedSameTab = operations
-      .slice(input.operation.baseRevision)
+      .filter((operation) => operation.revision > input.operation.baseRevision)
       .filter((operation) => operation.tabId === input.tabId);
     const transformed = transformSheetOperation(
       input.operation,
@@ -1690,6 +1760,45 @@ export class InMemorySheetsStore implements SheetsStore {
       revision: record.revision,
       operation: transformed,
       tab: updatedTab,
+    };
+  }
+
+  async compactOperations(
+    input: CompactSheetOperationsInput,
+  ): Promise<CompactSheetOperationsResult> {
+    const sheet = this.#requireVisible(input);
+    if (sheet === null) {
+      return { latestRevision: 0, compactedThroughRevision: 0, deletedCount: 0 };
+    }
+    const retainRevisions = assertRetainedOperationRevisions(input.retainRevisions);
+    const operations = this.#operations.get(sheet.id) ?? [];
+    const previousCompactedRevision = this.#compactedRevisions.get(sheet.id) ?? 0;
+    const latestRevision = latestSheetOperationRevision(operations, previousCompactedRevision);
+    const compactedThroughRevision = Math.max(
+      previousCompactedRevision,
+      Math.max(0, latestRevision - retainRevisions),
+    );
+    if (compactedThroughRevision <= previousCompactedRevision) {
+      return {
+        latestRevision,
+        compactedThroughRevision: previousCompactedRevision,
+        deletedCount: 0,
+      };
+    }
+    const retained = operations.filter(
+      (operation) => operation.revision > compactedThroughRevision,
+    );
+    this.#operations.set(sheet.id, retained);
+    this.#compactedRevisions.set(sheet.id, compactedThroughRevision);
+    this.#sheets.set(sheet.id, {
+      ...sheet,
+      metadata: withSheetSyncMetadata(sheet.metadata, compactedThroughRevision),
+      updatedAt: new Date(),
+    });
+    return {
+      latestRevision,
+      compactedThroughRevision,
+      deletedCount: operations.length - retained.length,
     };
   }
 
@@ -3875,7 +3984,16 @@ export class PostgresSheetsStore implements SheetsStore {
         from sheet_op_log
         where org_id = ${input.orgId} and sheet_id = ${input.sheetId}
       `) as unknown as readonly { readonly revision: number }[];
-      const latestRevision = latestRows[0]?.revision ?? 0;
+      const compactedThroughRevision = compactedThroughRevisionFromMetadata(sheet.metadata);
+      const latestRevision = Math.max(latestRows[0]?.revision ?? 0, compactedThroughRevision);
+      if (input.operation.baseRevision < compactedThroughRevision) {
+        return {
+          status: "compacted",
+          operationId: input.operation.id,
+          revision: latestRevision,
+          compactedThroughRevision,
+        };
+      }
       if (input.operation.baseRevision > latestRevision) {
         return { status: "ahead", operationId: input.operation.id, revision: latestRevision };
       }
@@ -4012,6 +4130,57 @@ export class PostgresSheetsStore implements SheetsStore {
         revision: record.revision,
         operation: record.operation,
         tab: { ...tab, cells: cellsWithMetadata },
+      };
+    });
+  }
+
+  async compactOperations(
+    input: CompactSheetOperationsInput,
+  ): Promise<CompactSheetOperationsResult> {
+    return this.sql.begin(async (tx) => {
+      const sheet = await selectVisibleSheetForUpdate(tx, input);
+      if (sheet === null) {
+        return { latestRevision: 0, compactedThroughRevision: 0, deletedCount: 0 };
+      }
+      const retainRevisions = assertRetainedOperationRevisions(input.retainRevisions);
+      const latestRows = (await tx`
+        select coalesce(max(revision), 0)::int as revision
+        from sheet_op_log
+        where org_id = ${input.orgId} and sheet_id = ${input.sheetId}
+      `) as unknown as readonly { readonly revision: number }[];
+      const previousCompactedRevision = compactedThroughRevisionFromMetadata(sheet.metadata);
+      const latestRevision = Math.max(latestRows[0]?.revision ?? 0, previousCompactedRevision);
+      const compactedThroughRevision = Math.max(
+        previousCompactedRevision,
+        Math.max(0, latestRevision - retainRevisions),
+      );
+      if (compactedThroughRevision <= previousCompactedRevision) {
+        return {
+          latestRevision,
+          compactedThroughRevision: previousCompactedRevision,
+          deletedCount: 0,
+        };
+      }
+      const deletedRows = (await tx`
+        delete from sheet_op_log
+        where org_id = ${input.orgId}
+          and sheet_id = ${input.sheetId}
+          and revision <= ${compactedThroughRevision}
+        returning revision
+      `) as unknown as readonly { readonly revision: number }[];
+      await tx`
+        update sheets
+        set metadata = ${tx.json(
+          toSqlJson(withSheetSyncMetadata(sheet.metadata, compactedThroughRevision)),
+        )}, updated_at = ${new Date()}
+        where org_id = ${input.orgId}
+          and id = ${input.sheetId}
+          and deleted_at is null
+      `;
+      return {
+        latestRevision,
+        compactedThroughRevision,
+        deletedCount: deletedRows.length,
       };
     });
   }

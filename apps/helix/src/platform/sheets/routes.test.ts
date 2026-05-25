@@ -302,6 +302,66 @@ describe("sheets sync routes", () => {
     });
   });
 
+  it("compacts operation logs after accepted sync writes and rejects compacted base revisions", async () => {
+    const store = new InMemorySheetsStore();
+    const sheet = await store.createSheet({ orgId, actorId, title: "Route Compaction" });
+    const tab = sheet.tabs[0];
+    if (tab === undefined) {
+      throw new Error("Expected default tab.");
+    }
+    const socket = new FakeSocket();
+
+    await handleSheetsSocket(
+      socket,
+      requestFor(sheet.id),
+      options(store, {
+        operationLogCompaction: { compactAfterRevisions: 2, retainRevisions: 1 },
+      }),
+    );
+    socket.receive({
+      type: "operation",
+      tabId: tab.id,
+      operation: {
+        id: "op-compact-1",
+        baseRevision: 0,
+        changes: [{ kind: "set-cell", row: 0, col: 0, value: "first" }],
+      },
+    });
+    await settle();
+    socket.receive({
+      type: "operation",
+      tabId: tab.id,
+      operation: {
+        id: "op-compact-2",
+        baseRevision: 1,
+        changes: [{ kind: "set-cell", row: 0, col: 1, value: "second" }],
+      },
+    });
+    await settle();
+
+    await expect(
+      store.listOperations({ orgId, actorId, sheetId: sheet.id }),
+    ).resolves.toMatchObject([{ operationId: "op-compact-2", revision: 2 }]);
+    socket.receive({
+      type: "operation",
+      tabId: tab.id,
+      operation: {
+        id: "op-too-old",
+        baseRevision: 0,
+        changes: [{ kind: "set-cell", row: 0, col: 2, value: "stale" }],
+      },
+    });
+    await settle();
+
+    expect(socket.messages.at(-1)).toEqual({
+      type: "error",
+      error: "Operation base revision has been compacted; reconnect required.",
+      revision: 2,
+      compactedThroughRevision: 1,
+      reconnectRequired: true,
+    });
+  });
+
   it("closes inaccessible spreadsheets before registering message handlers", async () => {
     const store = new InMemorySheetsStore();
     const bus = new FakeEventBus();
@@ -350,6 +410,9 @@ function options(
   store: SheetsStore,
   overrides: {
     readonly events?: EventBus | undefined;
+    readonly operationLogCompaction?: Parameters<
+      typeof handleSheetsSocket
+    >[2]["operationLogCompaction"];
     readonly metrics?: RecordingWebsocketMetrics | undefined;
   } = {},
 ): Parameters<typeof handleSheetsSocket>[2] {
@@ -357,6 +420,9 @@ function options(
     store,
     actorFromRequest: () => actor,
     ...(overrides.events === undefined ? {} : { events: overrides.events }),
+    ...(overrides.operationLogCompaction === undefined
+      ? {}
+      : { operationLogCompaction: overrides.operationLogCompaction }),
     ...(overrides.metrics === undefined ? {} : { metrics: overrides.metrics }),
   };
 }

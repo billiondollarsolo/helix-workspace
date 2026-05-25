@@ -6,4 +6,7 @@ export * from "./credentials.js";
 export * from "./oauth.js";
 export * from "./postgres-store.js";
 export * from "./routes.js";
+export * from "./saml-routes.js";
+export * from "./scim-routes.js";
+export * from "./tenant-idp-configs.js";
 export * from "./tools.js";

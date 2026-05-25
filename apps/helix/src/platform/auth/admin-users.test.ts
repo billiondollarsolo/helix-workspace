@@ -7,6 +7,7 @@ import {
   decodeAdminUsersCursor,
   encodeAdminUsersCursor,
   registerAdminUsersRoutes,
+  registerPeopleDirectoryRoutes,
   type AdminUserRecord,
   type AdminUsersStore,
   type ListAdminUsersInput,
@@ -128,6 +129,79 @@ describe("admin users routes", () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "Invalid admin users cursor." });
+    expect(store.calls).toEqual([]);
+  });
+});
+
+describe("people directory routes", () => {
+  it("returns active org users for authenticated non-admin actors", async () => {
+    const store = new FakeAdminUsersStore([
+      {
+        ...userRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"),
+        displayName: "Mina Park",
+        email: "mina@example.com",
+      },
+      {
+        ...userRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"),
+        displayName: "",
+        email: "fallback@example.com",
+      },
+    ]);
+    const app = fastify();
+    await registerPeopleDirectoryRoutes(app, { store, actorFromRequest });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/people?limit=10&query=mina",
+      headers: {
+        "x-helix-actor-id": actorId,
+        "x-helix-org-id": orgId,
+        "x-helix-scopes": "docs.read",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      people: [
+        {
+          id: "55555555-5555-4555-8555-555555555555",
+          email: "mina@example.com",
+          displayName: "Mina Park",
+        },
+        {
+          id: "44444444-4444-4444-8444-444444444444",
+          email: "fallback@example.com",
+          displayName: "fallback@example.com",
+        },
+      ],
+    });
+    expect(store.calls).toEqual([
+      {
+        orgId,
+        includeDisabled: false,
+        limit: 10,
+        query: "mina",
+        type: "user",
+      },
+    ]);
+  });
+
+  it("rejects malformed people directory queries before touching the store", async () => {
+    const store = new FakeAdminUsersStore([]);
+    const app = fastify();
+    await registerPeopleDirectoryRoutes(app, { store, actorFromRequest });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/people?limit=500",
+      headers: {
+        "x-helix-actor-id": actorId,
+        "x-helix-org-id": orgId,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "Invalid people directory query." });
     expect(store.calls).toEqual([]);
   });
 });

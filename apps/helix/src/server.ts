@@ -67,7 +67,11 @@ import {
   agentCredentialScopeCatalog,
   registerAgentCredentialTools,
 } from "./platform/auth/tools.js";
-import { PostgresAdminUsersStore, registerAdminUsersRoutes } from "./platform/auth/admin-users.js";
+import {
+  PostgresAdminUsersStore,
+  registerAdminUsersRoutes,
+  registerPeopleDirectoryRoutes,
+} from "./platform/auth/admin-users.js";
 import {
   createBetterAuthPlatformModule,
   createBetterAuthRuntime,
@@ -1653,6 +1657,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
   await registerAdminUsersRoutes(app, {
+    store: adminUsersStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+  });
+  await registerPeopleDirectoryRoutes(app, {
     store: adminUsersStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });

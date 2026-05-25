@@ -61,6 +61,7 @@
     "nanoid": "latest",
     "nodemailer": "^8.0.7",
     "pg": "^8.21.0",
+    "playwright": "^1.60.0",
     "pino": "^9.0.0",
     "postgres": "latest",
     "pptxgenjs": "^4.0.1",

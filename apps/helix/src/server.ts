@@ -133,6 +133,7 @@ import {
   registerChatTools,
 } from "./platform/chat/index.js";
 import {
+  createHeadlessChromiumPdfRenderer,
   PostgresDocsStore,
   registerDocsEnrichments,
   registerDocsIndexer,
@@ -835,6 +836,19 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const mailStore = new PostgresMailStore(sql);
   const chatStore = new PostgresChatStore(sql);
   const docsStore = new PostgresDocsStore(sql);
+  const docsPdfRenderTimeoutMs = Number.parseInt(
+    process.env.HELIX_DOCS_PDF_RENDER_TIMEOUT_MS ?? "15000",
+    10,
+  );
+  const docsPdfRenderer =
+    process.env.HELIX_DOCS_PDF_RENDERER === "deterministic"
+      ? undefined
+      : createHeadlessChromiumPdfRenderer({
+          ...(process.env.HELIX_CHROMIUM_PATH === undefined
+            ? {}
+            : { executablePath: process.env.HELIX_CHROMIUM_PATH }),
+          timeoutMs: Number.isFinite(docsPdfRenderTimeoutMs) ? docsPdfRenderTimeoutMs : 15_000,
+        });
   const calendarStore = new PostgresCalendarStore(sql);
   const cardDavContactStore = new PostgresCardDavContactStore(sql);
   const meetStore = new PostgresMeetStore(sql);
@@ -1364,6 +1378,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     registerDocsTools(tools, {
       store: docsStore,
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
+      ...(docsPdfRenderer === undefined ? {} : { pdfRenderer: docsPdfRenderer }),
+      onPdfRendererError: (error: unknown) => {
+        app.log.warn({ error }, "Docs PDF Chromium renderer failed; using deterministic fallback");
+      },
     });
   }
   // Wave-1 backend domains. Sheets and Slides stores are instantiated here so

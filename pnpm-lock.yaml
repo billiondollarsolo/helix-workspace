@@ -143,6 +143,9 @@ importers:
       pino:
         specifier: ^9.0.0
         version: 9.14.0
+      playwright:
+        specifier: ^1.60.0
+        version: 1.60.0
       postgres:
         specifier: latest
         version: 3.4.9

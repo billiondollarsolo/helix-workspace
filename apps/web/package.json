@@ -10,7 +10,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "audit:a11y": "node scripts/accessibility-audit.mjs",
     "audit:a11y:fallback": "node scripts/accessibility-audit.mjs --fallback-ok",
-    "test": "vitest run --passWithNoTests --exclude='tests/e2e/**'",
+    "test": "vitest run --config vitest.config.ts --passWithNoTests --exclude='tests/e2e/**'",
     "test:e2e": "playwright test",
     "lint:e2e": "eslint tests/e2e --max-warnings=0",
     "typecheck": "tsc --noEmit",

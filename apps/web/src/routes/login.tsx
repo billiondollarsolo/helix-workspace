@@ -1,7 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Dna, Loader2, LogIn } from "lucide-react";
 import { useState } from "react";
-import { getSessionUser, signInWithEmail } from "@/lib/auth";
+import { getSessionUser, signInWithEmail, type SessionUser, type SignInInput } from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({
   // If a session is already active, skip the login page.
@@ -23,6 +23,23 @@ const DEMO_ACCOUNTS = [
 
 function LoginRoute() {
   const navigate = Route.useNavigate();
+  return (
+    <LocalLoginPanel
+      onSignedIn={() => navigate({ to: "/mail", search: {} })}
+      signIn={signInWithEmail}
+    />
+  );
+}
+
+export interface LocalLoginPanelProps {
+  readonly signIn?: (input: SignInInput) => Promise<SessionUser>;
+  readonly onSignedIn?: (user: SessionUser) => Promise<void> | void;
+}
+
+export function LocalLoginPanel({
+  signIn = signInWithEmail,
+  onSignedIn,
+}: LocalLoginPanelProps = {}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting">("idle");
@@ -32,8 +49,8 @@ function LoginRoute() {
     setStatus("submitting");
     setError(null);
     try {
-      await signInWithEmail({ email: nextEmail.trim(), password: nextPassword });
-      await navigate({ to: "/mail", search: {} });
+      const user = await signIn({ email: nextEmail.trim(), password: nextPassword });
+      await onSignedIn?.(user);
     } catch (caught) {
       setStatus("idle");
       setError(caught instanceof Error ? caught.message : "Sign in failed.");
@@ -48,7 +65,14 @@ function LoginRoute() {
             <Dna />
           </div>
           <h1 className="auth-title">Sign in to Helix</h1>
-          <p className="auth-subtitle">Use your Helix Workspace email and password.</p>
+          <p className="auth-subtitle">
+            Local email/password is always available. Workspace SSO can be added separately.
+          </p>
+        </div>
+
+        <div className="auth-method-header">
+          <span>Local email/password login</span>
+          <span>Email + password</span>
         </div>
 
         <form
@@ -104,7 +128,7 @@ function LoginRoute() {
         </form>
 
         <div className="auth-demo">
-          <span className="auth-demo-label">Demo accounts</span>
+          <span className="auth-demo-label">Local demo accounts</span>
           <div className="auth-demo-row">
             {DEMO_ACCOUNTS.map((account) => (
               <button

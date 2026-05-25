@@ -2,149 +2,184 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 
 const accessTokenStorageKey = "helix.accessToken";
-const clientId = "helix-local-oauth-client";
-const clientSecret = "e2e-client-secret";
-const accessToken = "e2e-login-token";
-const expectedAuthorization = `Bearer ${accessToken}`;
+const sessionCookieName = "helix_session";
+const sessionCookieValue = "e2e-session";
+const expectedCookie = `${sessionCookieName}=${sessionCookieValue}`;
 
 interface BackendCall {
   readonly authorization: string | null;
+  readonly cookie: string | null;
   readonly method: string;
   readonly pathname: string;
 }
 
-interface TokenCall {
-  readonly authorization: string | null;
-  readonly body: Record<string, string>;
+interface SignInCall {
+  readonly body: Record<string, unknown>;
   readonly method: string;
+  readonly pathname: string;
 }
 
+const sessionUser = {
+  id: "user-1",
+  email: "admin@helix.local",
+  name: "Admin",
+  actorId: "actor-1",
+};
+
 test.describe("/login authenticated handoff", () => {
-  test("stores the OAuth token and sends it on the first backend call after navigation", async ({
+  test("signs in with local email/password and sends the session cookie on backend calls", async ({
     page,
   }) => {
-    const tokenCalls: TokenCall[] = [];
+    const signInCalls: SignInCall[] = [];
     const backendCalls: BackendCall[] = [];
     let resolveFirstBackendCall: (call: BackendCall) => void;
     const firstBackendCall = new Promise<BackendCall>((resolve) => {
       resolveFirstBackendCall = resolve;
     });
 
-    await mockTokenEndpoint(page, tokenCalls, {
-      status: 200,
-      body: {
-        access_token: accessToken,
-        token_type: "Bearer",
-        expires_in: 3600,
-        scope: "platform.read mail.read chat.read docs.read drive.read calendar.read",
-      },
+    await mockAppApi(page, {
+      backendCalls,
+      signInCalls,
+      signInResponse: { status: 200, body: { user: sessionUser } },
+      onBackendCall: (call) => resolveFirstBackendCall(call),
     });
-    await mockBackendApi(page, backendCalls, (call) => resolveFirstBackendCall(call));
 
     await page.goto("/login");
-    await page.getByLabel("Client secret").fill(clientSecret);
+    await expect(page.getByText("Local email/password login")).toBeVisible();
+    await expect(page.getByText("Email + password")).toBeVisible();
+
+    await page.getByLabel("Email").fill(" admin@helix.local ");
+    await page.getByLabel("Password").fill("helix-admin-password");
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(page).toHaveURL(/\/mail(?:[/?#]|$)/);
-    await expect(page.getByRole("main", { name: "Mail" })).toBeVisible();
+    await expect(
+      page.getByRole("textbox", {
+        name: "Search mail (try from:mira, has:attachment, label:urgent)",
+      }),
+    ).toBeVisible();
     await expect
       .poll(() => page.evaluate((key) => window.localStorage.getItem(key), accessTokenStorageKey))
-      .toBe(accessToken);
+      .toBeNull();
 
     const firstCall = await firstBackendCall;
-    expect(firstCall.authorization).toBe(expectedAuthorization);
-    expect(firstCall.pathname).toBe("/api/tools/mail.search");
+    expect(firstCall.authorization).toBeNull();
+    expect(firstCall.cookie).toContain(expectedCookie);
+    expect(firstCall.pathname).toMatch(/^\/api\//);
     expect(backendCalls[0]).toEqual(firstCall);
-    expect(tokenCalls).toEqual([
+    expect(signInCalls).toEqual([
       {
-        authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
         body: {
-          grant_type: "client_credentials",
-          scope: "platform.read mail.read chat.read docs.read drive.read calendar.read",
+          email: "admin@helix.local",
+          password: "helix-admin-password",
         },
         method: "POST",
+        pathname: "/api/auth/sign-in/email",
       },
     ]);
   });
 
-  test("shows the token error and stays on login when OAuth token exchange fails", async ({
+  test("shows the local sign-in error and stays on login when email/password auth fails", async ({
     page,
   }) => {
-    const tokenCalls: TokenCall[] = [];
+    const signInCalls: SignInCall[] = [];
     const backendCalls: BackendCall[] = [];
 
-    await mockTokenEndpoint(page, tokenCalls, {
-      status: 401,
-      body: { error: "invalid_client", error_description: "Invalid client secret." },
+    await mockAppApi(page, {
+      backendCalls,
+      signInCalls,
+      signInResponse: {
+        status: 401,
+        body: { error: "Invalid email or password." },
+      },
     });
-    await mockBackendApi(page, backendCalls);
 
     await page.goto("/login");
-    await page.getByLabel("Client secret").fill(clientSecret);
+    await page.getByLabel("Email").fill("admin@helix.local");
+    await page.getByLabel("Password").fill("wrong-password");
     await page.getByRole("button", { name: "Sign in" }).click();
 
-    await expect(page.getByRole("alert")).toHaveText("Invalid client secret.");
+    await expect(page.getByRole("alert")).toHaveText("Invalid email or password.");
     await expect(page).toHaveURL(/\/login(?:[/?#]|$)/);
     await expect
       .poll(() => page.evaluate((key) => window.localStorage.getItem(key), accessTokenStorageKey))
       .toBeNull();
     expect(backendCalls).toEqual([]);
-    expect(tokenCalls).toHaveLength(1);
+    expect(signInCalls).toEqual([
+      {
+        body: {
+          email: "admin@helix.local",
+          password: "wrong-password",
+        },
+        method: "POST",
+        pathname: "/api/auth/sign-in/email",
+      },
+    ]);
   });
 });
 
-async function mockTokenEndpoint(
+async function mockAppApi(
   page: Page,
-  tokenCalls: TokenCall[],
-  response: { readonly status: number; readonly body: unknown },
-) {
-  await page.route("**/oauth/token", async (route) => {
-    const request = route.request();
-    tokenCalls.push({
-      authorization: request.headers().authorization ?? null,
-      body: Object.fromEntries(new URLSearchParams(request.postData() ?? "")),
-      method: request.method(),
-    });
-
-    await route.fulfill({
-      status: response.status,
-      contentType: "application/json",
-      body: JSON.stringify(response.body),
-    });
-  });
-}
-
-async function mockBackendApi(
-  page: Page,
-  backendCalls: BackendCall[],
-  onBackendCall?: (call: BackendCall) => void,
-) {
+  options: {
+    readonly backendCalls: BackendCall[];
+    readonly signInCalls: SignInCall[];
+    readonly signInResponse: { readonly status: number; readonly body: unknown };
+    readonly onBackendCall?: (call: BackendCall) => void;
+  },
+): Promise<void> {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
-    const call = {
-      authorization: request.headers().authorization ?? null,
-      method: request.method(),
-      pathname: new URL(request.url()).pathname,
-    } satisfies BackendCall;
-    backendCalls.push(call);
-    onBackendCall?.(call);
+    const pathname = new URL(request.url()).pathname;
 
-    if (call.authorization !== expectedAuthorization) {
+    if (pathname === "/api/auth/get-session") {
+      await fulfillJson(
+        route,
+        request.headers().cookie?.includes(expectedCookie) ? { user: sessionUser } : {},
+      );
+      return;
+    }
+
+    if (pathname === "/api/auth/sign-in/email") {
+      options.signInCalls.push({
+        body: JSON.parse(request.postData() ?? "{}") as Record<string, unknown>,
+        method: request.method(),
+        pathname,
+      });
       await route.fulfill({
-        status: 401,
+        status: options.signInResponse.status,
         contentType: "application/json",
-        body: JSON.stringify({ error: "missing bearer token" }),
+        headers:
+          options.signInResponse.status >= 200 && options.signInResponse.status < 300
+            ? { "set-cookie": `${expectedCookie}; Path=/; HttpOnly; SameSite=Lax` }
+            : {},
+        body: JSON.stringify(options.signInResponse.body),
       });
       return;
     }
 
-    await fulfillMailTool(route, call.pathname);
+    const call = {
+      authorization: request.headers().authorization ?? null,
+      cookie: request.headers().cookie ?? null,
+      method: request.method(),
+      pathname,
+    } satisfies BackendCall;
+    options.backendCalls.push(call);
+    options.onBackendCall?.(call);
+
+    if (!call.cookie?.includes(expectedCookie)) {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "missing session cookie" }),
+      });
+      return;
+    }
+
+    await fulfillMailTool(route, pathname);
   });
 }
 
-async function fulfillMailTool(route: Route, pathname: string) {
-  // The production shell calls GET /api/core-apps on mount; serve the shared
-  // valid CoreAppShellStatus fixture so the shell never white-screens.
+async function fulfillMailTool(route: Route, pathname: string): Promise<void> {
   if (await fulfillCoreAppsRoute(route)) {
     return;
   }
@@ -172,7 +207,7 @@ async function fulfillMailTool(route: Route, pathname: string) {
   await fulfillJson(route, {});
 }
 
-async function fulfillJson(route: Route, value: unknown) {
+async function fulfillJson(route: Route, value: unknown): Promise<void> {
   await route.fulfill({
     status: 200,
     contentType: "application/json",

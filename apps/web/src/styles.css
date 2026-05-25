@@ -1218,6 +1218,25 @@ a {
   gap: 14px;
 }
 
+.auth-method-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-meta);
+}
+
+.auth-method-header span:first-child {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .auth-field {
   display: flex;
   flex-direction: column;

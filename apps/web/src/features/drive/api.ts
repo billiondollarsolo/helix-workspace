@@ -336,10 +336,7 @@ function inAppEditorUrl(entry: DriveApiEntry): string | null {
   }
   const mime = entry.mimeType ?? "";
   const name = entry.name.toLowerCase();
-  if (
-    mime === "application/pdf" ||
-    ((mime.length === 0 || mime === "application/octet-stream") && name.endsWith(".pdf"))
-  ) {
+  if (mime === "application/pdf" || (mime.length === 0 && name.endsWith(".pdf"))) {
     const sourceFolder =
       entry.folderId === null ? "" : `?folder=${encodeURIComponent(entry.folderId)}`;
     return `/pdf/${encodeURIComponent(entry.id)}${sourceFolder}`;

@@ -307,7 +307,7 @@ describe("drive API", () => {
         name: "scanned-form.pdf",
         mimeType: "application/octet-stream",
       }).url,
-    ).toBe("/pdf/generic-pdf");
+    ).toBe("/api/drive/objects/generic-pdf/preview");
   });
 
   it("surfaces backend tool errors", async () => {

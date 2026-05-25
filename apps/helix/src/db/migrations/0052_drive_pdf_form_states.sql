@@ -1,5 +1,5 @@
 create table if not exists drive_pdf_form_states (
-  org_id uuid not null references orgs(id) on delete cascade,
+  org_id uuid not null,
   object_id uuid not null references objects(id) on delete cascade,
   actor_id uuid not null references actors(id) on delete cascade,
   field_values jsonb not null default '[]'::jsonb,

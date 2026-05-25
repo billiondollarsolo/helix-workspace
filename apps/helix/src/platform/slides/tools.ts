@@ -2,7 +2,17 @@ import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
+import { importPptxDeck } from "./import-pptx.js";
 import { slideContentSchema } from "./content.js";
+import {
+  exportSlidesDeckToImageSeries,
+  exportSlidesDeckToPdf,
+  type SlidesImageSeriesExportResult,
+  type SlidesPdfExportResult,
+} from "./export-assets.js";
+import { exportSlidesDeckToPptx, type SlidesPptxExportResult } from "./export-pptx.js";
+import type { DriveStore } from "../drive/store.js";
+import type { DriveCommentListItem } from "../drive/types.js";
 import type { SlidesStore } from "./store.js";
 import type { SlideContent, SlideDeckSummaryRecord, SlideRecord } from "./types.js";
 
@@ -17,6 +27,19 @@ const listDecksSchema = z.object({
 
 const getDeckSchema = z.object({
   deckId: uuidSchema,
+});
+
+const exportDeckSchema = z.object({
+  deckId: uuidSchema,
+  format: z.enum(["pptx", "pdf", "svg-series"]).default("pptx"),
+});
+
+const importPptxSchema = z.object({
+  filename: z.string().min(1).max(255),
+  title: z.string().min(1).max(255).optional(),
+  folderId: uuidSchema.nullable().optional(),
+  contentBase64: z.string().min(1),
+  metadata: metadataSchema,
 });
 
 const createDeckSchema = z.object({
@@ -73,7 +96,12 @@ const genericObjectJsonSchema = {
 
 export interface CreateSlidesToolDefinitionsOptions {
   readonly store: SlidesStore;
+  readonly driveStore?: DriveCommentReader | undefined;
 }
+
+type DriveCommentReader = {
+  readonly listComments: NonNullable<DriveStore["listComments"]>;
+};
 
 /**
  * The Slides tool surface: deck list/get/create/update/delete plus slide
@@ -130,6 +158,91 @@ export function createSlidesToolDefinitions(
         return {
           deck: serializeDeck(result.deck),
           slides: result.slides.map(serializeSlide),
+        };
+      },
+    }),
+    defineTool<z.output<typeof exportDeckSchema>, unknown>({
+      id: "slides.export",
+      description: "Export a native Helix Slides deck to PPTX, PDF, or an SVG image series.",
+      permission: "slides.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(exportDeckSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const result = await store.getDeckForActor({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          deckId: input.deckId,
+        });
+        if (result === null) {
+          throw new Error(`Unknown Slides deck: ${input.deckId}`);
+        }
+        const comments =
+          options.driveStore === undefined
+            ? []
+            : await options.driveStore.listComments({
+                orgId: ctx.actor.orgId,
+                actorId: ctx.actor.id,
+                objectId: input.deckId,
+                status: "all",
+              });
+        const exported = await exportSlidesDeck(result.deck, result.slides, input.format, comments);
+        await ctx.audit("slides.export", {
+          deckId: input.deckId,
+          format: input.format,
+          byteSize: exported.byteSize,
+          slideCount: result.slides.length,
+          commentCount: comments.length,
+        });
+        return exported;
+      },
+    }),
+    defineTool<z.output<typeof importPptxSchema>, unknown>({
+      id: "slides.import-pptx",
+      description: "Import a PPTX file into a native Helix Slides deck.",
+      permission: "slides.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(importPptxSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const imported = await importPptxDeck({
+          filename: input.filename,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          content: Buffer.from(input.contentBase64, "base64"),
+        });
+        const deck = await store.createDeck({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          title: imported.title,
+          folderId: input.folderId ?? null,
+          metadata: toJsonObject({
+            ...input.metadata,
+            originalFormat: "pptx",
+            import: imported.metadata,
+          }),
+        });
+        const slides: SlideRecord[] = [];
+        for (const [position, slide] of imported.slides.entries()) {
+          slides.push(
+            await store.createSlide({
+              orgId: ctx.actor.orgId,
+              actorId: ctx.actor.id,
+              deckId: deck.id,
+              content: slide.content,
+              speakerNotes: slide.speakerNotes,
+              position,
+            }),
+          );
+        }
+        await ctx.audit("slides.import-pptx", {
+          deckId: deck.id,
+          filename: input.filename,
+          slideCount: slides.length,
+        });
+        return {
+          ...serializeDeck({ ...deck, slideCount: slides.length }),
+          slides: slides.map(serializeSlide),
+          import: imported.metadata,
         };
       },
     }),
@@ -277,6 +390,22 @@ export function createSlidesToolDefinitions(
       },
     }),
   ];
+}
+
+async function exportSlidesDeck(
+  deck: SlideDeckSummaryRecord,
+  slides: readonly SlideRecord[],
+  format: z.output<typeof exportDeckSchema>["format"],
+  comments: readonly DriveCommentListItem[],
+): Promise<SlidesPptxExportResult | SlidesPdfExportResult | SlidesImageSeriesExportResult> {
+  switch (format) {
+    case "pptx":
+      return exportSlidesDeckToPptx(deck, slides, comments);
+    case "pdf":
+      return exportSlidesDeckToPdf(deck, slides, comments);
+    case "svg-series":
+      return exportSlidesDeckToImageSeries(deck, slides, comments);
+  }
 }
 
 /**

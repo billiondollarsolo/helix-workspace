@@ -2,9 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject, StorageClient } from "@helix/sdk-types";
 import { computeAuditHash } from "../audit/hash.js";
+import { insertNotification } from "../notifications/store.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import type {
   DriveAutoTagWrite,
+  DriveCommentListItem,
+  DriveCommentRecord,
   DriveEnrichmentProjectionStore,
   DriveEnrichmentWrite,
   DriveEntryRecord,
@@ -116,6 +119,42 @@ export interface DriveStore {
     readonly limit?: number;
   }): Promise<readonly DriveSearchHit[]>;
   createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord>;
+  createComment?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly parentCommentId?: string | undefined;
+    readonly body: string;
+    readonly anchor?: JsonObject | undefined;
+    readonly metadata?: JsonObject | undefined;
+  }): Promise<DriveCommentRecord>;
+  listComments?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly status?: string | undefined;
+  }): Promise<readonly DriveCommentListItem[]>;
+  resolveComment?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DriveCommentRecord | null>;
+  reopenComment?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DriveCommentRecord | null>;
+  updateComment?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+    readonly body: string;
+  }): Promise<DriveCommentRecord | null>;
+  deleteComment?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DriveCommentRecord | null>;
 }
 
 export interface DriveFolderCreateInput {
@@ -191,6 +230,26 @@ interface DriveSearchProjectionRow extends ObjectRow {
   readonly owner_display_name: string | null;
   readonly owner_email: string | null;
   readonly folder_path: readonly string[];
+}
+
+interface DriveCommentRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly object_id: string;
+  readonly parent_comment_id: string | null;
+  readonly actor_id: string | null;
+  readonly anchor: JsonObject;
+  readonly body: string;
+  readonly status: string;
+  readonly metadata: JsonObject;
+  readonly resolved_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date | null;
+}
+
+interface DriveCommentProjectionRow extends DriveCommentRow {
+  readonly actor_display_name: string | null;
+  readonly actor_email: string | null;
 }
 
 type SqlLike = postgres.Sql | postgres.TransactionSql;
@@ -703,6 +762,240 @@ export class PostgresDriveStore
     return rows.map(mapSearchHit);
   }
 
+  async createComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly parentCommentId?: string | undefined;
+    readonly body: string;
+    readonly anchor?: JsonObject | undefined;
+    readonly metadata?: JsonObject | undefined;
+  }): Promise<DriveCommentRecord> {
+    return this.sql.begin(async (tx) => {
+      const object = await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
+      if (input.parentCommentId !== undefined) {
+        await requireDriveCommentParent(tx, {
+          orgId: input.orgId,
+          objectId: input.objectId,
+          parentCommentId: input.parentCommentId,
+        });
+      }
+      const rows = (await tx`
+        insert into drive_comments
+          (org_id, object_id, parent_comment_id, actor_id, anchor, body, metadata)
+        values (
+          ${input.orgId},
+          ${input.objectId},
+          ${input.parentCommentId ?? null},
+          ${input.actorId},
+          ${tx.json(toSqlJson(input.anchor ?? {}))},
+          ${input.body},
+          ${tx.json(toSqlJson(input.metadata ?? {}))}
+        )
+        returning *
+      `) as unknown as readonly DriveCommentRow[];
+      const comment = mapDriveComment(rows[0]);
+      await appendDriveActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "drive.comment.created",
+        objectId: input.objectId,
+        payload: { commentId: comment.id, parentCommentId: comment.parentCommentId },
+      });
+      await notifyDriveCommentMentions(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        object,
+        commentId: comment.id,
+        parentCommentId: comment.parentCommentId,
+        anchor: comment.anchor,
+        body: input.body,
+        metadata: comment.metadata,
+      });
+      return comment;
+    });
+  }
+
+  async listComments(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly status?: string | undefined;
+  }): Promise<readonly DriveCommentListItem[]> {
+    await requireObjectAccess(this.sql, input.orgId, input.actorId, input.objectId);
+    const rows = (await this.sql`
+      select
+        c.*,
+        a.display_name as actor_display_name,
+        a.email as actor_email
+      from drive_comments c
+      left join actors a on a.id = c.actor_id and a.org_id = c.org_id
+      where c.org_id = ${input.orgId}
+        and c.object_id = ${input.objectId}
+        ${
+          input.status === undefined || input.status === "all"
+            ? this.sql``
+            : this.sql`and c.status = ${input.status}`
+        }
+      order by c.created_at asc, c.id asc
+    `) as unknown as readonly DriveCommentProjectionRow[];
+    return rows.map(mapDriveCommentListItem);
+  }
+
+  async resolveComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DriveCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly DriveCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      await requireObjectAccess(tx, input.orgId, input.actorId, existing.object_id);
+      if (existing.status === "resolved") {
+        return mapDriveComment(existing);
+      }
+      const rows = (await tx`
+        update drive_comments
+        set status = 'resolved', resolved_at = now(), updated_at = now()
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly DriveCommentRow[];
+      const comment = mapDriveComment(rows[0]);
+      await appendDriveActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "drive.comment.resolved",
+        objectId: comment.objectId,
+        payload: { commentId: comment.id },
+      });
+      return comment;
+    });
+  }
+
+  async reopenComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DriveCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly DriveCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      await requireObjectAccess(tx, input.orgId, input.actorId, existing.object_id);
+      if (existing.status === "open") {
+        return mapDriveComment(existing);
+      }
+      const rows = (await tx`
+        update drive_comments
+        set status = 'open', resolved_at = null, updated_at = now()
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly DriveCommentRow[];
+      const comment = mapDriveComment(rows[0]);
+      await appendDriveActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "drive.comment.reopened",
+        objectId: comment.objectId,
+        payload: { commentId: comment.id },
+      });
+      return comment;
+    });
+  }
+
+  async updateComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+    readonly body: string;
+  }): Promise<DriveCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly DriveCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      await requireObjectAccess(tx, input.orgId, input.actorId, existing.object_id);
+      const rows = (await tx`
+        update drive_comments
+        set body = ${input.body}, updated_at = now()
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly DriveCommentRow[];
+      const comment = mapDriveComment(rows[0]);
+      await appendDriveActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "drive.comment.updated",
+        objectId: comment.objectId,
+        payload: { commentId: comment.id },
+      });
+      return comment;
+    });
+  }
+
+  async deleteComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DriveCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly DriveCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      await requireObjectAccess(tx, input.orgId, input.actorId, existing.object_id);
+      const rows = (await tx`
+        delete from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly DriveCommentRow[];
+      const comment = mapDriveComment(rows[0]);
+      await appendDriveActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "drive.comment.deleted",
+        objectId: comment.objectId,
+        payload: { commentId: comment.id },
+      });
+      return comment;
+    });
+  }
+
   async getDriveSearchRecord(fileId: string): Promise<DriveSearchRecord | null> {
     const rows = (await this.sql`
       with recursive target as (
@@ -962,6 +1255,27 @@ async function requireFolderAccess(
   }
 }
 
+async function requireDriveCommentParent(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly objectId: string;
+    readonly parentCommentId: string;
+  },
+): Promise<void> {
+  const rows = (await sql`
+    select id
+    from drive_comments
+    where id = ${input.parentCommentId}
+      and org_id = ${input.orgId}
+      and object_id = ${input.objectId}
+    limit 1
+  `) as unknown as readonly { readonly id: string }[];
+  if (rows[0] === undefined) {
+    throw new Error(`Unknown parent Drive comment: ${input.parentCommentId}`);
+  }
+}
+
 function canReadObjectSql(sql: SqlLike, actorId: string): postgres.PendingQuery<postgres.Row[]> {
   return sql`
     (
@@ -1080,6 +1394,178 @@ async function appendDriveActivity(
   `;
 }
 
+async function notifyDriveCommentMentions(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly object: ObjectRow;
+    readonly commentId: string;
+    readonly parentCommentId: string | null;
+    readonly anchor: JsonObject;
+    readonly body: string;
+    readonly metadata: JsonObject;
+  },
+): Promise<void> {
+  const tokens = mentionTokensForComment(input.metadata, input.body);
+  if (tokens.length === 0) {
+    return;
+  }
+  const actorRows = (await sql`
+    select id, display_name, email
+    from actors
+    where org_id = ${input.orgId}
+      and disabled_at is null
+      and type = 'user'
+      and (
+        id = ${input.object.owner_actor_id}
+        or exists (
+          select 1 from permissions p
+          where p.org_id = ${input.orgId}
+            and p.actor_id = actors.id
+            and p.resource_type = 'object'
+            and p.resource_id = ${input.object.id}
+            and (p.expires_at is null or p.expires_at > now())
+        )
+      )
+  `) as unknown as readonly {
+    readonly id: string;
+    readonly display_name: string;
+    readonly email: string | null;
+  }[];
+  const recipients = mentionedActorIds({
+    actors: actorRows,
+    authorActorId: input.actorId,
+    tokens,
+  });
+  if (recipients.length === 0) {
+    return;
+  }
+  const authorName =
+    actorRows.find((actor) => actor.id === input.actorId)?.display_name ?? "Someone";
+  const title = driveObjectNotificationTitle(input.object);
+  const app = stringMetadata(input.object.metadata, "app");
+  for (const recipientId of recipients) {
+    await insertNotification(sql, {
+      orgId: input.orgId,
+      actorId: recipientId,
+      verb: "drive.comment.mention",
+      objectType: "drive.object",
+      objectId: input.object.id,
+      summary: `${authorName} mentioned you in "${title}".`,
+      body: input.body,
+      payload: {
+        objectId: input.object.id,
+        commentId: input.commentId,
+        ...(input.parentCommentId === null ? {} : { parentCommentId: input.parentCommentId }),
+        anchor: input.anchor,
+        mentionedByActorId: input.actorId,
+        mentionsText: tokens,
+        ...(app === undefined ? {} : { app }),
+      },
+    });
+  }
+}
+
+function mentionTokensForComment(metadata: JsonObject, body: string): readonly string[] {
+  const tokens = new Set<string>();
+  for (const token of mentionTokensFromMetadata(metadata)) {
+    tokens.add(token);
+  }
+  for (const token of mentionTokensFromText(body)) {
+    tokens.add(token);
+  }
+  return [...tokens];
+}
+
+function mentionTokensFromMetadata(metadata: JsonObject): readonly string[] {
+  const mentionsText = metadata.mentionsText;
+  if (!Array.isArray(mentionsText)) {
+    return [];
+  }
+  const tokens = new Set<string>();
+  for (const value of mentionsText) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const token = normalizeMentionToken(value);
+    if (token.length > 0) {
+      tokens.add(token);
+    }
+  }
+  return [...tokens];
+}
+
+function mentionTokensFromText(value: string): readonly string[] {
+  const tokens = new Set<string>();
+  for (const match of value.matchAll(/(^|\s)@([\p{L}\p{N}](?:[\p{L}\p{N}._-]*[\p{L}\p{N}])?)/gu)) {
+    const token = normalizeMentionToken(match[2] ?? "");
+    if (token.length > 0) {
+      tokens.add(token);
+    }
+  }
+  return [...tokens];
+}
+
+function mentionedActorIds(input: {
+  readonly actors: readonly {
+    readonly id: string;
+    readonly display_name: string;
+    readonly email: string | null;
+  }[];
+  readonly authorActorId: string;
+  readonly tokens: readonly string[];
+}): readonly string[] {
+  const tokenSet = new Set(input.tokens.map(normalizeMentionToken));
+  const ids: string[] = [];
+  for (const actor of input.actors) {
+    if (actor.id === input.authorActorId) {
+      continue;
+    }
+    const aliases = actorMentionAliases(actor);
+    if ([...tokenSet].some((token) => aliases.has(token))) {
+      ids.push(actor.id);
+    }
+  }
+  return ids;
+}
+
+function actorMentionAliases(actor: {
+  readonly display_name: string;
+  readonly email: string | null;
+}): ReadonlySet<string> {
+  const aliases = new Set<string>();
+  const email = actor.email?.trim().toLowerCase();
+  if (email !== undefined && email.length > 0) {
+    aliases.add(email);
+    aliases.add(email.split("@")[0] ?? email);
+  }
+  const displayName = actor.display_name.trim().toLowerCase();
+  if (displayName.length > 0) {
+    aliases.add(displayName);
+    aliases.add(displayName.replace(/[^a-z0-9]+/gu, ""));
+    const firstName = displayName.split(/\s+/u)[0];
+    if (firstName !== undefined) {
+      aliases.add(firstName);
+    }
+  }
+  return aliases;
+}
+
+function normalizeMentionToken(value: string): string {
+  return value.trim().replace(/^@/u, "").toLowerCase();
+}
+
+function driveObjectNotificationTitle(object: ObjectRow): string {
+  return (
+    stringMetadata(object.metadata, "title") ??
+    stringMetadata(object.metadata, "name") ??
+    stringMetadata(object.metadata, "filename") ??
+    object.storage_key.split("/").at(-1) ??
+    "Drive object"
+  );
+}
+
 function mapUpload(row: ObjectRow | undefined): Omit<DriveUploadRecord, "uploadUrl"> {
   if (row === undefined) {
     throw new Error("Expected Drive object row.");
@@ -1173,6 +1659,42 @@ function mapSearchHit(row: DriveSearchRow): DriveSearchHit {
     preview: `${name} ${row.mime_type}`.slice(0, 240),
     ...driveSearchPreviewProperty(row.mime_type, row.metadata),
     updatedAt: row.updated_at,
+  };
+}
+
+function mapDriveComment(row: DriveCommentRow | undefined): DriveCommentRecord {
+  if (row === undefined) {
+    throw new Error("Expected Drive comment row.");
+  }
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    objectId: row.object_id,
+    parentCommentId: row.parent_comment_id,
+    actorId: row.actor_id,
+    anchor: row.anchor,
+    body: row.body,
+    status: row.status,
+    metadata: row.metadata,
+    resolvedAt: row.resolved_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapDriveCommentListItem(row: DriveCommentProjectionRow): DriveCommentListItem {
+  const comment = mapDriveComment(row);
+  return {
+    ...comment,
+    ...(row.actor_id === null
+      ? {}
+      : {
+          author: {
+            id: row.actor_id,
+            ...(row.actor_display_name === null ? {} : { displayName: row.actor_display_name }),
+            ...(row.actor_email === null ? {} : { email: row.actor_email }),
+          },
+        }),
   };
 }
 

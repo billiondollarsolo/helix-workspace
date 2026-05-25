@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
 import { registerDriveTools } from "./tools.js";
-import type { DriveStore, DriveFolderCreateInput, FinalizeDriveUploadInput, PrepareDriveUploadInput } from "./store.js";
-import type { DriveEntryRecord, DriveSearchHit, DriveUploadRecord, DriveVersionRecord } from "./types.js";
+import type {
+  DriveStore,
+  DriveFolderCreateInput,
+  FinalizeDriveUploadInput,
+  PrepareDriveUploadInput,
+} from "./store.js";
+import type {
+  DriveCommentRecord,
+  DriveEntryRecord,
+  DriveSearchHit,
+  DriveUploadRecord,
+  DriveVersionRecord,
+} from "./types.js";
 import type { DocsStore, CreateDocsDocumentInput } from "../docs/store.js";
 import type { DocsDocumentRecord } from "../docs/types.js";
 import type { SheetsStore, CreateSheetInput } from "../sheets/store.js";
@@ -28,7 +39,18 @@ describe("drive tools", () => {
     const registry = createToolRegistry();
     registerDriveTools(registry, { store: new FakeDriveStore() });
 
-    expect(registry.list().filter((tool) => tool.id.startsWith("drive.")).map((tool) => tool.id)).toEqual([
+    expect(
+      registry
+        .list()
+        .filter((tool) => tool.id.startsWith("drive."))
+        .map((tool) => tool.id),
+    ).toEqual([
+      "drive.comment.create",
+      "drive.comment.delete",
+      "drive.comment.list",
+      "drive.comment.reopen",
+      "drive.comment.resolve",
+      "drive.comment.update",
       "drive.create",
       "drive.delete",
       "drive.finalize",
@@ -40,6 +62,9 @@ describe("drive tools", () => {
       "drive.trash",
       "drive.upload",
     ]);
+    expect(registry.list().find((tool) => tool.id === "drive.comment.delete")).toMatchObject({
+      confirmationRequired: true,
+    });
   });
 
   it("prepares and finalizes uploads through the shared store contract", async () => {
@@ -48,12 +73,16 @@ describe("drive tools", () => {
     registerDriveTools(registry, { store });
     const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
 
-    const upload = await registry.invoke("drive.upload", {
-      name: "report.pdf",
-      folderId,
-      mimeType: "application/pdf",
-      byteSize: 128,
-    }, { actor });
+    const upload = await registry.invoke(
+      "drive.upload",
+      {
+        name: "report.pdf",
+        folderId,
+        mimeType: "application/pdf",
+        byteSize: 128,
+      },
+      { actor },
+    );
     expect(upload.ok).toBe(true);
     expect(store.uploads[0]).toMatchObject({
       orgId,
@@ -70,12 +99,16 @@ describe("drive tools", () => {
       createdAt: now.toISOString(),
     });
 
-    const finalized = await registry.invoke("drive.finalize", {
-      objectId,
-      byteSize: 128,
-      sha256,
-      mimeType: "application/pdf",
-    }, { actor });
+    const finalized = await registry.invoke(
+      "drive.finalize",
+      {
+        objectId,
+        byteSize: 128,
+        sha256,
+        mimeType: "application/pdf",
+      },
+      { actor },
+    );
     expect(finalized.ok).toBe(true);
     expect(store.finalized[0]).toMatchObject({ orgId, actorId, objectId, byteSize: 128, sha256 });
     expect(finalized.ok ? finalized.output : undefined).toMatchObject({
@@ -83,6 +116,154 @@ describe("drive tools", () => {
       objectId,
       versionNumber: 1,
       createdAt: now.toISOString(),
+    });
+  });
+
+  it("creates, lists, and resolves Drive object comments", async () => {
+    const store = new FakeDriveStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store });
+    const actor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      scopes: ["drive.read", "drive.write"],
+    };
+
+    await expect(
+      registry.invoke(
+        "drive.comment.create",
+        {
+          objectId,
+          body: "Review page totals",
+          anchor: { kind: "pdf-page", page: 2, pageCount: 3, target: "page" },
+          metadata: { source: "native-pdf-viewer" },
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: {
+        objectId,
+        body: "Review page totals",
+        anchor: { kind: "pdf-page", page: 2 },
+        status: "open",
+        createdAt: now.toISOString(),
+      },
+    });
+    expect(store.comments[0]).toMatchObject({
+      orgId,
+      actorId,
+      objectId,
+      body: "Review page totals",
+    });
+    expect(store.comments[0]?.anchor).toEqual({
+      kind: "pdf-page",
+      page: 2,
+      pageCount: 3,
+      target: "page",
+    });
+
+    await expect(
+      registry.invoke(
+        "drive.comment.create",
+        {
+          objectId,
+          body: "Pin the margin note",
+          anchor: {
+            kind: "pdf-page-point",
+            page: 2,
+            pageCount: 3,
+            target: "point",
+            units: "percent",
+            x: 25,
+            y: 50,
+          },
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: {
+        body: "Pin the margin note",
+        anchor: {
+          kind: "pdf-page-point",
+          page: 2,
+          pageCount: 3,
+          target: "point",
+          units: "percent",
+          x: 25,
+          y: 50,
+        },
+      },
+    });
+
+    await expect(
+      registry.invoke("drive.comment.list", { objectId, status: "open" }, { actor }),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { comments: [{ objectId, body: "Review page totals", status: "open" }] },
+    });
+    expect(store.listedComments[0]).toMatchObject({ orgId, actorId, objectId, status: "open" });
+
+    await expect(
+      registry.invoke(
+        "drive.comment.resolve",
+        { commentId: "77777777-7777-4777-8777-777777777777" },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { status: "resolved", resolvedAt: now.toISOString() },
+    });
+
+    await expect(
+      registry.invoke(
+        "drive.comment.update",
+        { commentId: "77777777-7777-4777-8777-777777777777", body: "Updated totals" },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { body: "Updated totals", status: "open" },
+    });
+    expect(store.updatedComments[0]).toMatchObject({
+      orgId,
+      actorId,
+      commentId: "77777777-7777-4777-8777-777777777777",
+      body: "Updated totals",
+    });
+
+    await expect(
+      registry.invoke(
+        "drive.comment.reopen",
+        { commentId: "77777777-7777-4777-8777-777777777777" },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { status: "open", resolvedAt: null },
+    });
+    expect(store.reopenedComments[0]).toMatchObject({
+      orgId,
+      actorId,
+      commentId: "77777777-7777-4777-8777-777777777777",
+    });
+
+    await expect(
+      registry.invoke(
+        "drive.comment.delete",
+        { commentId: "77777777-7777-4777-8777-777777777777" },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { id: "77777777-7777-4777-8777-777777777777" },
+    });
+    expect(store.deletedComments[0]).toMatchObject({
+      orgId,
+      actorId,
+      commentId: "77777777-7777-4777-8777-777777777777",
     });
   });
 
@@ -99,37 +280,57 @@ describe("drive tools", () => {
     await expect(registry.invoke("drive.list", { folderId }, { actor })).resolves.toMatchObject({
       ok: true,
       output: {
-        entries: [{
-          id: objectId,
-          name: "report.pdf",
-          preview: { kind: "pdf", status: "available", url: "https://cdn.example/report.pdf" },
-          updatedAt: now.toISOString(),
-        }],
+        entries: [
+          {
+            id: objectId,
+            name: "report.pdf",
+            preview: { kind: "pdf", status: "available", url: "https://cdn.example/report.pdf" },
+            updatedAt: now.toISOString(),
+          },
+        ],
       },
     });
-    await expect(registry.invoke("drive.share", {
-      objectId,
-      actorIds: ["66666666-6666-4666-8666-666666666666"],
-      role: "reader",
-    }, { actor })).resolves.toMatchObject({
+    await expect(
+      registry.invoke(
+        "drive.share",
+        {
+          objectId,
+          actorIds: ["66666666-6666-4666-8666-666666666666"],
+          role: "reader",
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
       ok: true,
       output: { objectId, role: "reader" },
     });
-    await expect(registry.invoke("drive.trash", { objectId }, { actor })).resolves.toMatchObject({ ok: true });
-    await expect(registry.invoke("drive.restore", { objectId }, { actor })).resolves.toMatchObject({ ok: true });
+    await expect(registry.invoke("drive.trash", { objectId }, { actor })).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(registry.invoke("drive.restore", { objectId }, { actor })).resolves.toMatchObject({
+      ok: true,
+    });
     await expect(registry.invoke("drive.delete", { objectId }, { actor })).resolves.toEqual({
       ok: true,
       output: { deleted: true },
     });
-    await expect(registry.invoke("drive.search", { query: "report" }, { actor })).resolves.toMatchObject({
+    await expect(
+      registry.invoke("drive.search", { query: "report" }, { actor }),
+    ).resolves.toMatchObject({
       ok: true,
       output: {
-        hits: [{
-          objectId,
-          name: "report.pdf",
-          previewMetadata: { kind: "pdf", status: "available", url: "https://cdn.example/report.pdf" },
-          updatedAt: now.toISOString(),
-        }],
+        hits: [
+          {
+            objectId,
+            name: "report.pdf",
+            previewMetadata: {
+              kind: "pdf",
+              status: "available",
+              url: "https://cdn.example/report.pdf",
+            },
+            updatedAt: now.toISOString(),
+          },
+        ],
       },
     });
   });
@@ -144,11 +345,15 @@ describe("drive tools", () => {
     });
     const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
 
-    const result = await registry.invoke("drive.create", {
-      kind: "folder",
-      name: "My Folder",
-      folderId: folderId,
-    }, { actor });
+    const result = await registry.invoke(
+      "drive.create",
+      {
+        kind: "folder",
+        name: "My Folder",
+        folderId: folderId,
+      },
+      { actor },
+    );
     expect(result.ok).toBe(true);
     expect(driveStore.createdFolders).toHaveLength(1);
     expect(driveStore.createdFolders[0]).toMatchObject({
@@ -173,11 +378,15 @@ describe("drive tools", () => {
     });
     const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
 
-    const result = await registry.invoke("drive.create", {
-      kind: "document",
-      name: "My Doc",
-      folderId,
-    }, { actor });
+    const result = await registry.invoke(
+      "drive.create",
+      {
+        kind: "document",
+        name: "My Doc",
+        folderId,
+      },
+      { actor },
+    );
     expect(result.ok).toBe(true);
     expect(docsStore.created).toHaveLength(1);
     expect(docsStore.created[0]).toMatchObject({
@@ -202,11 +411,15 @@ describe("drive tools", () => {
     });
     const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
 
-    const result = await registry.invoke("drive.create", {
-      kind: "spreadsheet",
-      name: "My Sheet",
-      folderId,
-    }, { actor });
+    const result = await registry.invoke(
+      "drive.create",
+      {
+        kind: "spreadsheet",
+        name: "My Sheet",
+        folderId,
+      },
+      { actor },
+    );
     expect(result.ok).toBe(true);
     expect(sheetsStore.created).toHaveLength(1);
     expect(sheetsStore.created[0]).toMatchObject({
@@ -231,11 +444,15 @@ describe("drive tools", () => {
     });
     const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
 
-    const result = await registry.invoke("drive.create", {
-      kind: "presentation",
-      name: "My Deck",
-      folderId,
-    }, { actor });
+    const result = await registry.invoke(
+      "drive.create",
+      {
+        kind: "presentation",
+        name: "My Deck",
+        folderId,
+      },
+      { actor },
+    );
     expect(result.ok).toBe(true);
     expect(slidesStore.created).toHaveLength(1);
     expect(slidesStore.created[0]).toMatchObject({
@@ -245,7 +462,10 @@ describe("drive tools", () => {
       folderId,
     });
     if (result.ok) {
-      expect(result.output).toMatchObject({ id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", app: "slides" });
+      expect(result.output).toMatchObject({
+        id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        app: "slides",
+      });
     }
   });
 
@@ -260,10 +480,14 @@ describe("drive tools", () => {
     });
     const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
 
-    const result = await registry.invoke("drive.create", {
-      kind: "document",
-      name: "No Folder Doc",
-    }, { actor });
+    const result = await registry.invoke(
+      "drive.create",
+      {
+        kind: "document",
+        name: "No Folder Doc",
+      },
+      { actor },
+    );
     expect(result.ok).toBe(true);
     expect(docsStore.created[0]).toMatchObject({ folderId: null });
   });
@@ -276,7 +500,10 @@ describe("drive tools", () => {
       sheetsStore: new FakeSheetsStore(),
       slidesStore: new FakeSlidesStore(),
     });
-    const toolIds = registry.list().filter((tool) => tool.id.startsWith("drive.")).map((tool) => tool.id);
+    const toolIds = registry
+      .list()
+      .filter((tool) => tool.id.startsWith("drive."))
+      .map((tool) => tool.id);
     expect(toolIds).toContain("drive.create");
   });
 
@@ -288,7 +515,9 @@ describe("drive tools", () => {
     // No filter → all three file entries returned, each carrying their app value
     const allResult = await registry.invoke("drive.list", { folderId: testFolderId }, { actor });
     expect(allResult.ok).toBe(true);
-    const allOutput = allResult.ok ? (allResult.output as { entries: DriveEntryRecord[] }) : { entries: [] };
+    const allOutput = allResult.ok
+      ? (allResult.output as { entries: DriveEntryRecord[] })
+      : { entries: [] };
     expect(allOutput.entries).toHaveLength(3);
     const plain = allOutput.entries.find((e) => e.id === plainFileId);
     const doc = allOutput.entries.find((e) => e.id === docsFileId);
@@ -298,9 +527,15 @@ describe("drive tools", () => {
     expect(sheet?.app).toBe("sheets");
 
     // app: "docs" filter → only the docs entry
-    const docsResult = await registry.invoke("drive.list", { folderId: testFolderId, app: "docs" }, { actor });
+    const docsResult = await registry.invoke(
+      "drive.list",
+      { folderId: testFolderId, app: "docs" },
+      { actor },
+    );
     expect(docsResult.ok).toBe(true);
-    const docsOutput = docsResult.ok ? (docsResult.output as { entries: DriveEntryRecord[] }) : { entries: [] };
+    const docsOutput = docsResult.ok
+      ? (docsResult.output as { entries: DriveEntryRecord[] })
+      : { entries: [] };
     expect(docsOutput.entries).toHaveLength(1);
     expect(docsOutput.entries[0]?.id).toBe(docsFileId);
     expect(docsOutput.entries[0]?.app).toBe("docs");
@@ -376,11 +611,21 @@ class AppFilterFakeDriveStore implements DriveStore {
   async share(input: Parameters<DriveStore["share"]>[0]) {
     return { objectId: input.objectId, sharedWithActorIds: input.targetActorIds, role: input.role };
   }
-  async move(): Promise<DriveEntryRecord | null> { return null; }
-  async trash(): Promise<DriveEntryRecord | null> { return null; }
-  async restore(): Promise<DriveEntryRecord | null> { return null; }
-  async delete(): Promise<boolean> { return false; }
-  async search(): Promise<readonly DriveSearchHit[]> { return []; }
+  async move(): Promise<DriveEntryRecord | null> {
+    return null;
+  }
+  async trash(): Promise<DriveEntryRecord | null> {
+    return null;
+  }
+  async restore(): Promise<DriveEntryRecord | null> {
+    return null;
+  }
+  async delete(): Promise<boolean> {
+    return false;
+  }
+  async search(): Promise<readonly DriveSearchHit[]> {
+    return [];
+  }
 }
 
 const deckId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
@@ -389,6 +634,11 @@ class FakeDriveStore implements DriveStore {
   readonly uploads: PrepareDriveUploadInput[] = [];
   readonly finalized: FinalizeDriveUploadInput[] = [];
   readonly createdFolders: DriveFolderCreateInput[] = [];
+  readonly comments: Parameters<NonNullable<DriveStore["createComment"]>>[0][] = [];
+  readonly listedComments: Parameters<NonNullable<DriveStore["listComments"]>>[0][] = [];
+  readonly reopenedComments: Parameters<NonNullable<DriveStore["reopenComment"]>>[0][] = [];
+  readonly updatedComments: Parameters<NonNullable<DriveStore["updateComment"]>>[0][] = [];
+  readonly deletedComments: Parameters<NonNullable<DriveStore["deleteComment"]>>[0][] = [];
 
   async createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord> {
     this.createdFolders.push(input);
@@ -471,23 +721,93 @@ class FakeDriveStore implements DriveStore {
   }
 
   async search(): Promise<readonly DriveSearchHit[]> {
-    return [{
-      objectId,
-      name: "report.pdf",
-      mimeType: "application/pdf",
-      byteSize: 128,
-      sha256,
-      folderId,
-      preview: "report.pdf application/pdf",
-      previewMetadata: {
-        kind: "pdf",
-        status: "available",
+    return [
+      {
+        objectId,
+        name: "report.pdf",
         mimeType: "application/pdf",
-        url: "https://cdn.example/report.pdf",
+        byteSize: 128,
+        sha256,
+        folderId,
+        preview: "report.pdf application/pdf",
+        previewMetadata: {
+          kind: "pdf",
+          status: "available",
+          mimeType: "application/pdf",
+          url: "https://cdn.example/report.pdf",
+        },
+        updatedAt: now,
       },
-      updatedAt: now,
-    }];
+    ];
   }
+
+  async createComment(
+    input: Parameters<NonNullable<DriveStore["createComment"]>>[0],
+  ): Promise<DriveCommentRecord> {
+    this.comments.push(input);
+    return driveComment({
+      body: input.body,
+      anchor: input.anchor ?? {},
+      metadata: input.metadata ?? {},
+      parentCommentId: input.parentCommentId ?? null,
+      status: "open",
+    });
+  }
+
+  async listComments(
+    input: Parameters<NonNullable<DriveStore["listComments"]>>[0],
+  ): Promise<readonly DriveCommentRecord[]> {
+    this.listedComments.push(input);
+    return [driveComment({ body: "Review page totals", status: "open" })];
+  }
+
+  async resolveComment(): Promise<DriveCommentRecord | null> {
+    return driveComment({
+      body: "Review page totals",
+      status: "resolved",
+      resolvedAt: now,
+    });
+  }
+
+  async reopenComment(
+    input: Parameters<NonNullable<DriveStore["reopenComment"]>>[0],
+  ): Promise<DriveCommentRecord | null> {
+    this.reopenedComments.push(input);
+    return driveComment({ body: "Review page totals", status: "open", resolvedAt: null });
+  }
+
+  async updateComment(
+    input: Parameters<NonNullable<DriveStore["updateComment"]>>[0],
+  ): Promise<DriveCommentRecord | null> {
+    this.updatedComments.push(input);
+    return driveComment({ body: input.body, status: "open" });
+  }
+
+  async deleteComment(
+    input: Parameters<NonNullable<DriveStore["deleteComment"]>>[0],
+  ): Promise<DriveCommentRecord | null> {
+    this.deletedComments.push(input);
+    return driveComment({ body: "Review page totals", status: "open" });
+  }
+}
+
+function driveComment(
+  input: Partial<DriveCommentRecord> & { readonly body: string },
+): DriveCommentRecord {
+  return {
+    id: "77777777-7777-4777-8777-777777777777",
+    orgId,
+    objectId,
+    parentCommentId: input.parentCommentId ?? null,
+    actorId,
+    anchor: input.anchor ?? { kind: "pdf-page", page: 2, pageCount: 3, target: "page" },
+    body: input.body,
+    status: input.status ?? "open",
+    metadata: input.metadata ?? {},
+    resolvedAt: input.resolvedAt ?? null,
+    createdAt: now,
+    updatedAt: input.updatedAt ?? null,
+  };
 }
 
 function entry(): DriveEntryRecord {

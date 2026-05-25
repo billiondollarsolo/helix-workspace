@@ -142,6 +142,25 @@ export interface DriveSearchHit {
   readonly updatedAt: Date;
 }
 
+export interface DriveCommentRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly objectId: string;
+  readonly parentCommentId: string | null;
+  readonly actorId: string | null;
+  readonly anchor: JsonObject;
+  readonly body: string;
+  readonly status: string;
+  readonly metadata: JsonObject;
+  readonly resolvedAt: Date | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date | null;
+}
+
+export interface DriveCommentListItem extends DriveCommentRecord {
+  readonly author?: DriveActor | undefined;
+}
+
 export interface DrivePreview {
   readonly kind: DrivePreviewKind;
   readonly status: DrivePreviewStatus;

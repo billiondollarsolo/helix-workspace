@@ -4,7 +4,14 @@ import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { DriveStore } from "./store.js";
-import type { DriveEntryRecord, DriveSearchHit, DriveUploadRecord, DriveVersionRecord } from "./types.js";
+import type {
+  DriveCommentListItem,
+  DriveCommentRecord,
+  DriveEntryRecord,
+  DriveSearchHit,
+  DriveUploadRecord,
+  DriveVersionRecord,
+} from "./types.js";
 import type { DocsStore } from "../docs/store.js";
 import type { SheetsStore } from "../sheets/store.js";
 import type { SlidesStore } from "../slides/store.js";
@@ -17,7 +24,10 @@ const uploadSchema = z.object({
   folderId: uuidSchema.nullable().optional(),
   mimeType: z.string().min(1).default("application/octet-stream"),
   byteSize: z.number().int().min(0).optional(),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/i)
+    .optional(),
   metadata: metadataSchema,
 });
 
@@ -60,6 +70,28 @@ const moveSchema = z.object({
 
 const objectIdSchema = z.object({
   objectId: uuidSchema,
+});
+
+const createCommentSchema = z.object({
+  objectId: uuidSchema,
+  parentCommentId: uuidSchema.optional(),
+  body: z.string().min(1).max(50_000),
+  anchor: metadataSchema,
+  metadata: metadataSchema,
+});
+
+const listCommentsSchema = z.object({
+  objectId: uuidSchema,
+  status: z.enum(["open", "resolved", "all"]).optional(),
+});
+
+const resolveCommentSchema = z.object({
+  commentId: uuidSchema,
+});
+
+const updateCommentSchema = z.object({
+  commentId: uuidSchema,
+  body: z.string().min(1).max(50_000),
 });
 
 const restoreSchema = z.object({
@@ -120,7 +152,9 @@ export interface CreateDriveToolDefinitionsOptions {
   ) => Promise<ReadonlyMap<string, { readonly displayName: string; readonly email?: string }>>;
 }
 
-export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOptions): readonly ToolDefinition[] {
+export function createDriveToolDefinitions(
+  options: CreateDriveToolDefinitionsOptions,
+): readonly ToolDefinition[] {
   return [
     defineTool<z.output<typeof createSchema>, unknown>({
       id: "drive.create",
@@ -186,7 +220,8 @@ export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOp
     }),
     defineTool<z.output<typeof uploadSchema>, unknown>({
       id: "drive.upload",
-      description: "Prepare a Drive file upload and return the target storage key and presigned upload URL when available.",
+      description:
+        "Prepare a Drive file upload and return the target storage key and presigned upload URL when available.",
       permission: "drive.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(uploadSchema, genericObjectJsonSchema),
@@ -218,17 +253,22 @@ export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOp
       sideEffects: "write",
       inputSchema: zodToolSchema(finalizeSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) => serializeVersion(await options.store.finalizeUpload({
-        orgId: ctx.actor.orgId,
-        actorId: ctx.actor.id,
-        objectId: input.objectId,
-        byteSize: input.byteSize,
-        sha256: input.sha256.toLowerCase(),
-        ...(input.mimeType === undefined ? {} : { mimeType: input.mimeType }),
-        ...(input.storageKey === undefined ? {} : { storageKey: input.storageKey }),
-        ...(input.contentBase64 === undefined ? {} : { content: Buffer.from(input.contentBase64, "base64") }),
-        metadata: toJsonObject(input.metadata),
-      })),
+      handler: async (input, ctx) =>
+        serializeVersion(
+          await options.store.finalizeUpload({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            objectId: input.objectId,
+            byteSize: input.byteSize,
+            sha256: input.sha256.toLowerCase(),
+            ...(input.mimeType === undefined ? {} : { mimeType: input.mimeType }),
+            ...(input.storageKey === undefined ? {} : { storageKey: input.storageKey }),
+            ...(input.contentBase64 === undefined
+              ? {}
+              : { content: Buffer.from(input.contentBase64, "base64") }),
+            metadata: toJsonObject(input.metadata),
+          }),
+        ),
     }),
     defineTool<z.output<typeof listSchema>, unknown>({
       id: "drive.list",
@@ -257,7 +297,11 @@ export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOp
           return { entries: serialized };
         }
         const ownerIds = Array.from(
-          new Set(serialized.map((e) => e.ownerActorId).filter((id): id is string => typeof id === "string")),
+          new Set(
+            serialized
+              .map((e) => e.ownerActorId)
+              .filter((id): id is string => typeof id === "string"),
+          ),
         );
         if (ownerIds.length === 0) {
           return { entries: serialized };
@@ -283,14 +327,18 @@ export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOp
       confirmationRequired: true,
       inputSchema: zodToolSchema(shareSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) => options.store.share({
-        orgId: ctx.actor.orgId,
-        actorId: ctx.actor.id,
-        objectId: input.objectId,
-        targetActorIds: input.actorIds,
-        role: input.role,
-        expiresAt: input.expiresAt === undefined || input.expiresAt === null ? null : new Date(input.expiresAt),
-      }),
+      handler: async (input, ctx) =>
+        options.store.share({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.objectId,
+          targetActorIds: input.actorIds,
+          role: input.role,
+          expiresAt:
+            input.expiresAt === undefined || input.expiresAt === null
+              ? null
+              : new Date(input.expiresAt),
+        }),
     }),
     defineTool<z.output<typeof moveSchema>, unknown>({
       id: "drive.move",
@@ -375,25 +423,171 @@ export function createDriveToolDefinitions(options: CreateDriveToolDefinitionsOp
       inputSchema: zodToolSchema(searchSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => ({
-        hits: (await options.store.search({
+        hits: (
+          await options.store.search({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            ...(input.query === undefined ? {} : { query: input.query }),
+            folderId: input.folderId ?? null,
+            limit: input.limit,
+          })
+        ).map(serializeSearchHit),
+      }),
+    }),
+    defineTool<z.output<typeof createCommentSchema>, unknown>({
+      id: "drive.comment.create",
+      description: "Create a page or object anchored comment on a Drive object.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(createCommentSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.createComment === undefined) {
+          throw new Error("drive.comment tools require DriveStore comment methods.");
+        }
+        return serializeComment(
+          await options.store.createComment({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            objectId: input.objectId,
+            ...(input.parentCommentId === undefined
+              ? {}
+              : { parentCommentId: input.parentCommentId }),
+            body: input.body,
+            anchor: toJsonObject(input.anchor),
+            metadata: toJsonObject(input.metadata),
+          }),
+        );
+      },
+    }),
+    defineTool<z.output<typeof listCommentsSchema>, unknown>({
+      id: "drive.comment.list",
+      description: "List comments on a Drive object.",
+      permission: "drive.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(listCommentsSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.listComments === undefined) {
+          throw new Error("drive.comment tools require DriveStore comment methods.");
+        }
+        return {
+          comments: (
+            await options.store.listComments({
+              orgId: ctx.actor.orgId,
+              actorId: ctx.actor.id,
+              objectId: input.objectId,
+              ...(input.status === undefined ? {} : { status: input.status }),
+            })
+          ).map(serializeComment),
+        };
+      },
+    }),
+    defineTool<z.output<typeof resolveCommentSchema>, unknown>({
+      id: "drive.comment.resolve",
+      description: "Resolve a comment on a Drive object.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.resolveComment === undefined) {
+          throw new Error("drive.comment tools require DriveStore comment methods.");
+        }
+        const comment = await options.store.resolveComment({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
-          ...(input.query === undefined ? {} : { query: input.query }),
-          folderId: input.folderId ?? null,
-          limit: input.limit,
-        })).map(serializeSearchHit),
-      }),
+          commentId: input.commentId,
+        });
+        if (comment === null) {
+          throw new Error(`Unknown Drive comment: ${input.commentId}`);
+        }
+        return serializeComment(comment);
+      },
+    }),
+    defineTool<z.output<typeof resolveCommentSchema>, unknown>({
+      id: "drive.comment.reopen",
+      description: "Reopen a resolved comment on a Drive object.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.reopenComment === undefined) {
+          throw new Error("drive.comment tools require DriveStore comment methods.");
+        }
+        const comment = await options.store.reopenComment({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          commentId: input.commentId,
+        });
+        if (comment === null) {
+          throw new Error(`Unknown Drive comment: ${input.commentId}`);
+        }
+        return serializeComment(comment);
+      },
+    }),
+    defineTool<z.output<typeof updateCommentSchema>, unknown>({
+      id: "drive.comment.update",
+      description: "Update a Drive object comment body.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(updateCommentSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.updateComment === undefined) {
+          throw new Error("drive.comment tools require DriveStore comment methods.");
+        }
+        const comment = await options.store.updateComment({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          commentId: input.commentId,
+          body: input.body,
+        });
+        if (comment === null) {
+          throw new Error(`Unknown Drive comment: ${input.commentId}`);
+        }
+        return serializeComment(comment);
+      },
+    }),
+    defineTool<z.output<typeof resolveCommentSchema>, unknown>({
+      id: "drive.comment.delete",
+      description: "Delete a comment on a Drive object.",
+      permission: "drive.write",
+      sideEffects: "write",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.deleteComment === undefined) {
+          throw new Error("drive.comment tools require DriveStore comment methods.");
+        }
+        const comment = await options.store.deleteComment({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          commentId: input.commentId,
+        });
+        if (comment === null) {
+          throw new Error(`Unknown Drive comment: ${input.commentId}`);
+        }
+        return serializeComment(comment);
+      },
     }),
   ];
 }
 
-export function registerDriveTools(registry: RuntimeToolRegistry, options: CreateDriveToolDefinitionsOptions): void {
+export function registerDriveTools(
+  registry: RuntimeToolRegistry,
+  options: CreateDriveToolDefinitionsOptions,
+): void {
   for (const tool of createDriveToolDefinitions(options)) {
     registry.register(tool);
   }
 }
 
-function defineTool<Input, Output>(tool: ToolDefinition<Input, Output>): ToolDefinition<Input, Output> {
+function defineTool<Input, Output>(
+  tool: ToolDefinition<Input, Output>,
+): ToolDefinition<Input, Output> {
   return tool;
 }
 
@@ -425,6 +619,15 @@ function serializeSearchHit(hit: DriveSearchHit) {
   return {
     ...hit,
     updatedAt: hit.updatedAt.toISOString(),
+  };
+}
+
+function serializeComment(comment: DriveCommentRecord | DriveCommentListItem) {
+  return {
+    ...comment,
+    resolvedAt: comment.resolvedAt?.toISOString() ?? null,
+    createdAt: comment.createdAt.toISOString(),
+    updatedAt: comment.updatedAt?.toISOString() ?? null,
   };
 }
 

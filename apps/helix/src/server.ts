@@ -1445,7 +1445,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     store: sheetsStore,
     ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
   });
-  registerSlides(tools, { store: slidesStore });
+  registerSlides(tools, { store: slidesStore, driveStore });
   const assistantOrchestrator = new AssistantOrchestrator({
     store: assistantStore,
     ai: assistantAi,

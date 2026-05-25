@@ -1,6 +1,7 @@
 import type { JsonObject, JsonValue } from "./json.js";
 
 export type SecurityTier = "personal" | "business" | "enterprise" | "sovereign";
+export type HelixMode = "single-tenant" | "multi-tenant-saas";
 
 export type ToolConfirmationPolicy =
   | "destructive"
@@ -132,6 +133,7 @@ export interface ObservabilityConfig {
 }
 
 export interface HelixConfig {
+  readonly mode?: HelixMode;
   readonly security: SecurityConfig;
   readonly modules?: Record<string, ModuleConfig>;
   readonly ai?: AiConfig;

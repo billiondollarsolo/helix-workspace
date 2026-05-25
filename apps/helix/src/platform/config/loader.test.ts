@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EventBus, HelixConfig } from "@helix/sdk-types";
 import {
+  EnvConfigSource,
   StaticConfigSource,
   YamlConfigSource,
   loadHelixConfig,
@@ -85,6 +86,35 @@ describe("YamlConfigSource with the real parser", () => {
     const config = await loadHelixConfig([new YamlConfigSource(file)]);
     expect(config.security.tier).toBe("business");
     expect(config.observability).toEqual({ enabled: true });
+  });
+});
+
+describe("HELIX_MODE config", () => {
+  it("defaults to single-tenant mode", async () => {
+    const config = await loadHelixConfig([new StaticConfigSource({})]);
+    expect(config.mode).toBe("single-tenant");
+  });
+
+  it("loads multi-tenant-saas from HELIX_MODE", async () => {
+    const config = await loadHelixConfig([
+      new EnvConfigSource({ HELIX_MODE: "multi-tenant-saas" }),
+    ]);
+    expect(config.mode).toBe("multi-tenant-saas");
+  });
+
+  it("rejects invalid HELIX_MODE values", async () => {
+    await expect(
+      loadHelixConfig([new EnvConfigSource({ HELIX_MODE: "multi-tenant" })]),
+    ).rejects.toThrow("HELIX_MODE must be single-tenant or multi-tenant-saas");
+  });
+
+  it("loads mode from structured config and rejects invalid values", async () => {
+    const config = await loadHelixConfig([new StaticConfigSource({ mode: "multi-tenant-saas" })]);
+    expect(config.mode).toBe("multi-tenant-saas");
+
+    await expect(
+      loadHelixConfig([new EnvConfigSource({ HELIX_CONFIG_JSON: '{"mode":"multi-tenant"}' })]),
+    ).rejects.toThrow("mode must be single-tenant or multi-tenant-saas");
   });
 });
 

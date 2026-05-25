@@ -7,4 +7,5 @@ export * from "./json.js";
 export * from "./lifecycle.js";
 export * from "./manifest.js";
 export * from "./migrations.js";
+export * from "./tenant-config.js";
 export * from "./tools.js";

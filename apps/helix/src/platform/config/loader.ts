@@ -1,6 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
-import type { EventBus, HelixConfig, JsonObject, JsonValue, SecurityTier } from "@helix/sdk-types";
+import type {
+  EventBus,
+  HelixConfig,
+  HelixMode,
+  JsonObject,
+  JsonValue,
+  SecurityTier,
+} from "@helix/sdk-types";
 import { isJsonObject } from "@helix/sdk-types";
 
 type ModuleConfig = NonNullable<HelixConfig["modules"]>[string];
@@ -27,6 +34,7 @@ export interface ConfigHotReloadOptions {
 }
 
 export interface PartialHelixConfig {
+  readonly mode?: HelixMode;
   readonly security?: {
     readonly tier?: SecurityTier;
     readonly overrides?: HelixConfig["security"]["overrides"];
@@ -44,7 +52,14 @@ export class EnvConfigSource implements ConfigSource {
   async load(): Promise<PartialHelixConfig> {
     const envConfig = loadConfigFromEnvironment(this.env);
     const tier = parseTier(this.env.HELIX_SECURITY_TIER ?? this.env.HELIX_TIER);
-    return mergeConfig(envConfig, tier === undefined ? {} : { security: { tier } });
+    const mode = parseOptionalHelixMode(this.env.HELIX_MODE, "HELIX_MODE");
+    return mergeConfig(
+      envConfig,
+      mergeConfig(
+        tier === undefined ? {} : { security: { tier } },
+        mode === undefined ? {} : { mode },
+      ),
+    );
   }
 }
 
@@ -84,6 +99,7 @@ export async function loadHelixConfig(sources: readonly ConfigSource[]): Promise
   }
 
   return {
+    mode: merged.mode ?? "single-tenant",
     security: {
       tier: merged.security?.tier ?? "personal",
       ...(merged.security?.overrides === undefined ? {} : { overrides: merged.security.overrides }),
@@ -110,6 +126,7 @@ export function mergeConfig(
   right: PartialHelixConfig,
 ): PartialHelixConfig {
   const tier = right.security?.tier ?? left.security?.tier;
+  const mode = right.mode ?? left.mode;
   const modules = mergeModuleConfig(left.modules, right.modules);
   const ai = mergeTypedJsonObject(left.ai, right.ai);
   const observability = mergeTypedJsonObject(left.observability, right.observability);
@@ -125,6 +142,7 @@ export function mergeConfig(
         ...(right.security?.overrides ?? {}),
       },
     },
+    ...(mode === undefined ? {} : { mode }),
     plugins: {
       ...mergePluginConfig(left.plugins, right.plugins),
     },
@@ -194,18 +212,45 @@ function parseTier(value: string | undefined): SecurityTier | undefined {
   return undefined;
 }
 
+function parseHelixMode(value: string | undefined): HelixMode | undefined {
+  if (value === "single-tenant" || value === "multi-tenant-saas") {
+    return value;
+  }
+  return undefined;
+}
+
+function parseOptionalHelixMode(value: string | undefined, label: string): HelixMode | undefined {
+  if (value === undefined || value.length === 0) {
+    return undefined;
+  }
+  const mode = parseHelixMode(value);
+  if (mode === undefined) {
+    throw new TypeError(`${label} must be single-tenant or multi-tenant-saas`);
+  }
+  return mode;
+}
+
 function normalizePartialConfig(value: unknown, label: string): PartialHelixConfig {
   if (!isJsonObject(value)) {
     throw new TypeError(`${label} must contain a config object`);
   }
 
   const security = value.security;
+  const mode = value.mode;
   const modules = value.modules;
   const ai = value.ai;
   const observability = value.observability;
   const plugins = value.plugins;
   const platform = value.platform;
   const config: PartialHelixConfig = {};
+
+  if (mode !== undefined) {
+    const parsedMode = parseHelixMode(typeof mode === "string" ? mode : undefined);
+    if (parsedMode === undefined) {
+      throw new TypeError(`${label}.mode must be single-tenant or multi-tenant-saas`);
+    }
+    Object.assign(config, { mode: parsedMode });
+  }
 
   if (security !== undefined) {
     if (!isJsonObject(security)) {

@@ -56,7 +56,6 @@ describe("observability plugin assets", () => {
       "provider",
       "model",
       "feature",
-      "actor_id",
       "helix_llm_cost_usd_micros_total",
       "helix_llm_errors_total",
       "helix_llm_latency_seconds_bucket",
@@ -64,6 +63,7 @@ describe("observability plugin assets", () => {
     ]) {
       expect(panelText).toContain(expected);
     }
+    expect(panelText).not.toContain("actor_id");
   });
 
   it("keeps the audit dashboard aligned with PRD audit operations", async () => {
@@ -90,7 +90,10 @@ describe("observability plugin assets", () => {
       join(grafanaPluginRoot, "provisioning/dashboards/helix.yml"),
       "utf8",
     );
-    const datasources = await readFile(join(grafanaPluginRoot, "provisioning/datasources/helix.yml"), "utf8");
+    const datasources = await readFile(
+      join(grafanaPluginRoot, "provisioning/datasources/helix.yml"),
+      "utf8",
+    );
 
     expect(dashboardsProvider).toContain("/var/lib/grafana/dashboards/helix");
     expect(datasources).toContain("helix-prometheus");

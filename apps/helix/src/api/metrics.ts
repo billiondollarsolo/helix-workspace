@@ -13,7 +13,6 @@ export type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
 export interface PlatformMetrics {
   readonly registry: Registry;
   recordLLMChat(input: {
-    readonly actorId: string;
     readonly feature: string;
     readonly providerId: string;
     readonly model: string;
@@ -93,33 +92,33 @@ export function createPlatformMetrics(): PlatformMetrics {
   });
   const llmCalls = new Counter({
     name: "helix_llm_calls_total",
-    help: "Total LLM chat attempts by provider, model, feature, actor, and status.",
-    labelNames: ["provider", "model", "feature", "actor_id", "status"],
+    help: "Total LLM chat attempts by provider, model, feature, and status.",
+    labelNames: ["provider", "model", "feature", "status"],
     registers: [registry],
   });
   const llmLatency = new Histogram({
     name: "helix_llm_latency_seconds",
     help: "LLM chat attempt latency in seconds.",
-    labelNames: ["provider", "model", "feature", "actor_id", "status"],
+    labelNames: ["provider", "model", "feature", "status"],
     buckets: [0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
     registers: [registry],
   });
   const llmCost = new Counter({
     name: "helix_llm_cost_usd_micros_total",
     help: "Total estimated or reported LLM cost in USD micros.",
-    labelNames: ["provider", "model", "feature", "actor_id"],
+    labelNames: ["provider", "model", "feature"],
     registers: [registry],
   });
   const llmErrors = new Counter({
     name: "helix_llm_errors_total",
-    help: "Total failed LLM chat attempts by provider, model, feature, actor, and error type.",
-    labelNames: ["provider", "model", "feature", "actor_id", "error_type"],
+    help: "Total failed LLM chat attempts by provider, model, feature, and error type.",
+    labelNames: ["provider", "model", "feature", "error_type"],
     registers: [registry],
   });
   const llmFallbacks = new Counter({
     name: "helix_llm_routing_fallback_total",
-    help: "Total LLM fallback route attempts by provider, model, feature, actor, and status.",
-    labelNames: ["provider", "model", "feature", "actor_id", "status"],
+    help: "Total LLM fallback route attempts by provider, model, feature, and status.",
+    labelNames: ["provider", "model", "feature", "status"],
     registers: [registry],
   });
   const auditActivity = new Counter({
@@ -185,11 +184,10 @@ export function createPlatformMetrics(): PlatformMetrics {
   return {
     registry,
     recordLLMChat(input) {
-      const attemptLabels: LabelValues<"provider" | "model" | "feature" | "actor_id" | "status"> = {
+      const attemptLabels: LabelValues<"provider" | "model" | "feature" | "status"> = {
         provider: input.providerId,
         model: input.model,
         feature: input.feature,
-        actor_id: input.actorId,
         status: input.status,
       };
       llmCalls.inc(attemptLabels);
@@ -200,7 +198,6 @@ export function createPlatformMetrics(): PlatformMetrics {
             provider: input.providerId,
             model: input.model,
             feature: input.feature,
-            actor_id: input.actorId,
           },
           Math.ceil(input.costCents * 10_000),
         );
@@ -210,7 +207,6 @@ export function createPlatformMetrics(): PlatformMetrics {
           provider: input.providerId,
           model: input.model,
           feature: input.feature,
-          actor_id: input.actorId,
           error_type: input.errorType ?? "Error",
         });
       }

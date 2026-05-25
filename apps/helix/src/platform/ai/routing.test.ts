@@ -1,12 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { AIRouter, type LLMChatMetrics, type LLMMetricStatus } from "./routing.js";
+import {
+  AIClassificationBlockedError,
+  AIProviderUnavailableError,
+  AIRouter,
+  type LLMChatMetrics,
+  type LLMMetricStatus,
+} from "./routing.js";
 import {
   AICostLimitExceededError,
   InMemoryAICostLimiter,
   aiCentsToUsdMicros,
   createAICostGuard,
 } from "./costs/index.js";
-import type { Actor, ChatRequest, ChatResponse, LLMProviderCapability } from "@helix/sdk-types";
+import type {
+  Actor,
+  ChatRequest,
+  ChatResponse,
+  ImageGenerationResponse,
+  ImageProviderCapability,
+  LLMProviderCapability,
+  MeteringClient,
+  MeteringEmitInput,
+  MeteringEvent,
+  TraceContext,
+} from "@helix/sdk-types";
 
 const actor: Actor = {
   id: "actor-1",
@@ -109,9 +126,104 @@ describe("AIRouter", () => {
     expect(calls).toEqual(["reserve:cloud:0.01", "record:cloud:2"]);
   });
 
+  it("emits safe AI token metering after successful chat responses", async () => {
+    const metering = new RecordingMeteringClient();
+    const router = new AIRouter({
+      providers: [
+        provider("cloud", [], {
+          async chat(req): Promise<ChatResponse> {
+            return {
+              providerId: "cloud",
+              model: req.model ?? "cloud-model",
+              message: "secret output text",
+              usage: {
+                inputTokens: 4,
+                outputTokens: 5,
+                totalTokens: 9,
+                costCents: 1.5,
+              },
+            };
+          },
+        }),
+      ],
+      metering,
+    });
+
+    await router.chat(
+      {
+        feature: "assistant.chat",
+        messages: [{ role: "user", content: "secret prompt text" }],
+      },
+      {
+        actor,
+      },
+    );
+
+    expect(metering.records).toEqual([
+      {
+        orgId: actor.orgId,
+        event: {
+          type: "ai.tokens",
+          quantity: 9,
+          metadata: {
+            provider: "cloud",
+            model: "cloud-model",
+            slot: "assistant.chat",
+            cost_cents_estimate: 1.5,
+            tokens_in: 4,
+            tokens_out: 5,
+          },
+        },
+      },
+    ]);
+    expect(JSON.stringify(metering.records[0]?.event.metadata)).not.toContain("secret");
+  });
+
+  it("does not fail successful chat responses when metering emission fails", async () => {
+    const errors: unknown[] = [];
+    const router = new AIRouter({
+      providers: [
+        provider("cloud", [], {
+          async chat(req): Promise<ChatResponse> {
+            return {
+              providerId: "cloud",
+              model: req.model ?? "cloud-model",
+              message: "hello",
+              usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, costCents: 0.5 },
+            };
+          },
+        }),
+      ],
+      metering: new RecordingMeteringClient({ reject: true }),
+      onMeteringError(error) {
+        errors.push(error);
+      },
+    });
+
+    await expect(router.chat(request(), { actor })).resolves.toMatchObject({ message: "hello" });
+    await Promise.resolve();
+
+    expect(errors).toHaveLength(1);
+  });
+
+  it("does not emit AI token metering when providers return only cost usage", async () => {
+    const metering = new RecordingMeteringClient();
+    const router = new AIRouter({
+      providers: [provider("cloud", [])],
+      metering,
+    });
+
+    await expect(router.chat(request(), { actor })).resolves.toMatchObject({
+      providerId: "cloud",
+    });
+
+    expect(metering.records).toHaveLength(0);
+  });
+
   it("uses configured primary model refs and falls back after provider failure", async () => {
     const calls: string[] = [];
     const metrics = new MemoryLLMMetrics();
+    const metering = new RecordingMeteringClient();
     const router = new AIRouter({
       providers: [
         provider("cloud", [], {
@@ -129,12 +241,13 @@ describe("AIRouter", () => {
               providerId: "local",
               model: req.model ?? "local-configured",
               message: "fallback hello",
-              usage: { costCents: 1.5 },
+              usage: { inputTokens: 2, outputTokens: 4, totalTokens: 6, costCents: 1.5 },
             };
           },
         }),
       ],
       metrics,
+      metering,
       policy: {
         featureRoutes: {
           "assistant.chat": {
@@ -168,11 +281,29 @@ describe("AIRouter", () => {
         costCents: 1.5,
       }),
     ]);
+    expect(metering.records).toEqual([
+      {
+        orgId: actor.orgId,
+        event: {
+          type: "ai.tokens",
+          quantity: 6,
+          metadata: {
+            provider: "local",
+            model: "local-configured",
+            slot: "assistant.chat",
+            cost_cents_estimate: 1.5,
+            tokens_in: 2,
+            tokens_out: 4,
+          },
+        },
+      },
+    ]);
   });
 
   it("uses the configured AI cost limiter to record calls and block over-budget calls", async () => {
     const limiter = new InMemoryAICostLimiter();
     let providerCalls = 0;
+    const metering = new RecordingMeteringClient();
     const meteredProvider: LLMProviderCapability = {
       id: "cloud",
       protocol: "openai-compatible",
@@ -183,7 +314,7 @@ describe("AIRouter", () => {
           providerId: "cloud",
           model: req.model ?? "cloud-model",
           message: "hello",
-          usage: { costCents: 2 },
+          usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7, costCents: 2 },
         };
       },
       async models() {
@@ -201,19 +332,291 @@ describe("AIRouter", () => {
         budget: { actorDailyUsdMicros: aiCentsToUsdMicros(2) },
         now: () => new Date("2026-05-20T12:00:00.000Z"),
       }),
+      metering,
     });
 
     await expect(router.chat(request(), { actor })).resolves.toMatchObject({
       providerId: "cloud",
     });
     expect(limiter.listRecords({ orgId: actor.orgId, actorId: actor.id })).toHaveLength(1);
+    expect(metering.records).toHaveLength(1);
     expect(providerCalls).toBe(1);
 
     await expect(router.chat(request(), { actor })).rejects.toBeInstanceOf(
       AICostLimitExceededError,
     );
     expect(limiter.listRecords({ orgId: actor.orgId, actorId: actor.id })).toHaveLength(1);
+    expect(metering.records).toHaveLength(1);
     expect(providerCalls).toBe(1);
+  });
+
+  it("emits safe AI image metering after successful image generation", async () => {
+    const metering = new RecordingMeteringClient();
+    const router = new AIRouter({
+      providers: [],
+      imageProviders: [
+        imageProvider("cloud", [], {
+          async generateImage(req): Promise<ImageGenerationResponse> {
+            return {
+              providerId: "cloud",
+              model: req.model ?? "image-model",
+              images: [
+                {
+                  url: "https://images.example/secret-project.png",
+                  mimeType: "image/png",
+                  width: 1024,
+                  height: 1024,
+                },
+                {
+                  b64Json: "secret-image-bytes",
+                  mimeType: "image/png",
+                  width: 1024,
+                  height: 1024,
+                },
+              ],
+              usage: { imageCount: 2, costCents: 4.5 },
+            };
+          },
+        }),
+      ],
+      metering,
+    });
+
+    const generated = await router.generateImage(
+      {
+        feature: "slides.generate-image",
+        prompt: "secret launch image prompt",
+        size: "1024x1024",
+      },
+      { actor },
+    );
+
+    expect(generated.providerId).toBe("cloud");
+    expect(generated.images).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mimeType: "image/png" })]),
+    );
+
+    expect(metering.records).toEqual([
+      {
+        orgId: actor.orgId,
+        event: {
+          type: "ai.image.generated",
+          quantity: 2,
+          metadata: {
+            provider: "cloud",
+            model: "cloud-model",
+            slot: "slides.generate-image",
+            count: 2,
+            resolution: "1024x1024",
+            cost_cents_estimate: 4.5,
+          },
+        },
+      },
+    ]);
+    const serializedMetering = JSON.stringify(metering.records);
+    expect(serializedMetering).not.toContain("secret launch image prompt");
+    expect(serializedMetering).not.toContain("secret-project");
+    expect(serializedMetering).not.toContain("secret-image-bytes");
+  });
+
+  it("falls back to an image-capable provider when the preferred AI provider cannot generate images", async () => {
+    const metering = new RecordingMeteringClient();
+    const calls: string[] = [];
+    const router = new AIRouter({
+      providers: [],
+      imageProviders: [
+        imageProvider("primary-image", [], {
+          async generateImage() {
+            calls.push("primary");
+            throw new Error("primary image provider unavailable");
+          },
+        }),
+        imageProvider("image", [], {
+          async generateImage(req): Promise<ImageGenerationResponse> {
+            calls.push(`image:${req.model ?? ""}`);
+            return {
+              providerId: "image",
+              model: req.model ?? "image-model",
+              images: [{ url: "https://images.example/result.png" }],
+            };
+          },
+        }),
+      ],
+      metering,
+      policy: {
+        featureRoutes: {
+          "slides.generate-image": {
+            primary: { providerId: "primary-image", model: "primary-model" },
+            fallback: { providerId: "image", model: "image-model" },
+          },
+        },
+      },
+    });
+
+    await expect(
+      router.generateImage({ feature: "slides.generate-image", prompt: "draw a chart" }, { actor }),
+    ).resolves.toMatchObject({ providerId: "image", model: "image-model" });
+
+    expect(calls).toEqual(["primary", "image:image-model"]);
+    expect(metering.records).toEqual([
+      {
+        orgId: actor.orgId,
+        event: {
+          type: "ai.image.generated",
+          quantity: 1,
+          metadata: {
+            provider: "image",
+            model: "image-model",
+            slot: "slides.generate-image",
+            count: 1,
+          },
+        },
+      },
+    ]);
+  });
+
+  it("reserves estimated image cost before calling the image provider", async () => {
+    const reserveCosts: number[] = [];
+    let providerCalls = 0;
+    const router = new AIRouter({
+      providers: [],
+      imageProviders: [
+        imageProvider("image", [], {
+          model: "image-model",
+          imageCostCents: 6,
+          async generateImage() {
+            providerCalls += 1;
+            return {
+              providerId: "image",
+              model: "image-model",
+              images: [{ url: "https://images.example/result.png" }],
+            };
+          },
+        }),
+      ],
+      costGuard: {
+        async reserve(input) {
+          reserveCosts.push(input.estimatedCostCents);
+          throw new AICostLimitExceededError("blocked", "actor_daily_cost", 60);
+        },
+        async record() {
+          throw new Error("record should not be called");
+        },
+      },
+    });
+
+    await expect(
+      router.generateImage(
+        { feature: "slides.generate-image", prompt: "draw", count: 2 },
+        { actor },
+      ),
+    ).rejects.toBeInstanceOf(AICostLimitExceededError);
+
+    expect(reserveCosts).toEqual([12]);
+    expect(providerCalls).toBe(0);
+  });
+
+  it("does not fall through to another image provider when an explicit route has no image provider", async () => {
+    const router = new AIRouter({
+      providers: [provider("text-only", [])],
+      imageProviders: [imageProvider("default-image", [])],
+      policy: {
+        featureRoutes: {
+          "slides.generate-image": {
+            primary: { providerId: "text-only", model: "text-model" },
+          },
+        },
+      },
+    });
+
+    await expect(
+      router.generateImage({ feature: "slides.generate-image", prompt: "draw" }, { actor }),
+    ).rejects.toBeInstanceOf(AIProviderUnavailableError);
+  });
+
+  it("blocks restricted image requests when a configured route has no local provider", async () => {
+    const router = new AIRouter({
+      providers: [],
+      imageProviders: [imageProvider("cloud", [])],
+      policy: {
+        featureRoutes: {
+          "slides.generate-image": {
+            primary: { providerId: "cloud", model: "cloud-model" },
+          },
+        },
+      },
+    });
+
+    await expect(
+      router.generateImage(
+        {
+          feature: "slides.generate-image",
+          prompt: "draw",
+          classification: "restricted",
+        },
+        { actor },
+      ),
+    ).rejects.toBeInstanceOf(AIClassificationBlockedError);
+  });
+
+  it("does not copy unsafe image size strings into metering metadata", async () => {
+    const metering = new RecordingMeteringClient();
+    const router = new AIRouter({
+      providers: [],
+      imageProviders: [
+        imageProvider("image", [], {
+          async generateImage(): Promise<ImageGenerationResponse> {
+            return {
+              providerId: "image",
+              model: "image-model",
+              images: [{ url: "https://images.example/result.png", width: 512, height: 768 }],
+            };
+          },
+        }),
+      ],
+      metering,
+    });
+
+    await router.generateImage(
+      {
+        feature: "slides.generate-image",
+        prompt: "draw",
+        size: "secret-customer-resolution",
+      },
+      { actor },
+    );
+
+    expect(metering.records[0]?.event.metadata).toMatchObject({ resolution: "512x768" });
+    expect(JSON.stringify(metering.records)).not.toContain("secret-customer-resolution");
+  });
+
+  it("does not fail successful image generation when metering emission fails", async () => {
+    const errors: unknown[] = [];
+    const router = new AIRouter({
+      providers: [],
+      imageProviders: [
+        imageProvider("image", [], {
+          async generateImage(): Promise<ImageGenerationResponse> {
+            return {
+              providerId: "image",
+              model: "image-model",
+              images: [{ url: "https://images.example/result.png" }],
+            };
+          },
+        }),
+      ],
+      metering: new RecordingMeteringClient({ reject: true }),
+      onMeteringError(error) {
+        errors.push(error);
+      },
+    });
+
+    await expect(
+      router.generateImage({ feature: "slides.generate-image", prompt: "draw" }, { actor }),
+    ).resolves.toMatchObject({ providerId: "image" });
+    await Promise.resolve();
+
+    expect(errors).toHaveLength(1);
   });
 });
 
@@ -265,6 +668,44 @@ describe("AIRouter streaming", () => {
     expect(metricCalls).toEqual(["success"]);
     expect(costRecords).toHaveLength(1);
     expect(provenanceInputs).toEqual([{ providerId: "local", streamed: true }]);
+  });
+
+  it("emits safe AI token metering after successful streamed responses", async () => {
+    const metering = new RecordingMeteringClient();
+    const router = new AIRouter({
+      providers: [
+        streamingProvider("local", ["local-only"], ["Hel", "lo"], {
+          inputTokens: 2,
+          outputTokens: 3,
+          totalTokens: 5,
+          costCents: 3,
+        }),
+      ],
+      policy: { defaultProviderId: "local" },
+      metering,
+    });
+
+    for await (const _chunk of router.chatStream(request(), { actor })) {
+      void _chunk;
+    }
+
+    expect(metering.records).toEqual([
+      {
+        orgId: actor.orgId,
+        event: {
+          type: "ai.tokens",
+          quantity: 5,
+          metadata: {
+            provider: "local",
+            model: "local-model",
+            slot: "assistant.chat",
+            cost_cents_estimate: 3,
+            tokens_in: 2,
+            tokens_out: 3,
+          },
+        },
+      },
+    ]);
   });
 
   it("enforces classification gating before streaming begins", async () => {
@@ -344,11 +785,49 @@ function provider(
   };
 }
 
+function imageProvider(
+  id: string,
+  tags: readonly string[],
+  options: {
+    readonly model?: string;
+    readonly imageCostCents?: number;
+    readonly generateImage?: ImageProviderCapability["generateImage"];
+  } = {},
+): ImageProviderCapability {
+  const model = options.model ?? `${id}-model`;
+  return {
+    id,
+    protocol: "openai-compatible",
+    tags,
+    async generateImage(req, ctx) {
+      if (options.generateImage !== undefined) {
+        return options.generateImage(req, ctx);
+      }
+      return {
+        providerId: id,
+        model: req.model ?? model,
+        images: [{ url: "https://images.example/default.png" }],
+      };
+    },
+    async models() {
+      return [
+        {
+          id: model,
+          ...(options.imageCostCents === undefined
+            ? {}
+            : { imageCostCents: options.imageCostCents }),
+        },
+      ];
+    },
+  };
+}
+
 /** Provider whose `chatStream` replays the given text deltas plus a usage-bearing terminal chunk. */
 function streamingProvider(
   id: string,
   tags: readonly string[],
   deltas: readonly string[],
+  usage: ChatResponse["usage"] = { costCents: 3 },
 ): LLMProviderCapability {
   const model = `${id}-model`;
   const base = provider(id, tags, { model });
@@ -361,7 +840,7 @@ function streamingProvider(
       yield {
         delta: "",
         done: true,
-        usage: { costCents: 3 },
+        usage,
         metadata: { model: req.model ?? model },
       };
     },
@@ -373,5 +852,28 @@ class MemoryLLMMetrics implements LLMChatMetrics {
 
   recordLLMChat(input: Parameters<LLMChatMetrics["recordLLMChat"]>[0]): void {
     this.records.push(input);
+  }
+}
+
+class RecordingMeteringClient implements MeteringClient {
+  readonly records: {
+    readonly orgId: string;
+    readonly event: MeteringEvent;
+    readonly trace?: TraceContext;
+  }[] = [];
+
+  constructor(private readonly options: { readonly reject?: boolean } = {}) {}
+
+  async emit(orgId: string, event: MeteringEvent, trace?: TraceContext): Promise<void> {
+    this.records.push({ orgId, event, ...(trace === undefined ? {} : { trace }) });
+    if (this.options.reject === true) {
+      throw new Error("metering unavailable");
+    }
+  }
+
+  async emitBatch(events: readonly MeteringEmitInput[]): Promise<void> {
+    for (const input of events) {
+      await this.emit(input.orgId, input.event, input.trace);
+    }
   }
 }

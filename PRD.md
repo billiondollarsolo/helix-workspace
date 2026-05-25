@@ -2686,7 +2686,7 @@ The `observability-grafana-stack` plugin provisions Grafana dashboards as code (
 3. **Chat dashboard** — active WS connections, message rate, presence updates, NATS subject lag
 4. **Drive dashboard** — upload throughput, preview generation latency, storage usage
 5. **Docs dashboard** — active Yjs sessions, sync update throughput, compaction lag
-6. **AI dashboard** — LLM call rate by provider/model/feature, cost by provider/feature/actor, latency percentiles, error rate, routing fallback rate, top-cost actors
+6. **AI dashboard** — LLM call rate by provider/model/feature, cost by provider/model/feature, latency percentiles, error rate, routing fallback rate, top-cost provider/model/feature routes
 7. **Agent dashboard** — active agents, tool call rate by tool, confirmation gate metrics, denials by reason
 8. **Security dashboard** — permission denials by resource type, authentication failures, MFA challenges, IP allowlist violations
 9. **Audit dashboard** — activity rate, hash-chain verification status, shipping lag to immutable destination

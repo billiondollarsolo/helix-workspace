@@ -122,12 +122,53 @@ export interface ChatChunk {
   readonly metadata?: JsonObject;
 }
 
+export interface ImageGenerationRequest {
+  readonly feature: string;
+  readonly prompt: string;
+  readonly model?: string;
+  readonly count?: number;
+  readonly size?: string;
+  readonly classification?: AIClassification;
+  readonly metadata?: JsonObject;
+}
+
+export interface GeneratedImage {
+  readonly url?: string;
+  readonly b64Json?: string;
+  readonly mimeType?: string;
+  readonly width?: number;
+  readonly height?: number;
+  readonly metadata?: JsonObject;
+}
+
+export interface ImageGenerationUsage {
+  readonly imageCount?: number;
+  readonly costCents?: number;
+}
+
+export interface ImageGenerationResponse {
+  readonly providerId: string;
+  readonly model: string;
+  readonly images: readonly GeneratedImage[];
+  readonly usage?: ImageGenerationUsage;
+  readonly metadata?: JsonObject;
+}
+
+export interface ImageProviderCapability {
+  readonly id: string;
+  readonly protocol: AIProviderProtocol;
+  readonly tags?: readonly string[];
+  generateImage(req: ImageGenerationRequest, ctx: AICallContext): Promise<ImageGenerationResponse>;
+  models(): Promise<readonly ModelInfo[]>;
+}
+
 export interface ModelInfo {
   readonly id: string;
   readonly displayName?: string;
   readonly contextWindow?: number;
   readonly inputCostPer1kTokensCents?: number;
   readonly outputCostPer1kTokensCents?: number;
+  readonly imageCostCents?: number;
   readonly supportsTools?: boolean;
   readonly supportsVision?: boolean;
 }
@@ -403,6 +444,10 @@ export interface OutboundMailProvider {
 
 export interface AICapability {
   chat(request: ChatRequest, ctx?: Partial<AICallContext>): Promise<ChatResponse>;
+  generateImage?(
+    request: ImageGenerationRequest,
+    ctx?: Partial<AICallContext>,
+  ): Promise<ImageGenerationResponse>;
   /**
    * Streams a chat completion as incremental {@link ChatChunk} values.
    * Optional: routers that cannot stream omit this and callers fall back to

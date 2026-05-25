@@ -6,7 +6,6 @@ describe("platform metrics", () => {
     const metrics = createPlatformMetrics();
 
     metrics.recordLLMChat({
-      actorId: "actor-1",
       feature: "assistant.chat",
       providerId: "cloud",
       model: "gpt-test",
@@ -16,7 +15,6 @@ describe("platform metrics", () => {
       errorType: "Error",
     });
     metrics.recordLLMChat({
-      actorId: "actor-1",
       feature: "assistant.chat",
       providerId: "local",
       model: "llama-test",
@@ -29,23 +27,24 @@ describe("platform metrics", () => {
     const output = await metrics.registry.metrics();
 
     expect(output).toContain(
-      'helix_llm_calls_total{provider="cloud",model="gpt-test",feature="assistant.chat",actor_id="actor-1",status="error"} 1',
+      'helix_llm_calls_total{provider="cloud",model="gpt-test",feature="assistant.chat",status="error"} 1',
     );
     expect(output).toContain(
-      'helix_llm_errors_total{provider="cloud",model="gpt-test",feature="assistant.chat",actor_id="actor-1",error_type="Error"} 1',
+      'helix_llm_errors_total{provider="cloud",model="gpt-test",feature="assistant.chat",error_type="Error"} 1',
     );
     expect(output).toContain(
-      'helix_llm_calls_total{provider="local",model="llama-test",feature="assistant.chat",actor_id="actor-1",status="success"} 1',
+      'helix_llm_calls_total{provider="local",model="llama-test",feature="assistant.chat",status="success"} 1',
     );
     expect(output).toContain(
-      'helix_llm_latency_seconds_count{provider="local",model="llama-test",feature="assistant.chat",actor_id="actor-1",status="success"} 1',
+      'helix_llm_latency_seconds_count{provider="local",model="llama-test",feature="assistant.chat",status="success"} 1',
     );
     expect(output).toContain(
-      'helix_llm_cost_usd_micros_total{provider="local",model="llama-test",feature="assistant.chat",actor_id="actor-1"} 12500',
+      'helix_llm_cost_usd_micros_total{provider="local",model="llama-test",feature="assistant.chat"} 12500',
     );
     expect(output).toContain(
-      'helix_llm_routing_fallback_total{provider="local",model="llama-test",feature="assistant.chat",actor_id="actor-1",status="success"} 1',
+      'helix_llm_routing_fallback_total{provider="local",model="llama-test",feature="assistant.chat",status="success"} 1',
     );
+    expect(output).not.toContain("actor_id=");
   });
 
   it("records audit activity and hash-chain verifier metrics used by Grafana", async () => {

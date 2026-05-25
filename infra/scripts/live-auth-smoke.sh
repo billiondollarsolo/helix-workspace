@@ -2429,19 +2429,19 @@ assert_assistant_llm_metrics() {
   local metrics_file
   metrics_file=$(mktemp "${TMPDIR:-/tmp}/helix-assistant-metrics.XXXXXX")
   curl_with_trace -fsS "$(api_url /metrics)" -o "$metrics_file"
-  grep -E '^helix_llm_calls_total\{provider="assistant\.local",model="deterministic-assistant",feature="assistant\.chat",actor_id="[^"]+",status="success"\} [1-9][0-9]*$' "$metrics_file" >/dev/null || {
+  grep -E '^helix_llm_calls_total\{provider="assistant\.local",model="deterministic-assistant",feature="assistant\.chat",status="success"\} [1-9][0-9]*$' "$metrics_file" >/dev/null || {
     log "metrics output from /metrics:"
     cat "$metrics_file" >&2
     rm -f "$metrics_file"
     die "assistant smoke did not emit helix_llm_calls_total for deterministic assistant"
   }
-  grep -E '^helix_llm_latency_seconds_count\{provider="assistant\.local",model="deterministic-assistant",feature="assistant\.chat",actor_id="[^"]+",status="success"\} [1-9][0-9]*$' "$metrics_file" >/dev/null || {
+  grep -E '^helix_llm_latency_seconds_count\{provider="assistant\.local",model="deterministic-assistant",feature="assistant\.chat",status="success"\} [1-9][0-9]*$' "$metrics_file" >/dev/null || {
     log "metrics output from /metrics:"
     cat "$metrics_file" >&2
     rm -f "$metrics_file"
     die "assistant smoke did not emit helix_llm_latency_seconds_count for deterministic assistant"
   }
-  grep -E '^helix_llm_cost_usd_micros_total\{provider="assistant\.local",model="deterministic-assistant",feature="assistant\.chat",actor_id="[^"]+"\} [0-9]+$' "$metrics_file" >/dev/null || {
+  grep -E '^helix_llm_cost_usd_micros_total\{provider="assistant\.local",model="deterministic-assistant",feature="assistant\.chat"\} [0-9]+$' "$metrics_file" >/dev/null || {
     log "metrics output from /metrics:"
     cat "$metrics_file" >&2
     rm -f "$metrics_file"

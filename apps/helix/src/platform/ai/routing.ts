@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
-import {
-  confidentialProviderTags,
-  localOnlyProviderTags,
-} from "./classification/provider-tags.js";
+import { confidentialProviderTags, localOnlyProviderTags } from "./classification/provider-tags.js";
 import type {
   Actor,
   AICallContext,
@@ -13,8 +10,12 @@ import type {
   ChatChunk,
   ChatRequest,
   ChatResponse,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  ImageProviderCapability,
   LLMProviderCapability,
   JsonObject,
+  MeteringClient,
   SecurityTier,
   TraceContext,
 } from "@helix/sdk-types";
@@ -54,7 +55,6 @@ export type LLMMetricStatus = "success" | "error";
 
 export interface LLMChatMetrics {
   recordLLMChat(input: {
-    readonly actorId: string;
     readonly feature: string;
     readonly providerId: string;
     readonly model: string;
@@ -80,10 +80,13 @@ export interface AIProvenanceRecorder {
 
 export interface AIRouterOptions {
   readonly providers: readonly LLMProviderCapability[];
+  readonly imageProviders?: readonly ImageProviderCapability[];
   readonly policy?: AIRoutingPolicy;
   readonly costGuard?: AICostGuard;
   readonly metrics?: LLMChatMetrics;
   readonly provenance?: AIProvenanceRecorder;
+  readonly metering?: MeteringClient;
+  readonly onMeteringError?: (error: unknown) => void;
   readonly systemActor?: Actor;
 }
 
@@ -103,20 +106,28 @@ export class AIClassificationBlockedError extends Error {
 
 export class AIRouter implements AICapability {
   readonly #providers = new Map<string, LLMProviderCapability>();
+  readonly #imageProviders = new Map<string, ImageProviderCapability>();
   readonly #policy: AIRoutingPolicy;
   readonly #costGuard: AICostGuard | undefined;
   readonly #metrics: LLMChatMetrics | undefined;
   readonly #provenance: AIProvenanceRecorder | undefined;
+  readonly #metering: MeteringClient | undefined;
+  readonly #onMeteringError: ((error: unknown) => void) | undefined;
   readonly #systemActor: Actor;
 
   constructor(options: AIRouterOptions) {
     for (const provider of options.providers) {
       this.#providers.set(provider.id, provider);
     }
+    for (const provider of options.imageProviders ?? []) {
+      this.#imageProviders.set(provider.id, provider);
+    }
     this.#policy = options.policy ?? {};
     this.#costGuard = options.costGuard;
     this.#metrics = options.metrics;
     this.#provenance = options.provenance;
+    this.#metering = options.metering;
+    this.#onMeteringError = options.onMeteringError;
     this.#systemActor = options.systemActor ?? {
       id: "system",
       orgId: "00000000-0000-0000-0000-000000000000",
@@ -133,6 +144,28 @@ export class AIRouter implements AICapability {
     return trace.getTracer("helix.ai").startActiveSpan("llm.chat", async (span) => {
       try {
         const result = await this.#chat(request, ctx, span);
+        span.setStatus({ code: SpanStatusCode.OK });
+        return result;
+      } catch (error) {
+        span.recordException(error instanceof Error ? error : new Error(String(error)));
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
+  async generateImage(
+    request: ImageGenerationRequest,
+    ctx: Partial<AICallContext> = {},
+  ): Promise<ImageGenerationResponse> {
+    return trace.getTracer("helix.ai").startActiveSpan("ai.image.generate", async (span) => {
+      try {
+        const result = await this.#generateImage(request, ctx, span);
         span.setStatus({ code: SpanStatusCode.OK });
         return result;
       } catch (error) {
@@ -269,7 +302,6 @@ export class AIRouter implements AICapability {
         return;
       } catch (error) {
         this.#metrics?.recordLLMChat({
-          actorId: actor.id,
           feature: request.feature,
           providerId: attempt.provider.id,
           model: modelForMetrics,
@@ -293,7 +325,9 @@ export class AIRouter implements AICapability {
 
     throw lastError instanceof Error
       ? lastError
-      : new AIProviderUnavailableError(`No AI provider is configured for feature ${request.feature}.`);
+      : new AIProviderUnavailableError(
+          `No AI provider is configured for feature ${request.feature}.`,
+        );
   }
 
   async *#emitNonStreamingFallback(
@@ -345,7 +379,6 @@ export class AIRouter implements AICapability {
       costCents,
     });
     this.#metrics?.recordLLMChat({
-      actorId: input.actor.id,
       feature: input.request.feature,
       providerId: input.providerId,
       model: input.model,
@@ -367,6 +400,14 @@ export class AIRouter implements AICapability {
     if (input.usage?.totalTokens !== undefined) {
       input.span.setAttribute("llm.usage.total_tokens", input.usage.totalTokens);
     }
+    this.#recordTokenMetering({
+      actor: input.actor,
+      feature: input.request.feature,
+      providerId: input.providerId,
+      model: input.model,
+      usage: input.usage,
+      costCents,
+    });
     await this.#provenance?.record({
       actor: input.actor,
       feature: input.request.feature,
@@ -382,14 +423,16 @@ export class AIRouter implements AICapability {
           fallbackUsed: input.attempt.fallback,
           attemptedProviderId: input.attempt.provider.id,
         },
-        ...(input.context.trace === undefined
-          ? {}
-          : { trace: traceMetadata(input.context.trace) }),
+        ...(input.context.trace === undefined ? {} : { trace: traceMetadata(input.context.trace) }),
       },
     });
   }
 
-  async #chat(request: ChatRequest, ctx: Partial<AICallContext>, span: Span): Promise<ChatResponse> {
+  async #chat(
+    request: ChatRequest,
+    ctx: Partial<AICallContext>,
+    span: Span,
+  ): Promise<ChatResponse> {
     const classification = request.classification ?? ctx.classification ?? "standard";
     const actor = ctx.actor ?? this.#systemActor;
     const attempts = await this.#selectProviderAttempts(request, classification);
@@ -420,7 +463,10 @@ export class AIRouter implements AICapability {
           estimatedCostCents,
         });
 
-        const responseOrStream = await attempt.provider.chat({ ...request, model, classification }, context);
+        const responseOrStream = await attempt.provider.chat(
+          { ...request, model, classification },
+          context,
+        );
         const response = isChatChunkStream(responseOrStream)
           ? await collectChatStream(responseOrStream, attempt.provider.id, model)
           : responseOrStream;
@@ -438,7 +484,6 @@ export class AIRouter implements AICapability {
           costCents,
         });
         this.#metrics?.recordLLMChat({
-          actorId: actor.id,
           feature: request.feature,
           providerId: output.providerId,
           model: output.model,
@@ -460,6 +505,14 @@ export class AIRouter implements AICapability {
         if (output.usage?.totalTokens !== undefined) {
           span.setAttribute("llm.usage.total_tokens", output.usage.totalTokens);
         }
+        this.#recordTokenMetering({
+          actor,
+          feature: request.feature,
+          providerId: output.providerId,
+          model: output.model,
+          usage: output.usage,
+          costCents,
+        });
         const provenance = await this.#provenance?.record({
           actor,
           feature: request.feature,
@@ -488,7 +541,6 @@ export class AIRouter implements AICapability {
             };
       } catch (error) {
         this.#metrics?.recordLLMChat({
-          actorId: actor.id,
           feature: request.feature,
           providerId: attempt.provider.id,
           model: modelForMetrics,
@@ -512,7 +564,167 @@ export class AIRouter implements AICapability {
 
     throw lastError instanceof Error
       ? lastError
-      : new AIProviderUnavailableError(`No AI provider is configured for feature ${request.feature}.`);
+      : new AIProviderUnavailableError(
+          `No AI provider is configured for feature ${request.feature}.`,
+        );
+  }
+
+  async #generateImage(
+    request: ImageGenerationRequest,
+    ctx: Partial<AICallContext>,
+    span: Span,
+  ): Promise<ImageGenerationResponse> {
+    const classification = request.classification ?? ctx.classification ?? "standard";
+    const actor = ctx.actor ?? this.#systemActor;
+    const attempts = await this.#selectImageProviderAttempts(request, classification);
+    const context: AICallContext = {
+      actor,
+      feature: request.feature,
+      classification,
+      ...(ctx.trace === undefined ? {} : { trace: ctx.trace }),
+      ...(ctx.costLimitCents === undefined ? {} : { costLimitCents: ctx.costLimitCents }),
+    };
+    span.setAttribute("helix.ai.feature", request.feature);
+    span.setAttribute("helix.ai.classification", classification);
+    span.setAttribute("helix.actor.id", actor.id);
+
+    let lastError: unknown;
+    for (const attempt of attempts) {
+      const modelForMetrics = request.model ?? attempt.model ?? "unknown";
+      try {
+        const model = request.model ?? attempt.model ?? (await firstModel(attempt.provider));
+        const estimatedCostCents = await estimateImageGenerationCost(
+          attempt.provider,
+          request,
+          model,
+        );
+        assertClassificationAllowed(attempt.provider, classification, this.#policy);
+        await this.#costGuard?.reserve({
+          actor,
+          feature: request.feature,
+          providerId: attempt.provider.id,
+          model,
+          estimatedCostCents,
+        });
+
+        const response = await attempt.provider.generateImage(
+          { ...request, model, classification },
+          context,
+        );
+        const output = {
+          ...response,
+          providerId: response.providerId || attempt.provider.id,
+          model: response.model || model,
+        };
+        const costCents = output.usage?.costCents ?? estimatedCostCents;
+        await this.#costGuard?.record({
+          actor,
+          feature: request.feature,
+          providerId: output.providerId,
+          model: output.model,
+          costCents,
+        });
+        span.setAttribute("llm.provider", output.providerId);
+        span.setAttribute("llm.model", output.model);
+        span.setAttribute("llm.usage.cost_cents", costCents);
+        span.setAttribute("helix.ai.fallback.used", attempt.fallback);
+        span.setAttribute("helix.ai.image.count", imageGenerationQuantity(output));
+        this.#recordImageMetering({
+          actor,
+          feature: request.feature,
+          providerId: output.providerId,
+          model: output.model,
+          request,
+          response: output,
+          costCents,
+        });
+        return output;
+      } catch (error) {
+        lastError = error;
+        if (!shouldTryFallback(error) || attempt === attempts[attempts.length - 1]) {
+          throw error;
+        }
+        span.addEvent("ai.image.generate.fallback", {
+          "llm.provider": attempt.provider.id,
+          "llm.model": modelForMetrics,
+          "exception.type": errorName(error),
+          "exception.message": error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new AIProviderUnavailableError(
+          `No AI provider is configured for feature ${request.feature}.`,
+        );
+  }
+
+  #recordTokenMetering(input: {
+    readonly actor: Actor;
+    readonly feature: string;
+    readonly providerId: string;
+    readonly model: string;
+    readonly usage: ChatResponse["usage"];
+    readonly costCents: number;
+  }): void {
+    const quantity = tokenQuantity(input.usage);
+    if (quantity === undefined || quantity <= 0) {
+      return;
+    }
+
+    const metadata: JsonObject = {
+      provider: input.providerId,
+      model: input.model,
+      slot: input.feature,
+      cost_cents_estimate: input.costCents,
+      ...(input.usage?.inputTokens === undefined ? {} : { tokens_in: input.usage.inputTokens }),
+      ...(input.usage?.outputTokens === undefined ? {} : { tokens_out: input.usage.outputTokens }),
+    };
+
+    void this.#metering
+      ?.emit(input.actor.orgId, {
+        type: "ai.tokens",
+        quantity,
+        metadata,
+      })
+      .catch((error: unknown) => {
+        this.#onMeteringError?.(error);
+      });
+  }
+
+  #recordImageMetering(input: {
+    readonly actor: Actor;
+    readonly feature: string;
+    readonly providerId: string;
+    readonly model: string;
+    readonly request: ImageGenerationRequest;
+    readonly response: ImageGenerationResponse;
+    readonly costCents: number;
+  }): void {
+    const quantity = imageGenerationQuantity(input.response);
+    if (quantity <= 0) {
+      return;
+    }
+
+    const metadata: JsonObject = {
+      provider: input.providerId,
+      model: input.model,
+      slot: input.feature,
+      count: quantity,
+      ...imageResolutionMetadata(input.request, input.response),
+      ...(input.costCents <= 0 ? {} : { cost_cents_estimate: input.costCents }),
+    };
+
+    void this.#metering
+      ?.emit(input.actor.orgId, {
+        type: "ai.image.generated",
+        quantity,
+        metadata,
+      })
+      .catch((error: unknown) => {
+        this.#onMeteringError?.(error);
+      });
   }
 
   async #selectProviderAttempts(
@@ -548,14 +760,11 @@ export class AIRouter implements AICapability {
     }
 
     const preferredId =
-      this.#policy.featureProviders?.[request.feature] ??
-      this.#policy.defaultProviderId;
+      this.#policy.featureProviders?.[request.feature] ?? this.#policy.defaultProviderId;
     const provider =
       preferredId === undefined ? this.listProviders()[0] : this.#providers.get(preferredId);
     if (provider !== undefined) {
-      if (
-        providerAllowedForClassification(provider, classification, this.#policy)
-      ) {
+      if (providerAllowedForClassification(provider, classification, this.#policy)) {
         return [{ provider, fallback: false }];
       }
     }
@@ -563,7 +772,9 @@ export class AIRouter implements AICapability {
       providerAllowedForClassification(candidate, classification, this.#policy),
     );
     if (allowed !== undefined) {
-      return [{ provider: allowed, fallback: preferredId !== undefined && allowed.id !== preferredId }];
+      return [
+        { provider: allowed, fallback: preferredId !== undefined && allowed.id !== preferredId },
+      ];
     }
     throw new AIProviderUnavailableError(
       `No AI provider is configured for feature ${request.feature}.`,
@@ -581,6 +792,91 @@ export class AIRouter implements AICapability {
       ...(ref.model === undefined ? {} : { model: ref.model }),
     };
   }
+
+  async #selectImageProviderAttempts(
+    request: ImageGenerationRequest,
+    classification: AIClassification,
+  ): Promise<readonly ImageProviderAttempt[]> {
+    const explicitId =
+      request.metadata !== undefined && typeof request.metadata.providerId === "string"
+        ? request.metadata.providerId
+        : undefined;
+    if (explicitId !== undefined) {
+      const provider = this.#imageProviders.get(explicitId);
+      if (provider !== undefined) {
+        return [{ provider, fallback: false }];
+      }
+      throw new AIProviderUnavailableError(
+        `No image provider is configured for feature ${request.feature}.`,
+      );
+    }
+
+    const route = this.#policy.featureRoutes?.[request.feature];
+    if (route !== undefined) {
+      const attempts = [
+        this.#imageAttemptFromRef(route.primary, false),
+        route.fallback === undefined ? undefined : this.#imageAttemptFromRef(route.fallback, true),
+      ].filter((attempt): attempt is ImageProviderAttempt => attempt !== undefined);
+      if (attempts.length === 0) {
+        throw new AIProviderUnavailableError(
+          `No image provider is configured for feature ${request.feature}.`,
+        );
+      }
+      const allowedAttempts = attempts.filter((attempt) =>
+        providerAllowedForClassification(attempt.provider, classification, this.#policy),
+      );
+      if (allowedAttempts.length > 0) {
+        return dedupeImageAttempts(allowedAttempts);
+      }
+      throw new AIClassificationBlockedError(
+        `No image provider configured for ${request.feature} can process ${classification} AI requests.`,
+      );
+    }
+
+    const preferredId =
+      this.#policy.featureProviders?.[request.feature] ?? this.#policy.defaultProviderId;
+    const provider =
+      preferredId === undefined
+        ? this.listImageProviders()[0]
+        : this.#imageProviders.get(preferredId);
+    if (provider !== undefined) {
+      if (providerAllowedForClassification(provider, classification, this.#policy)) {
+        return [{ provider, fallback: false }];
+      }
+    }
+    const allowed = this.listImageProviders().find((candidate) =>
+      providerAllowedForClassification(candidate, classification, this.#policy),
+    );
+    if (allowed !== undefined) {
+      return [
+        { provider: allowed, fallback: preferredId !== undefined && allowed.id !== preferredId },
+      ];
+    }
+    throw new AIProviderUnavailableError(
+      `No image provider is configured for feature ${request.feature}.`,
+    );
+  }
+
+  listImageProviders(): readonly ImageProviderCapability[] {
+    return [...this.#imageProviders.values()].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    );
+  }
+
+  #imageAttemptFromRef(
+    ref: AiProviderModelRef,
+    fallback: boolean,
+  ): ImageProviderAttempt | undefined {
+    const provider = this.#imageProviders.get(ref.providerId);
+    if (provider === undefined) {
+      return undefined;
+    }
+    return {
+      provider,
+      fallback,
+      ...(ref.model === undefined ? {} : { model: ref.model }),
+    };
+  }
 }
 
 interface AIProviderAttempt {
@@ -589,8 +885,19 @@ interface AIProviderAttempt {
   readonly fallback: boolean;
 }
 
+interface ImageProviderAttempt {
+  readonly provider: ImageProviderCapability;
+  readonly model?: string;
+  readonly fallback: boolean;
+}
+
+interface ProviderForPolicy {
+  readonly id: string;
+  readonly tags?: readonly string[];
+}
+
 export function providerAllowedForClassification(
-  provider: LLMProviderCapability,
+  provider: ProviderForPolicy,
   classification: AIClassification,
   policy: AIRoutingPolicy = {},
 ): boolean {
@@ -610,7 +917,7 @@ export function providerAllowedForClassification(
 }
 
 export function assertClassificationAllowed(
-  provider: LLMProviderCapability,
+  provider: ProviderForPolicy,
   classification: AIClassification,
   policy: AIRoutingPolicy = {},
 ): void {
@@ -625,7 +932,9 @@ export function hashJson(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-async function firstModel(provider: LLMProviderCapability): Promise<string> {
+async function firstModel(
+  provider: Pick<LLMProviderCapability | ImageProviderCapability, "id" | "models">,
+): Promise<string> {
   const model = (await provider.models())[0];
   if (model === undefined) {
     throw new AIProviderUnavailableError(`Provider ${provider.id} has no models.`);
@@ -643,6 +952,16 @@ async function estimateRequestCost(
   const inputText = request.messages.map((message) => message.content).join("\n");
   const inputTokens = await provider.countTokens(inputText, model);
   return ((modelInfo?.inputCostPer1kTokensCents ?? 0) * inputTokens) / 1000;
+}
+
+async function estimateImageGenerationCost(
+  provider: ImageProviderCapability,
+  request: ImageGenerationRequest,
+  model: string,
+): Promise<number> {
+  const models = await provider.models();
+  const modelInfo = models.find((candidate) => candidate.id === model);
+  return (modelInfo?.imageCostCents ?? 0) * requestedImageCount(request);
 }
 
 async function collectChatStream(
@@ -675,11 +994,11 @@ function isChatChunkStream(value: unknown): value is AsyncIterable<{ readonly de
   return typeof value === "object" && value !== null && Symbol.asyncIterator in value;
 }
 
-function providerIsLocalOnly(provider: LLMProviderCapability): boolean {
+function providerIsLocalOnly(provider: ProviderForPolicy): boolean {
   return providerHasAnyTag(provider, localOnlyProviderTags);
 }
 
-function providerHasAnyTag(provider: LLMProviderCapability, tags: readonly string[]): boolean {
+function providerHasAnyTag(provider: ProviderForPolicy, tags: readonly string[]): boolean {
   const providerTags = new Set(provider.tags ?? []);
   return tags.some((tag) => providerTags.has(tag));
 }
@@ -692,6 +1011,79 @@ function traceMetadata(trace: TraceContext): Record<string, string> {
   );
 }
 
+function tokenQuantity(usage: ChatResponse["usage"]): number | undefined {
+  if (usage === undefined) {
+    return undefined;
+  }
+  if (usage.totalTokens !== undefined) {
+    return usage.totalTokens;
+  }
+  if (usage.inputTokens !== undefined && usage.outputTokens !== undefined) {
+    return usage.inputTokens + usage.outputTokens;
+  }
+  return undefined;
+}
+
+function imageGenerationQuantity(response: ImageGenerationResponse): number {
+  const usageCount = response.usage?.imageCount;
+  if (usageCount !== undefined && Number.isFinite(usageCount) && usageCount > 0) {
+    return Math.trunc(usageCount);
+  }
+  return response.images.length;
+}
+
+function requestedImageCount(request: ImageGenerationRequest): number {
+  if (request.count !== undefined && Number.isFinite(request.count) && request.count > 0) {
+    return Math.trunc(request.count);
+  }
+  return 1;
+}
+
+function imageResolutionMetadata(
+  request: ImageGenerationRequest,
+  response: ImageGenerationResponse,
+): JsonObject {
+  const requested = normalizeImageResolution(request.size);
+  if (requested !== undefined) {
+    return { resolution: requested };
+  }
+
+  for (const image of response.images) {
+    if (
+      image.width !== undefined &&
+      image.height !== undefined &&
+      Number.isFinite(image.width) &&
+      Number.isFinite(image.height) &&
+      image.width > 0 &&
+      image.height > 0
+    ) {
+      const width = Math.trunc(image.width);
+      const height = Math.trunc(image.height);
+      return { resolution: `${String(width)}x${String(height)}` };
+    }
+  }
+  return {};
+}
+
+function normalizeImageResolution(size: string | undefined): string | undefined {
+  if (size === undefined) {
+    return undefined;
+  }
+  const match = /^([1-9]\d{0,4})[xX]([1-9]\d{0,4})$/.exec(size.trim());
+  if (match === null) {
+    return undefined;
+  }
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height)) {
+    return undefined;
+  }
+  if (width > 16_384 || height > 16_384) {
+    return undefined;
+  }
+  return `${String(width)}x${String(height)}`;
+}
+
 function durationSecondsSince(start: bigint): number {
   return Number(process.hrtime.bigint() - start) / 1_000_000_000;
 }
@@ -699,6 +1091,22 @@ function durationSecondsSince(start: bigint): number {
 function dedupeAttempts(attempts: readonly AIProviderAttempt[]): readonly AIProviderAttempt[] {
   const seen = new Set<string>();
   const deduped: AIProviderAttempt[] = [];
+  for (const attempt of attempts) {
+    const key = `${attempt.provider.id}:${attempt.model ?? ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(attempt);
+  }
+  return deduped;
+}
+
+function dedupeImageAttempts(
+  attempts: readonly ImageProviderAttempt[],
+): readonly ImageProviderAttempt[] {
+  const seen = new Set<string>();
+  const deduped: ImageProviderAttempt[] = [];
   for (const attempt of attempts) {
     const key = `${attempt.provider.id}:${attempt.model ?? ""}`;
     if (seen.has(key)) {

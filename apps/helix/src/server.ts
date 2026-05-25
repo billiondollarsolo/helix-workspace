@@ -837,7 +837,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     },
   });
   const webhookStore = new PostgresWebhookStore(sql);
-  const mailStore = new PostgresMailStore(sql);
   const chatStore = new PostgresChatStore(sql);
   const docsStore = new PostgresDocsStore(sql);
   const docsPdfRenderTimeoutMs = Number.parseInt(
@@ -1015,6 +1014,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           forcePathStyle: true,
         });
   const driveStorageResolver = createDefaultTenantStorageResolver(driveStorage);
+  const mailStore = new PostgresMailStore(sql, {
+    storageResolver: driveStorageResolver,
+  });
   const officePreviewConverter =
     process.env.HELIX_DRIVE_OFFICE_PREVIEW_URL === undefined
       ? undefined

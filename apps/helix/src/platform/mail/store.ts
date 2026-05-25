@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
 import type { MailOutboundDeliveryHealth } from "./admin-config.js";
+import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import type {
   MailFilterActions,
   MailFilterCriteria,
@@ -150,6 +151,10 @@ export interface MailStore {
   }): Promise<readonly MailLabelRecord[]>;
 }
 
+export interface PostgresMailStoreOptions {
+  readonly storageResolver?: TenantStorageResolver | undefined;
+}
+
 interface MailFilterRow {
   readonly id: string;
   readonly org_id: string;
@@ -293,7 +298,10 @@ interface MailLabelRow {
 export class PostgresMailStore
   implements MailStore, MailSearchProjectionStore, MailEnrichmentProjectionStore
 {
-  constructor(private readonly sql: postgres.Sql) {}
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly options: PostgresMailStoreOptions = {},
+  ) {}
 
   async findActorByAddress(
     orgId: string,
@@ -318,26 +326,31 @@ export class PostgresMailStore
   }
 
   async insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage> {
-    return this.sql.begin(async (tx) => insertMailMessage(tx, input));
+    return this.sql.begin(async (tx) => insertMailMessage(tx, input, this.options));
   }
 
   async createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord> {
     return this.sql.begin(async (tx) => {
-      const message = await insertMailMessage(tx, {
-        orgId: input.orgId,
-        actorId: input.actorId,
-        threadId: input.threadId,
-        from: input.envelope.from,
-        to: input.envelope.to,
-        cc: input.envelope.cc,
-        bcc: input.envelope.bcc,
-        subject: input.envelope.subject,
-        bodyText: input.envelope.text,
-        ...(input.envelope.html === undefined ? {} : { bodyHtml: input.envelope.html }),
-        ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
-        ...(input.references === undefined ? {} : { references: input.references }),
-        metadata: { direction: "outbound" },
-      });
+      const message = await insertMailMessage(
+        tx,
+        {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          threadId: input.threadId,
+          from: input.envelope.from,
+          to: input.envelope.to,
+          cc: input.envelope.cc,
+          bcc: input.envelope.bcc,
+          subject: input.envelope.subject,
+          bodyText: input.envelope.text,
+          ...(input.envelope.html === undefined ? {} : { bodyHtml: input.envelope.html }),
+          ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
+          ...(input.references === undefined ? {} : { references: input.references }),
+          attachments: input.envelope.attachments,
+          metadata: { direction: "outbound" },
+        },
+        this.options,
+      );
 
       const outboxRows = (await tx`
         insert into outbox (subject, payload, deliver_after)
@@ -1100,6 +1113,7 @@ type SqlLike = postgres.Sql | postgres.TransactionSql;
 async function insertMailMessage(
   sql: SqlLike,
   input: MailMessageInput,
+  options: PostgresMailStoreOptions = {},
 ): Promise<StoredMailMessage> {
   const threadRows =
     input.threadId === undefined
@@ -1152,17 +1166,23 @@ async function insertMailMessage(
   }
 
   const objectIds: string[] = [];
+  const storage =
+    input.attachments === undefined || input.attachments.length === 0
+      ? undefined
+      : (await options.storageResolver?.({ orgId: input.orgId }))?.client;
   for (const attachment of input.attachments ?? []) {
+    const storageKey = `mail/${messageId}/${attachment.filename ?? randomUUID()}`;
+    const sha256 = createHash("sha256").update(attachment.content).digest("hex");
     const objectRows = (await sql`
       insert into objects (org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
       values (
         ${input.orgId},
         ${input.actorId ?? null},
         'mail_attachment',
-        ${`mail/${messageId}/${attachment.filename ?? randomUUID()}`},
+        ${storageKey},
         ${attachment.mimeType},
         ${attachment.content.byteLength},
-        ${createHash("sha256").update(attachment.content).digest("hex")},
+        ${sha256},
         ${sql.json(
           toSqlJson({
             filename: attachment.filename ?? null,
@@ -1174,6 +1194,19 @@ async function insertMailMessage(
     `) as unknown as readonly { readonly id: string }[];
     const objectId = objectRows[0]?.id;
     if (objectId !== undefined) {
+      await storage?.put({
+        key: storageKey,
+        body: attachment.content,
+        contentType: attachment.mimeType,
+        metadata: {
+          objectId,
+          messageId,
+          sha256,
+          ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
+          ...(attachment.contentId === undefined ? {} : { contentId: attachment.contentId }),
+          disposition: attachment.disposition ?? "attachment",
+        },
+      });
       objectIds.push(objectId);
       await sql`
         insert into message_attachments (message_id, object_id, disposition)

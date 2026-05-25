@@ -2,7 +2,7 @@ import type { AIClassification, JsonObject } from "@helix/sdk-types";
 
 export const docsPluginId = "com.helix.core.docs";
 
-export const docsExportFormats = ["markdown", "pdf", "docx"] as const;
+export const docsExportFormats = ["markdown", "pdf", "docx", "epub"] as const;
 export type DocsExportFormat = (typeof docsExportFormats)[number];
 
 export interface DocsExportFormatDescriptor {
@@ -31,8 +31,20 @@ export const docsExportFormatDescriptors = {
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     binary: true,
   },
+  epub: {
+    format: "epub",
+    extension: "epub",
+    mimeType: "application/epub+zip",
+    binary: true,
+  },
 } as const satisfies Record<DocsExportFormat, DocsExportFormatDescriptor>;
 export type DocsTimestamp = Date | string;
+export const docsEditorEngines = [
+  "legacy-yjs",
+  "onlyoffice-ooxml",
+  "helix-native-document",
+] as const;
+export type DocsEditorEngine = (typeof docsEditorEngines)[number];
 
 export type DocsActivityPayload = JsonObject & {
   readonly id?: string | undefined;
@@ -56,6 +68,7 @@ export type DocsOutlineItem = JsonObject & {
 
 export type DocsCommentProjection = JsonObject & {
   readonly id: string;
+  readonly parentCommentId?: string | null | undefined;
   readonly body: string;
   readonly anchor?: JsonObject | string | undefined;
   readonly author?: DocsActor | undefined;
@@ -72,6 +85,8 @@ export interface DocsDocumentRecord {
   readonly ydocState: Buffer | null;
   readonly ydocStateVector: Buffer | null;
   readonly updateSeq: number;
+  readonly editorEngine: string;
+  readonly formatVersion: number;
   readonly metadata: JsonObject;
   readonly deletedAt: Date | null;
   readonly createdAt: Date;
@@ -89,10 +104,38 @@ export interface DocsUpdateRecord {
   readonly createdAt: Date;
 }
 
+export type DocsVersionPreviewCompleteness = "snapshot" | "reconstructed";
+
+export interface DocsVersionDiffLine {
+  readonly kind: "unchanged" | "added" | "removed";
+  readonly text: string;
+}
+
+export interface DocsVersionPreviewRecord {
+  readonly version: DocsUpdateRecord;
+  readonly documentId: string;
+  readonly currentUpdateSeq: number;
+  readonly currentText: string;
+  readonly versionText: string;
+  readonly completeness: DocsVersionPreviewCompleteness;
+  readonly complete: boolean;
+  readonly appliedCount: number;
+  readonly skippedCount: number;
+  readonly diff: readonly DocsVersionDiffLine[];
+  readonly warnings: readonly string[];
+}
+
+export interface DocsVersionRestoreRecord {
+  readonly document: DocsDocumentRecord;
+  readonly restoredVersion: DocsUpdateRecord;
+  readonly restoreVersion: DocsUpdateRecord;
+}
+
 export interface DocsCommentRecord {
   readonly id: string;
   readonly orgId: string;
   readonly documentId: string;
+  readonly parentCommentId: string | null;
   readonly actorId: string | null;
   readonly anchor: JsonObject;
   readonly body: string;
@@ -103,8 +146,13 @@ export interface DocsCommentRecord {
   readonly updatedAt: Date;
 }
 
+export type DocsCommentListItem = DocsCommentRecord & {
+  readonly author?: DocsActor | undefined;
+};
+
 export const docsSuggestionStatuses = ["pending", "accepted", "rejected"] as const;
 export type DocsSuggestionStatus = (typeof docsSuggestionStatuses)[number];
+export type DocsAskSourceScope = "document" | "selection";
 
 /**
  * A tracked-change / proposed edit on a document. Distinct from {@link DocsCommentRecord}:
@@ -124,6 +172,20 @@ export interface DocsSuggestionRecord {
   readonly metadata: JsonObject;
   readonly resolvedByActorId: string | null;
   readonly resolvedAt: Date | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface DocsAskHistoryRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly documentId: string;
+  readonly actorId: string;
+  readonly question: string;
+  readonly answer: string;
+  readonly sourceScope: DocsAskSourceScope;
+  readonly sourceExcerpt: string;
+  readonly metadata: JsonObject;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

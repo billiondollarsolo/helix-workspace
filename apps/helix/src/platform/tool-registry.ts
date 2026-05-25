@@ -42,6 +42,7 @@ export type ToolInvokeResult<Output = unknown> =
       readonly error: string;
       readonly retryAfterSeconds?: number;
       readonly rateLimit?: ToolRateLimitMetadata;
+      readonly quotaLimit?: ToolQuotaLimitMetadata;
     };
 export type ToolInvokeErrorResult = Extract<ToolInvokeResult, { readonly ok: false }>;
 
@@ -49,6 +50,15 @@ export interface ToolRateLimitMetadata {
   readonly reason: AgentLimitExceeded["reason"];
   readonly retryAfterSeconds: number;
   readonly usage: AgentLimitExceeded["usage"];
+}
+
+export interface ToolQuotaLimitMetadata {
+  readonly quota: string;
+  readonly limit: number;
+  readonly used: number;
+  readonly remaining: 0;
+  readonly retryAfterSeconds: number;
+  readonly resetsAt: string;
 }
 
 export interface ToolInvokeOptions {
@@ -313,11 +323,17 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
             invocationMetrics,
           );
         } catch (error) {
+          const httpError = toolHttpError(error);
           const result: ToolInvokeErrorResult = {
             ok: false,
             statusCode:
-              error instanceof PermissionDeniedError ? 403 : isInputError(error) ? 400 : 500,
+              httpError?.statusCode ??
+              (error instanceof PermissionDeniedError ? 403 : isInputError(error) ? 400 : 500),
             error: error instanceof Error ? error.message : "Tool invocation failed",
+            ...(httpError?.retryAfterSeconds === undefined
+              ? {}
+              : { retryAfterSeconds: httpError.retryAfterSeconds }),
+            ...(httpError?.quotaLimit === undefined ? {} : { quotaLimit: httpError.quotaLimit }),
           };
           return toolInvokeResultWithSpan(span, result, tool.id, start, invocationMetrics);
         }
@@ -638,6 +654,69 @@ function isInputError(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "ZodError" || error.name === "SyntaxError" || error.name === "TypeError")
   );
+}
+
+function toolHttpError(error: unknown): {
+  readonly statusCode: number;
+  readonly retryAfterSeconds?: number;
+  readonly quotaLimit?: ToolQuotaLimitMetadata;
+} | null {
+  if (typeof error !== "object" || error === null) {
+    return null;
+  }
+  const statusCode = (error as { readonly statusCode?: unknown }).statusCode;
+  if (
+    typeof statusCode !== "number" ||
+    !Number.isInteger(statusCode) ||
+    statusCode < 400 ||
+    statusCode > 599
+  ) {
+    return null;
+  }
+  const retryAfterSeconds = (error as { readonly retryAfterSeconds?: unknown }).retryAfterSeconds;
+  const quotaLimit = toolQuotaLimit(error);
+  return {
+    statusCode,
+    ...(typeof retryAfterSeconds === "number" &&
+    Number.isInteger(retryAfterSeconds) &&
+    retryAfterSeconds > 0
+      ? { retryAfterSeconds }
+      : {}),
+    ...(quotaLimit === null ? {} : { quotaLimit }),
+  };
+}
+
+function toolQuotaLimit(error: object): ToolQuotaLimitMetadata | null {
+  const raw = (error as { readonly quotaLimit?: unknown }).quotaLimit;
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+  const quotaLimit = raw as {
+    readonly quota?: unknown;
+    readonly limit?: unknown;
+    readonly used?: unknown;
+    readonly remaining?: unknown;
+    readonly retryAfterSeconds?: unknown;
+    readonly resetsAt?: unknown;
+  };
+  if (
+    typeof quotaLimit.quota !== "string" ||
+    typeof quotaLimit.limit !== "number" ||
+    typeof quotaLimit.used !== "number" ||
+    quotaLimit.remaining !== 0 ||
+    typeof quotaLimit.retryAfterSeconds !== "number" ||
+    typeof quotaLimit.resetsAt !== "string"
+  ) {
+    return null;
+  }
+  return {
+    quota: quotaLimit.quota,
+    limit: quotaLimit.limit,
+    used: quotaLimit.used,
+    remaining: 0,
+    retryAfterSeconds: quotaLimit.retryAfterSeconds,
+    resetsAt: quotaLimit.resetsAt,
+  };
 }
 
 function shouldLimitActor(actor: Actor): boolean {

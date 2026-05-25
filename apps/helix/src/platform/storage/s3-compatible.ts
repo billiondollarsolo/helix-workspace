@@ -13,12 +13,13 @@ export interface S3CompatibleStorageConfig {
   readonly bucket: string;
   readonly credentials: S3CompatibleCredentials;
   readonly serverSideEncryption?: S3ServerSideEncryption;
+  readonly serverSideEncryptionAwsKmsKeyId?: string;
   readonly forcePathStyle?: boolean;
   readonly fetch?: typeof fetch;
   readonly now?: () => Date;
 }
 
-export type S3ServerSideEncryption = "AES256";
+export type S3ServerSideEncryption = "AES256" | "aws:kms";
 
 export interface S3CompatiblePresignOptions {
   readonly expiresSeconds?: number;
@@ -26,10 +27,19 @@ export interface S3CompatiblePresignOptions {
   readonly metadata?: Record<string, string>;
 }
 
+export interface S3CompatiblePresignedPutUpload {
+  readonly url: string;
+  readonly headers: Record<string, string>;
+}
+
 export interface S3CompatibleStorageClient extends StorageClient {
   ensureBucket(): Promise<void>;
   presignGetUrl(key: string, options?: S3CompatiblePresignOptions): Promise<string>;
   presignPutUrl(key: string, options?: S3CompatiblePresignOptions): Promise<string>;
+  presignPutRequest(
+    key: string,
+    options?: S3CompatiblePresignOptions,
+  ): Promise<S3CompatiblePresignedPutUpload>;
 }
 
 export class S3CompatibleStorageError extends Error {
@@ -120,11 +130,22 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
   }
 
   async presignGetUrl(key: string, options: S3CompatiblePresignOptions = {}): Promise<string> {
-    return this.#presign("GET", key, options);
+    return this.#presign("GET", key, options).url;
   }
 
   async presignPutUrl(key: string, options: S3CompatiblePresignOptions = {}): Promise<string> {
-    return this.#presign("PUT", key, options);
+    return (await this.presignPutRequest(key, options)).url;
+  }
+
+  async presignPutRequest(
+    key: string,
+    options: S3CompatiblePresignOptions = {},
+  ): Promise<S3CompatiblePresignedPutUpload> {
+    const presigned = this.#presign("PUT", key, options);
+    return {
+      url: presigned.url,
+      headers: presignedUploadHeaders(presigned.headers),
+    };
   }
 
   async #request(
@@ -190,11 +211,11 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
     });
   }
 
-  async #presign(
+  #presign(
     method: S3Method,
     key: string,
     options: S3CompatiblePresignOptions,
-  ): Promise<string> {
+  ): { readonly url: string; readonly headers: Record<string, string> } {
     const url = objectUrl(this.#config, key);
     const date = this.#config.now();
     const expiresSeconds = validateExpiresSeconds(options.expiresSeconds ?? 900);
@@ -225,7 +246,7 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
     );
     const signature = requestSignature(this.#config, date, canonicalRequest);
     url.search = `${canonicalQuery}&X-Amz-Signature=${signature}`;
-    return url.toString();
+    return { url: url.toString(), headers };
   }
 }
 
@@ -237,6 +258,7 @@ interface NormalizedS3Config {
   readonly bucket: string;
   readonly credentials: S3CompatibleCredentials;
   readonly serverSideEncryption?: S3ServerSideEncryption;
+  readonly serverSideEncryptionAwsKmsKeyId?: string;
   readonly forcePathStyle: boolean;
   readonly fetch: typeof fetch;
   readonly now: () => Date;
@@ -267,6 +289,9 @@ function normalizeConfig(config: S3CompatibleStorageConfig): NormalizedS3Config 
     ...(config.serverSideEncryption === undefined
       ? {}
       : { serverSideEncryption: config.serverSideEncryption }),
+    ...(config.serverSideEncryptionAwsKmsKeyId === undefined
+      ? {}
+      : { serverSideEncryptionAwsKmsKeyId: config.serverSideEncryptionAwsKmsKeyId }),
     forcePathStyle: config.forcePathStyle ?? true,
     fetch: config.fetch ?? fetch,
     now: config.now ?? (() => new Date()),
@@ -320,7 +345,24 @@ function requestContentHeaders(options: S3CompatiblePresignOptions): Record<stri
 function serverSideEncryptionHeaders(config: NormalizedS3Config): Record<string, string> {
   return config.serverSideEncryption === undefined
     ? {}
-    : { "x-amz-server-side-encryption": config.serverSideEncryption };
+    : {
+        "x-amz-server-side-encryption": config.serverSideEncryption,
+        ...(config.serverSideEncryptionAwsKmsKeyId === undefined
+          ? {}
+          : {
+              "x-amz-server-side-encryption-aws-kms-key-id": config.serverSideEncryptionAwsKmsKeyId,
+            }),
+      };
+}
+
+function presignedUploadHeaders(headers: Record<string, string>): Record<string, string> {
+  const uploadHeaders: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (name !== "host") {
+      uploadHeaders[name] = value;
+    }
+  }
+  return uploadHeaders;
 }
 
 function metadataHeaders(metadata: Record<string, string> | undefined): Record<string, string> {

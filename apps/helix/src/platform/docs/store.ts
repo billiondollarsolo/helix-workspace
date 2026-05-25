@@ -1,12 +1,27 @@
+import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
-import * as Y from "yjs";
+import { insertNotification } from "../notifications/store.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
+import type { TenantStorageResolver } from "../storage/index.js";
 import { exportDocsDocument } from "./export/index.js";
+import {
+  HELIX_NATIVE_DOCUMENT_ENGINE,
+  createNativeDocumentState,
+  documentStateFromStoredUpdates,
+  documentTextFromStoredState,
+  type NativeDocumentTextSelection,
+  replaceFirstTextInStoredState,
+  stateVectorFromStoredState,
+} from "./native-state.js";
 import type {
   DocsCommentProjection,
+  DocsAskHistoryRecord,
+  DocsAskSourceScope,
+  DocsCommentListItem,
   DocsCommentRecord,
   DocsDocumentRecord,
+  DocsEditorEngine,
   DocsExportDocument,
   DocsExportFormat,
   DocsExportRecord,
@@ -19,6 +34,9 @@ import type {
   DocsSuggestionRecord,
   DocsSuggestionStatus,
   DocsUpdateRecord,
+  DocsVersionDiffLine,
+  DocsVersionPreviewRecord,
+  DocsVersionRestoreRecord,
 } from "./types.js";
 
 export interface CreateDocsDocumentInput {
@@ -26,6 +44,8 @@ export interface CreateDocsDocumentInput {
   readonly actorId: string;
   readonly title: string;
   readonly initialMarkdown?: string | undefined;
+  readonly editorEngine?: DocsEditorEngine | undefined;
+  readonly formatVersion?: number | undefined;
   readonly folderId?: string | null | undefined;
   readonly metadata?: JsonObject | undefined;
 }
@@ -52,6 +72,17 @@ export interface DocsStore extends DocsExportStore {
     readonly documentId: string;
     readonly title: string;
   }): Promise<DocsDocumentRecord | null>;
+  updateLayout(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly layoutSettings: NativeDocumentLayoutSettings;
+  }): Promise<DocsDocumentRecord | null>;
+  migrateToNativeDocument(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+  }): Promise<DocsDocumentRecord | null>;
   export(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -62,10 +93,38 @@ export interface DocsStore extends DocsExportStore {
     readonly orgId: string;
     readonly actorId: string;
     readonly documentId: string;
+    readonly parentCommentId?: string | undefined;
     readonly body: string;
     readonly anchor?: JsonObject | undefined;
     readonly metadata?: JsonObject | undefined;
   }): Promise<DocsCommentRecord>;
+  listComments(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly status?: string | undefined;
+  }): Promise<readonly DocsCommentListItem[]>;
+  resolveComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DocsCommentRecord | null>;
+  reopenComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DocsCommentRecord | null>;
+  updateComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+    readonly body: string;
+  }): Promise<DocsCommentRecord | null>;
+  deleteComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DocsCommentRecord | null>;
   createSuggestion(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -82,12 +141,63 @@ export interface DocsStore extends DocsExportStore {
     readonly documentId: string;
     readonly status?: DocsSuggestionStatus | undefined;
   }): Promise<readonly DocsSuggestionRecord[]>;
+  listVersions(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly limit: number;
+  }): Promise<readonly DocsUpdateRecord[]>;
+  nameVersion(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly versionId: string;
+    readonly name: string;
+  }): Promise<DocsUpdateRecord | null>;
+  previewVersion(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly versionId: string;
+  }): Promise<DocsVersionPreviewRecord | null>;
+  restoreVersion(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly versionId: string;
+    readonly expectedCurrentUpdateSeq?: number | undefined;
+  }): Promise<DocsVersionRestoreRecord | null>;
   resolveSuggestion(input: {
     readonly orgId: string;
     readonly actorId: string;
     readonly suggestionId: string;
     readonly status: "accepted" | "rejected";
   }): Promise<DocsSuggestionRecord | null>;
+  resolveSuggestions(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly suggestionIds: readonly string[];
+    readonly status: "accepted" | "rejected";
+  }): Promise<readonly DocsSuggestionRecord[] | null>;
+  createAskHistoryItem(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly question: string;
+    readonly answer: string;
+    readonly sourceScope: DocsAskSourceScope;
+    readonly sourceExcerpt: string;
+    readonly metadata?: JsonObject | undefined;
+  }): Promise<DocsAskHistoryRecord>;
+  listAskHistory(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly limit: number;
+  }): Promise<readonly DocsAskHistoryRecord[]>;
+  clearAskHistory(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+  }): Promise<number>;
   getDocumentForActor(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -107,6 +217,21 @@ export interface DocsStore extends DocsExportStore {
   }): Promise<DocsDocumentRecord | null>;
 }
 
+export interface NativeDocumentLayoutSettings {
+  readonly layoutMode: "page" | "pageless";
+  readonly columnCount: 1 | 2;
+  readonly sections?: readonly NativeDocumentSectionSettings[] | undefined;
+}
+
+export interface NativeDocumentSectionSettings {
+  readonly id: string;
+  readonly title?: string | undefined;
+  readonly layoutMode?: "page" | "pageless" | undefined;
+  readonly columnCount?: 1 | 2 | undefined;
+  readonly pageSize?: "letter" | "a4" | undefined;
+  readonly orientation?: "portrait" | "landscape" | undefined;
+}
+
 interface DocsDocumentRow {
   readonly id: string;
   readonly org_id: string;
@@ -117,6 +242,8 @@ interface DocsDocumentRow {
   readonly ydoc_state: Buffer | null;
   readonly ydoc_state_vector: Buffer | null;
   readonly update_seq: number;
+  readonly editor_engine: string;
+  readonly format_version: number;
   readonly metadata: JsonObject;
   readonly deleted_at: Date | null;
   readonly created_at: Date;
@@ -127,6 +254,7 @@ interface DocsUpdateRow {
   readonly id: string;
   readonly org_id: string;
   readonly document_id: string;
+  readonly parent_comment_id: string | null;
   readonly actor_id: string | null;
   readonly seq: number;
   readonly update: Buffer;
@@ -138,6 +266,7 @@ interface DocsCommentRow {
   readonly id: string;
   readonly org_id: string;
   readonly document_id: string;
+  readonly parent_comment_id: string | null;
   readonly actor_id: string | null;
   readonly anchor: JsonObject;
   readonly body: string;
@@ -170,6 +299,20 @@ interface DocsSuggestionRow {
   readonly updated_at: Date;
 }
 
+interface DocsAskHistoryRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly document_id: string;
+  readonly actor_id: string;
+  readonly question: string;
+  readonly answer: string;
+  readonly source_scope: DocsAskSourceScope;
+  readonly source_excerpt: string;
+  readonly metadata: JsonObject;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
 interface DocsSearchProjectionRow extends DocsDocumentRow {
   readonly owner_display_name: string | null;
   readonly owner_email: string | null;
@@ -183,10 +326,19 @@ interface DocsActorRow {
 
 type SqlLike = postgres.Sql | postgres.TransactionSql;
 
+export interface PostgresDocsStoreOptions {
+  readonly storageResolver?: TenantStorageResolver | undefined;
+}
+
+const docsDocumentMimeType = "application/vnd.helix.document";
+
 export class PostgresDocsStore
   implements DocsStore, DocsSearchProjectionStore, DocsOutlineEnrichmentStore
 {
-  constructor(private readonly sql: postgres.Sql) {}
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly options: PostgresDocsStoreOptions = {},
+  ) {}
 
   async create(input: CreateDocsDocumentInput): Promise<DocsDocumentRecord> {
     return this.sql.begin(async (tx) => {
@@ -200,10 +352,16 @@ export class PostgresDocsStore
         throw new Error("Unable to create docs thread.");
       }
 
-      const initialState = Buffer.from(input.initialMarkdown ?? "", "utf8");
+      const initialState =
+        input.editorEngine === HELIX_NATIVE_DOCUMENT_ENGINE
+          ? createNativeDocumentState(input.initialMarkdown ?? "")
+          : {
+              state: Buffer.from(input.initialMarkdown ?? "", "utf8"),
+              stateVector: null,
+            };
       const documentRows = (await tx`
         insert into docs_documents (
-          org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, update_seq, metadata
+          org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, ydoc_state_vector, update_seq, editor_engine, format_version, metadata
         )
         values (
           ${input.orgId},
@@ -211,13 +369,18 @@ export class PostgresDocsStore
           ${threadId},
           ${input.actorId},
           ${input.actorId},
-          ${initialState},
+          ${initialState.state},
+          ${initialState.stateVector},
           0,
+          ${input.editorEngine ?? "legacy-yjs"},
+          ${input.formatVersion ?? 1},
           ${tx.json(toSqlJson(input.metadata ?? {}))}
         )
         returning *
       `) as unknown as readonly DocsDocumentRow[];
       const document = mapDocument(documentRows[0]);
+      const storageKey = docsDocumentStorageKey(input.orgId, document.id);
+      const stateSha256 = sha256Hex(initialState.state);
       const driveMetadata = toSqlJson({
         ...(input.metadata ?? {}),
         app: "docs",
@@ -225,6 +388,8 @@ export class PostgresDocsStore
         name: `${input.title}.helixdoc`,
         title: input.title,
         folderId: input.folderId ?? null,
+        editorEngine: input.editorEngine ?? "legacy-yjs",
+        formatVersion: input.formatVersion ?? 1,
       });
 
       await tx`
@@ -234,16 +399,27 @@ export class PostgresDocsStore
           ${input.orgId},
           ${input.actorId},
           'file',
-          ${`docs/${input.orgId}/${document.id}`},
-          'application/vnd.helix.document',
-          ${initialState.byteLength},
-          null,
+          ${storageKey},
+          ${docsDocumentMimeType},
+          ${initialState.state.byteLength},
+          ${stateSha256},
           ${tx.json(driveMetadata)}
         )
         on conflict (id) do update set
+          storage_key = excluded.storage_key,
+          mime_type = excluded.mime_type,
+          byte_size = excluded.byte_size,
+          sha256 = excluded.sha256,
           metadata = excluded.metadata,
           updated_at = now()
       `;
+      await this.persistDocumentState({
+        orgId: input.orgId,
+        documentId: document.id,
+        storageKey,
+        state: initialState.state,
+        sha256: stateSha256,
+      });
 
       await grantDocumentAccess(tx, {
         orgId: input.orgId,
@@ -360,6 +536,48 @@ export class PostgresDocsStore
     });
   }
 
+  async updateLayout(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly layoutSettings: NativeDocumentLayoutSettings;
+  }): Promise<DocsDocumentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      await requireDocumentAccess(tx, input.orgId, input.actorId, input.documentId);
+      const rows = (await tx`
+        update docs_documents
+        set
+          metadata = jsonb_set(
+            metadata,
+            '{nativeDocumentLayout}',
+            ${tx.json(toSqlJson(input.layoutSettings))}::jsonb,
+            true
+          ),
+          updated_at = now()
+        where id = ${input.documentId}
+          and org_id = ${input.orgId}
+          and deleted_at is null
+        returning *
+      `) as unknown as readonly DocsDocumentRow[];
+      const document = rows[0] === undefined ? null : mapDocument(rows[0]);
+      if (document !== null) {
+        await appendDocsActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "docs.document.layout_updated",
+          documentId: input.documentId,
+          payload: {
+            layoutSettings: {
+              layoutMode: input.layoutSettings.layoutMode,
+              columnCount: input.layoutSettings.columnCount,
+            },
+          },
+        });
+      }
+      return document;
+    });
+  }
+
   async export(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -375,7 +593,7 @@ export class PostgresDocsStore
         id: document.id,
         orgId: document.orgId,
         title: document.title,
-        markdown: markdownFromStoredYDocState(document.ydocState),
+        markdown: documentTextFromStoredState(document.ydocState),
         updatedAt: document.updatedAt,
         metadata: document.metadata,
       },
@@ -390,6 +608,113 @@ export class PostgresDocsStore
       contentBase64: exported.contentBase64,
       exportedAt: new Date(),
     };
+  }
+
+  async migrateToNativeDocument(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+  }): Promise<DocsDocumentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existing = await selectDocumentForActor(
+        tx,
+        input.orgId,
+        input.actorId,
+        input.documentId,
+      );
+      if (existing === null) {
+        return null;
+      }
+      if (existing.editorEngine === HELIX_NATIVE_DOCUMENT_ENGINE && existing.formatVersion === 1) {
+        return existing;
+      }
+
+      const text = documentTextFromStoredState(existing.ydocState);
+      const nativeState = createNativeDocumentState(text);
+      const storageKey = docsDocumentStorageKey(input.orgId, input.documentId);
+      const stateSha256 = sha256Hex(nativeState.state);
+      const rows = (await tx`
+        update docs_documents
+        set
+          ydoc_state = ${nativeState.state},
+          ydoc_state_vector = ${nativeState.stateVector},
+          update_seq = update_seq + 1,
+          editor_engine = ${HELIX_NATIVE_DOCUMENT_ENGINE},
+          format_version = 1,
+          metadata = metadata || ${tx.json(
+            toSqlJson({
+              migratedFromEditorEngine: existing.editorEngine,
+              migratedFromFormatVersion: existing.formatVersion,
+            }),
+          )}::jsonb,
+          updated_at = now()
+        where id = ${input.documentId}
+          and org_id = ${input.orgId}
+          and deleted_at is null
+        returning *
+      `) as unknown as readonly DocsDocumentRow[];
+      const migrated = rows[0] === undefined ? null : mapDocument(rows[0]);
+      if (migrated === null) {
+        return null;
+      }
+      await tx`
+        insert into docs_updates (org_id, document_id, actor_id, seq, update, metadata)
+        values (
+          ${input.orgId},
+          ${input.documentId},
+          ${input.actorId},
+          ${migrated.updateSeq},
+          ${nativeState.state},
+          ${tx.json(
+            toSqlJson({
+              source: "docs.migrate-native",
+              migratedFromEditorEngine: existing.editorEngine,
+              migratedFromFormatVersion: existing.formatVersion,
+              stateBase64: nativeState.state.toString("base64"),
+            }),
+          )}
+        )
+      `;
+      await tx`
+        update objects
+        set
+          storage_key = ${storageKey},
+          mime_type = ${docsDocumentMimeType},
+          byte_size = ${nativeState.state.byteLength},
+          sha256 = ${stateSha256},
+          metadata = metadata || ${tx.json(
+            toSqlJson({
+              app: "docs",
+              docId: input.documentId,
+              editorEngine: HELIX_NATIVE_DOCUMENT_ENGINE,
+              formatVersion: 1,
+              migratedFromEditorEngine: existing.editorEngine,
+            }),
+          )}::jsonb,
+          updated_at = now()
+        where id = ${input.documentId}
+          and org_id = ${input.orgId}
+          and metadata->>'app' = 'docs'
+      `;
+      await appendDocsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "docs.document.migrated_native",
+        documentId: input.documentId,
+        payload: {
+          migratedFromEditorEngine: existing.editorEngine,
+          migratedFromFormatVersion: existing.formatVersion,
+        },
+      });
+      await this.persistDocumentState({
+        orgId: input.orgId,
+        documentId: input.documentId,
+        storageKey,
+        state: nativeState.state,
+        sha256: stateSha256,
+      });
+      return migrated;
+    });
   }
 
   async getDocsSearchRecord(docId: string): Promise<DocsSearchRecord | null> {
@@ -482,17 +807,27 @@ export class PostgresDocsStore
     readonly orgId: string;
     readonly actorId: string;
     readonly documentId: string;
+    readonly parentCommentId?: string | undefined;
     readonly body: string;
     readonly anchor?: JsonObject | undefined;
     readonly metadata?: JsonObject | undefined;
   }): Promise<DocsCommentRecord> {
     return this.sql.begin(async (tx) => {
       await requireDocumentAccess(tx, input.orgId, input.actorId, input.documentId);
+      if (input.parentCommentId !== undefined) {
+        await requireCommentParent(tx, {
+          orgId: input.orgId,
+          documentId: input.documentId,
+          parentCommentId: input.parentCommentId,
+        });
+      }
       const rows = (await tx`
-        insert into docs_comments (org_id, document_id, actor_id, anchor, body, metadata)
+        insert into docs_comments
+          (org_id, document_id, parent_comment_id, actor_id, anchor, body, metadata)
         values (
           ${input.orgId},
           ${input.documentId},
+          ${input.parentCommentId ?? null},
           ${input.actorId},
           ${tx.json(toSqlJson(input.anchor ?? {}))},
           ${input.body},
@@ -507,7 +842,193 @@ export class PostgresDocsStore
         documentId: input.documentId,
         payload: { commentId: rows[0]?.id ?? null },
       });
-      return mapComment(rows[0]);
+      const comment = mapComment(rows[0]);
+      await notifyCommentMentions(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        documentId: input.documentId,
+        commentId: comment.id,
+        parentCommentId: comment.parentCommentId,
+        body: input.body,
+        metadata: input.metadata ?? {},
+      });
+      return comment;
+    });
+  }
+
+  async listComments(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly status?: string | undefined;
+  }): Promise<readonly DocsCommentListItem[]> {
+    await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
+    const rows = (await this.sql`
+      select
+        c.*,
+        a.display_name as actor_display_name,
+        a.email as actor_email
+      from docs_comments c
+      left join actors a on a.id = c.actor_id and a.org_id = c.org_id
+      where c.org_id = ${input.orgId}
+        and c.document_id = ${input.documentId}
+        ${
+          input.status === undefined || input.status === "all"
+            ? this.sql``
+            : this.sql`and c.status = ${input.status}`
+        }
+      order by c.created_at asc, c.id asc
+    `) as unknown as readonly DocsCommentProjectionRow[];
+    return rows.map(mapCommentListItem);
+  }
+
+  async resolveComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DocsCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from docs_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly DocsCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      await requireDocumentAccess(tx, input.orgId, input.actorId, existing.document_id);
+      if (existing.status === "resolved") {
+        return mapComment(existing);
+      }
+      const rows = (await tx`
+        update docs_comments
+        set status = 'resolved', resolved_at = now(), updated_at = now()
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly DocsCommentRow[];
+      await appendDocsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "docs.comment.resolved",
+        documentId: existing.document_id,
+        payload: { commentId: input.commentId },
+      });
+      return rows[0] === undefined ? null : mapComment(rows[0]);
+    });
+  }
+
+  async reopenComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DocsCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from docs_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly DocsCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      await requireDocumentAccess(tx, input.orgId, input.actorId, existing.document_id);
+      if (existing.status === "open") {
+        return mapComment(existing);
+      }
+      const rows = (await tx`
+        update docs_comments
+        set status = 'open', resolved_at = null, updated_at = now()
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly DocsCommentRow[];
+      await appendDocsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "docs.comment.reopened",
+        documentId: existing.document_id,
+        payload: { commentId: input.commentId },
+      });
+      return rows[0] === undefined ? null : mapComment(rows[0]);
+    });
+  }
+
+  async updateComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+    readonly body: string;
+  }): Promise<DocsCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from docs_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly DocsCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      await requireDocumentAccess(tx, input.orgId, input.actorId, existing.document_id);
+      const rows = (await tx`
+        update docs_comments
+        set body = ${input.body}, updated_at = now()
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly DocsCommentRow[];
+      await appendDocsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "docs.comment.updated",
+        documentId: existing.document_id,
+        payload: { commentId: input.commentId },
+      });
+      return rows[0] === undefined ? null : mapComment(rows[0]);
+    });
+  }
+
+  async deleteComment(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  }): Promise<DocsCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from docs_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly DocsCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      await requireDocumentAccess(tx, input.orgId, input.actorId, existing.document_id);
+      const rows = (await tx`
+        delete from docs_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly DocsCommentRow[];
+      await appendDocsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "docs.comment.deleted",
+        documentId: existing.document_id,
+        payload: { commentId: input.commentId },
+      });
+      return rows[0] === undefined ? null : mapComment(rows[0]);
     });
   }
 
@@ -598,6 +1119,7 @@ export class PostgresDocsStore
           documentId: existing.document_id,
           beforeText: existing.before_text,
           afterText: existing.after_text,
+          anchorSelection: nativeDocumentSuggestionAnchorSelection(existing.anchor),
         });
       }
 
@@ -621,6 +1143,152 @@ export class PostgresDocsStore
       });
       return rows[0] === undefined ? null : mapSuggestion(rows[0]);
     });
+  }
+
+  async resolveSuggestions(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly suggestionIds: readonly string[];
+    readonly status: "accepted" | "rejected";
+  }): Promise<readonly DocsSuggestionRecord[] | null> {
+    const suggestionIds = [...new Set(input.suggestionIds)];
+    if (suggestionIds.length === 0) {
+      return [];
+    }
+
+    return this.sql.begin(async (tx) => {
+      await requireDocumentAccess(tx, input.orgId, input.actorId, input.documentId);
+      const existingRows = (await tx`
+        select *
+        from docs_suggestions
+        where org_id = ${input.orgId}
+          and document_id = ${input.documentId}
+          and id = any(${tx.array(suggestionIds)}::uuid[])
+        for update
+      `) as unknown as readonly DocsSuggestionRow[];
+      if (existingRows.length !== suggestionIds.length) {
+        return null;
+      }
+
+      const rowById = new Map(existingRows.map((row) => [row.id, row]));
+      const resolved: DocsSuggestionRecord[] = [];
+      for (const suggestionId of suggestionIds) {
+        const existing = rowById.get(suggestionId);
+        if (existing === undefined) {
+          return null;
+        }
+        if (existing.status !== "pending") {
+          resolved.push(mapSuggestion(existing));
+          continue;
+        }
+
+        if (input.status === "accepted") {
+          await applySuggestionToDocument(tx, {
+            orgId: input.orgId,
+            actorId: input.actorId,
+            documentId: existing.document_id,
+            beforeText: existing.before_text,
+            afterText: existing.after_text,
+            anchorSelection: nativeDocumentSuggestionAnchorSelection(existing.anchor),
+          });
+        }
+
+        const rows = (await tx`
+          update docs_suggestions
+          set
+            status = ${input.status},
+            resolved_by_actor_id = ${input.actorId},
+            resolved_at = now(),
+            updated_at = now()
+          where id = ${suggestionId}
+            and org_id = ${input.orgId}
+            and document_id = ${input.documentId}
+          returning *
+        `) as unknown as readonly DocsSuggestionRow[];
+        await appendDocsActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: `docs.suggestion.${input.status}`,
+          documentId: existing.document_id,
+          payload: { suggestionId },
+        });
+        const updated = rows[0];
+        if (updated === undefined) {
+          return null;
+        }
+        resolved.push(mapSuggestion(updated));
+      }
+      return resolved;
+    });
+  }
+
+  async createAskHistoryItem(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly question: string;
+    readonly answer: string;
+    readonly sourceScope: DocsAskSourceScope;
+    readonly sourceExcerpt: string;
+    readonly metadata?: JsonObject | undefined;
+  }): Promise<DocsAskHistoryRecord> {
+    await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
+    const rows = (await this.sql`
+      insert into docs_ask_history (
+        org_id, document_id, actor_id, question, answer, source_scope, source_excerpt, metadata
+      )
+      values (
+        ${input.orgId},
+        ${input.documentId},
+        ${input.actorId},
+        ${input.question},
+        ${input.answer},
+        ${input.sourceScope},
+        ${input.sourceExcerpt},
+        ${this.sql.json(toSqlJson(input.metadata ?? {}))}
+      )
+      returning *
+    `) as unknown as readonly DocsAskHistoryRow[];
+    return mapAskHistory(rows[0]);
+  }
+
+  async listAskHistory(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly limit: number;
+  }): Promise<readonly DocsAskHistoryRecord[]> {
+    await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
+    const rows = (await this.sql`
+      select *
+      from docs_ask_history
+      where org_id = ${input.orgId}
+        and document_id = ${input.documentId}
+        and actor_id = ${input.actorId}
+      order by created_at desc
+      limit ${input.limit}
+    `) as unknown as readonly DocsAskHistoryRow[];
+    return rows.map(mapAskHistory);
+  }
+
+  async clearAskHistory(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+  }): Promise<number> {
+    await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
+    const rows = (await this.sql`
+      with deleted as (
+        delete from docs_ask_history
+        where org_id = ${input.orgId}
+          and document_id = ${input.documentId}
+          and actor_id = ${input.actorId}
+        returning id
+      )
+      select count(*)::integer as count from deleted
+    `) as unknown as readonly { readonly count: number }[];
+    return rows[0]?.count ?? 0;
   }
 
   async getDocumentForActor(input: {
@@ -660,7 +1328,7 @@ export class PostgresDocsStore
       id: document.id,
       orgId: document.orgId,
       title: document.title,
-      markdown: markdownFromStoredYDocState(document.ydocState),
+      markdown: documentTextFromStoredState(document.ydocState),
       comments: comments.map(mapCommentProjection),
       updatedAt: document.updatedAt,
       metadata: document.metadata,
@@ -702,25 +1370,446 @@ export class PostgresDocsStore
     });
   }
 
+  async listVersions(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly limit: number;
+  }): Promise<readonly DocsUpdateRecord[]> {
+    await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
+    const rows = (await this.sql`
+      select *
+      from docs_updates
+      where org_id = ${input.orgId}
+        and document_id = ${input.documentId}
+      order by seq desc
+      limit ${input.limit}
+    `) as unknown as readonly DocsUpdateRow[];
+    return rows.map(mapUpdate);
+  }
+
+  async nameVersion(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly versionId: string;
+    readonly name: string;
+  }): Promise<DocsUpdateRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const versionRows = (await tx`
+        select *
+        from docs_updates
+        where org_id = ${input.orgId}
+          and id = ${input.versionId}
+        for update
+      `) as unknown as readonly DocsUpdateRow[];
+      const version = versionRows[0];
+      if (version === undefined) {
+        return null;
+      }
+      await requireDocumentAccess(tx, input.orgId, input.actorId, version.document_id);
+      const rows = (await tx`
+        update docs_updates
+        set metadata = metadata || ${tx.json(toSqlJson({ name: input.name }))}::jsonb
+        where org_id = ${input.orgId}
+          and id = ${input.versionId}
+        returning *
+      `) as unknown as readonly DocsUpdateRow[];
+      await appendDocsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "docs.version.named",
+        documentId: version.document_id,
+        payload: { versionId: input.versionId, name: input.name },
+      });
+      return rows[0] === undefined ? null : mapUpdate(rows[0]);
+    });
+  }
+
+  async previewVersion(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly versionId: string;
+  }): Promise<DocsVersionPreviewRecord | null> {
+    const versionRows = (await this.sql`
+      select *
+      from docs_updates
+      where org_id = ${input.orgId}
+        and id = ${input.versionId}
+      limit 1
+    `) as unknown as readonly DocsUpdateRow[];
+    const versionRow = versionRows[0];
+    if (versionRow === undefined) {
+      return null;
+    }
+    const document = await selectDocumentForActor(
+      this.sql,
+      input.orgId,
+      input.actorId,
+      versionRow.document_id,
+    );
+    if (document === null) {
+      throw new Error(`Unknown or inaccessible document: ${versionRow.document_id}`);
+    }
+
+    const warnings: string[] = [];
+    const snapshotState = stateSnapshotFromMetadata(versionRow.metadata);
+    const reconstruction =
+      snapshotState === null
+        ? await this.reconstructVersionState({
+            sql: this.sql,
+            orgId: input.orgId,
+            documentId: versionRow.document_id,
+            seq: versionRow.seq,
+            warnings,
+          })
+        : {
+            state: snapshotState,
+            appliedCount: 0,
+            skippedCount: 0,
+            hasBaseline: true,
+          };
+    const versionText = documentTextFromStoredState(reconstruction.state);
+    const currentText = documentTextFromStoredState(document.ydocState);
+    return {
+      version: mapUpdate(versionRow),
+      documentId: versionRow.document_id,
+      currentUpdateSeq: document.updateSeq,
+      currentText,
+      versionText,
+      completeness: snapshotState === null ? "reconstructed" : "snapshot",
+      complete:
+        snapshotState !== null ||
+        (reconstruction.hasBaseline &&
+          reconstruction.appliedCount > 0 &&
+          reconstruction.skippedCount === 0),
+      appliedCount: reconstruction.appliedCount,
+      skippedCount: reconstruction.skippedCount,
+      diff: lineDiff(versionText, currentText),
+      warnings,
+    };
+  }
+
+  private async reconstructVersionState(input: {
+    readonly sql: SqlLike;
+    readonly orgId: string;
+    readonly documentId: string;
+    readonly seq: number;
+    readonly warnings: string[];
+  }): Promise<{
+    readonly state: Buffer;
+    readonly appliedCount: number;
+    readonly skippedCount: number;
+    readonly hasBaseline: boolean;
+  }> {
+    const rows = (await input.sql`
+      select *
+      from docs_updates
+      where org_id = ${input.orgId}
+        and document_id = ${input.documentId}
+        and seq <= ${input.seq}
+      order by seq asc, created_at asc, id asc
+    `) as unknown as readonly DocsUpdateRow[];
+    const reconstructed = documentStateFromStoredUpdates(rows.map((row) => row.update));
+    if (reconstructed.skippedCount > 0) {
+      input.warnings.push(
+        `${String(reconstructed.skippedCount)} stored update(s) could not be applied.`,
+      );
+    }
+    if (rows.length > 0 && reconstructed.appliedCount === 0) {
+      input.warnings.push("No Yjs update payloads were available for this preview.");
+    }
+    const hasBaseline = rows[0]?.seq === 1;
+    if (!hasBaseline) {
+      input.warnings.push("This preview has no baseline update and may omit earlier content.");
+    }
+    return {
+      state: reconstructed.state,
+      appliedCount: reconstructed.appliedCount,
+      skippedCount: reconstructed.skippedCount,
+      hasBaseline,
+    };
+  }
+
+  async restoreVersion(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly versionId: string;
+    readonly expectedCurrentUpdateSeq?: number | undefined;
+  }): Promise<DocsVersionRestoreRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const versionRows = (await tx`
+        select *
+        from docs_updates
+        where org_id = ${input.orgId}
+          and id = ${input.versionId}
+        for update
+      `) as unknown as readonly DocsUpdateRow[];
+      const versionRow = versionRows[0];
+      if (versionRow === undefined) {
+        return null;
+      }
+      const document = await selectDocumentForActor(
+        tx,
+        input.orgId,
+        input.actorId,
+        versionRow.document_id,
+      );
+      if (document === null) {
+        throw new Error(`Unknown or inaccessible document: ${versionRow.document_id}`);
+      }
+      if (
+        input.expectedCurrentUpdateSeq !== undefined &&
+        document.updateSeq !== input.expectedCurrentUpdateSeq
+      ) {
+        throw new Error("Cannot restore Docs version because the document changed after preview.");
+      }
+
+      const warnings: string[] = [];
+      const snapshotState = stateSnapshotFromMetadata(versionRow.metadata);
+      const reconstruction =
+        snapshotState === null
+          ? await this.reconstructVersionState({
+              sql: tx,
+              orgId: input.orgId,
+              documentId: versionRow.document_id,
+              seq: versionRow.seq,
+              warnings,
+            })
+          : {
+              state: snapshotState,
+              appliedCount: 0,
+              skippedCount: 0,
+              hasBaseline: true,
+            };
+      const complete =
+        snapshotState !== null ||
+        (reconstruction.hasBaseline &&
+          reconstruction.appliedCount > 0 &&
+          reconstruction.skippedCount === 0);
+      if (!complete) {
+        throw new Error("Cannot restore an incomplete Docs version preview.");
+      }
+
+      const stateSha256 = sha256Hex(reconstruction.state);
+      const stateVector = stateVectorFromStoredState(reconstruction.state);
+      const storageKey = docsDocumentStorageKey(input.orgId, versionRow.document_id);
+      const seqRows = (await tx`
+        update docs_documents
+        set
+          update_seq = update_seq + 1,
+          ydoc_state = ${reconstruction.state},
+          ydoc_state_vector = ${stateVector},
+          updated_at = now()
+        where id = ${versionRow.document_id}
+          and org_id = ${input.orgId}
+          and deleted_at is null
+          ${
+            input.expectedCurrentUpdateSeq === undefined
+              ? tx``
+              : tx`and update_seq = ${input.expectedCurrentUpdateSeq}`
+          }
+        returning *
+      `) as unknown as readonly DocsDocumentRow[];
+      const restoredRow = seqRows[0];
+      if (restoredRow === undefined) {
+        throw new Error("Cannot restore Docs version because the document changed after preview.");
+      }
+      const restoredDocument = mapDocument(restoredRow);
+      const restoreRows = (await tx`
+        insert into docs_updates (org_id, document_id, actor_id, seq, update, metadata)
+        values (
+          ${input.orgId},
+          ${versionRow.document_id},
+          ${input.actorId},
+          ${restoredDocument.updateSeq},
+          ${reconstruction.state},
+          ${tx.json(
+            toSqlJson({
+              source: "docs.version.restore",
+              restoredVersionId: input.versionId,
+              restoredSeq: versionRow.seq,
+              stateBase64: reconstruction.state.toString("base64"),
+            }),
+          )}
+        )
+        returning *
+      `) as unknown as readonly DocsUpdateRow[];
+      await tx`
+        update objects
+        set
+          storage_key = ${storageKey},
+          mime_type = ${docsDocumentMimeType},
+          byte_size = ${reconstruction.state.byteLength},
+          sha256 = ${stateSha256},
+          updated_at = now()
+        where id = ${versionRow.document_id}
+          and org_id = ${input.orgId}
+          and metadata->>'app' = 'docs'
+      `;
+      await appendDocsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "docs.version.restored",
+        documentId: versionRow.document_id,
+        payload: {
+          restoredVersionId: input.versionId,
+          restoredSeq: versionRow.seq,
+          restoreVersionId: restoreRows[0]?.id ?? null,
+        },
+      });
+      await this.persistDocumentState({
+        orgId: input.orgId,
+        documentId: versionRow.document_id,
+        storageKey,
+        state: reconstruction.state,
+        sha256: stateSha256,
+      });
+      return {
+        document: restoredDocument,
+        restoredVersion: mapUpdate(versionRow),
+        restoreVersion: mapUpdate(restoreRows[0]),
+      };
+    });
+  }
+
   async compactDocument(input: {
     readonly orgId: string;
     readonly documentId: string;
     readonly state: Buffer;
     readonly stateVector?: Buffer | null | undefined;
   }): Promise<DocsDocumentRecord | null> {
-    const rows = (await this.sql`
-      update docs_documents
-      set
-        ydoc_state = ${input.state},
-        ydoc_state_vector = ${input.stateVector ?? null},
-        updated_at = now()
-      where id = ${input.documentId}
-        and org_id = ${input.orgId}
-        and deleted_at is null
-      returning *
-    `) as unknown as readonly DocsDocumentRow[];
-    return rows[0] === undefined ? null : mapDocument(rows[0]);
+    return this.sql.begin(async (tx) => {
+      const stateSha256 = sha256Hex(input.state);
+      const storageKey = docsDocumentStorageKey(input.orgId, input.documentId);
+      const rows = (await tx`
+        update docs_documents
+        set
+          ydoc_state = ${input.state},
+          ydoc_state_vector = ${input.stateVector ?? null},
+          updated_at = now()
+        where id = ${input.documentId}
+          and org_id = ${input.orgId}
+          and deleted_at is null
+        returning *
+      `) as unknown as readonly DocsDocumentRow[];
+      const document = rows[0] === undefined ? null : mapDocument(rows[0]);
+      if (document === null) {
+        return null;
+      }
+      await tx`
+        update objects
+        set
+          storage_key = ${storageKey},
+          mime_type = ${docsDocumentMimeType},
+          byte_size = ${input.state.byteLength},
+          sha256 = ${stateSha256},
+          updated_at = now()
+        where id = ${input.documentId}
+          and org_id = ${input.orgId}
+          and metadata->>'app' = 'docs'
+      `;
+      await this.persistDocumentState({
+        orgId: input.orgId,
+        documentId: input.documentId,
+        storageKey,
+        state: input.state,
+        sha256: stateSha256,
+      });
+      return document;
+    });
   }
+
+  private async persistDocumentState(input: {
+    readonly orgId: string;
+    readonly documentId: string;
+    readonly storageKey: string;
+    readonly state: Buffer;
+    readonly sha256: string;
+  }): Promise<void> {
+    const storage = (await this.options.storageResolver?.({ orgId: input.orgId }))?.client;
+    await storage?.put({
+      key: input.storageKey,
+      body: input.state,
+      contentType: docsDocumentMimeType,
+      metadata: {
+        documentId: input.documentId,
+        orgId: input.orgId,
+        sha256: input.sha256,
+      },
+    });
+  }
+}
+
+function docsDocumentStorageKey(orgId: string, documentId: string): string {
+  return `docs/${orgId}/${documentId}`;
+}
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function stateSnapshotFromMetadata(metadata: JsonObject): Buffer | null {
+  const stateBase64 = metadata.stateBase64;
+  if (typeof stateBase64 !== "string" || stateBase64.length === 0) {
+    return null;
+  }
+  try {
+    return Buffer.from(stateBase64, "base64");
+  } catch {
+    return null;
+  }
+}
+
+function lineDiff(before: string, after: string): readonly DocsVersionDiffLine[] {
+  const beforeLines = splitDiffLines(before);
+  const afterLines = splitDiffLines(after);
+  const matrix = Array.from({ length: beforeLines.length + 1 }, () =>
+    Array<number>(afterLines.length + 1).fill(0),
+  );
+  for (let oldIndex = beforeLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = afterLines.length - 1; newIndex >= 0; newIndex -= 1) {
+      const row = matrix[oldIndex];
+      if (row === undefined) {
+        continue;
+      }
+      row[newIndex] =
+        beforeLines[oldIndex] === afterLines[newIndex]
+          ? (matrix[oldIndex + 1]?.[newIndex + 1] ?? 0) + 1
+          : Math.max(matrix[oldIndex + 1]?.[newIndex] ?? 0, matrix[oldIndex]?.[newIndex + 1] ?? 0);
+    }
+  }
+
+  const diff: DocsVersionDiffLine[] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+  while (oldIndex < beforeLines.length || newIndex < afterLines.length) {
+    if (
+      oldIndex < beforeLines.length &&
+      newIndex < afterLines.length &&
+      beforeLines[oldIndex] === afterLines[newIndex]
+    ) {
+      diff.push({ kind: "unchanged", text: beforeLines[oldIndex] ?? "" });
+      oldIndex += 1;
+      newIndex += 1;
+      continue;
+    }
+    if (
+      newIndex >= afterLines.length ||
+      (oldIndex < beforeLines.length &&
+        (matrix[oldIndex + 1]?.[newIndex] ?? 0) >= (matrix[oldIndex]?.[newIndex + 1] ?? 0))
+    ) {
+      diff.push({ kind: "removed", text: beforeLines[oldIndex] ?? "" });
+      oldIndex += 1;
+    } else {
+      diff.push({ kind: "added", text: afterLines[newIndex] ?? "" });
+      newIndex += 1;
+    }
+  }
+  return diff;
+}
+
+function splitDiffLines(value: string): readonly string[] {
+  return value.length === 0 ? [] : value.replace(/\r\n/g, "\n").split("\n");
 }
 
 async function selectDocumentForActor(
@@ -761,6 +1850,27 @@ async function requireDocumentAccess(
   const document = await selectDocumentForActor(sql, orgId, actorId, documentId);
   if (document === null) {
     throw new Error(`Unknown or inaccessible document: ${documentId}`);
+  }
+}
+
+async function requireCommentParent(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly documentId: string;
+    readonly parentCommentId: string;
+  },
+): Promise<void> {
+  const rows = (await sql`
+    select id
+    from docs_comments
+    where id = ${input.parentCommentId}
+      and org_id = ${input.orgId}
+      and document_id = ${input.documentId}
+    limit 1
+  `) as unknown as readonly { readonly id: string }[];
+  if (rows[0] === undefined) {
+    throw new Error(`Unknown parent comment: ${input.parentCommentId}`);
   }
 }
 
@@ -862,6 +1972,183 @@ async function appendDocsActivity(
   `;
 }
 
+async function notifyCommentMentions(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly commentId: string;
+    readonly parentCommentId: string | null;
+    readonly body: string;
+    readonly metadata: JsonObject;
+  },
+): Promise<void> {
+  const tokens = mentionTokensForComment(input.metadata, input.body);
+  if (tokens.length === 0) {
+    return;
+  }
+  const actorRows = (await sql`
+    select id, display_name, email
+    from actors
+    where org_id = ${input.orgId}
+      and disabled_at is null
+      and type = 'user'
+      and (
+        id in (
+          select owner_actor_id from docs_documents
+          where id = ${input.documentId}
+            and org_id = ${input.orgId}
+            and owner_actor_id is not null
+        )
+        or id in (
+          select created_by_actor_id from docs_documents
+          where id = ${input.documentId}
+            and org_id = ${input.orgId}
+            and created_by_actor_id is not null
+        )
+        or exists (
+          select 1 from permissions p
+          where p.org_id = ${input.orgId}
+            and p.actor_id = actors.id
+            and p.resource_type = 'document'
+            and p.resource_id = ${input.documentId}
+            and (p.expires_at is null or p.expires_at > now())
+        )
+      )
+  `) as unknown as readonly {
+    readonly id: string;
+    readonly display_name: string;
+    readonly email: string | null;
+  }[];
+  const recipients = mentionedActorIds({
+    actors: actorRows,
+    authorActorId: input.actorId,
+    tokens,
+  });
+  if (recipients.length === 0) {
+    return;
+  }
+  const titleRows = (await sql`
+    select title
+    from docs_documents
+    where id = ${input.documentId}
+      and org_id = ${input.orgId}
+    limit 1
+  `) as unknown as readonly { readonly title: string }[];
+  const authorName =
+    actorRows.find((actor) => actor.id === input.actorId)?.display_name ?? "Someone";
+  const title = titleRows[0]?.title ?? "a document";
+  for (const recipientId of recipients) {
+    await insertNotification(sql, {
+      orgId: input.orgId,
+      actorId: recipientId,
+      verb: "docs.comment.mention",
+      objectType: "document",
+      objectId: input.documentId,
+      summary: `${authorName} mentioned you in "${title}".`,
+      body: input.body,
+      payload: {
+        documentId: input.documentId,
+        docId: input.documentId,
+        commentId: input.commentId,
+        ...(input.parentCommentId === null ? {} : { parentCommentId: input.parentCommentId }),
+        mentionedByActorId: input.actorId,
+        mentionsText: tokens,
+      },
+    });
+  }
+}
+
+function mentionTokensForComment(metadata: JsonObject, body: string): readonly string[] {
+  const tokens = new Set<string>();
+  for (const token of mentionTokensFromMetadata(metadata)) {
+    tokens.add(token);
+  }
+  for (const token of mentionTokensFromText(body)) {
+    tokens.add(token);
+  }
+  return [...tokens];
+}
+
+function mentionTokensFromMetadata(metadata: JsonObject): readonly string[] {
+  const mentionsText = metadata.mentionsText;
+  if (!Array.isArray(mentionsText)) {
+    return [];
+  }
+  const tokens = new Set<string>();
+  for (const value of mentionsText) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const token = normalizeMentionToken(value);
+    if (token.length > 0) {
+      tokens.add(token);
+    }
+  }
+  return [...tokens];
+}
+
+function mentionTokensFromText(value: string): readonly string[] {
+  const tokens = new Set<string>();
+  for (const match of value.matchAll(/(^|\s)@([\p{L}\p{N}](?:[\p{L}\p{N}._-]*[\p{L}\p{N}])?)/gu)) {
+    const token = normalizeMentionToken(match[2] ?? "");
+    if (token.length > 0) {
+      tokens.add(token);
+    }
+  }
+  return [...tokens];
+}
+
+function mentionedActorIds(input: {
+  readonly actors: readonly {
+    readonly id: string;
+    readonly display_name: string;
+    readonly email: string | null;
+  }[];
+  readonly authorActorId: string;
+  readonly tokens: readonly string[];
+}): readonly string[] {
+  const tokenSet = new Set(input.tokens.map(normalizeMentionToken));
+  const ids: string[] = [];
+  for (const actor of input.actors) {
+    if (actor.id === input.authorActorId) {
+      continue;
+    }
+    const aliases = actorMentionAliases(actor);
+    if ([...tokenSet].some((token) => aliases.has(token))) {
+      ids.push(actor.id);
+    }
+  }
+  return ids;
+}
+
+function actorMentionAliases(actor: {
+  readonly display_name: string;
+  readonly email: string | null;
+}): ReadonlySet<string> {
+  const aliases = new Set<string>();
+  const email = actor.email?.trim().toLowerCase();
+  if (email !== undefined && email.length > 0) {
+    aliases.add(email);
+    aliases.add(email.split("@")[0] ?? email);
+  }
+  const displayName = actor.display_name.trim().toLowerCase();
+  if (displayName.length > 0) {
+    aliases.add(displayName);
+    aliases.add(displayName.replace(/[^a-z0-9]+/gu, ""));
+    const firstName = displayName.split(/\s+/u)[0];
+    if (firstName !== undefined) {
+      aliases.add(firstName);
+    }
+  }
+  return aliases;
+}
+
+function normalizeMentionToken(value: string): string {
+  return value.trim().replace(/^@/u, "").toLowerCase();
+}
+
 function mapDocument(row: DocsDocumentRow | undefined): DocsDocumentRecord {
   if (row === undefined) {
     throw new Error("Expected docs document row.");
@@ -876,6 +2163,8 @@ function mapDocument(row: DocsDocumentRow | undefined): DocsDocumentRecord {
     ydocState: row.ydoc_state,
     ydocStateVector: row.ydoc_state_vector,
     updateSeq: row.update_seq,
+    editorEngine: row.editor_engine,
+    formatVersion: row.format_version,
     metadata: row.metadata,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
@@ -899,12 +2188,6 @@ function mapUpdate(row: DocsUpdateRow | undefined): DocsUpdateRecord {
   };
 }
 
-/**
- * Applies an accepted suggestion to a document by replacing the first occurrence of
- * `beforeText` with `afterText` in the document's Yjs `markdown` text. The edit is
- * persisted both as an incremental update and as a compacted document state so live
- * Yjs sync sessions and the stored snapshot stay consistent.
- */
 async function applySuggestionToDocument(
   sql: SqlLike,
   input: {
@@ -913,6 +2196,7 @@ async function applySuggestionToDocument(
     readonly documentId: string;
     readonly beforeText: string;
     readonly afterText: string;
+    readonly anchorSelection?: NativeDocumentTextSelection | undefined;
   },
 ): Promise<void> {
   if (input.beforeText.length === 0 || input.beforeText === input.afterText) {
@@ -928,37 +2212,22 @@ async function applySuggestionToDocument(
   `) as unknown as readonly { readonly ydoc_state: Buffer | null }[];
   const stored = documentRows[0]?.ydoc_state ?? null;
 
-  const doc = new Y.Doc();
-  if (stored !== null && stored.length > 0) {
-    try {
-      Y.applyUpdate(doc, new Uint8Array(stored));
-    } catch {
-      doc.getText("markdown").insert(0, stored.toString("utf8"));
-    }
-  }
-  const markdown = doc.getText("markdown");
-  const index = markdown.toJSON().indexOf(input.beforeText);
-  if (index === -1) {
-    doc.destroy();
+  const replacement = replaceFirstTextInStoredState({
+    state: stored,
+    beforeText: input.beforeText,
+    afterText: input.afterText,
+    anchorSelection: input.anchorSelection,
+  });
+  if (replacement === null) {
     throw new Error("Suggestion no longer matches the document text.");
   }
-
-  const beforeUpdate = Y.encodeStateVector(doc);
-  doc.transact(() => {
-    markdown.delete(index, input.beforeText.length);
-    markdown.insert(index, input.afterText);
-  }, "docs.suggestion.accept");
-  const incremental = Y.encodeStateAsUpdate(doc, beforeUpdate);
-  const compacted = Y.encodeStateAsUpdate(doc);
-  const stateVector = Y.encodeStateVector(doc);
-  doc.destroy();
 
   const seqRows = (await sql`
     update docs_documents
     set
       update_seq = update_seq + 1,
-      ydoc_state = ${Buffer.from(compacted)},
-      ydoc_state_vector = ${Buffer.from(stateVector)},
+      ydoc_state = ${replacement.state},
+      ydoc_state_vector = ${replacement.stateVector},
       updated_at = now()
     where id = ${input.documentId}
       and org_id = ${input.orgId}
@@ -976,10 +2245,36 @@ async function applySuggestionToDocument(
       ${input.documentId},
       ${input.actorId},
       ${seq},
-      ${Buffer.from(incremental)},
+      ${replacement.update},
       ${sql.json(toSqlJson({ source: "docs.suggestion.accept" }))}
     )
   `;
+}
+
+function nativeDocumentSuggestionAnchorSelection(
+  anchor: JsonObject,
+): NativeDocumentTextSelection | undefined {
+  if (anchor.kind !== "native-document" || anchor.target !== "selection") {
+    return undefined;
+  }
+  const selection = anchor.selection;
+  if (selection === null || typeof selection !== "object" || Array.isArray(selection)) {
+    return undefined;
+  }
+  const rawSelection = selection as Record<string, unknown>;
+  const { from, to, text } = rawSelection;
+  if (
+    typeof from !== "number" ||
+    typeof to !== "number" ||
+    typeof text !== "string" ||
+    !Number.isSafeInteger(from) ||
+    !Number.isSafeInteger(to) ||
+    to <= from ||
+    text.trim().length === 0
+  ) {
+    return undefined;
+  }
+  return { from, to, text };
 }
 
 function mapSuggestion(row: DocsSuggestionRow | undefined): DocsSuggestionRecord {
@@ -1008,6 +2303,25 @@ function normalizeSuggestionStatus(value: string): DocsSuggestionStatus {
   return value === "accepted" || value === "rejected" ? value : "pending";
 }
 
+function mapAskHistory(row: DocsAskHistoryRow | undefined): DocsAskHistoryRecord {
+  if (row === undefined) {
+    throw new Error("Expected docs ask history row.");
+  }
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    documentId: row.document_id,
+    actorId: row.actor_id,
+    question: row.question,
+    answer: row.answer,
+    sourceScope: row.source_scope === "selection" ? "selection" : "document",
+    sourceExcerpt: row.source_excerpt,
+    metadata: row.metadata,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapComment(row: DocsCommentRow | undefined): DocsCommentRecord {
   if (row === undefined) {
     throw new Error("Expected docs comment row.");
@@ -1016,6 +2330,7 @@ function mapComment(row: DocsCommentRow | undefined): DocsCommentRecord {
     id: row.id,
     orgId: row.org_id,
     documentId: row.document_id,
+    parentCommentId: row.parent_comment_id,
     actorId: row.actor_id,
     anchor: row.anchor,
     body: row.body,
@@ -1027,9 +2342,25 @@ function mapComment(row: DocsCommentRow | undefined): DocsCommentRecord {
   };
 }
 
+function mapCommentListItem(row: DocsCommentProjectionRow): DocsCommentListItem {
+  return {
+    ...mapComment(row),
+    ...(row.actor_id === null
+      ? {}
+      : {
+          author: {
+            id: row.actor_id,
+            ...(row.actor_display_name === null ? {} : { displayName: row.actor_display_name }),
+            ...(row.actor_email === null ? {} : { email: row.actor_email }),
+          },
+        }),
+  };
+}
+
 function mapCommentProjection(row: DocsCommentProjectionRow): DocsCommentProjection {
   return {
     id: row.id,
+    parentCommentId: row.parent_comment_id,
     body: row.body,
     anchor: row.anchor,
     ...(row.actor_id === null
@@ -1051,7 +2382,7 @@ function mapDocsSearchRecord(
   collaborators: readonly DocsActorRow[],
 ): DocsSearchRecord {
   const metadata = row.metadata;
-  const markdown = markdownFromStoredYDocState(row.ydoc_state);
+  const markdown = documentTextFromStoredState(row.ydoc_state);
   return {
     id: row.id,
     orgId: row.org_id,
@@ -1153,19 +2484,6 @@ function metadataOutlineProperty(metadata: JsonObject): Pick<DocsSearchRecord, "
 
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function markdownFromStoredYDocState(state: Buffer | null): string {
-  if (state === null || state.length === 0) {
-    return "";
-  }
-  try {
-    const doc = new Y.Doc();
-    Y.applyUpdate(doc, new Uint8Array(state));
-    return doc.getText("markdown").toJSON();
-  } catch {
-    return state.toString("utf8");
-  }
 }
 
 function toSqlJson(value: unknown): postgres.JSONValue {

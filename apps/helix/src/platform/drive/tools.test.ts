@@ -537,6 +537,8 @@ class FakeDocsStore implements Pick<DocsStore, "create"> {
       ydocState: null,
       ydocStateVector: null,
       updateSeq: 0,
+      editorEngine: input.editorEngine ?? "legacy-yjs",
+      formatVersion: input.formatVersion ?? 1,
       metadata: { ...(input.metadata ?? {}), folderId: input.folderId ?? null },
       deletedAt: null,
       createdAt: now,

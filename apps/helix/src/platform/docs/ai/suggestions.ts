@@ -10,7 +10,12 @@ import type {
 } from "@helix/sdk-types";
 import { docsPluginId } from "../types.js";
 
-export const docsSuggestionSlotIds = ["docs.smart-write", "docs.summarize", "docs.translate"] as const;
+export const docsSuggestionSlotIds = [
+  "docs.smart-write",
+  "docs.summarize",
+  "docs.translate",
+  "docs.ask-document",
+] as const;
 
 export type DocsSuggestionSlotId = (typeof docsSuggestionSlotIds)[number];
 
@@ -44,6 +49,13 @@ export const docsSuggestionSlots: readonly DocsSuggestionSlotDescriptor[] = [
     description: "Translate selected document content",
     order: 30,
   },
+  {
+    id: "docs.ask-document",
+    pluginId: docsPluginId,
+    label: "Ask this document",
+    description: "Answer questions from document context",
+    order: 40,
+  },
 ];
 
 export interface DocsSuggestionProviderOptions {
@@ -65,7 +77,8 @@ function createProvider(
     slotId,
     available: async (ctx) => ctx.feature === slotId || ctx.feature.length === 0,
     generate: async function* generate(ctx): AsyncIterable<SuggestionChunk> {
-      const classification = classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
+      const classification =
+        classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
       const response = await options.ai.chat(toChatRequest(slotId, ctx, classification), {
         actor: ctx.actor,
         feature: slotId,
@@ -111,7 +124,9 @@ function toChatRequest(
               type: ctx.resource.type,
               ...(ctx.resource.id === undefined ? {} : { id: ctx.resource.id }),
               ...(ctx.resource.orgId === undefined ? {} : { orgId: ctx.resource.orgId }),
-              ...(ctx.resource.attributes === undefined ? {} : { attributes: ctx.resource.attributes }),
+              ...(ctx.resource.attributes === undefined
+                ? {}
+                : { attributes: ctx.resource.attributes }),
             },
           }),
     },
@@ -125,6 +140,9 @@ function systemPrompt(slotId: DocsSuggestionSlotId): string {
   if (slotId === "docs.translate") {
     return "Translate the selected document content into the requested target language. Preserve structure and do not add facts.";
   }
+  if (slotId === "docs.ask-document") {
+    return "Answer the user's question using only the supplied document context. If the context does not support an answer, say so directly.";
+  }
   return "Summarize the document with concise key points, decisions, open questions, and action items. Do not invent facts.";
 }
 
@@ -132,7 +150,8 @@ function suggestionInputText(slotId: DocsSuggestionSlotId, ctx: SuggestionContex
   const input = ctx.input ?? {};
   const title = stringInput(input, "title");
   const selection = stringInput(input, "selection");
-  const body = stringInput(input, "body") ?? stringInput(input, "markdown") ?? stringInput(input, "text");
+  const body =
+    stringInput(input, "body") ?? stringInput(input, "markdown") ?? stringInput(input, "text");
   const prompt = stringInput(input, "prompt");
   const targetLanguage = stringInput(input, "targetLanguage") ?? stringInput(input, "language");
   const outline = arrayInput(input, "outline").map(formatOutlineItem).filter(hasText).join("\n");
@@ -165,7 +184,10 @@ function formatOutlineItem(value: JsonValue): string {
 
 function classificationFromInput(input: JsonObject | undefined): AIClassification | undefined {
   const value = input?.classification;
-  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
+  return value === "public" ||
+    value === "standard" ||
+    value === "confidential" ||
+    value === "restricted"
     ? value
     : undefined;
 }

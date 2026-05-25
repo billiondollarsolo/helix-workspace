@@ -1,4 +1,4 @@
-import type { Actor, JsonObject } from "@helix/sdk-types";
+import type { Actor, JsonObject, MeteringClient } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { SpanStatusCode, trace, type Context } from "@opentelemetry/api";
 import * as decoding from "lib0/decoding";
@@ -10,10 +10,7 @@ import { z } from "zod";
 import type { DocsDocumentRecord } from "./types.js";
 import type { DocsStore } from "./store.js";
 import type { WebsocketConnectionMetrics } from "../websocket-metrics.js";
-import {
-  trackWebsocketConnection,
-  traceContextFromUpgradeRequest,
-} from "../websocket-metrics.js";
+import { trackWebsocketConnection, traceContextFromUpgradeRequest } from "../websocket-metrics.js";
 
 /** Route label for the docs sync WebSocket connection gauge. */
 const DOCS_WS_ROUTE = "/sync/docs/:docId";
@@ -40,10 +37,18 @@ const inboundSchema = z.object({
 export interface RegisterDocsRoutesOptions {
   readonly store: DocsStore;
   readonly actorFromRequest: (request: FastifyRequest) => Actor | Promise<Actor>;
+  readonly concurrentEditorLimit?: (input: {
+    readonly request: FastifyRequest;
+    readonly actor: Actor;
+    readonly document: DocsDocumentRecord;
+  }) => number | null | undefined | Promise<number | null | undefined>;
   readonly debounceMs?: number | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
   /** Active-connections gauge recorder (Follow-up B). */
   readonly metrics?: WebsocketConnectionMetrics | undefined;
+  readonly metering?: MeteringClient | undefined;
+  readonly onMeteringError?: ((error: unknown) => void) | undefined;
+  readonly nowMs?: (() => number) | undefined;
 }
 
 interface DocsRouteState {
@@ -71,6 +76,8 @@ const yjsMessageAwareness = 1;
 
 /** Close code sent to docs sync clients when the host is shutting down. */
 const DOCS_SHUTDOWN_CLOSE_CODE = 1001;
+const DOCS_QUOTA_CLOSE_CODE = 1008;
+const DOCS_QUOTA_CLOSE_REASON = "Concurrent editor quota exceeded";
 
 /**
  * Handle returned by {@link registerDocsRoutes} so the server's graceful
@@ -166,11 +173,27 @@ export async function handleDocsSocket(
     return;
   }
 
+  const concurrentEditorLimit = await options.concurrentEditorLimit?.({
+    request,
+    actor,
+    document,
+  });
+  if (
+    concurrentEditorLimit !== null &&
+    concurrentEditorLimit !== undefined &&
+    activeDocsSocketCount(state, docId) >= concurrentEditorLimit
+  ) {
+    docsSocket.close(DOCS_QUOTA_CLOSE_CODE, DOCS_QUOTA_CLOSE_REASON);
+    return;
+  }
+
   if (isYjsProtocolRequest(request)) {
+    trackDocsCollabSession(docsSocket, document, options, "yjs");
     handleYjsDocsSocket(docsSocket, actor, document, options, state, traceContext);
     return;
   }
 
+  trackDocsCollabSession(docsSocket, document, options, "legacy-json");
   const room = state.rooms.get(docId) ?? new Set<DocsSocket>();
   room.add(docsSocket);
   state.rooms.set(docId, room);
@@ -220,6 +243,37 @@ export async function handleDocsSocket(
   });
 }
 
+function trackDocsCollabSession(
+  socket: DocsSocket,
+  document: DocsDocumentRecord,
+  options: RegisterDocsRoutesOptions,
+  protocol: "legacy-json" | "yjs",
+): void {
+  if (options.metering === undefined) {
+    return;
+  }
+  const startedAt = (options.nowMs ?? Date.now)();
+  socket.on("close", () => {
+    const durationSeconds = Math.max(
+      1,
+      Math.round(((options.nowMs ?? Date.now)() - startedAt) / 1000),
+    );
+    void options.metering
+      ?.emit(document.orgId, {
+        type: "collab.session.opened",
+        quantity: durationSeconds,
+        metadata: {
+          surface: "docs.sync",
+          protocol,
+          duration_seconds: durationSeconds,
+        },
+      })
+      .catch((error: unknown) => {
+        options.onMeteringError?.(error);
+      });
+  });
+}
+
 async function handleSyncMessage(input: {
   readonly raw: Buffer | ArrayBuffer | string;
   readonly socket: DocsSocket;
@@ -236,7 +290,10 @@ async function handleSyncMessage(input: {
     actorId: input.actor.id,
     documentId: input.documentId,
     update: parsed.update,
-    metadata: parsed.metadata,
+    metadata: {
+      ...parsed.metadata,
+      ...(parsed.state === null ? {} : { stateBase64: parsed.state.toString("base64") }),
+    },
   });
 
   scheduleCompaction({
@@ -380,6 +437,12 @@ function getYjsRooms(state: DocsRouteState): Map<string, DocsYjsRoom> {
   return mutableState.yjsRooms;
 }
 
+function activeDocsSocketCount(state: DocsRouteState, documentId: string): number {
+  return (
+    (state.rooms.get(documentId)?.size ?? 0) + (state.yjsRooms?.get(documentId)?.sockets.size ?? 0)
+  );
+}
+
 async function persistAndBroadcastYjsUpdate(
   room: DocsYjsRoom,
   origin: DocsSocket,
@@ -396,7 +459,10 @@ async function persistAndBroadcastYjsUpdate(
       actorId: actor.id,
       documentId: room.documentId,
       update: Buffer.from(update),
-      metadata: { protocol: "yjs" },
+      metadata: {
+        protocol: "yjs",
+        stateBase64: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString("base64"),
+      },
     });
     scheduleYjsCompaction(room);
     broadcastYjsUpdate(room, update, origin);

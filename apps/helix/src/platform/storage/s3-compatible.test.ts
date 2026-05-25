@@ -175,6 +175,28 @@ describe("S3-compatible storage", () => {
     );
   });
 
+  it("sends configurable SSE-KMS headers on signed PUT requests", async () => {
+    const fetchStub = createFetchStub();
+
+    await storage(fetchStub.fetch, {
+      serverSideEncryption: "aws:kms",
+      serverSideEncryptionAwsKmsKeyId: "arn:aws:kms:us-east-1:123456789012:key/test",
+    }).put({
+      key: "encrypted-kms.txt",
+      body: new TextEncoder().encode("encrypted"),
+      contentType: "text/plain",
+    });
+
+    const headers = requestHeaders(firstUrlCall(fetchStub)[1]);
+    expect(headers["x-amz-server-side-encryption"]).toBe("aws:kms");
+    expect(headers["x-amz-server-side-encryption-aws-kms-key-id"]).toBe(
+      "arn:aws:kms:us-east-1:123456789012:key/test",
+    );
+    expect(headers.authorization).toContain(
+      "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-server-side-encryption;x-amz-server-side-encryption-aws-kms-key-id",
+    );
+  });
+
   it("returns null for missing objects", async () => {
     const fetchStub = createFetchStub(() => new Response(null, { status: 404 }));
 
@@ -237,6 +259,70 @@ describe("S3-compatible storage", () => {
       "content-type;host;x-amz-server-side-encryption",
     );
     expect(url.searchParams.get("X-Amz-Signature")).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("returns required signed headers for SSE-S3 presigned PUT requests", async () => {
+    const fetchStub = createFetchStub();
+
+    const request = await storage(fetchStub.fetch, {
+      serverSideEncryption: "AES256",
+    }).presignPutRequest("uploads/encrypted.csv", {
+      expiresSeconds: 60,
+      contentType: "text/csv",
+      metadata: { source: "test" },
+    });
+
+    expect(fetchStub.calls).toHaveLength(0);
+    expect(new URL(request.url).searchParams.get("X-Amz-SignedHeaders")).toBe(
+      "content-type;host;x-amz-meta-source;x-amz-server-side-encryption",
+    );
+    expect(request.headers).toEqual({
+      "content-type": "text/csv",
+      "x-amz-meta-source": "test",
+      "x-amz-server-side-encryption": "AES256",
+    });
+  });
+
+  it("signs configurable SSE-KMS headers into presigned PUT URLs", async () => {
+    const fetchStub = createFetchStub();
+
+    const url = new URL(
+      await storage(fetchStub.fetch, {
+        serverSideEncryption: "aws:kms",
+        serverSideEncryptionAwsKmsKeyId: "arn:aws:kms:us-east-1:123456789012:key/test",
+      }).presignPutUrl("uploads/encrypted-kms.csv", {
+        expiresSeconds: 60,
+        contentType: "text/csv",
+      }),
+    );
+
+    expect(fetchStub.calls).toHaveLength(0);
+    expect(url.searchParams.get("X-Amz-SignedHeaders")).toBe(
+      "content-type;host;x-amz-server-side-encryption;x-amz-server-side-encryption-aws-kms-key-id",
+    );
+    expect(url.searchParams.get("X-Amz-Signature")).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("returns required signed headers for SSE-KMS presigned PUT requests", async () => {
+    const fetchStub = createFetchStub();
+
+    const request = await storage(fetchStub.fetch, {
+      serverSideEncryption: "aws:kms",
+      serverSideEncryptionAwsKmsKeyId: "arn:aws:kms:us-east-1:123456789012:key/test",
+    }).presignPutRequest("uploads/encrypted-kms.csv", {
+      expiresSeconds: 60,
+      contentType: "text/csv",
+    });
+
+    expect(fetchStub.calls).toHaveLength(0);
+    expect(new URL(request.url).searchParams.get("X-Amz-SignedHeaders")).toBe(
+      "content-type;host;x-amz-server-side-encryption;x-amz-server-side-encryption-aws-kms-key-id",
+    );
+    expect(request.headers).toEqual({
+      "content-type": "text/csv",
+      "x-amz-server-side-encryption": "aws:kms",
+      "x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:us-east-1:123456789012:key/test",
+    });
   });
 
   it("throws a typed error for failed object operations", async () => {

@@ -534,6 +534,8 @@ function docsRecord(): DocsDocumentRecord {
     ydocState: null,
     ydocStateVector: null,
     updateSeq: 1,
+    editorEngine: "legacy-yjs",
+    formatVersion: 1,
     metadata: {},
     deletedAt: null,
     createdAt: new Date("2026-05-20T12:00:00.000Z"),

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { Actor, JsonObject } from "@helix/sdk-types";
+import type {
+  Actor,
+  JsonObject,
+  MeteringClient,
+  MeteringEmitInput,
+  MeteringEvent,
+  TraceContext,
+} from "@helix/sdk-types";
 import type { FastifyRequest } from "fastify";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
@@ -9,6 +16,7 @@ import type { FastifyInstance } from "fastify";
 import { handleDocsSocket, registerDocsRoutes } from "./routes.js";
 import type { DocsStore } from "./store.js";
 import type {
+  DocsAskHistoryRecord,
   DocsCommentRecord,
   DocsDocumentRecord,
   DocsExportDocument,
@@ -61,7 +69,10 @@ describe("docs sync routes", () => {
       {
         actorId: actor.id,
         documentId: docId,
-        metadata: { source: "test" },
+        metadata: {
+          source: "test",
+          stateBase64: Buffer.from("# Synced title\n", "utf8").toString("base64"),
+        },
         text: "incremental update",
       },
     ]);
@@ -82,6 +93,113 @@ describe("docs sync routes", () => {
       reason: "Unknown or inaccessible document",
     });
     expect(socket.messageHandlerCount).toBe(0);
+  });
+
+  it("enforces the concurrent editor quota across legacy and Yjs sockets", async () => {
+    const store = new FakeDocsStore();
+    const legacySocket = new FakeSocket();
+    const blockedYjsSocket = new FakeSocket();
+    const state = {
+      rooms: new Map<string, Set<Parameters<typeof handleDocsSocket>[0]>>(),
+      compactions: new Map<string, NodeJS.Timeout>(),
+      yjsRooms: new Map(),
+    };
+    const routeOptions = options(store, { concurrentEditorLimit: 1 });
+
+    await handleDocsSocket(legacySocket, requestFor(docId), routeOptions, state);
+    await handleDocsSocket(blockedYjsSocket, yjsRequestFor(docId), routeOptions, state);
+
+    expect(legacySocket.closed).toBeNull();
+    expect(blockedYjsSocket.closed).toEqual({
+      code: 1008,
+      reason: "Concurrent editor quota exceeded",
+    });
+    expect(blockedYjsSocket.messageHandlerCount).toBe(0);
+
+    legacySocket.close();
+    const nextYjsSocket = new FakeSocket();
+    await handleDocsSocket(nextYjsSocket, yjsRequestFor(docId), routeOptions, state);
+
+    expect(nextYjsSocket.closed).toBeNull();
+    expect(nextYjsSocket.binaryMessages.length).toBeGreaterThan(0);
+  });
+
+  it("treats a null concurrent editor quota as unlimited", async () => {
+    const store = new FakeDocsStore();
+    const firstSocket = new FakeSocket();
+    const secondSocket = new FakeSocket();
+    const state = {
+      rooms: new Map<string, Set<Parameters<typeof handleDocsSocket>[0]>>(),
+      compactions: new Map<string, NodeJS.Timeout>(),
+      yjsRooms: new Map(),
+    };
+
+    await handleDocsSocket(
+      firstSocket,
+      requestFor(docId),
+      options(store, { concurrentEditorLimit: null }),
+      state,
+    );
+    await handleDocsSocket(
+      secondSocket,
+      yjsRequestFor(docId),
+      options(store, { concurrentEditorLimit: null }),
+      state,
+    );
+
+    expect(firstSocket.closed).toBeNull();
+    expect(secondSocket.closed).toBeNull();
+    expect(secondSocket.binaryMessages.length).toBeGreaterThan(0);
+  });
+
+  it("emits collab session metering after accepted docs sockets close", async () => {
+    const store = new FakeDocsStore();
+    const metering = new RecordingMeteringClient();
+    const socket = new FakeSocket();
+    const nowValues = [1_000, 4_400];
+
+    await handleDocsSocket(
+      socket,
+      requestFor(docId),
+      options(store, {
+        metering,
+        nowMs: () => nowValues.shift() ?? 4_400,
+      }),
+    );
+
+    socket.close();
+    await settle();
+
+    expect(metering.records).toEqual([
+      {
+        orgId,
+        event: {
+          type: "collab.session.opened",
+          quantity: 3,
+          metadata: {
+            surface: "docs.sync",
+            protocol: "legacy-json",
+            duration_seconds: 3,
+          },
+        },
+        trace: undefined,
+      },
+    ]);
+    expect(JSON.stringify(metering.records)).not.toContain(docId);
+    expect(JSON.stringify(metering.records)).not.toContain(actor.id);
+  });
+
+  it("does not meter rejected docs sockets", async () => {
+    const store = new FakeDocsStore({ accessible: false });
+    const metering = new RecordingMeteringClient();
+    const socket = new FakeSocket();
+
+    await handleDocsSocket(socket, requestFor(docId), options(store, { metering }));
+
+    socket.close();
+    await settle();
+
+    expect(metering.records).toEqual([]);
   });
 
   it("supports Yjs sync protocol frames, persisted updates, peer broadcast, and compaction", async () => {
@@ -130,10 +248,22 @@ describe("docs sync routes", () => {
   });
 });
 
-function options(store: DocsStore): Parameters<typeof handleDocsSocket>[2] {
+function options(
+  store: DocsStore,
+  overrides: {
+    readonly concurrentEditorLimit?: number | null;
+    readonly metering?: MeteringClient | undefined;
+    readonly nowMs?: (() => number) | undefined;
+  } = {},
+): Parameters<typeof handleDocsSocket>[2] {
   return {
     store,
     actorFromRequest: () => actor,
+    ...(overrides.concurrentEditorLimit === undefined
+      ? {}
+      : { concurrentEditorLimit: () => overrides.concurrentEditorLimit }),
+    ...(overrides.metering === undefined ? {} : { metering: overrides.metering }),
+    ...(overrides.nowMs === undefined ? {} : { nowMs: overrides.nowMs }),
     debounceMs: 0,
   };
 }
@@ -147,9 +277,7 @@ function captureWebsocketApp(): {
   readonly app: FastifyInstance;
   readonly connect: (socket: FakeSocket, request: FastifyRequest) => Promise<void>;
 } {
-  let handler:
-    | ((socket: unknown, request: FastifyRequest) => Promise<void>)
-    | undefined;
+  let handler: ((socket: unknown, request: FastifyRequest) => Promise<void>) | undefined;
   const app = {
     get: (_path: string, _opts: unknown, registered: typeof handler) => {
       handler = registered;
@@ -215,9 +343,7 @@ describe("docs graceful-shutdown broadcast (PRD §16.3 step 4)", () => {
 
 describe("docs yjs.sync span coverage (P2-6)", () => {
   it("emits a yjs.sync span parented to the upgrade-request trace context", async () => {
-    const { installSpanCapture } = await import(
-      "../observability/span-testing.js"
-    );
+    const { installSpanCapture } = await import("../observability/span-testing.js");
     const harness = installSpanCapture();
     try {
       const store = new FakeDocsStore();
@@ -344,6 +470,10 @@ class FakeDocsStore implements DocsStore {
     return documentRecord();
   }
 
+  async updateLayout(): Promise<DocsDocumentRecord | null> {
+    return documentRecord();
+  }
+
   async listDocumentsForActor(): Promise<readonly DocsDocumentRecord[]> {
     return [documentRecord()];
   }
@@ -365,6 +495,7 @@ class FakeDocsStore implements DocsStore {
       id: "44444444-4444-4444-8444-444444444444",
       orgId,
       documentId: docId,
+      parentCommentId: null,
       actorId: actor.id,
       anchor: {},
       body: "Comment",
@@ -374,6 +505,40 @@ class FakeDocsStore implements DocsStore {
       createdAt: now,
       updatedAt: now,
     };
+  }
+
+  async listComments(): Promise<readonly DocsCommentRecord[]> {
+    return [await this.createComment()];
+  }
+
+  async resolveComment(): Promise<DocsCommentRecord | null> {
+    return {
+      ...(await this.createComment()),
+      status: "resolved",
+      resolvedAt: now,
+    };
+  }
+
+  async reopenComment(): Promise<DocsCommentRecord | null> {
+    return {
+      ...(await this.createComment()),
+      status: "open",
+      resolvedAt: null,
+    };
+  }
+
+  async updateComment(
+    input: Parameters<DocsStore["updateComment"]>[0],
+  ): Promise<DocsCommentRecord | null> {
+    return {
+      ...(await this.createComment()),
+      body: input.body,
+      updatedAt: now,
+    };
+  }
+
+  async deleteComment(): Promise<DocsCommentRecord | null> {
+    return this.createComment();
   }
 
   async createSuggestion(
@@ -401,8 +566,56 @@ class FakeDocsStore implements DocsStore {
     return [];
   }
 
+  async listVersions(): Promise<readonly DocsUpdateRecord[]> {
+    return [];
+  }
+
+  async nameVersion(): Promise<DocsUpdateRecord | null> {
+    return null;
+  }
+
+  async previewVersion(): Promise<null> {
+    return null;
+  }
+
+  async restoreVersion(): Promise<null> {
+    return null;
+  }
+
+  async migrateToNativeDocument(): Promise<DocsDocumentRecord | null> {
+    return documentRecord({ editorEngine: "helix-native-document", updateSeq: this.#seq + 1 });
+  }
+
   async resolveSuggestion(): Promise<DocsSuggestionRecord | null> {
     return null;
+  }
+
+  async resolveSuggestions(): Promise<readonly DocsSuggestionRecord[] | null> {
+    return [];
+  }
+
+  async createAskHistoryItem(): Promise<DocsAskHistoryRecord> {
+    return {
+      id: "99999999-9999-4999-8999-999999999999",
+      orgId,
+      documentId: docId,
+      actorId: actor.id,
+      question: "Question?",
+      answer: "Answer.",
+      sourceScope: "document",
+      sourceExcerpt: "Excerpt",
+      metadata: {},
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  async listAskHistory(): Promise<readonly DocsAskHistoryRecord[]> {
+    return [];
+  }
+
+  async clearAskHistory(): Promise<number> {
+    return 0;
   }
 
   async getDocumentForActor(input: {
@@ -448,8 +661,30 @@ class FakeDocsStore implements DocsStore {
   }
 }
 
+class RecordingMeteringClient implements MeteringClient {
+  readonly records: Array<{
+    readonly orgId: string;
+    readonly event: MeteringEvent;
+    readonly trace: TraceContext | undefined;
+  }> = [];
+
+  async emit(orgId: string, event: MeteringEvent, trace?: TraceContext): Promise<void> {
+    this.records.push({ orgId, event, trace });
+  }
+
+  async emitBatch(inputs: readonly MeteringEmitInput[]): Promise<void> {
+    for (const input of inputs) {
+      await this.emit(input.orgId, input.event, input.trace);
+    }
+  }
+}
+
 function documentRecord(
-  overrides: { readonly state?: Buffer | null; readonly updateSeq?: number } = {},
+  overrides: {
+    readonly state?: Buffer | null;
+    readonly updateSeq?: number;
+    readonly editorEngine?: string;
+  } = {},
 ): DocsDocumentRecord {
   return {
     id: docId,
@@ -461,6 +696,8 @@ function documentRecord(
     ydocState: overrides.state ?? Buffer.from("# Initial title\n", "utf8"),
     ydocStateVector: null,
     updateSeq: overrides.updateSeq ?? 4,
+    editorEngine: overrides.editorEngine ?? "legacy-yjs",
+    formatVersion: 1,
     metadata: {},
     deletedAt: null,
     createdAt: now,

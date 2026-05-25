@@ -215,9 +215,9 @@ describe("applyDriveScope", () => {
     expect(result.map((e) => e.id)).toEqual(["trashed"]);
   });
 
-  it("returns every live entry for the my scope", () => {
+  it("returns owned live entries for the my scope", () => {
     const result = applyDriveScope(entries, "my", "actor-self");
-    expect(result.map((e) => e.id).sort()).toEqual(["mine", "starred", "theirs"]);
+    expect(result.map((e) => e.id).sort()).toEqual(["mine", "starred"]);
   });
 });
 

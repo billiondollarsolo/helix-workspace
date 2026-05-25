@@ -109,6 +109,7 @@ describe("drive API", () => {
           sha256,
           status: "prepared",
           uploadUrl: "https://storage.example/upload",
+          uploadHeaders: { "content-type": "application/pdf" },
           metadata: { source: "web-shell" },
           createdAt: "2026-05-20T12:00:00.000Z",
           updatedAt: "2026-05-20T12:00:00.000Z",
@@ -142,7 +143,11 @@ describe("drive API", () => {
         },
         fetchImpl,
       ),
-    ).resolves.toMatchObject({ objectId: "33333333-3333-4333-8333-333333333333", sha256 });
+    ).resolves.toMatchObject({
+      objectId: "33333333-3333-4333-8333-333333333333",
+      sha256,
+      uploadHeaders: { "content-type": "application/pdf" },
+    });
     await expect(
       finalizeDriveUpload(
         {
@@ -308,6 +313,23 @@ describe("drive API", () => {
         mimeType: "application/octet-stream",
       }).url,
     ).toBe("/api/drive/objects/generic-pdf/preview");
+  });
+
+  it("resolves native document entries to the routed document editor", () => {
+    expect(
+      driveDownloadResult({
+        id: "doc-1",
+        type: "file",
+        name: "Launch Plan.helixdoc",
+        folderId: null,
+        ownerActorId: "actor-1",
+        app: "docs",
+        mimeType: "application/vnd.helix.document",
+        deletedAt: null,
+        createdAt: "2026-05-20T12:00:00.000Z",
+        updatedAt: "2026-05-20T12:00:00.000Z",
+      }).url,
+    ).toBe("/docs/doc-1");
   });
 
   it("surfaces backend tool errors", async () => {

@@ -84,6 +84,7 @@ export interface DriveUploadResult {
   readonly sha256: string | null;
   readonly status: string;
   readonly uploadUrl: string | null;
+  readonly uploadHeaders?: Record<string, string>;
   readonly metadata: Record<string, unknown>;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -326,7 +327,7 @@ export function driveDownloadResult(entry: DriveApiEntry): DriveDownloadResult {
  *      read-only preview endpoint. */
 function inAppEditorUrl(entry: DriveApiEntry): string | null {
   if (entry.app === "docs") {
-    return `/docs?doc=${encodeURIComponent(entry.id)}`;
+    return `/docs/${encodeURIComponent(entry.id)}`;
   }
   if (entry.app === "sheets") {
     return `/sheets?sheet=${encodeURIComponent(entry.id)}`;

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import type { JsonObject } from "@helix/sdk-types";
+import type { JsonObject, MeteringClient } from "@helix/sdk-types";
 import type {
   MeetActorRef,
   MeetMeetingRecord,
@@ -79,6 +79,10 @@ export interface MeetStore {
     readonly actorId: string;
     readonly roomId: string;
   }): Promise<MeetRoomRecord | null>;
+  getRoomById(input: {
+    readonly orgId: string;
+    readonly roomId: string;
+  }): Promise<MeetRoomRecord | null>;
   getRoomByName(input: {
     readonly orgId: string;
     readonly roomName: string;
@@ -94,6 +98,11 @@ export interface MeetStore {
    * message tagged `meet.summary`, so it surfaces in {@link listMeetingsForActor}.
    */
   attachSummary(input: AttachMeetSummaryInput): Promise<MeetSummaryRef | null>;
+}
+
+export interface PostgresMeetStoreOptions {
+  readonly metering?: MeteringClient | undefined;
+  readonly onMeteringError?: ((error: unknown) => void) | undefined;
 }
 
 interface MeetRoomRow {
@@ -143,10 +152,19 @@ interface MeetRecordingArtifactRow {
   readonly metadata: JsonObject;
 }
 
+interface ExistingRecordingAttachmentRow {
+  readonly object_id: string;
+  readonly message_id: string;
+  readonly storage_key: string;
+}
+
 type SqlLike = postgres.Sql | postgres.TransactionSql;
 
 export class PostgresMeetStore implements MeetStore {
-  constructor(private readonly sql: postgres.Sql) {}
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly options: PostgresMeetStoreOptions = {},
+  ) {}
 
   async createRoom(input: CreateMeetRoomInput): Promise<MeetRoomRecord> {
     const subject = input.subject.trim();
@@ -265,9 +283,7 @@ export class PostgresMeetStore implements MeetStore {
     return rows.map(mapRoom);
   }
 
-  async listMeetingsForActor(
-    input: ListMeetMeetingsInput,
-  ): Promise<readonly MeetMeetingRecord[]> {
+  async listMeetingsForActor(input: ListMeetMeetingsInput): Promise<readonly MeetMeetingRecord[]> {
     const rows = (await this.sql`
       select
         r.*,
@@ -356,6 +372,13 @@ export class PostgresMeetStore implements MeetStore {
     return selectRoomForActor(this.sql, input.orgId, input.actorId, input.roomId);
   }
 
+  async getRoomById(input: {
+    readonly orgId: string;
+    readonly roomId: string;
+  }): Promise<MeetRoomRecord | null> {
+    return selectRoomById(this.sql, input.orgId, input.roomId);
+  }
+
   async getRoomByName(input: {
     readonly orgId: string;
     readonly roomName: string;
@@ -411,6 +434,40 @@ export class PostgresMeetStore implements MeetStore {
           : await selectRoomById(tx, input.orgId, input.roomId);
       if (room === null) {
         return null;
+      }
+      await tx`
+        select id
+        from meet_rooms
+        where id = ${room.id}
+          and org_id = ${input.orgId}
+        for update
+      `;
+      const existingRows = (await tx`
+        select
+          o.id as object_id,
+          ma.message_id as message_id,
+          o.storage_key as storage_key
+        from message_attachments ma
+        join messages m on m.id = ma.message_id
+        join objects o on o.id = ma.object_id
+        where m.org_id = ${input.orgId}
+          and m.thread_id = ${room.threadId}
+          and ma.disposition = 'recording'
+          and o.org_id = ${input.orgId}
+          and o.kind = 'recording'
+          and o.storage_key = ${input.storageKey}
+        order by o.created_at asc
+        limit 1
+      `) as unknown as readonly ExistingRecordingAttachmentRow[];
+      const existing = existingRows[0];
+      if (existing !== undefined) {
+        return {
+          roomId: room.id,
+          threadId: room.threadId,
+          objectId: existing.object_id,
+          messageId: existing.message_id,
+          storageKey: existing.storage_key,
+        };
       }
       const objectId = randomUUID();
       const sha256 = input.sha256 ?? createHash("sha256").update(input.storageKey).digest("hex");
@@ -509,23 +566,27 @@ export class PostgresMeetStore implements MeetStore {
             ${room.id}::uuid,
             ${`Recording is ready for "${room.subject}"`},
             null,
-            ${tx.json(toSqlJson({
-              threadId: room.threadId,
-              objectId,
-              messageId,
-              storageKey: input.storageKey,
-              roomName: room.roomName,
-            }))}
+            ${tx.json(
+              toSqlJson({
+                threadId: room.threadId,
+                objectId,
+                messageId,
+                storageKey: input.storageKey,
+                roomName: room.roomName,
+              }),
+            )}
           from unnest(${tx.array([...recipients])}::uuid[]) as actor_id
         `;
       }
-      return {
+      const attachment = {
         roomId: room.id,
         threadId: room.threadId,
         objectId,
         messageId,
         storageKey: input.storageKey,
       };
+      this.emitRecordingStorageDelta(input.orgId, byteSize);
+      return attachment;
     });
   }
 
@@ -585,6 +646,25 @@ export class PostgresMeetStore implements MeetStore {
       };
     });
   }
+
+  private emitRecordingStorageDelta(orgId: string, byteDelta: number): void {
+    if (byteDelta === 0) {
+      return;
+    }
+
+    void this.options.metering
+      ?.emit(orgId, {
+        type: "storage.delta",
+        quantity: byteDelta,
+        metadata: {
+          bucket: "meet_recordings",
+          byte_delta: byteDelta,
+        },
+      })
+      .catch((error: unknown) => {
+        this.options.onMeteringError?.(error);
+      });
+  }
 }
 
 export class InMemoryMeetStore implements MeetStore {
@@ -633,9 +713,7 @@ export class InMemoryMeetStore implements MeetStore {
     return room;
   }
 
-  async listMeetingsForActor(
-    input: ListMeetMeetingsInput,
-  ): Promise<readonly MeetMeetingRecord[]> {
+  async listMeetingsForActor(input: ListMeetMeetingsInput): Promise<readonly MeetMeetingRecord[]> {
     return [...this.#rooms.values()]
       .filter((room) => room.orgId === input.orgId)
       .filter((room) => input.status === undefined || room.status === input.status)
@@ -666,6 +744,16 @@ export class InMemoryMeetStore implements MeetStore {
     return this.#members.get(input.roomId)?.has(input.actorId) === true
       ? this.#withRecordingArtifacts(room)
       : null;
+  }
+
+  async getRoomById(input: {
+    readonly orgId: string;
+    readonly roomId: string;
+  }): Promise<MeetRoomRecord | null> {
+    const room = this.#rooms.get(input.roomId);
+    return room === undefined || room.orgId !== input.orgId
+      ? null
+      : this.#withRecordingArtifacts(room);
   }
 
   async listRoomsForActor(input: ListMeetRoomsInput): Promise<readonly MeetRoomRecord[]> {
@@ -725,6 +813,17 @@ export class InMemoryMeetStore implements MeetStore {
     if (room === null || room.orgId !== input.orgId) {
       return null;
     }
+    const artifacts = this.#recordingArtifacts.get(room.id) ?? [];
+    const alreadyAttached = artifacts.find((artifact) => artifact.storageKey === input.storageKey);
+    if (alreadyAttached !== undefined) {
+      return {
+        roomId: room.id,
+        threadId: room.threadId,
+        objectId: alreadyAttached.objectId,
+        messageId: alreadyAttached.messageId,
+        storageKey: alreadyAttached.storageKey,
+      };
+    }
     const suffix = String(this.#recordingCounter);
     this.#recordingCounter += 1;
     const objectId = randomUUID();
@@ -742,8 +841,7 @@ export class InMemoryMeetStore implements MeetStore {
       endedAt: input.endedAt ?? null,
       metadata: input.metadata ?? {},
     };
-    const existing = this.#recordingArtifacts.get(room.id) ?? [];
-    this.#recordingArtifacts.set(room.id, [artifact, ...existing]);
+    this.#recordingArtifacts.set(room.id, [artifact, ...artifacts]);
     return {
       roomId: room.id,
       threadId: room.threadId,

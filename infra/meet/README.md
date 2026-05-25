@@ -57,6 +57,43 @@ MEET_JITSI_TOKEN_TTL_SECONDS=3600
 The compose defaults are suitable only for repeatable local tests; override every
 secret outside local development.
 
+## Recording Storage
+
+By default, Jibri `finalize.sh` still uploads directly to the configured
+RustFS/S3 bucket, then posts `/webhook/jitsi` with the logical `storageKey`.
+That keeps local single-bucket development backwards compatible.
+
+For BYO or tenant-resolved recording storage deployments, enable and require the
+prepare path:
+
+```sh
+HELIX_JITSI_ORG_ID=<org-id>
+HELIX_JITSI_PREPARE_UPLOAD=true
+HELIX_JITSI_PREPARE_REQUIRED=true
+```
+
+`HELIX_JITSI_PREPARE_URL` can override the default
+`${HELIX_INTERNAL_URL}/internal/meet/recording-uploads`.
+The non-required RustFS/S3 fallback is local single-bucket dev compatibility
+only. It must not be used for BYO because failures would otherwise allow a Drive
+recording row to be posted without bytes in the tenant-resolved bucket.
+
+Production upload shape:
+
+1. Jibri calls an internal Helix prepare endpoint with `X-Helix-Jitsi-Secret`
+   and `X-Helix-Org-Id`.
+2. Helix resolves tenant storage and returns a presigned PUT URL, required
+   signed request headers, and the logical `storageKey`.
+3. Jibri uploads bytes to that URL with every returned header. BYO storage with
+   metadata or SSE-KMS depends on these headers matching the signed request.
+4. Jibri posts `/webhook/jitsi` with the same `storageKey`, timestamps, hashes,
+   and upload metadata so Helix attaches the recording to the room.
+
+If prepare is enabled but not required, `finalize.sh` falls back to the RustFS/S3
+path on prepare or upload failure and still posts the webhook with
+`metadata.uploaded = false` when no byte upload succeeded. Required mode exits
+before the webhook if the prepare/upload step fails.
+
 After the API is running with a seeded OAuth client, the live backend Meet smoke
 can validate the room/tool/webhook contract without a browser media session:
 

@@ -457,9 +457,17 @@ services:
       JIBRI_RECORDER_PASSWORD: ${JIBRI_RECORDER_PASSWORD:-helix_dev_jibri_recorder_password_change_me}
       JIBRI_RECORDING_DIR: /recordings
       JIBRI_FINALIZE_RECORDING_SCRIPT_PATH: /jibri-finalize/finalize.sh
-      # finalize.sh reads these to upload to RustFS + notify helix
+      # finalize.sh reads these to prepare tenant storage uploads + notify helix.
+      # Prepare is optional only for local RustFS dev. BYO/tenant-resolved
+      # recording storage must set HELIX_JITSI_PREPARE_UPLOAD=true and
+      # HELIX_JITSI_PREPARE_REQUIRED=true so finalize fails before webhooking
+      # when storage cannot be prepared or uploaded.
       HELIX_INTERNAL_URL: ${HELIX_INTERNAL_URL:-http://helix:3000}
       HELIX_JITSI_WEBHOOK_SECRET: ${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}
+      HELIX_JITSI_ORG_ID: ${HELIX_JITSI_ORG_ID:-}
+      HELIX_JITSI_PREPARE_UPLOAD: ${HELIX_JITSI_PREPARE_UPLOAD:-false}
+      HELIX_JITSI_PREPARE_REQUIRED: ${HELIX_JITSI_PREPARE_REQUIRED:-false}
+      HELIX_JITSI_PREPARE_URL: ${HELIX_JITSI_PREPARE_URL:-}
       RUSTFS_ENDPOINT_INTERNAL: ${RUSTFS_ENDPOINT_INTERNAL:-http://rustfs:9000}
       RUSTFS_BUCKET: ${RUSTFS_BUCKET:-helix-objects}
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-helixrustfs}

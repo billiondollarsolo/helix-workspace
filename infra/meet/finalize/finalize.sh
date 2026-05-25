@@ -6,16 +6,17 @@
 # Jibri writes with conference metadata (room name, start/end timestamps).
 #
 # Responsibility:
-#   1. Upload the mp4 to RustFS (or whichever S3-compatible bucket is
-#      configured) at key `recordings/{room}/{epoch}.mp4`.
-#   2. POST helix's /webhook/jitsi with the storageKey + metadata so the
+#   1. Prefer an opt-in Helix prepare call that resolves tenant storage and
+#      returns a presigned PUT URL. When disabled or non-required failures
+#      occur, fall back to the local RustFS/S3-compatible upload path.
+#   2. POST Helix's /webhook/jitsi with the storageKey + metadata so the
 #      attachRecording flow creates the objects/messages/notifications
 #      rows + fans out to participants.
 #
 # Failure modes:
-#   - If S3 upload fails, we still POST helix with the local path so the
-#     row exists; the operator can repair the upload later (Jibri keeps
-#     the file on the local volume).
+#   - If upload fails and prepare-required mode is disabled, we still POST
+#     Helix with the local path so the row exists; the operator can repair the
+#     upload later (Jibri keeps the file on the local volume).
 #   - If helix POST fails, we exit 1 so Jibri logs the failure. The mp4
 #     is retained on disk.
 
@@ -61,14 +62,107 @@ END_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 echo "finalize: room=$ROOM size=$BYTE_SIZE sha256=$SHA256 key=$KEY"
 
+http_ok() {
+  [[ "$1" == 2* ]]
+}
+
+PREPARE_UPLOAD="${HELIX_JITSI_PREPARE_UPLOAD:-false}"
+PREPARE_REQUIRED="${HELIX_JITSI_PREPARE_REQUIRED:-false}"
+PREPARE_URL="${HELIX_JITSI_PREPARE_URL:-${HELIX_INTERNAL_URL}/internal/meet/recording-uploads}"
+UPLOAD_ID=""
+
+PREPARE_ENABLED=0
+if [[ "$PREPARE_UPLOAD" == "true" || -n "${HELIX_JITSI_PREPARE_URL:-}" ]]; then
+  PREPARE_ENABLED=1
+fi
+
 # --- Upload to S3-compatible storage (RustFS by default) ---
+UPLOADED=0
+if [[ "$PREPARE_ENABLED" -eq 1 ]]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "finalize: prepare upload requested but jq is unavailable" >&2
+    if [[ "$PREPARE_REQUIRED" == "true" ]]; then
+      exit 1
+    fi
+  else
+    PREPARE_PAYLOAD=$(jq -n \
+      --arg roomName "$ROOM" \
+      --arg storageKey "$KEY" \
+      --arg mimeType "video/mp4" \
+      --argjson byteSize "$BYTE_SIZE" \
+      --arg sha256 "$SHA256" \
+      --arg startedAt "$START_AT" \
+      --arg endedAt "$END_AT" \
+      '{
+        roomName: $roomName,
+        storageKey: $storageKey,
+        mimeType: $mimeType,
+        byteSize: $byteSize,
+        sha256: $sha256,
+        startedAt: (if $startedAt == "" then null else $startedAt end),
+        endedAt: $endedAt
+      }')
+    PREPARE_HEADERS=(
+      -H "Content-Type: application/json"
+      -H "X-Helix-Jitsi-Secret: ${HELIX_JITSI_WEBHOOK_SECRET}"
+    )
+    if [[ -n "${HELIX_JITSI_ORG_ID:-}" ]]; then
+      PREPARE_HEADERS+=(-H "X-Helix-Org-Id: ${HELIX_JITSI_ORG_ID}")
+    fi
+
+    PREPARE_STATUS=$(curl -sS -o /tmp/finalize-prepare-resp.txt -w "%{http_code}" \
+      -X POST "$PREPARE_URL" \
+      "${PREPARE_HEADERS[@]}" \
+      -d "$PREPARE_PAYLOAD")
+    echo "finalize: prepare -> HTTP $PREPARE_STATUS"
+
+    if http_ok "$PREPARE_STATUS"; then
+      PREPARED_KEY="$(jq -r '.storageKey // empty' /tmp/finalize-prepare-resp.txt)"
+      UPLOAD_URL="$(jq -r '.uploadUrl // empty' /tmp/finalize-prepare-resp.txt)"
+      UPLOAD_ID="$(jq -r '.uploadId // empty' /tmp/finalize-prepare-resp.txt)"
+      if [[ -n "$PREPARED_KEY" && -n "$UPLOAD_URL" ]]; then
+        KEY="$PREPARED_KEY"
+        mapfile -t UPLOAD_HEADER_VALUES < <(jq -r '.headers // {} | to_entries[] | "\(.key): \(.value)"' /tmp/finalize-prepare-resp.txt)
+        if [[ "${#UPLOAD_HEADER_VALUES[@]}" -eq 0 ]]; then
+          UPLOAD_HEADER_VALUES=("Content-Type: video/mp4")
+        fi
+        UPLOAD_HEADERS=()
+        for header in "${UPLOAD_HEADER_VALUES[@]}"; do
+          UPLOAD_HEADERS+=(-H "$header")
+        done
+        UPLOAD_STATUS=$(curl -sS -o /tmp/finalize-upload-resp.txt -w "%{http_code}" \
+          -X PUT "$UPLOAD_URL" \
+          "${UPLOAD_HEADERS[@]}" \
+          --upload-file "$MP4")
+        echo "finalize: presigned upload -> HTTP $UPLOAD_STATUS"
+        if http_ok "$UPLOAD_STATUS"; then
+          UPLOADED=1
+        elif [[ "$PREPARE_REQUIRED" == "true" ]]; then
+          cat /tmp/finalize-upload-resp.txt >&2 || true
+          exit 1
+        fi
+      else
+        echo "finalize: prepare response missing storageKey or uploadUrl" >&2
+        cat /tmp/finalize-prepare-resp.txt >&2 || true
+        if [[ "$PREPARE_REQUIRED" == "true" ]]; then
+          exit 1
+        fi
+      fi
+    else
+      cat /tmp/finalize-prepare-resp.txt >&2 || true
+      if [[ "$PREPARE_REQUIRED" == "true" ]]; then
+        exit 1
+      fi
+    fi
+  fi
+fi
+
 # Jibri image is debian-based; install awscli on first run (cached after).
-if ! command -v aws >/dev/null 2>&1; then
+if [[ "$UPLOADED" -eq 0 && -n "${RUSTFS_ENDPOINT_INTERNAL:-}" ]] && ! command -v aws >/dev/null 2>&1; then
   apt-get update -qq && apt-get install -y -qq awscli >/dev/null 2>&1 || true
 fi
 
-UPLOADED=0
-if command -v aws >/dev/null 2>&1 && [[ -n "${RUSTFS_ENDPOINT_INTERNAL:-}" ]]; then
+if [[ "$UPLOADED" -eq 0 ]] && command -v aws >/dev/null 2>&1 && [[ -n "${RUSTFS_ENDPOINT_INTERNAL:-}" ]]; then
   # Path-style + sigv4. Region is required by AWS CLI but ignored by RustFS.
   if AWS_ACCESS_KEY_ID="$RUSTFS_ACCESS_KEY" \
      AWS_SECRET_ACCESS_KEY="$RUSTFS_SECRET_KEY" \
@@ -84,32 +178,72 @@ if command -v aws >/dev/null 2>&1 && [[ -n "${RUSTFS_ENDPOINT_INTERNAL:-}" ]]; t
 fi
 
 # --- POST helix webhook ---
-PAYLOAD=$(cat <<JSON
+if command -v jq >/dev/null 2>&1; then
+  PAYLOAD=$(jq -n \
+    --arg roomName "$ROOM" \
+    --arg storageKey "$KEY" \
+    --arg mimeType "video/mp4" \
+    --argjson byteSize "$BYTE_SIZE" \
+    --arg sha256 "$SHA256" \
+    --arg startedAt "$START_AT" \
+    --arg endedAt "$END_AT" \
+    --arg uploadId "$UPLOAD_ID" \
+    --argjson uploaded "$UPLOADED" \
+    '{
+      event: "recording.uploaded",
+      roomName: $roomName,
+      storageKey: $storageKey,
+      mimeType: $mimeType,
+      byteSize: $byteSize,
+      sha256: $sha256,
+      startedAt: (if $startedAt == "" then null else $startedAt end),
+      endedAt: $endedAt,
+      metadata: { uploaded: ($uploaded == 1) }
+    } + (if $uploadId == "" then {} else { uploadId: $uploadId } end)')
+else
+  UPLOAD_ID_FIELD=""
+  if [[ -n "$UPLOAD_ID" ]]; then
+    UPLOAD_ID_FIELD="\"uploadId\": \"${UPLOAD_ID}\","
+  fi
+  UPLOADED_JSON="false"
+  if [[ "$UPLOADED" -eq 1 ]]; then
+    UPLOADED_JSON="true"
+  fi
+  PAYLOAD=$(cat <<JSON
 {
   "event": "recording.uploaded",
   "roomName": "${ROOM}",
   "storageKey": "${KEY}",
+  ${UPLOAD_ID_FIELD}
   "mimeType": "video/mp4",
   "byteSize": ${BYTE_SIZE},
   "sha256": "${SHA256}",
   "startedAt": ${START_AT:+\"${START_AT}\"}${START_AT:-null},
   "endedAt": "${END_AT}",
-  "metadata": { "uploaded": ${UPLOADED} }
+  "metadata": { "uploaded": ${UPLOADED_JSON} }
 }
 JSON
 )
+fi
+
+WEBHOOK_HEADERS=(
+  -H "Content-Type: application/json"
+  -H "X-Helix-Jitsi-Secret: ${HELIX_JITSI_WEBHOOK_SECRET}"
+)
+if [[ -n "${HELIX_JITSI_ORG_ID:-}" ]]; then
+  WEBHOOK_HEADERS+=(-H "X-Helix-Org-Id: ${HELIX_JITSI_ORG_ID}")
+fi
 
 HTTP_STATUS=$(curl -sS -o /tmp/finalize-resp.txt -w "%{http_code}" \
   -X POST "${HELIX_INTERNAL_URL}/webhook/jitsi" \
-  -H "Content-Type: application/json" \
-  -H "X-Helix-Jitsi-Secret: ${HELIX_JITSI_WEBHOOK_SECRET}" \
+  "${WEBHOOK_HEADERS[@]}" \
   -d "$PAYLOAD")
 
 echo "finalize: webhook -> HTTP $HTTP_STATUS"
 cat /tmp/finalize-resp.txt
 echo
 
-if [[ "$HTTP_STATUS" != "200" ]]; then
+if ! http_ok "$HTTP_STATUS"; then
   exit 1
 fi
 exit 0

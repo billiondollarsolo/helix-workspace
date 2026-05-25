@@ -17,6 +17,7 @@ import type { ToolDefinition } from "@helix/sdk-types";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { S3CompatibleStorageClient } from "../storage/s3-compatible.js";
+import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import type { MeetStore } from "./store.js";
 
 const mockRecordSchema = z.object({
@@ -27,8 +28,15 @@ const genericObjectJsonSchema = { type: "object", additionalProperties: true } a
 
 export interface CreateMockRecorderToolsOptions {
   readonly meetStore: MeetStore;
-  /** Same storage client that DriveStore uses. When undefined, the tool
-   *  skips the upload step and just creates the row — useful in tests. */
+  /**
+   * Preferred tenant-aware storage resolver. When present, mock recordings use
+   * the same per-org storage boundary as Drive bytes.
+   */
+  readonly storageResolver?: TenantStorageResolver | undefined;
+  /**
+   * Legacy fallback storage client. When no resolver or client is supplied,
+   * the tool skips the upload step and just creates the row — useful in tests.
+   */
   readonly storage?: S3CompatibleStorageClient;
   readonly bucket?: string;
 }
@@ -65,8 +73,9 @@ export function createMockRecorderToolDefinitions(
           `MOCK-RECORDER mp4 placeholder for ${room.roomName} @ ${String(epoch)}`,
         );
         const sha256 = createHash("sha256").update(body).digest("hex");
-        if (options.storage !== undefined && options.bucket !== undefined) {
-          await options.storage.put({
+        const storage = await storageClientForOrg(options, ctx.actor.orgId);
+        if (storage !== undefined) {
+          await storage.put({
             key: storageKey,
             body,
             contentType: "video/mp4",
@@ -86,13 +95,11 @@ export function createMockRecorderToolDefinitions(
           metadata: { source: "mock-recorder" },
         });
         if (attachment === null) {
-          throw new Error(
-            `attachRecording returned null for room: ${room.id}`,
-          );
+          throw new Error(`attachRecording returned null for room: ${room.id}`);
         }
         return {
           attachment,
-          uploaded: options.storage !== undefined,
+          uploaded: storage !== undefined,
           byteSize: body.byteLength,
         };
       },
@@ -113,4 +120,19 @@ function defineTool<Input, Output>(
   tool: ToolDefinition<Input, Output>,
 ): ToolDefinition<Input, Output> {
   return tool;
+}
+
+async function storageClientForOrg(
+  options: CreateMockRecorderToolsOptions,
+  orgId: string,
+): Promise<S3CompatibleStorageClient | undefined> {
+  if (options.storageResolver !== undefined) {
+    return (await options.storageResolver({ orgId }))?.client as
+      | S3CompatibleStorageClient
+      | undefined;
+  }
+  if (options.storage !== undefined && options.bucket !== undefined) {
+    return options.storage;
+  }
+  return undefined;
 }

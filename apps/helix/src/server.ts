@@ -279,7 +279,10 @@ import {
   ObservedToolAccessPolicy,
   ScopeToolAccessPolicy,
 } from "./platform/permissions/tool-access.js";
-import { createS3CompatibleStorage } from "./platform/storage/index.js";
+import {
+  createDefaultTenantStorageResolver,
+  createS3CompatibleStorage,
+} from "./platform/storage/index.js";
 import {
   createToolRegistry,
   type RuntimeToolRegistry,
@@ -993,6 +996,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
               }),
           forcePathStyle: true,
         });
+  const driveStorageResolver = createDefaultTenantStorageResolver(driveStorage);
   const officePreviewConverter =
     process.env.HELIX_DRIVE_OFFICE_PREVIEW_URL === undefined
       ? undefined
@@ -1432,6 +1436,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     // loaded (Docker-for-Mac). Same attachRecording flow.
     registerMockRecorderTools(tools, {
       meetStore,
+      storageResolver: driveStorageResolver,
       ...(driveStorage === undefined ? {} : { storage: driveStorage }),
       bucket: process.env.RUSTFS_BUCKET ?? "helix-objects",
     });
@@ -1967,6 +1972,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         process.env.JITSI_WEBHOOK_SECRET ??
         "helix_dev_jitsi_webhook_secret_change_me",
       defaultOrgId: process.env.HELIX_DEFAULT_ORG_ID ?? "00000000-0000-0000-0000-000000000000",
+      storageResolver: driveStorageResolver,
+      requirePreparedRecordingUpload:
+        envFlag("HELIX_JITSI_PREPARE_REQUIRED", false) ||
+        envFlag("MEET_JITSI_PREPARE_REQUIRED", false),
       onError: (error) => {
         app.log.error({ error }, "Meet webhook error");
       },

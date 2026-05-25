@@ -7,6 +7,7 @@ import {
   PostgresPlatformConfigStore,
 } from "../config/admin.js";
 import { registerCoreAppsAdminRoutes, type CoreAppsAdminStatus } from "./admin-routes.js";
+import { CORE_APP_IDS } from "./core-apps.js";
 
 /** Minimal in-memory `platform_config` table fake (matches admin.test.ts). */
 class InMemoryPlatformConfigSql {
@@ -80,7 +81,7 @@ describe("core-app enablement admin routes", () => {
     expect(response.statusCode).toBe(200);
     const body = response.json<CoreAppsAdminStatus>();
     expect(body.role).toBe("all");
-    expect(body.apps).toHaveLength(7);
+    expect(body.apps).toHaveLength(CORE_APP_IDS.length);
     for (const coreApp of body.apps) {
       expect(coreApp.enabled).toBe(true);
       expect(coreApp.registered).toBe(true);

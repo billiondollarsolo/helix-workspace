@@ -5,8 +5,8 @@ import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
 /**
  * Core-app enablement client.
  *
- * Core apps (mail, chat, drive, docs, calendar, meet, assistant) are toggleable
- * platform modules. This module talks to two backend surfaces:
+ * Core apps (mail, chat, drive, docs, calendar, meet, assistant, editors) are
+ * toggleable platform modules. This module talks to two backend surfaces:
  *  - `/api/core-apps` — readable by any authenticated user; drives the web
  *    shell's left-rail + route gating;
  *  - `/api/admin/core-apps` — admin-only view/toggle of org-wide enablement.
@@ -20,6 +20,7 @@ export const CORE_APP_IDS = [
   "calendar",
   "meet",
   "assistant",
+  "editors",
 ] as const;
 
 export type CoreAppId = (typeof CORE_APP_IDS)[number];

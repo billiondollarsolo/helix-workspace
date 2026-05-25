@@ -67,10 +67,24 @@ describe("role-based boot", () => {
     expect([...plan.registeredAppIds()].sort()).toEqual(["chat", "meet"]);
   });
 
+  it("a named editors role runs only the editors core app", () => {
+    const plan = new CoreAppRegistrationPlan({ role: "editors-conv-worker" });
+    expect(plan.role).toBe("editors-conv-worker");
+    expect(plan.shouldRegister("editors")).toBe(true);
+    expect(plan.shouldRegister("mail")).toBe(false);
+    expect([...plan.registeredAppIds()]).toEqual(["editors"]);
+  });
+
   it("HELIX_APPS overrides the role with an explicit subset", () => {
     const { role, appIds } = resolveRoleAppSet({ role: "realtime", apps: "mail,docs" });
     expect(role).toBe("custom");
     expect([...appIds].sort()).toEqual(["docs", "mail"]);
+  });
+
+  it("HELIX_APPS accepts editor role ids as aliases for the editors core app", () => {
+    const { role, appIds } = resolveRoleAppSet({ apps: "editors-conv-worker" });
+    expect(role).toBe("custom");
+    expect([...appIds]).toEqual(["editors"]);
   });
 
   it("an out-of-role app is not registered even when enabled", () => {
@@ -106,7 +120,7 @@ describe("role-based boot", () => {
 });
 
 describe("isCoreAppId", () => {
-  it("recognizes the seven core apps", () => {
+  it("recognizes the eight core apps", () => {
     for (const appId of CORE_APP_IDS) {
       expect(isCoreAppId(appId)).toBe(true);
     }

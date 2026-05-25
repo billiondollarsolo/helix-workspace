@@ -1,7 +1,7 @@
 /**
  * Core-app registry — the confirmed Helix architecture model.
  *
- * Core apps (mail, chat, drive, docs, calendar, meet, assistant) are
+ * Core apps (mail, chat, drive, docs, calendar, meet, assistant, editors) are
  * **toggleable modules of the Helix platform** — not plugins, not per-user
  * containers. They ship in a single deployable, are multi-tenant, and scale by
  * horizontal replicas. The plugin SDK / loader is reserved for *external
@@ -30,6 +30,7 @@ export const CORE_APP_IDS = [
   "calendar",
   "meet",
   "assistant",
+  "editors",
 ] as const;
 
 export type CoreAppId = (typeof CORE_APP_IDS)[number];
@@ -53,6 +54,11 @@ export const CORE_APPS: readonly CoreAppDefinition[] = [
     name: "Assistant",
     description: "The Helix conversational AI assistant.",
   },
+  {
+    id: "editors",
+    name: "Editors",
+    description: "Native Docs, Sheets, Slides, and PDF editor suite.",
+  },
 ];
 
 export function isCoreAppId(value: string): value is CoreAppId {
@@ -71,6 +77,19 @@ export interface CoreAppEnablementInput {
   readonly role?: string;
   /** `HELIX_APPS` env value — a comma-separated explicit app subset. */
   readonly apps?: string;
+}
+
+export const EDITOR_CORE_APP_ROLE_IDS = [
+  "editors-conv-worker",
+  "editors-export-worker",
+  "editors-ocr-worker",
+  "editors-collab-gw",
+] as const;
+
+export type EditorCoreAppRoleId = (typeof EDITOR_CORE_APP_ROLE_IDS)[number];
+
+function isEditorCoreAppRoleId(value: string): value is EditorCoreAppRoleId {
+  return (EDITOR_CORE_APP_ROLE_IDS as readonly string[]).includes(value);
 }
 
 /**
@@ -103,7 +122,12 @@ export const HELIX_ROLES: Record<string, readonly CoreAppId[]> = {
   /** Async/worker-heavy apps — mail SMTP + indexing/enrichment. */
   workers: ["mail"],
   /** Web/API surface without realtime fan-out. */
-  web: ["mail", "drive", "docs", "calendar", "assistant"],
+  web: ["mail", "drive", "docs", "calendar", "assistant", "editors"],
+  /** Editors scale-out roles. Each boots the Editors core app in a specialized mode. */
+  "editors-conv-worker": ["editors"],
+  "editors-export-worker": ["editors"],
+  "editors-ocr-worker": ["editors"],
+  "editors-collab-gw": ["editors"],
 };
 
 export const DEFAULT_HELIX_ROLE = "all";
@@ -131,9 +155,16 @@ export function resolveRoleAppSet(input: Pick<CoreAppEnablementInput, "role" | "
       .filter((part) => part.length > 0);
     const resolved = new Set<CoreAppId>();
     for (const id of ids) {
+      if (isEditorCoreAppRoleId(id)) {
+        resolved.add("editors");
+        continue;
+      }
       if (!isCoreAppId(id)) {
         throw new CoreAppRoleError(
-          `HELIX_APPS contains unknown core app "${id}"; valid apps: ${CORE_APP_IDS.join(", ")}`,
+          `HELIX_APPS contains unknown core app "${id}"; valid apps: ${[
+            ...CORE_APP_IDS,
+            ...EDITOR_CORE_APP_ROLE_IDS,
+          ].join(", ")}`,
         );
       }
       resolved.add(id);

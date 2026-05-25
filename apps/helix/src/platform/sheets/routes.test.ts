@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
+import type { Actor, EventBus, EventEnvelope, JsonValue, Unsubscribe } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   InMemorySheetsStore,
   SHEETS_WS_PROTOCOL,
   SHEETS_WS_ROUTE,
   handleSheetsSocket,
+  handleSheetsFanoutEvent,
   registerSheetsRoutes,
   type SheetsStore,
 } from "./index.js";
@@ -30,7 +31,7 @@ describe("sheets sync routes", () => {
     }
     const firstSocket = new FakeSocket();
     const secondSocket = new FakeSocket();
-    const state = { rooms: new Map() };
+    const state = { rooms: new Map(), nodeId: "node-a" };
 
     await handleSheetsSocket(firstSocket, requestFor(sheet.id), options(store), state);
     await handleSheetsSocket(secondSocket, requestFor(sheet.id), options(store), state);
@@ -91,6 +92,7 @@ describe("sheets sync routes", () => {
     const reconnectedSocket = new FakeSocket();
     await handleSheetsSocket(reconnectedSocket, requestFor(sheet.id), options(store), {
       rooms: new Map(),
+      nodeId: "node-b",
     });
 
     expect(reconnectedSocket.messages[0]).toMatchObject({
@@ -108,7 +110,7 @@ describe("sheets sync routes", () => {
       throw new Error("Expected default tab.");
     }
     const socket = new FakeSocket();
-    const state = { rooms: new Map() };
+    const state = { rooms: new Map(), nodeId: "node-a" };
 
     await handleSheetsSocket(socket, requestFor(sheet.id), options(store), state);
     socket.receive({
@@ -139,6 +141,119 @@ describe("sheets sync routes", () => {
       dropped: true,
     });
     await expectCell(store, tab.id, "higher");
+  });
+
+  it("fans out accepted operations through the event bus without echoing the source node", async () => {
+    const store = new InMemorySheetsStore();
+    const sheet = await store.createSheet({ orgId, actorId, title: "Fanout" });
+    const tab = sheet.tabs[0];
+    if (tab === undefined) {
+      throw new Error("Expected default tab.");
+    }
+    const bus = new FakeEventBus();
+    const sourceSocket = new FakeSocket();
+    const remoteSocket = new FakeSocket();
+    const sourceState = { rooms: new Map(), nodeId: "node-a" };
+    const remoteState = { rooms: new Map(), nodeId: "node-b" };
+
+    await handleSheetsSocket(
+      sourceSocket,
+      requestFor(sheet.id),
+      options(store, { events: bus }),
+      sourceState,
+    );
+    await handleSheetsSocket(remoteSocket, requestFor(sheet.id), options(store), remoteState);
+    sourceSocket.receive({
+      type: "operation",
+      tabId: tab.id,
+      operation: {
+        id: "op-fanout",
+        baseRevision: 0,
+        changes: [{ kind: "set-cell", row: 0, col: 0, value: "replicated" }],
+      },
+    });
+    await settle();
+
+    expect(bus.events).toHaveLength(1);
+    const published = bus.events[0];
+    if (published === undefined) {
+      throw new Error("Expected published Sheets sync event.");
+    }
+    expect(published.subject).toBe(`sheets.sync.${orgId}.${sheet.id}`);
+    expect(bus.subjects).toEqual([`sheets.sync.${orgId}.${sheet.id}`]);
+    await handleSheetsFanoutEvent(published, sourceState, { store });
+    await handleSheetsFanoutEvent(published, remoteState, { store });
+
+    expect(sourceSocket.messages).toHaveLength(2);
+    expect(remoteSocket.messages.at(-1)).toMatchObject({
+      type: "operation",
+      sheetId: sheet.id,
+      tabId: tab.id,
+      revision: 1,
+      operation: { id: "op-fanout" },
+    });
+    sourceSocket.close();
+    await settle();
+    expect(bus.unsubscribeCount).toBe(1);
+  });
+
+  it("replays missing operation log entries when a remote fanout revision has a gap", async () => {
+    const store = new InMemorySheetsStore();
+    const sheet = await store.createSheet({ orgId, actorId, title: "Gap Recovery" });
+    const tab = sheet.tabs[0];
+    if (tab === undefined) {
+      throw new Error("Expected default tab.");
+    }
+    const remoteSocket = new FakeSocket();
+    const remoteState = { rooms: new Map(), nodeId: "node-b" };
+
+    await handleSheetsSocket(remoteSocket, requestFor(sheet.id), options(store), remoteState);
+    const firstOperation = {
+      id: "op-gap-1",
+      baseRevision: 0,
+      changes: [{ kind: "set-cell" as const, row: 0, col: 0, value: "first" }],
+    };
+    const secondOperation = {
+      id: "op-gap-2",
+      baseRevision: 1,
+      changes: [{ kind: "set-cell" as const, row: 0, col: 1, value: "second" }],
+    };
+    await store.applyOperation({
+      orgId,
+      actorId,
+      sheetId: sheet.id,
+      tabId: tab.id,
+      operation: firstOperation,
+    });
+    await store.applyOperation({
+      orgId,
+      actorId,
+      sheetId: sheet.id,
+      tabId: tab.id,
+      operation: secondOperation,
+    });
+
+    await handleSheetsFanoutEvent(
+      {
+        subject: `sheets.sync.${orgId}.${sheet.id}`,
+        payload: {
+          sourceId: "node-a",
+          orgId,
+          sheetId: sheet.id,
+          tabId: tab.id,
+          revision: 2,
+          operation: secondOperation,
+        },
+        occurredAt: "2026-05-25T12:00:00.000Z",
+      },
+      remoteState,
+      { store },
+    );
+
+    expect(remoteSocket.messages.slice(1)).toMatchObject([
+      { type: "operation", revision: 1, operation: { id: "op-gap-1" } },
+      { type: "operation", revision: 2, operation: { id: "op-gap-2" } },
+    ]);
   });
 
   it("accepts structural row and column operations over the sync route", async () => {
@@ -189,6 +304,7 @@ describe("sheets sync routes", () => {
 
   it("closes inaccessible spreadsheets before registering message handlers", async () => {
     const store = new InMemorySheetsStore();
+    const bus = new FakeEventBus();
     const sheet = await store.createSheet({
       orgId,
       actorId: otherActorId,
@@ -196,13 +312,14 @@ describe("sheets sync routes", () => {
     });
     const socket = new FakeSocket();
 
-    await handleSheetsSocket(socket, requestFor(sheet.id), options(store));
+    await handleSheetsSocket(socket, requestFor(sheet.id), options(store, { events: bus }));
 
     expect(socket.closed).toEqual({
       code: 1008,
       reason: "Unknown or inaccessible spreadsheet",
     });
     expect(socket.messageHandlerCount).toBe(0);
+    expect(bus.subjects).toEqual([]);
   });
 
   it("tracks active websocket metrics with the sheets route label", async () => {
@@ -232,12 +349,14 @@ describe("registerSheetsRoutes", () => {
 function options(
   store: SheetsStore,
   overrides: {
+    readonly events?: EventBus | undefined;
     readonly metrics?: RecordingWebsocketMetrics | undefined;
   } = {},
 ): Parameters<typeof handleSheetsSocket>[2] {
   return {
     store,
     actorFromRequest: () => actor,
+    ...(overrides.events === undefined ? {} : { events: overrides.events }),
     ...(overrides.metrics === undefined ? {} : { metrics: overrides.metrics }),
   };
 }
@@ -349,6 +468,27 @@ class RecordingWebsocketMetrics {
 
   recordWebsocketConnectionClosed(input: { readonly route: string }): void {
     this.events.push(`close:${input.route}`);
+  }
+}
+
+class FakeEventBus implements EventBus {
+  readonly events: EventEnvelope[] = [];
+  readonly subjects: string[] = [];
+  unsubscribeCount = 0;
+
+  async publish(subject: string, payload: JsonValue): Promise<void> {
+    this.events.push({
+      subject,
+      payload,
+      occurredAt: "2026-05-25T12:00:00.000Z",
+    });
+  }
+
+  async subscribe(subject: string): Promise<Unsubscribe> {
+    this.subjects.push(subject);
+    return () => {
+      this.unsubscribeCount += 1;
+    };
   }
 }
 

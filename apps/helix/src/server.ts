@@ -1706,6 +1706,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerSheetsRoutes(app, {
     store: sheetsStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    events: eventBus,
     metrics,
     onError: (error) => {
       app.log.error({ error }, "Sheets websocket error");

@@ -7,6 +7,14 @@ import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
 
 export type SheetsApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type SheetsCommentStatus = "open" | "resolved" | "all";
+
+export interface SheetsCellWindow {
+  readonly startRow: number;
+  readonly startCol: number;
+  readonly endRow: number;
+  readonly endCol: number;
+}
 
 /** A spreadsheet row as returned by `sheets.list` / `sheets.get`. */
 export interface SheetsApiSheet {
@@ -42,6 +50,10 @@ export interface SheetsApiCell {
   readonly row: number;
   readonly col: number;
   readonly value: string;
+  readonly formula?: string | null;
+  readonly calcValue?: string | null;
+  readonly dependencies?: readonly string[];
+  readonly formulaError?: string | null;
   readonly format: Record<string, unknown>;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -57,12 +69,84 @@ export interface SheetsApiTabWithCells extends SheetsApiTab {
   readonly cells: readonly SheetsApiCell[];
 }
 
+export interface SheetsDriveComment {
+  readonly id: string;
+  readonly sheetId: string;
+  readonly objectId?: string;
+  readonly parentCommentId?: string | null;
+  readonly actorId: string | null;
+  readonly anchor: Record<string, unknown>;
+  readonly body: string;
+  readonly status: SheetsCommentStatus;
+  readonly metadata: Record<string, unknown>;
+  readonly resolvedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string | null;
+  readonly author?: {
+    readonly id: string;
+    readonly displayName?: string;
+    readonly email?: string;
+  };
+}
+
 /** Paginated result envelope from `sheets.list`. */
 export interface SheetsListResult {
   readonly sheets: readonly SheetsApiSheet[];
   readonly total: number;
   readonly limit: number;
   readonly offset: number;
+}
+
+export interface SheetsImportCsvResult extends SheetsApiSheetWithTabs {
+  readonly import: {
+    readonly format: "csv";
+    readonly filename: string;
+    readonly rowCount: number;
+    readonly columnCount: number;
+    readonly populatedCellCount: number;
+  };
+}
+
+export interface SheetsImportTsvResult extends SheetsApiSheetWithTabs {
+  readonly import: {
+    readonly format: "tsv";
+    readonly filename: string;
+    readonly rowCount: number;
+    readonly columnCount: number;
+    readonly populatedCellCount: number;
+  };
+}
+
+export interface SheetsImportXlsxResult extends SheetsApiSheetWithTabs {
+  readonly import: {
+    readonly format: "xlsx";
+    readonly filename: string;
+    readonly sheetCount: number;
+    readonly rowCount: number;
+    readonly columnCount: number;
+    readonly populatedCellCount: number;
+  };
+}
+
+export interface SheetsImportOdsResult extends SheetsApiSheetWithTabs {
+  readonly import: {
+    readonly format: "ods";
+    readonly filename: string;
+    readonly sheetCount: number;
+    readonly rowCount: number;
+    readonly columnCount: number;
+    readonly populatedCellCount: number;
+  };
+}
+
+export interface SheetsExportResult {
+  readonly sheetId: string;
+  readonly format: "csv" | "tsv" | "xlsx" | "ods";
+  readonly filename: string;
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly contentBase64: string;
+  readonly metadata: Record<string, unknown>;
 }
 
 /** A single cell mutation in a `sheets.cells.update` batch. */
@@ -129,6 +213,122 @@ export async function createSheet(
       title: input.title,
       ...(input.tabNames === undefined ? {} : { tabNames: input.tabNames }),
       metadata: input.metadata ?? {},
+    },
+    fetchImpl,
+  );
+}
+
+/** Import CSV text into a native spreadsheet. */
+export async function importCsvSheet(
+  input: {
+    readonly filename: string;
+    readonly title?: string;
+    readonly folderId?: string | null;
+    readonly csvText: string;
+    readonly metadata?: Record<string, unknown>;
+  },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsImportCsvResult> {
+  return callSheetsTool<SheetsImportCsvResult>(
+    "sheets.import-csv",
+    {
+      filename: input.filename,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+      csvText: input.csvText,
+      metadata: input.metadata ?? {},
+    },
+    fetchImpl,
+  );
+}
+
+/** Import TSV text into a native spreadsheet. */
+export async function importTsvSheet(
+  input: {
+    readonly filename: string;
+    readonly title?: string;
+    readonly folderId?: string | null;
+    readonly tsvText: string;
+    readonly metadata?: Record<string, unknown>;
+  },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsImportTsvResult> {
+  return callSheetsTool<SheetsImportTsvResult>(
+    "sheets.import-tsv",
+    {
+      filename: input.filename,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+      tsvText: input.tsvText,
+      metadata: input.metadata ?? {},
+    },
+    fetchImpl,
+  );
+}
+
+/** Import XLSX bytes into a native spreadsheet. */
+export async function importXlsxSheet(
+  input: {
+    readonly filename: string;
+    readonly title?: string;
+    readonly folderId?: string | null;
+    readonly contentBase64: string;
+    readonly metadata?: Record<string, unknown>;
+  },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsImportXlsxResult> {
+  return callSheetsTool<SheetsImportXlsxResult>(
+    "sheets.import-xlsx",
+    {
+      filename: input.filename,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+      contentBase64: input.contentBase64,
+      metadata: input.metadata ?? {},
+    },
+    fetchImpl,
+  );
+}
+
+/** Import ODS bytes into a native spreadsheet. */
+export async function importOdsSheet(
+  input: {
+    readonly filename: string;
+    readonly title?: string;
+    readonly folderId?: string | null;
+    readonly contentBase64: string;
+    readonly metadata?: Record<string, unknown>;
+  },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsImportOdsResult> {
+  return callSheetsTool<SheetsImportOdsResult>(
+    "sheets.import-ods",
+    {
+      filename: input.filename,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+      contentBase64: input.contentBase64,
+      metadata: input.metadata ?? {},
+    },
+    fetchImpl,
+  );
+}
+
+/** Export a native spreadsheet as CSV, TSV, XLSX, or ODS bytes. */
+export async function exportSheet(
+  input: {
+    readonly sheetId: string;
+    readonly format: "csv" | "tsv" | "xlsx" | "ods";
+    readonly tabId?: string;
+  },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsExportResult> {
+  return callSheetsTool<SheetsExportResult>(
+    "sheets.export",
+    {
+      sheetId: input.sheetId,
+      format: input.format,
+      ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
     },
     fetchImpl,
   );
@@ -224,19 +424,26 @@ export async function deleteSheetTab(
 
 /** Get a tab and its populated cells. */
 export async function getSheetTab(
-  input: { readonly tabId: string },
+  input: { readonly tabId: string; readonly window?: SheetsCellWindow },
   fetchImpl: SheetsApiFetch = authenticatedFetch,
 ): Promise<SheetsApiTabWithCells> {
   return callSheetsTool<SheetsApiTabWithCells>(
     "sheets.tab.get",
-    { tabId: input.tabId },
+    {
+      tabId: input.tabId,
+      ...(input.window === undefined ? {} : { window: input.window }),
+    },
     fetchImpl,
   );
 }
 
 /** Apply a batch of cell edits to a tab. Empty values clear cells. */
 export async function updateSheetCells(
-  input: { readonly tabId: string; readonly edits: readonly SheetsCellEdit[] },
+  input: {
+    readonly tabId: string;
+    readonly edits: readonly SheetsCellEdit[];
+    readonly window?: SheetsCellWindow;
+  },
   fetchImpl: SheetsApiFetch = authenticatedFetch,
 ): Promise<SheetsApiTabWithCells> {
   return callSheetsTool<SheetsApiTabWithCells>(
@@ -249,9 +456,94 @@ export async function updateSheetCells(
         value: edit.value,
         ...(edit.format === undefined ? {} : { format: edit.format }),
       })),
+      ...(input.window === undefined ? {} : { window: input.window }),
     },
     fetchImpl,
   );
+}
+
+/** Sort a rectangular range by its first column. */
+export async function sortSheetRange(
+  input: {
+    readonly tabId: string;
+    readonly range: {
+      readonly startRow: number;
+      readonly startCol: number;
+      readonly endRow: number;
+      readonly endCol: number;
+    };
+    readonly direction: "asc" | "desc";
+    readonly window?: SheetsCellWindow;
+  },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsApiTabWithCells> {
+  return callSheetsTool<SheetsApiTabWithCells>("sheets.range.sort", input, fetchImpl);
+}
+
+export async function listSheetComments(
+  input: { readonly sheetId: string; readonly status?: SheetsCommentStatus },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<readonly SheetsDriveComment[]> {
+  const output = await callSheetsTool<{ readonly comments?: readonly SheetsDriveComment[] }>(
+    "sheets.comment.list",
+    {
+      sheetId: input.sheetId,
+      ...(input.status === undefined ? {} : { status: input.status }),
+    },
+    fetchImpl,
+  );
+  return output.comments ?? [];
+}
+
+export async function createSheetComment(
+  input: {
+    readonly sheetId: string;
+    readonly body: string;
+    readonly anchor: Record<string, unknown>;
+    readonly metadata?: Record<string, unknown>;
+    readonly parentCommentId?: string;
+  },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsDriveComment> {
+  return callSheetsTool<SheetsDriveComment>(
+    "sheets.comment.create",
+    {
+      sheetId: input.sheetId,
+      body: input.body,
+      anchor: input.anchor,
+      metadata: input.metadata ?? {},
+      ...(input.parentCommentId === undefined ? {} : { parentCommentId: input.parentCommentId }),
+    },
+    fetchImpl,
+  );
+}
+
+export async function resolveSheetComment(
+  input: { readonly commentId: string },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsDriveComment> {
+  return callSheetsTool<SheetsDriveComment>("sheets.comment.resolve", input, fetchImpl);
+}
+
+export async function reopenSheetComment(
+  input: { readonly commentId: string },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsDriveComment> {
+  return callSheetsTool<SheetsDriveComment>("sheets.comment.reopen", input, fetchImpl);
+}
+
+export async function updateSheetComment(
+  input: { readonly commentId: string; readonly body: string },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsDriveComment> {
+  return callSheetsTool<SheetsDriveComment>("sheets.comment.update", input, fetchImpl);
+}
+
+export async function deleteSheetComment(
+  input: { readonly commentId: string },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsDriveComment> {
+  return callSheetsTool<SheetsDriveComment>("sheets.comment.delete", input, fetchImpl);
 }
 
 async function callSheetsTool<Output>(

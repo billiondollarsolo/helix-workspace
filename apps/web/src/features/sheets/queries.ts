@@ -6,7 +6,7 @@
 
 import { queryOptions } from "@tanstack/react-query";
 import { listDrive } from "@/features/drive/api";
-import { getSheet, getSheetTab, type SheetsListInput } from "./api";
+import { getSheet, getSheetTab, type SheetsCellWindow, type SheetsListInput } from "./api";
 import { formatModified, type SheetListRow } from "./model";
 
 export const sheetsQueryKeys = {
@@ -15,6 +15,16 @@ export const sheetsQueryKeys = {
     ["sheets", "list", input.query?.trim() ?? "", input.limit ?? 50, input.offset ?? 0] as const,
   sheet: (sheetId: string) => ["sheets", "sheet", sheetId] as const,
   tab: (tabId: string) => ["sheets", "tab", tabId] as const,
+  tabWindow: (tabId: string, window: SheetsCellWindow | null = null) =>
+    [
+      "sheets",
+      "tab",
+      tabId,
+      window?.startRow ?? "all",
+      window?.startCol ?? "all",
+      window?.endRow ?? "all",
+      window?.endCol ?? "all",
+    ] as const,
 };
 
 /** A single spreadsheet with its tabs (`sheets.get`). */
@@ -28,10 +38,14 @@ export function sheetQueryOptions(sheetId: string, enabled = true) {
 }
 
 /** A tab with its populated cells (`sheets.tab.get`). */
-export function sheetTabQueryOptions(tabId: string | null) {
+export function sheetTabQueryOptions(tabId: string | null, window: SheetsCellWindow | null = null) {
   return queryOptions({
-    queryKey: sheetsQueryKeys.tab(tabId ?? "none"),
-    queryFn: () => getSheetTab({ tabId: tabId ?? "" }),
+    queryKey: sheetsQueryKeys.tabWindow(tabId ?? "none", window),
+    queryFn: () =>
+      getSheetTab({
+        tabId: tabId ?? "",
+        ...(window === null ? {} : { window }),
+      }),
     enabled: tabId !== null,
     throwOnError: false,
   });
@@ -53,7 +67,9 @@ export function sheetsListFromDriveQueryOptions(input: { readonly limit?: number
     queryFn: async (): Promise<readonly SheetListRow[]> => {
       const entries = await listDrive({ folderId: null, limit: input.limit ?? 100 });
       return entries
-        .filter((entry) => entry.type === "file" && entry.deletedAt === null && isSpreadsheetLike(entry))
+        .filter(
+          (entry) => entry.type === "file" && entry.deletedAt === null && isSpreadsheetLike(entry),
+        )
         .map(
           (entry): SheetListRow => ({
             id: entry.id,
@@ -65,6 +81,7 @@ export function sheetsListFromDriveQueryOptions(input: { readonly limit?: number
             modified: formatModified(entry.updatedAt),
             shared: (entry.metadata?.sharedCount as number | undefined) ?? 1,
             source: "backend",
+            openMode: entry.app === "sheets" ? "native" : "office",
           }),
         );
     },
@@ -74,7 +91,11 @@ export function sheetsListFromDriveQueryOptions(input: { readonly limit?: number
 
 /** True when a drive entry should appear in the Sheets list — a native
  *  Helix sheet OR a raw spreadsheet upload (XLSX, CSV). */
-function isSpreadsheetLike(entry: { readonly app?: string | null; readonly mimeType?: string; readonly name: string }): boolean {
+function isSpreadsheetLike(entry: {
+  readonly app?: string | null;
+  readonly mimeType?: string;
+  readonly name: string;
+}): boolean {
   if (entry.app === "sheets") return true;
   const mime = entry.mimeType ?? "";
   if (mime.includes("spreadsheetml") || mime.startsWith("text/csv")) return true;

@@ -98,6 +98,11 @@ const Plus: IconComponent = (p) => (
     <line x1="5" y1="12" x2="19" y2="12" />
   </I>
 );
+const Minus: IconComponent = (p) => (
+  <I {...p}>
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </I>
+);
 const X: IconComponent = (p) => (
   <I {...p}>
     <line x1="18" y1="6" x2="6" y2="18" />
@@ -595,6 +600,7 @@ export const Icons = {
   Bell,
   Help,
   Plus,
+  Minus,
   X,
   Check,
   ChevronDown,
@@ -685,6 +691,7 @@ export {
   Bell,
   Help,
   Plus,
+  Minus,
   X,
   Check,
   ChevronDown,

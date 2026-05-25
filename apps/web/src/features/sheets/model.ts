@@ -34,6 +34,37 @@ export function gridFromCells(cells: readonly SheetsApiCell[]): EditableGrid {
   return grid;
 }
 
+/** Build the user-facing grid, showing formula results while preserving raw values elsewhere. */
+export function displayGridFromCells(cells: readonly SheetsApiCell[]): EditableGrid {
+  return gridFromCells(
+    cells.map((cell) => ({
+      ...cell,
+      value: displayValueForCell(cell),
+    })),
+  );
+}
+
+export function displayValueForCell(cell: SheetsApiCell): string {
+  if (cell.formula === null || cell.formula === undefined) {
+    return cell.value;
+  }
+  return cell.calcValue ?? cell.value;
+}
+
+/** Pad a dense grid to a stable editing viewport without mutating the input. */
+export function padGrid(
+  grid: SheetGrid | EditableGrid,
+  minRows: number,
+  minCols: number,
+): EditableGrid {
+  const rowCount = Math.max(grid.length, minRows);
+  const colCount = Math.max(...grid.map((row) => row.length), minCols);
+  return Array.from({ length: rowCount }, (_, rowIndex) => {
+    const row = grid[rowIndex] ?? [];
+    return Array.from({ length: colCount }, (_, colIndex) => row[colIndex] ?? "");
+  });
+}
+
 /** Deep-clone a (possibly readonly) grid into a mutable one. */
 export function cloneGrid(grid: SheetGrid | EditableGrid): EditableGrid {
   return grid.map((row) => [...row]);
@@ -74,6 +105,8 @@ export function gridToCellEdits(grid: SheetGrid | EditableGrid): SheetsCellEdit[
 export interface SheetListRow extends SheetFile {
   /** `"backend"` rows are live and editable; `"seed"` rows are offline-only. */
   readonly source: "backend" | "seed";
+  /** Native Helix sheets open in-app; raw XLS/XLSX/CSV uploads still use OnlyOffice. */
+  readonly openMode?: "native" | "office";
 }
 
 /** Map a backend sheet record into a list-view row. */

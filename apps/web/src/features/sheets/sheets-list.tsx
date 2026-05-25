@@ -17,13 +17,19 @@ export interface SheetsListProps {
   /** Optional case-insensitive filter applied to the spreadsheet title. */
   query?: string;
   /** Opens a spreadsheet in the editor. */
-  onOpen: (id: string) => void;
+  onOpen: (id: string, openMode: SheetListRow["openMode"]) => void;
   /** Runs the `sheets.create` tool. */
   onCreate?: () => void;
+  /** Opens the native spreadsheet import file picker. */
+  onImportCsv?: () => void;
   /** True while a create is in flight. */
   isCreating?: boolean;
+  /** True while a spreadsheet import is in flight. */
+  isImporting?: boolean;
   /** Surfaced when a create fails. */
   createError?: string | null;
+  /** Surfaced when a spreadsheet import fails. */
+  importError?: string | null;
 }
 
 const GRID_COLUMNS = "1fr 160px 140px 80px 32px";
@@ -56,8 +62,11 @@ export function SheetsList({
   query = "",
   onOpen,
   onCreate,
+  onImportCsv,
   isCreating = false,
+  isImporting = false,
   createError,
+  importError,
 }: SheetsListProps) {
   const normalized = query.trim().toLowerCase();
   const queryClient = useQueryClient();
@@ -83,6 +92,7 @@ export function SheetsList({
     : driveRows;
 
   const createErrorMessage = createError ?? undefined;
+  const importErrorMessage = importError ?? undefined;
   const deleteErrorMessage = deleteError ?? undefined;
 
   return (
@@ -95,6 +105,14 @@ export function SheetsList({
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button type="button" className="btn">
             <Icons.Filter /> Filter
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={isImporting}
+            onClick={() => onImportCsv?.()}
+          >
+            <Icons.Upload /> {isImporting ? "Importing..." : "Import"}
           </button>
           <button
             type="button"
@@ -121,6 +139,16 @@ export function SheetsList({
         >
           <Icons.X />
           Could not create spreadsheet: {createErrorMessage}
+        </div>
+      ) : null}
+
+      {importErrorMessage !== undefined ? (
+        <div
+          role="alert"
+          style={{ ...noticeStyle, background: "var(--danger-soft)", color: "var(--danger)" }}
+        >
+          <Icons.X />
+          Could not import spreadsheet: {importErrorMessage}
         </div>
       ) : null}
 
@@ -167,7 +195,7 @@ export function SheetsList({
                   <button
                     key={sheet.id}
                     type="button"
-                    onClick={() => onOpen(sheet.id)}
+                    onClick={() => onOpen(sheet.id, sheet.openMode)}
                     style={{
                       background: "var(--surface)",
                       border: "1px solid var(--border)",
@@ -180,7 +208,13 @@ export function SheetsList({
                     }}
                   >
                     <div style={thumbStyle}>
-                      <div style={{ fontSize: "var(--text-6)", fontWeight: 600, color: "var(--text-2)" }}>
+                      <div
+                        style={{
+                          fontSize: "var(--text-6)",
+                          fontWeight: 600,
+                          color: "var(--text-2)",
+                        }}
+                      >
                         {sheet.title.split(" ")[0]}
                       </div>
                     </div>
@@ -191,7 +225,9 @@ export function SheetsList({
                       >
                         {sheet.title}
                       </div>
-                      <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{sheet.modified}</div>
+                      <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+                        {sheet.modified}
+                      </div>
                     </div>
                   </button>
                 ))}
@@ -240,7 +276,7 @@ export function SheetsList({
 
 interface SheetRowProps {
   readonly sheet: SheetListRow;
-  readonly onOpen: (id: string) => void;
+  readonly onOpen: (id: string, openMode: SheetListRow["openMode"]) => void;
   readonly onDelete: (id: string) => void;
   readonly isDeleting: boolean;
 }
@@ -254,7 +290,7 @@ function SheetRow({ sheet, onOpen, onDelete, isDeleting }: SheetRowProps) {
       <button
         type="button"
         className="list-row"
-        onClick={() => onOpen(sheet.id)}
+        onClick={() => onOpen(sheet.id, sheet.openMode)}
         disabled={isDeleting}
         style={{
           display: "grid",

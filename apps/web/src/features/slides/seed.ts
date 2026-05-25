@@ -15,6 +15,8 @@ export interface SlideDeck {
   readonly modified: string;
   readonly slides: number;
   readonly shared: number;
+  /** Native Helix decks open in-app; uploaded PPT/PPTX files open through Office. */
+  readonly openMode?: "native" | "office";
   /** `"backend"` rows are persisted decks; `"seed"` rows are the offline fallback. */
   readonly source?: "backend" | "seed";
 }
@@ -22,14 +24,11 @@ export interface SlideDeck {
 /** Background treatment for a `title` slide. */
 export type SlideBackground = "accent" | "neutral";
 
+/** Deck-level visual palette inherited by slide previews and present mode. */
+export type SlideTheme = "classic" | "midnight" | "meadow";
+
 /** The six slide layout discriminants. */
-export type SlideLayout =
-  | "title"
-  | "agenda"
-  | "stats"
-  | "split"
-  | "bullets"
-  | "image";
+export type SlideLayout = "title" | "agenda" | "stats" | "split" | "bullets" | "image";
 
 /** A single statistic on a `stats` slide. */
 export interface SlideStat {
@@ -38,11 +37,97 @@ export interface SlideStat {
   readonly note: string;
 }
 
+/** Freeform slide object kind persisted in the slide content JSON. */
+export type SlideShapeKind = "text" | "rectangle" | "connector" | "image" | "media";
+
+/** Visual treatment for first-pass freeform shapes. */
+export type SlideShapeTone = "accent" | "light" | "dark";
+
+/** Connector line direction inside the shape's percentage bounding box. */
+export type SlideConnectorDirection = "up" | "down";
+
+/** Connector arrowhead treatment. */
+export type SlideConnectorArrow = "none" | "start" | "end" | "both";
+
+/** Embedded media player type for freeform media shapes. */
+export type SlideMediaType = "video" | "audio";
+
+/** Image placement inside a freeform image shape's percentage box. */
+export type SlideImageFit = "contain" | "cover";
+
+/** Image mask applied inside a freeform image shape's percentage box. */
+export type SlideImageMask = "rectangle" | "rounded" | "circle";
+
+/** First-pass entrance animation for freeform shapes in present mode. */
+export type SlideShapeAnimationType = "fade" | "fly" | "zoom";
+
+/** Direction for fly-in motion path animations. */
+export type SlideShapeMotionPath = "up" | "down" | "left" | "right";
+
+/** Timing curve for entrance animations. */
+export type SlideShapeAnimationEasing = "standard" | "linear" | "easeIn" | "easeOut" | "easeInOut";
+
+export interface SlideShapeAnimation {
+  readonly type: SlideShapeAnimationType;
+  readonly motionPath?: SlideShapeMotionPath;
+  readonly order?: number;
+  readonly durationMs?: number;
+  readonly easing?: SlideShapeAnimationEasing;
+}
+
+/** Slide-level transition applied when advancing through presentation mode. */
+export type SlideTransitionType = "fade" | "slide" | "zoom";
+
+/** Direction for slide-level push/slide transitions. */
+export type SlideTransitionDirection = "left" | "right" | "up" | "down";
+
+export interface SlideTransition {
+  readonly type: SlideTransitionType;
+  readonly direction?: SlideTransitionDirection;
+  readonly durationMs?: number;
+}
+
+/** A percentage-positioned freeform object on top of a typed slide layout. */
+export interface SlideShape {
+  readonly id: string;
+  readonly kind: SlideShapeKind;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly text?: string;
+  readonly tone?: SlideShapeTone;
+  readonly connectorDirection?: SlideConnectorDirection;
+  readonly connectorArrow?: SlideConnectorArrow;
+  readonly imageUrl?: string;
+  readonly imageAlt?: string;
+  readonly imageFit?: SlideImageFit;
+  readonly imageMask?: SlideImageMask;
+  readonly mediaUrl?: string;
+  readonly mediaType?: SlideMediaType;
+  readonly mediaTitle?: string;
+  readonly mediaPosterUrl?: string;
+  readonly mediaCaptionUrl?: string;
+  readonly mediaCaptionLabel?: string;
+  readonly mediaStartSeconds?: number;
+  readonly mediaEndSeconds?: number;
+  readonly mediaAutoplay?: boolean;
+  readonly mediaLoop?: boolean;
+  readonly mediaMuted?: boolean;
+  readonly animation?: SlideShapeAnimation;
+  readonly exitAnimation?: SlideShapeAnimation;
+}
+
+export interface SlideShapeLayer {
+  readonly shapes?: readonly SlideShape[];
+  readonly transition?: SlideTransition;
+}
+
 /** A slide id — a numeric handoff-seed id or a backend UUID string. */
 export type SlideId = number | string;
 
 /** Full-bleed title slide. */
-export interface TitleSlide {
+export interface TitleSlide extends SlideShapeLayer {
   readonly id: SlideId;
   readonly layout: "title";
   readonly title: string;
@@ -52,7 +137,7 @@ export interface TitleSlide {
 }
 
 /** Numbered agenda slide. */
-export interface AgendaSlide {
+export interface AgendaSlide extends SlideShapeLayer {
   readonly id: SlideId;
   readonly layout: "agenda";
   readonly title: string;
@@ -60,7 +145,7 @@ export interface AgendaSlide {
 }
 
 /** Three-column statistics slide. */
-export interface StatsSlide {
+export interface StatsSlide extends SlideShapeLayer {
   readonly id: SlideId;
   readonly layout: "stats";
   readonly title: string;
@@ -69,7 +154,7 @@ export interface StatsSlide {
 }
 
 /** Two-column slide: prose left, quote or list right. */
-export interface SplitSlide {
+export interface SplitSlide extends SlideShapeLayer {
   readonly id: SlideId;
   readonly layout: "split";
   readonly title: string;
@@ -80,7 +165,7 @@ export interface SplitSlide {
 }
 
 /** Bulleted content slide. */
-export interface BulletsSlide {
+export interface BulletsSlide extends SlideShapeLayer {
   readonly id: SlideId;
   readonly layout: "bullets";
   readonly title: string;
@@ -88,7 +173,7 @@ export interface BulletsSlide {
 }
 
 /** Image-placeholder slide. */
-export interface ImageSlide {
+export interface ImageSlide extends SlideShapeLayer {
   readonly id: SlideId;
   readonly layout: "image";
   readonly title: string;
@@ -96,13 +181,7 @@ export interface ImageSlide {
 }
 
 /** A slide in any of the six layouts. */
-export type Slide =
-  | TitleSlide
-  | AgendaSlide
-  | StatsSlide
-  | SplitSlide
-  | BulletsSlide
-  | ImageSlide;
+export type Slide = TitleSlide | AgendaSlide | StatsSlide | SplitSlide | BulletsSlide | ImageSlide;
 
 /* -------------------------------------------------------------------------- */
 /* Typed slide content (the backend `slides.content` JSON payload)            */
@@ -143,15 +222,25 @@ export function slideToContent(slide: Slide): SlideContent {
         ...(slide.eyebrow === undefined ? {} : { eyebrow: slide.eyebrow }),
         ...(slide.subtitle === undefined ? {} : { subtitle: slide.subtitle }),
         ...(slide.bg === undefined ? {} : { bg: slide.bg }),
+        ...(slide.shapes === undefined ? {} : { shapes: slide.shapes }),
+        ...(slide.transition === undefined ? {} : { transition: slide.transition }),
       };
     case "agenda":
-      return { layout: "agenda", title: slide.title, items: slide.items };
+      return {
+        layout: "agenda",
+        title: slide.title,
+        items: slide.items,
+        ...(slide.shapes === undefined ? {} : { shapes: slide.shapes }),
+        ...(slide.transition === undefined ? {} : { transition: slide.transition }),
+      };
     case "stats":
       return {
         layout: "stats",
         title: slide.title,
         ...(slide.subtitle === undefined ? {} : { subtitle: slide.subtitle }),
         stats: slide.stats,
+        ...(slide.shapes === undefined ? {} : { shapes: slide.shapes }),
+        ...(slide.transition === undefined ? {} : { transition: slide.transition }),
       };
     case "split":
       return {
@@ -161,11 +250,25 @@ export function slideToContent(slide: Slide): SlideContent {
         rightKind: slide.rightKind,
         rightContent: slide.rightContent,
         ...(slide.quoteWho === undefined ? {} : { quoteWho: slide.quoteWho }),
+        ...(slide.shapes === undefined ? {} : { shapes: slide.shapes }),
+        ...(slide.transition === undefined ? {} : { transition: slide.transition }),
       };
     case "bullets":
-      return { layout: "bullets", title: slide.title, items: slide.items };
+      return {
+        layout: "bullets",
+        title: slide.title,
+        items: slide.items,
+        ...(slide.shapes === undefined ? {} : { shapes: slide.shapes }),
+        ...(slide.transition === undefined ? {} : { transition: slide.transition }),
+      };
     case "image":
-      return { layout: "image", title: slide.title, note: slide.note };
+      return {
+        layout: "image",
+        title: slide.title,
+        note: slide.note,
+        ...(slide.shapes === undefined ? {} : { shapes: slide.shapes }),
+        ...(slide.transition === undefined ? {} : { transition: slide.transition }),
+      };
   }
 }
 
@@ -216,4 +319,14 @@ export const SLIDE_LAYOUT_OPTIONS: ReadonlyArray<{
   { value: "split", label: "Split" },
   { value: "bullets", label: "Bullets" },
   { value: "image", label: "Image" },
+];
+
+/** Deck-level theme options persisted in deck metadata. */
+export const SLIDE_THEME_OPTIONS: ReadonlyArray<{
+  readonly value: SlideTheme;
+  readonly label: string;
+}> = [
+  { value: "classic", label: "Classic" },
+  { value: "midnight", label: "Midnight" },
+  { value: "meadow", label: "Meadow" },
 ];

@@ -5,8 +5,9 @@
    components and invalidate against `slidesQueryKeys`. */
 
 import { queryOptions } from "@tanstack/react-query";
-import { listDrive } from "@/features/drive/api";
-import { getSlidesDeck } from "./api";
+import { listDrive, type DriveApiEntry } from "@/features/drive/api";
+import { listPeopleDirectory, type PeopleDirectoryPerson } from "@/features/people/api";
+import { getSlidesDeck, listSlidesComments, type SlidesCommentStatus } from "./api";
 import { formatModified } from "./mapping";
 import type { SlideDeck } from "./seed";
 
@@ -16,6 +17,10 @@ export const slidesQueryKeys = {
   deckLists: ["slides", "decks"] as const,
   deckDetails: ["slides", "deck"] as const,
   deckDetail: (deckId: string) => ["slides", "deck", deckId] as const,
+  deckComments: (deckId: string) => ["slides", "deck", deckId, "comments"] as const,
+  deckCommentsByStatus: (deckId: string, status: SlidesCommentStatus) =>
+    ["slides", "deck", deckId, "comments", status] as const,
+  mentionPeople: ["slides", "mention-people"] as const,
 };
 
 /** Editor query: a single deck with its ordered slides. */
@@ -56,7 +61,9 @@ export function slidesListFromDriveQueryOptions(input: { readonly limit?: number
     queryFn: async (): Promise<readonly SlideDeck[]> => {
       const entries = await listDrive({ folderId: null, limit: input.limit ?? 100 });
       return entries
-        .filter((entry) => entry.type === "file" && entry.deletedAt === null && isPresentationLike(entry))
+        .filter(
+          (entry) => entry.type === "file" && entry.deletedAt === null && isPresentationLike(entry),
+        )
         .map(
           (entry): SlideDeck => ({
             id: entry.id,
@@ -68,6 +75,7 @@ export function slidesListFromDriveQueryOptions(input: { readonly limit?: number
             modified: formatModified(entry.updatedAt),
             slides: (entry.metadata?.slideCount as number | undefined) ?? 0,
             shared: (entry.metadata?.sharedCount as number | undefined) ?? 0,
+            openMode: entry.app === "slides" ? "native" : "office",
             source: "backend",
           }),
         );
@@ -76,9 +84,52 @@ export function slidesListFromDriveQueryOptions(input: { readonly limit?: number
   });
 }
 
+export function slidesDriveShapeAssetsQueryOptions(input: { readonly limit?: number } = {}) {
+  return queryOptions({
+    queryKey: ["slides", "drive-shape-assets", input.limit ?? 100] as const,
+    queryFn: (): Promise<readonly DriveApiEntry[]> =>
+      listDrive({ folderId: null, acrossFolders: true, limit: input.limit ?? 100 }),
+    staleTime: 60_000,
+    throwOnError: false,
+  });
+}
+
+/** People directory used by native Slides comment @mention pickers. */
+export function slidesMentionPeopleQueryOptions(input: { readonly limit?: number } = {}) {
+  return queryOptions({
+    queryKey: [...slidesQueryKeys.mentionPeople, input.limit ?? 25] as const,
+    queryFn: (): Promise<readonly PeopleDirectoryPerson[]> =>
+      listPeopleDirectory({ limit: input.limit ?? 25 }),
+    staleTime: 60_000,
+    throwOnError: false,
+  });
+}
+
+/** Editor query: Drive-backed review comments attached to a native deck. */
+export function slidesCommentsQueryOptions(
+  deckId: string | undefined,
+  status: SlidesCommentStatus = "open",
+) {
+  return queryOptions({
+    queryKey: slidesQueryKeys.deckCommentsByStatus(deckId ?? "none", status),
+    queryFn: () => {
+      if (deckId === undefined) {
+        throw new Error("A deck id is required to load Slides comments.");
+      }
+      return listSlidesComments({ deckId, status });
+    },
+    enabled: deckId !== undefined && isBackendSlidesDeckId(deckId),
+    throwOnError: false,
+  });
+}
+
 /** True when a drive entry should appear in the Slides list — a native
  *  Helix deck OR an uploaded PPTX. */
-function isPresentationLike(entry: { readonly app?: string | null; readonly mimeType?: string; readonly name: string }): boolean {
+function isPresentationLike(entry: {
+  readonly app?: string | null;
+  readonly mimeType?: string;
+  readonly name: string;
+}): boolean {
   if (entry.app === "slides") return true;
   const mime = entry.mimeType ?? "";
   if (mime.includes("presentationml") || mime === "application/vnd.ms-powerpoint") return true;

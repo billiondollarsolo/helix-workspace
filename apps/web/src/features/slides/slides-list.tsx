@@ -11,13 +11,14 @@ import { useId, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Avatar } from "@/components/ui/avatar";
 import { Icons } from "@/components/icons";
-import { createSlidesDeck, deleteSlidesDeck, updateSlidesDeck } from "./api";
+import { createSlidesDeck, createSlidesSlide, deleteSlidesDeck, updateSlidesDeck } from "./api";
+import { generatePresentationDeck } from "./presentation-ai";
 import { slidesListFromDriveQueryOptions, slidesQueryKeys } from "./queries";
 import type { SlideDeck } from "./seed";
 
 interface SlidesListProps {
   /** Open a deck in the editor. */
-  readonly onOpen: (deckId: string) => void;
+  readonly onOpen: (deck: Pick<SlideDeck, "id" | "openMode">) => void;
   /** Live search query from the TopBar. */
   readonly query: string;
 }
@@ -43,17 +44,57 @@ const menuItemStyle: CSSProperties = {
   font: "inherit",
 };
 
+const GENERATE_PANEL_STYLE = {
+  display: "grid",
+  gap: 12,
+  padding: 16,
+  marginBottom: 20,
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  background: "var(--surface)",
+} satisfies CSSProperties;
+
+const GENERATE_FIELD_STYLE = {
+  display: "grid",
+  gap: 6,
+} satisfies CSSProperties;
+
+const GENERATE_LABEL_STYLE = {
+  fontSize: "var(--text-meta)",
+  color: "var(--text-3)",
+  fontWeight: 600,
+} satisfies CSSProperties;
+
+const GENERATE_TEXTAREA_STYLE = {
+  width: "100%",
+  minHeight: 72,
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  padding: 10,
+  background: "var(--surface-2)",
+  color: "var(--text)",
+  font: "inherit",
+  resize: "vertical",
+} satisfies CSSProperties;
+
+const GENERATE_PREVIEW_STYLE = {
+  display: "grid",
+  gap: 4,
+  fontSize: "var(--text-meta)",
+  color: "var(--text-2)",
+} satisfies CSSProperties;
+
 function RecentCard({
   deck,
   onOpen,
 }: {
   readonly deck: SlideDeck;
-  readonly onOpen: (deckId: string) => void;
+  readonly onOpen: (deck: Pick<SlideDeck, "id" | "openMode">) => void;
 }) {
   return (
     <button
       type="button"
-      onClick={() => onOpen(deck.id)}
+      onClick={() => onOpen(deck)}
       style={{
         background: "var(--surface)",
         border: "1px solid var(--border)",
@@ -99,7 +140,9 @@ function RecentCard({
         <div className="truncate" style={{ fontSize: "var(--text-meta)", fontWeight: 500 }}>
           {deck.title}
         </div>
-        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{deck.modified}</div>
+        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+          {deck.modified}
+        </div>
       </div>
     </button>
   );
@@ -125,13 +168,15 @@ export function SlidesList({ onOpen, query }: SlidesListProps) {
   const isBackendUnavailable = decksQuery.isError;
   const [menuDeckId, setMenuDeckId] = useState<string | null>(null);
   const [renameDeck, setRenameDeck] = useState<SlideDeck | null>(null);
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generatePrompt, setGeneratePrompt] = useState(
+    "Product launch, customer proof, rollout risks",
+  );
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const decks = useMemo(
-    () => filterDecks(decksQuery.data ?? [], query),
-    [decksQuery.data, query],
-  );
+  const decks = useMemo(() => filterDecks(decksQuery.data ?? [], query), [decksQuery.data, query]);
   const recent = decks.slice(0, 4);
+  const generatedDeck = useMemo(() => generatePresentationDeck(generatePrompt), [generatePrompt]);
 
   const clearError = () => setActionError(null);
 
@@ -141,7 +186,36 @@ export function SlidesList({ onOpen, query }: SlidesListProps) {
     onError: () => setActionError("Could not create a new deck. Please try again."),
     onSuccess: async (deck) => {
       await queryClient.invalidateQueries({ queryKey: slidesQueryKeys.all });
-      onOpen(deck.id);
+      onOpen({ id: deck.id, openMode: "native" });
+    },
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: async (prompt: string) => {
+      const generated = generatePresentationDeck(prompt);
+      const deck = await createSlidesDeck({
+        title: generated.title,
+        metadata: {
+          generatedBy: "helix.presentation-assist.local",
+          prompt: prompt.trim(),
+        },
+      });
+      for (const [position, slide] of generated.slides.entries()) {
+        await createSlidesSlide({
+          deckId: deck.id,
+          content: slide.content,
+          speakerNotes: slide.speakerNotes,
+          position,
+        });
+      }
+      return deck;
+    },
+    onMutate: clearError,
+    onError: () => setActionError("Could not generate that deck. Please try again."),
+    onSuccess: async (deck) => {
+      await queryClient.invalidateQueries({ queryKey: slidesQueryKeys.all });
+      setGenerateOpen(false);
+      onOpen({ id: deck.id, openMode: "native" });
     },
   });
 
@@ -190,6 +264,14 @@ export function SlidesList({ onOpen, query }: SlidesListProps) {
           </button>
           <button
             type="button"
+            className="btn"
+            onClick={() => setGenerateOpen((current) => !current)}
+            disabled={generateMutation.isPending}
+          >
+            <Icons.Sparkles /> Generate deck
+          </button>
+          <button
+            type="button"
             className="btn primary"
             onClick={handleNewDeck}
             disabled={createMutation.isPending}
@@ -221,10 +303,50 @@ export function SlidesList({ onOpen, query }: SlidesListProps) {
 
       {actionError !== null ? <ErrorBanner message={actionError} /> : null}
 
+      {generateOpen ? (
+        <section aria-label="Generate deck" style={GENERATE_PANEL_STYLE}>
+          <label style={GENERATE_FIELD_STYLE}>
+            <span style={GENERATE_LABEL_STYLE}>Prompt</span>
+            <textarea
+              aria-label="Deck prompt"
+              value={generatePrompt}
+              onChange={(event) => setGeneratePrompt(event.target.value)}
+              rows={3}
+              style={GENERATE_TEXTAREA_STYLE}
+            />
+          </label>
+          <div style={GENERATE_PREVIEW_STYLE}>
+            <strong>{generatedDeck.title}</strong>
+            <span>
+              {generatedDeck.slides.length} slides ·{" "}
+              {generatedDeck.slides.map((slide) => slide.content.title).join(", ")}
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button type="button" className="btn" onClick={() => setGenerateOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={generateMutation.isPending || generatePrompt.trim().length === 0}
+              onClick={() => generateMutation.mutate(generatePrompt)}
+            >
+              {generateMutation.isPending ? "Generating…" : "Create generated deck"}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       {decksQuery.isPending ? (
         <div
           role="status"
-          style={{ padding: "64px 0", textAlign: "center", color: "var(--text-3)", fontSize: "var(--text-body-sm)" }}
+          style={{
+            padding: "64px 0",
+            textAlign: "center",
+            color: "var(--text-3)",
+            fontSize: "var(--text-body-sm)",
+          }}
         >
           Loading presentations…
         </div>
@@ -317,14 +439,15 @@ function DeckRow({
   deleting,
 }: {
   readonly deck: SlideDeck;
-  readonly onOpen: (deckId: string) => void;
+  readonly onOpen: (deck: Pick<SlideDeck, "id" | "openMode">) => void;
   readonly menuOpen: boolean;
   readonly onToggleMenu: () => void;
   readonly onRename: () => void;
   readonly onDelete: () => void;
   readonly deleting: boolean;
 }) {
-  const isBackend = deck.source === "backend";
+  const isNativeBackendDeck = deck.source === "backend" && deck.openMode !== "office";
+  const passiveLabel = deck.openMode === "office" ? "Office" : "Seed";
   return (
     <div
       style={{
@@ -341,7 +464,7 @@ function DeckRow({
     >
       <button
         type="button"
-        onClick={() => onOpen(deck.id)}
+        onClick={() => onOpen(deck)}
         style={{
           gridColumn: "1 / 4",
           display: "grid",
@@ -371,7 +494,7 @@ function DeckRow({
       <span style={{ color: "var(--text-2)" }}>{deck.slides}</span>
       <span style={{ color: "var(--text-2)" }}>{deck.shared} people</span>
       <span style={{ display: "flex", justifyContent: "flex-end" }}>
-        {isBackend ? (
+        {isNativeBackendDeck ? (
           <button
             type="button"
             className="icon-btn"
@@ -382,8 +505,13 @@ function DeckRow({
             <Icons.MoreV />
           </button>
         ) : (
-          <span title="Seeded preview deck" style={{ color: "var(--text-3)", fontSize: "var(--text-chip)" }}>
-            Seed
+          <span
+            title={
+              deck.openMode === "office" ? "Opens in the Office editor" : "Seeded preview deck"
+            }
+            style={{ color: "var(--text-3)", fontSize: "var(--text-chip)" }}
+          >
+            {passiveLabel}
           </span>
         )}
       </span>
@@ -470,7 +598,9 @@ function RenameDialog({
           gap: 12,
         }}
       >
-        <h2 style={{ margin: 0, fontSize: "var(--text-body-lg)", fontWeight: 600 }}>Rename presentation</h2>
+        <h2 style={{ margin: 0, fontSize: "var(--text-body-lg)", fontWeight: 600 }}>
+          Rename presentation
+        </h2>
         <label htmlFor={inputId} style={{ fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
           Title
         </label>

@@ -98,6 +98,12 @@ const Plus: IconComponent = (p) => (
     <line x1="5" y1="12" x2="19" y2="12" />
   </I>
 );
+const Copy: IconComponent = (p) => (
+  <I {...p}>
+    <rect x="8" y="8" width="11" height="11" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+  </I>
+);
 const Minus: IconComponent = (p) => (
   <I {...p}>
     <line x1="5" y1="12" x2="19" y2="12" />
@@ -585,7 +591,7 @@ const Dot: IconComponent = (p) => (
 );
 
 /**
- * The complete Helix icon set (50 icons). Keyed by name so it can be indexed
+ * The complete Helix icon set. Keyed by name so it can be indexed
  * dynamically (e.g. by app id) the way the prototype did, while individual
  * named exports give the type-safe ergonomic path.
  */
@@ -600,6 +606,7 @@ export const Icons = {
   Bell,
   Help,
   Plus,
+  Copy,
   Minus,
   X,
   Check,
@@ -691,6 +698,7 @@ export {
   Bell,
   Help,
   Plus,
+  Copy,
   Minus,
   X,
   Check,

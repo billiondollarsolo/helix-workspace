@@ -10,6 +10,8 @@ import { callTool } from "@/lib/tool-call";
 import type { SlideContent, SlideLayout } from "./seed";
 
 export type SlidesApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type SlidesCommentStatus = "open" | "resolved" | "all";
+type SlidesCommentRecordStatus = Exclude<SlidesCommentStatus, "all">;
 
 /** A deck summary row returned by `slides.deck.list` / `slides.deck.create`. */
 export interface SlidesApiDeck {
@@ -42,6 +44,44 @@ export interface SlidesApiSlide {
 export interface SlidesApiDeckDetail {
   readonly deck: SlidesApiDeck;
   readonly slides: readonly SlidesApiSlide[];
+}
+
+export interface SlidesExportResult {
+  readonly deckId: string;
+  readonly format: "pptx" | "pdf" | "svg-series";
+  readonly filename: string;
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly contentBase64: string;
+  readonly metadata: Record<string, unknown>;
+}
+
+export interface SlidesImportResult extends SlidesApiDeck {
+  readonly slides: readonly SlidesApiSlide[];
+  readonly import: {
+    readonly sourceFormat: "pptx";
+    readonly slideCount: number;
+    readonly fidelity: string;
+  };
+}
+
+export interface SlidesDriveComment {
+  readonly id: string;
+  readonly objectId: string;
+  readonly parentCommentId?: string | null;
+  readonly actorId: string | null;
+  readonly anchor: Record<string, unknown>;
+  readonly body: string;
+  readonly status: SlidesCommentRecordStatus;
+  readonly metadata: Record<string, unknown>;
+  readonly resolvedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string | null;
+  readonly author?: {
+    readonly id: string;
+    readonly displayName?: string;
+    readonly email?: string;
+  };
 }
 
 export interface SlidesListDecksInput {
@@ -84,7 +124,115 @@ export async function getSlidesDeck(
   input: { readonly deckId: string },
   fetchImpl: SlidesApiFetch = authenticatedFetch,
 ): Promise<SlidesApiDeckDetail> {
-  return callSlidesTool<SlidesApiDeckDetail>("slides.deck.get", { deckId: input.deckId }, fetchImpl);
+  return callSlidesTool<SlidesApiDeckDetail>(
+    "slides.deck.get",
+    { deckId: input.deckId },
+    fetchImpl,
+  );
+}
+
+/** `slides.export` — download a native deck as PPTX. */
+export async function exportSlidesDeck(
+  input: { readonly deckId: string; readonly format?: SlidesExportResult["format"] | undefined },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<SlidesExportResult> {
+  return callSlidesTool<SlidesExportResult>(
+    "slides.export",
+    { deckId: input.deckId, format: input.format ?? "pptx" },
+    fetchImpl,
+  );
+}
+
+/** `slides.import-pptx` — import an uploaded PPTX into a native deck. */
+export async function importPptxDeck(
+  input: {
+    readonly filename: string;
+    readonly title: string;
+    readonly folderId?: string | null;
+    readonly contentBase64: string;
+    readonly metadata?: Record<string, unknown>;
+  },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<SlidesImportResult> {
+  return callSlidesTool<SlidesImportResult>(
+    "slides.import-pptx",
+    {
+      filename: input.filename,
+      title: input.title,
+      folderId: input.folderId ?? null,
+      contentBase64: input.contentBase64,
+      metadata: input.metadata ?? {},
+    },
+    fetchImpl,
+  );
+}
+
+/** `drive.comment.list` — review comments attached to a native Slides deck. */
+export async function listSlidesComments(
+  input: { readonly deckId: string; readonly status?: SlidesCommentStatus },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<readonly SlidesDriveComment[]> {
+  const output = await callSlidesTool<{ readonly comments?: readonly SlidesDriveComment[] }>(
+    "drive.comment.list",
+    {
+      objectId: input.deckId,
+      ...(input.status === undefined ? {} : { status: input.status }),
+    },
+    fetchImpl,
+  );
+  return output.comments ?? [];
+}
+
+/** `drive.comment.create` — add a deck, slide, or shape comment. */
+export async function createSlidesComment(
+  input: {
+    readonly deckId: string;
+    readonly body: string;
+    readonly anchor: Record<string, unknown>;
+    readonly metadata?: Record<string, unknown>;
+    readonly parentCommentId?: string;
+  },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<SlidesDriveComment> {
+  return callSlidesTool<SlidesDriveComment>(
+    "drive.comment.create",
+    {
+      objectId: input.deckId,
+      body: input.body,
+      anchor: input.anchor,
+      metadata: input.metadata ?? {},
+      ...(input.parentCommentId === undefined ? {} : { parentCommentId: input.parentCommentId }),
+    },
+    fetchImpl,
+  );
+}
+
+export async function resolveSlidesComment(
+  input: { readonly commentId: string },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<SlidesDriveComment> {
+  return callSlidesTool<SlidesDriveComment>("drive.comment.resolve", input, fetchImpl);
+}
+
+export async function reopenSlidesComment(
+  input: { readonly commentId: string },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<SlidesDriveComment> {
+  return callSlidesTool<SlidesDriveComment>("drive.comment.reopen", input, fetchImpl);
+}
+
+export async function updateSlidesComment(
+  input: { readonly commentId: string; readonly body: string },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<SlidesDriveComment> {
+  return callSlidesTool<SlidesDriveComment>("drive.comment.update", input, fetchImpl);
+}
+
+export async function deleteSlidesComment(
+  input: { readonly commentId: string },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<SlidesDriveComment> {
+  return callSlidesTool<SlidesDriveComment>("drive.comment.delete", input, fetchImpl);
 }
 
 /** `slides.deck.create` — the New deck button. */

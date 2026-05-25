@@ -15,12 +15,29 @@
    (`DRIVE_FOLDERS_SEED` / `DRIVE_FILES_SEED`) is used only as an offline
    fallback when the backend listing yields nothing AND the query errored. */
 
-import { type ChangeEvent, type CSSProperties, type DragEvent, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type CSSProperties,
+  type DragEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import "./drive-shell.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
+import { importDocxDocument } from "@/features/docs/api";
+import {
+  importCsvSheet,
+  importOdsSheet,
+  importTsvSheet,
+  importXlsxSheet,
+} from "@/features/sheets/api";
+import { importPptxDeck } from "@/features/slides/api";
+import { slidesQueryKeys } from "@/features/slides/queries";
+import { sheetsQueryKeys } from "@/features/sheets/queries";
 import {
   createDriveEntry,
   deleteDriveObject,
@@ -51,6 +68,12 @@ import {
 } from "./queries";
 
 type DriveView = "grid" | "list";
+
+type DriveUploadOutcome =
+  | { readonly kind: "drive" }
+  | { readonly kind: "native-doc"; readonly documentId: string }
+  | { readonly kind: "native-sheet"; readonly sheetId: string }
+  | { readonly kind: "native-slide"; readonly deckId: string };
 
 interface DriveScopeItem {
   readonly id: DriveScope;
@@ -84,20 +107,29 @@ const TILE_GRID: CSSProperties = {
 const LIST_COLUMNS = "1fr 160px 120px 90px 32px";
 
 /** A `navigate()` target opening a specific editor item. */
-interface EditorDestination {
-  readonly to: string;
-  readonly search: Record<string, string>;
-}
+type EditorDestination =
+  | {
+      readonly to: "/docs/$documentId";
+      readonly params: { readonly documentId: string };
+    }
+  | {
+      readonly to: "/sheets";
+      readonly search: { readonly sheet: string };
+    }
+  | {
+      readonly to: "/slides";
+      readonly search: { readonly deck: string };
+    };
 
 /**
  * Maps a `drive.create` result (`{ id, app }`) to the editor route that opens
- * that item. The doc/sheet/deck routes read a single search param
- * (`?doc=` / `?sheet=` / `?deck=`) and open straight into the editor.
+ * that item. Docs use the native document route; sheets and slides still read
+ * their editor object id from a search param.
  */
 function editorDestinationFor(app: string, id: string): EditorDestination | null {
   switch (app) {
     case "docs":
-      return { to: "/docs", search: { doc: id } };
+      return { to: "/docs/$documentId", params: { documentId: id } };
     case "sheets":
       return { to: "/sheets", search: { sheet: id } };
     case "slides":
@@ -105,6 +137,66 @@ function editorDestinationFor(app: string, id: string): EditorDestination | null
     default:
       return null;
   }
+}
+
+function isCsvFile(file: File): boolean {
+  return file.type.toLowerCase().startsWith("text/csv") || file.name.toLowerCase().endsWith(".csv");
+}
+
+function isTsvFile(file: File): boolean {
+  return (
+    file.type.toLowerCase() === "text/tab-separated-values" ||
+    file.name.toLowerCase().endsWith(".tsv")
+  );
+}
+
+function isXlsxFile(file: File): boolean {
+  return file.type.includes("spreadsheetml") || file.name.toLowerCase().endsWith(".xlsx");
+}
+
+function isOdsFile(file: File): boolean {
+  return (
+    file.type.toLowerCase() === "application/vnd.oasis.opendocument.spreadsheet" ||
+    file.name.toLowerCase().endsWith(".ods")
+  );
+}
+
+function isDocxFile(file: File): boolean {
+  const type = file.type.toLowerCase();
+  return (
+    type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    file.name.toLowerCase().endsWith(".docx")
+  );
+}
+
+function isPptxFile(file: File): boolean {
+  const type = file.type.toLowerCase();
+  return (
+    type === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    file.name.toLowerCase().endsWith(".pptx")
+  );
+}
+
+function titleFromSheetFilename(filename: string): string {
+  return filename.replace(/\.(csv|tsv|xlsx|ods)$/iu, "").trim() || "Imported sheet";
+}
+
+function titleFromDocxFilename(filename: string): string {
+  return filename.replace(/\.docx$/iu, "").trim() || "Imported document";
+}
+
+function titleFromPptxFilename(filename: string): string {
+  return filename.replace(/\.pptx$/iu, "").trim() || "Imported presentation";
+}
+
+function base64FromArrayBuffer(buffer: ArrayBuffer): string {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
 }
 
 /** Icon + colour override for app-typed file entries. */
@@ -125,8 +217,12 @@ interface DriveCrumb {
 /** The Drive surface body. Rendered inside `SurfaceFrame`. */
 export function DriveShell() {
   const navigate = useNavigate();
-  const driveSearch: Partial<{ folder: string | null; scope: DriveScope; q: string; file: string }> =
-    useSearch({ strict: false });
+  const driveSearch: Partial<{
+    folder: string | null;
+    scope: DriveScope;
+    q: string;
+    file: string;
+  }> = useSearch({ strict: false });
   const queryClient = useQueryClient();
   const [view, setView] = useState<DriveView>("grid");
   const [scope, setScope] = useState<DriveScope>(driveSearch.scope ?? "my");
@@ -134,7 +230,8 @@ export function DriveShell() {
   const [selectedFileId, setSelectedFileId] = useState<string | null>(driveSearch.file ?? null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const folderId = trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : (driveSearch.folder ?? null);
+  const folderId =
+    trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : (driveSearch.folder ?? null);
 
   // Drive URL sync — every state transition (scope, folder, selection)
   // pushes a fresh `?folder=…&scope=…&file=…` query string, so the back
@@ -159,15 +256,92 @@ export function DriveShell() {
     driveItemsQueryOptions({ folderId, scope, limit: scope === "recent" ? 50 : 100 }),
   );
 
-  const invalidateDrive = () =>
-    queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+  const invalidateDrive = () => queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+  const invalidateSheets = () => queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
+  const invalidateSlides = () => queryClient.invalidateQueries({ queryKey: slidesQueryKeys.all });
+  const invalidateDocs = () => queryClient.invalidateQueries({ queryKey: ["docs"] });
 
   const uploadMutation = useMutation({
-    mutationFn: (file: File) => uploadDriveFile({ file, folderId }),
+    mutationFn: async (file: File): Promise<DriveUploadOutcome> => {
+      if (isDocxFile(file)) {
+        const document = await importDocxDocument({
+          filename: file.name,
+          title: titleFromDocxFilename(file.name),
+          folderId,
+          contentBase64: base64FromArrayBuffer(await file.arrayBuffer()),
+          metadata: { source: "web.drive-shell.import-docx" },
+        });
+        return { kind: "native-doc", documentId: document.id };
+      }
+      if (isCsvFile(file)) {
+        const sheet = await importCsvSheet({
+          filename: file.name,
+          title: titleFromSheetFilename(file.name),
+          folderId,
+          csvText: await file.text(),
+          metadata: { source: "web.drive-shell.import-csv" },
+        });
+        return { kind: "native-sheet", sheetId: sheet.id };
+      }
+      if (isTsvFile(file)) {
+        const sheet = await importTsvSheet({
+          filename: file.name,
+          title: titleFromSheetFilename(file.name),
+          folderId,
+          tsvText: await file.text(),
+          metadata: { source: "web.drive-shell.import-tsv" },
+        });
+        return { kind: "native-sheet", sheetId: sheet.id };
+      }
+      if (isXlsxFile(file)) {
+        const sheet = await importXlsxSheet({
+          filename: file.name,
+          title: titleFromSheetFilename(file.name),
+          folderId,
+          contentBase64: base64FromArrayBuffer(await file.arrayBuffer()),
+          metadata: { source: "web.drive-shell.import-xlsx" },
+        });
+        return { kind: "native-sheet", sheetId: sheet.id };
+      }
+      if (isOdsFile(file)) {
+        const sheet = await importOdsSheet({
+          filename: file.name,
+          title: titleFromSheetFilename(file.name),
+          folderId,
+          contentBase64: base64FromArrayBuffer(await file.arrayBuffer()),
+          metadata: { source: "web.drive-shell.import-ods" },
+        });
+        return { kind: "native-sheet", sheetId: sheet.id };
+      }
+      if (isPptxFile(file)) {
+        const deck = await importPptxDeck({
+          filename: file.name,
+          title: titleFromPptxFilename(file.name),
+          folderId,
+          contentBase64: base64FromArrayBuffer(await file.arrayBuffer()),
+          metadata: { source: "web.drive-shell.import-pptx" },
+        });
+        return { kind: "native-slide", deckId: deck.id };
+      }
+      await uploadDriveFile({ file, folderId });
+      return { kind: "drive" };
+    },
     onMutate: () => undefined,
     onError: () => undefined,
-    onSuccess: () => {
+    onSuccess: (result) => {
       void invalidateDrive();
+      void invalidateDocs();
+      void invalidateSheets();
+      void invalidateSlides();
+      if (result.kind === "native-doc") {
+        navigateToEditor({ to: "/docs/$documentId", params: { documentId: result.documentId } });
+      }
+      if (result.kind === "native-sheet") {
+        navigateToEditor({ to: "/sheets", search: { sheet: result.sheetId } });
+      }
+      if (result.kind === "native-slide") {
+        navigateToEditor({ to: "/slides", search: { deck: result.deckId } });
+      }
     },
   });
 
@@ -221,6 +395,14 @@ export function DriveShell() {
     },
   });
 
+  const navigateToEditor = (destination: EditorDestination): void => {
+    if (destination.to === "/docs/$documentId") {
+      void navigate({ to: destination.to, params: destination.params });
+      return;
+    }
+    void navigate({ to: destination.to, search: destination.search });
+  };
+
   const createMutation = useMutation({
     mutationFn: (vars: { readonly kind: DriveCreateKind; readonly name: string }) =>
       createDriveEntry({ kind: vars.kind, name: vars.name, folderId }),
@@ -228,13 +410,12 @@ export function DriveShell() {
     onError: () => undefined,
     onSuccess: (result) => {
       void invalidateDrive();
-      // Doc/sheet/deck kinds return `{ id, app }` — open the new item's editor
-      // by threading its id through the route's search param. Folder kinds
-      // return a plain drive entry (no `app`) and just stay in Drive.
+      // Doc/sheet/deck kinds return `{ id, app }` and open the new item's
+      // editor. Folder kinds return a plain drive entry and stay in Drive.
       if (result.app !== undefined) {
         const destination = editorDestinationFor(result.app, result.id);
         if (destination !== null) {
-          void navigate({ to: destination.to, search: destination.search });
+          navigateToEditor(destination);
         }
       }
     },
@@ -310,7 +491,7 @@ export function DriveShell() {
     if (entry?.app != null) {
       const destination = editorDestinationFor(entry.app, id);
       if (destination !== null) {
-        void navigate({ to: destination.to, search: destination.search });
+        navigateToEditor(destination);
         return;
       }
     }
@@ -838,7 +1019,10 @@ function DriveMain({
                   >
                     <Icons.Folder />
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div className="truncate" style={{ fontSize: "var(--text-meta)", fontWeight: 500 }}>
+                      <div
+                        className="truncate"
+                        style={{ fontSize: "var(--text-meta)", fontWeight: 500 }}
+                      >
                         {folder.name}
                       </div>
                       <div style={{ fontSize: "var(--text-chip)", color: "var(--text-3)" }}>
@@ -1124,7 +1308,10 @@ function DriveFileCard({
             marginBottom: 4,
           }}
         >
-          <div className="truncate" style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}>
+          <div
+            className="truncate"
+            style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}
+          >
             {file.name}
           </div>
           {file.formatLabel ? <FormatChip label={file.formatLabel} color={meta.color} /> : null}
@@ -1209,7 +1396,9 @@ function DriveFileRow({
         <span style={{ color: meta.color, display: "inline-flex" }}>
           <FileIcon />
         </span>
-        <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{file.name}</span>
+        <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
+          {file.name}
+        </span>
         {file.formatLabel ? <FormatChip label={file.formatLabel} color={meta.color} /> : null}
       </div>
       <div className="row gap-2">
@@ -1289,7 +1478,11 @@ function DriveDetailsPanel({
       { who: ownerLabel, what: "created", time: formatModified(entry.createdAt) },
     ];
     if (entry.deletedAt !== null) {
-      items.unshift({ who: ownerLabel, what: "moved to trash", time: formatModified(entry.deletedAt) });
+      items.unshift({
+        who: ownerLabel,
+        what: "moved to trash",
+        time: formatModified(entry.deletedAt),
+      });
     }
     return items;
   }, [entry, ownerLabel, file.owner, file.modified]);
@@ -1362,7 +1555,14 @@ function DriveDetailsPanel({
           )}
         </div>
         <div style={{ padding: "12px 14px" }}>
-          <div style={{ fontSize: "var(--text-body)", fontWeight: 600, marginBottom: 4, wordBreak: "break-word" }}>
+          <div
+            style={{
+              fontSize: "var(--text-body)",
+              fontWeight: 600,
+              marginBottom: 4,
+              wordBreak: "break-word",
+            }}
+          >
             {file.name}
           </div>
           <div
@@ -1391,8 +1591,8 @@ function DriveDetailsPanel({
             <a
               className="btn sm primary"
               href={download?.url ?? "#"}
-              // Native editor URLs and the PDF viewer stay in-tab; raw
-              // previews pop a new tab so the user keeps their place.
+              // Native editor URLs (/docs, /sheets, /slides) stay in-tab;
+              // raw downloads pop a new tab so the user keeps their place.
               target={
                 entry?.app === null || entry?.app === undefined
                   ? download?.url.startsWith("/pdf/") === true
@@ -1478,7 +1678,13 @@ function DriveDetailsPanel({
             Owner
           </div>
           <div
-            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-meta)", marginBottom: 12 }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: "var(--text-meta)",
+              marginBottom: 12,
+            }}
           >
             <Avatar name={ownerLabel} size={24} />
             <span className="truncate">{ownerLabel}</span>
@@ -1513,7 +1719,9 @@ function DriveDetailsPanel({
                 Share
               </button>
               {shareDone ? (
-                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 6 }}>
+                <div
+                  style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 6 }}
+                >
                   Access granted.
                 </div>
               ) : null}

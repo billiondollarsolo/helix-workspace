@@ -7,9 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DriveShell } from "./drive-shell";
 import type { DriveApiEntry } from "./api";
 
-// Mock @tanstack/react-router so DriveShell can call useNavigate without a router context.
+// Mock @tanstack/react-router so DriveShell can call router hooks without a router context.
 const navigateMock = vi.fn();
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigateMock }));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => navigateMock,
+  useSearch: () => ({}),
+}));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -24,7 +27,9 @@ function firstFileCard(container: HTMLElement): HTMLButtonElement | null {
   );
 }
 
-function entry(overrides: Partial<DriveApiEntry> & Pick<DriveApiEntry, "id" | "type" | "name">): DriveApiEntry {
+function entry(
+  overrides: Partial<DriveApiEntry> & Pick<DriveApiEntry, "id" | "type" | "name">,
+): DriveApiEntry {
   return {
     folderId: null,
     ownerActorId: "owner-1",
@@ -37,12 +42,30 @@ function entry(overrides: Partial<DriveApiEntry> & Pick<DriveApiEntry, "id" | "t
 
 const ROOT_ENTRIES: readonly DriveApiEntry[] = [
   entry({ id: "folder-eng", type: "folder", name: "Engineering" }),
-  entry({ id: "file-roadmap", type: "file", name: "Roadmap.docx", mimeType: "application/msword", byteSize: 2048 }),
-  entry({ id: "file-budget", type: "file", name: "Budget.xlsx", mimeType: "application/vnd.ms-excel", byteSize: 4096 }),
+  entry({
+    id: "file-roadmap",
+    type: "file",
+    name: "Roadmap.docx",
+    mimeType: "application/msword",
+    byteSize: 2048,
+  }),
+  entry({
+    id: "file-budget",
+    type: "file",
+    name: "Budget.xlsx",
+    mimeType: "application/vnd.ms-excel",
+    byteSize: 4096,
+  }),
 ];
 
 const FOLDER_CHILDREN: readonly DriveApiEntry[] = [
-  entry({ id: "file-nested", type: "file", name: "Nested-spec.pdf", folderId: "folder-eng", mimeType: "application/pdf" }),
+  entry({
+    id: "file-nested",
+    type: "file",
+    name: "Nested-spec.pdf",
+    folderId: "folder-eng",
+    mimeType: "application/pdf",
+  }),
 ];
 
 describe("DriveShell", () => {
@@ -61,11 +84,18 @@ describe("DriveShell", () => {
       defaultOptions: { queries: { retry: false, staleTime: 0 } },
     });
     toolCalls = [];
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => null),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+        clear: vi.fn(),
+      },
+    });
     fetchMock = vi.fn<typeof fetch>((input, init) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      const body: unknown =
-        typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
       if (url !== "/api/auth/get-session") {
         toolCalls.push({ url, body });
       }
@@ -132,9 +162,9 @@ describe("DriveShell", () => {
     render();
     await settle();
 
-    const folderButton = Array.from(
-      container.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("Engineering"));
+    const folderButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Engineering"),
+    );
     expect(folderButton).not.toBeNull();
     act(() => {
       folderButton?.click();
@@ -157,9 +187,9 @@ describe("DriveShell", () => {
     expect(crumb?.textContent ?? "").toContain("My Drive");
 
     // Clicking the root crumb returns to My Drive.
-    const rootCrumb = Array.from(
-      crumb?.querySelectorAll<HTMLButtonElement>("button") ?? [],
-    ).find((button) => button.textContent?.trim() === "My Drive");
+    const rootCrumb = Array.from(crumb?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
+      (button) => button.textContent?.trim() === "My Drive",
+    );
     act(() => {
       rootCrumb?.click();
     });
@@ -190,9 +220,9 @@ describe("DriveShell", () => {
     act(() => {
       firstFileCard(container)?.click();
     });
-    const trashButton = Array.from(
-      container.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.trim() === "Move to trash");
+    const trashButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Move to trash",
+    );
     expect(trashButton).not.toBeNull();
     act(() => {
       trashButton?.click();
@@ -206,9 +236,9 @@ describe("DriveShell", () => {
     render();
     await settle();
 
-    const sharedButton = Array.from(
-      container.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.trim() === "Shared with me");
+    const sharedButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Shared with me",
+    );
     expect(sharedButton).not.toBeNull();
     act(() => {
       sharedButton?.click();
@@ -221,8 +251,7 @@ describe("DriveShell", () => {
 
   it("surfaces a clean error state when the backend listing errors", async () => {
     fetchMock.mockImplementation((input) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url === "/api/auth/get-session") {
         return Promise.resolve(Response.json({}));
       }
@@ -252,8 +281,7 @@ describe("DriveShell", () => {
       fetchMock.mockImplementation((input, init) => {
         const url =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown =
-          typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
         if (url !== "/api/auth/get-session") {
           toolCalls.push({ url, body });
         }
@@ -275,16 +303,21 @@ describe("DriveShell", () => {
       );
     }
 
-    it("clicking a docs entry navigates to /docs with ?doc=<id>", async () => {
+    it("clicking a docs entry navigates to the native document route", async () => {
       setupFetch(makeAppEntries());
       render();
       await settle();
 
       const docButton = findFileButton("My Doc");
       expect(docButton).not.toBeNull();
-      act(() => { docButton?.click(); });
+      act(() => {
+        docButton?.click();
+      });
 
-      expect(navigateMock).toHaveBeenCalledWith({ to: "/docs", search: { doc: "doc-entry-1" } });
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/docs/$documentId",
+        params: { documentId: "doc-entry-1" },
+      });
     });
 
     it("clicking a sheets entry navigates to /sheets with ?sheet=<id>", async () => {
@@ -294,9 +327,14 @@ describe("DriveShell", () => {
 
       const sheetButton = findFileButton("My Sheet");
       expect(sheetButton).not.toBeNull();
-      act(() => { sheetButton?.click(); });
+      act(() => {
+        sheetButton?.click();
+      });
 
-      expect(navigateMock).toHaveBeenCalledWith({ to: "/sheets", search: { sheet: "sheet-entry-1" } });
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/sheets",
+        search: { sheet: "sheet-entry-1" },
+      });
     });
 
     it("clicking a slides entry navigates to /slides with ?deck=<id>", async () => {
@@ -306,9 +344,14 @@ describe("DriveShell", () => {
 
       const deckButton = findFileButton("My Deck");
       expect(deckButton).not.toBeNull();
-      act(() => { deckButton?.click(); });
+      act(() => {
+        deckButton?.click();
+      });
 
-      expect(navigateMock).toHaveBeenCalledWith({ to: "/slides", search: { deck: "deck-entry-1" } });
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/slides",
+        search: { deck: "deck-entry-1" },
+      });
     });
 
     it("clicking a plain file (no app) opens the details panel instead of navigating", async () => {
@@ -318,7 +361,9 @@ describe("DriveShell", () => {
 
       const plainButton = findFileButton("Plain.pdf");
       expect(plainButton).not.toBeNull();
-      act(() => { plainButton?.click(); });
+      act(() => {
+        plainButton?.click();
+      });
 
       // No navigation should happen
       expect(navigateMock).not.toHaveBeenCalled();
@@ -334,9 +379,9 @@ describe("DriveShell", () => {
       await settle();
 
       // Find and click the "New" button in the sidebar.
-      const newButton = Array.from(
-        container.querySelectorAll<HTMLButtonElement>("button"),
-      ).find((button) => button.textContent?.trim() === "New");
+      const newButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === "New",
+      );
       expect(newButton).not.toBeNull();
 
       act(() => {
@@ -357,8 +402,7 @@ describe("DriveShell", () => {
       fetchMock.mockImplementation((input, init) => {
         const url =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown =
-          typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
         if (url !== "/api/auth/get-session") {
           toolCalls.push({ url, body });
         }
@@ -378,9 +422,9 @@ describe("DriveShell", () => {
       await settle();
 
       // Open the "New" dropdown.
-      const newButton = Array.from(
-        container.querySelectorAll<HTMLButtonElement>("button"),
-      ).find((button) => button.textContent?.trim() === "New");
+      const newButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === "New",
+      );
       act(() => {
         newButton?.click();
       });
@@ -406,11 +450,10 @@ describe("DriveShell", () => {
       expect(typeof (createCall?.body as { name?: string }).name).toBe("string");
       expect((createCall?.body as { name?: string }).name?.length).toBeGreaterThan(0);
 
-      // The new document's editor must open: navigate to /docs threading the
-      // created id through the `doc` search param.
+      // The new document's editor must open in the native document route.
       expect(navigateMock).toHaveBeenCalledWith({
-        to: "/docs",
-        search: { doc: "new-doc-id" },
+        to: "/docs/$documentId",
+        params: { documentId: "new-doc-id" },
       });
     });
 
@@ -418,8 +461,7 @@ describe("DriveShell", () => {
       fetchMock.mockImplementation((input, init) => {
         const url =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown =
-          typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
         if (url !== "/api/auth/get-session") {
           toolCalls.push({ url, body });
         }
@@ -430,7 +472,9 @@ describe("DriveShell", () => {
           return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
         }
         if (url === "/api/tools/drive.create") {
-          return Promise.resolve(Response.json({ id: "new-folder-id", type: "folder", name: "New folder" }));
+          return Promise.resolve(
+            Response.json({ id: "new-folder-id", type: "folder", name: "New folder" }),
+          );
         }
         return Promise.resolve(Response.json({}));
       });
@@ -438,9 +482,9 @@ describe("DriveShell", () => {
       render();
       await settle();
 
-      const newButton = Array.from(
-        container.querySelectorAll<HTMLButtonElement>("button"),
-      ).find((button) => button.textContent?.trim() === "New");
+      const newButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === "New",
+      );
       act(() => {
         newButton?.click();
       });
@@ -480,11 +524,7 @@ describe("DriveShell", () => {
       };
     }
 
-    function fireDragEvent(
-      element: Element,
-      type: string,
-      dataTransfer?: DataTransfer,
-    ) {
+    function fireDragEvent(element: Element, type: string, dataTransfer?: DataTransfer) {
       const event = new Event(type, { bubbles: true, cancelable: true });
       if (dataTransfer !== undefined) {
         Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
@@ -522,8 +562,7 @@ describe("DriveShell", () => {
       fetchMock.mockImplementation((input, init) => {
         const url =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown =
-          typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
         if (url !== "/api/auth/get-session") {
           toolCalls.push({ url, body });
         }
@@ -547,6 +586,7 @@ describe("DriveShell", () => {
               sha256: "a".repeat(64),
               status: "prepared",
               uploadUrl: null,
+              uploadHeaders: {},
               metadata: {},
               createdAt: "2026-05-21T00:00:00.000Z",
               updatedAt: "2026-05-21T00:00:00.000Z",
@@ -601,6 +641,392 @@ describe("DriveShell", () => {
 
       digestSpy.mockRestore();
     });
+
+    it("imports dropped CSV files as native spreadsheets and opens Sheets", async () => {
+      fetchMock.mockImplementation((input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url !== "/api/auth/get-session") {
+          toolCalls.push({ url, body });
+        }
+        if (url === "/api/auth/get-session") {
+          return Promise.resolve(Response.json({}));
+        }
+        if (url === "/api/tools/drive.list") {
+          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
+        }
+        if (url === "/api/tools/sheets.import-csv") {
+          return Promise.resolve(
+            Response.json({
+              id: "11111111-1111-4111-8111-111111111111",
+              title: "Renewals",
+              tabs: [],
+              import: {
+                format: "csv",
+                filename: "Renewals.csv",
+                rowCount: 2,
+                columnCount: 2,
+                populatedCellCount: 4,
+              },
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({}));
+      });
+
+      render();
+      await settle();
+
+      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
+      expect(main).not.toBeNull();
+      const csvFile = new File(["Customer,ARR\nAcme,1200"], "Renewals.csv", { type: "text/csv" });
+      Object.defineProperty(csvFile, "text", {
+        configurable: true,
+        value: () => Promise.resolve("Customer,ARR\nAcme,1200"),
+      });
+      const dt = makeDataTransfer([csvFile]);
+
+      act(() => {
+        fireDragEvent(main!, "drop", dt);
+      });
+      await settle();
+
+      expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-csv")?.body).toEqual({
+        filename: "Renewals.csv",
+        title: "Renewals",
+        folderId: null,
+        csvText: "Customer,ARR\nAcme,1200",
+        metadata: { source: "web.drive-shell.import-csv" },
+      });
+      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/sheets",
+        search: { sheet: "11111111-1111-4111-8111-111111111111" },
+      });
+    });
+
+    it("imports dropped XLSX files as native spreadsheets and opens Sheets", async () => {
+      fetchMock.mockImplementation((input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url !== "/api/auth/get-session") {
+          toolCalls.push({ url, body });
+        }
+        if (url === "/api/auth/get-session") {
+          return Promise.resolve(Response.json({}));
+        }
+        if (url === "/api/tools/drive.list") {
+          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
+        }
+        if (url === "/api/tools/sheets.import-xlsx") {
+          return Promise.resolve(
+            Response.json({
+              id: "11111111-1111-4111-8111-111111111111",
+              title: "Forecast",
+              tabs: [],
+              import: {
+                format: "xlsx",
+                filename: "Forecast.xlsx",
+                sheetCount: 1,
+                rowCount: 2,
+                columnCount: 2,
+                populatedCellCount: 4,
+              },
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({}));
+      });
+
+      render();
+      await settle();
+
+      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
+      expect(main).not.toBeNull();
+      const bytes = Uint8Array.from([1, 2, 3]);
+      const xlsxFile = new File([bytes], "Forecast.xlsx", {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      Object.defineProperty(xlsxFile, "arrayBuffer", {
+        configurable: true,
+        value: () => Promise.resolve(Uint8Array.from([1, 2, 3]).buffer),
+      });
+      const dt = makeDataTransfer([xlsxFile]);
+
+      act(() => {
+        fireDragEvent(main!, "drop", dt);
+      });
+      await settle();
+
+      expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-xlsx")?.body).toEqual({
+        filename: "Forecast.xlsx",
+        title: "Forecast",
+        folderId: null,
+        contentBase64: "AQID",
+        metadata: { source: "web.drive-shell.import-xlsx" },
+      });
+      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/sheets",
+        search: { sheet: "11111111-1111-4111-8111-111111111111" },
+      });
+    });
+
+    it("imports dropped ODS files as native spreadsheets and opens Sheets", async () => {
+      fetchMock.mockImplementation((input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url !== "/api/auth/get-session") {
+          toolCalls.push({ url, body });
+        }
+        if (url === "/api/auth/get-session") {
+          return Promise.resolve(Response.json({}));
+        }
+        if (url === "/api/tools/drive.list") {
+          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
+        }
+        if (url === "/api/tools/sheets.import-ods") {
+          return Promise.resolve(
+            Response.json({
+              id: "11111111-1111-4111-8111-111111111111",
+              title: "Forecast",
+              tabs: [],
+              import: {
+                format: "ods",
+                filename: "Forecast.ods",
+                sheetCount: 1,
+                rowCount: 2,
+                columnCount: 2,
+                populatedCellCount: 4,
+              },
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({}));
+      });
+
+      render();
+      await settle();
+
+      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
+      expect(main).not.toBeNull();
+      const bytes = Uint8Array.from([4, 5, 6]);
+      const odsFile = new File([bytes], "Forecast.ods", {
+        type: "application/vnd.oasis.opendocument.spreadsheet",
+      });
+      Object.defineProperty(odsFile, "arrayBuffer", {
+        configurable: true,
+        value: () => Promise.resolve(Uint8Array.from([4, 5, 6]).buffer),
+      });
+      const dt = makeDataTransfer([odsFile]);
+
+      act(() => {
+        fireDragEvent(main!, "drop", dt);
+      });
+      await settle();
+
+      expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-ods")?.body).toEqual({
+        filename: "Forecast.ods",
+        title: "Forecast",
+        folderId: null,
+        contentBase64: "BAUG",
+        metadata: { source: "web.drive-shell.import-ods" },
+      });
+      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/sheets",
+        search: { sheet: "11111111-1111-4111-8111-111111111111" },
+      });
+    });
+
+    it("imports dropped DOCX files as native documents and opens Docs", async () => {
+      fetchMock.mockImplementation((input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url !== "/api/auth/get-session") {
+          toolCalls.push({ url, body });
+        }
+        if (url === "/api/auth/get-session") {
+          return Promise.resolve(Response.json({}));
+        }
+        if (url === "/api/tools/drive.list") {
+          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
+        }
+        if (url === "/api/tools/docs.import-docx") {
+          return Promise.resolve(
+            Response.json({
+              id: "99999999-9999-4999-8999-999999999999",
+              title: "Launch plan",
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({}));
+      });
+
+      render();
+      await settle();
+
+      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
+      expect(main).not.toBeNull();
+      const bytes = Uint8Array.from([4, 5, 6]);
+      const docxFile = new File([bytes], "Launch plan.docx", {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+      Object.defineProperty(docxFile, "arrayBuffer", {
+        configurable: true,
+        value: () => Promise.resolve(Uint8Array.from([4, 5, 6]).buffer),
+      });
+      const dt = makeDataTransfer([docxFile]);
+
+      act(() => {
+        fireDragEvent(main!, "drop", dt);
+      });
+      await settle();
+
+      expect(toolCalls.find((call) => call.url === "/api/tools/docs.import-docx")?.body).toEqual({
+        filename: "Launch plan.docx",
+        title: "Launch plan",
+        folderId: null,
+        contentBase64: "BAUG",
+        metadata: { source: "web.drive-shell.import-docx" },
+      });
+      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/docs/$documentId",
+        params: { documentId: "99999999-9999-4999-8999-999999999999" },
+      });
+    });
+
+    it("imports dropped PPTX files as native presentations and opens Slides", async () => {
+      fetchMock.mockImplementation((input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url !== "/api/auth/get-session") {
+          toolCalls.push({ url, body });
+        }
+        if (url === "/api/auth/get-session") {
+          return Promise.resolve(Response.json({}));
+        }
+        if (url === "/api/tools/drive.list") {
+          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
+        }
+        if (url === "/api/tools/slides.import-pptx") {
+          return Promise.resolve(
+            Response.json({
+              id: "88888888-8888-4888-8888-888888888888",
+              title: "Board narrative",
+              slides: [],
+              import: { sourceFormat: "pptx", slideCount: 2, fidelity: "first-pass-text" },
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({}));
+      });
+
+      render();
+      await settle();
+
+      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
+      expect(main).not.toBeNull();
+      const bytes = Uint8Array.from([7, 8, 9]);
+      const pptxFile = new File([bytes], "Board narrative.pptx", {
+        type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      });
+      Object.defineProperty(pptxFile, "arrayBuffer", {
+        configurable: true,
+        value: () => Promise.resolve(Uint8Array.from([7, 8, 9]).buffer),
+      });
+      const dt = makeDataTransfer([pptxFile]);
+
+      act(() => {
+        fireDragEvent(main!, "drop", dt);
+      });
+      await settle();
+
+      expect(toolCalls.find((call) => call.url === "/api/tools/slides.import-pptx")?.body).toEqual({
+        filename: "Board narrative.pptx",
+        title: "Board narrative",
+        folderId: null,
+        contentBase64: "BwgJ",
+        metadata: { source: "web.drive-shell.import-pptx" },
+      });
+      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/slides",
+        search: { deck: "88888888-8888-4888-8888-888888888888" },
+      });
+    });
+
+    it("imports dropped TSV files as native spreadsheets and opens Sheets", async () => {
+      fetchMock.mockImplementation((input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        if (url !== "/api/auth/get-session") {
+          toolCalls.push({ url, body });
+        }
+        if (url === "/api/auth/get-session") {
+          return Promise.resolve(Response.json({}));
+        }
+        if (url === "/api/tools/drive.list") {
+          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
+        }
+        if (url === "/api/tools/sheets.import-tsv") {
+          return Promise.resolve(
+            Response.json({
+              id: "11111111-1111-4111-8111-111111111111",
+              title: "Pipeline",
+              tabs: [],
+              import: {
+                format: "tsv",
+                filename: "Pipeline.tsv",
+                rowCount: 2,
+                columnCount: 2,
+                populatedCellCount: 4,
+              },
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({}));
+      });
+
+      render();
+      await settle();
+
+      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
+      expect(main).not.toBeNull();
+      const tsvFile = new File(["Customer\tStage\nAcme\tCommit"], "Pipeline.tsv", {
+        type: "text/tab-separated-values",
+      });
+      Object.defineProperty(tsvFile, "text", {
+        configurable: true,
+        value: () => Promise.resolve("Customer\tStage\nAcme\tCommit"),
+      });
+      const dt = makeDataTransfer([tsvFile]);
+
+      act(() => {
+        fireDragEvent(main!, "drop", dt);
+      });
+      await settle();
+
+      expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-tsv")?.body).toEqual({
+        filename: "Pipeline.tsv",
+        title: "Pipeline",
+        folderId: null,
+        tsvText: "Customer\tStage\nAcme\tCommit",
+        metadata: { source: "web.drive-shell.import-tsv" },
+      });
+      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/sheets",
+        search: { sheet: "11111111-1111-4111-8111-111111111111" },
+      });
+    });
   });
 
   describe("FAB (floating action button)", () => {
@@ -641,8 +1067,7 @@ describe("DriveShell", () => {
       fetchMock.mockImplementation((input, init) => {
         const url =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown =
-          typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
         if (url !== "/api/auth/get-session") {
           toolCalls.push({ url, body });
         }
@@ -684,7 +1109,10 @@ describe("DriveShell", () => {
       expect(container.querySelector('[data-testid="drive-fab-menu"]')).toBeNull();
 
       // Should navigate to the new doc's editor
-      expect(navigateMock).toHaveBeenCalledWith({ to: "/docs", search: { doc: "doc-fab-id" } });
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/docs/$documentId",
+        params: { documentId: "doc-fab-id" },
+      });
     });
 
     it("FAB menu closes when escape is pressed", async () => {

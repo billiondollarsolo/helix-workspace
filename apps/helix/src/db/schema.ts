@@ -1089,12 +1089,52 @@ export const sheetCells = pgTable(
     row: integer("row").notNull(),
     col: integer("col").notNull(),
     value: text("value").default("").notNull(),
+    formula: text("formula"),
+    calcValue: text("calc_value"),
+    dependencies: jsonb("dependencies").default([]).notNull(),
+    formulaError: text("formula_error"),
     format: jsonb("format").default({}).notNull(),
     ...timestamps,
   },
   (table) => ({
     tabCoordIdx: uniqueIndex("sheet_cells_tab_coord_idx").on(table.sheetTabId, table.row, table.col),
     orgIdx: index("sheet_cells_org_idx").on(table.orgId),
+  }),
+);
+
+export const sheetOpLog = pgTable(
+  "sheet_op_log",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    sheetId: uuid("sheet_id")
+      .references(() => sheets.id, { onDelete: "cascade" })
+      .notNull(),
+    sheetTabId: uuid("sheet_tab_id")
+      .references(() => sheetTabs.id, { onDelete: "cascade" })
+      .notNull(),
+    actorId: uuid("actor_id").references(() => actors.id),
+    operationId: text("operation_id").notNull(),
+    revision: integer("revision").notNull(),
+    baseRevision: integer("base_revision").notNull(),
+    operation: jsonb("operation").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    sheetRevisionIdx: uniqueIndex("sheet_op_log_sheet_revision_idx").on(
+      table.sheetId,
+      table.revision,
+    ),
+    sheetOperationIdx: uniqueIndex("sheet_op_log_sheet_operation_idx").on(
+      table.sheetId,
+      table.operationId,
+    ),
+    orgSheetRevisionIdx: index("sheet_op_log_org_sheet_revision_idx").on(
+      table.orgId,
+      table.sheetId,
+      table.revision,
+    ),
+    orgCreatedIdx: index("sheet_op_log_org_created_idx").on(table.orgId, table.createdAt),
   }),
 );
 

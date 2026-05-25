@@ -1,10 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import { insertNotification } from "../notifications/store.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
+import { evaluateSheetFormulas, type SheetFormulaNamedRange } from "./formula.js";
 import type {
   SheetCellEdit,
   SheetCellRecord,
+  SheetCommentListItem,
+  SheetCommentRecord,
   SheetRecord,
   SheetTabRecord,
   SheetTabWithCells,
@@ -93,12 +97,174 @@ export interface TabRef {
   readonly tabId: string;
 }
 
+export interface SheetCellWindow {
+  readonly startRow: number;
+  readonly startCol: number;
+  readonly endRow: number;
+  readonly endCol: number;
+}
+
+export interface GetTabCellsInput extends TabRef {
+  readonly window?: SheetCellWindow | undefined;
+}
+
 export interface UpdateCellsInput {
   readonly orgId: string;
   readonly actorId: string;
   readonly tabId: string;
   readonly edits: readonly SheetCellEdit[];
+  readonly window?: SheetCellWindow | undefined;
 }
+
+export interface SortRangeInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly tabId: string;
+  readonly range: {
+    readonly startRow: number;
+    readonly startCol: number;
+    readonly endRow: number;
+    readonly endCol: number;
+  };
+  readonly direction: "asc" | "desc";
+  readonly window?: SheetCellWindow | undefined;
+}
+
+export interface CreateSheetCommentInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly sheetId: string;
+  readonly parentCommentId?: string | undefined;
+  readonly body: string;
+  readonly anchor?: JsonObject | undefined;
+  readonly metadata?: JsonObject | undefined;
+}
+
+export interface ListSheetCommentsInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly sheetId: string;
+  readonly status?: string | undefined;
+}
+
+export interface ResolveSheetCommentInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly commentId: string;
+}
+
+export interface UpdateSheetCommentInput extends ResolveSheetCommentInput {
+  readonly body: string;
+}
+
+export type DeleteSheetCommentInput = ResolveSheetCommentInput;
+
+export interface SheetOperationLogRecord {
+  readonly orgId: string;
+  readonly sheetId: string;
+  readonly tabId: string;
+  readonly actorId: string | null;
+  readonly operationId: string;
+  readonly revision: number;
+  readonly baseRevision: number;
+  readonly operation: SheetOperation;
+  readonly createdAt: Date;
+}
+
+export interface AppendSheetOperationInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly sheetId: string;
+  readonly tabId: string;
+  readonly operationId: string;
+  readonly baseRevision: number;
+  readonly operation: SheetOperation;
+}
+
+export type SheetCellOperation =
+  | {
+      readonly kind: "set-cell";
+      readonly row: number;
+      readonly col: number;
+      readonly value: string;
+    }
+  | {
+      readonly kind: "clear-cell";
+      readonly row: number;
+      readonly col: number;
+    }
+  | {
+      readonly kind: "insert-rows";
+      readonly index: number;
+      readonly count: number;
+    }
+  | {
+      readonly kind: "delete-rows";
+      readonly index: number;
+      readonly count: number;
+    }
+  | {
+      readonly kind: "insert-columns";
+      readonly index: number;
+      readonly count: number;
+    }
+  | {
+      readonly kind: "delete-columns";
+      readonly index: number;
+      readonly count: number;
+    };
+
+export interface SheetOperation {
+  readonly id: string;
+  readonly baseRevision: number;
+  readonly changes: readonly SheetCellOperation[];
+}
+
+export interface SheetSnapshotStorageClient {
+  put(object: {
+    readonly key: string;
+    readonly body: Uint8Array;
+    readonly contentType?: string;
+  }): Promise<void>;
+}
+
+export type SheetSnapshotStorageResolver = (input: {
+  readonly orgId: string;
+}) =>
+  | Promise<{ readonly client: SheetSnapshotStorageClient } | undefined>
+  | { readonly client: SheetSnapshotStorageClient }
+  | undefined;
+
+export interface ApplySheetOperationInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly sheetId: string;
+  readonly tabId: string;
+  readonly operation: SheetOperation;
+}
+
+export type ApplySheetOperationResult =
+  | {
+      readonly status: "applied";
+      readonly revision: number;
+      readonly operation: SheetOperation;
+      readonly tab: SheetTabWithCells;
+    }
+  | {
+      readonly status: "dropped";
+      readonly operationId: string;
+      readonly revision: number;
+    }
+  | {
+      readonly status: "duplicate";
+      readonly operationId: string;
+      readonly revision: number;
+    }
+  | {
+      readonly status: "ahead";
+      readonly operationId: string;
+      readonly revision: number;
+    };
 
 /**
  * Persistence contract for the Sheets domain. Implemented by both
@@ -114,8 +280,20 @@ export interface SheetsStore {
   createTab(input: CreateTabInput): Promise<SheetTabRecord>;
   updateTab(input: UpdateTabInput): Promise<SheetTabRecord | null>;
   deleteTab(input: TabRef): Promise<SheetTabRecord | null>;
-  getTabCells(input: TabRef): Promise<SheetTabWithCells | null>;
+  getTabCells(input: GetTabCellsInput): Promise<SheetTabWithCells | null>;
   updateCells(input: UpdateCellsInput): Promise<SheetTabWithCells>;
+  sortRange(input: SortRangeInput): Promise<SheetTabWithCells>;
+  createComment(input: CreateSheetCommentInput): Promise<SheetCommentRecord>;
+  listComments(input: ListSheetCommentsInput): Promise<readonly SheetCommentListItem[]>;
+  resolveComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null>;
+  reopenComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null>;
+  updateComment(input: UpdateSheetCommentInput): Promise<SheetCommentRecord | null>;
+  deleteComment(input: DeleteSheetCommentInput): Promise<SheetCommentRecord | null>;
+  listOperations(
+    input: SheetRef & { readonly afterRevision?: number | undefined },
+  ): Promise<readonly SheetOperationLogRecord[]>;
+  appendOperation(input: AppendSheetOperationInput): Promise<SheetOperationLogRecord>;
+  applyOperation(input: ApplySheetOperationInput): Promise<ApplySheetOperationResult>;
 }
 
 const MAX_TITLE = 255;
@@ -140,9 +318,7 @@ function assertTabName(name: string): string {
     throw new SheetsValidationError("Tab name must not be empty.");
   }
   if (trimmed.length > MAX_TAB_NAME) {
-    throw new SheetsValidationError(
-      `Tab name must be at most ${String(MAX_TAB_NAME)} characters.`,
-    );
+    throw new SheetsValidationError(`Tab name must be at most ${String(MAX_TAB_NAME)} characters.`);
   }
   return trimmed;
 }
@@ -161,6 +337,42 @@ function assertCellEdit(edit: SheetCellEdit): void {
   }
 }
 
+function normalizeSheetRange(range: SortRangeInput["range"]): {
+  readonly top: number;
+  readonly left: number;
+  readonly bottom: number;
+  readonly right: number;
+} {
+  for (const [name, value] of Object.entries(range)) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new SheetsValidationError(`${name} must be a non-negative integer.`);
+    }
+  }
+  return {
+    top: Math.min(range.startRow, range.endRow),
+    left: Math.min(range.startCol, range.endCol),
+    bottom: Math.max(range.startRow, range.endRow),
+    right: Math.max(range.startCol, range.endCol),
+  };
+}
+
+function filterCellsInWindow(
+  cells: readonly SheetCellRecord[],
+  window: SheetCellWindow | undefined,
+): readonly SheetCellRecord[] {
+  if (window === undefined) {
+    return cells;
+  }
+  const normalized = normalizeSheetRange(window);
+  return cells.filter(
+    (cell) =>
+      cell.row >= normalized.top &&
+      cell.row <= normalized.bottom &&
+      cell.col >= normalized.left &&
+      cell.col <= normalized.right,
+  );
+}
+
 /** True when an edit clears the cell (empty value, no format). */
 function isClearingEdit(edit: SheetCellEdit): boolean {
   return edit.value.length === 0 && (edit.format === undefined || isEmptyObject(edit.format));
@@ -168,6 +380,866 @@ function isClearingEdit(edit: SheetCellEdit): boolean {
 
 function isEmptyObject(value: JsonObject): boolean {
   return Object.keys(value).length === 0;
+}
+
+interface SheetProtectedRange {
+  readonly id?: string | undefined;
+  readonly tabId: string;
+  readonly label: string;
+  readonly mode?: "block" | "warn";
+  readonly range: {
+    readonly startRow: number;
+    readonly startCol: number;
+    readonly endRow: number;
+    readonly endCol: number;
+  };
+}
+
+interface SheetNamedRange {
+  readonly id?: string;
+  readonly tabId: string;
+  readonly name: string;
+  readonly range: {
+    readonly startRow: number;
+    readonly startCol: number;
+    readonly endRow: number;
+    readonly endCol: number;
+  };
+}
+
+interface SheetMergedCellRange {
+  readonly id?: string;
+  readonly tabId: string;
+  readonly label?: string;
+  readonly range: SheetNamedRange["range"];
+}
+
+interface SheetChartMetadata {
+  readonly id: string;
+  readonly tabId: string;
+  readonly type: string;
+  readonly title: string;
+  readonly range: SheetNamedRange["range"];
+  readonly labelCol?: number;
+  readonly valueCol?: number;
+  readonly placement?: {
+    readonly anchorRow: number;
+    readonly anchorCol: number;
+    readonly rowSpan: number;
+    readonly colSpan: number;
+  };
+}
+
+interface SheetFilterPredicateMetadata {
+  readonly column: number;
+  readonly operator: string;
+  readonly value: string;
+}
+
+interface SheetFilterViewMetadata {
+  readonly id: string;
+  readonly tabId: string;
+  readonly name: string;
+  readonly sortDirection: string;
+  readonly sortColumn?: number;
+  readonly sortKeys?: readonly number[];
+  readonly predicate?: SheetFilterPredicateMetadata;
+  readonly predicates?: readonly SheetFilterPredicateMetadata[];
+  readonly range: SheetNamedRange["range"];
+}
+
+interface SheetPivotSlicerMetadata {
+  readonly column: number;
+  readonly operator: string;
+  readonly value: string;
+}
+
+interface SheetPivotTableMetadata {
+  readonly id: string;
+  readonly tabId: string;
+  readonly title: string;
+  readonly rowFieldCol: number;
+  readonly valueFieldCol: number;
+  readonly aggregation: string;
+  readonly slicer?: SheetPivotSlicerMetadata;
+  readonly range: SheetNamedRange["range"];
+}
+
+interface SheetFrozenPanesMetadata {
+  readonly tabId: string;
+  readonly frozenRows: number;
+  readonly frozenCols: number;
+}
+
+interface SheetRangeCommentAnchor {
+  readonly type: "sheet-range";
+  readonly tabId?: string;
+  readonly label?: string;
+  readonly range?: SheetNamedRange["range"];
+  readonly deleted?: boolean;
+}
+
+type SheetGridRange = SheetNamedRange["range"];
+type SheetMetadataRangeEntry = {
+  readonly tabId: string;
+  readonly range: SheetGridRange;
+};
+
+interface SheetValidationContext {
+  readonly namedRanges: readonly SheetNamedRange[];
+  readonly values: ReadonlyMap<string, string>;
+}
+
+function assertNoProtectedRangeEdits(
+  edits: readonly SheetCellEdit[],
+  tab: Pick<SheetTabRecord, "id" | "sheetId">,
+  sheet: Pick<SheetRecord, "metadata">,
+): void {
+  const protectedRanges = protectedRangesFromMetadata(sheet.metadata).filter(
+    (range) => range.tabId === tab.id && protectedRangeBlocksEdits(range),
+  );
+  const blocked = edits.find((edit) =>
+    protectedRanges.some((protectedRange) =>
+      cellEditIntersectsProtectedRange(edit, protectedRange),
+    ),
+  );
+  if (blocked === undefined) {
+    return;
+  }
+  const range = protectedRanges.find((protectedRange) =>
+    cellEditIntersectsProtectedRange(blocked, protectedRange),
+  );
+  throw new SheetsValidationError(
+    `Cell ${cellA1(blocked.row, blocked.col)} is inside protected range ${
+      range?.label ?? "Protected range"
+    }.`,
+  );
+}
+
+function assertNoHardValidationFailures(
+  edits: readonly SheetCellEdit[],
+  currentCells: readonly SheetCellRecord[],
+  tab: Pick<SheetTabRecord, "id">,
+  sheet: Pick<SheetRecord, "metadata">,
+): void {
+  const currentByCoordinate = new Map(
+    currentCells.map((cell) => [cellValidationKey(cell.row, cell.col), cell] as const),
+  );
+  const validationContext = validationContextForSheet(currentCells, edits, tab.id, sheet.metadata);
+  for (const edit of edits) {
+    const existing = currentByCoordinate.get(cellValidationKey(edit.row, edit.col));
+    const format =
+      edit.format === undefined
+        ? (existing?.format ?? {})
+        : mergeSheetCellFormat(existing?.format ?? {}, edit.format);
+    const validation = format["dataValidation"];
+    if (
+      sheetDataValidationMode(validation) === "reject" &&
+      sheetValidationMessageForValue(edit.value, validation, validationContext) !== null
+    ) {
+      throw new SheetsValidationError(
+        `Cell ${cellA1(edit.row, edit.col)} violates reject-mode data validation.`,
+      );
+    }
+  }
+}
+
+function mergeSheetCellFormat(existing: JsonObject, patch: JsonObject): JsonObject {
+  const clearedKeys = new Set(
+    Object.entries(patch)
+      .filter(([, value]) => value === false || value === null || value === "")
+      .map(([key]) => key),
+  );
+  const entries = Object.entries(existing).filter(([key]) => !clearedKeys.has(key));
+  for (const [key, value] of Object.entries(patch)) {
+    if (!clearedKeys.has(key)) {
+      entries.push([key, value]);
+    }
+  }
+  return Object.fromEntries(entries);
+}
+
+function cellValidationKey(row: number, col: number): string {
+  return `${String(row)}:${String(col)}`;
+}
+
+function sheetDataValidationMode(value: unknown): "warn" | "reject" {
+  return isPlainRecord(value) && value["mode"] === "reject" ? "reject" : "warn";
+}
+
+function sheetDataValidationKind(
+  value: unknown,
+): "none" | "number" | "email" | "url" | "date" | "list" | "customFormula" {
+  if (!isPlainRecord(value)) {
+    return "none";
+  }
+  const type = value["type"];
+  return type === "number" ||
+    type === "email" ||
+    type === "url" ||
+    type === "date" ||
+    type === "list" ||
+    type === "customFormula"
+    ? type
+    : "none";
+}
+
+function sheetDataValidationDateLocale(value: unknown): "iso" | "en-US" | "en-GB" | "de-DE" {
+  if (!isPlainRecord(value)) {
+    return "iso";
+  }
+  const locale = value["locale"];
+  return locale === "en-US" || locale === "en-GB" || locale === "de-DE" ? locale : "iso";
+}
+
+function validationContextForSheet(
+  currentCells: readonly SheetCellRecord[],
+  edits: readonly SheetCellEdit[],
+  tabId: string,
+  metadata: JsonObject,
+): SheetValidationContext {
+  const values = new Map(
+    currentCells.map((cell) => [cellValidationKey(cell.row, cell.col), cell.value]),
+  );
+  for (const edit of edits) {
+    values.set(cellValidationKey(edit.row, edit.col), edit.value);
+  }
+  return {
+    namedRanges: namedRangesFromMetadata(metadata).filter((range) => range.tabId === tabId),
+    values,
+  };
+}
+
+function sheetValidationMessageForValue(
+  value: string,
+  validation: unknown,
+  context: SheetValidationContext,
+): string | null {
+  const kind = sheetDataValidationKind(validation);
+  if (kind === "none" || value.trim().length === 0 || value.trimStart().startsWith("=")) {
+    return null;
+  }
+  if (kind === "number" && !Number.isFinite(Number(value.replace(/,/g, "")))) {
+    return "Expected a number.";
+  }
+  if (kind === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value.trim())) {
+    return "Expected an email address.";
+  }
+  if (kind === "url" && !isValidSheetHttpUrl(value.trim())) {
+    return "Expected a URL.";
+  }
+  if (kind === "date") {
+    const locale = sheetDataValidationDateLocale(validation);
+    if (!isValidSheetDateForLocale(value.trim(), locale)) {
+      return `Expected a date in ${sheetDateLocaleFormatLabel(locale)} format.`;
+    }
+  }
+  if (kind === "list") {
+    const choices = sheetDataValidationChoices(validation, context);
+    if (choices.length > 0 && !choices.includes(value.trim())) {
+      return "Expected a listed value.";
+    }
+  }
+  if (
+    kind === "customFormula" &&
+    !sheetValidationFormulaMatches(
+      sheetDataValidationFormulaText(validation) || '=VALUE<>""',
+      value,
+      context,
+    )
+  ) {
+    return "Expected a value matching the validation formula.";
+  }
+  return null;
+}
+
+function sheetDataValidationChoices(
+  value: unknown,
+  context?: SheetValidationContext,
+): readonly string[] {
+  if (!isPlainRecord(value) || !Array.isArray(value["choices"])) {
+    const namedRangeId = isPlainRecord(value) ? value["namedRangeId"] : undefined;
+    return typeof namedRangeId === "string" && context !== undefined
+      ? sheetDataValidationNamedRangeChoices(namedRangeId, context)
+      : [];
+  }
+  return value["choices"]
+    .filter((choice): choice is string => typeof choice === "string")
+    .map((choice) => choice.trim())
+    .filter((choice) => choice.length > 0);
+}
+
+function sheetDataValidationNamedRangeChoices(
+  namedRangeId: string,
+  context: SheetValidationContext,
+): readonly string[] {
+  const namedRange = context.namedRanges.find((range) => range.id === namedRangeId);
+  if (namedRange === undefined) {
+    return [];
+  }
+  const top = Math.min(namedRange.range.startRow, namedRange.range.endRow);
+  const bottom = Math.max(namedRange.range.startRow, namedRange.range.endRow);
+  const left = Math.min(namedRange.range.startCol, namedRange.range.endCol);
+  const right = Math.max(namedRange.range.startCol, namedRange.range.endCol);
+  const choices: string[] = [];
+  for (let row = top; row <= bottom; row += 1) {
+    for (let col = left; col <= right; col += 1) {
+      const choice = context.values.get(cellValidationKey(row, col))?.trim() ?? "";
+      if (choice.length > 0 && !choices.includes(choice)) {
+        choices.push(choice);
+      }
+      if (choices.length >= 100) {
+        return choices;
+      }
+    }
+  }
+  return choices;
+}
+
+function sheetDataValidationFormulaText(validation: unknown): string {
+  if (!isPlainRecord(validation)) {
+    return "";
+  }
+  const formula = validation["formula"];
+  return typeof formula === "string" ? formula : "";
+}
+
+function isValidSheetHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isValidSheetDateForLocale(
+  value: string,
+  locale: "iso" | "en-US" | "en-GB" | "de-DE",
+): boolean {
+  if (isValidSheetIsoDate(value)) {
+    return true;
+  }
+  if (locale === "en-US") {
+    return isValidSheetDateParts(sheetMonthDayYearDateParts(value, "/"));
+  }
+  if (locale === "en-GB") {
+    return isValidSheetDateParts(sheetDayMonthYearDateParts(value, "/"));
+  }
+  if (locale === "de-DE") {
+    return isValidSheetDateParts(sheetDayMonthYearDateParts(value, "."));
+  }
+  return false;
+}
+
+function isValidSheetIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) {
+    return false;
+  }
+  return isValidSheetDateParts({
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+  });
+}
+
+function sheetMonthDayYearDateParts(
+  value: string,
+  separator: "/" | ".",
+): { readonly year: number; readonly month: number; readonly day: number } | null {
+  const escapedSeparator = separator === "." ? "\\." : separator;
+  const match = new RegExp(
+    `^(\\d{1,2})${escapedSeparator}(\\d{1,2})${escapedSeparator}(\\d{4})$`,
+    "u",
+  ).exec(value);
+  if (match === null) {
+    return null;
+  }
+  return {
+    month: Number(match[1]),
+    day: Number(match[2]),
+    year: Number(match[3]),
+  };
+}
+
+function sheetDayMonthYearDateParts(
+  value: string,
+  separator: "/" | ".",
+): { readonly year: number; readonly month: number; readonly day: number } | null {
+  const escapedSeparator = separator === "." ? "\\." : separator;
+  const match = new RegExp(
+    `^(\\d{1,2})${escapedSeparator}(\\d{1,2})${escapedSeparator}(\\d{4})$`,
+    "u",
+  ).exec(value);
+  if (match === null) {
+    return null;
+  }
+  return {
+    day: Number(match[1]),
+    month: Number(match[2]),
+    year: Number(match[3]),
+  };
+}
+
+function isValidSheetDateParts(
+  parts: { readonly year: number; readonly month: number; readonly day: number } | null,
+): boolean {
+  if (parts === null) {
+    return false;
+  }
+  const { year, month, day } = parts;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+function sheetDateLocaleFormatLabel(locale: "iso" | "en-US" | "en-GB" | "de-DE"): string {
+  if (locale === "en-US") {
+    return "m/d/yyyy";
+  }
+  if (locale === "en-GB") {
+    return "d/m/yyyy";
+  }
+  if (locale === "de-DE") {
+    return "d.m.yyyy";
+  }
+  return "yyyy-mm-dd";
+}
+
+function sheetValidationFormulaMatches(
+  formula: string,
+  value: string,
+  context: SheetValidationContext,
+): boolean {
+  const expression = formula.trim().replace(/^=/u, "").trim();
+  if (expression.length === 0) {
+    return false;
+  }
+  const comparison = expression.match(/^(.+?)\s*(>=|<=|<>|!=|=|>|<)\s*(.+)$/u);
+  if (comparison === null) {
+    return sheetFormulaTermTruthy(sheetValidationFormulaTermValue(expression, value, context));
+  }
+  const left = sheetValidationFormulaTermValue(comparison[1]?.trim() ?? "", value, context);
+  const operator = comparison[2] ?? "";
+  const right = sheetValidationFormulaTermValue(comparison[3]?.trim() ?? "", value, context);
+  return compareSheetFormulaTerms(left, operator, right);
+}
+
+function sheetValidationFormulaTermValue(
+  term: string,
+  value: string,
+  context: SheetValidationContext,
+): string | number | boolean {
+  const normalized = term.trim();
+  if (/^VALUE$/iu.test(normalized)) {
+    return value.trim();
+  }
+  if (/^TRUE$/iu.test(normalized)) {
+    return true;
+  }
+  if (/^FALSE$/iu.test(normalized)) {
+    return false;
+  }
+  const quoted = normalized.match(/^"([^"]*)"$/u);
+  if (quoted !== null) {
+    return quoted[1] ?? "";
+  }
+  const numeric = Number(normalized.replace(/,/g, ""));
+  if (Number.isFinite(numeric) && normalized.length > 0) {
+    return numeric;
+  }
+  const reference = normalized.match(/^\$?([A-Za-z]{1,3})\$?([1-9]\d*)$/u);
+  if (reference !== null) {
+    const referencedCol = columnIndexFromLabel((reference[1] ?? "").toUpperCase());
+    const referencedRow = Number(reference[2]) - 1;
+    if (referencedCol !== null && Number.isInteger(referencedRow) && referencedRow >= 0) {
+      return context.values.get(cellValidationKey(referencedRow, referencedCol))?.trim() ?? "";
+    }
+  }
+  return normalized;
+}
+
+function sheetFormulaTermTruthy(value: string | number | boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  const numeric = Number(value.replace(/,/g, ""));
+  if (Number.isFinite(numeric) && value.trim().length > 0) {
+    return numeric !== 0;
+  }
+  return value.trim().length > 0;
+}
+
+function compareSheetFormulaTerms(
+  left: string | number | boolean,
+  operator: string,
+  right: string | number | boolean,
+): boolean {
+  const leftNumeric = typeof left === "number" ? left : Number(String(left).replace(/,/g, ""));
+  const rightNumeric = typeof right === "number" ? right : Number(String(right).replace(/,/g, ""));
+  const numericComparison =
+    Number.isFinite(leftNumeric) &&
+    Number.isFinite(rightNumeric) &&
+    String(left).trim().length > 0 &&
+    String(right).trim().length > 0;
+  const leftValue = numericComparison ? leftNumeric : String(left).toLowerCase();
+  const rightValue = numericComparison ? rightNumeric : String(right).toLowerCase();
+
+  if (operator === ">") return leftValue > rightValue;
+  if (operator === "<") return leftValue < rightValue;
+  if (operator === ">=") return leftValue >= rightValue;
+  if (operator === "<=") return leftValue <= rightValue;
+  if (operator === "!=" || operator === "<>") return leftValue !== rightValue;
+  return leftValue === rightValue;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function protectedRangesFromMetadata(metadata: JsonObject): readonly SheetProtectedRange[] {
+  const ranges = metadata["protectedRanges"];
+  if (!Array.isArray(ranges)) {
+    return [];
+  }
+  return ranges.filter(isSheetProtectedRange);
+}
+
+function protectedRangeAuditDelta(
+  beforeMetadata: JsonObject,
+  afterMetadata: JsonObject,
+): JsonObject | null {
+  const before = protectedRangesFromMetadata(beforeMetadata).map(protectedRangeAuditEntry);
+  const after = protectedRangesFromMetadata(afterMetadata).map(protectedRangeAuditEntry);
+  const beforeByKey = new Map(before.map((range) => [protectedRangeAuditKey(range), range]));
+  const afterByKey = new Map(after.map((range) => [protectedRangeAuditKey(range), range]));
+  const added = after.filter((range) => !beforeByKey.has(protectedRangeAuditKey(range)));
+  const removed = before.filter((range) => !afterByKey.has(protectedRangeAuditKey(range)));
+  const changed = after.flatMap((range): JsonObject[] => {
+    const beforeRange = beforeByKey.get(protectedRangeAuditKey(range));
+    if (beforeRange === undefined || protectedRangeAuditEqual(beforeRange, range)) {
+      return [];
+    }
+    return [{ before: beforeRange, after: range }];
+  });
+  if (added.length === 0 && removed.length === 0 && changed.length === 0) {
+    return null;
+  }
+  return { added, removed, changed };
+}
+
+function protectedRangeAuditEntry(range: SheetProtectedRange): JsonObject {
+  return {
+    ...(range.id === undefined ? {} : { id: range.id }),
+    tabId: range.tabId,
+    label: range.label,
+    mode: range.mode ?? "block",
+    range: {
+      startRow: range.range.startRow,
+      startCol: range.range.startCol,
+      endRow: range.range.endRow,
+      endCol: range.range.endCol,
+    },
+  };
+}
+
+function protectedRangeAuditKey(range: JsonObject): string {
+  const id = range["id"];
+  if (typeof id === "string" && id.length > 0) {
+    return `id:${id}`;
+  }
+  const rangeValue = range["range"];
+  if (typeof rangeValue !== "object" || rangeValue === null || Array.isArray(rangeValue)) {
+    return JSON.stringify(range);
+  }
+  const gridRange = rangeValue as Record<string, unknown>;
+  return [
+    "range",
+    range["tabId"],
+    range["label"],
+    gridRange["startRow"],
+    gridRange["startCol"],
+    gridRange["endRow"],
+    gridRange["endCol"],
+  ].join(":");
+}
+
+function protectedRangeAuditEqual(before: JsonObject, after: JsonObject): boolean {
+  return JSON.stringify(before) === JSON.stringify(after);
+}
+
+function namedFormulaRangesFromMetadata(metadata: JsonObject): readonly SheetFormulaNamedRange[] {
+  return namedRangesFromMetadata(metadata).map(({ name, tabId, range }) => ({
+    name,
+    tabId,
+    range,
+  }));
+}
+
+function namedRangesFromMetadata(metadata: JsonObject): readonly SheetNamedRange[] {
+  const ranges = metadata["namedRanges"];
+  if (!Array.isArray(ranges)) {
+    return [];
+  }
+  return ranges.filter(isSheetNamedRange);
+}
+
+function isSheetNamedRange(value: unknown): value is SheetNamedRange {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const range = candidate["range"];
+  return (
+    (candidate["id"] === undefined || typeof candidate["id"] === "string") &&
+    typeof candidate["tabId"] === "string" &&
+    typeof candidate["name"] === "string" &&
+    typeof range === "object" &&
+    range !== null &&
+    !Array.isArray(range) &&
+    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endCol"])
+  );
+}
+
+function isSheetMergedCellRange(value: unknown): value is SheetMergedCellRange {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const range = candidate["range"];
+  return (
+    (candidate["id"] === undefined || typeof candidate["id"] === "string") &&
+    typeof candidate["tabId"] === "string" &&
+    (candidate["label"] === undefined || typeof candidate["label"] === "string") &&
+    typeof range === "object" &&
+    range !== null &&
+    !Array.isArray(range) &&
+    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endCol"])
+  );
+}
+
+function isSheetProtectedRange(value: unknown): value is SheetProtectedRange {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const range = candidate["range"];
+  return (
+    (candidate["id"] === undefined || typeof candidate["id"] === "string") &&
+    typeof candidate["tabId"] === "string" &&
+    typeof candidate["label"] === "string" &&
+    (candidate["mode"] === undefined || isSheetProtectedRangeMode(candidate["mode"])) &&
+    typeof range === "object" &&
+    range !== null &&
+    !Array.isArray(range) &&
+    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endCol"])
+  );
+}
+
+function isSheetChartMetadata(value: unknown): value is SheetChartMetadata {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const range = candidate["range"];
+  const placement = candidate["placement"];
+  return (
+    typeof candidate["id"] === "string" &&
+    typeof candidate["tabId"] === "string" &&
+    typeof candidate["type"] === "string" &&
+    typeof candidate["title"] === "string" &&
+    typeof range === "object" &&
+    range !== null &&
+    !Array.isArray(range) &&
+    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endCol"]) &&
+    isOptionalNonnegativeInteger(candidate["labelCol"]) &&
+    isOptionalNonnegativeInteger(candidate["valueCol"]) &&
+    (placement === undefined || isSheetChartPlacementMetadata(placement))
+  );
+}
+
+function isSheetChartPlacementMetadata(
+  value: unknown,
+): value is NonNullable<SheetChartMetadata["placement"]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    Number.isInteger(candidate["anchorRow"]) &&
+    Number.isInteger(candidate["anchorCol"]) &&
+    Number.isInteger(candidate["rowSpan"]) &&
+    Number.isInteger(candidate["colSpan"])
+  );
+}
+
+function isOptionalNonnegativeInteger(value: unknown): value is number | undefined {
+  return (
+    value === undefined || (Number.isInteger(value) && typeof value === "number" && value >= 0)
+  );
+}
+
+function isSheetFilterViewMetadata(value: unknown): value is SheetFilterViewMetadata {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const range = candidate["range"];
+  const sortColumn = candidate["sortColumn"];
+  const sortKeys = candidate["sortKeys"];
+  const predicate = candidate["predicate"];
+  const predicates = candidate["predicates"];
+  return (
+    typeof candidate["id"] === "string" &&
+    typeof candidate["tabId"] === "string" &&
+    typeof candidate["name"] === "string" &&
+    typeof candidate["sortDirection"] === "string" &&
+    (sortColumn === undefined || Number.isInteger(sortColumn)) &&
+    (sortKeys === undefined ||
+      (Array.isArray(sortKeys) && sortKeys.every((key) => Number.isInteger(key)))) &&
+    (predicate === undefined || isSheetFilterPredicateMetadata(predicate)) &&
+    (predicates === undefined ||
+      (Array.isArray(predicates) && predicates.every(isSheetFilterPredicateMetadata))) &&
+    typeof range === "object" &&
+    range !== null &&
+    !Array.isArray(range) &&
+    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endCol"])
+  );
+}
+
+function isSheetFilterPredicateMetadata(value: unknown): value is SheetFilterPredicateMetadata {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    Number.isInteger(candidate["column"]) &&
+    typeof candidate["operator"] === "string" &&
+    typeof candidate["value"] === "string"
+  );
+}
+
+function isSheetPivotTableMetadata(value: unknown): value is SheetPivotTableMetadata {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const range = candidate["range"];
+  const slicer = candidate["slicer"];
+  return (
+    typeof candidate["id"] === "string" &&
+    typeof candidate["tabId"] === "string" &&
+    typeof candidate["title"] === "string" &&
+    Number.isInteger(candidate["rowFieldCol"]) &&
+    Number.isInteger(candidate["valueFieldCol"]) &&
+    typeof candidate["aggregation"] === "string" &&
+    (slicer === undefined || isSheetPivotSlicerMetadata(slicer)) &&
+    typeof range === "object" &&
+    range !== null &&
+    !Array.isArray(range) &&
+    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
+    Number.isInteger((range as Record<string, unknown>)["endCol"])
+  );
+}
+
+function isSheetPivotSlicerMetadata(value: unknown): value is SheetPivotSlicerMetadata {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    Number.isInteger(candidate["column"]) &&
+    typeof candidate["operator"] === "string" &&
+    typeof candidate["value"] === "string"
+  );
+}
+
+function isSheetFrozenPanesMetadata(value: unknown): value is SheetFrozenPanesMetadata {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate["tabId"] === "string" &&
+    Number.isInteger(candidate["frozenRows"]) &&
+    Number.isInteger(candidate["frozenCols"]) &&
+    (candidate["frozenRows"] as number) >= 0 &&
+    (candidate["frozenCols"] as number) >= 0
+  );
+}
+
+function isSheetRangeCommentAnchor(value: unknown): value is SheetRangeCommentAnchor {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const range = candidate["range"];
+  return (
+    candidate["type"] === "sheet-range" &&
+    (candidate["tabId"] === undefined || typeof candidate["tabId"] === "string") &&
+    (candidate["label"] === undefined || typeof candidate["label"] === "string") &&
+    (candidate["deleted"] === undefined || typeof candidate["deleted"] === "boolean") &&
+    (range === undefined ||
+      (typeof range === "object" &&
+        range !== null &&
+        !Array.isArray(range) &&
+        Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
+        Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
+        Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
+        Number.isInteger((range as Record<string, unknown>)["endCol"])))
+  );
+}
+
+function isSheetProtectedRangeMode(value: unknown): value is "block" | "warn" {
+  return value === "block" || value === "warn";
+}
+
+function protectedRangeBlocksEdits(range: SheetProtectedRange): boolean {
+  return range.mode !== "warn";
+}
+
+function cellEditIntersectsProtectedRange(
+  edit: SheetCellEdit,
+  protectedRange: SheetProtectedRange,
+): boolean {
+  const range = protectedRange.range;
+  const top = Math.min(range.startRow, range.endRow);
+  const bottom = Math.max(range.startRow, range.endRow);
+  const left = Math.min(range.startCol, range.endCol);
+  const right = Math.max(range.startCol, range.endCol);
+  return edit.row >= top && edit.row <= bottom && edit.col >= left && edit.col <= right;
+}
+
+function cellA1(row: number, col: number): string {
+  let index = col;
+  let label = "";
+  do {
+    label = String.fromCharCode(65 + (index % 26)) + label;
+    index = Math.floor(index / 26) - 1;
+  } while (index >= 0);
+  return `${label}${String(row + 1)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +1254,8 @@ export class InMemorySheetsStore implements SheetsStore {
   readonly #sheets = new Map<string, SheetRecord>();
   readonly #tabs = new Map<string, SheetTabRecord>();
   readonly #cells = new Map<string, SheetCellRecord>();
+  readonly #comments = new Map<string, SheetCommentRecord>();
+  readonly #operations = new Map<string, SheetOperationLogRecord[]>();
 
   async createSheet(input: CreateSheetInput): Promise<SheetWithTabs> {
     const title = assertTitle(input.title);
@@ -221,9 +1295,7 @@ export class InMemorySheetsStore implements SheetsStore {
           sheet.orgId === input.orgId &&
           sheet.deletedAt === null &&
           this.#canAccess(sheet, input.actorId) &&
-          (query === undefined ||
-            query.length === 0 ||
-            sheet.title.toLowerCase().includes(query)),
+          (query === undefined || query.length === 0 || sheet.title.toLowerCase().includes(query)),
       )
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
     return {
@@ -299,7 +1371,9 @@ export class InMemorySheetsStore implements SheetsStore {
     if (tab === null) {
       return null;
     }
-    const remaining = this.#tabsForSheet(tab.sheetId).filter((candidate) => candidate.id !== tab.id);
+    const remaining = this.#tabsForSheet(tab.sheetId).filter(
+      (candidate) => candidate.id !== tab.id,
+    );
     if (remaining.length === 0) {
       throw new SheetsValidationError("A spreadsheet must keep at least one tab.");
     }
@@ -314,12 +1388,12 @@ export class InMemorySheetsStore implements SheetsStore {
     return deleted;
   }
 
-  async getTabCells(input: TabRef): Promise<SheetTabWithCells | null> {
+  async getTabCells(input: GetTabCellsInput): Promise<SheetTabWithCells | null> {
     const tab = this.#requireTab(input);
     if (tab === null) {
       return null;
     }
-    return { ...tab, cells: this.#cellsForTab(tab.id) };
+    return { ...tab, cells: filterCellsInWindow(this.#cellsForTab(tab.id), input.window) };
   }
 
   async updateCells(input: UpdateCellsInput): Promise<SheetTabWithCells> {
@@ -327,9 +1401,17 @@ export class InMemorySheetsStore implements SheetsStore {
     if (tab === null) {
       throw new SheetsNotFoundError(`Unknown or inaccessible tab: ${input.tabId}`);
     }
+    const sheet = this.#sheets.get(tab.sheetId);
+    if (sheet === undefined) {
+      throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${tab.sheetId}`);
+    }
     const now = new Date();
     for (const edit of input.edits) {
       assertCellEdit(edit);
+    }
+    assertNoProtectedRangeEdits(input.edits, tab, sheet);
+    assertNoHardValidationFailures(input.edits, this.#cellsForTab(tab.id), tab, sheet);
+    for (const edit of input.edits) {
       const key = cellKey(tab.id, edit.row, edit.col);
       if (isClearingEdit(edit)) {
         this.#cells.delete(key);
@@ -343,13 +1425,362 @@ export class InMemorySheetsStore implements SheetsStore {
         row: edit.row,
         col: edit.col,
         value: edit.value,
+        formula: existing?.formula ?? null,
+        calcValue: existing?.calcValue ?? edit.value,
+        dependencies: existing?.dependencies ?? [],
+        formulaError: existing?.formulaError ?? null,
         format: edit.format ?? existing?.format ?? {},
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       });
     }
+    this.#refreshFormulaMetadata(tab.id);
+    this.#touchSheet(tab.sheetId);
+    return { ...tab, cells: filterCellsInWindow(this.#cellsForTab(tab.id), input.window) };
+  }
+
+  async sortRange(input: SortRangeInput): Promise<SheetTabWithCells> {
+    const tab = this.#requireTab(input);
+    if (tab === null) {
+      throw new SheetsNotFoundError(`Unknown or inaccessible tab: ${input.tabId}`);
+    }
+    const sheet = this.#sheets.get(tab.sheetId);
+    if (sheet === undefined) {
+      throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${tab.sheetId}`);
+    }
+    const range = normalizeSheetRange(input.range);
+    if (range.top === range.bottom) {
+      return { ...tab, cells: filterCellsInWindow(this.#cellsForTab(tab.id), input.window) };
+    }
+    const cells = this.#cellsForTab(tab.id);
+    const edits = sortSheetRangeEdits(cells, range, input.direction);
+    assertNoProtectedRangeEdits(edits, tab, sheet);
+    assertNoHardValidationFailures(edits, cells, tab, sheet);
+    return this.updateCells({ ...input, edits });
+  }
+
+  async createComment(input: CreateSheetCommentInput): Promise<SheetCommentRecord> {
+    const sheet = this.#requireVisible(input);
+    if (sheet === null) {
+      throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${input.sheetId}`);
+    }
+    if (input.parentCommentId !== undefined) {
+      const parent = this.#comments.get(input.parentCommentId);
+      if (
+        parent === undefined ||
+        parent.orgId !== input.orgId ||
+        parent.sheetId !== input.sheetId
+      ) {
+        throw new SheetsValidationError("Comment parent must belong to the same spreadsheet.");
+      }
+    }
+    const anchor = validatedSheetCommentAnchor(input.anchor, sheet, this.#tabsForSheet(sheet.id));
+    const now = new Date();
+    const comment: SheetCommentRecord = {
+      id: randomUUID(),
+      orgId: input.orgId,
+      sheetId: sheet.id,
+      parentCommentId: input.parentCommentId ?? null,
+      actorId: input.actorId,
+      anchor,
+      body: input.body,
+      status: "open",
+      metadata: input.metadata ?? {},
+      resolvedAt: null,
+      createdAt: now,
+      updatedAt: null,
+    };
+    this.#comments.set(comment.id, comment);
+    return comment;
+  }
+
+  async listComments(input: ListSheetCommentsInput): Promise<readonly SheetCommentListItem[]> {
+    const sheet = this.#requireVisible(input);
+    if (sheet === null) {
+      return [];
+    }
+    return [...this.#comments.values()]
+      .filter(
+        (comment) =>
+          comment.orgId === input.orgId &&
+          comment.sheetId === sheet.id &&
+          (input.status === undefined || input.status === "all" || comment.status === input.status),
+      )
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .map((comment) => ({
+        ...comment,
+        ...(comment.actorId === null ? {} : { author: { id: comment.actorId } }),
+      }));
+  }
+
+  async resolveComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
+    const existing = this.#comments.get(input.commentId);
+    if (existing === undefined || existing.orgId !== input.orgId) {
+      return null;
+    }
+    const sheet = this.#requireVisible({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      sheetId: existing.sheetId,
+    });
+    if (sheet === null) {
+      return null;
+    }
+    if (existing.status === "resolved") {
+      return existing;
+    }
+    const resolved: SheetCommentRecord = {
+      ...existing,
+      status: "resolved",
+      resolvedAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.#comments.set(resolved.id, resolved);
+    return resolved;
+  }
+
+  async reopenComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
+    const existing = this.#comments.get(input.commentId);
+    if (existing === undefined || existing.orgId !== input.orgId) {
+      return null;
+    }
+    const sheet = this.#requireVisible({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      sheetId: existing.sheetId,
+    });
+    if (sheet === null) {
+      return null;
+    }
+    if (existing.status === "open") {
+      return existing;
+    }
+    const reopened: SheetCommentRecord = {
+      ...existing,
+      status: "open",
+      resolvedAt: null,
+      updatedAt: new Date(),
+    };
+    this.#comments.set(reopened.id, reopened);
+    return reopened;
+  }
+
+  async updateComment(input: UpdateSheetCommentInput): Promise<SheetCommentRecord | null> {
+    const existing = this.#comments.get(input.commentId);
+    if (existing === undefined || existing.orgId !== input.orgId) {
+      return null;
+    }
+    const sheet = this.#requireVisible({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      sheetId: existing.sheetId,
+    });
+    if (sheet === null) {
+      return null;
+    }
+    const updated: SheetCommentRecord = {
+      ...existing,
+      body: input.body,
+      updatedAt: new Date(),
+    };
+    this.#comments.set(updated.id, updated);
+    return updated;
+  }
+
+  async deleteComment(input: DeleteSheetCommentInput): Promise<SheetCommentRecord | null> {
+    const existing = this.#comments.get(input.commentId);
+    if (existing === undefined || existing.orgId !== input.orgId) {
+      return null;
+    }
+    const sheet = this.#requireVisible({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      sheetId: existing.sheetId,
+    });
+    if (sheet === null) {
+      return null;
+    }
+    this.#comments.delete(existing.id);
+    for (const comment of [...this.#comments.values()]) {
+      if (comment.parentCommentId === existing.id) {
+        this.#comments.delete(comment.id);
+      }
+    }
+    return existing;
+  }
+
+  async listOperations(
+    input: SheetRef & { readonly afterRevision?: number | undefined },
+  ): Promise<readonly SheetOperationLogRecord[]> {
+    const sheet = this.#requireVisible(input);
+    if (sheet === null) {
+      return [];
+    }
+    return [...(this.#operations.get(sheet.id) ?? [])]
+      .sort((left, right) => left.revision - right.revision)
+      .filter((operation) => operation.revision > (input.afterRevision ?? 0));
+  }
+
+  async appendOperation(input: AppendSheetOperationInput): Promise<SheetOperationLogRecord> {
+    const tab = this.#requireTab(input);
+    if (tab === null || tab.sheetId !== input.sheetId) {
+      throw new SheetsNotFoundError(`Unknown or inaccessible tab: ${input.tabId}`);
+    }
+    const operations = this.#operations.get(input.sheetId) ?? [];
+    const existing = operations.find((operation) => operation.operationId === input.operationId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const operation: SheetOperationLogRecord = {
+      orgId: input.orgId,
+      sheetId: input.sheetId,
+      tabId: input.tabId,
+      actorId: input.actorId,
+      operationId: input.operationId,
+      revision: operations.length + 1,
+      baseRevision: input.baseRevision,
+      operation: input.operation,
+      createdAt: new Date(),
+    };
+    this.#operations.set(input.sheetId, [...operations, operation]);
+    return operation;
+  }
+
+  async applyOperation(input: ApplySheetOperationInput): Promise<ApplySheetOperationResult> {
+    const tab = this.#requireTab(input);
+    if (tab === null || tab.sheetId !== input.sheetId) {
+      throw new SheetsNotFoundError(`Unknown or inaccessible tab: ${input.tabId}`);
+    }
+    const operations = this.#operations.get(input.sheetId) ?? [];
+    const existing = operations.find((operation) => operation.operationId === input.operation.id);
+    if (existing !== undefined) {
+      return {
+        status: "duplicate",
+        operationId: input.operation.id,
+        revision: existing.revision,
+      };
+    }
+    const latestRevision = operations.length;
+    if (input.operation.baseRevision > latestRevision) {
+      return { status: "ahead", operationId: input.operation.id, revision: latestRevision };
+    }
+    const committedSameTab = operations
+      .slice(input.operation.baseRevision)
+      .filter((operation) => operation.tabId === input.tabId);
+    const transformed = transformSheetOperation(
+      input.operation,
+      committedSameTab.map((operation) => operation.operation),
+      latestRevision,
+    );
+    if (transformed === null) {
+      return { status: "dropped", operationId: input.operation.id, revision: latestRevision };
+    }
+    const updatedTab = this.#applySheetOperation(tab, transformed);
+    const record = await this.appendOperation({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      sheetId: input.sheetId,
+      tabId: input.tabId,
+      operationId: transformed.id,
+      baseRevision: transformed.baseRevision,
+      operation: transformed,
+    });
+    return {
+      status: "applied",
+      revision: record.revision,
+      operation: transformed,
+      tab: updatedTab,
+    };
+  }
+
+  #applySheetOperation(tab: SheetTabRecord, operation: SheetOperation): SheetTabWithCells {
+    const sheet = this.#sheets.get(tab.sheetId);
+    if (sheet === undefined) {
+      throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${tab.sheetId}`);
+    }
+    assertNoProtectedRangeEdits(cellEditsFromSheetOperation(operation), tab, sheet);
+    const existingCells = this.#cellsForTab(tab.id);
+    const now = new Date();
+    const metadataRebase = rebaseSheetMetadataRangesForOperation(sheet.metadata, tab.id, operation);
+    if (metadataRebase.changed) {
+      this.#sheets.set(sheet.id, {
+        ...sheet,
+        metadata: metadataRebase.metadata,
+        updatedAt: now,
+      });
+    }
+    this.#rebaseCommentAnchorsForOperation(sheet.id, tab.id, operation, now);
+    for (const cell of [...this.#cells.values()]) {
+      if (cell.sheetTabId === tab.id) {
+        this.#cells.delete(cellKey(cell.sheetTabId, cell.row, cell.col));
+      }
+    }
+    for (const cell of applySheetOperationToCells({
+      orgId: tab.orgId,
+      tabId: tab.id,
+      cells: existingCells,
+      operation,
+      now,
+      createId: randomUUID,
+    })) {
+      this.#cells.set(cellKey(tab.id, cell.row, cell.col), cell);
+    }
+    this.#refreshFormulaMetadata(tab.id);
     this.#touchSheet(tab.sheetId);
     return { ...tab, cells: this.#cellsForTab(tab.id) };
+  }
+
+  #rebaseCommentAnchorsForOperation(
+    sheetId: string,
+    tabId: string,
+    operation: SheetOperation,
+    now: Date,
+  ): void {
+    for (const comment of [...this.#comments.values()]) {
+      if (comment.sheetId !== sheetId) {
+        continue;
+      }
+      const rebased = rebaseSheetCommentAnchorForOperation(comment.anchor, tabId, operation);
+      if (!rebased.changed) {
+        continue;
+      }
+      this.#comments.set(comment.id, {
+        ...comment,
+        anchor: rebased.anchor,
+        updatedAt: now,
+      });
+    }
+  }
+
+  #refreshFormulaMetadata(tabId: string): void {
+    const tab = this.#tabs.get(tabId);
+    const sheet = tab === undefined ? undefined : this.#sheets.get(tab.sheetId);
+    if (tab === undefined || sheet === undefined) {
+      return;
+    }
+    const tabs = [...this.#tabs.values()]
+      .filter((candidate) => candidate.sheetId === sheet.id && candidate.deletedAt === null)
+      .sort(
+        (left, right) =>
+          left.position - right.position || left.createdAt.getTime() - right.createdAt.getTime(),
+      );
+    const tabIds = new Set(tabs.map((candidate) => candidate.id));
+    const cells = [...this.#cells.values()].filter((cell) => tabIds.has(cell.sheetTabId));
+    const evaluations = evaluateSheetFormulas(cells, {
+      currentTabId: tab.id,
+      tabs,
+      namedRanges: namedFormulaRangesFromMetadata(sheet.metadata),
+    });
+    for (const cell of cells) {
+      const evaluation = evaluations.get(formulaCellKey(cell.sheetTabId, cell.row, cell.col));
+      this.#cells.set(cellKey(cell.sheetTabId, cell.row, cell.col), {
+        ...cell,
+        formula: evaluation?.formula ?? null,
+        calcValue: evaluation?.calcValue ?? cell.value,
+        dependencies: evaluation?.dependencies ?? [],
+        formulaError: evaluation?.error ?? null,
+      });
+    }
   }
 
   #insertTab(
@@ -378,7 +1809,10 @@ export class InMemorySheetsStore implements SheetsStore {
   #tabsForSheet(sheetId: string): SheetTabRecord[] {
     return [...this.#tabs.values()]
       .filter((tab) => tab.sheetId === sheetId && tab.deletedAt === null)
-      .sort((left, right) => left.position - right.position || left.createdAt.getTime() - right.createdAt.getTime());
+      .sort(
+        (left, right) =>
+          left.position - right.position || left.createdAt.getTime() - right.createdAt.getTime(),
+      );
   }
 
   #cellsForTab(tabId: string): SheetCellRecord[] {
@@ -429,6 +1863,1188 @@ function cellKey(tabId: string, row: number, col: number): string {
   return `${tabId}:${String(row)}:${String(col)}`;
 }
 
+function cellEditsFromSheetOperation(operation: SheetOperation): readonly SheetCellEdit[] {
+  return operation.changes.flatMap((change) => {
+    if (change.kind === "set-cell") {
+      return [{ row: change.row, col: change.col, value: change.value }];
+    }
+    if (change.kind === "clear-cell") {
+      return [{ row: change.row, col: change.col, value: "" }];
+    }
+    return [];
+  });
+}
+
+function transformSheetOperation(
+  operation: SheetOperation,
+  committed: readonly SheetOperation[],
+  acceptedBaseRevision = operation.baseRevision + committed.length,
+): SheetOperation | null {
+  let changes = [...operation.changes];
+  for (const committedOperation of committed) {
+    for (const committedChange of committedOperation.changes) {
+      changes = changes.flatMap((change) =>
+        transformSheetCellOperation(change, operation.id, committedChange, committedOperation.id),
+      );
+    }
+    if (changes.length === 0) {
+      return null;
+    }
+  }
+  return {
+    ...operation,
+    baseRevision: acceptedBaseRevision,
+    changes,
+  };
+}
+
+function transformSheetCellOperation(
+  change: SheetCellOperation,
+  operationId: string,
+  committed: SheetCellOperation,
+  committedId: string,
+): readonly SheetCellOperation[] {
+  if (isSheetCellWrite(change)) {
+    return transformSheetCellWrite(change, operationId, committed, committedId);
+  }
+  if (change.kind === "insert-rows") {
+    return transformSheetInsertAxis(change, operationId, committed, committedId, "row");
+  }
+  if (change.kind === "insert-columns") {
+    return transformSheetInsertAxis(change, operationId, committed, committedId, "column");
+  }
+  if (change.kind === "delete-rows") {
+    return transformSheetDeleteAxis(change, committed, "row");
+  }
+  return transformSheetDeleteAxis(change, committed, "column");
+}
+
+function transformSheetCellWrite(
+  change: Extract<SheetCellOperation, { readonly kind: "set-cell" | "clear-cell" }>,
+  operationId: string,
+  committed: SheetCellOperation,
+  committedId: string,
+): readonly SheetCellOperation[] {
+  if (
+    isSheetCellWrite(committed) &&
+    change.row === committed.row &&
+    change.col === committed.col &&
+    operationId < committedId
+  ) {
+    return [];
+  }
+  const row = transformSheetPoint(change.row, committed, "row");
+  const col = transformSheetPoint(change.col, committed, "column");
+  if (row === null || col === null) {
+    return [];
+  }
+  return [{ ...change, row, col }];
+}
+
+function transformSheetInsertAxis(
+  change: Extract<SheetCellOperation, { readonly kind: "insert-rows" | "insert-columns" }>,
+  operationId: string,
+  committed: SheetCellOperation,
+  committedId: string,
+  axis: "row" | "column",
+): readonly SheetCellOperation[] {
+  if (!sheetOperationAffectsAxis(committed, axis)) {
+    return [change];
+  }
+  if (isSheetInsertForAxis(committed, axis)) {
+    const shouldMoveAfterCommitted =
+      change.index > committed.index ||
+      (change.index === committed.index && operationId > committedId);
+    return [
+      {
+        ...change,
+        index: shouldMoveAfterCommitted ? change.index + committed.count : change.index,
+      },
+    ];
+  }
+  if (isSheetDeleteForAxis(committed, axis)) {
+    return [
+      {
+        ...change,
+        index: transformSheetInsertionIndexAgainstDelete(change.index, committed),
+      },
+    ];
+  }
+  return [change];
+}
+
+function transformSheetDeleteAxis(
+  change: Extract<SheetCellOperation, { readonly kind: "delete-rows" | "delete-columns" }>,
+  committed: SheetCellOperation,
+  axis: "row" | "column",
+): readonly SheetCellOperation[] {
+  if (!sheetOperationAffectsAxis(committed, axis)) {
+    return [change];
+  }
+  if (isSheetInsertForAxis(committed, axis)) {
+    return [
+      {
+        ...change,
+        index: change.index >= committed.index ? change.index + committed.count : change.index,
+      },
+    ];
+  }
+  if (isSheetDeleteForAxis(committed, axis)) {
+    const transformed = transformSheetDeletionAgainstDeletion(
+      change.index,
+      change.count,
+      committed,
+    );
+    return transformed === null ? [] : [{ ...change, ...transformed }];
+  }
+  return [change];
+}
+
+function transformSheetPoint(
+  point: number,
+  committed: SheetCellOperation,
+  axis: "row" | "column",
+): number | null {
+  if (!sheetOperationAffectsAxis(committed, axis)) {
+    return point;
+  }
+  if (isSheetInsertForAxis(committed, axis)) {
+    return point >= committed.index ? point + committed.count : point;
+  }
+  if (isSheetDeleteForAxis(committed, axis)) {
+    const deleteEnd = committed.index + committed.count;
+    if (point >= committed.index && point < deleteEnd) {
+      return null;
+    }
+    return point >= deleteEnd ? point - committed.count : point;
+  }
+  return point;
+}
+
+function transformSheetInsertionIndexAgainstDelete(
+  index: number,
+  committed: Extract<SheetCellOperation, { readonly kind: "delete-rows" | "delete-columns" }>,
+): number {
+  const deleteEnd = committed.index + committed.count;
+  if (index >= deleteEnd) {
+    return index - committed.count;
+  }
+  return index > committed.index ? committed.index : index;
+}
+
+function transformSheetDeletionAgainstDeletion(
+  index: number,
+  count: number,
+  committed: Extract<SheetCellOperation, { readonly kind: "delete-rows" | "delete-columns" }>,
+): { readonly index: number; readonly count: number } | null {
+  const end = index + count;
+  const committedEnd = committed.index + committed.count;
+  if (end <= committed.index) {
+    return { index, count };
+  }
+  if (index >= committedEnd) {
+    return { index: index - committed.count, count };
+  }
+  const overlapStart = Math.max(index, committed.index);
+  const overlapEnd = Math.min(end, committedEnd);
+  const nextCount = count - (overlapEnd - overlapStart);
+  if (nextCount <= 0) {
+    return null;
+  }
+  return {
+    index: index >= committed.index ? committed.index : index,
+    count: nextCount,
+  };
+}
+
+function applySheetOperationToCells(input: {
+  readonly orgId: string;
+  readonly tabId: string;
+  readonly cells: readonly SheetCellRecord[];
+  readonly operation: SheetOperation;
+  readonly now: Date;
+  readonly createId: () => string;
+}): readonly SheetCellRecord[] {
+  let cells = new Map(input.cells.map((cell) => [cellCoordinateKey(cell.row, cell.col), cell]));
+  for (const change of input.operation.changes) {
+    cells = applySheetOperationChangeToCells(cells, change, input);
+  }
+  return [...cells.values()].sort((left, right) => left.row - right.row || left.col - right.col);
+}
+
+function applySheetOperationChangeToCells(
+  cells: ReadonlyMap<string, SheetCellRecord>,
+  change: SheetCellOperation,
+  input: {
+    readonly orgId: string;
+    readonly tabId: string;
+    readonly now: Date;
+    readonly createId: () => string;
+  },
+): Map<string, SheetCellRecord> {
+  if (change.kind === "set-cell") {
+    const next = new Map(cells);
+    const key = cellCoordinateKey(change.row, change.col);
+    const existing = next.get(key);
+    next.set(key, {
+      id: existing?.id ?? input.createId(),
+      orgId: input.orgId,
+      sheetTabId: input.tabId,
+      row: change.row,
+      col: change.col,
+      value: change.value,
+      formula: existing?.formula ?? null,
+      calcValue: existing?.calcValue ?? change.value,
+      dependencies: existing?.dependencies ?? [],
+      formulaError: existing?.formulaError ?? null,
+      format: existing?.format ?? {},
+      createdAt: existing?.createdAt ?? input.now,
+      updatedAt: input.now,
+    });
+    return next;
+  }
+  if (change.kind === "clear-cell") {
+    const next = new Map(cells);
+    next.delete(cellCoordinateKey(change.row, change.col));
+    return next;
+  }
+  return mapSheetCells(cells, (cell) => shiftedCellForStructuralChange(cell, change, input.now));
+}
+
+function shiftedCellForStructuralChange(
+  cell: SheetCellRecord,
+  change: SheetCellOperation,
+  now: Date,
+): SheetCellRecord | null {
+  if (change.kind === "insert-rows") {
+    return rebaseSheetCellForStructuralChange(
+      cell.row >= change.index ? { ...cell, row: cell.row + change.count } : cell,
+      change,
+      now,
+      cell.row >= change.index,
+    );
+  }
+  if (change.kind === "insert-columns") {
+    return rebaseSheetCellForStructuralChange(
+      cell.col >= change.index ? { ...cell, col: cell.col + change.count } : cell,
+      change,
+      now,
+      cell.col >= change.index,
+    );
+  }
+  if (change.kind === "delete-rows") {
+    if (cell.row >= change.index && cell.row < change.index + change.count) {
+      return null;
+    }
+    return rebaseSheetCellForStructuralChange(
+      cell.row >= change.index + change.count ? { ...cell, row: cell.row - change.count } : cell,
+      change,
+      now,
+      cell.row >= change.index + change.count,
+    );
+  }
+  if (change.kind === "delete-columns") {
+    if (cell.col >= change.index && cell.col < change.index + change.count) {
+      return null;
+    }
+    return rebaseSheetCellForStructuralChange(
+      cell.col >= change.index + change.count ? { ...cell, col: cell.col - change.count } : cell,
+      change,
+      now,
+      cell.col >= change.index + change.count,
+    );
+  }
+  return cell;
+}
+
+function rebaseSheetCellForStructuralChange(
+  cell: SheetCellRecord,
+  change: SheetCellOperation,
+  now: Date,
+  moved: boolean,
+): SheetCellRecord {
+  const value = rebaseSheetFormulaForStructuralChange(cell.value, change);
+  const formula =
+    cell.formula === null
+      ? null
+      : rebaseSheetFormulaForStructuralChange(`=${cell.formula}`, change).slice(1);
+  return {
+    ...cell,
+    value,
+    formula,
+    updatedAt: moved || value !== cell.value || formula !== cell.formula ? now : cell.updatedAt,
+  };
+}
+
+function rebaseSheetFormulaForStructuralChange(value: string, change: SheetCellOperation): string {
+  if (!value.trimStart().startsWith("=") || isSheetCellWrite(change)) {
+    return value;
+  }
+  return value.replace(
+    /(\$?)([A-Z]{1,3})(\$?)([1-9]\d*)/g,
+    (
+      match,
+      colAbsolute: string,
+      colLabel: string,
+      rowAbsolute: string,
+      rowLabel: string,
+      offset: number,
+      source: string,
+    ) => {
+      if (isScopedToExplicitSheet(source, offset)) {
+        return match;
+      }
+      const col = columnIndexFromLabel(colLabel);
+      const row = Number.parseInt(rowLabel, 10) - 1;
+      if (col === null || !Number.isFinite(row)) {
+        return match;
+      }
+      const nextRow = rebaseStructuralReferenceIndex(row, change, "row");
+      const nextCol = rebaseStructuralReferenceIndex(col, change, "column");
+      if (nextRow === null || nextCol === null) {
+        return "#REF!";
+      }
+      return `${colAbsolute}${columnLetter(nextCol)}${rowAbsolute}${String(nextRow + 1)}`;
+    },
+  );
+}
+
+function isScopedToExplicitSheet(source: string, referenceOffset: number): boolean {
+  const lastBang = source.lastIndexOf("!", referenceOffset);
+  if (lastBang === -1) {
+    return false;
+  }
+  const lastBoundary = Math.max(
+    source.lastIndexOf(" ", referenceOffset),
+    source.lastIndexOf("\t", referenceOffset),
+    source.lastIndexOf("\n", referenceOffset),
+    source.lastIndexOf("\r", referenceOffset),
+    source.lastIndexOf("+", referenceOffset),
+    source.lastIndexOf("-", referenceOffset),
+    source.lastIndexOf("*", referenceOffset),
+    source.lastIndexOf("/", referenceOffset),
+    source.lastIndexOf("(", referenceOffset),
+    source.lastIndexOf(")", referenceOffset),
+    source.lastIndexOf(",", referenceOffset),
+  );
+  return lastBang > lastBoundary;
+}
+
+function sortSheetRangeEdits(
+  cells: readonly SheetCellRecord[],
+  range: ReturnType<typeof normalizeSheetRange>,
+  direction: "asc" | "desc",
+): readonly SheetCellEdit[] {
+  const cellsByCoordinate = new Map(
+    cells.map((cell) => [cellCoordinateKey(cell.row, cell.col), cell] as const),
+  );
+  const rows = Array.from({ length: range.bottom - range.top + 1 }, (_, rowOffset) => {
+    const row = range.top + rowOffset;
+    return {
+      row,
+      rowOffset,
+      cells: Array.from({ length: range.right - range.left + 1 }, (_, colOffset) => {
+        const col = range.left + colOffset;
+        const cell = cellsByCoordinate.get(cellCoordinateKey(row, col));
+        return {
+          value: cell?.value ?? "",
+          format: cell?.format ?? {},
+        };
+      }),
+    };
+  }).sort((left, right) => {
+    const compared = compareSheetSortValues(
+      left.cells[0]?.value ?? "",
+      right.cells[0]?.value ?? "",
+    );
+    return compared === 0
+      ? left.rowOffset - right.rowOffset
+      : direction === "asc"
+        ? compared
+        : -compared;
+  });
+
+  const edits: SheetCellEdit[] = [];
+  rows.forEach((sourceRow, rowOffset) => {
+    const row = range.top + rowOffset;
+    sourceRow.cells.forEach((cell, colOffset) => {
+      const col = range.left + colOffset;
+      edits.push({
+        row,
+        col,
+        value: shiftSheetFormulaReferences(cell.value, row - sourceRow.row, 0),
+        format: { ...cell.format },
+      });
+    });
+  });
+  return edits;
+}
+
+function compareSheetSortValues(left: string, right: string): number {
+  const leftTrimmed = left.trim();
+  const rightTrimmed = right.trim();
+  if (leftTrimmed.length === 0 || rightTrimmed.length === 0) {
+    if (leftTrimmed.length === rightTrimmed.length) {
+      return 0;
+    }
+    return leftTrimmed.length === 0 ? 1 : -1;
+  }
+  const leftNumber = Number(leftTrimmed.replace(/[$,\s]/gu, ""));
+  const rightNumber = Number(rightTrimmed.replace(/[$,\s]/gu, ""));
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return leftNumber - rightNumber;
+  }
+  return leftTrimmed.localeCompare(rightTrimmed, undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function shiftSheetFormulaReferences(value: string, rowDelta: number, colDelta: number): string {
+  if (!value.trimStart().startsWith("=") || (rowDelta === 0 && colDelta === 0)) {
+    return value;
+  }
+  return value.replace(
+    /\b(\$?)([A-Z]{1,3})(\$?)([1-9]\d*)\b/gu,
+    (match, colAbsolute: string, colLabel: string, rowAbsolute: string, rowLabel: string) => {
+      const col = columnIndexFromLabel(colLabel);
+      const row = Number.parseInt(rowLabel, 10) - 1;
+      if (col === null || !Number.isFinite(row)) {
+        return match;
+      }
+      const nextCol = colAbsolute === "$" ? col : Math.max(0, col + colDelta);
+      const nextRow = rowAbsolute === "$" ? row : Math.max(0, row + rowDelta);
+      return `${colAbsolute}${columnLetter(nextCol)}${rowAbsolute}${String(nextRow + 1)}`;
+    },
+  );
+}
+
+function rebaseStructuralReferenceIndex(
+  index: number,
+  change: SheetCellOperation,
+  axis: "row" | "column",
+): number | null {
+  if (axis === "row") {
+    if (change.kind === "insert-rows") {
+      return index >= change.index ? index + change.count : index;
+    }
+    if (change.kind === "delete-rows") {
+      if (index >= change.index && index < change.index + change.count) {
+        return null;
+      }
+      return index >= change.index + change.count ? index - change.count : index;
+    }
+    return index;
+  }
+  if (change.kind === "insert-columns") {
+    return index >= change.index ? index + change.count : index;
+  }
+  if (change.kind === "delete-columns") {
+    if (index >= change.index && index < change.index + change.count) {
+      return null;
+    }
+    return index >= change.index + change.count ? index - change.count : index;
+  }
+  return index;
+}
+
+function rebaseSheetMetadataRangesForOperation(
+  metadata: JsonObject,
+  tabId: string,
+  operation: SheetOperation,
+): { readonly metadata: JsonObject; readonly changed: boolean } {
+  const namedRanges = rebaseSheetMetadataRangeCollection(
+    metadata["namedRanges"],
+    tabId,
+    operation,
+    isSheetNamedRange,
+  );
+  const mergedCells = rebaseSheetMetadataRangeCollection(
+    metadata["mergedCells"],
+    tabId,
+    operation,
+    isSheetMergedCellRange,
+  );
+  const protectedRanges = rebaseSheetMetadataRangeCollection(
+    metadata["protectedRanges"],
+    tabId,
+    operation,
+    isSheetProtectedRange,
+  );
+  const charts = rebaseSheetChartsForOperation(metadata["charts"], tabId, operation);
+  const filterViews = rebaseSheetFilterViewsForOperation(metadata["filterViews"], tabId, operation);
+  const pivotTables = rebaseSheetPivotTablesForOperation(metadata["pivotTables"], tabId, operation);
+  const frozenPanes = rebaseSheetFrozenPanesForOperation(metadata["frozenPanes"], tabId, operation);
+  if (
+    !namedRanges.changed &&
+    !mergedCells.changed &&
+    !protectedRanges.changed &&
+    !charts.changed &&
+    !filterViews.changed &&
+    !pivotTables.changed &&
+    !frozenPanes.changed
+  ) {
+    return { metadata, changed: false };
+  }
+  const nextMetadata: Record<string, unknown> = { ...metadata };
+  if (namedRanges.changed) {
+    nextMetadata["namedRanges"] = namedRanges.ranges;
+  }
+  if (mergedCells.changed) {
+    nextMetadata["mergedCells"] = mergedCells.ranges;
+  }
+  if (protectedRanges.changed) {
+    nextMetadata["protectedRanges"] = protectedRanges.ranges;
+  }
+  if (charts.changed) {
+    nextMetadata["charts"] = charts.ranges;
+  }
+  if (filterViews.changed) {
+    nextMetadata["filterViews"] = filterViews.views;
+  }
+  if (pivotTables.changed) {
+    nextMetadata["pivotTables"] = pivotTables.pivots;
+  }
+  if (frozenPanes.changed) {
+    nextMetadata["frozenPanes"] = frozenPanes.panes;
+  }
+  return { metadata: nextMetadata as JsonObject, changed: true };
+}
+
+function rebaseSheetMetadataRangeCollection(
+  ranges: unknown,
+  tabId: string,
+  operation: SheetOperation,
+  isRangeEntry: (value: unknown) => value is SheetMetadataRangeEntry,
+): { readonly ranges: readonly unknown[]; readonly changed: boolean } {
+  if (!Array.isArray(ranges)) {
+    return { ranges: [], changed: false };
+  }
+  let changed = false;
+  const nextRanges: unknown[] = [];
+  for (const range of ranges) {
+    if (!isRangeEntry(range) || range.tabId !== tabId) {
+      nextRanges.push(range);
+      continue;
+    }
+    let nextRange: SheetGridRange | null = range.range;
+    for (const change of operation.changes) {
+      if (isSheetCellWrite(change)) {
+        continue;
+      }
+      nextRange = rebaseSheetRangeForStructuralChange(nextRange, change);
+      if (nextRange === null) {
+        break;
+      }
+    }
+    if (nextRange === null) {
+      changed = true;
+      continue;
+    }
+    if (
+      nextRange.startRow !== range.range.startRow ||
+      nextRange.startCol !== range.range.startCol ||
+      nextRange.endRow !== range.range.endRow ||
+      nextRange.endCol !== range.range.endCol
+    ) {
+      changed = true;
+      nextRanges.push({ ...range, range: nextRange });
+      continue;
+    }
+    nextRanges.push(range);
+  }
+  return { ranges: nextRanges, changed };
+}
+
+function rebaseSheetCommentAnchorForOperation(
+  anchor: JsonObject,
+  tabId: string,
+  operation: SheetOperation,
+): { readonly anchor: JsonObject; readonly changed: boolean } {
+  if (!isSheetRangeCommentAnchor(anchor)) {
+    return { anchor, changed: false };
+  }
+  if (typeof anchor.tabId === "string" && anchor.tabId !== tabId) {
+    return { anchor, changed: false };
+  }
+  if (anchor.range === undefined) {
+    return { anchor, changed: false };
+  }
+  let range: SheetGridRange | null = anchor.range;
+  for (const change of operation.changes) {
+    if (isSheetCellWrite(change)) {
+      continue;
+    }
+    range = rebaseSheetRangeForStructuralChange(range, change);
+    if (range === null) {
+      break;
+    }
+  }
+  if (range === null) {
+    const nextAnchor = {
+      ...anchor,
+      label: "Deleted range",
+      deleted: true,
+    };
+    delete nextAnchor.range;
+    return { anchor: nextAnchor, changed: true };
+  }
+  if (
+    range.startRow === anchor.range.startRow &&
+    range.startCol === anchor.range.startCol &&
+    range.endRow === anchor.range.endRow &&
+    range.endCol === anchor.range.endCol &&
+    anchor.deleted !== true
+  ) {
+    return { anchor, changed: false };
+  }
+  return {
+    anchor: {
+      ...anchor,
+      range,
+      label: sheetRangeLabel(range),
+      deleted: false,
+    },
+    changed: true,
+  };
+}
+
+function sheetRangeLabel(range: SheetGridRange): string {
+  const start = cellA1(range.startRow, range.startCol);
+  const end = cellA1(range.endRow, range.endCol);
+  return start === end ? start : `${start}:${end}`;
+}
+
+function rebaseSheetChartsForOperation(
+  charts: unknown,
+  tabId: string,
+  operation: SheetOperation,
+): { readonly ranges: readonly unknown[]; readonly changed: boolean } {
+  if (!Array.isArray(charts)) {
+    return { ranges: [], changed: false };
+  }
+  let changed = false;
+  const nextCharts: unknown[] = [];
+  for (const chart of charts) {
+    if (!isSheetChartMetadata(chart) || chart.tabId !== tabId) {
+      nextCharts.push(chart);
+      continue;
+    }
+    let nextChart: SheetChartMetadata | null = chart;
+    for (const change of operation.changes) {
+      nextChart = rebaseSheetChartForStructuralChange(nextChart, change);
+      if (nextChart === null) {
+        break;
+      }
+    }
+    if (nextChart === null) {
+      changed = true;
+      continue;
+    }
+    if (JSON.stringify(nextChart) !== JSON.stringify(chart)) {
+      changed = true;
+    }
+    nextCharts.push(nextChart);
+  }
+  return { ranges: nextCharts, changed };
+}
+
+function rebaseSheetChartForStructuralChange(
+  chart: SheetChartMetadata,
+  change: SheetCellOperation,
+): SheetChartMetadata | null {
+  if (isSheetCellWrite(change)) {
+    return chart;
+  }
+  const range = rebaseSheetRangeForStructuralChange(chart.range, change);
+  if (range === null) {
+    return null;
+  }
+  if (change.kind === "insert-columns" || change.kind === "delete-columns") {
+    const labelCol =
+      chart.labelCol === undefined
+        ? undefined
+        : rebaseStructuralReferenceIndex(chart.labelCol, change, "column");
+    const valueCol =
+      chart.valueCol === undefined
+        ? undefined
+        : rebaseStructuralReferenceIndex(chart.valueCol, change, "column");
+    const placement =
+      chart.placement === undefined
+        ? undefined
+        : rebaseSheetChartPlacementForStructuralChange(chart.placement, change);
+    const nextChart: Record<string, unknown> = { ...chart, range };
+    if (labelCol === null || labelCol === undefined) {
+      delete nextChart["labelCol"];
+    } else {
+      nextChart["labelCol"] = labelCol;
+    }
+    if (valueCol === null || valueCol === undefined) {
+      delete nextChart["valueCol"];
+    } else {
+      nextChart["valueCol"] = valueCol;
+    }
+    if (placement === undefined) {
+      delete nextChart["placement"];
+    } else {
+      nextChart["placement"] = placement;
+    }
+    return nextChart as unknown as SheetChartMetadata;
+  }
+  const placement =
+    chart.placement === undefined
+      ? undefined
+      : rebaseSheetChartPlacementForStructuralChange(chart.placement, change);
+  const nextChart: Record<string, unknown> = { ...chart, range };
+  if (placement === undefined) {
+    delete nextChart["placement"];
+  } else {
+    nextChart["placement"] = placement;
+  }
+  return nextChart as unknown as SheetChartMetadata;
+}
+
+function rebaseSheetChartPlacementForStructuralChange(
+  placement: NonNullable<SheetChartMetadata["placement"]>,
+  change: SheetCellOperation,
+): NonNullable<SheetChartMetadata["placement"]> | undefined {
+  if (change.kind === "insert-rows" || change.kind === "delete-rows") {
+    const anchorRow = rebaseStructuralReferenceIndex(placement.anchorRow, change, "row");
+    if (anchorRow === null) {
+      return undefined;
+    }
+    return { ...placement, anchorRow };
+  }
+  if (change.kind === "insert-columns" || change.kind === "delete-columns") {
+    const anchorCol = rebaseStructuralReferenceIndex(placement.anchorCol, change, "column");
+    if (anchorCol === null) {
+      return undefined;
+    }
+    return { ...placement, anchorCol };
+  }
+  return placement;
+}
+
+function rebaseSheetFilterViewsForOperation(
+  views: unknown,
+  tabId: string,
+  operation: SheetOperation,
+): { readonly views: readonly unknown[]; readonly changed: boolean } {
+  if (!Array.isArray(views)) {
+    return { views: [], changed: false };
+  }
+  let changed = false;
+  const nextViews: unknown[] = [];
+  for (const view of views) {
+    if (!isSheetFilterViewMetadata(view) || view.tabId !== tabId) {
+      nextViews.push(view);
+      continue;
+    }
+    let nextView: SheetFilterViewMetadata | null = view;
+    for (const change of operation.changes) {
+      nextView = rebaseSheetFilterViewForStructuralChange(nextView, change);
+      if (nextView === null) {
+        break;
+      }
+    }
+    if (nextView === null) {
+      changed = true;
+      continue;
+    }
+    if (JSON.stringify(nextView) !== JSON.stringify(view)) {
+      changed = true;
+    }
+    nextViews.push(nextView);
+  }
+  return { views: nextViews, changed };
+}
+
+function rebaseSheetFilterViewForStructuralChange(
+  view: SheetFilterViewMetadata,
+  change: SheetCellOperation,
+): SheetFilterViewMetadata | null {
+  if (isSheetCellWrite(change)) {
+    return view;
+  }
+  const range = rebaseSheetRangeForStructuralChange(view.range, change);
+  if (range === null) {
+    return null;
+  }
+  if (change.kind !== "insert-columns" && change.kind !== "delete-columns") {
+    return range === view.range ? view : { ...view, range };
+  }
+  const sortColumn =
+    view.sortColumn === undefined
+      ? undefined
+      : rebaseStructuralReferenceIndex(view.sortColumn, change, "column");
+  const sortKeys =
+    view.sortKeys === undefined
+      ? undefined
+      : view.sortKeys
+          .map((key) => rebaseStructuralReferenceIndex(key, change, "column"))
+          .filter((key): key is number => key !== null);
+  const predicates = filterViewPredicatesFromMetadata(view)
+    .map((predicate) => rebaseSheetFilterPredicateForStructuralChange(predicate, change))
+    .filter((predicate): predicate is SheetFilterPredicateMetadata => predicate !== null);
+  const nextView: Record<string, unknown> = { ...view, range, predicates };
+  if (sortColumn === null || sortColumn === undefined) {
+    delete nextView["sortColumn"];
+  } else {
+    nextView["sortColumn"] = sortColumn;
+  }
+  if (sortKeys !== undefined) {
+    nextView["sortKeys"] = sortKeys;
+  }
+  if (predicates[0] === undefined) {
+    delete nextView["predicate"];
+  } else {
+    nextView["predicate"] = predicates[0];
+  }
+  return nextView as unknown as SheetFilterViewMetadata;
+}
+
+function filterViewPredicatesFromMetadata(
+  view: SheetFilterViewMetadata,
+): readonly SheetFilterPredicateMetadata[] {
+  if (view.predicates !== undefined) {
+    return view.predicates;
+  }
+  return view.predicate === undefined ? [] : [view.predicate];
+}
+
+function rebaseSheetFilterPredicateForStructuralChange(
+  predicate: SheetFilterPredicateMetadata,
+  change: SheetCellOperation,
+): SheetFilterPredicateMetadata | null {
+  const column = rebaseStructuralReferenceIndex(predicate.column, change, "column");
+  return column === null ? null : { ...predicate, column };
+}
+
+function rebaseSheetPivotTablesForOperation(
+  pivots: unknown,
+  tabId: string,
+  operation: SheetOperation,
+): { readonly pivots: readonly unknown[]; readonly changed: boolean } {
+  if (!Array.isArray(pivots)) {
+    return { pivots: [], changed: false };
+  }
+  let changed = false;
+  const nextPivots: unknown[] = [];
+  for (const pivot of pivots) {
+    if (!isSheetPivotTableMetadata(pivot) || pivot.tabId !== tabId) {
+      nextPivots.push(pivot);
+      continue;
+    }
+    let nextPivot: SheetPivotTableMetadata | null = pivot;
+    for (const change of operation.changes) {
+      nextPivot = rebaseSheetPivotTableForStructuralChange(nextPivot, change);
+      if (nextPivot === null) {
+        break;
+      }
+    }
+    if (nextPivot === null) {
+      changed = true;
+      continue;
+    }
+    if (JSON.stringify(nextPivot) !== JSON.stringify(pivot)) {
+      changed = true;
+    }
+    nextPivots.push(nextPivot);
+  }
+  return { pivots: nextPivots, changed };
+}
+
+function rebaseSheetPivotTableForStructuralChange(
+  pivot: SheetPivotTableMetadata,
+  change: SheetCellOperation,
+): SheetPivotTableMetadata | null {
+  if (isSheetCellWrite(change)) {
+    return pivot;
+  }
+  const range = rebaseSheetRangeForStructuralChange(pivot.range, change);
+  if (range === null) {
+    return null;
+  }
+  if (change.kind !== "insert-columns" && change.kind !== "delete-columns") {
+    return range === pivot.range ? pivot : { ...pivot, range };
+  }
+  const rowFieldCol = rebaseStructuralReferenceIndex(pivot.rowFieldCol, change, "column");
+  const valueFieldCol = rebaseStructuralReferenceIndex(pivot.valueFieldCol, change, "column");
+  if (rowFieldCol === null || valueFieldCol === null) {
+    return null;
+  }
+  const slicerColumn =
+    pivot.slicer === undefined
+      ? undefined
+      : rebaseStructuralReferenceIndex(pivot.slicer.column, change, "column");
+  const nextPivot: Record<string, unknown> = { ...pivot, range, rowFieldCol, valueFieldCol };
+  if (pivot.slicer === undefined || slicerColumn === null || slicerColumn === undefined) {
+    delete nextPivot["slicer"];
+  } else {
+    nextPivot["slicer"] = { ...pivot.slicer, column: slicerColumn };
+  }
+  return nextPivot as unknown as SheetPivotTableMetadata;
+}
+
+function rebaseSheetFrozenPanesForOperation(
+  panes: unknown,
+  tabId: string,
+  operation: SheetOperation,
+): { readonly panes: readonly unknown[]; readonly changed: boolean } {
+  if (!Array.isArray(panes)) {
+    return { panes: [], changed: false };
+  }
+  let changed = false;
+  const nextPanes: unknown[] = [];
+  for (const pane of panes) {
+    if (!isSheetFrozenPanesMetadata(pane) || pane.tabId !== tabId) {
+      nextPanes.push(pane);
+      continue;
+    }
+    let frozenRows = pane.frozenRows;
+    let frozenCols = pane.frozenCols;
+    for (const change of operation.changes) {
+      frozenRows = rebaseSheetFrozenPaneCountForStructuralChange(frozenRows, change, "row");
+      frozenCols = rebaseSheetFrozenPaneCountForStructuralChange(frozenCols, change, "column");
+    }
+    if (frozenRows !== pane.frozenRows || frozenCols !== pane.frozenCols) {
+      changed = true;
+      nextPanes.push({ ...pane, frozenRows, frozenCols });
+      continue;
+    }
+    nextPanes.push(pane);
+  }
+  return { panes: nextPanes, changed };
+}
+
+function rebaseSheetFrozenPaneCountForStructuralChange(
+  count: number,
+  change: SheetCellOperation,
+  axis: "row" | "column",
+): number {
+  if (isSheetCellWrite(change) || !sheetOperationAffectsAxis(change, axis)) {
+    return count;
+  }
+  if (isSheetInsertForAxis(change, axis)) {
+    return change.index < count ? count + change.count : count;
+  }
+  if (!isSheetDeleteForAxis(change, axis) || change.index >= count) {
+    return count;
+  }
+  const deletedFromFrozenBand = Math.min(count, change.index + change.count) - change.index;
+  return Math.max(0, count - Math.max(0, deletedFromFrozenBand));
+}
+
+function rebaseSheetRangeForStructuralChange(
+  range: SheetGridRange,
+  change: SheetCellOperation,
+): SheetGridRange | null {
+  if (change.kind === "insert-rows" || change.kind === "delete-rows") {
+    const rebased = rebaseSheetRangeAxis(range.startRow, range.endRow, change);
+    if (rebased === null) {
+      return null;
+    }
+    return { ...range, startRow: rebased.start, endRow: rebased.end };
+  }
+  if (change.kind === "insert-columns" || change.kind === "delete-columns") {
+    const rebased = rebaseSheetRangeAxis(range.startCol, range.endCol, change);
+    if (rebased === null) {
+      return null;
+    }
+    return { ...range, startCol: rebased.start, endCol: rebased.end };
+  }
+  return range;
+}
+
+function rebaseSheetRangeAxis(
+  start: number,
+  end: number,
+  change: SheetCellOperation,
+): { readonly start: number; readonly end: number } | null {
+  const reversed = start > end;
+  const low = Math.min(start, end);
+  const high = Math.max(start, end);
+  let nextLow = low;
+  let nextHigh = high;
+  if (change.kind === "insert-rows" || change.kind === "insert-columns") {
+    if (high < change.index) {
+      return { start, end };
+    }
+    if (low >= change.index) {
+      nextLow = low + change.count;
+      nextHigh = high + change.count;
+    } else {
+      nextHigh = high + change.count;
+    }
+    return reversed ? { start: nextHigh, end: nextLow } : { start: nextLow, end: nextHigh };
+  }
+  if (change.kind !== "delete-rows" && change.kind !== "delete-columns") {
+    return { start, end };
+  }
+  const deleteLow = change.index;
+  const deleteHigh = change.index + change.count - 1;
+  if (high < deleteLow) {
+    return { start, end };
+  }
+  if (low > deleteHigh) {
+    nextLow = low - change.count;
+    nextHigh = high - change.count;
+    return reversed ? { start: nextHigh, end: nextLow } : { start: nextLow, end: nextHigh };
+  }
+  const overlapLow = Math.max(low, deleteLow);
+  const overlapHigh = Math.min(high, deleteHigh);
+  const overlapCount = overlapHigh - overlapLow + 1;
+  const remainingCount = high - low + 1 - overlapCount;
+  if (remainingCount <= 0) {
+    return null;
+  }
+  nextLow = low < deleteLow ? low : deleteLow;
+  nextHigh = nextLow + remainingCount - 1;
+  return reversed ? { start: nextHigh, end: nextLow } : { start: nextLow, end: nextHigh };
+}
+
+function columnIndexFromLabel(label: string): number | null {
+  let index = 0;
+  for (const char of label) {
+    const code = char.charCodeAt(0);
+    if (code < 65 || code > 90) {
+      return null;
+    }
+    index = index * 26 + (code - 64);
+  }
+  return index - 1;
+}
+
+function columnLetter(index: number): string {
+  let value = index + 1;
+  let label = "";
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    label = String.fromCharCode(65 + remainder) + label;
+    value = Math.floor((value - 1) / 26);
+  }
+  return label;
+}
+
+function mapSheetCells(
+  cells: ReadonlyMap<string, SheetCellRecord>,
+  project: (cell: SheetCellRecord) => SheetCellRecord | null,
+): Map<string, SheetCellRecord> {
+  const next = new Map<string, SheetCellRecord>();
+  for (const cell of cells.values()) {
+    const projected = project(cell);
+    if (projected !== null) {
+      next.set(cellCoordinateKey(projected.row, projected.col), projected);
+    }
+  }
+  return next;
+}
+
+function cellCoordinateKey(row: number, col: number): string {
+  return `${String(row)}:${String(col)}`;
+}
+
+function isSheetCellWrite(
+  change: SheetCellOperation,
+): change is Extract<SheetCellOperation, { readonly kind: "set-cell" | "clear-cell" }> {
+  return change.kind === "set-cell" || change.kind === "clear-cell";
+}
+
+function sheetOperationAffectsAxis(change: SheetCellOperation, axis: "row" | "column"): boolean {
+  return axis === "row"
+    ? change.kind === "insert-rows" || change.kind === "delete-rows"
+    : change.kind === "insert-columns" || change.kind === "delete-columns";
+}
+
+function isSheetInsertForAxis(
+  change: SheetCellOperation,
+  axis: "row" | "column",
+): change is Extract<SheetCellOperation, { readonly kind: "insert-rows" | "insert-columns" }> {
+  return axis === "row" ? change.kind === "insert-rows" : change.kind === "insert-columns";
+}
+
+function isSheetDeleteForAxis(
+  change: SheetCellOperation,
+  axis: "row" | "column",
+): change is Extract<SheetCellOperation, { readonly kind: "delete-rows" | "delete-columns" }> {
+  return axis === "row" ? change.kind === "delete-rows" : change.kind === "delete-columns";
+}
+
+function parseSheetOperation(value: unknown): SheetOperation {
+  if (!isObjectRecord(value)) {
+    throw new Error("Expected sheet operation object.");
+  }
+  const id = value["id"];
+  const baseRevision = value["baseRevision"];
+  const changes = value["changes"];
+  if (
+    typeof id !== "string" ||
+    !Number.isInteger(baseRevision) ||
+    typeof baseRevision !== "number" ||
+    baseRevision < 0 ||
+    !Array.isArray(changes)
+  ) {
+    throw new Error("Invalid sheet operation.");
+  }
+  return {
+    id,
+    baseRevision,
+    changes: changes.map(parseSheetCellOperation),
+  };
+}
+
+function parseSheetCellOperation(value: unknown): SheetCellOperation {
+  if (!isObjectRecord(value)) {
+    throw new Error("Expected sheet cell operation object.");
+  }
+  const kind = value["kind"];
+  if (
+    kind === "insert-rows" ||
+    kind === "delete-rows" ||
+    kind === "insert-columns" ||
+    kind === "delete-columns"
+  ) {
+    const index = value["index"];
+    const count = value["count"];
+    if (
+      !Number.isInteger(index) ||
+      typeof index !== "number" ||
+      index < 0 ||
+      !Number.isInteger(count) ||
+      typeof count !== "number" ||
+      count <= 0
+    ) {
+      throw new Error("Invalid sheet structural operation.");
+    }
+    return { kind, index, count };
+  }
+  const row = value["row"];
+  const col = value["col"];
+  if (
+    (kind !== "set-cell" && kind !== "clear-cell") ||
+    !Number.isInteger(row) ||
+    typeof row !== "number" ||
+    row < 0 ||
+    !Number.isInteger(col) ||
+    typeof col !== "number" ||
+    col < 0
+  ) {
+    throw new Error("Invalid sheet cell operation.");
+  }
+  if (kind === "clear-cell") {
+    return { kind, row, col };
+  }
+  const valueText = value["value"];
+  if (typeof valueText !== "string") {
+    throw new Error("Invalid sheet set-cell operation.");
+  }
+  return { kind, row, col, value: valueText };
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 // ---------------------------------------------------------------------------
 // Postgres store.
 // ---------------------------------------------------------------------------
@@ -466,14 +3082,55 @@ interface SheetCellRow {
   readonly row: number;
   readonly col: number;
   readonly value: string;
+  readonly formula: string | null;
+  readonly calc_value: string | null;
+  readonly dependencies: readonly string[];
+  readonly formula_error: string | null;
   readonly format: JsonObject;
   readonly created_at: Date;
   readonly updated_at: Date;
 }
 
+interface SheetCommentRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly object_id: string;
+  readonly parent_comment_id: string | null;
+  readonly actor_id: string | null;
+  readonly anchor: JsonObject;
+  readonly body: string;
+  readonly status: string;
+  readonly metadata: JsonObject;
+  readonly resolved_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date | null;
+}
+
+interface SheetCommentProjectionRow extends SheetCommentRow {
+  readonly actor_display_name: string | null;
+  readonly actor_email: string | null;
+}
+
+interface SheetOperationLogRow {
+  readonly org_id: string;
+  readonly sheet_id: string;
+  readonly sheet_tab_id: string;
+  readonly actor_id: string | null;
+  readonly operation_id: string;
+  readonly revision: number;
+  readonly base_revision: number;
+  readonly operation: JsonObject;
+  readonly created_at: Date;
+}
+
 /** Postgres-backed {@link SheetsStore}. */
 export class PostgresSheetsStore implements SheetsStore {
-  constructor(private readonly sql: postgres.Sql) {}
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly options: {
+      readonly storageResolver?: SheetSnapshotStorageResolver | undefined;
+    } = {},
+  ) {}
 
   async createSheet(input: CreateSheetInput): Promise<SheetWithTabs> {
     const title = assertTitle(input.title);
@@ -501,16 +3158,45 @@ export class PostgresSheetsStore implements SheetsStore {
         `) as unknown as readonly SheetTabRow[];
         tabs.push(mapTab(tabRows[0]));
       }
+      const storageKey = `sheets/${input.orgId}/${sheet.id}`;
+      const storedSnapshot = await writeSheetStorageSnapshot({
+        resolver: this.options.storageResolver,
+        orgId: input.orgId,
+        key: storageKey,
+        sheet,
+        tabs,
+      });
+      const versionSnapshot = await writeSheetStorageSnapshot({
+        resolver: this.options.storageResolver,
+        orgId: input.orgId,
+        key: sheetSnapshotVersionStorageKey(input.orgId, sheet.id, 1),
+        sheet,
+        tabs,
+      });
       await tx`
         insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
         values (
           ${sheet.id}, ${input.orgId}, ${input.actorId}, 'file',
-          ${`sheets/${input.orgId}/${sheet.id}`},
-          'application/vnd.helix.spreadsheet', 0, null,
+          ${storageKey},
+          'application/vnd.helix.spreadsheet', ${storedSnapshot.byteSize}, ${storedSnapshot.sha256},
           ${tx.json(toSqlJson({ ...(input.metadata ?? {}), app: "sheets", sheetId: sheet.id, name: title, title, folderId: input.folderId ?? null }))}
         )
-        on conflict (id) do update set metadata = excluded.metadata, updated_at = now()
+        on conflict (id) do update set
+          byte_size = excluded.byte_size,
+          sha256 = excluded.sha256,
+          metadata = excluded.metadata,
+          updated_at = now()
       `;
+      await insertSheetSnapshotVersion(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        sheetId: sheet.id,
+        versionNumber: 1,
+        storageKey: sheetSnapshotVersionStorageKey(input.orgId, sheet.id, 1),
+        byteSize: versionSnapshot.byteSize,
+        sha256: versionSnapshot.sha256,
+        metadata: { app: "sheets", title, tabCount: tabs.length },
+      });
       await grantObjectAccess(tx, {
         orgId: input.orgId,
         objectId: sheet.id,
@@ -567,6 +3253,8 @@ export class PostgresSheetsStore implements SheetsStore {
       }
       const title = input.title === undefined ? existing.title : assertTitle(input.title);
       const metadata = input.metadata ?? existing.metadata;
+      const protectedRangesDelta =
+        input.metadata === undefined ? null : protectedRangeAuditDelta(existing.metadata, metadata);
       const rows = (await tx`
         update sheets
         set title = ${title}, metadata = ${tx.json(toSqlJson(metadata))}, updated_at = now()
@@ -577,6 +3265,8 @@ export class PostgresSheetsStore implements SheetsStore {
         return null;
       }
       const sheet = mapSheet(rows[0]);
+      const tabs = await selectTabs(tx, input.orgId, sheet.id);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, sheet.id);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -584,7 +3274,16 @@ export class PostgresSheetsStore implements SheetsStore {
         objectId: sheet.id,
         payload: { title },
       });
-      return { ...sheet, tabs: await selectTabs(tx, input.orgId, sheet.id) };
+      if (protectedRangesDelta !== null) {
+        await appendSheetsActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "sheets.protected_ranges.updated",
+          objectId: sheet.id,
+          payload: { sheetId: sheet.id, title, protectedRanges: protectedRangesDelta },
+        });
+      }
+      return { ...sheet, tabs };
     });
   }
 
@@ -625,7 +3324,7 @@ export class PostgresSheetsStore implements SheetsStore {
         from sheet_tabs
         where sheet_id = ${input.sheetId} and deleted_at is null
       `) as unknown as readonly { readonly next_position: number }[];
-      const position = input.position ?? (positionRows[0]?.next_position ?? 0);
+      const position = input.position ?? positionRows[0]?.next_position ?? 0;
       const rows = (await tx`
         insert into sheet_tabs (org_id, sheet_id, name, position, metadata)
         values (
@@ -635,6 +3334,7 @@ export class PostgresSheetsStore implements SheetsStore {
         returning *
       `) as unknown as readonly SheetTabRow[];
       await touchSheet(tx, input.orgId, input.sheetId);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.sheetId);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -666,6 +3366,7 @@ export class PostgresSheetsStore implements SheetsStore {
         return null;
       }
       await touchSheet(tx, input.orgId, tab.sheetId);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, tab.sheetId);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -701,6 +3402,7 @@ export class PostgresSheetsStore implements SheetsStore {
       }
       await tx`delete from sheet_cells where sheet_tab_id = ${input.tabId}`;
       await touchSheet(tx, input.orgId, tab.sheetId);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, tab.sheetId);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -712,12 +3414,12 @@ export class PostgresSheetsStore implements SheetsStore {
     });
   }
 
-  async getTabCells(input: TabRef): Promise<SheetTabWithCells | null> {
+  async getTabCells(input: GetTabCellsInput): Promise<SheetTabWithCells | null> {
     const tab = await selectVisibleTab(this.sql, input);
     if (tab === null) {
       return null;
     }
-    return { ...tab, cells: await selectCells(this.sql, input.tabId) };
+    return { ...tab, cells: await selectCells(this.sql, input.tabId, input.window) };
   }
 
   async updateCells(input: UpdateCellsInput): Promise<SheetTabWithCells> {
@@ -729,6 +3431,12 @@ export class PostgresSheetsStore implements SheetsStore {
       if (tab === null) {
         throw new SheetsNotFoundError(`Unknown or inaccessible tab: ${input.tabId}`);
       }
+      const sheet = await selectSheetById(tx, input.orgId, tab.sheetId);
+      if (sheet === null) {
+        throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${tab.sheetId}`);
+      }
+      assertNoProtectedRangeEdits(input.edits, tab, sheet);
+      assertNoHardValidationFailures(input.edits, await selectCells(tx, input.tabId), tab, sheet);
       for (const edit of input.edits) {
         if (isClearingEdit(edit)) {
           await tx`
@@ -752,7 +3460,15 @@ export class PostgresSheetsStore implements SheetsStore {
             updated_at = now()
         `;
       }
+      const cellsWithMetadata = await refreshFormulaMetadata(
+        tx,
+        input.orgId,
+        tab.sheetId,
+        input.tabId,
+        sheet.metadata,
+      );
       await touchSheet(tx, input.orgId, tab.sheetId);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, tab.sheetId);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -760,9 +3476,673 @@ export class PostgresSheetsStore implements SheetsStore {
         objectId: tab.sheetId,
         payload: { tabId: input.tabId, editCount: input.edits.length },
       });
-      return { ...tab, cells: await selectCells(tx, input.tabId) };
+      return { ...tab, cells: filterCellsInWindow(cellsWithMetadata, input.window) };
     });
   }
+
+  async sortRange(input: SortRangeInput): Promise<SheetTabWithCells> {
+    const range = normalizeSheetRange(input.range);
+    return this.sql.begin(async (tx) => {
+      const tab = await selectVisibleTab(tx, input);
+      if (tab === null) {
+        throw new SheetsNotFoundError(`Unknown or inaccessible tab: ${input.tabId}`);
+      }
+      const sheet = await selectSheetById(tx, input.orgId, tab.sheetId);
+      if (sheet === null) {
+        throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${tab.sheetId}`);
+      }
+      const currentCells = await selectCells(tx, input.tabId);
+      if (range.top === range.bottom) {
+        return { ...tab, cells: filterCellsInWindow(currentCells, input.window) };
+      }
+      const edits = sortSheetRangeEdits(currentCells, range, input.direction);
+      assertNoProtectedRangeEdits(edits, tab, sheet);
+      assertNoHardValidationFailures(edits, currentCells, tab, sheet);
+      for (const edit of edits) {
+        if (isClearingEdit(edit)) {
+          await tx`
+            delete from sheet_cells
+            where sheet_tab_id = ${input.tabId} and row = ${edit.row} and col = ${edit.col}
+          `;
+          continue;
+        }
+        await tx`
+          insert into sheet_cells (org_id, sheet_tab_id, row, col, value, format)
+          values (
+            ${input.orgId}, ${input.tabId}, ${edit.row}, ${edit.col}, ${edit.value},
+            ${tx.json(toSqlJson(edit.format ?? {}))}
+          )
+          on conflict (sheet_tab_id, row, col) do update set
+            value = excluded.value,
+            format = case
+              when ${edit.format === undefined} then sheet_cells.format
+              else excluded.format
+            end,
+            updated_at = now()
+        `;
+      }
+      const cellsWithMetadata = await refreshFormulaMetadata(
+        tx,
+        input.orgId,
+        tab.sheetId,
+        input.tabId,
+        sheet.metadata,
+      );
+      await touchSheet(tx, input.orgId, tab.sheetId);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, tab.sheetId);
+      await appendSheetsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "sheets.range.sorted",
+        objectId: tab.sheetId,
+        payload: {
+          tabId: input.tabId,
+          direction: input.direction,
+          range: input.range,
+          editCount: edits.length,
+        },
+      });
+      return { ...tab, cells: filterCellsInWindow(cellsWithMetadata, input.window) };
+    });
+  }
+
+  async createComment(input: CreateSheetCommentInput): Promise<SheetCommentRecord> {
+    return this.sql.begin(async (tx) => {
+      const sheet = await selectVisibleSheet(tx, input);
+      if (sheet === null) {
+        throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${input.sheetId}`);
+      }
+      if (input.parentCommentId !== undefined) {
+        await requireSheetCommentParent(tx, {
+          orgId: input.orgId,
+          sheetId: input.sheetId,
+          parentCommentId: input.parentCommentId,
+        });
+      }
+      const tabs = await selectTabs(tx, input.orgId, sheet.id);
+      const anchor = validatedSheetCommentAnchor(input.anchor, sheet, tabs);
+      const rows = (await tx`
+        insert into drive_comments
+          (org_id, object_id, parent_comment_id, actor_id, anchor, body, metadata)
+        values (
+          ${input.orgId},
+          ${input.sheetId},
+          ${input.parentCommentId ?? null},
+          ${input.actorId},
+          ${tx.json(toSqlJson(anchor))},
+          ${input.body},
+          ${tx.json(toSqlJson(input.metadata ?? {}))}
+        )
+        returning *
+      `) as unknown as readonly SheetCommentRow[];
+      const comment = mapSheetComment(rows[0]);
+      await appendSheetsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "sheets.comment.created",
+        objectId: sheet.id,
+        payload: { commentId: comment.id, parentCommentId: comment.parentCommentId },
+      });
+      await notifySheetCommentMentions(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        sheet,
+        commentId: comment.id,
+        parentCommentId: comment.parentCommentId,
+        anchor: comment.anchor,
+        body: input.body,
+        metadata: input.metadata ?? {},
+      });
+      return comment;
+    });
+  }
+
+  async listComments(input: ListSheetCommentsInput): Promise<readonly SheetCommentListItem[]> {
+    const sheet = await selectVisibleSheet(this.sql, input);
+    if (sheet === null) {
+      return [];
+    }
+    const rows = (await this.sql`
+      select
+        c.*,
+        a.display_name as actor_display_name,
+        a.email as actor_email
+      from drive_comments c
+      left join actors a on a.id = c.actor_id and a.org_id = c.org_id
+      where c.org_id = ${input.orgId}
+        and c.object_id = ${sheet.id}
+        ${
+          input.status === undefined || input.status === "all"
+            ? this.sql``
+            : this.sql`and c.status = ${input.status}`
+        }
+      order by c.created_at asc, c.id asc
+    `) as unknown as readonly SheetCommentProjectionRow[];
+    return rows.map(mapSheetCommentListItem);
+  }
+
+  async resolveComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly SheetCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      const sheet = await selectVisibleSheet(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        sheetId: existing.object_id,
+      });
+      if (sheet === null) {
+        return null;
+      }
+      if (existing.status === "resolved") {
+        return mapSheetComment(existing);
+      }
+      const rows = (await tx`
+        update drive_comments
+        set status = 'resolved', resolved_at = now(), updated_at = now()
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly SheetCommentRow[];
+      const comment = mapSheetComment(rows[0]);
+      await appendSheetsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "sheets.comment.resolved",
+        objectId: sheet.id,
+        payload: { commentId: comment.id },
+      });
+      return comment;
+    });
+  }
+
+  async reopenComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly SheetCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      const sheet = await selectVisibleSheet(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        sheetId: existing.object_id,
+      });
+      if (sheet === null) {
+        return null;
+      }
+      if (existing.status === "open") {
+        return mapSheetComment(existing);
+      }
+      const rows = (await tx`
+        update drive_comments
+        set status = 'open', resolved_at = null, updated_at = now()
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly SheetCommentRow[];
+      const comment = mapSheetComment(rows[0]);
+      await appendSheetsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "sheets.comment.reopened",
+        objectId: sheet.id,
+        payload: { commentId: comment.id },
+      });
+      return comment;
+    });
+  }
+
+  async updateComment(input: UpdateSheetCommentInput): Promise<SheetCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly SheetCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      const sheet = await selectVisibleSheet(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        sheetId: existing.object_id,
+      });
+      if (sheet === null) {
+        return null;
+      }
+      const rows = (await tx`
+        update drive_comments
+        set body = ${input.body}, updated_at = now()
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly SheetCommentRow[];
+      const comment = mapSheetComment(rows[0]);
+      await appendSheetsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "sheets.comment.updated",
+        objectId: sheet.id,
+        payload: { commentId: comment.id },
+      });
+      return comment;
+    });
+  }
+
+  async deleteComment(input: DeleteSheetCommentInput): Promise<SheetCommentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existingRows = (await tx`
+        select *
+        from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        limit 1
+      `) as unknown as readonly SheetCommentRow[];
+      const existing = existingRows[0];
+      if (existing === undefined) {
+        return null;
+      }
+      const sheet = await selectVisibleSheet(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        sheetId: existing.object_id,
+      });
+      if (sheet === null) {
+        return null;
+      }
+      const rows = (await tx`
+        delete from drive_comments
+        where id = ${input.commentId}
+          and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly SheetCommentRow[];
+      const comment = mapSheetComment(rows[0]);
+      await appendSheetsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "sheets.comment.deleted",
+        objectId: sheet.id,
+        payload: { commentId: comment.id },
+      });
+      return comment;
+    });
+  }
+
+  async listOperations(
+    input: SheetRef & { readonly afterRevision?: number | undefined },
+  ): Promise<readonly SheetOperationLogRecord[]> {
+    const sheet = await selectVisibleSheet(this.sql, input);
+    if (sheet === null) {
+      return [];
+    }
+    const rows = (await this.sql`
+      select *
+      from sheet_op_log
+      where org_id = ${input.orgId}
+        and sheet_id = ${sheet.id}
+        and revision > ${input.afterRevision ?? 0}
+      order by revision asc
+    `) as unknown as readonly SheetOperationLogRow[];
+    return rows.map(mapSheetOperationLog);
+  }
+
+  async appendOperation(input: AppendSheetOperationInput): Promise<SheetOperationLogRecord> {
+    return this.sql.begin(async (tx) => {
+      const tab = await selectVisibleTab(tx, input);
+      if (tab === null || tab.sheetId !== input.sheetId) {
+        throw new SheetsNotFoundError(`Unknown or inaccessible tab: ${input.tabId}`);
+      }
+      const existingRows = (await tx`
+        select *
+        from sheet_op_log
+        where org_id = ${input.orgId}
+          and sheet_id = ${input.sheetId}
+          and operation_id = ${input.operationId}
+        limit 1
+      `) as unknown as readonly SheetOperationLogRow[];
+      if (existingRows[0] !== undefined) {
+        return mapSheetOperationLog(existingRows[0]);
+      }
+      const rows = (await tx`
+        insert into sheet_op_log (
+          org_id, sheet_id, sheet_tab_id, actor_id, operation_id, revision, base_revision, operation
+        )
+        values (
+          ${input.orgId},
+          ${input.sheetId},
+          ${input.tabId},
+          ${input.actorId},
+          ${input.operationId},
+          (
+            select coalesce(max(revision) + 1, 1)::int
+            from sheet_op_log
+            where org_id = ${input.orgId} and sheet_id = ${input.sheetId}
+          ),
+          ${input.baseRevision},
+          ${tx.json(toSqlJson(input.operation))}
+        )
+        returning *
+      `) as unknown as readonly SheetOperationLogRow[];
+      return mapSheetOperationLog(rows[0]);
+    });
+  }
+
+  async applyOperation(input: ApplySheetOperationInput): Promise<ApplySheetOperationResult> {
+    return this.sql.begin(async (tx) => {
+      const tab = await selectVisibleTab(tx, input);
+      if (tab === null || tab.sheetId !== input.sheetId) {
+        throw new SheetsNotFoundError(`Unknown or inaccessible tab: ${input.tabId}`);
+      }
+      const sheet = await selectVisibleSheetForUpdate(tx, input);
+      if (sheet === null) {
+        throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${input.sheetId}`);
+      }
+      const existingRows = (await tx`
+        select *
+        from sheet_op_log
+        where org_id = ${input.orgId}
+          and sheet_id = ${input.sheetId}
+          and operation_id = ${input.operation.id}
+        limit 1
+      `) as unknown as readonly SheetOperationLogRow[];
+      if (existingRows[0] !== undefined) {
+        return {
+          status: "duplicate",
+          operationId: input.operation.id,
+          revision: existingRows[0].revision,
+        };
+      }
+      const latestRows = (await tx`
+        select coalesce(max(revision), 0)::int as revision
+        from sheet_op_log
+        where org_id = ${input.orgId} and sheet_id = ${input.sheetId}
+      `) as unknown as readonly { readonly revision: number }[];
+      const latestRevision = latestRows[0]?.revision ?? 0;
+      if (input.operation.baseRevision > latestRevision) {
+        return { status: "ahead", operationId: input.operation.id, revision: latestRevision };
+      }
+      const committedRows = (await tx`
+        select *
+        from sheet_op_log
+        where org_id = ${input.orgId}
+          and sheet_id = ${input.sheetId}
+          and revision > ${input.operation.baseRevision}
+        order by revision asc
+      `) as unknown as readonly SheetOperationLogRow[];
+      const transformed = transformSheetOperation(
+        input.operation,
+        committedRows
+          .map((row) => mapSheetOperationLog(row))
+          .filter((operation) => operation.tabId === input.tabId)
+          .map((operation) => operation.operation),
+        latestRevision,
+      );
+      if (transformed === null) {
+        return { status: "dropped", operationId: input.operation.id, revision: latestRevision };
+      }
+      const edits = cellEditsFromSheetOperation(transformed);
+      for (const edit of edits) {
+        assertCellEdit(edit);
+      }
+      assertNoProtectedRangeEdits(edits, tab, sheet);
+      const currentCells = await selectCells(tx, input.tabId);
+      assertNoHardValidationFailures(edits, currentCells, tab, sheet);
+      const now = new Date();
+      const metadataRebase = rebaseSheetMetadataRangesForOperation(
+        sheet.metadata,
+        input.tabId,
+        transformed,
+      );
+      const sheetMetadata = metadataRebase.metadata;
+      if (metadataRebase.changed) {
+        await tx`
+          update sheets
+          set metadata = ${tx.json(toSqlJson(sheetMetadata))}, updated_at = ${now}
+          where id = ${input.sheetId} and org_id = ${input.orgId} and deleted_at is null
+        `;
+      }
+      await rebaseSheetCommentAnchorsForOperation(tx, {
+        orgId: input.orgId,
+        sheetId: input.sheetId,
+        tabId: input.tabId,
+        operation: transformed,
+        now,
+      });
+      const nextCells = applySheetOperationToCells({
+        orgId: input.orgId,
+        tabId: input.tabId,
+        cells: currentCells,
+        operation: transformed,
+        now,
+        createId: randomUUID,
+      });
+      await tx`delete from sheet_cells where sheet_tab_id = ${input.tabId}`;
+      for (const cell of nextCells) {
+        await tx`
+          insert into sheet_cells (
+            id,
+            org_id,
+            sheet_tab_id,
+            row,
+            col,
+            value,
+            formula,
+            calc_value,
+            dependencies,
+            formula_error,
+            format,
+            created_at,
+            updated_at
+          )
+          values (
+            ${cell.id},
+            ${input.orgId},
+            ${input.tabId},
+            ${cell.row},
+            ${cell.col},
+            ${cell.value},
+            ${cell.formula},
+            ${cell.calcValue},
+            ${tx.json(toSqlJson(cell.dependencies))},
+            ${cell.formulaError},
+            ${tx.json(toSqlJson(cell.format))},
+            ${cell.createdAt},
+            ${cell.updatedAt}
+          )
+        `;
+      }
+      const cellsWithMetadata = await refreshFormulaMetadata(
+        tx,
+        input.orgId,
+        input.sheetId,
+        input.tabId,
+        sheetMetadata,
+      );
+      await touchSheet(tx, input.orgId, input.sheetId);
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.sheetId);
+      await appendSheetsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "sheets.cells.updated",
+        objectId: input.sheetId,
+        payload: {
+          tabId: input.tabId,
+          editCount: edits.length,
+          operationChangeCount: transformed.changes.length,
+          source: "sheets.sync",
+        },
+      });
+      const rows = (await tx`
+        insert into sheet_op_log (
+          org_id, sheet_id, sheet_tab_id, actor_id, operation_id, revision, base_revision, operation
+        )
+        values (
+          ${input.orgId},
+          ${input.sheetId},
+          ${input.tabId},
+          ${input.actorId},
+          ${transformed.id},
+          ${latestRevision + 1},
+          ${transformed.baseRevision},
+          ${tx.json(toSqlJson(transformed))}
+        )
+        returning *
+      `) as unknown as readonly SheetOperationLogRow[];
+      const record = mapSheetOperationLog(rows[0]);
+      return {
+        status: "applied",
+        revision: record.revision,
+        operation: record.operation,
+        tab: { ...tab, cells: cellsWithMetadata },
+      };
+    });
+  }
+
+  async #refreshStorageSnapshot(
+    sql: SqlLike,
+    orgId: string,
+    actorId: string,
+    sheetId: string,
+  ): Promise<void> {
+    if (this.options.storageResolver === undefined) {
+      return;
+    }
+    const sheet = await selectSheetById(sql, orgId, sheetId);
+    if (sheet === null) {
+      return;
+    }
+    const tabs = await selectTabs(sql, orgId, sheetId);
+    const cells = await selectCellsForSheet(sql, orgId, sheetId);
+    const storageKey = `sheets/${orgId}/${sheetId}`;
+    const versionNumber = await nextDriveVersionNumber(sql, sheetId);
+    const versionStorageKey = sheetSnapshotVersionStorageKey(orgId, sheetId, versionNumber);
+    const storedSnapshot = await writeSheetStorageSnapshot({
+      resolver: this.options.storageResolver,
+      orgId,
+      key: storageKey,
+      sheet,
+      tabs,
+      cells,
+    });
+    const versionSnapshot = await writeSheetStorageSnapshot({
+      resolver: this.options.storageResolver,
+      orgId,
+      key: versionStorageKey,
+      sheet,
+      tabs,
+      cells,
+    });
+    await insertSheetSnapshotVersion(sql, {
+      orgId,
+      actorId,
+      sheetId,
+      versionNumber,
+      storageKey: versionStorageKey,
+      byteSize: versionSnapshot.byteSize,
+      sha256: versionSnapshot.sha256,
+      metadata: {
+        app: "sheets",
+        title: sheet.title,
+        tabCount: tabs.length,
+        cellCount: cells.length,
+      },
+    });
+    await sql`
+      update objects
+      set byte_size = ${storedSnapshot.byteSize},
+          sha256 = ${storedSnapshot.sha256},
+          metadata = objects.metadata || ${sql.json(
+            toSqlJson({ app: "sheets", sheetId, name: sheet.title, title: sheet.title }),
+          )},
+          updated_at = now()
+      where id = ${sheetId} and org_id = ${orgId}
+    `;
+  }
+}
+
+async function nextDriveVersionNumber(sql: SqlLike, objectId: string): Promise<number> {
+  const rows = (await sql`
+    select coalesce(max(version_number) + 1, 1)::int as version_number
+    from drive_versions
+    where object_id = ${objectId}
+  `) as unknown as readonly { readonly version_number: number }[];
+  return rows[0]?.version_number ?? 1;
+}
+
+async function insertSheetSnapshotVersion(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly sheetId: string;
+    readonly versionNumber: number;
+    readonly storageKey: string;
+    readonly byteSize: number;
+    readonly sha256: string | null;
+    readonly metadata: JsonObject;
+  },
+): Promise<void> {
+  if (input.sha256 === null) {
+    return;
+  }
+  await sql`
+    insert into drive_versions (
+      org_id, object_id, version_number, storage_key, mime_type, byte_size, sha256, metadata, created_by_actor_id
+    )
+    values (
+      ${input.orgId},
+      ${input.sheetId},
+      ${input.versionNumber},
+      ${input.storageKey},
+      'application/vnd.helix.spreadsheet+json',
+      ${input.byteSize},
+      ${input.sha256},
+      ${sql.json(toSqlJson(input.metadata))},
+      ${input.actorId}
+    )
+  `;
+}
+
+function sheetSnapshotVersionStorageKey(
+  orgId: string,
+  sheetId: string,
+  versionNumber: number,
+): string {
+  return `sheets/${orgId}/${sheetId}/versions/${String(versionNumber)}`;
+}
+
+async function selectSheetById(
+  sql: SqlLike,
+  orgId: string,
+  sheetId: string,
+): Promise<SheetRecord | null> {
+  const rows = (await sql`
+    select *
+    from sheets
+    where id = ${sheetId}
+      and org_id = ${orgId}
+      and deleted_at is null
+    limit 1
+  `) as unknown as readonly SheetRow[];
+  return rows[0] === undefined ? null : mapSheet(rows[0]);
 }
 
 async function selectVisibleSheet(
@@ -777,6 +4157,22 @@ async function selectVisibleSheet(
       and deleted_at is null
       and (owner_actor_id = ${input.actorId} or created_by_actor_id = ${input.actorId})
     limit 1
+  `) as unknown as readonly SheetRow[];
+  return rows[0] === undefined ? null : mapSheet(rows[0]);
+}
+
+async function selectVisibleSheetForUpdate(
+  sql: SqlLike,
+  input: SheetRef,
+): Promise<SheetRecord | null> {
+  const rows = (await sql`
+    select *
+    from sheets
+    where id = ${input.sheetId}
+      and org_id = ${input.orgId}
+      and deleted_at is null
+      and (owner_actor_id = ${input.actorId} or created_by_actor_id = ${input.actorId})
+    for update
   `) as unknown as readonly SheetRow[];
   return rows[0] === undefined ? null : mapSheet(rows[0]);
 }
@@ -813,7 +4209,25 @@ async function selectTabs(
   return rows.map(mapTab);
 }
 
-async function selectCells(sql: SqlLike, tabId: string): Promise<readonly SheetCellRecord[]> {
+async function selectCells(
+  sql: SqlLike,
+  tabId: string,
+  window?: SheetCellWindow,
+): Promise<readonly SheetCellRecord[]> {
+  if (window !== undefined) {
+    const normalized = normalizeSheetRange(window);
+    const rows = (await sql`
+      select *
+      from sheet_cells
+      where sheet_tab_id = ${tabId}
+        and row >= ${normalized.top}
+        and row <= ${normalized.bottom}
+        and col >= ${normalized.left}
+        and col <= ${normalized.right}
+      order by row asc, col asc
+    `) as unknown as readonly SheetCellRow[];
+    return rows.map(mapCell);
+  }
   const rows = (await sql`
     select *
     from sheet_cells
@@ -821,6 +4235,121 @@ async function selectCells(sql: SqlLike, tabId: string): Promise<readonly SheetC
     order by row asc, col asc
   `) as unknown as readonly SheetCellRow[];
   return rows.map(mapCell);
+}
+
+async function selectCellsForSheet(
+  sql: SqlLike,
+  orgId: string,
+  sheetId: string,
+): Promise<readonly SheetCellRecord[]> {
+  const rows = (await sql`
+    select c.*
+    from sheet_cells c
+    join sheet_tabs t on t.id = c.sheet_tab_id and t.org_id = c.org_id
+    where t.org_id = ${orgId}
+      and t.sheet_id = ${sheetId}
+      and t.deleted_at is null
+    order by t.position asc, c.row asc, c.col asc
+  `) as unknown as readonly SheetCellRow[];
+  return rows.map(mapCell);
+}
+
+async function rebaseSheetCommentAnchorsForOperation(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly sheetId: string;
+    readonly tabId: string;
+    readonly operation: SheetOperation;
+    readonly now: Date;
+  },
+): Promise<void> {
+  const rows = (await sql`
+    select *
+    from drive_comments
+    where org_id = ${input.orgId}
+      and object_id = ${input.sheetId}
+    for update
+  `) as unknown as readonly SheetCommentRow[];
+  for (const row of rows) {
+    const rebased = rebaseSheetCommentAnchorForOperation(row.anchor, input.tabId, input.operation);
+    if (!rebased.changed) {
+      continue;
+    }
+    await sql`
+      update drive_comments
+      set anchor = ${sql.json(toSqlJson(rebased.anchor))}, updated_at = ${input.now}
+      where id = ${row.id} and org_id = ${input.orgId}
+    `;
+  }
+}
+
+async function requireSheetCommentParent(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly sheetId: string;
+    readonly parentCommentId: string;
+  },
+): Promise<void> {
+  const rows = (await sql`
+    select id
+    from drive_comments
+    where id = ${input.parentCommentId}
+      and org_id = ${input.orgId}
+      and object_id = ${input.sheetId}
+    limit 1
+  `) as unknown as readonly { readonly id: string }[];
+  if (rows[0] === undefined) {
+    throw new SheetsValidationError("Comment parent must belong to the same spreadsheet.");
+  }
+}
+
+function validatedSheetCommentAnchor(
+  anchor: JsonObject | undefined,
+  sheet: SheetRecord,
+  tabs: readonly SheetTabRecord[],
+): JsonObject {
+  const candidate = anchor ?? {};
+  if (candidate["type"] !== "sheet-range") {
+    return candidate;
+  }
+  const sheetId = candidate["sheetId"];
+  if (sheetId !== undefined && sheetId !== sheet.id) {
+    throw new SheetsValidationError("Sheet comment anchor must reference the target spreadsheet.");
+  }
+  const tabId = candidate["tabId"];
+  if (typeof tabId !== "string" || !tabs.some((tab) => tab.id === tabId)) {
+    throw new SheetsValidationError(
+      "Sheet comment anchor must reference a tab in the spreadsheet.",
+    );
+  }
+  const range = candidate["range"];
+  if (typeof range !== "object" || range === null || Array.isArray(range)) {
+    throw new SheetsValidationError("Sheet comment anchor range is required.");
+  }
+  const record = range as Record<string, unknown>;
+  const startRow = validatedSheetCommentAnchorCoordinate(record["startRow"], "startRow");
+  const startCol = validatedSheetCommentAnchorCoordinate(record["startCol"], "startCol");
+  const endRow = validatedSheetCommentAnchorCoordinate(record["endRow"], "endRow");
+  const endCol = validatedSheetCommentAnchorCoordinate(record["endCol"], "endCol");
+  return {
+    ...candidate,
+    tabId,
+    range: {
+      startRow: Math.min(startRow, endRow),
+      startCol: Math.min(startCol, endCol),
+      endRow: Math.max(startRow, endRow),
+      endCol: Math.max(startCol, endCol),
+    },
+  };
+}
+
+function validatedSheetCommentAnchorCoordinate(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new SheetsValidationError(`Sheet comment anchor ${name} must be a non-negative integer.`);
+  }
+  return value;
 }
 
 async function touchSheet(sql: SqlLike, orgId: string, sheetId: string): Promise<void> {
@@ -872,6 +4401,216 @@ async function appendSheetsActivity(
   `;
 }
 
+async function notifySheetCommentMentions(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly sheet: SheetRecord;
+    readonly commentId: string;
+    readonly parentCommentId: string | null;
+    readonly anchor: JsonObject;
+    readonly body: string;
+    readonly metadata: JsonObject;
+  },
+): Promise<void> {
+  const tokens = mentionTokensForComment(input.metadata, input.body);
+  if (tokens.length === 0) {
+    return;
+  }
+  const actorRows = (await sql`
+    select id, display_name, email
+    from actors
+    where org_id = ${input.orgId}
+      and disabled_at is null
+      and type = 'user'
+      and (
+        id = ${input.sheet.ownerActorId}
+        or id = ${input.sheet.createdByActorId}
+        or exists (
+          select 1 from permissions p
+          where p.org_id = ${input.orgId}
+            and p.actor_id = actors.id
+            and p.resource_type = 'object'
+            and p.resource_id = ${input.sheet.id}
+            and (p.expires_at is null or p.expires_at > now())
+        )
+      )
+  `) as unknown as readonly {
+    readonly id: string;
+    readonly display_name: string;
+    readonly email: string | null;
+  }[];
+  const recipients = mentionedActorIds({
+    actors: actorRows,
+    authorActorId: input.actorId,
+    tokens,
+  });
+  if (recipients.length === 0) {
+    return;
+  }
+  const authorName =
+    actorRows.find((actor) => actor.id === input.actorId)?.display_name ?? "Someone";
+  for (const recipientId of recipients) {
+    await insertNotification(sql, {
+      orgId: input.orgId,
+      actorId: recipientId,
+      verb: "sheets.comment.mention",
+      objectType: "sheet",
+      objectId: input.sheet.id,
+      summary: `${authorName} mentioned you in "${input.sheet.title}".`,
+      body: input.body,
+      payload: {
+        sheetId: input.sheet.id,
+        commentId: input.commentId,
+        ...(input.parentCommentId === null ? {} : { parentCommentId: input.parentCommentId }),
+        anchor: input.anchor,
+        mentionedByActorId: input.actorId,
+        mentionsText: tokens,
+      },
+    });
+  }
+}
+
+function mentionTokensForComment(metadata: JsonObject, body: string): readonly string[] {
+  const tokens = new Set<string>();
+  for (const token of mentionTokensFromMetadata(metadata)) {
+    tokens.add(token);
+  }
+  for (const token of mentionTokensFromText(body)) {
+    tokens.add(token);
+  }
+  return [...tokens];
+}
+
+function mentionTokensFromMetadata(metadata: JsonObject): readonly string[] {
+  const mentionsText = metadata.mentionsText;
+  if (!Array.isArray(mentionsText)) {
+    return [];
+  }
+  const tokens = new Set<string>();
+  for (const value of mentionsText) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const token = normalizeMentionToken(value);
+    if (token.length > 0) {
+      tokens.add(token);
+    }
+  }
+  return [...tokens];
+}
+
+function mentionTokensFromText(value: string): readonly string[] {
+  const tokens = new Set<string>();
+  for (const match of value.matchAll(/(^|\s)@([\p{L}\p{N}](?:[\p{L}\p{N}._-]*[\p{L}\p{N}])?)/gu)) {
+    const token = normalizeMentionToken(match[2] ?? "");
+    if (token.length > 0) {
+      tokens.add(token);
+    }
+  }
+  return [...tokens];
+}
+
+function mentionedActorIds(input: {
+  readonly actors: readonly {
+    readonly id: string;
+    readonly display_name: string;
+    readonly email: string | null;
+  }[];
+  readonly authorActorId: string;
+  readonly tokens: readonly string[];
+}): readonly string[] {
+  const tokenSet = new Set(input.tokens.map(normalizeMentionToken));
+  const ids: string[] = [];
+  for (const actor of input.actors) {
+    if (actor.id === input.authorActorId) {
+      continue;
+    }
+    const aliases = actorMentionAliases(actor);
+    if ([...tokenSet].some((token) => aliases.has(token))) {
+      ids.push(actor.id);
+    }
+  }
+  return ids;
+}
+
+function actorMentionAliases(actor: {
+  readonly display_name: string;
+  readonly email: string | null;
+}): ReadonlySet<string> {
+  const aliases = new Set<string>();
+  const email = actor.email?.trim().toLowerCase();
+  if (email !== undefined && email.length > 0) {
+    aliases.add(email);
+    aliases.add(email.split("@")[0] ?? email);
+  }
+  const displayName = actor.display_name.trim().toLowerCase();
+  if (displayName.length > 0) {
+    aliases.add(displayName);
+    aliases.add(displayName.replace(/[^a-z0-9]+/gu, ""));
+    const firstName = displayName.split(/\s+/u)[0];
+    if (firstName !== undefined) {
+      aliases.add(firstName);
+    }
+  }
+  return aliases;
+}
+
+function normalizeMentionToken(value: string): string {
+  return value.trim().replace(/^@/u, "").toLowerCase();
+}
+
+async function writeSheetStorageSnapshot(input: {
+  readonly resolver?: SheetSnapshotStorageResolver | undefined;
+  readonly orgId: string;
+  readonly key: string;
+  readonly sheet: SheetRecord;
+  readonly tabs: readonly SheetTabRecord[];
+  readonly cells?: readonly SheetCellRecord[] | undefined;
+}): Promise<{ readonly byteSize: number; readonly sha256: string | null }> {
+  if (input.resolver === undefined) {
+    return { byteSize: 0, sha256: null };
+  }
+  const body = encodeSnapshot({
+    app: "sheets",
+    version: 1,
+    sheet: {
+      id: input.sheet.id,
+      orgId: input.sheet.orgId,
+      title: input.sheet.title,
+      metadata: input.sheet.metadata,
+    },
+    tabs: input.tabs.map((tab) => ({
+      id: tab.id,
+      name: tab.name,
+      position: tab.position,
+      metadata: tab.metadata,
+    })),
+    cells: (input.cells ?? []).map((cell) => ({
+      tabId: cell.sheetTabId,
+      row: cell.row,
+      col: cell.col,
+      value: cell.value,
+      formula: cell.formula,
+      calcValue: cell.calcValue,
+      dependencies: cell.dependencies,
+      formulaError: cell.formulaError,
+      format: cell.format,
+    })),
+  });
+  const storage = await input.resolver({ orgId: input.orgId });
+  if (storage === undefined) {
+    throw new Error("Tenant storage resolver did not resolve storage for sheet snapshot.");
+  }
+  await storage.client.put({
+    key: input.key,
+    body,
+    contentType: "application/vnd.helix.spreadsheet+json",
+  });
+  return { byteSize: body.byteLength, sha256: sha256Hex(body) };
+}
+
 function mapSheet(row: SheetRow | undefined): SheetRecord {
   if (row === undefined) {
     throw new Error("Expected sheet row.");
@@ -917,12 +4656,119 @@ function mapCell(row: SheetCellRow | undefined): SheetCellRecord {
     row: row.row,
     col: row.col,
     value: row.value,
+    formula: row.formula,
+    calcValue: row.calc_value,
+    dependencies: row.dependencies,
+    formulaError: row.formula_error,
     format: row.format,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
+function mapSheetComment(row: SheetCommentRow | undefined): SheetCommentRecord {
+  if (row === undefined) {
+    throw new Error("Expected sheet comment row.");
+  }
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    sheetId: row.object_id,
+    parentCommentId: row.parent_comment_id,
+    actorId: row.actor_id,
+    anchor: row.anchor,
+    body: row.body,
+    status: row.status,
+    metadata: row.metadata,
+    resolvedAt: row.resolved_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapSheetCommentListItem(row: SheetCommentProjectionRow): SheetCommentListItem {
+  const comment = mapSheetComment(row);
+  return {
+    ...comment,
+    ...(row.actor_id === null
+      ? {}
+      : {
+          author: {
+            id: row.actor_id,
+            ...(row.actor_display_name === null ? {} : { displayName: row.actor_display_name }),
+            ...(row.actor_email === null ? {} : { email: row.actor_email }),
+          },
+        }),
+  };
+}
+
+function mapSheetOperationLog(row: SheetOperationLogRow | undefined): SheetOperationLogRecord {
+  if (row === undefined) {
+    throw new Error("Expected sheet operation log row.");
+  }
+  return {
+    orgId: row.org_id,
+    sheetId: row.sheet_id,
+    tabId: row.sheet_tab_id,
+    actorId: row.actor_id,
+    operationId: row.operation_id,
+    revision: row.revision,
+    baseRevision: row.base_revision,
+    operation: parseSheetOperation(row.operation),
+    createdAt: row.created_at,
+  };
+}
+
+async function refreshFormulaMetadata(
+  sql: SqlLike,
+  orgId: string,
+  sheetId: string,
+  tabId: string,
+  sheetMetadata: JsonObject,
+): Promise<SheetCellRecord[]> {
+  const tabs = await selectTabs(sql, orgId, sheetId);
+  const cells = await selectCellsForSheet(sql, orgId, sheetId);
+  const evaluations = evaluateSheetFormulas(cells, {
+    currentTabId: tabId,
+    tabs,
+    namedRanges: namedFormulaRangesFromMetadata(sheetMetadata),
+  });
+  const cellsWithMetadata = cells.map((cell) => {
+    const evaluation = evaluations.get(formulaCellKey(cell.sheetTabId, cell.row, cell.col));
+    return {
+      ...cell,
+      formula: evaluation?.formula ?? null,
+      calcValue: evaluation?.calcValue ?? cell.value,
+      dependencies: evaluation?.dependencies ?? [],
+      formulaError: evaluation?.error ?? null,
+    };
+  });
+  for (const cell of cellsWithMetadata) {
+    await sql`
+      update sheet_cells
+      set
+        formula = ${cell.formula},
+        calc_value = ${cell.calcValue},
+        dependencies = ${sql.json(toSqlJson(cell.dependencies))},
+        formula_error = ${cell.formulaError}
+      where id = ${cell.id}
+    `;
+  }
+  return cellsWithMetadata.filter((cell) => cell.sheetTabId === tabId);
+}
+
+function formulaCellKey(tabId: string, row: number, col: number): string {
+  return `${tabId}:${String(row)}:${String(col)}`;
+}
+
 function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
+}
+
+function encodeSnapshot(value: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value));
+}
+
+function sha256Hex(value: Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
 }

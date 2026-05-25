@@ -43,6 +43,10 @@ export interface SheetCellRecord {
   readonly row: number;
   readonly col: number;
   readonly value: string;
+  readonly formula: string | null;
+  readonly calcValue: string | null;
+  readonly dependencies: readonly string[];
+  readonly formulaError: string | null;
   readonly format: JsonObject;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -59,6 +63,31 @@ export interface SheetWithTabs extends SheetRecord {
 /** A tab plus its populated cells. Returned by `sheets.tab` reads. */
 export interface SheetTabWithCells extends SheetTabRecord {
   readonly cells: readonly SheetCellRecord[];
+}
+
+export type SheetCommentAuthor = JsonObject & {
+  readonly id: string;
+  readonly displayName?: string;
+  readonly email?: string;
+};
+
+export interface SheetCommentRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly sheetId: string;
+  readonly parentCommentId: string | null;
+  readonly actorId: string | null;
+  readonly anchor: JsonObject;
+  readonly body: string;
+  readonly status: string;
+  readonly metadata: JsonObject;
+  readonly resolvedAt: Date | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date | null;
+}
+
+export interface SheetCommentListItem extends SheetCommentRecord {
+  readonly author?: SheetCommentAuthor | undefined;
 }
 
 /** A single cell mutation in a `sheets.cells.update` batch. */

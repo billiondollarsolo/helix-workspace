@@ -199,7 +199,11 @@ import {
   PostgresNotificationStore,
   registerNotificationTools,
 } from "./platform/notifications/index.js";
-import { PostgresSheetsStore, registerSheets } from "./platform/sheets/index.js";
+import {
+  PostgresSheetsStore,
+  registerSheets,
+  registerSheetsRoutes,
+} from "./platform/sheets/index.js";
 import { PostgresSlidesStore, registerSlides } from "./platform/slides/index.js";
 import {
   PostgresGroupsStore,
@@ -1699,6 +1703,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
       })
     : undefined;
+  await registerSheetsRoutes(app, {
+    store: sheetsStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    metrics,
+    onError: (error) => {
+      app.log.error({ error }, "Sheets websocket error");
+    },
+  });
   if (coreApps.shouldRegister("calendar")) {
     await registerCalendarRoutes(app, {
       store: calendarStore,

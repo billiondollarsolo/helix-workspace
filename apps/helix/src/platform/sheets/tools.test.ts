@@ -826,6 +826,98 @@ describe("sheets tools", () => {
     expect(contentXml).toContain("Approved by finance");
   });
 
+  it("exports cross-tab named-range list validation to XLSX defined names", async () => {
+    const { registry } = setup();
+    const actor = writerActor();
+    const created = await registry.invoke<{
+      readonly id: string;
+      readonly tabs: { readonly id: string }[];
+    }>("sheets.create", { title: "Cross Tab Validation", tabNames: ["Entry", "Lists"] }, { actor });
+    const sheetId = created.ok ? created.output.id : "";
+    const entryTabId = created.ok ? (created.output.tabs[0]?.id ?? "") : "";
+    const listsTabId = created.ok ? (created.output.tabs[1]?.id ?? "") : "";
+
+    await registry.invoke(
+      "sheets.update",
+      {
+        sheetId,
+        metadata: {
+          namedRanges: [
+            {
+              id: "named-status-cross-tab",
+              tabId: listsTabId,
+              name: "Status_List",
+              range: { startRow: 0, startCol: 0, endRow: 1, endCol: 0 },
+            },
+          ],
+        },
+      },
+      { actor },
+    );
+    await registry.invoke(
+      "sheets.cells.update",
+      {
+        tabId: listsTabId,
+        edits: [
+          { row: 0, col: 0, value: "Ready" },
+          { row: 1, col: 0, value: "Blocked" },
+        ],
+      },
+      { actor },
+    );
+    await registry.invoke(
+      "sheets.cells.update",
+      {
+        tabId: entryTabId,
+        edits: [
+          {
+            row: 0,
+            col: 0,
+            value: "Ready",
+            format: {
+              dataValidation: {
+                type: "list",
+                namedRangeId: "named-status-cross-tab",
+                mode: "reject",
+              },
+            },
+          },
+        ],
+      },
+      { actor },
+    );
+
+    const xlsx = await registry.invoke<{
+      readonly contentBase64: string;
+      readonly metadata: Record<string, unknown>;
+    }>("sheets.export", { sheetId, format: "xlsx" }, { actor: readerActor() });
+    expect(xlsx.ok).toBe(true);
+    expect(xlsx.ok ? xlsx.output.metadata : {}).toMatchObject({
+      namedRangeCount: 1,
+    });
+
+    const ExcelJS = (await import("exceljs")).default;
+    const workbook = new ExcelJS.Workbook();
+    const bytes = Buffer.from(xlsx.ok ? xlsx.output.contentBase64 : "", "base64");
+    const workbookBuffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(workbookBuffer).set(bytes);
+    await workbook.xlsx.load(workbookBuffer);
+    const entrySheet = workbook.getWorksheet("Entry");
+    expect(entrySheet).toBeDefined();
+    if (entrySheet === undefined) {
+      throw new Error("Expected Entry worksheet.");
+    }
+    expect(workbook.definedNames.model).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Status_List", ranges: ["Lists!$A$1:$A$2"] }),
+      ]),
+    );
+    expect(entrySheet.getCell(1, 1).dataValidation).toMatchObject({
+      type: "list",
+      formulae: ["Status_List"],
+    });
+  });
+
   it("manages tabs and batch cell edits through the tools", async () => {
     const { registry } = setup();
     const actor = writerActor();

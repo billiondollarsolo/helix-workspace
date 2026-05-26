@@ -1,4 +1,5 @@
-import type { TenantExportManifest } from "./export.js";
+import type { JsonObject, JsonValue } from "@helix/sdk-types";
+import type { TenantExportManifest, TenantExportPostgresDataChunkManifest } from "./export.js";
 import {
   validateTenantExportPostgresDataChunks,
   type TenantExportValidationFiles,
@@ -34,6 +35,35 @@ export interface BuildTenantImportPlanInput {
   readonly files: TenantExportValidationFiles;
   readonly targetOrgId?: string | undefined;
   readonly targetSlug?: string | undefined;
+}
+
+export interface BuildTenantImportPlanFromArchiveInput {
+  readonly archive: Uint8Array;
+  readonly targetOrgId?: string | undefined;
+  readonly targetSlug?: string | undefined;
+}
+
+export type TenantImportArchiveReadIssueCode =
+  | "invalid_tar_archive"
+  | "unsafe_archive_path"
+  | "duplicate_archive_entry"
+  | "missing_archive_entry"
+  | "invalid_archive_json"
+  | "invalid_archive_manifest";
+
+export interface TenantImportArchiveReadIssue {
+  readonly severity: "error";
+  readonly code: TenantImportArchiveReadIssueCode;
+  readonly message: string;
+  readonly path?: string | undefined;
+  readonly expected?: unknown;
+  readonly actual?: unknown;
+}
+
+export interface TenantImportArchivePlanResult {
+  readonly ok: boolean;
+  readonly issues: readonly TenantImportArchiveReadIssue[];
+  readonly plan?: TenantImportPlan | undefined;
 }
 
 export interface TenantImportPlanIssue {
@@ -209,6 +239,63 @@ export function buildTenantImportPlan(input: BuildTenantImportPlanInput): Tenant
 }
 
 export const buildTenantExportImportPlan = buildTenantImportPlan;
+
+export function buildTenantImportPlanFromArchive(
+  input: BuildTenantImportPlanFromArchiveInput,
+): TenantImportArchivePlanResult {
+  const archive = readTenantExportArchive(input.archive);
+  if (archive.issues.length > 0) {
+    return {
+      ok: false,
+      issues: archive.issues,
+    };
+  }
+  const manifestJson = readRequiredJsonRecord(archive.entries, "manifest.json");
+  const configSnapshot = readRequiredJsonRecord(archive.entries, "config-snapshot.json");
+  const objectInventory = readRequiredJsonRecord(archive.entries, "objects/inventory.json");
+  const rowDataChunks = readRequiredJsonRecord(
+    archive.entries,
+    "postgres/data/chunks/manifest.json",
+  );
+  const issues = [
+    ...manifestJson.issues,
+    ...configSnapshot.issues,
+    ...objectInventory.issues,
+    ...rowDataChunks.issues,
+  ];
+  if (issues.length > 0) {
+    return {
+      ok: false,
+      issues,
+    };
+  }
+
+  const manifest = tenantExportManifestFromArchiveEntries({
+    manifest: manifestJson.value,
+    configSnapshot: configSnapshot.value,
+    objectInventory: objectInventory.value,
+    rowDataChunks: rowDataChunks.value,
+  });
+  if (manifest.issues.length > 0) {
+    return {
+      ok: false,
+      issues: manifest.issues,
+    };
+  }
+
+  const files = tenantExportRowChunkFilesFromArchive(archive.entries);
+  const plan = buildTenantImportPlan({
+    manifest: manifest.value,
+    files,
+    ...(input.targetOrgId === undefined ? {} : { targetOrgId: input.targetOrgId }),
+    ...(input.targetSlug === undefined ? {} : { targetSlug: input.targetSlug }),
+  });
+  return {
+    ok: plan.ok,
+    issues: [],
+    plan,
+  };
+}
 
 function planSummary(
   validation: TenantExportValidationResult,
@@ -482,4 +569,490 @@ function stringField(row: JsonRecord, field: string): string {
     throw new Error(`Expected ${field} to be a string after validation.`);
   }
   return value;
+}
+
+interface ParsedTenantExportArchive {
+  readonly entries: ReadonlyMap<string, Uint8Array>;
+  readonly issues: readonly TenantImportArchiveReadIssue[];
+}
+
+interface RequiredJsonRecordResult {
+  readonly value: JsonRecord;
+  readonly issues: readonly TenantImportArchiveReadIssue[];
+}
+
+interface TenantExportManifestFromArchiveEntriesResult {
+  readonly value: TenantExportManifest;
+  readonly issues: readonly TenantImportArchiveReadIssue[];
+}
+
+function readTenantExportArchive(archive: Uint8Array): ParsedTenantExportArchive {
+  const buffer = Buffer.from(archive);
+  const entries = new Map<string, Uint8Array>();
+  const issues: TenantImportArchiveReadIssue[] = [];
+  let sawEndMarker = false;
+
+  for (let offset = 0; offset + 512 <= buffer.byteLength; ) {
+    const header = buffer.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      sawEndMarker = true;
+      break;
+    }
+
+    const path = readTarString(header, 0, 100);
+    if (!isSafeArchivePath(path)) {
+      issues.push({
+        severity: "error",
+        code: "unsafe_archive_path",
+        path,
+        message: "Tenant export archive entry path must be relative and normalized.",
+      });
+      break;
+    }
+    if (entries.has(path)) {
+      issues.push({
+        severity: "error",
+        code: "duplicate_archive_entry",
+        path,
+        message: "Tenant export archive contains a duplicate entry.",
+      });
+      break;
+    }
+
+    const typeflag = header.subarray(156, 157).toString("ascii");
+    if (typeflag !== "0" && typeflag !== "\0") {
+      issues.push({
+        severity: "error",
+        code: "invalid_tar_archive",
+        path,
+        message: "Tenant export archive entries must be regular files.",
+        actual: typeflag,
+      });
+      break;
+    }
+
+    const magic = header.subarray(257, 263).toString("ascii");
+    const version = header.subarray(263, 265).toString("ascii");
+    if (magic !== "ustar\0" || version !== "00") {
+      issues.push({
+        severity: "error",
+        code: "invalid_tar_archive",
+        path,
+        message: "Tenant export archive entry must use the ustar format.",
+        expected: { magic: "ustar\\0", version: "00" },
+        actual: { magic, version },
+      });
+      break;
+    }
+
+    if (!tarHeaderChecksumMatches(header)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_tar_archive",
+        path,
+        message: "Tenant export archive entry checksum is invalid.",
+      });
+      break;
+    }
+
+    const size = readTarOctal(header, 124, 12);
+    if (size === null) {
+      issues.push({
+        severity: "error",
+        code: "invalid_tar_archive",
+        path,
+        message: "Tenant export archive entry has an invalid size.",
+      });
+      break;
+    }
+    const bodyStart = offset + 512;
+    const bodyEnd = bodyStart + size;
+    if (bodyEnd > buffer.byteLength) {
+      issues.push({
+        severity: "error",
+        code: "invalid_tar_archive",
+        path,
+        message: "Tenant export archive entry body is truncated.",
+      });
+      break;
+    }
+
+    entries.set(path, buffer.subarray(bodyStart, bodyEnd));
+    offset = bodyStart + Math.ceil(size / 512) * 512;
+  }
+
+  if (!sawEndMarker && issues.length === 0) {
+    issues.push({
+      severity: "error",
+      code: "invalid_tar_archive",
+      message: "Tenant export archive is missing the tar end marker.",
+    });
+  }
+
+  return {
+    entries,
+    issues,
+  };
+}
+
+function readRequiredJsonRecord(
+  entries: ReadonlyMap<string, Uint8Array>,
+  path: string,
+): RequiredJsonRecordResult {
+  const body = entries.get(path);
+  if (body === undefined) {
+    return {
+      value: {},
+      issues: [
+        {
+          severity: "error",
+          code: "missing_archive_entry",
+          path,
+          message: "Tenant export archive is missing a required metadata entry.",
+        },
+      ],
+    };
+  }
+  try {
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown;
+    if (!isJsonRecord(value)) {
+      return {
+        value: {},
+        issues: [
+          {
+            severity: "error",
+            code: "invalid_archive_json",
+            path,
+            message: "Tenant export archive metadata entry must be a JSON object.",
+          },
+        ],
+      };
+    }
+    return {
+      value,
+      issues: [],
+    };
+  } catch (error) {
+    return {
+      value: {},
+      issues: [
+        {
+          severity: "error",
+          code: "invalid_archive_json",
+          path,
+          message: `Tenant export archive metadata entry is not valid JSON: ${errorMessage(
+            error,
+          )}.`,
+        },
+      ],
+    };
+  }
+}
+
+function tenantExportManifestFromArchiveEntries(input: {
+  readonly manifest: JsonRecord;
+  readonly configSnapshot: JsonRecord;
+  readonly objectInventory: JsonRecord;
+  readonly rowDataChunks: JsonRecord;
+}): TenantExportManifestFromArchiveEntriesResult {
+  const issues: TenantImportArchiveReadIssue[] = [];
+  if (input.manifest.version !== 1) {
+    issues.push({
+      severity: "error",
+      code: "invalid_archive_manifest",
+      path: "manifest.json",
+      message: "Tenant export archive manifest must use version 1.",
+      expected: 1,
+      actual: input.manifest.version,
+    });
+  }
+  if (!isJsonRecord(input.manifest.org)) {
+    issues.push({
+      severity: "error",
+      code: "invalid_archive_manifest",
+      path: "manifest.json",
+      message: "Tenant export archive manifest is missing org metadata.",
+    });
+  }
+  if (!isJsonRecord(input.manifest.postgres)) {
+    issues.push({
+      severity: "error",
+      code: "invalid_archive_manifest",
+      path: "manifest.json",
+      message: "Tenant export archive manifest is missing postgres metadata.",
+    });
+  }
+  if (!isJsonRecord(input.manifest.auditLog)) {
+    issues.push({
+      severity: "error",
+      code: "invalid_archive_manifest",
+      path: "manifest.json",
+      message: "Tenant export archive manifest is missing audit summary metadata.",
+    });
+  }
+  if (!isTenantExportObjectInventory(input.objectInventory)) {
+    issues.push({
+      severity: "error",
+      code: "invalid_archive_manifest",
+      path: "objects/inventory.json",
+      message: "Tenant export object inventory has an invalid shape.",
+    });
+  }
+  if (!isTenantExportPostgresDataChunkManifest(input.rowDataChunks)) {
+    issues.push({
+      severity: "error",
+      code: "invalid_archive_manifest",
+      path: "postgres/data/chunks/manifest.json",
+      message: "Tenant export row chunk manifest has an invalid shape.",
+    });
+  }
+  if (
+    isJsonRecord(input.manifest.postgres) &&
+    isJsonRecord(input.manifest.postgres.rowDataChunks) &&
+    JSON.stringify(input.manifest.postgres.rowDataChunks) !== JSON.stringify(input.rowDataChunks)
+  ) {
+    issues.push({
+      severity: "error",
+      code: "invalid_archive_manifest",
+      path: "postgres/data/chunks/manifest.json",
+      message: "Tenant export row chunk manifest entry must match manifest.json metadata.",
+    });
+  }
+  if (issues.length > 0) {
+    return {
+      value: emptyTenantExportManifest(),
+      issues,
+    };
+  }
+
+  const org = input.manifest.org as JsonRecord;
+  const postgres = input.manifest.postgres as JsonRecord;
+  const auditLog = input.manifest.auditLog as JsonRecord;
+  return {
+    value: {
+      version: 1,
+      generatedAt: stringValue(input.manifest.generatedAt),
+      org: {
+        id: stringValue(org.id),
+        slug: stringValue(org.slug),
+        displayName: stringValue(org.displayName),
+        status: stringValue(org.status),
+        tier: stringValue(org.tier),
+        planId: stringValue(org.planId),
+        region: stringValue(org.region),
+      },
+      configSnapshot: {
+        byoConfig: jsonObjectValue(input.configSnapshot.byoConfig),
+        featureFlags: jsonObjectValue(input.configSnapshot.featureFlags),
+        quotas: jsonObjectValue(input.configSnapshot.quotas),
+        branding: jsonObjectValue(input.configSnapshot.branding),
+      },
+      objectInventory: {
+        bytesIncluded: input.objectInventory.bytesIncluded === true,
+        objectCount: numberValue(input.objectInventory.objectCount),
+        totalKnownBytes: numberValue(input.objectInventory.totalKnownBytes),
+        objects: arrayValue(input.objectInventory.objects).map((object) => ({
+          storageKey: stringValue(object.storageKey),
+          ...(object.byteSize === undefined ? {} : { byteSize: numberValue(object.byteSize) }),
+          ...(object.sha256 === undefined ? {} : { sha256: stringValue(object.sha256) }),
+        })),
+      },
+      postgres: {
+        rowCounts: arrayValue(postgres.rowCounts).map((row) => ({
+          table: stringValue(row.table),
+          rowCount: numberValue(row.rowCount),
+        })),
+        rowDataChunks: input.rowDataChunks as unknown as TenantExportPostgresDataChunkManifest,
+      },
+      auditLog: {
+        rowCount: numberValue(auditLog.rowCount),
+        firstEntryAt: nullableStringValue(auditLog.firstEntryAt),
+        lastEntryAt: nullableStringValue(auditLog.lastEntryAt),
+      },
+    },
+    issues,
+  };
+}
+
+function tenantExportRowChunkFilesFromArchive(
+  entries: ReadonlyMap<string, Uint8Array>,
+): ReadonlyMap<string, Uint8Array> {
+  const files = new Map<string, Uint8Array>();
+  for (const [path, body] of entries) {
+    if (path.startsWith("postgres/data/chunks/") && path.endsWith(".jsonl")) {
+      files.set(path, body);
+    }
+  }
+  return files;
+}
+
+function isTenantExportObjectInventory(value: JsonRecord): boolean {
+  return (
+    typeof value.bytesIncluded === "boolean" &&
+    typeof value.objectCount === "number" &&
+    typeof value.totalKnownBytes === "number" &&
+    Array.isArray(value.objects) &&
+    value.objects.every(
+      (object) =>
+        isJsonRecord(object) &&
+        typeof object.storageKey === "string" &&
+        (object.byteSize === undefined || typeof object.byteSize === "number") &&
+        (object.sha256 === undefined || typeof object.sha256 === "string"),
+    )
+  );
+}
+
+function isTenantExportPostgresDataChunkManifest(value: JsonRecord): boolean {
+  return (
+    value.version === 1 &&
+    value.format === "jsonl" &&
+    Array.isArray(value.chunks) &&
+    Array.isArray(value.includedTables) &&
+    Array.isArray(value.excludedTables) &&
+    Array.isArray(value.notes)
+  );
+}
+
+function isSafeArchivePath(path: string): boolean {
+  return (
+    path.length > 0 &&
+    !containsControlCharacter(path) &&
+    !path.startsWith("/") &&
+    !path.includes("\\") &&
+    !path.split("/").some((part) => part === "" || part === "." || part === "..")
+  );
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0 && code <= 31) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function readTarString(header: Buffer, offset: number, length: number): string {
+  return header
+    .subarray(offset, offset + length)
+    .toString("utf8")
+    .replace(/\0.*$/u, "");
+}
+
+function readTarOctal(header: Buffer, offset: number, length: number): number | null {
+  const value = header
+    .subarray(offset, offset + length)
+    .toString("ascii")
+    .replace(/\0.*$/u, "")
+    .trim();
+  if (value.length === 0 || !/^[0-7]+$/u.test(value)) {
+    return null;
+  }
+  return Number.parseInt(value, 8);
+}
+
+function tarHeaderChecksumMatches(header: Buffer): boolean {
+  const expected = readTarOctal(header, 148, 8);
+  if (expected === null) {
+    return false;
+  }
+  let actual = 0;
+  for (let index = 0; index < header.byteLength; index += 1) {
+    actual += index >= 148 && index < 156 ? 0x20 : (header[index] ?? 0);
+  }
+  return actual === expected;
+}
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function nullableStringValue(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return stringValue(value);
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function jsonObjectValue(value: unknown): JsonObject {
+  return isJsonRecord(value) && isJsonValue(value) ? value : {};
+}
+
+function arrayValue(value: unknown): readonly JsonRecord[] {
+  return Array.isArray(value) ? value.filter(isJsonRecord) : [];
+}
+
+function emptyTenantExportManifest(): TenantExportManifest {
+  return {
+    version: 1,
+    generatedAt: "",
+    org: {
+      id: "",
+      slug: "",
+      displayName: "",
+      status: "",
+      tier: "",
+      planId: "",
+      region: "",
+    },
+    configSnapshot: {
+      byoConfig: {},
+      featureFlags: {},
+      quotas: {},
+      branding: {},
+    },
+    objectInventory: {
+      bytesIncluded: false,
+      objectCount: 0,
+      totalKnownBytes: 0,
+      objects: [],
+    },
+    postgres: {
+      rowCounts: [],
+      rowDataChunks: {
+        version: 1,
+        format: "jsonl",
+        chunks: [],
+        includedTables: [],
+        excludedTables: [],
+        notes: [],
+      },
+    },
+    auditLog: {
+      rowCount: 0,
+      firstEntryAt: null,
+      lastEntryAt: null,
+    },
+  };
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+  if (isJsonRecord(value)) {
+    return Object.values(value).every(isJsonValue);
+  }
+  return false;
 }

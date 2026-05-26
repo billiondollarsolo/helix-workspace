@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  buildTenantExportArchive,
   buildTenantExportManifest,
   type TenantExportManifest,
   type TenantExportPostgresDataChunkFile,
   type TenantExportPostgresDataChunkManifest,
 } from "./export.js";
-import { buildTenantImportPlan } from "./import-plan.js";
+import { buildTenantImportPlan, buildTenantImportPlanFromArchive } from "./import-plan.js";
 import type { OrgRecord } from "./orgs.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -160,6 +161,103 @@ describe("buildTenantImportPlan", () => {
       operations: [],
     });
     expect(plan.steps.map((step) => step.kind)).toEqual(["tenant_config", "storage_objects"]);
+  });
+
+  it("builds a dry-run plan directly from an export archive", async () => {
+    const input = validImportPlanInput({
+      objects: [
+        { storageKey: "objects/a.txt", byteSize: 10, sha256: "a".repeat(64) },
+        { storageKey: "objects/b.txt", byteSize: 15 },
+      ],
+    });
+    const archive = await buildTenantExportArchive(input.manifest);
+
+    const result = buildTenantImportPlanFromArchive({
+      archive: archive.bytes,
+      targetOrgId,
+      targetSlug: "target-acme",
+    });
+
+    expect(result.issues).toEqual([]);
+    expect(result.plan).toMatchObject({
+      dryRun: true,
+      ok: true,
+      source: {
+        orgId,
+        slug: "acme",
+      },
+      target: {
+        orgId: targetOrgId,
+        slug: "target-acme",
+        rewritesOrgId: true,
+      },
+      objectBytes: {
+        mode: "metadata_only",
+        objectCount: 2,
+        totalKnownBytes: 25,
+      },
+      summary: {
+        postgresRows: 3,
+        operationCount: 3,
+      },
+    });
+    expect(result.plan?.operations.map((operation) => operation.kind)).toEqual([
+      "upsert_admin_domain",
+      "upsert_admin_dns_record",
+      "upsert_resource_classification",
+    ]);
+    expect(result.plan?.issues.map((issue) => issue.code)).toContain("org_id_remap_required");
+  });
+
+  it("reports archive metadata errors before planning", () => {
+    const result = buildTenantImportPlanFromArchive({
+      archive: Buffer.alloc(1024),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "missing_archive_entry",
+          path: "manifest.json",
+        }),
+        expect.objectContaining({
+          code: "missing_archive_entry",
+          path: "objects/inventory.json",
+        }),
+        expect.objectContaining({
+          code: "missing_archive_entry",
+          path: "postgres/data/chunks/manifest.json",
+        }),
+      ]),
+    );
+  });
+
+  it("returns a validation-blocked plan when archive row bytes are tampered", async () => {
+    const input = validImportPlanInput();
+    const archive = await buildTenantExportArchive(input.manifest);
+    const tampered = tamperTarEntryByte(
+      archive.bytes,
+      "postgres/data/chunks/admin_domains/000000.jsonl",
+    );
+
+    const result = buildTenantImportPlanFromArchive({
+      archive: tampered,
+    });
+
+    expect(result.issues).toEqual([]);
+    expect(result.plan).toMatchObject({
+      ok: false,
+      operations: [],
+      issues: [
+        expect.objectContaining({
+          code: "export_validation_failed",
+        }),
+      ],
+    });
+    expect(result.plan?.issues[0]?.validationIssues?.map((issue) => issue.code)).toContain(
+      "chunk_digest_mismatch",
+    );
   });
 });
 
@@ -322,6 +420,29 @@ function issueCodes(plan: {
   }[];
 }): readonly string[] {
   return plan.issues.map((issue) => issue.code);
+}
+
+function tamperTarEntryByte(archive: Buffer, path: string): Buffer {
+  const tampered = Buffer.from(archive);
+  for (let offset = 0; offset + 512 <= tampered.byteLength; ) {
+    const header = tampered.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      break;
+    }
+    const entryPath = header.subarray(0, 100).toString("utf8").replace(/\0.*$/u, "");
+    const sizeOctal = header.subarray(124, 136).toString("ascii").replace(/\0.*$/u, "").trim();
+    const size = Number.parseInt(sizeOctal, 8);
+    const bodyStart = offset + 512;
+    if (entryPath === path) {
+      if (size < 1) {
+        throw new Error(`Cannot tamper empty tar entry: ${path}.`);
+      }
+      tampered[bodyStart] = (tampered[bodyStart] ?? 0) === 0x7b ? 0x5b : 0x7b;
+      return tampered;
+    }
+    offset = bodyStart + Math.ceil(size / 512) * 512;
+  }
+  throw new Error(`Tar entry not found: ${path}.`);
 }
 
 interface TestStorageObject {

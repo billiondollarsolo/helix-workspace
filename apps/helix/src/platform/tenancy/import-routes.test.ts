@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Actor } from "@helix/sdk-types";
+import type { Actor, StorageObject } from "@helix/sdk-types";
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import {
@@ -520,6 +520,159 @@ describe("registerTenantImportRoutes", () => {
     await app.close();
   });
 
+  it("roundtrips included export object bytes through gated import execute", async () => {
+    const reportBytes = Buffer.from("report bytes", "utf8");
+    const deckBytes = Buffer.from("deck bytes", "utf8");
+    const sourceStorage = new RecordingStorageClient([
+      {
+        key: "drive/report.txt",
+        body: reportBytes,
+        contentType: "text/plain",
+        metadata: { source: "drive" },
+      },
+      {
+        key: "slides/deck-1/versions/2",
+        body: deckBytes,
+        contentType: "application/octet-stream",
+      },
+    ]);
+    const archive = await buildTenantExportArchive(
+      tenantExportManifest({
+        objects: [
+          {
+            storageKey: "drive/report.txt",
+            byteSize: reportBytes.byteLength,
+            sha256: sha256Hex(reportBytes),
+          },
+          {
+            storageKey: "slides/deck-1/versions/2",
+            byteSize: deckBytes.byteLength,
+            sha256: sha256Hex(deckBytes),
+          },
+        ],
+      }),
+      {
+        includeObjectBytes: true,
+        storageResolver: async () => ({
+          client: sourceStorage,
+          managedBy: "helix-default",
+          prefix: "tenants/source/",
+        }),
+      },
+    );
+    const importJobs = new InMemoryTenantImportJobStore([]);
+    const targetStorage = new RecordingStorageClient();
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => ({
+        existingRowIds: [],
+        existingNaturalKeys: [],
+        primaryDomain: null,
+      }),
+      importJobs,
+      rowApplyStore: new RecordingRowApplyStore(),
+      storageResolver: async () => ({
+        client: targetStorage,
+        managedBy: "helix-default",
+        prefix: "tenants/acme/",
+      }),
+      auditContinuityStore: new InMemoryTenantImportAuditContinuityStore(),
+      auditSink: auditSink([]),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/tenants/acme/import/execute?confirm=EXECUTE_INTERNAL_TENANT_IMPORT&verifiedState=preserve&remaps=${encodeQueryJson(
+        executableRemaps(),
+      )}`,
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(sourceStorage.gets).toEqual(["drive/report.txt", "slides/deck-1/versions/2"]);
+    expect(targetStorage.puts).toHaveLength(2);
+    expect(targetStorage.puts).toEqual([
+      expect.objectContaining({
+        key: "drive/report.txt",
+        contentType: "application/octet-stream",
+        metadata: expect.objectContaining({
+          "helix-import-source": "included-archive-bytes",
+          "helix-import-source-key": "drive/report.txt",
+          "helix-import-sha256": sha256Hex(reportBytes),
+        }) as unknown,
+      }),
+      expect.objectContaining({
+        key: "slides/deck-1/versions/2",
+        contentType: "application/octet-stream",
+        metadata: expect.objectContaining({
+          "helix-import-source": "included-archive-bytes",
+          "helix-import-source-key": "slides/deck-1/versions/2",
+          "helix-import-sha256": sha256Hex(deckBytes),
+        }) as unknown,
+      }),
+    ]);
+    expect(Buffer.from(targetStorage.puts[0]?.body as Uint8Array).toString("utf8")).toBe(
+      "report bytes",
+    );
+    expect(Buffer.from(targetStorage.puts[1]?.body as Uint8Array).toString("utf8")).toBe(
+      "deck bytes",
+    );
+    expect(response.json()).toMatchObject({
+      ok: true,
+      plan: {
+        objectBytes: {
+          mode: "included",
+          objectCount: 2,
+          totalKnownBytes: reportBytes.byteLength + deckBytes.byteLength,
+        },
+      },
+      execution: {
+        status: "succeeded",
+        objectRestore: {
+          summary: {
+            total: 2,
+            restorable: 2,
+            blocked: 0,
+          },
+        },
+      },
+      importJob: {
+        dryRun: false,
+        status: "succeeded",
+        objectBytesMode: "included",
+        resultSummary: {
+          execution: {
+            objectRestore: {
+              summary: {
+                total: 2,
+                restorable: 2,
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(importJobs.jobs[0]).toMatchObject({
+      dryRun: false,
+      status: "succeeded",
+      objectBytesMode: "included",
+      resultSummary: {
+        execution: {
+          objectRestore: {
+            summary: {
+              total: 2,
+              restorable: 2,
+            },
+          },
+        },
+      },
+    });
+    await app.close();
+  });
+
   it("rejects tenant import execute without confirmation before reading target state", async () => {
     let loadedTargetState = false;
     const archive = await buildTenantExportArchive(tenantExportManifest());
@@ -761,7 +914,17 @@ describe("registerTenantImportRoutes", () => {
   });
 });
 
-function tenantExportManifest() {
+function tenantExportManifest(
+  input: {
+    readonly objects?:
+      | readonly {
+          readonly storageKey: string;
+          readonly byteSize?: number | undefined;
+          readonly sha256?: string | undefined;
+        }[]
+      | undefined;
+  } = {},
+) {
   const chunks = [
     chunkFile({
       table: "admin_domains",
@@ -824,7 +987,7 @@ function tenantExportManifest() {
   return buildTenantExportManifest({
     org: orgRecord(),
     generatedAt: new Date("2026-05-24T10:00:00.000Z"),
-    objects: [],
+    objects: input.objects ?? [],
     rowCounts: [],
     rowDataChunkFiles: chunks,
     auditSummary: {
@@ -872,6 +1035,17 @@ interface ImportDryRunResponseBody {
 
 function encodeQueryJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function executableRemaps() {
+  return {
+    principals: {
+      [actorId]: targetActorId,
+    },
+    resources: {
+      "mail.message:msg-1": "target-msg-1",
+    },
+  };
 }
 
 function importJobRecord(overrides: Partial<TenantImportJobRecord> = {}): TenantImportJobRecord {
@@ -1075,17 +1249,27 @@ class RecordingRowApplyStore implements TenantImportRowApplyStore {
 }
 
 class RecordingStorageClient implements TenantStorageClient {
-  readonly puts: unknown[] = [];
+  readonly gets: string[] = [];
+  readonly puts: StorageObject[] = [];
+  readonly objects: Map<string, StorageObject>;
 
-  async put(object: Parameters<TenantStorageClient["put"]>[0]): Promise<void> {
+  constructor(objects: readonly StorageObject[] = []) {
+    this.objects = new Map(objects.map((object) => [object.key, object]));
+  }
+
+  async put(object: StorageObject): Promise<void> {
     this.puts.push(object);
+    this.objects.set(object.key, object);
   }
 
-  async get(): Promise<null> {
-    return null;
+  async get(key: string): Promise<StorageObject | null> {
+    this.gets.push(key);
+    return this.objects.get(key) ?? null;
   }
 
-  async delete(): Promise<void> {}
+  async delete(key: string): Promise<void> {
+    this.objects.delete(key);
+  }
 }
 
 class InMemoryTenantImportAuditContinuityStore implements TenantImportAuditContinuityStore {
@@ -1111,4 +1295,8 @@ function auditSink(records: unknown[]) {
       return { id: "audit-1", thisHash: "hash-1" };
     },
   };
+}
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }

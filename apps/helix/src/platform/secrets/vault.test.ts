@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   VaultTenantStorageSecretReader,
   createVaultTenantStorageSecretReaderFromEnv,
+  createVaultTenantStorageSecretStoreFromEnv,
 } from "./vault.js";
 
 describe("VaultTenantStorageSecretReader", () => {
@@ -68,6 +69,70 @@ describe("VaultTenantStorageSecretReader", () => {
     expect(headerValue(fetchImpl.mock.calls[0]?.[1], "X-Vault-Namespace")).toBe("admin/helix");
   });
 
+  it("writes S3 credentials to Vault KV v2 without reading them back into Postgres", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
+    const store = new VaultTenantStorageSecretReader({
+      address: "https://vault.internal/",
+      token: "vault-token",
+      namespace: "admin/helix",
+      mount: "kv",
+      fetchImpl,
+    });
+
+    await store.write("tenants/acme/byo-storage/s3", {
+      accessKeyId: "access-key",
+      secretAccessKey: "secret-key",
+      sessionToken: "session-token",
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://vault.internal/v1/kv/data/tenants/acme/byo-storage/s3",
+      {
+        method: "POST",
+        headers: {
+          "X-Vault-Token": "vault-token",
+          accept: "application/json",
+          "content-type": "application/json",
+          "X-Vault-Namespace": "admin/helix",
+        },
+        body: JSON.stringify({
+          data: {
+            accessKeyId: "access-key",
+            secretAccessKey: "secret-key",
+            sessionToken: "session-token",
+          },
+        }),
+      },
+    );
+  });
+
+  it("writes KV v1 secrets with the raw Vault body shape", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
+    const store = new VaultTenantStorageSecretReader({
+      address: "https://vault.internal/",
+      token: "vault-token",
+      mount: "secret",
+      kvVersion: 1,
+      fetchImpl,
+    });
+
+    await store.write("tenants/acme/byo-storage/aws", {
+      accessKeyId: "access-key",
+      secretAccessKey: "secret-key",
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://vault.internal/v1/secret/tenants/acme/byo-storage/aws",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          accessKeyId: "access-key",
+          secretAccessKey: "secret-key",
+        }),
+      }),
+    );
+  });
+
   it("logs in with Kubernetes auth and reuses the client token", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -116,12 +181,12 @@ describe("VaultTenantStorageSecretReader", () => {
   });
 
   it("returns undefined for missing secrets and fails closed on Vault errors or unsafe paths", async () => {
-    const missingFetch = vi.fn<typeof fetch>().mockResolvedValue(
-      Response.json({ errors: ["not found"] }, { status: 404 }),
-    );
-    const deniedFetch = vi.fn<typeof fetch>().mockResolvedValue(
-      Response.json({ errors: ["denied"] }, { status: 403 }),
-    );
+    const missingFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ errors: ["not found"] }, { status: 404 }));
+    const deniedFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ errors: ["denied"] }, { status: 403 }));
 
     await expect(
       new VaultTenantStorageSecretReader({
@@ -143,10 +208,22 @@ describe("VaultTenantStorageSecretReader", () => {
         token: "vault-token",
       }).read("tenants/acme/../s3"),
     ).rejects.toThrow("unsafe path");
+    await expect(
+      new VaultTenantStorageSecretReader({
+        address: "https://vault.internal",
+        token: "vault-token",
+        fetchImpl: deniedFetch,
+      }).write("tenants/acme/byo-storage/s3", {
+        accessKeyId: "access-key",
+        secretAccessKey: "secret-key",
+      }),
+    ).rejects.toThrow("Vault secret write failed with status 403.");
   });
 
-  it("builds a reader from token or Kubernetes Vault environment configuration", () => {
-    expect(createVaultTenantStorageSecretReaderFromEnv({ VAULT_ADDR: "https://vault" })).toBeUndefined();
+  it("builds a reader/store from token or Kubernetes Vault environment configuration", () => {
+    expect(
+      createVaultTenantStorageSecretReaderFromEnv({ VAULT_ADDR: "https://vault" }),
+    ).toBeUndefined();
     expect(
       createVaultTenantStorageSecretReaderFromEnv({
         HELIX_VAULT_ADDR: "https://vault",
@@ -158,6 +235,12 @@ describe("VaultTenantStorageSecretReader", () => {
         VAULT_ADDR: "https://vault",
         HELIX_VAULT_AUTH_PATH: "kubernetes",
         HELIX_VAULT_ROLE: "helix",
+      }),
+    ).toBeInstanceOf(VaultTenantStorageSecretReader);
+    expect(
+      createVaultTenantStorageSecretStoreFromEnv({
+        VAULT_ADDR: "https://vault",
+        VAULT_TOKEN: "token",
       }),
     ).toBeInstanceOf(VaultTenantStorageSecretReader);
   });

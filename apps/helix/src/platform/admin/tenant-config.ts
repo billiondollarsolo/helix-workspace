@@ -23,6 +23,7 @@ import {
   defaultTenantStoragePrefix,
   testTenantStorageConnection,
   type TenantStorageResolver,
+  type TenantStorageSecretWriter,
   type TenantStorageMigrationJobRecord,
   type TenantStorageMigrationJobStore,
   type TenantStorageMigrationStorageState,
@@ -86,6 +87,7 @@ export interface RegisterTenantConfigAdminRoutesOptions {
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly auditSink?: AdminConsoleAuditSink | undefined;
   readonly storageResolver?: TenantStorageResolver | undefined;
+  readonly storageCredentialWriter?: TenantStorageSecretWriter | undefined;
   readonly storageMigrationJobs?:
     | Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg" | "listForOrg">
     | undefined;
@@ -286,6 +288,27 @@ const storageMigrationCutoverBody = z
   })
   .strict();
 
+const credentialSecretString = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((value) => value.trim().length > 0, {
+    message: "Credential values must not be blank.",
+  });
+
+const byoStorageCredentialsBody = z
+  .object({
+    credentials: z
+      .object({
+        accessKeyId: credentialSecretString,
+        secretAccessKey: credentialSecretString,
+        sessionToken: credentialSecretString.optional(),
+      })
+      .strict(),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
 export async function registerTenantConfigAdminRoutes(
   app: FastifyInstance,
   options: RegisterTenantConfigAdminRoutesOptions,
@@ -392,6 +415,68 @@ export async function registerTenantConfigAdminRoutes(
       },
     });
     return { health };
+  });
+
+  app.post("/api/admin/tenant-config/byo-storage/credentials", async (request, reply) => {
+    const actor = await options.actorFromRequest(request);
+    if (!canWriteAdminConsole(actor)) {
+      return sendForbidden(reply, adminConsoleWriteScope);
+    }
+    if (options.storageCredentialWriter === undefined) {
+      return reply
+        .code(503)
+        .send(invalidRequest("BYO storage credential writer is not configured.", []));
+    }
+    const body = byoStorageCredentialsBody.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid BYO storage credentials request.", body.error.issues));
+    }
+    const org = await options.store.findById(actor.orgId);
+    if (org === null) {
+      return reply.code(404).send(notFound("Tenant config not found."));
+    }
+
+    let credentialsVaultPath: string;
+    try {
+      credentialsVaultPath = currentByoStorageCredentialsVaultPath(org);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.length > 0
+          ? error.message
+          : "BYO storage credentials path is not configured.";
+      return reply.code(400).send(invalidRequest(message, []));
+    }
+
+    await options.storageCredentialWriter.write(
+      credentialsVaultPath,
+      byoStorageCredentialSecret(body.data.credentials),
+    );
+    const health = await testTenantStorageConnection({
+      orgId: actor.orgId,
+      storageResolver: options.storageResolver,
+      refresh: true,
+    });
+    await auditAdminAction(options.auditSink, {
+      orgId: actor.orgId,
+      actorId: actor.id,
+      verb: "admin.tenant_config.byo_storage_credentials_rotated",
+      objectType: "tenant_config",
+      objectId: actor.orgId,
+      metadata: {
+        credentialsVaultPath,
+        status: health.status,
+        managedBy: health.managedBy ?? null,
+      },
+    });
+    return {
+      credentials: {
+        credentials_vault_path: credentialsVaultPath,
+        rotated: true,
+      },
+      health,
+    };
   });
 
   app.get("/api/admin/tenant-config/byo-storage/migrations", async (request, reply) => {
@@ -686,6 +771,16 @@ function toJsonObject(value: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
+function byoStorageCredentialSecret(
+  input: z.infer<typeof byoStorageCredentialsBody>["credentials"],
+): Record<string, string> {
+  return {
+    accessKeyId: input.accessKeyId,
+    secretAccessKey: input.secretAccessKey,
+    ...(input.sessionToken === undefined ? {} : { sessionToken: input.sessionToken }),
+  };
+}
+
 function tenantStorageMigrationState(
   storage: z.infer<typeof byoStorageSchema> | undefined,
   fallback: "byo" | "helix-default",
@@ -697,6 +792,23 @@ function tenantStorageMigrationState(
     managedBy: storage.kind === "byo" ? "byo" : "helix-default",
     storage: toJsonObject(storage),
   };
+}
+
+function currentByoStorageCredentialsVaultPath(org: OrgRecord): string {
+  const storage = (org.byoConfig as { readonly storage?: unknown }).storage;
+  const parsed = byoStorageSchema.safeParse(storage);
+  if (!parsed.success || parsed.data.kind !== "byo") {
+    throw new Error("BYO storage credentials path is not configured.");
+  }
+  const path = parsed.data.credentials_vault_path;
+  if (path === undefined || path.length === 0) {
+    throw new Error("BYO storage credentials path is not configured.");
+  }
+  const expectedPrefix = `tenants/${org.slug}/byo-storage/`;
+  if (!path.startsWith(expectedPrefix)) {
+    throw new Error("BYO storage credentials path must be scoped to this tenant.");
+  }
+  return path;
 }
 
 function currentTenantStorageMigrationState(org: OrgRecord): TenantStorageMigrationStorageState {

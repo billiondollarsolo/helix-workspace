@@ -368,6 +368,208 @@ describe("tenant config admin routes", () => {
     await app.close();
   });
 
+  it("rotates BYO storage credentials through Vault and refresh-probes tenant storage", async () => {
+    const store = new InMemoryTenantConfigAdminStore({
+      byoConfig: {
+        storage: {
+          kind: "byo",
+          provider: "s3-compatible",
+          endpoint: "https://storage.example.com",
+          region: "us-east-1",
+          bucket: "acme-helix-data",
+          prefix: "helix/",
+          credentials_vault_path: "tenants/acme/byo-storage/s3",
+        },
+      },
+      featureFlags: { ai_smart_compose: false, byo_storage: true },
+    });
+    const storage = new RecordingStorageClient();
+    const credentialWriter = new RecordingSecretWriter();
+    const resolverInputs: unknown[] = [];
+    const auditRecords: unknown[] = [];
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store,
+      actorFromRequest,
+      storageCredentialWriter: credentialWriter,
+      storageResolver: async (input) => {
+        resolverInputs.push(input);
+        return {
+          client: storage,
+          managedBy: "byo",
+          prefix: "helix/",
+        };
+      },
+      auditSink: {
+        async append(record) {
+          auditRecords.push(record);
+          return { id: "audit-storage-credentials", thisHash: "hash-storage-credentials" };
+        },
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/credentials",
+      headers: headers("admin.console.write"),
+      payload: {
+        credentials: {
+          accessKeyId: "rotated-access-key",
+          secretAccessKey: "rotated-secret-key",
+          sessionToken: "rotated-session-token",
+        },
+        reason: "scheduled credential rotation",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(credentialWriter.writes).toEqual([
+      {
+        path: "tenants/acme/byo-storage/s3",
+        secret: {
+          accessKeyId: "rotated-access-key",
+          secretAccessKey: "rotated-secret-key",
+          sessionToken: "rotated-session-token",
+        },
+      },
+    ]);
+    expect(resolverInputs).toEqual([{ orgId, refresh: true }]);
+    expect(storage.calls.map((call) => call.split(":")[0])).toEqual(["put", "get", "delete"]);
+    expect(response.json()).toMatchObject({
+      credentials: {
+        credentials_vault_path: "tenants/acme/byo-storage/s3",
+        rotated: true,
+      },
+      health: {
+        status: "healthy",
+        managedBy: "byo",
+        prefix: "helix/",
+      },
+    });
+    expect(auditRecords).toEqual([
+      expect.objectContaining({
+        verb: "admin.tenant_config.byo_storage_credentials_rotated",
+        objectType: "tenant_config",
+        objectId: orgId,
+        metadata: {
+          credentialsVaultPath: "tenants/acme/byo-storage/s3",
+          status: "healthy",
+          managedBy: "byo",
+        },
+      }),
+    ]);
+    expect(JSON.stringify(auditRecords)).not.toContain("rotated-secret-key");
+    expect(JSON.stringify(store.updates)).not.toContain("rotated-secret-key");
+    await app.close();
+  });
+
+  it("requires a Vault writer before rotating BYO storage credentials", async () => {
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store: new InMemoryTenantConfigAdminStore({
+        byoConfig: {
+          storage: {
+            kind: "byo",
+            provider: "aws-s3",
+            bucket: "acme-helix-data",
+            credentials_vault_path: "tenants/acme/byo-storage/aws",
+          },
+        },
+      }),
+      actorFromRequest,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/credentials",
+      headers: headers("admin.console.write"),
+      payload: {
+        credentials: {
+          accessKeyId: "rotated-access-key",
+          secretAccessKey: "rotated-secret-key",
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(body(response).error).toBe("BYO storage credential writer is not configured.");
+    await app.close();
+  });
+
+  it("requires configured BYO storage credentials to be scoped to the actor tenant", async () => {
+    const credentialWriter = new RecordingSecretWriter();
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store: new InMemoryTenantConfigAdminStore({
+        byoConfig: {
+          storage: {
+            kind: "byo",
+            provider: "aws-s3",
+            bucket: "acme-helix-data",
+            credentials_vault_path: "tenants/other/byo-storage/aws",
+          },
+        },
+      }),
+      actorFromRequest,
+      storageCredentialWriter: credentialWriter,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/credentials",
+      headers: headers("admin.console.write"),
+      payload: {
+        credentials: {
+          accessKeyId: "rotated-access-key",
+          secretAccessKey: "rotated-secret-key",
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(body(response).error).toBe(
+      "BYO storage credentials path must be scoped to this tenant.",
+    );
+    expect(credentialWriter.writes).toEqual([]);
+    await app.close();
+  });
+
+  it("requires write scope to rotate BYO storage credentials", async () => {
+    const credentialWriter = new RecordingSecretWriter();
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store: new InMemoryTenantConfigAdminStore({
+        byoConfig: {
+          storage: {
+            kind: "byo",
+            provider: "aws-s3",
+            bucket: "acme-helix-data",
+            credentials_vault_path: "tenants/acme/byo-storage/aws",
+          },
+        },
+      }),
+      actorFromRequest,
+      storageCredentialWriter: credentialWriter,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/credentials",
+      headers: headers("admin.console.read"),
+      payload: {
+        credentials: {
+          accessKeyId: "rotated-access-key",
+          secretAccessKey: "rotated-secret-key",
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(body(response).requiredScope).toBe("admin.console.write");
+    expect(credentialWriter.writes).toEqual([]);
+    await app.close();
+  });
+
   it("returns degraded storage health when tenant storage is unavailable", async () => {
     const app = fastify();
     await registerTenantConfigAdminRoutes(app, {
@@ -1498,6 +1700,14 @@ class RecordingStorageClient {
   async delete(key: string): Promise<void> {
     this.calls.push(`delete:${key}`);
     this.#objects.delete(key);
+  }
+}
+
+class RecordingSecretWriter {
+  readonly writes: { readonly path: string; readonly secret: Record<string, string> }[] = [];
+
+  async write(path: string, secret: Record<string, string>): Promise<void> {
+    this.writes.push({ path, secret });
   }
 }
 

@@ -1,5 +1,8 @@
 import { readFile } from "node:fs/promises";
-import type { TenantStorageSecretReader } from "../storage/tenant-resolver.js";
+import type {
+  TenantStorageSecretReader,
+  TenantStorageSecretStore,
+} from "../storage/tenant-resolver.js";
 
 export interface VaultSecretReaderOptions {
   readonly address: string;
@@ -17,11 +20,20 @@ export interface VaultSecretReaderOptions {
 export function createVaultTenantStorageSecretReaderFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): TenantStorageSecretReader | undefined {
+  return createVaultTenantStorageSecretStoreFromEnv(env);
+}
+
+export function createVaultTenantStorageSecretStoreFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): TenantStorageSecretStore | undefined {
   const address = firstNonEmpty(env.HELIX_VAULT_ADDR, env.VAULT_ADDR);
   const token = firstNonEmpty(env.HELIX_VAULT_TOKEN, env.VAULT_TOKEN);
   const authPath = firstNonEmpty(env.HELIX_VAULT_AUTH_PATH, env.VAULT_AUTH_PATH);
   const role = firstNonEmpty(env.HELIX_VAULT_ROLE, env.VAULT_ROLE);
-  if (address === undefined || (token === undefined && (authPath === undefined || role === undefined))) {
+  if (
+    address === undefined ||
+    (token === undefined && (authPath === undefined || role === undefined))
+  ) {
     return undefined;
   }
   return new VaultTenantStorageSecretReader({
@@ -36,7 +48,7 @@ export function createVaultTenantStorageSecretReaderFromEnv(
   });
 }
 
-export class VaultTenantStorageSecretReader implements TenantStorageSecretReader {
+export class VaultTenantStorageSecretReader implements TenantStorageSecretStore {
   private readonly address: string;
   private readonly mount: string;
   private readonly kvVersion: 1 | 2;
@@ -69,10 +81,24 @@ export class VaultTenantStorageSecretReader implements TenantStorageSecretReader
     return stringRecordFromVaultResponse(await response.json(), this.kvVersion);
   }
 
-  private async headers(): Promise<Record<string, string>> {
+  async write(path: string, secret: Record<string, string>): Promise<void> {
+    const response = await this.fetchImpl(this.urlFor(path), {
+      method: "POST",
+      headers: await this.headers({ contentType: true }),
+      body: JSON.stringify(this.kvVersion === 2 ? { data: secret } : secret),
+    });
+    if (!response.ok) {
+      throw new Error(`Vault secret write failed with status ${String(response.status)}.`);
+    }
+  }
+
+  private async headers(
+    options: { readonly contentType?: boolean } = {},
+  ): Promise<Record<string, string>> {
     return {
       "X-Vault-Token": await this.resolveToken(),
       accept: "application/json",
+      ...(options.contentType === true ? { "content-type": "application/json" } : {}),
       ...(this.namespace === undefined ? {} : { "X-Vault-Namespace": this.namespace }),
     };
   }
@@ -107,7 +133,9 @@ export class VaultTenantStorageSecretReader implements TenantStorageSecretReader
     if (!response.ok) {
       throw new Error(`Vault Kubernetes login failed with status ${String(response.status)}.`);
     }
-    const clientToken = readString(readRecord(readRecord(await response.json())?.auth)?.client_token);
+    const clientToken = readString(
+      readRecord(readRecord(await response.json())?.auth)?.client_token,
+    );
     if (clientToken === undefined) {
       throw new Error("Vault Kubernetes login response did not include a client token.");
     }

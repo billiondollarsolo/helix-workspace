@@ -69,6 +69,13 @@ export interface TenantStorageSecretReader {
   read(path: string): Promise<Record<string, string> | undefined>;
 }
 
+export interface TenantStorageSecretWriter {
+  write(path: string, secret: Record<string, string>): Promise<void>;
+}
+
+export interface TenantStorageSecretStore
+  extends TenantStorageSecretReader, TenantStorageSecretWriter {}
+
 export interface TenantStoragePoolMetrics {
   setStoragePoolSize(input: { readonly size: number }): void;
   recordStoragePoolEviction(): void;

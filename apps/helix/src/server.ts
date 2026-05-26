@@ -301,7 +301,7 @@ import {
   resolveTenantStorageSnapshot,
   TenantStorageMigrationWorker,
 } from "./platform/storage/index.js";
-import { createVaultTenantStorageSecretReaderFromEnv } from "./platform/secrets/index.js";
+import { createVaultTenantStorageSecretStoreFromEnv } from "./platform/secrets/index.js";
 import {
   createToolRegistry,
   type RuntimeToolRegistry,
@@ -1027,12 +1027,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
               }),
           forcePathStyle: true,
         });
-  const tenantStorageSecretReader = createVaultTenantStorageSecretReaderFromEnv(process.env);
+  const tenantStorageSecretStore = createVaultTenantStorageSecretStoreFromEnv(process.env);
   const tenantStorageMigrationJobStore = new PostgresTenantStorageMigrationJobStore(sql);
   const driveStorageResolver = createTenantStorageResolver({
     defaultClient: driveStorage,
     loadByoConfig: async (orgId: string) => (await orgStore.findById(orgId))?.byoConfig,
-    ...(tenantStorageSecretReader === undefined ? {} : { secretReader: tenantStorageSecretReader }),
+    ...(tenantStorageSecretStore === undefined ? {} : { secretReader: tenantStorageSecretStore }),
     migrationWriteCoordinator: createTenantStorageMigrationWriteCoordinator({
       store: tenantStorageMigrationJobStore,
       snapshotStorageResolver: ({ orgId, state }) =>
@@ -1040,9 +1040,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           orgId,
           state,
           defaultClient: driveStorage,
-          ...(tenantStorageSecretReader === undefined
+          ...(tenantStorageSecretStore === undefined
             ? {}
-            : { secretReader: tenantStorageSecretReader }),
+            : { secretReader: tenantStorageSecretStore }),
         }),
     }),
   });
@@ -1065,9 +1065,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
               orgId,
               state,
               defaultClient: driveStorage,
-              ...(tenantStorageSecretReader === undefined
+              ...(tenantStorageSecretStore === undefined
                 ? {}
-                : { secretReader: tenantStorageSecretReader }),
+                : { secretReader: tenantStorageSecretStore }),
             }),
         }),
         intervalMs: envPositiveInt("HELIX_TENANT_STORAGE_MIGRATION_INTERVAL_MS", 15_000),
@@ -1772,6 +1772,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
     storageResolver: driveStorageResolver,
+    storageCredentialWriter: tenantStorageSecretStore,
     storageMigrationJobs: tenantStorageMigrationJobStore,
     plans: planStore,
     featureFlagEvents: eventBus,

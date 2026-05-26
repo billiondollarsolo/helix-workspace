@@ -37,9 +37,42 @@ const storageHealthSchema = z.object({
   prefix: z.string().optional(),
 });
 const storageHealthResponseSchema = z.object({ health: storageHealthSchema });
+const storageMigrationTargetSchema = z.enum(["byo", "helix-default"]);
+const storageMigrationStorageStateSchema = z.object({
+  managedBy: storageMigrationTargetSchema,
+  storage: jsonObjectSchema.nullable(),
+});
+const storageMigrationFailureSchema = z.object({
+  storageKey: z.string(),
+  reason: z.string(),
+});
+const storageMigrationJobSchema = z.object({
+  id: z.string(),
+  orgId: z.string(),
+  target: storageMigrationTargetSchema,
+  status: z.enum(["queued", "running", "succeeded", "succeeded_with_errors", "failed", "dry_run"]),
+  dryRun: z.boolean(),
+  sourceStorage: storageMigrationStorageStateSchema.nullable(),
+  targetStorage: storageMigrationStorageStateSchema.nullable(),
+  plannedCount: z.number(),
+  copiedCount: z.number(),
+  verifiedCount: z.number(),
+  failures: z.array(storageMigrationFailureSchema),
+  lastError: z.string().nullable(),
+  attemptCount: z.number(),
+  requestedByActorId: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+const storageMigrationResponseSchema = z.object({ migration: storageMigrationJobSchema });
 
 export type TenantConfigAdminView = z.infer<typeof tenantConfigSchema>;
 export type TenantStorageHealthResult = z.infer<typeof storageHealthSchema>;
+export type TenantStorageMigrationTarget = z.infer<typeof storageMigrationTargetSchema>;
+export type TenantStorageMigrationStorageState = z.infer<typeof storageMigrationStorageStateSchema>;
+export type TenantStorageMigrationJob = z.infer<typeof storageMigrationJobSchema>;
 
 export interface UpdateTenantConfigInput {
   readonly byo?: Record<string, unknown>;
@@ -47,6 +80,13 @@ export interface UpdateTenantConfigInput {
   readonly quotas?: Record<string, unknown>;
   readonly branding?: Record<string, unknown>;
   readonly reason?: string;
+}
+
+export interface RequestTenantStorageMigrationInput {
+  readonly target?: TenantStorageMigrationTarget;
+  readonly dryRun?: boolean;
+  readonly sourceStorage?: Record<string, unknown>;
+  readonly targetStorage?: Record<string, unknown>;
 }
 
 export const tenantConfigQueryKeys = {
@@ -91,6 +131,36 @@ export async function testByoStorage(
     method: "POST",
   });
   return (await parseResponse(response, "test BYO storage", storageHealthResponseSchema)).health;
+}
+
+export async function requestTenantStorageMigration(
+  input: RequestTenantStorageMigrationInput,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<TenantStorageMigrationJob> {
+  const response = await fetchImpl("/api/admin/tenant-config/byo-storage/migrations", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+  return (
+    await parseResponse(
+      response,
+      "request tenant storage migration",
+      storageMigrationResponseSchema,
+    )
+  ).migration;
+}
+
+export async function fetchTenantStorageMigration(
+  id: string,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<TenantStorageMigrationJob> {
+  const response = await fetchImpl(`/api/admin/tenant-config/byo-storage/migrations/${id}`, {
+    method: "GET",
+  });
+  return (
+    await parseResponse(response, "load tenant storage migration", storageMigrationResponseSchema)
+  ).migration;
 }
 
 async function parseResponse<T>(

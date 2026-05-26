@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AuthFetch } from "@/lib/auth";
-import { fetchTenantConfig, testByoStorage, updateTenantConfig } from "./tenant-config-api";
+import {
+  fetchTenantConfig,
+  fetchTenantStorageMigration,
+  requestTenantStorageMigration,
+  testByoStorage,
+  updateTenantConfig,
+} from "./tenant-config-api";
 
 const tenantConfigPayload = {
   tenantConfig: {
@@ -21,6 +27,40 @@ const tenantConfigPayload = {
       quotas: { api_rps_limit: 10 },
       branding: { display_name_override: "Acme" },
     },
+  },
+};
+
+const migrationPayload = {
+  migration: {
+    id: "5f0951a7-8e65-4634-a6a4-af2f2b4797da",
+    orgId: "org-1",
+    target: "byo",
+    status: "queued",
+    dryRun: true,
+    sourceStorage: {
+      managedBy: "helix-default",
+      storage: null,
+    },
+    targetStorage: {
+      managedBy: "byo",
+      storage: {
+        kind: "byo",
+        provider: "aws-s3",
+        bucket: "acme-helix-data",
+        credentials_vault_path: "tenants/org-1/byo-storage/aws",
+      },
+    },
+    plannedCount: 0,
+    copiedCount: 0,
+    verifiedCount: 0,
+    failures: [],
+    lastError: null,
+    attemptCount: 0,
+    requestedByActorId: "actor-1",
+    startedAt: null,
+    completedAt: null,
+    createdAt: "2026-05-25T10:00:00.000Z",
+    updatedAt: "2026-05-25T10:00:00.000Z",
   },
 };
 
@@ -80,6 +120,57 @@ describe("tenant-config-api", () => {
     expect(fetchImpl).toHaveBeenCalledWith("/api/admin/tenant-config/byo-storage/test", {
       method: "POST",
     });
+  });
+
+  it("requests tenant storage migration jobs through the admin endpoint", async () => {
+    const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(Response.json(migrationPayload));
+
+    const result = await requestTenantStorageMigration(
+      {
+        target: "byo",
+        dryRun: true,
+        targetStorage: {
+          kind: "byo",
+          provider: "aws-s3",
+          bucket: "acme-helix-data",
+          credentials_vault_path: "tenants/org-1/byo-storage/aws",
+        },
+      },
+      fetchImpl,
+    );
+
+    expect(result.id).toBe("5f0951a7-8e65-4634-a6a4-af2f2b4797da");
+    expect(result.targetStorage?.managedBy).toBe("byo");
+    expect(fetchImpl).toHaveBeenCalledWith("/api/admin/tenant-config/byo-storage/migrations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        target: "byo",
+        dryRun: true,
+        targetStorage: {
+          kind: "byo",
+          provider: "aws-s3",
+          bucket: "acme-helix-data",
+          credentials_vault_path: "tenants/org-1/byo-storage/aws",
+        },
+      }),
+    });
+  });
+
+  it("fetches tenant storage migration status by id", async () => {
+    const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(Response.json(migrationPayload));
+
+    const result = await fetchTenantStorageMigration(
+      "5f0951a7-8e65-4634-a6a4-af2f2b4797da",
+      fetchImpl,
+    );
+
+    expect(result.status).toBe("queued");
+    expect(result.dryRun).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/admin/tenant-config/byo-storage/migrations/5f0951a7-8e65-4634-a6a4-af2f2b4797da",
+      { method: "GET" },
+    );
   });
 
   it("surfaces backend errors", async () => {

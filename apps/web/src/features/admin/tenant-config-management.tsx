@@ -1,14 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Database, Gauge, Palette, Save, Settings2, ToggleLeft } from "lucide-react";
+import {
+  Activity,
+  ArrowRightLeft,
+  Database,
+  Gauge,
+  Palette,
+  RefreshCcw,
+  Save,
+  Settings2,
+  ToggleLeft,
+} from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   tenantConfigQueryKeys,
   tenantConfigQueryOptions,
+  fetchTenantStorageMigration,
+  requestTenantStorageMigration,
   testByoStorage,
   updateTenantConfig,
   type TenantConfigAdminView,
+  type TenantStorageMigrationJob,
+  type TenantStorageMigrationTarget,
   type TenantStorageHealthResult,
 } from "./tenant-config-api";
 
@@ -135,6 +149,9 @@ export function TenantConfigManagement() {
   const [branding, setBranding] = useState<BrandingState>(emptyBrandingState);
   const [byoStorage, setByoStorage] = useState<ByoStorageState>(emptyByoStorageState);
   const [storageHealth, setStorageHealth] = useState<TenantStorageHealthResult | null>(null);
+  const [migrationTarget, setMigrationTarget] = useState<TenantStorageMigrationTarget>("byo");
+  const [migrationDryRun, setMigrationDryRun] = useState(true);
+  const [storageMigration, setStorageMigration] = useState<TenantStorageMigrationJob | null>(null);
   const query = useQuery(tenantConfigQueryOptions());
 
   useEffect(() => {
@@ -145,6 +162,7 @@ export function TenantConfigManagement() {
     setDirtyFeatureKeys(new Set());
     setBranding(brandingStateFromConfig(query.data));
     setByoStorage(byoStorageStateFromConfig(query.data));
+    setMigrationTarget(defaultMigrationTarget(query.data));
   }, [query.data]);
 
   const mutation = useMutation({
@@ -178,8 +196,45 @@ export function TenantConfigManagement() {
       setStorageHealth(health);
     },
   });
+  const storageMigrationMutation = useMutation({
+    mutationFn: () => requestTenantStorageMigration(buildStorageMigrationRequest()),
+    onMutate: () => {
+      setError(null);
+    },
+    onError: (mutationError: unknown) => {
+      setError(
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Failed to request tenant storage migration.",
+      );
+    },
+    onSuccess: (migration) => {
+      setStorageMigration(migration);
+    },
+  });
+  const storageMigrationStatusMutation = useMutation({
+    mutationFn: (id: string) => fetchTenantStorageMigration(id),
+    onMutate: () => {
+      setError(null);
+    },
+    onError: (mutationError: unknown) => {
+      setError(
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Failed to refresh tenant storage migration status.",
+      );
+    },
+    onSuccess: (migration) => {
+      setStorageMigration(migration);
+    },
+  });
 
-  const canSave = !mutation.isPending && !storageTestMutation.isPending && !query.isLoading;
+  const canSave =
+    !mutation.isPending &&
+    !storageTestMutation.isPending &&
+    !storageMigrationMutation.isPending &&
+    !storageMigrationStatusMutation.isPending &&
+    !query.isLoading;
   const orgId = query.data?.orgId ?? "tenant";
   const booleanFeatureRows = useMemo(() => [...BOOLEAN_FEATURE_FLAGS], []);
   const selectFeatureRows = useMemo(() => [...SELECT_FEATURE_FLAGS], []);
@@ -236,6 +291,47 @@ export function TenantConfigManagement() {
     setError(null);
     storageTestMutation.mutate();
   };
+  const requestStorageMigration = () => {
+    setError(null);
+    try {
+      storageMigrationMutation.mutate();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Failed to prepare tenant storage migration request.",
+      );
+    }
+  };
+  const refreshStorageMigration = () => {
+    if (storageMigration === null) {
+      return;
+    }
+    storageMigrationStatusMutation.mutate(storageMigration.id);
+  };
+
+  function buildStorageMigrationRequest(): Parameters<typeof requestTenantStorageMigration>[0] {
+    if (migrationTarget === "byo") {
+      const parsed = parseByoStorage({ ...byoStorage, kind: "byo" });
+      if (typeof parsed === "string") {
+        throw new Error(parsed);
+      }
+      if (parsed.kind !== "byo") {
+        throw new Error("Set storage mode to Customer-owned before migrating to BYO storage.");
+      }
+      return {
+        target: "byo",
+        dryRun: migrationDryRun,
+        targetStorage: parsed,
+      };
+    }
+    const parsed = parseByoStorage(byoStorage);
+    return {
+      target: "helix-default",
+      dryRun: migrationDryRun,
+      ...(typeof parsed === "string" || parsed.kind !== "byo" ? {} : { sourceStorage: parsed }),
+    };
+  }
 
   return (
     <section aria-labelledby="tenant-settings-title" className="grid gap-4">
@@ -474,6 +570,82 @@ export function TenantConfigManagement() {
                 {storageHealth.prefix === undefined ? "" : ` prefix ${storageHealth.prefix}`}
               </p>
             )}
+            <div className="grid gap-3 border-t border-border/70 pt-3">
+              <SectionHeader
+                icon={<ArrowRightLeft aria-hidden="true" />}
+                title="Storage migration"
+              />
+              <label className="grid gap-1 text-xs text-muted-foreground">
+                <span>Migration target</span>
+                <select
+                  className="h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+                  onChange={(event) => {
+                    setMigrationTarget(event.currentTarget.value as TenantStorageMigrationTarget);
+                  }}
+                  value={migrationTarget}
+                >
+                  <option value="byo">Customer-owned storage</option>
+                  <option value="helix-default">Helix default storage</option>
+                </select>
+              </label>
+              <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
+                <span>Dry run only</span>
+                <input
+                  checked={migrationDryRun}
+                  className="size-4"
+                  onChange={(event) => {
+                    setMigrationDryRun(event.currentTarget.checked);
+                  }}
+                  type="checkbox"
+                />
+              </label>
+              <Button disabled={!canSave} onClick={requestStorageMigration} size="sm" type="button">
+                <ArrowRightLeft aria-hidden="true" />
+                {storageMigrationMutation.isPending ? "Requesting migration" : "Request migration"}
+              </Button>
+              {storageMigration === null ? null : (
+                <div
+                  className="grid gap-2 rounded-md border border-border/70 px-3 py-2 text-xs"
+                  role="status"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-foreground">
+                      {formatMigrationStatus(storageMigration.status)}
+                    </span>
+                    <Button
+                      disabled={!canSave}
+                      onClick={refreshStorageMigration}
+                      size="sm"
+                      type="button"
+                    >
+                      <RefreshCcw aria-hidden="true" />
+                      {storageMigrationStatusMutation.isPending ? "Refreshing" : "Refresh status"}
+                    </Button>
+                  </div>
+                  <span>
+                    Target {formatMigrationTarget(storageMigration.target)}
+                    {storageMigration.dryRun ? " dry run" : " live migration"}
+                  </span>
+                  <span>
+                    Planned {storageMigration.plannedCount}, copied {storageMigration.copiedCount},
+                    verified {storageMigration.verifiedCount}
+                  </span>
+                  <span>
+                    Source {storageMigration.sourceStorage?.managedBy ?? "unknown"} to target{" "}
+                    {storageMigration.targetStorage?.managedBy ?? "unknown"}
+                  </span>
+                  {storageMigration.lastError === null ? null : (
+                    <span className="text-destructive">{storageMigration.lastError}</span>
+                  )}
+                  {storageMigration.failures.length === 0 ? null : (
+                    <span className="text-destructive">
+                      {storageMigration.failures.length} object failure
+                      {storageMigration.failures.length === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </form>
         </div>
       )}
@@ -586,6 +758,11 @@ function byoStorageStateFromConfig(config: TenantConfigAdminView): ByoStorageSta
   };
 }
 
+function defaultMigrationTarget(config: TenantConfigAdminView): TenantStorageMigrationTarget {
+  const storage = readRecord(config.byo.storage);
+  return storage?.kind === "byo" ? "helix-default" : "byo";
+}
+
 function compactBlankStrings(input: BrandingState): Record<string, string> {
   const output: Record<string, string> = {};
   for (const [key] of BRANDING_FIELDS) {
@@ -648,6 +825,17 @@ function parseByoStorage(input: ByoStorageState):
 
 function formatQuotaValue(value: unknown): string {
   return typeof value === "number" ? new Intl.NumberFormat("en-US").format(value) : "unlimited";
+}
+
+function formatMigrationStatus(status: TenantStorageMigrationJob["status"]): string {
+  return status
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatMigrationTarget(target: TenantStorageMigrationTarget): string {
+  return target === "byo" ? "customer-owned storage" : "Helix default storage";
 }
 
 function brandingPlaceholder(key: BrandingKey): string | undefined {

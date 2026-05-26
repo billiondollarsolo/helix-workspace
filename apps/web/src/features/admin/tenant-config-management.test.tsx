@@ -73,6 +73,44 @@ const tenantConfigPayload = {
   },
 };
 
+const storageMigrationPayload = {
+  migration: {
+    id: "5f0951a7-8e65-4634-a6a4-af2f2b4797da",
+    orgId: "org-1",
+    target: "helix-default",
+    status: "dry_run",
+    dryRun: true,
+    sourceStorage: {
+      managedBy: "byo",
+      storage: {
+        kind: "byo",
+        provider: "s3-compatible",
+        endpoint: "https://storage.example.com",
+        region: "us-east-1",
+        bucket: "acme-helix-data",
+        prefix: "helix/",
+        credentials_vault_path: "tenants/org-1/byo-storage/s3",
+        force_path_style: true,
+      },
+    },
+    targetStorage: {
+      managedBy: "helix-default",
+      storage: null,
+    },
+    plannedCount: 12,
+    copiedCount: 0,
+    verifiedCount: 12,
+    failures: [],
+    lastError: null,
+    attemptCount: 1,
+    requestedByActorId: "actor-1",
+    startedAt: "2026-05-25T10:00:00.000Z",
+    completedAt: "2026-05-25T10:01:00.000Z",
+    createdAt: "2026-05-25T10:00:00.000Z",
+    updatedAt: "2026-05-25T10:01:00.000Z",
+  },
+};
+
 describe("TenantConfigManagement", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -296,6 +334,144 @@ describe("TenantConfigManagement", () => {
     expect(requestUrlOf(postCall?.[0])).toContain("/api/admin/tenant-config/byo-storage/test");
   });
 
+  it("requests a storage migration dry run without mutating tenant config", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      if (
+        init?.method === "POST" &&
+        requestUrlOf(input).includes("/api/admin/tenant-config/byo-storage/migrations")
+      ) {
+        return Promise.resolve(Response.json(storageMigrationPayload));
+      }
+      return Promise.resolve(Response.json(tenantConfigPayload));
+    });
+
+    await render();
+
+    await waitFor(() => {
+      expect(selectByLabel("Migration target").value).toBe("helix-default");
+      expect(checkboxByLabel("Dry run only").checked).toBe(true);
+    });
+    await act(async () => {
+      buttonByLabel("Request migration").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Dry Run");
+      expect(container.textContent).toContain("Planned 12, copied 0, verified 12");
+    });
+    expect(postBody("/api/admin/tenant-config/byo-storage/migrations")).toMatchObject({
+      target: "helix-default",
+      dryRun: true,
+      sourceStorage: {
+        kind: "byo",
+        provider: "s3-compatible",
+        bucket: "acme-helix-data",
+        credentials_vault_path: "tenants/org-1/byo-storage/s3",
+      },
+    });
+    expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
+  });
+
+  it("refreshes the latest storage migration status", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      const url = requestUrlOf(input);
+      if (
+        init?.method === "POST" &&
+        url.includes("/api/admin/tenant-config/byo-storage/migrations")
+      ) {
+        return Promise.resolve(Response.json(storageMigrationPayload));
+      }
+      if (
+        init?.method === "GET" &&
+        url.includes("/api/admin/tenant-config/byo-storage/migrations/")
+      ) {
+        return Promise.resolve(
+          Response.json({
+            migration: {
+              ...storageMigrationPayload.migration,
+              status: "running",
+              dryRun: false,
+              plannedCount: 12,
+              copiedCount: 4,
+              verifiedCount: 3,
+              completedAt: null,
+              updatedAt: "2026-05-25T10:02:00.000Z",
+            },
+          }),
+        );
+      }
+      return Promise.resolve(Response.json(tenantConfigPayload));
+    });
+
+    await render();
+
+    await waitFor(() => {
+      expect(buttonByLabel("Request migration").disabled).toBe(false);
+    });
+    await act(async () => {
+      checkboxByLabel("Dry run only").click();
+      buttonByLabel("Request migration").click();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(buttonByLabel("Refresh status").disabled).toBe(false);
+    });
+    await act(async () => {
+      buttonByLabel("Refresh status").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Running");
+      expect(container.textContent).toContain("Planned 12, copied 4, verified 3");
+    });
+    const getCall = fetchMock.mock.calls.find(
+      (call) =>
+        call[1]?.method === "GET" &&
+        requestUrlOf(call[0]).includes("/api/admin/tenant-config/byo-storage/migrations/"),
+    );
+    expect(requestUrlOf(getCall?.[0])).toContain(storageMigrationPayload.migration.id);
+  });
+
+  it("surfaces storage migration request errors without mutating tenant config", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      if (
+        init?.method === "POST" &&
+        requestUrlOf(input).includes("/api/admin/tenant-config/byo-storage/migrations")
+      ) {
+        return Promise.resolve(
+          Response.json(
+            {
+              error:
+                "Live tenant storage migration requires staged source and target storage snapshots.",
+            },
+            { status: 409 },
+          ),
+        );
+      }
+      return Promise.resolve(Response.json(tenantConfigPayload));
+    });
+
+    await render();
+
+    await waitFor(() => {
+      expect(buttonByLabel("Request migration").disabled).toBe(false);
+    });
+    await act(async () => {
+      checkboxByLabel("Dry run only").click();
+      buttonByLabel("Request migration").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(
+        "Live tenant storage migration requires staged source and target storage snapshots.",
+      );
+    });
+    expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
+  });
+
   it("saves Helix default storage without forcing the BYO feature flag", async () => {
     fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
 
@@ -404,6 +580,17 @@ describe("TenantConfigManagement", () => {
     const call = fetchMock.mock.calls.find((candidate) => candidate[1]?.method === "PATCH");
     if (call === undefined || typeof call[1]?.body !== "string") {
       throw new Error("PATCH request not found.");
+    }
+    return JSON.parse(call[1].body) as Record<string, unknown>;
+  }
+
+  function postBody(urlPart: string): Record<string, unknown> {
+    const call = fetchMock.mock.calls.find(
+      (candidate) =>
+        candidate[1]?.method === "POST" && requestUrlOf(candidate[0]).includes(urlPart),
+    );
+    if (call === undefined || typeof call[1]?.body !== "string") {
+      throw new Error(`POST request for "${urlPart}" not found.`);
     }
     return JSON.parse(call[1].body) as Record<string, unknown>;
   }

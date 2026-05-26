@@ -985,6 +985,8 @@ export const docsDocuments = pgTable(
     ydocState: bytea("ydoc_state"),
     ydocStateVector: bytea("ydoc_state_vector"),
     updateSeq: integer("update_seq").default(0).notNull(),
+    editorEngine: text("editor_engine").default("legacy-yjs").notNull(),
+    formatVersion: integer("format_version").default(1).notNull(),
     metadata: jsonb("metadata").default({}).notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     ...timestamps,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fastify from "fastify";
 import type postgres from "postgres";
 import type { Actor, StorageObject } from "@helix/sdk-types";
@@ -7,6 +8,7 @@ import type { TenantStorageClient, TenantStorageResolver } from "../storage/inde
 import {
   buildTenantExportArchive,
   buildTenantExportManifest,
+  buildTenantExportPostgresDataChunkFiles,
   countTenantExportRows,
   materializeTenantExportArchiveArtifact,
   PostgresTenantExportJobStore,
@@ -18,6 +20,7 @@ import {
   type TenantExportJobStore,
   type TenantExportManifest,
   type TenantExportMetrics,
+  type TenantExportPostgresDataChunkFile,
   type TenantExportPostgresDataChunkManifest,
 } from "./export.js";
 import { registerTenantExportRoutes } from "./export-routes.js";
@@ -86,6 +89,78 @@ describe("tenant export archive", () => {
     const serialized = archive.bytes.toString("utf8");
     expect(serialized).not.toContain("plaintext-secret");
     expect(serialized).not.toContain("report bytes");
+  });
+
+  it("packs allowlisted PostgreSQL metadata row chunks", async () => {
+    const rowDataChunkFiles = await tenantExportAdminDomainChunkFiles();
+    const manifest = tenantExportManifest({ rowDataChunkFiles });
+
+    const archive = await buildTenantExportArchive(manifest);
+    const entries = parseTarEntries(archive.bytes);
+    const rowChunkManifest = JSON.parse(
+      entries["postgres/data/chunks/manifest.json"] ?? "{}",
+    ) as TenantExportPostgresDataChunkManifest;
+
+    expect(Object.keys(entries).sort()).toContain(
+      "postgres/data/chunks/admin_domains/000000.jsonl",
+    );
+    expect(Object.keys(entries).sort()).toContain(
+      "postgres/data/chunks/admin_dns_records/000000.jsonl",
+    );
+    expect(rowChunkManifest.includedTables).toEqual(["admin_domains", "admin_dns_records"]);
+    expect(rowChunkManifest.chunks).toEqual([
+      expect.objectContaining({
+        table: "admin_domains",
+        path: "postgres/data/chunks/admin_domains/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["lower(domain)", "created_at", "id"],
+      }),
+      expect.objectContaining({
+        table: "admin_dns_records",
+        path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["domain_id", "record_type", "host", "id"],
+      }),
+    ]);
+
+    for (const chunk of rowChunkManifest.chunks) {
+      const body = entries[chunk.path] ?? "";
+      expect(chunk.byteSize).toBe(Buffer.byteLength(body, "utf8"));
+      expect(chunk.sha256).toBe(createHash("sha256").update(body).digest("hex"));
+    }
+
+    expect(parseJsonl(entries["postgres/data/chunks/admin_domains/000000.jsonl"] ?? "")).toEqual([
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        orgId,
+        domain: "example.com",
+        isPrimary: true,
+        verificationStatus: "verified",
+        verifiedAt: "2026-05-24T09:30:00.000Z",
+        createdBy: actorId,
+        createdAt: "2026-05-24T09:00:00.000Z",
+        updatedAt: "2026-05-24T09:30:00.000Z",
+      },
+    ]);
+    expect(
+      parseJsonl(entries["postgres/data/chunks/admin_dns_records/000000.jsonl"] ?? ""),
+    ).toEqual([
+      {
+        id: "55555555-5555-4555-8555-555555555555",
+        orgId,
+        domainId: "44444444-4444-4444-8444-444444444444",
+        recordType: "TXT",
+        host: "_helix.example.com",
+        expectedValue: "helix-verification=abc",
+        observedValue: "helix-verification=abc",
+        status: "verified",
+        lastCheckedAt: "2026-05-24T09:25:00.000Z",
+        createdAt: "2026-05-24T09:00:00.000Z",
+        updatedAt: "2026-05-24T09:25:00.000Z",
+      },
+    ]);
+    expect(entries["manifest.json"]).not.toContain("expectedValue");
+    expect(entries["README.md"]).toContain("allowlisted PostgreSQL metadata row-data chunks");
   });
 
   it("packs object bytes from tenant-resolved storage when explicitly requested", async () => {
@@ -236,6 +311,55 @@ describe("tenant export archive", () => {
 });
 
 describe("tenant export SQL helpers", () => {
+  it("builds allowlisted PostgreSQL metadata row chunks with deterministic queries", async () => {
+    const recording = createRecordingSql(adminDomainChunkSqlResults());
+
+    const chunks = await buildTenantExportPostgresDataChunkFiles(recording.sql, orgId);
+
+    expect(chunks.map((chunk) => chunk.metadata)).toEqual([
+      expect.objectContaining({
+        table: "admin_domains",
+        path: "postgres/data/chunks/admin_domains/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["lower(domain)", "created_at", "id"],
+      }),
+      expect.objectContaining({
+        table: "admin_dns_records",
+        path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["domain_id", "record_type", "host", "id"],
+      }),
+    ]);
+    expect(recording.calls[0]?.text).toContain(
+      "select id, org_id, domain, is_primary, verification_status, verified_at",
+    );
+    expect(recording.calls[0]?.text).toContain("from admin_domains");
+    expect(recording.calls[0]?.text).toContain("where org_id = ?");
+    expect(recording.calls[0]?.text).toContain(
+      "order by lower(domain) asc, created_at asc, id asc",
+    );
+    expect(recording.calls[1]?.text).toContain(
+      "select id, org_id, domain_id, record_type, host, expected_value, observed_value",
+    );
+    expect(recording.calls[1]?.text).toContain("from admin_dns_records");
+    expect(recording.calls[1]?.text).toContain("where org_id = ?");
+    expect(recording.calls[1]?.text).toContain(
+      "order by domain_id asc, record_type asc, host asc, id asc",
+    );
+    expect(recording.calls.flatMap((call) => call.values).every((value) => value === orgId)).toBe(
+      true,
+    );
+    const combinedSql = recording.calls.map((call) => call.text).join("\n");
+    expect(combinedSql).not.toContain("select *");
+    expect(combinedSql).not.toContain("payload");
+    expect(combinedSql).not.toContain("body");
+    expect(combinedSql).not.toContain("hash");
+    expect(combinedSql).not.toContain("secret_ref");
+    expect(combinedSql).not.toContain("private_key_pem");
+    expect(combinedSql).not.toContain("token");
+    expect(combinedSql).not.toContain("webhook");
+  });
+
   it("counts tenant rows through committed org-scoped tables only", async () => {
     const recording = createRecordingSql([
       [
@@ -250,6 +374,8 @@ describe("tenant export SQL helpers", () => {
     ]);
     expect(recording.calls[0]?.text).toContain("from objects where org_id = ?");
     expect(recording.calls[0]?.text).toContain("from activity where org_id = ?");
+    expect(recording.calls[0]?.text).toContain("from admin_domains where org_id = ?");
+    expect(recording.calls[0]?.text).toContain("from admin_dns_records where org_id = ?");
     expect(recording.calls[0]?.text).toContain(
       "from message_attachments join messages on messages.id = message_attachments.message_id where messages.org_id = ?",
     );
@@ -1052,7 +1178,11 @@ describe("TenantExportMaterializationWorker", () => {
   });
 });
 
-function tenantExportManifest(): TenantExportManifest {
+function tenantExportManifest(
+  input: {
+    readonly rowDataChunkFiles?: readonly TenantExportPostgresDataChunkFile[] | undefined;
+  } = {},
+): TenantExportManifest {
   return buildTenantExportManifest({
     org: orgRecord(),
     generatedAt: new Date("2026-05-24T10:00:00.000Z"),
@@ -1066,7 +1196,50 @@ function tenantExportManifest(): TenantExportManifest {
       firstEntryAt: "2026-05-24T09:00:00.000Z",
       lastEntryAt: "2026-05-24T09:30:00.000Z",
     },
+    ...(input.rowDataChunkFiles === undefined
+      ? {}
+      : { rowDataChunkFiles: input.rowDataChunkFiles }),
   });
+}
+
+async function tenantExportAdminDomainChunkFiles(): Promise<
+  readonly TenantExportPostgresDataChunkFile[]
+> {
+  const recording = createRecordingSql(adminDomainChunkSqlResults());
+  return buildTenantExportPostgresDataChunkFiles(recording.sql, orgId);
+}
+
+function adminDomainChunkSqlResults(): readonly unknown[][] {
+  return [
+    [
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        org_id: orgId,
+        domain: "example.com",
+        is_primary: true,
+        verification_status: "verified",
+        verified_at: new Date("2026-05-24T09:30:00.000Z"),
+        created_by: actorId,
+        created_at: new Date("2026-05-24T09:00:00.000Z"),
+        updated_at: new Date("2026-05-24T09:30:00.000Z"),
+      },
+    ],
+    [
+      {
+        id: "55555555-5555-4555-8555-555555555555",
+        org_id: orgId,
+        domain_id: "44444444-4444-4444-8444-444444444444",
+        record_type: "TXT",
+        host: "_helix.example.com",
+        expected_value: "helix-verification=abc",
+        observed_value: "helix-verification=abc",
+        status: "verified",
+        last_checked_at: new Date("2026-05-24T09:25:00.000Z"),
+        created_at: new Date("2026-05-24T09:00:00.000Z"),
+        updated_at: new Date("2026-05-24T09:25:00.000Z"),
+      },
+    ],
+  ];
 }
 
 function orgRecord(overrides: Partial<OrgRecord> = {}): OrgRecord {
@@ -1444,4 +1617,14 @@ function parseTarEntries(buffer: Buffer): Record<string, string> {
     offset = bodyStart + Math.ceil(size / 512) * 512;
   }
   return entries;
+}
+
+function parseJsonl(value: string): readonly unknown[] {
+  if (value.trim().length === 0) {
+    return [];
+  }
+  return value
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as unknown);
 }

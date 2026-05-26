@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { trace } from "@opentelemetry/api";
 import type { JsonObject, StorageObject } from "@helix/sdk-types";
@@ -50,6 +51,11 @@ export interface TenantExportPostgresDataChunkManifest {
   readonly notes: readonly string[];
 }
 
+export interface TenantExportPostgresDataChunkFile {
+  readonly metadata: TenantExportPostgresDataChunk;
+  readonly body: Uint8Array;
+}
+
 export interface TenantExportAuditSummary {
   readonly rowCount: number;
   readonly firstEntryAt: string | null;
@@ -83,6 +89,7 @@ export interface TenantExportManifest {
   readonly postgres: {
     readonly rowCounts: readonly TenantExportTableCount[];
     readonly rowDataChunks: TenantExportPostgresDataChunkManifest;
+    readonly rowDataChunkFiles?: readonly TenantExportPostgresDataChunkFile[] | undefined;
   };
   readonly auditLog: TenantExportAuditSummary;
 }
@@ -138,6 +145,7 @@ export interface BuildTenantExportManifestInput {
   readonly org: OrgRecord;
   readonly objects: readonly TenantStorageMigrationObject[];
   readonly rowCounts: readonly TenantExportTableCount[];
+  readonly rowDataChunkFiles?: readonly TenantExportPostgresDataChunkFile[] | undefined;
   readonly auditSummary: TenantExportAuditSummary;
   readonly generatedAt?: Date | undefined;
   readonly bytesIncluded?: boolean | undefined;
@@ -287,6 +295,32 @@ interface TenantExportAuditSummaryRow {
   readonly last_entry_at: Date | null;
 }
 
+interface TenantExportAdminDomainRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly domain: string;
+  readonly is_primary: boolean;
+  readonly verification_status: string;
+  readonly verified_at: Date | null;
+  readonly created_by: string | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
+interface TenantExportAdminDnsRecordRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly domain_id: string;
+  readonly record_type: string;
+  readonly host: string;
+  readonly expected_value: string;
+  readonly observed_value: string | null;
+  readonly status: string;
+  readonly last_checked_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
 interface TenantExportJobRow {
   readonly id: string;
   readonly org_id: string;
@@ -324,6 +358,7 @@ export function createPostgresTenantExportManifestPlanner(
       org,
       objects: await listTenantStorageMigrationObjects(sql, org.id),
       rowCounts: await countTenantExportRows(sql, org.id),
+      rowDataChunkFiles: await buildTenantExportPostgresDataChunkFiles(sql, org.id),
       auditSummary: await summarizeTenantExportAudit(sql, org.id),
     });
 }
@@ -361,7 +396,10 @@ export function buildTenantExportManifest(
     },
     postgres: {
       rowCounts: input.rowCounts,
-      rowDataChunks: buildTenantExportPostgresDataChunkManifest(),
+      rowDataChunks: buildTenantExportPostgresDataChunkManifest(input.rowDataChunkFiles ?? []),
+      ...(input.rowDataChunkFiles === undefined
+        ? {}
+        : { rowDataChunkFiles: input.rowDataChunkFiles }),
     },
     auditLog: input.auditSummary,
   };
@@ -969,7 +1007,10 @@ async function tenantExportArchiveFiles(
           objectCount: metadataManifest.objectInventory.objectCount,
           totalKnownBytes: metadataManifest.objectInventory.totalKnownBytes,
         },
-        postgres: metadataManifest.postgres,
+        postgres: {
+          rowCounts: metadataManifest.postgres.rowCounts,
+          rowDataChunks: metadataManifest.postgres.rowDataChunks,
+        },
         auditLog: metadataManifest.auditLog,
       }),
     },
@@ -999,6 +1040,7 @@ async function tenantExportArchiveFiles(
       path: "postgres/data/chunks/manifest.json",
       body: stableJson(metadataManifest.postgres.rowDataChunks),
     },
+    ...tenantExportPostgresDataChunkArchiveFiles(metadataManifest.postgres.rowDataChunkFiles ?? []),
     {
       path: "audit-log/summary.json",
       body: stableJson(metadataManifest.auditLog),
@@ -1031,6 +1073,63 @@ async function tenantExportArchiveFiles(
   return files;
 }
 
+export async function buildTenantExportPostgresDataChunkFiles(
+  sql: postgres.Sql,
+  orgId: string,
+): Promise<readonly TenantExportPostgresDataChunkFile[]> {
+  const adminDomains = (await sql`
+    select id, org_id, domain, is_primary, verification_status, verified_at,
+           created_by, created_at, updated_at
+    from admin_domains
+    where org_id = ${orgId}
+    order by lower(domain) asc, created_at asc, id asc
+  `) as unknown as readonly TenantExportAdminDomainRow[];
+  const adminDnsRecords = (await sql`
+    select id, org_id, domain_id, record_type, host, expected_value, observed_value,
+           status, last_checked_at, created_at, updated_at
+    from admin_dns_records
+    where org_id = ${orgId}
+    order by domain_id asc, record_type asc, host asc, id asc
+  `) as unknown as readonly TenantExportAdminDnsRecordRow[];
+
+  return [
+    buildTenantExportPostgresDataChunkFile({
+      table: "admin_domains",
+      path: "postgres/data/chunks/admin_domains/000000.jsonl",
+      orderBy: ["lower(domain)", "created_at", "id"],
+      rows: adminDomains.map((row) => ({
+        id: row.id,
+        orgId: row.org_id,
+        domain: row.domain,
+        isPrimary: row.is_primary,
+        verificationStatus: row.verification_status,
+        verifiedAt: row.verified_at?.toISOString() ?? null,
+        createdBy: row.created_by,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      })),
+    }),
+    buildTenantExportPostgresDataChunkFile({
+      table: "admin_dns_records",
+      path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
+      orderBy: ["domain_id", "record_type", "host", "id"],
+      rows: adminDnsRecords.map((row) => ({
+        id: row.id,
+        orgId: row.org_id,
+        domainId: row.domain_id,
+        recordType: row.record_type,
+        host: row.host,
+        expectedValue: row.expected_value,
+        observedValue: row.observed_value,
+        status: row.status,
+        lastCheckedAt: row.last_checked_at?.toISOString() ?? null,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      })),
+    }),
+  ];
+}
+
 export async function countTenantExportRows(
   sql: postgres.Sql,
   orgId: string,
@@ -1043,6 +1142,8 @@ export async function countTenantExportRows(
     union all select 'message_attachments', count(*)::integer from message_attachments join messages on messages.id = message_attachments.message_id where messages.org_id = ${orgId}
     union all select 'permissions', count(*)::integer from permissions where org_id = ${orgId}
     union all select 'activity', count(*)::integer from activity where org_id = ${orgId}
+    union all select 'admin_domains', count(*)::integer from admin_domains where org_id = ${orgId}
+    union all select 'admin_dns_records', count(*)::integer from admin_dns_records where org_id = ${orgId}
     union all select 'tenant_config_audit', count(*)::integer from tenant_config_audit where org_id = ${orgId}
     union all select 'tenant_storage_migration_jobs', count(*)::integer from tenant_storage_migration_jobs where org_id = ${orgId}
     union all select 'ai_artifacts', count(*)::integer from ai_artifacts where org_id = ${orgId}
@@ -1248,12 +1349,44 @@ function hasControlCharacter(value: string): boolean {
   return false;
 }
 
-function buildTenantExportPostgresDataChunkManifest(): TenantExportPostgresDataChunkManifest {
+function buildTenantExportPostgresDataChunkFile(input: {
+  readonly table: string;
+  readonly path: string;
+  readonly orderBy: readonly string[];
+  readonly rows: readonly Record<string, unknown>[];
+}): TenantExportPostgresDataChunkFile {
+  const body = jsonlBytes(input.rows);
+  return {
+    metadata: {
+      table: input.table,
+      path: input.path,
+      rowCount: input.rows.length,
+      byteSize: body.byteLength,
+      sha256: createHash("sha256").update(body).digest("hex"),
+      orderBy: input.orderBy,
+    },
+    body,
+  };
+}
+
+function tenantExportPostgresDataChunkArchiveFiles(
+  chunks: readonly TenantExportPostgresDataChunkFile[],
+): readonly TenantExportArchiveFile[] {
+  return chunks.map((chunk) => ({
+    path: chunk.metadata.path,
+    body: chunk.body,
+    byteSize: chunk.body.byteLength,
+  }));
+}
+
+function buildTenantExportPostgresDataChunkManifest(
+  chunks: readonly TenantExportPostgresDataChunkFile[],
+): TenantExportPostgresDataChunkManifest {
   return {
     version: 1,
     format: "jsonl",
-    chunks: [],
-    includedTables: [],
+    chunks: chunks.map((chunk) => chunk.metadata),
+    includedTables: chunks.map((chunk) => chunk.metadata.table),
     excludedTables: [
       {
         table: "app_passwords",
@@ -1309,17 +1442,27 @@ function buildTenantExportPostgresDataChunkManifest(): TenantExportPostgresDataC
       },
     ],
     notes: [
-      "This archive declares the future row-data chunk manifest format but emits no row-data chunk files.",
+      "This archive emits only explicitly allowlisted PostgreSQL metadata row-data chunks.",
       "Future chunks are append-only JSONL under postgres/data/chunks/<table>/000000.jsonl.",
       "Sensitive, credential, token, webhook payload, and content-body tables require explicit redaction before row export.",
     ],
   };
 }
 
+function jsonlBytes(rows: readonly Record<string, unknown>[]): Uint8Array {
+  return textBytes(
+    rows.map((row) => JSON.stringify(row)).join("\n") + (rows.length > 0 ? "\n" : ""),
+  );
+}
+
 function exportReadme(manifest: TenantExportManifest): string {
   const byteLine = manifest.objectInventory.bytesIncluded
     ? "This archive includes object-store bytes under objects/."
     : "It intentionally does not include object bytes unless objects/self-fetch-manifest.json is present.";
+  const rowChunkLine =
+    manifest.postgres.rowDataChunks.chunks.length === 0
+      ? "It includes PostgreSQL row-data chunk metadata at postgres/data/chunks/manifest.json, but emits no row-data chunk files yet."
+      : "It includes allowlisted PostgreSQL metadata row-data chunks under postgres/data/chunks/ and describes them in postgres/data/chunks/manifest.json.";
   return [
     `# Helix Tenant Export: ${manifest.org.slug}`,
     "",
@@ -1331,10 +1474,9 @@ function exportReadme(manifest: TenantExportManifest): string {
     "logical object inventory, org-scoped table row counts, and audit-log summary.",
     byteLine,
     "",
-    "It includes PostgreSQL row-data chunk metadata at postgres/data/chunks/manifest.json,",
-    "but intentionally emits no row-data chunk files yet. Private credentials, token hashes, webhook",
-    "payloads, document/mail bodies, and encrypted customer secrets remain excluded until explicit",
-    "redaction and import compatibility rules are implemented.",
+    rowChunkLine,
+    "Private credentials, token hashes, webhook payloads, document/mail bodies, and encrypted",
+    "customer secrets remain excluded until explicit redaction and import compatibility rules are implemented.",
     "",
   ].join("\n");
 }

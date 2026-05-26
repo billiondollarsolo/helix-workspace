@@ -8,6 +8,7 @@ const webhookId = "66666666-6666-4666-8666-666666666666";
 const deliveryId = "77777777-7777-4777-8777-777777777777";
 const actorId = "88888888-8888-4888-8888-888888888888";
 const migrationId = "99999999-9999-4999-8999-999999999999";
+const exportJobId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("parseCliArgs", () => {
   it("parses tool list", () => {
@@ -987,6 +988,73 @@ describe("parseCliArgs", () => {
     expect(() =>
       parseCliArgs(["admin", "storage-migrations", "cutover", migrationId, "--confirm", "LIVE"]),
     ).toThrow(CliUsageError);
+  });
+
+  it("parses durable tenant export operator commands", () => {
+    expect(
+      parseCliArgs([
+        "admin",
+        "tenant-exports",
+        "queue",
+        "acme",
+        "--metadata-only",
+        "--presigned-url-expires-seconds",
+        "600",
+      ]),
+    ).toEqual({
+      kind: "tenant-export-queue",
+      slug: "acme",
+      includeObjectBytes: false,
+      presignedUrlExpiresSeconds: 600,
+    });
+    expect(parseCliArgs(["admin", "tenant-exports", "queue", "acme"])).toEqual({
+      kind: "tenant-export-queue",
+      slug: "acme",
+      includeObjectBytes: true,
+    });
+    expect(
+      parseCliArgs([
+        "admin",
+        "tenant-exports",
+        "list",
+        "acme",
+        "--status",
+        "running",
+        "--limit",
+        "10",
+        "--cursor",
+        "cursor-1",
+      ]),
+    ).toEqual({
+      kind: "tenant-export-list",
+      slug: "acme",
+      status: "running",
+      limit: 10,
+      cursor: "cursor-1",
+    });
+    expect(parseCliArgs(["admin", "tenant-exports", "status", "acme", exportJobId])).toEqual({
+      kind: "tenant-export-status",
+      slug: "acme",
+      jobId: exportJobId,
+    });
+    expect(parseCliArgs(["admin", "tenant-exports", "get", "acme", exportJobId])).toEqual({
+      kind: "tenant-export-status",
+      slug: "acme",
+      jobId: exportJobId,
+    });
+  });
+
+  it("rejects unsafe durable tenant export operator commands", () => {
+    expect(() => parseCliArgs(["admin", "tenant-exports", "queue"])).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs(["admin", "tenant-exports", "queue", "acme", "--presigned-url-expires-seconds"]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs(["admin", "tenant-exports", "list", "acme", "--status", "dry_run"]),
+    ).toThrow(CliUsageError);
+    expect(() => parseCliArgs(["admin", "tenant-exports", "status", "acme"])).toThrow(
+      CliUsageError,
+    );
   });
 
   it("parses backup and restore operator commands", () => {

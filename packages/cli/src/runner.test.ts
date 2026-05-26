@@ -111,6 +111,8 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("--actor-id --label --scope --expires-at --json");
     expect(stdout.output).toContain("--password-id --json");
     expect(stdout.output).toContain("--transport --json");
+    expect(stdout.output).toContain("tenant-exports");
+    expect(stdout.output).toContain("--include-object-bytes --metadata-only");
     expect(stdout.output).toContain("--thread-id --add --remove --json");
     expect(stdout.output).toContain("--name --priority --enabled --disabled --criteria --actions");
     expect(stdout.output).toContain("--room-id --before --limit --json");
@@ -144,6 +146,7 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("serve resources");
     expect(stdout.output).toContain("backup");
     expect(stdout.output).toContain("restore");
+    expect(stdout.output).toContain("tenant-exports");
     expect(stdout.output).toContain("install enable disable uninstall");
     expect(stdout.output).toContain("-l from -x");
     expect(stdout.output).toContain(
@@ -340,6 +343,97 @@ describe("runCli tenant storage migration operator commands", () => {
             "content-type": "application/json",
           },
           body: '{"confirm":"CUTOVER"}',
+        },
+      },
+    ]);
+  });
+});
+
+describe("runCli durable tenant export operator commands", () => {
+  it("queues, lists, and reads durable tenant export jobs", async () => {
+    const exportJobId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      requests.push({ url, init });
+      if (init.method === "POST") {
+        return Response.json({ exportJob: { id: exportJobId, status: "queued" } }, { status: 202 });
+      }
+      if (url.endsWith(`/${exportJobId}`)) {
+        return Response.json({
+          exportJob: {
+            id: exportJobId,
+            status: "succeeded",
+            artifact: { downloadUrl: "https://storage.example/archive.tar" },
+          },
+        });
+      }
+      return Response.json({ exportJobs: [{ id: exportJobId, status: "queued" }] });
+    };
+
+    const commands: readonly (readonly string[])[] = [
+      [
+        "admin",
+        "tenant-exports",
+        "queue",
+        "acme",
+        "--metadata-only",
+        "--presigned-url-expires-seconds",
+        "600",
+      ],
+      ["admin", "tenant-exports", "list", "acme", "--status", "queued", "--limit", "10"],
+      ["admin", "tenant-exports", "status", "acme", exportJobId],
+    ];
+
+    for (const args of commands) {
+      const stdout = new CaptureStream();
+      const stderr = new CaptureStream();
+      await expect(
+        runCli(
+          args,
+          { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+          {
+            stdin: Readable.from([]),
+            stdout,
+            stderr,
+          },
+          fetchImpl,
+        ),
+      ).resolves.toBe(0);
+      expect(stdout.output).toContain("{\n");
+      expect(stderr.output).toBe("");
+    }
+
+    expect(requests).toEqual([
+      {
+        url: "https://helix.example/api/admin/tenants/acme/export/jobs",
+        init: {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer token-1",
+            "content-type": "application/json",
+          },
+          body: '{"includeObjectBytes":false,"presignedUrlExpiresSeconds":600}',
+        },
+      },
+      {
+        url: "https://helix.example/api/admin/tenants/acme/export/jobs?status=queued&limit=10",
+        init: {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer token-1",
+          },
+        },
+      },
+      {
+        url: `https://helix.example/api/admin/tenants/acme/export/jobs/${exportJobId}`,
+        init: {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer token-1",
+          },
         },
       },
     ]);

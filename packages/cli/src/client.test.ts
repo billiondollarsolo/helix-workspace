@@ -383,6 +383,59 @@ describe("buildHelixRequest", () => {
     });
   });
 
+  it("builds durable tenant export operator requests", () => {
+    const exportJobId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+    expect(
+      buildHelixRequest(
+        {
+          kind: "tenant-export-queue",
+          slug: "acme",
+          includeObjectBytes: false,
+          presignedUrlExpiresSeconds: 600,
+        },
+        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+      ),
+    ).toEqual({
+      url: "https://helix.example/api/admin/tenants/acme/export/jobs",
+      init: {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: "Bearer token-1",
+          "content-type": "application/json",
+        },
+        body: '{"includeObjectBytes":false,"presignedUrlExpiresSeconds":600}',
+      },
+    });
+
+    expect(
+      buildHelixRequest(
+        {
+          kind: "tenant-export-list",
+          slug: "acme",
+          status: "failed",
+          limit: 10,
+          cursor: "cursor-1",
+        },
+        { HELIX_BASE_URL: "https://helix.example" },
+      ),
+    ).toMatchObject({
+      url: "https://helix.example/api/admin/tenants/acme/export/jobs?status=failed&limit=10&cursor=cursor-1",
+      init: { method: "GET" },
+    });
+
+    expect(
+      buildHelixRequest(
+        { kind: "tenant-export-status", slug: "acme", jobId: exportJobId },
+        { HELIX_BASE_URL: "https://helix.example" },
+      ),
+    ).toMatchObject({
+      url: `https://helix.example/api/admin/tenants/acme/export/jobs/${exportJobId}`,
+      init: { method: "GET" },
+    });
+  });
+
   it("builds tier update requests against admin platform config", () => {
     expect(
       buildHelixRequest(

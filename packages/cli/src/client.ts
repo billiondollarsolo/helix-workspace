@@ -114,6 +114,34 @@ export function buildHelixRequest(
         `/api/admin/tenant-config/byo-storage/migrations/${encodeURIComponent(command.migrationId)}/cutover`,
         { confirm: "CUTOVER" },
       );
+    case "tenant-export-queue":
+      return createRequest(
+        env,
+        "POST",
+        `/api/admin/tenants/${encodeURIComponent(command.slug)}/export/jobs`,
+        {
+          includeObjectBytes: command.includeObjectBytes,
+          ...(command.presignedUrlExpiresSeconds === undefined
+            ? {}
+            : { presignedUrlExpiresSeconds: command.presignedUrlExpiresSeconds }),
+        },
+      );
+    case "tenant-export-list":
+      return createRequest(
+        env,
+        "GET",
+        withQuery(`/api/admin/tenants/${encodeURIComponent(command.slug)}/export/jobs`, {
+          status: command.status,
+          limit: command.limit,
+          cursor: command.cursor,
+        }),
+      );
+    case "tenant-export-status":
+      return createRequest(
+        env,
+        "GET",
+        `/api/admin/tenants/${encodeURIComponent(command.slug)}/export/jobs/${encodeURIComponent(command.jobId)}`,
+      );
     case "backup-create":
       return createRequest(env, "POST", "/api/admin/backups", {});
     case "restore-from":

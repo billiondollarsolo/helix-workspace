@@ -62,6 +62,20 @@ export type HelixCommand =
     }
   | { readonly kind: "admin-storage-migration-get"; readonly migrationId: string }
   | { readonly kind: "admin-storage-migration-cutover"; readonly migrationId: string }
+  | {
+      readonly kind: "tenant-export-queue";
+      readonly slug: string;
+      readonly includeObjectBytes: boolean;
+      readonly presignedUrlExpiresSeconds?: number;
+    }
+  | {
+      readonly kind: "tenant-export-list";
+      readonly slug: string;
+      readonly status?: TenantExportJobStatus;
+      readonly limit?: number;
+      readonly cursor?: string;
+    }
+  | { readonly kind: "tenant-export-status"; readonly slug: string; readonly jobId: string }
   | { readonly kind: "backup-create" }
   | { readonly kind: "restore-from"; readonly backupId: string; readonly encrypted?: boolean }
   | { readonly kind: "reindex-all" }
@@ -92,6 +106,7 @@ export type TenantStorageMigrationStatus =
   | "succeeded_with_errors"
   | "failed"
   | "dry_run";
+export type TenantExportJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 export type JsonArgument =
   | { readonly source: "empty" }
@@ -1802,6 +1817,8 @@ function parseAdminCommand(
       return parseAdminStorageCommand(action, args);
     case "storage-migrations":
       return parseAdminStorageMigrationsCommand(action, args);
+    case "tenant-exports":
+      return parseAdminTenantExportsCommand(action, args);
     default:
       throw new CliUsageError(adminUsage);
   }
@@ -2073,8 +2090,106 @@ function parseAdminStorageMigrationCutoverCommand(args: readonly string[]): Heli
   return { kind: "admin-storage-migration-cutover", migrationId: args[0] };
 }
 
+function parseAdminTenantExportsCommand(
+  action: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  switch (action) {
+    case "queue":
+      return parseTenantExportQueueCommand(args[0], args.slice(1));
+    case "list":
+      return parseTenantExportListCommand(args[0], args.slice(1));
+    case "get":
+    case "status":
+      return parseTenantExportStatusCommand(args[0], args.slice(1));
+    default:
+      throw new CliUsageError(adminTenantExportsUsage);
+  }
+}
+
+function parseTenantExportQueueCommand(
+  slug: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  if (slug === undefined || slug.startsWith("-")) {
+    throw new CliUsageError(adminTenantExportsQueueUsage);
+  }
+  let includeObjectBytes = true;
+  let presignedUrlExpiresSeconds: number | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    if (flag === "--include-object-bytes") {
+      includeObjectBytes = true;
+      continue;
+    }
+    if (flag === "--metadata-only") {
+      includeObjectBytes = false;
+      continue;
+    }
+    if (flag === "--presigned-url-expires-seconds") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new CliUsageError(adminTenantExportsQueueUsage);
+      }
+      presignedUrlExpiresSeconds = parsePositiveInteger(value, adminTenantExportsQueueUsage);
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(adminTenantExportsQueueUsage);
+  }
+
+  return {
+    kind: "tenant-export-queue",
+    slug,
+    includeObjectBytes,
+    ...(presignedUrlExpiresSeconds === undefined ? {} : { presignedUrlExpiresSeconds }),
+  };
+}
+
+function parseTenantExportListCommand(
+  slug: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  if (slug === undefined || slug.startsWith("-")) {
+    throw new CliUsageError(adminTenantExportsListUsage);
+  }
+  const input: {
+    status?: TenantExportJobStatus;
+    limit?: number;
+    cursor?: string;
+  } = {};
+  parseAdminGetFlags(args, adminTenantExportsListUsage, {
+    strings: new Map([["--cursor", "cursor"]]),
+    numbers: new Map([["--limit", "limit"]]),
+    booleans: new Map<string, string>(),
+    enums: new Map([["--status", tenantExportJobStatuses]]),
+    enumFields: new Map([["--status", "status"]]),
+    input,
+  });
+  return { kind: "tenant-export-list", slug, ...input };
+}
+
+function parseTenantExportStatusCommand(
+  slug: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  if (slug === undefined || slug.startsWith("-") || args.length !== 1 || args[0] === undefined) {
+    throw new CliUsageError(adminTenantExportsStatusUsage);
+  }
+  return { kind: "tenant-export-status", slug, jobId: args[0] };
+}
+
+const adminTenantExportsUsage =
+  "Usage: helix admin tenant-exports <queue|list|status> <slug> [options]";
+const adminTenantExportsQueueUsage =
+  "Usage: helix admin tenant-exports queue <slug> [--include-object-bytes | --metadata-only] [--presigned-url-expires-seconds <seconds>]";
+const adminTenantExportsListUsage =
+  "Usage: helix admin tenant-exports list <slug> [--status <queued|running|succeeded|failed>] [--limit <number>] [--cursor <cursor>]";
+const adminTenantExportsStatusUsage = "Usage: helix admin tenant-exports status <slug> <job-id>";
+
 const adminUsage =
-  "Usage: helix admin <app-passwords|agent-credentials|users|audit|storage|storage-migrations> <command> [--json [JSON]]";
+  "Usage: helix admin <app-passwords|agent-credentials|users|audit|storage|storage-migrations|tenant-exports> <command> [--json [JSON]]";
 const adminAppPasswordsUsage =
   "Usage: helix admin app-passwords <list|create|revoke> [--json [JSON]]";
 const adminAppPasswordsListUsage =
@@ -2171,6 +2286,12 @@ const tenantStorageMigrationStatuses = new Set<TenantStorageMigrationStatus>([
   "succeeded_with_errors",
   "failed",
   "dry_run",
+]);
+const tenantExportJobStatuses = new Set<TenantExportJobStatus>([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
 ]);
 
 function parseBackupCommand(
@@ -2956,6 +3077,9 @@ export const usage = `Usage:
   helix admin storage-migrations request --target <byo|helix-default> [--dry-run | --live --confirm LIVE] [--source-storage <json-object>] [--target-storage <json-object>]
   helix admin storage-migrations get <migration-id>
   helix admin storage-migrations cutover <migration-id> --confirm CUTOVER
+  helix admin tenant-exports queue <slug> [--include-object-bytes | --metadata-only] [--presigned-url-expires-seconds <seconds>]
+  helix admin tenant-exports list <slug> [--status <queued|running|succeeded|failed>] [--limit <number>] [--cursor <cursor>]
+  helix admin tenant-exports status <slug> <job-id>
   helix backup create
   helix restore --from <backup-id> [--encrypted]
   helix reindex --all

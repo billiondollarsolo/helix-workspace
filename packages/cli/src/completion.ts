@@ -106,6 +106,7 @@ export const commandActions: Record<string, readonly string[]> = {
     "audit-log",
     "storage",
     "storage-migrations",
+    "tenant-exports",
   ],
   backup: ["create"],
   restore: ["--from", "--encrypted"],
@@ -136,6 +137,7 @@ const storageMigrationStatusValues = [
   "failed",
   "dry_run",
 ] as const;
+const tenantExportJobStatusValues = ["queued", "running", "succeeded", "failed"] as const;
 
 const mailActionFlags: Record<string, readonly string[]> = {
   send: ["--to", "--cc", "--bcc", "--from", "--subject", "--body", "--html", "--json"],
@@ -389,6 +391,7 @@ const adminFamilyActions: Record<string, readonly string[]> = {
   "audit-log": ["list"],
   storage: ["test"],
   "storage-migrations": ["list", "request", "get", "status", "cutover"],
+  "tenant-exports": ["queue", "list", "get", "status"],
 };
 
 const adminActionFlags: Record<string, readonly string[]> = {
@@ -417,6 +420,14 @@ const adminActionFlags: Record<string, readonly string[]> = {
   "storage-migrations:get": [],
   "storage-migrations:status": [],
   "storage-migrations:cutover": ["--confirm"],
+  "tenant-exports:queue": [
+    "--include-object-bytes",
+    "--metadata-only",
+    "--presigned-url-expires-seconds",
+  ],
+  "tenant-exports:list": ["--status", "--limit", "--cursor"],
+  "tenant-exports:get": [],
+  "tenant-exports:status": [],
 };
 
 const dynamicToolIdsScript = String.raw`command helix tool list --source openapi 2>/dev/null | node -e 'let input = ""; process.stdin.on("data", (chunk) => input += chunk); process.stdin.on("end", () => { try { const parsed = JSON.parse(input); for (const tool of Array.isArray(parsed.tools) ? parsed.tools : []) { if (tool && typeof tool.id === "string") console.log(tool.id); } } catch {} });'`;
@@ -454,7 +465,7 @@ function generateBashCompletion(): string {
     `    --direction) COMPREPLY=( $(compgen -W "${wordList(["outbound", "inbound"])}" -- "$cur") ); return ;;`,
     `    --classification) COMPREPLY=( $(compgen -W "${wordList(assistantClassificationValues)}" -- "$cur") ); return ;;`,
     `    --response) COMPREPLY=( $(compgen -W "${wordList(["accepted", "declined", "tentative"])}" -- "$cur") ); return ;;`,
-    `    --status) [[ $scope == meet ]] && COMPREPLY=( $(compgen -W "${wordList(["active", "ended"])}" -- "$cur") ) || [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationStatusValues)}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["pending", "in_progress", "delivered", "failed", "abandoned"])}" -- "$cur") ); return ;;`,
+    `    --status) [[ $scope == meet ]] && COMPREPLY=( $(compgen -W "${wordList(["active", "ended"])}" -- "$cur") ) || [[ $scope == admin && $action == tenant-exports ]] && COMPREPLY=( $(compgen -W "${wordList(tenantExportJobStatusValues)}" -- "$cur") ) || [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationStatusValues)}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["pending", "in_progress", "delivered", "failed", "abandoned"])}" -- "$cur") ); return ;;`,
     `    --target) [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationTargetValues)}" -- "$cur") ); return ;;`,
     `    --confirm) [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == request ]] && COMPREPLY=( $(compgen -W "LIVE" -- "$cur") ) || [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == cutover ]] && COMPREPLY=( $(compgen -W "CUTOVER" -- "$cur") ); return ;;`,
     "    --client-id|--client-secret|--scope|--json|--from) return ;;",
@@ -587,7 +598,7 @@ function generateZshCompletion(): string {
     "",
     "_helix() {",
     "  local -a top source_values transport_values search_type_values admin_user_type_values tier_values auth_flags json_flag",
-    "  local -a direction_values webhook_status_values meet_status_values classification_values storage_migration_target_values storage_migration_status_values",
+    "  local -a direction_values webhook_status_values meet_status_values classification_values storage_migration_target_values storage_migration_status_values tenant_export_status_values",
     `  top=(${zshWords(topLevelCommands)})`,
     "  source_values=(api openapi mcp)",
     "  transport_values=(rest mcp)",
@@ -599,6 +610,7 @@ function generateZshCompletion(): string {
     "  meet_status_values=(active ended)",
     `  storage_migration_target_values=(${storageMigrationTargetValues.join(" ")})`,
     `  storage_migration_status_values=(${storageMigrationStatusValues.join(" ")})`,
+    `  tenant_export_status_values=(${tenantExportJobStatusValues.join(" ")})`,
     `  classification_values=(${assistantClassificationValues.join(" ")})`,
     "  auth_flags=(--client-id --client-secret --scope)",
     "  json_flag=(--json)",
@@ -681,6 +693,8 @@ function generateZshCompletion(): string {
     "        esac",
     "      elif [[ ${words[CURRENT-1]} == --direction ]]; then",
     "        compadd -- $direction_values",
+    "      elif [[ ${words[CURRENT-1]} == --status && ${words[3]} == tenant-exports ]]; then",
+    "        compadd -- $tenant_export_status_values",
     "      elif [[ ${words[CURRENT-1]} == --status ]]; then",
     "        compadd -- $webhook_status_values",
     "      else",

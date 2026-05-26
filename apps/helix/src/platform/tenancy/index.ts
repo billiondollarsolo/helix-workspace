@@ -4,6 +4,7 @@ export * from "./export-validation.js";
 export * from "./import-plan.js";
 export * from "./import-jobs.js";
 export * from "./import-audit-continuity.js";
+export * from "./import-execution.js";
 export * from "./import-object-restore.js";
 export * from "./import-routes.js";
 export * from "./import-row-apply.js";

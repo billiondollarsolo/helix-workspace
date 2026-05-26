@@ -166,6 +166,61 @@ describe("PostgresOrgStore", () => {
     expect(recording.calls[1]?.values).toContain("11111111-1111-4111-8111-111111111111");
   });
 
+  it("updates tenant config only when the current storage snapshot still matches", async () => {
+    const recording = createRecordingSql([
+      [],
+      [
+        orgRow({
+          byoConfig: {
+            storage: {
+              kind: "byo",
+              provider: "aws-s3",
+              bucket: "next-bucket",
+              credentials_vault_path: "tenants/acme/byo-storage/next",
+            },
+          },
+          featureFlags: { byo_storage: true },
+        }),
+      ],
+    ]);
+    const store = new PostgresOrgStore(recording.sql);
+    const expectedCurrentStorage = {
+      kind: "helix-default",
+      prefix: "tenants/11111111-1111-4111-8111-111111111111/",
+    };
+
+    const org = await store.cutoverTenantStorageConfig({
+      orgId: "11111111-1111-4111-8111-111111111111",
+      storageConfig: {
+        kind: "byo",
+        provider: "aws-s3",
+        bucket: "next-bucket",
+        credentials_vault_path: "tenants/acme/byo-storage/next",
+      },
+      enableByoStorage: true,
+      expectedCurrentStorage,
+      changedByActorId: "22222222-2222-4222-8222-222222222222",
+      reason: "tenant storage migration cutover: job-1",
+    });
+
+    expect(org).toMatchObject({
+      byoConfig: {
+        storage: {
+          kind: "byo",
+          bucket: "next-bucket",
+        },
+      },
+      featureFlags: { byo_storage: true },
+    });
+    expect(recording.calls[0]?.text).toContain("helix.tenant_config_changed_by");
+    expect(recording.calls[0]?.text).toContain("helix.tenant_config_reason");
+    expect(recording.calls[1]?.text).toContain("jsonb_set");
+    expect(recording.calls[1]?.text).toContain("'{storage}'");
+    expect(recording.calls[1]?.text).toContain("'{byo_storage}'");
+    expect(recording.calls[1]?.text).toContain("byo_config->'storage' is not distinct from");
+    expect(recording.calls[1]?.values).toContain(expectedCurrentStorage);
+  });
+
   it("lists BYO storage orgs and persists bounded health", async () => {
     const recording = createRecordingSql([
       [{ id: "org-a" }, { id: "org-b" }],
@@ -244,10 +299,7 @@ function orgRecord(overrides: Partial<OrgRecord>): OrgRecord {
 }
 
 function sqlReturningOrg(overrides: Partial<OrgRecord> = {}): postgres.Sql {
-  const tag = () =>
-    Promise.resolve([
-      orgRow(overrides),
-    ]);
+  const tag = () => Promise.resolve([orgRow(overrides)]);
   const sql = Object.assign(tag, {
     json: (value: unknown) => value,
     array: (value: unknown) => value,

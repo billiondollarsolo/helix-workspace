@@ -59,6 +59,15 @@ export interface UpdateTenantConfigInput {
   readonly reason?: string | undefined;
 }
 
+export interface CutoverTenantStorageConfigInput {
+  readonly orgId: string;
+  readonly expectedCurrentStorage: JsonObject | null;
+  readonly storageConfig: JsonObject;
+  readonly enableByoStorage?: boolean | undefined;
+  readonly changedByActorId?: string | null | undefined;
+  readonly reason?: string | undefined;
+}
+
 export interface TenantByoStorageHealth {
   readonly status: "healthy" | "degraded";
   readonly checked_at: string;
@@ -289,9 +298,7 @@ export class PostgresOrgStore implements OrgStore {
       await tx`
         select
           set_config('helix.tenant_config_changed_by', ${input.changedByActorId ?? ""}, true),
-          set_config('helix.tenant_config_reason', ${
-            input.reason ?? "tenant-config:update"
-          }, true)
+          set_config('helix.tenant_config_reason', ${input.reason ?? "tenant-config:update"}, true)
       `;
       const rows = (await tx`
         update orgs
@@ -334,6 +341,62 @@ export class PostgresOrgStore implements OrgStore {
     });
   }
 
+  async cutoverTenantStorageConfig(
+    input: CutoverTenantStorageConfigInput,
+  ): Promise<OrgRecord | null> {
+    return this.sql.begin(async (tx) => {
+      await tx`
+        select
+          set_config('helix.tenant_config_changed_by', ${input.changedByActorId ?? ""}, true),
+          set_config('helix.tenant_config_reason', ${
+            input.reason ?? "tenant-storage-migration:cutover"
+          }, true)
+      `;
+      const expectedStorage =
+        input.expectedCurrentStorage === null
+          ? null
+          : tx.json(jsonObjectValue(input.expectedCurrentStorage));
+      const rows = (await tx`
+        update orgs
+        set
+          byo_config = jsonb_set(
+            byo_config,
+            '{storage}',
+            ${tx.json(jsonObjectValue(input.storageConfig))},
+            true
+          ),
+          feature_flags = case
+            when ${input.enableByoStorage === true} then jsonb_set(
+              feature_flags,
+              '{byo_storage}',
+              'true'::jsonb,
+              true
+            )
+            else feature_flags
+          end,
+          updated_at = now()
+        where id = ${input.orgId}
+          and byo_config->'storage' is not distinct from ${expectedStorage}::jsonb
+        returning
+          id,
+          slug,
+          display_name,
+          status,
+          tier,
+          plan_id,
+          region,
+          byo_config,
+          feature_flags,
+          quotas,
+          branding,
+          suspended_at,
+          soft_deleted_at,
+          hard_deleted_at
+      `) as unknown as readonly OrgRow[];
+      return rows[0] === undefined ? null : mapOrgRow(rows[0]);
+    });
+  }
+
   async listByoStorageOrgIds(
     input: { readonly limit?: number | undefined } = {},
   ): Promise<readonly string[]> {
@@ -349,9 +412,7 @@ export class PostgresOrgStore implements OrgStore {
     return rows.map((row) => row.id);
   }
 
-  async updateByoStorageHealth(
-    input: UpdateByoStorageHealthInput,
-  ): Promise<OrgRecord | null> {
+  async updateByoStorageHealth(input: UpdateByoStorageHealthInput): Promise<OrgRecord | null> {
     return this.sql.begin(async (tx) => {
       await tx`
         select set_config(
@@ -416,7 +477,7 @@ function mapOrgRow(row: OrgRow | undefined): OrgRecord {
 }
 
 function jsonObjectValue(value: JsonObject | undefined): Parameters<postgres.Sql["json"]>[0] {
-  return (value ?? {}) as Parameters<postgres.Sql["json"]>[0];
+  return value ?? {};
 }
 
 function jsonSerializable(value: unknown): Parameters<postgres.Sql["json"]>[0] {

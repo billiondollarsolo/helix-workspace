@@ -1,12 +1,17 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
+import type { JsonObject } from "@helix/sdk-types";
 import { actorFromRequest } from "../../api/actor.js";
 import type {
   CreateTenantStorageMigrationJobInput,
   TenantStorageMigrationJobRecord,
   TenantStorageMigrationJobStore,
 } from "../storage/index.js";
-import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
+import type {
+  CutoverTenantStorageConfigInput,
+  OrgRecord,
+  UpdateTenantConfigInput,
+} from "../tenancy/orgs.js";
 import type { PlanRecord, PlanStore } from "../tenancy/plans.js";
 import { registerTenantConfigAdminRoutes, type TenantConfigAdminStore } from "./tenant-config.js";
 
@@ -912,11 +917,12 @@ describe("tenant config admin routes", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(store.updates).toEqual([
+    expect(store.cutovers).toEqual([
       {
         orgId,
-        byoConfig: { storage: targetStorage },
-        featureFlags: { ai_smart_compose: false, byo_storage: true },
+        storageConfig: targetStorage,
+        enableByoStorage: true,
+        expectedCurrentStorage: null,
         changedByActorId: actorId,
         reason: "tenant storage migration cutover: 33333333-3333-4333-8333-333333333333",
       },
@@ -990,10 +996,12 @@ describe("tenant config admin routes", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(store.updates).toEqual([
+    expect(store.cutovers).toEqual([
       {
         orgId,
-        byoConfig: { storage: { kind: "helix-default", prefix: `tenants/${orgId}/` } },
+        storageConfig: { kind: "helix-default", prefix: `tenants/${orgId}/` },
+        enableByoStorage: false,
+        expectedCurrentStorage: sourceStorage,
         changedByActorId: actorId,
         reason: "tenant storage migration cutover: 33333333-3333-4333-8333-333333333333",
       },
@@ -1092,6 +1100,52 @@ describe("tenant config admin routes", () => {
     await app.close();
   });
 
+  it("rejects storage migration cutover when the atomic storage update loses the race", async () => {
+    const targetStorage = {
+      kind: "byo",
+      provider: "aws-s3",
+      bucket: "acme-helix-data",
+      credentials_vault_path: "tenants/acme/byo-storage/aws",
+    } as const;
+    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore([
+      migrationJob({
+        target: "byo",
+        status: "succeeded",
+        dryRun: false,
+        sourceStorage: { managedBy: "helix-default", storage: null },
+        targetStorage: { managedBy: "byo", storage: targetStorage },
+        plannedCount: 1,
+        copiedCount: 1,
+        verifiedCount: 1,
+        completedAt: new Date("2026-05-24T10:05:00.000Z"),
+      }),
+    ]);
+    const store = new InMemoryTenantConfigAdminStore();
+    store.forceStorageMismatch = true;
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store,
+      actorFromRequest,
+      storageMigrationJobs,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/migrations/33333333-3333-4333-8333-333333333333/cutover",
+      headers: headers("admin.console.write"),
+      payload: { confirm: "CUTOVER" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      code: "conflict",
+      error: "Tenant storage config changed during cutover. Refresh and retry.",
+    });
+    expect(store.cutovers).toHaveLength(1);
+    expect(store.updates).toEqual([]);
+    await app.close();
+  });
+
   it("rejects storage migration cutover when the source snapshot is stale", async () => {
     const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore([
       migrationJob({
@@ -1150,6 +1204,8 @@ describe("tenant config admin routes", () => {
 
 class InMemoryTenantConfigAdminStore implements TenantConfigAdminStore {
   readonly updates: UpdateTenantConfigInput[] = [];
+  readonly cutovers: CutoverTenantStorageConfigInput[] = [];
+  forceStorageMismatch = false;
   #org: OrgRecord | null;
 
   constructor(overrides: Partial<OrgRecord> = {}) {
@@ -1190,6 +1246,35 @@ class InMemoryTenantConfigAdminStore implements TenantConfigAdminStore {
     };
     return this.#org;
   }
+
+  async cutoverTenantStorageConfig(
+    input: CutoverTenantStorageConfigInput,
+  ): Promise<OrgRecord | null> {
+    this.cutovers.push(input);
+    if (this.#org === null || input.orgId !== this.#org.id || this.forceStorageMismatch) {
+      return null;
+    }
+    const currentStorage = rawStorageConfig(this.#org.byoConfig);
+    if (JSON.stringify(currentStorage) !== JSON.stringify(input.expectedCurrentStorage)) {
+      return null;
+    }
+    this.#org = {
+      ...this.#org,
+      byoConfig: { ...this.#org.byoConfig, storage: input.storageConfig },
+      featureFlags:
+        input.enableByoStorage === true
+          ? { ...this.#org.featureFlags, byo_storage: true }
+          : this.#org.featureFlags,
+    };
+    return this.#org;
+  }
+}
+
+function rawStorageConfig(byoConfig: OrgRecord["byoConfig"]): JsonObject | null {
+  const storage = (byoConfig as { readonly storage?: unknown }).storage;
+  return typeof storage === "object" && storage !== null && !Array.isArray(storage)
+    ? (storage as JsonObject)
+    : null;
 }
 
 class InMemoryPlanStore implements Pick<PlanStore, "findById"> {

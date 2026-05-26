@@ -27,12 +27,17 @@ import {
   type TenantStorageMigrationJobStore,
   type TenantStorageMigrationStorageState,
 } from "../storage/index.js";
-import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
+import type {
+  CutoverTenantStorageConfigInput,
+  OrgRecord,
+  UpdateTenantConfigInput,
+} from "../tenancy/orgs.js";
 import { buildEffectiveTenantConfig, type PlanRecord, type PlanStore } from "../tenancy/plans.js";
 
 export interface TenantConfigAdminStore {
   findById(id: string): Promise<OrgRecord | null>;
   updateTenantConfig(input: UpdateTenantConfigInput): Promise<OrgRecord | null>;
+  cutoverTenantStorageConfig(input: CutoverTenantStorageConfigInput): Promise<OrgRecord | null>;
 }
 
 export interface TenantConfigAdminView {
@@ -551,9 +556,10 @@ export async function registerTenantConfigAdminRoutes(
       }
 
       let storageConfig: JsonObject;
+      let expectedCurrentStorage: JsonObject | null;
       try {
         storageConfig = cutoverStorageConfig(job);
-        assertCurrentStorageMatchesCutoverJob(org, job, storageConfig);
+        expectedCurrentStorage = currentStorageMatchingCutoverJob(org, job, storageConfig).storage;
       } catch (error) {
         const message =
           error instanceof Error && error.message.length > 0
@@ -566,18 +572,18 @@ export async function registerTenantConfigAdminRoutes(
         job.target === "byo" && org.featureFlags.byo_storage !== true
           ? { ...org.featureFlags, byo_storage: true }
           : undefined;
-      const updatedOrg = await options.store.updateTenantConfig({
+      const updatedOrg = await options.store.cutoverTenantStorageConfig({
         orgId: actor.orgId,
-        byoConfig: {
-          ...org.byoConfig,
-          storage: storageConfig,
-        },
-        ...(featureFlags === undefined ? {} : { featureFlags }),
+        storageConfig,
+        enableByoStorage: featureFlags !== undefined,
+        expectedCurrentStorage,
         changedByActorId: actor.id,
         reason: `tenant storage migration cutover: ${job.id}`,
       });
       if (updatedOrg === null) {
-        return reply.code(404).send(notFound("Tenant config not found."));
+        return reply
+          .code(409)
+          .send(conflict("Tenant storage config changed during cutover. Refresh and retry."));
       }
 
       await auditAdminAction(options.auditSink, {
@@ -745,22 +751,23 @@ function cutoverStorageConfig(job: TenantStorageMigrationJobRecord): JsonObject 
   return toJsonObject(parsed.data);
 }
 
-function assertCurrentStorageMatchesCutoverJob(
+function currentStorageMatchingCutoverJob(
   org: OrgRecord,
   job: TenantStorageMigrationJobRecord,
   targetStorageConfig: JsonObject,
-): void {
+): TenantStorageMigrationStorageState {
   const current = currentTenantStorageMigrationState(org);
   const target = tenantStorageMigrationState(
     byoStorageSchema.parse(targetStorageConfig),
     job.target,
   );
   if (storageStatesEqual(current, target)) {
-    return;
+    return current;
   }
   if (!storageStatesEqual(current, job.sourceStorage)) {
     throw new Error("Tenant storage config changed after the migration job was created.");
   }
+  return current;
 }
 
 function storageStatesEqual(

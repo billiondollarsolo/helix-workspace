@@ -55,9 +55,10 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
   const elapsedQuery = useQuery(meetCallElapsedQueryOptions(callStartRef.current));
   const elapsed = elapsedQuery.data ?? 0;
 
-  /* A real room + minted token → embed the live Jitsi call. */
+  /* A real room + minted token → embed Jitsi unless this is the local demo domain. */
   const hasLiveRoom = session.roomId.length > 0;
   const embedUrl = session.joinUrl;
+  const useLocalPreview = isLocalJitsiUrl(embedUrl);
 
   /* Leave → end the backend room (only when we own a real room), then exit. */
   const leaveMutation = useMutation({
@@ -115,7 +116,9 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           <span className="chip-dot" />
           REC
         </span>
-        <span style={{ fontSize: "var(--text-meta)", color: "#a1a1aa" }}>helix.meet/{session.code}</span>
+        <span style={{ fontSize: "var(--text-meta)", color: "#a1a1aa" }}>
+          helix.meet/{session.code}
+        </span>
         <div
           style={{
             marginLeft: "auto",
@@ -147,7 +150,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             minWidth: 0,
           }}
         >
-          {embedUrl !== null ? (
+          {embedUrl !== null && !useLocalPreview ? (
             <iframe
               title={`Meeting: ${session.subject}`}
               src={embedUrl}
@@ -161,6 +164,8 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                 minHeight: 0,
               }}
             />
+          ) : useLocalPreview ? (
+            <LocalMeetingPreview session={session} />
           ) : (
             <div
               role="status"
@@ -201,7 +206,9 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
               }}
             >
               <Icons.Chat />
-              <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>In-call messages</span>
+              <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>
+                In-call messages
+              </span>
               <button
                 className="icon-btn"
                 style={{ marginLeft: "auto" }}
@@ -380,6 +387,144 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             <Icons.Users />
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function isLocalJitsiUrl(value: string | null): boolean {
+  if (value === null) {
+    return false;
+  }
+  try {
+    return new URL(value).hostname === "meet.localhost";
+  } catch {
+    return false;
+  }
+}
+
+function LocalMeetingPreview({ session }: { readonly session: MeetCallSession }) {
+  return (
+    <div
+      aria-label={`Local meeting preview: ${session.subject}`}
+      style={{
+        flex: 1,
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 2fr) minmax(180px, 1fr)",
+        gap: 12,
+        minHeight: 0,
+      }}
+    >
+      <div
+        style={{
+          minHeight: 0,
+          borderRadius: 8,
+          background: "linear-gradient(145deg, #1d2433, #111827 60%, #09090b)",
+          border: `1px solid ${DARK_BORDER}`,
+          display: "grid",
+          placeItems: "center",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: 124,
+            height: 124,
+            borderRadius: "50%",
+            display: "grid",
+            placeItems: "center",
+            background: "rgba(255,255,255,0.12)",
+            color: "#fafafa",
+            fontSize: 34,
+            fontWeight: 700,
+          }}
+        >
+          LH
+        </div>
+        <div
+          style={{
+            position: "absolute",
+            left: 16,
+            bottom: 16,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 10px",
+            borderRadius: 999,
+            background: "rgba(0,0,0,0.45)",
+            fontSize: "var(--text-body-sm)",
+          }}
+        >
+          <Icons.Video />
+          <span>Local Helix Admin</span>
+        </div>
+      </div>
+      <div
+        style={{
+          minHeight: 0,
+          display: "grid",
+          gridTemplateRows: "1fr 1fr",
+          gap: 12,
+        }}
+      >
+        <PreviewParticipant name="Maya Sharma" initials="MS" />
+        <PreviewParticipant name="Erica Johnson" initials="EJ" muted />
+      </div>
+    </div>
+  );
+}
+
+function PreviewParticipant({
+  name,
+  initials,
+  muted = false,
+}: {
+  readonly name: string;
+  readonly initials: string;
+  readonly muted?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        borderRadius: 8,
+        border: `1px solid ${DARK_BORDER}`,
+        background: DARK_PANEL,
+        display: "grid",
+        placeItems: "center",
+        position: "relative",
+        minHeight: 0,
+      }}
+    >
+      <div
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: "50%",
+          display: "grid",
+          placeItems: "center",
+          background: "#27272d",
+          color: "#ededee",
+          fontWeight: 700,
+        }}
+      >
+        {initials}
+      </div>
+      <div
+        style={{
+          position: "absolute",
+          left: 10,
+          bottom: 10,
+          right: 10,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          color: "#d4d4d8",
+          fontSize: "var(--text-caption)",
+        }}
+      >
+        {muted ? <Icons.MicOff /> : <Icons.Mic />}
+        <span>{name}</span>
       </div>
     </div>
   );

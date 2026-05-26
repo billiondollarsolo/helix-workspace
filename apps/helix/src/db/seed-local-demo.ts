@@ -1313,7 +1313,7 @@ async function seedMeet(
       ${scheduledStartAt},
       ${scheduledStartAt},
       ${scheduledEndAt},
-      'scheduled',
+      'active',
       ${json(sql, {
         source: LOCAL_DEMO_SOURCE,
         agenda: ["Mail", "Drive", "Docs", "Sheets", "Slides", "Calendar", "Chat", "Assistant"],

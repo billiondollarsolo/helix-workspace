@@ -78,12 +78,7 @@ meetingsPayload.meetings = [...meetingsPayload.active, ...meetingsPayload.recent
 
 function mockTools(handlers: Record<string, () => unknown>) {
   return vi.spyOn(authModule, "authenticatedFetch").mockImplementation((input) => {
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url;
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const toolId = url.replace("/api/tools/", "");
     const handler = handlers[toolId];
     if (handler === undefined) {
@@ -116,7 +111,7 @@ function flush() {
 /* Repeatedly flush microtasks until the container shows `text` (or give up). */
 async function waitForText(container: HTMLElement, text: string) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (container.textContent?.includes(text) ?? false) {
+    if (container.textContent.includes(text)) {
       return;
     }
     await flush();
@@ -141,10 +136,16 @@ const liveSession: MeetCallSession = {
   roomName: "atlas-sync",
   subject: "Atlas weekly sync",
   code: "atl-asly-snc",
-  jitsiDomain: "meet.localhost",
+  jitsiDomain: "meet.helix.test",
   token: "jwt-token",
-  joinUrl: "https://meet.localhost/atlas-sync?jwt=jwt-token",
+  joinUrl: "https://meet.helix.test/atlas-sync?jwt=jwt-token",
   startedAtMs: Date.now() - 32 * 60 * 1000,
+};
+
+const localPreviewSession: MeetCallSession = {
+  ...liveSession,
+  jitsiDomain: "meet.localhost",
+  joinUrl: "https://meet.localhost/atlas-sync?jwt=jwt-token",
 };
 
 /** A session that hasn't yet received its minted join URL. Used to verify the
@@ -241,7 +242,7 @@ describe("MeetShell hub", () => {
     renderWithClient(<MeetShell />, root);
     await waitForText(container, "Atlas weekly sync");
     const startButton = [...container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("Start instant meeting"),
+      b.textContent.includes("Start instant meeting"),
     );
     act(() => {
       startButton?.click();
@@ -249,8 +250,9 @@ describe("MeetShell hub", () => {
     await waitForText(container, "REC");
     expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.create-room", expect.anything());
     expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.mint-token", expect.anything());
-    // Entered the in-call view, with the live Jitsi embed.
-    expect(container.querySelector("iframe")).not.toBeNull();
+    // Entered the in-call view, with the local preview for meet.localhost.
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.textContent).toContain("Local Helix Admin");
   });
 
   it("opens the schedule dialog and calls meet.create-room with a window", async () => {
@@ -273,7 +275,7 @@ describe("MeetShell hub", () => {
     renderWithClient(<MeetShell />, root);
     await flush();
     const scheduleButton = [...container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("Schedule for later"),
+      b.textContent.includes("Schedule for later"),
     );
     act(() => {
       scheduleButton?.click();
@@ -298,7 +300,14 @@ describe("MeetShell hub", () => {
     const createCall = fetchSpy.mock.calls.find(
       (call) => call[0] === "/api/tools/meet.create-room",
     );
-    const body = JSON.parse((createCall?.[1]?.body as string) ?? "{}") as Record<string, unknown>;
+    if (createCall === undefined) {
+      throw new Error("Expected meet.create-room to be called");
+    }
+    const createInit = createCall[1];
+    if (createInit === undefined) {
+      throw new Error("Expected meet.create-room to receive request options");
+    }
+    const body = JSON.parse(createInit.body as string) as Record<string, unknown>;
     expect(body.scheduledStartAt).toBeDefined();
     expect(body.scheduledEndAt).toBeDefined();
   });
@@ -329,6 +338,13 @@ describe("MeetCall", () => {
     expect(container.textContent).toContain("helix.meet/atl-asly-snc");
   });
 
+  it("renders a local preview instead of an unreachable meet.localhost frame", () => {
+    renderWithClient(<MeetCall session={localPreviewSession} onLeave={() => undefined} />, root);
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.textContent).toContain("Local Helix Admin");
+    expect(container.textContent).toContain("Maya Sharma");
+  });
+
   it("renders a connecting placeholder when no join URL is available yet", () => {
     renderWithClient(<MeetCall session={pendingSession} onLeave={() => undefined} />, root);
     expect(container.querySelector("iframe")).toBeNull();
@@ -342,7 +358,7 @@ describe("MeetCall", () => {
     const onLeave = vi.fn();
     renderWithClient(<MeetCall session={liveSession} onLeave={onLeave} />, root);
     const leaveButton = [...container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("Leave"),
+      b.textContent.includes("Leave"),
     );
     act(() => {
       leaveButton?.click();
@@ -357,7 +373,7 @@ describe("MeetCall", () => {
     const onLeave = vi.fn();
     renderWithClient(<MeetCall session={pendingSession} onLeave={onLeave} />, root);
     const leaveButton = [...container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("Leave"),
+      b.textContent.includes("Leave"),
     );
     act(() => {
       leaveButton?.click();

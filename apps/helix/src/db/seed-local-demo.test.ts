@@ -75,6 +75,11 @@ describe("seedLocalDemo", () => {
     expect(sqlText).toContain("Launch Metrics Tracker");
     expect(sqlText).toContain("MVP Readiness Readout");
     expect(sqlText).toContain("mvp-surface-walkthrough");
+    expect(
+      recording.calls.some(
+        (call) => call.text.includes("insert into meet_rooms") && call.text.includes("'active'"),
+      ),
+    ).toBe(true);
     expect(sqlText).toContain("subject ilike 'k6 %'");
     expect(recording.calls.some((call) => call.values.includes("MVP surface walkthrough"))).toBe(
       true,

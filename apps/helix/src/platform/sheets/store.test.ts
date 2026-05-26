@@ -1846,6 +1846,68 @@ describe("PostgresSheetsStore tenant storage snapshots", () => {
     expect(versionInserts[1]?.values).toContain(sha256Hex(versionPut?.body ?? new Uint8Array()));
   });
 
+  it("restores spreadsheet state from a tenant-stored snapshot version", async () => {
+    const recording = createRecordingSheetsSql();
+    const storage = new RecordingStorageClient();
+    const store = new PostgresSheetsStore(recording.sql, {
+      storageResolver: storageResolverFor(storage),
+    });
+
+    const sheet = await store.createSheet({
+      orgId,
+      actorId,
+      title: "Storage Sheet",
+      tabNames: ["Forecast"],
+    });
+    const tabId = sheet.tabs[0]?.id;
+    if (tabId === undefined) {
+      throw new Error("Expected initial tab.");
+    }
+    await store.updateCells({
+      orgId,
+      actorId,
+      tabId,
+      edits: [{ row: 1, col: 1, value: "Current" }],
+    });
+
+    const restored = await store.restoreSnapshotVersion({
+      orgId,
+      actorId,
+      sheetId: sheet.id,
+      versionNumber: 1,
+    });
+
+    expect(restored?.id).toBe(sheet.id);
+    expect(storage.puts).toHaveLength(6);
+    const restoredLatestPut = storage.puts[4];
+    const restoredVersionPut = storage.puts[5];
+    expect(restoredLatestPut?.key).toBe(`sheets/${orgId}/${sheet.id}`);
+    expect(restoredVersionPut?.key).toBe(`sheets/${orgId}/${sheet.id}/versions/3`);
+    const restoredSnapshot: unknown = JSON.parse(new TextDecoder().decode(restoredLatestPut?.body));
+    expect(restoredSnapshot).toMatchObject({
+      app: "sheets",
+      version: 1,
+      sheet: { id: sheet.id, orgId, title: "Storage Sheet" },
+      tabs: [{ id: tabId, name: "Forecast", position: 0 }],
+      cells: [],
+    });
+    const deleteCells = recording.calls.find((call) =>
+      call.text.includes("delete from sheet_cells"),
+    );
+    expect(deleteCells?.values).toContain(orgId);
+    const versionSelect = recording.calls.find((call) => call.text.includes("version_number = ?"));
+    expect(versionSelect?.values).toContain(1);
+    const versionInserts = recording.calls.filter((call) =>
+      call.text.includes("insert into drive_versions"),
+    );
+    expect(versionInserts[2]?.values).toContain(3);
+    expect(versionInserts[2]?.values).toContain(restoredVersionPut?.key);
+    const activityInsert = recording.calls
+      .filter((call) => call.text.includes("insert into activity"))
+      .at(-1);
+    expect(JSON.stringify(activityInsert?.values)).toContain("restoredVersionNumber");
+  });
+
   it("does not insert object metadata when the snapshot write fails", async () => {
     const recording = createRecordingSheetsSql();
     const store = new PostgresSheetsStore(recording.sql, {
@@ -2087,6 +2149,24 @@ function createRecordingSheetsSql(): {
         return Promise.resolve([tabRow]);
       }
       if (text.includes("insert into sheet_cells")) {
+        if (text.includes("formula")) {
+          cells.splice(0, cells.length, {
+            id: "f2100000-0000-4000-8000-000000000003",
+            org_id: orgId,
+            sheet_tab_id: String(values[1]),
+            row: Number(values[2]),
+            col: Number(values[3]),
+            value: String(values[4]),
+            formula: values[5] as string | null,
+            calc_value: values[6] as string | null,
+            dependencies: values[7] as readonly string[],
+            formula_error: values[8] as string | null,
+            format: values[9] as Record<string, unknown>,
+            created_at: now,
+            updated_at: now,
+          });
+          return Promise.resolve([]);
+        }
         cells.splice(0, cells.length, {
           id: "f2100000-0000-4000-8000-000000000003",
           org_id: orgId,
@@ -2102,6 +2182,10 @@ function createRecordingSheetsSql(): {
           created_at: now,
           updated_at: now,
         });
+        return Promise.resolve([]);
+      }
+      if (text.includes("delete from sheet_cells")) {
+        cells.splice(0, cells.length);
         return Promise.resolve([]);
       }
       if (text.includes("update sheets") && text.includes("set title =")) {
@@ -2171,6 +2255,23 @@ function createRecordingSheetsSql(): {
       if (text.includes("max(version_number)")) {
         return Promise.resolve([{ version_number: versionCount + 1 }]);
       }
+      if (text.includes("from drive_versions")) {
+        const versionNumber = Number(values[2]);
+        return Promise.resolve([
+          {
+            org_id: orgId,
+            object_id: sheetRow.id,
+            version_number: versionNumber,
+            storage_key: `sheets/${orgId}/${sheetRow.id}/versions/${String(versionNumber)}`,
+            mime_type: "application/vnd.helix.spreadsheet+json",
+            byte_size: 0,
+            sha256: null,
+            metadata: {},
+            created_by_actor_id: actorId,
+            created_at: now,
+          },
+        ]);
+      }
       if (text.includes("insert into drive_versions")) {
         versionCount += 1;
         return Promise.resolve([]);
@@ -2193,6 +2294,7 @@ function createRecordingSheetsSql(): {
       begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) =>
         callback(tx as unknown as postgres.TransactionSql),
       json: (value: unknown) => value,
+      array: (value: readonly unknown[]) => value,
     },
   );
   return { sql: tx as unknown as postgres.Sql, calls };
@@ -2219,8 +2321,17 @@ class RecordingStorageClient implements SheetSnapshotStorageClient {
     this.puts.push(object);
   }
 
-  async get(): Promise<null> {
-    return null;
+  async get(
+    key: string,
+  ): Promise<{ readonly body: Uint8Array; readonly contentType?: string } | null> {
+    const object = this.puts.find((put) => put.key === key);
+    if (object === undefined) {
+      return null;
+    }
+    return {
+      body: object.body,
+      ...(object.contentType === undefined ? {} : { contentType: object.contentType }),
+    };
   }
 
   async delete(): Promise<void> {}

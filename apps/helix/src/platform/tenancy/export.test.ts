@@ -8,6 +8,7 @@ import {
   buildTenantExportArchive,
   buildTenantExportManifest,
   countTenantExportRows,
+  materializeTenantExportArchiveArtifact,
   streamTenantExportArchive,
   summarizeTenantExportAudit,
   type TenantExportManifest,
@@ -156,6 +157,45 @@ describe("tenant export archive", () => {
       { key: "drive/report.txt", expiresSeconds: 600 },
       { key: "slides/deck-1/versions/2", expiresSeconds: 600 },
     ]);
+  });
+
+  it("materializes an archive artifact into tenant storage and returns a presigned download URL", async () => {
+    const storage = new MemoryStorageClient([
+      { key: "drive/report.txt", body: Buffer.from("report bytes", "utf8") },
+      { key: "slides/deck-1/versions/2", body: Buffer.from("deck bytes", "utf8") },
+    ]);
+
+    const artifact = await materializeTenantExportArchiveArtifact(tenantExportManifest(), {
+      includeObjectBytes: true,
+      presignedUrlExpiresSeconds: 900,
+      storageResolver: storageResolverFor(storage),
+      now: () => new Date("2026-05-24T11:00:00.000Z"),
+    });
+    const stored = storage.objects.get(artifact.storageKey);
+    const entries = parseTarEntries(await collectBytesFromStorageObject(stored));
+
+    expect(artifact).toMatchObject({
+      filename: "helix-export-acme-20260524T100000Z.tar",
+      contentType: "application/x-tar",
+      storageKey: "tenant-exports/acme/helix-export-acme-20260524T100000Z.tar",
+      downloadUrl:
+        "https://storage.example/tenant-exports%2Facme%2Fhelix-export-acme-20260524T100000Z.tar?expires=900",
+      expiresAt: "2026-05-24T11:15:00.000Z",
+      expiresSeconds: 900,
+    });
+    expect(artifact.byteSize).toBeGreaterThan(0);
+    expect(stored).toMatchObject({
+      key: artifact.storageKey,
+      contentType: "application/x-tar",
+      metadata: {
+        "helix-org-id": orgId,
+        "helix-export-generated-at": "2026-05-24T10:00:00.000Z",
+        "helix-export-filename": "helix-export-acme-20260524T100000Z.tar",
+      },
+    });
+    expect(entries["objects/drive/report.txt"]).toBe("report bytes");
+    expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes");
+    expect(storage.presignedGets).toEqual([{ key: artifact.storageKey, expiresSeconds: 900 }]);
   });
 });
 
@@ -505,6 +545,92 @@ describe("registerTenantExportRoutes", () => {
     await app.close();
   });
 
+  it("materializes a tenant export archive artifact and audits the presigned URL handoff", async () => {
+    const storage = new MemoryStorageClient([
+      { key: "drive/report.txt", body: Buffer.from("report bytes", "utf8") },
+      { key: "slides/deck-1/versions/2", body: Buffer.from("deck bytes", "utf8") },
+    ]);
+    const auditRecords: unknown[] = [];
+    const app = fastify();
+    await registerTenantExportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor(),
+      exportPlanner: () => tenantExportManifest(),
+      storageResolver: storageResolverFor(storage),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/export/artifact",
+      payload: { includeObjectBytes: true, presignedUrlExpiresSeconds: 1200 },
+      headers: { "user-agent": "test-agent" },
+    });
+    const body: {
+      readonly manifest: TenantExportManifest;
+      readonly artifact: {
+        readonly filename: string;
+        readonly byteSize: number;
+        readonly storageKey: string;
+        readonly downloadUrl: string;
+        readonly expiresSeconds: number;
+      };
+    } = response.json();
+    const stored = storage.objects.get(body.artifact.storageKey);
+    const entries = parseTarEntries(await collectBytesFromStorageObject(stored));
+
+    expect(response.statusCode).toBe(201);
+    expect(body.manifest).toEqual(tenantExportManifest());
+    expect(body.artifact).toMatchObject({
+      filename: "helix-export-acme-20260524T100000Z.tar",
+      storageKey: "tenant-exports/acme/helix-export-acme-20260524T100000Z.tar",
+      downloadUrl:
+        "https://storage.example/tenant-exports%2Facme%2Fhelix-export-acme-20260524T100000Z.tar?expires=1200",
+      expiresSeconds: 1200,
+    });
+    expect(body.artifact.byteSize).toBeGreaterThan(0);
+    expect(entries["objects/drive/report.txt"]).toBe("report bytes");
+    expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes");
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.export.artifact.created",
+        metadata: expect.objectContaining({
+          bytesIncluded: true,
+          objectByteDelivery: "archive",
+          storageKey: body.artifact.storageKey,
+          presignedUrlExpiresSeconds: 1200,
+        }) as unknown,
+      }),
+    );
+    await app.close();
+  });
+
+  it("returns a clear service error when archive artifacts cannot be presigned", async () => {
+    const auditRecords: unknown[] = [];
+    const app = fastify();
+    await registerTenantExportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor(),
+      exportPlanner: () => tenantExportManifest(),
+      storageResolver: storageResolverFor(new NoPresignStorageClient()),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/export/artifact",
+      payload: { includeObjectBytes: false },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      error: "Tenant export storage does not support presigned archive fetch.",
+      code: "tenant_export_delivery_unavailable",
+    });
+    expect(auditRecords).toEqual([]);
+    await app.close();
+  });
+
   it("rejects cross-tenant and non-admin export requests", async () => {
     const crossTenant = fastify();
     await registerTenantExportRoutes(crossTenant, {
@@ -721,6 +847,16 @@ async function collectBytes(chunks: AsyncIterable<Uint8Array>): Promise<Buffer> 
     collected.push(chunk);
   }
   return Buffer.concat(collected);
+}
+
+async function collectBytesFromStorageObject(object: StorageObject | undefined): Promise<Buffer> {
+  if (object === undefined) {
+    throw new Error("Expected storage object to exist.");
+  }
+  if (object.body instanceof Uint8Array) {
+    return Buffer.from(object.body);
+  }
+  return collectBytes(object.body);
 }
 
 function rawPayload(response: { readonly rawPayload?: Buffer; readonly payload: string }): Buffer {

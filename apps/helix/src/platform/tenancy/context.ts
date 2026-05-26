@@ -95,10 +95,7 @@ function allowsSuspendedTenant(request: Pick<FastifyRequest, "url" | "method">):
     (request.method === "POST" &&
       (/^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/unsuspend$/u.test(path) ||
         /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/delete$/u.test(path))) ||
-    (request.method === "GET" &&
-      /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export(?:\/manifest)?$/u.test(
-        path,
-      ))
+    isTenantExportRecoveryRoute(request, path)
   );
 }
 
@@ -107,10 +104,22 @@ function allowsSoftDeletedTenant(request: Pick<FastifyRequest, "url" | "method">
   return (
     (request.method === "POST" &&
       /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/restore$/u.test(path)) ||
-    (request.method === "GET" &&
-      /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export(?:\/manifest)?$/u.test(
-        path,
-      ))
+    isTenantExportRecoveryRoute(request, path)
+  );
+}
+
+function isTenantExportRecoveryRoute(
+  request: Pick<FastifyRequest, "method">,
+  path: string,
+): boolean {
+  if (request.method === "GET") {
+    return /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export(?:\/manifest)?$/u.test(
+      path,
+    );
+  }
+  return (
+    request.method === "POST" &&
+    /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export\/artifact$/u.test(path)
   );
 }
 

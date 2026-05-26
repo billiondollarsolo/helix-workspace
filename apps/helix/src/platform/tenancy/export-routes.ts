@@ -15,6 +15,7 @@ import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import {
   buildTenantExportArchive,
   buildTenantExportSelfFetchManifest,
+  materializeTenantExportArchiveArtifact,
   streamTenantExportArchive,
   type TenantExportManifestPlanner,
 } from "./export.js";
@@ -70,6 +71,13 @@ const exportQuery = z.object({
     }, z.number().int().min(1).max(604_800))
     .optional(),
 });
+
+const exportArtifactBody = z
+  .object({
+    includeObjectBytes: z.boolean().default(true),
+    presignedUrlExpiresSeconds: z.number().int().min(1).max(604_800).optional(),
+  })
+  .default({});
 
 export async function registerTenantExportRoutes(
   app: FastifyInstance,
@@ -252,6 +260,62 @@ export async function registerTenantExportRoutes(
       .header("content-length", String(archive.byteSize))
       .type(archive.contentType)
       .send(archive.bytes);
+  });
+
+  app.post("/api/admin/tenants/:slug/export/artifact", async (request, reply) => {
+    const loaded = await loadTenantForExport({ request, reply, options });
+    if (loaded === undefined) {
+      return reply;
+    }
+    const body = exportArtifactBody.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid tenant export artifact request.", body.error.issues));
+    }
+    const quotaDecision = await consumeTenantExportQuota({
+      limiter: options.exportJobLimiter,
+      limit: options.exportJobLimit,
+      org: loaded.org,
+      actor: loaded.actor,
+      events: options.events,
+      onEventError: options.onEventError,
+      trace: (request as { readonly trace?: TraceContext }).trace,
+      surface: "tenant.export.artifact",
+    });
+    if (quotaDecision !== undefined) {
+      return sendQuotaExceeded(reply, quotaDecision);
+    }
+
+    const manifest = await options.exportPlanner(loaded.org);
+    const artifact = await safeBuildExportDelivery(reply, () =>
+      materializeTenantExportArchiveArtifact(manifest, {
+        includeObjectBytes: body.data.includeObjectBytes,
+        objectByteDelivery: "archive",
+        presignedUrlExpiresSeconds: body.data.presignedUrlExpiresSeconds,
+        storageResolver: options.storageResolver,
+      }),
+    );
+    if (artifact === "unavailable") {
+      return reply;
+    }
+    await auditAdminAction(options.auditSink, {
+      orgId: loaded.org.id,
+      actorId: loaded.actor.id,
+      verb: "tenant.export.artifact.created",
+      objectType: "tenant",
+      objectId: loaded.org.id,
+      metadata: {
+        ...exportAuditMetadata({ org: loaded.org, manifest, request }),
+        filename: artifact.filename,
+        byteSize: artifact.byteSize,
+        storageKey: artifact.storageKey,
+        bytesIncluded: body.data.includeObjectBytes,
+        objectByteDelivery: "archive",
+        presignedUrlExpiresSeconds: artifact.expiresSeconds,
+      },
+    });
+    return reply.code(201).send({ manifest, artifact });
   });
 }
 

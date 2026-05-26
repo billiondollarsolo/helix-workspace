@@ -64,6 +64,16 @@ export interface TenantExportArchiveStream {
   readonly body: AsyncIterable<Uint8Array>;
 }
 
+export interface TenantExportArchiveArtifact {
+  readonly filename: string;
+  readonly contentType: "application/x-tar";
+  readonly byteSize: number;
+  readonly storageKey: string;
+  readonly downloadUrl: string;
+  readonly expiresAt: string;
+  readonly expiresSeconds: number;
+}
+
 export interface TenantExportSelfFetchObject {
   readonly storageKey: string;
   readonly byteSize?: number | undefined;
@@ -108,6 +118,10 @@ export interface BuildTenantExportSelfFetchManifestOptions {
   readonly presignedUrlExpiresSeconds?: number | undefined;
   readonly storageResolver?: TenantStorageResolver | undefined;
   readonly now?: (() => Date) | undefined;
+}
+
+export interface MaterializeTenantExportArchiveArtifactOptions extends BuildTenantExportArchiveOptions {
+  readonly archiveStorageKey?: string | undefined;
 }
 
 export type TenantExportManifestPlanner = (
@@ -207,6 +221,51 @@ export async function streamTenantExportArchive(
     contentType: "application/x-tar",
     byteSize: tarArchiveByteSize(files),
     body: streamTarArchive(files, Math.floor(Date.parse(manifest.generatedAt) / 1000)),
+  };
+}
+
+export async function materializeTenantExportArchiveArtifact(
+  manifest: TenantExportManifest,
+  options: MaterializeTenantExportArchiveArtifactOptions,
+): Promise<TenantExportArchiveArtifact> {
+  if (options.storageResolver === undefined) {
+    throw new Error("Tenant storage resolver is required to materialize export archives.");
+  }
+  const storage = await options.storageResolver({ orgId: manifest.org.id });
+  if (storage === undefined) {
+    throw new Error("Tenant storage resolver did not resolve storage for tenant export.");
+  }
+  if (storage.client.presignGetUrl === undefined) {
+    throw new Error("Tenant export storage does not support presigned archive fetch.");
+  }
+  const archive = await streamTenantExportArchive(manifest, options);
+  const storageKey =
+    options.archiveStorageKey ?? defaultArchiveArtifactStorageKey(manifest, archive.filename);
+  const expiresSeconds = validatePresignedUrlExpiresSeconds(
+    options.presignedUrlExpiresSeconds ?? 3600,
+  );
+  const now = options.now ?? (() => new Date());
+  const expiresAt = new Date(now().getTime() + expiresSeconds * 1000).toISOString();
+
+  await storage.client.put({
+    key: storageKey,
+    body: archive.body,
+    contentType: archive.contentType,
+    metadata: {
+      "helix-org-id": manifest.org.id,
+      "helix-export-generated-at": manifest.generatedAt,
+      "helix-export-filename": archive.filename,
+    },
+  });
+
+  return {
+    filename: archive.filename,
+    contentType: archive.contentType,
+    byteSize: archive.byteSize,
+    storageKey,
+    downloadUrl: await storage.client.presignGetUrl(storageKey, { expiresSeconds }),
+    expiresAt,
+    expiresSeconds,
   };
 }
 
@@ -553,6 +612,14 @@ function validatePresignedUrlExpiresSeconds(expiresSeconds: number): number {
     throw new Error("Tenant export presigned URL expiry must be between 1 and 604800 seconds.");
   }
   return expiresSeconds;
+}
+
+function defaultArchiveArtifactStorageKey(
+  manifest: TenantExportManifest,
+  filename: string,
+): string {
+  const slug = manifest.org.slug.replace(/[^a-z0-9-]/giu, "-").toLowerCase();
+  return `tenant-exports/${slug}/${filename}`;
 }
 
 function buildTarArchive(

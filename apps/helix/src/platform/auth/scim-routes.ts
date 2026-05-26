@@ -2,12 +2,14 @@ import type postgres from "postgres";
 import type { Actor, JsonObject, JsonValue } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { GroupsConflictError, type GroupRecord, type GroupsStore } from "../admin/groups.js";
 import type { OrgStore } from "../tenancy/orgs.js";
 
 export interface RegisterTenantScimRoutesOptions {
   readonly orgs: Pick<OrgStore, "findBySlug">;
   readonly documentationUri?: string | undefined;
   readonly users?: ScimUserStore | undefined;
+  readonly groups?: GroupsStore | undefined;
   readonly actorFromRequest?: ((request: FastifyRequest) => Promise<Actor> | Actor) | undefined;
 }
 
@@ -88,11 +90,15 @@ const scimTenantParams = z.object({
 const scimUserParams = scimTenantParams.extend({
   userId: z.string().trim().min(1).max(100),
 });
+const scimGroupParams = scimTenantParams.extend({
+  groupId: z.string().uuid(),
+});
 const scimUsersQuery = z.object({
   count: z.coerce.number().int().min(1).max(200).default(100),
   filter: z.string().trim().min(1).max(500).optional(),
   startIndex: z.coerce.number().int().min(1).default(1),
 });
+const scimGroupsQuery = scimUsersQuery;
 const scimCreateUserBody = z.object({
   active: z.boolean().optional(),
   displayName: z.string().trim().min(1).max(200).optional(),
@@ -132,12 +138,40 @@ const scimPatchUserBody = z.object({
     .max(20),
   schemas: z.array(z.string()).optional(),
 });
+const scimGroupMemberBody = z.object({
+  display: z.string().trim().max(240).optional(),
+  value: z.string().uuid(),
+});
+const scimCreateGroupBody = z.object({
+  displayName: z.string().trim().min(1).max(200),
+  externalId: z.string().trim().min(1).max(255).optional(),
+  members: z.array(scimGroupMemberBody).max(1000).optional(),
+});
+const scimPutGroupBody = scimCreateGroupBody;
+const scimPatchGroupBody = z.object({
+  Operations: z
+    .array(
+      z.object({
+        op: z
+          .string()
+          .trim()
+          .transform((value) => value.toLowerCase()),
+        path: z.string().trim().optional(),
+        value: z.unknown().optional(),
+      }),
+    )
+    .min(1)
+    .max(50),
+  schemas: z.array(z.string()).optional(),
+});
 
 const SCIM_JSON = "application/scim+json; charset=utf-8";
 const LIST_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
 const ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error";
 const USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
+const GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group";
 const unsupportedScimUserNameFilter = Symbol("unsupported-scim-user-name-filter");
+const unsupportedScimGroupFilter = Symbol("unsupported-scim-group-filter");
 
 export async function registerTenantScimRoutes(
   app: FastifyInstance,
@@ -435,19 +469,270 @@ export async function registerTenantScimRoutes(
     },
   });
 
-  app.route({
-    method: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    url: "/api/scim/v2/:tenantSlug/Groups",
-    handler: async (request, reply) => {
-      const tenant = await resolveActiveScimTenant(request.params, options);
-      if (!tenant.success) {
-        return reply.code(tenant.status).header("content-type", SCIM_JSON).send(tenant.body);
-      }
+  app.get("/api/scim/v2/:tenantSlug/Groups", async (request, reply) => {
+    const tenant = await resolveActiveScimTenant(request.params, options);
+    if (!tenant.success) {
+      return reply.code(tenant.status).header("content-type", SCIM_JSON).send(tenant.body);
+    }
+    const auth = await authenticateScimGroupsRequest(request, tenant, options, "scim.groups.read");
+    if (!auth.success) {
+      return reply.code(auth.status).header("content-type", SCIM_JSON).send(auth.body);
+    }
+    const query = scimGroupsQuery.safeParse(request.query ?? {});
+    if (!query.success) {
       return reply
-        .code(501)
+        .code(400)
         .header("content-type", SCIM_JSON)
-        .send(scimError(501, "Groups SCIM provisioning is not implemented yet."));
-    },
+        .send(scimError(400, "Invalid SCIM Groups query."));
+    }
+    const filterDisplayName = scimGroupDisplayNameFilter(query.data.filter);
+    if (filterDisplayName === unsupportedScimGroupFilter) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Unsupported SCIM Groups filter."));
+    }
+    const allGroups = await auth.groups.listGroups(tenant.id);
+    const filteredGroups =
+      filterDisplayName === undefined
+        ? allGroups
+        : allGroups.filter((group) => group.name.toLowerCase() === filterDisplayName);
+    const page = filteredGroups.slice(
+      query.data.startIndex - 1,
+      query.data.startIndex - 1 + query.data.count,
+    );
+    const resources = await Promise.all(
+      page.map((group) => scimGroupResource(auth.groups, tenant.slug, group)),
+    );
+    return reply
+      .code(200)
+      .header("content-type", SCIM_JSON)
+      .header("cache-control", "no-store")
+      .send(
+        scimListResponse(resources, {
+          startIndex: query.data.startIndex,
+          totalResults: filteredGroups.length,
+        }),
+      );
+  });
+
+  app.post("/api/scim/v2/:tenantSlug/Groups", async (request, reply) => {
+    const tenant = await resolveActiveScimTenant(request.params, options);
+    if (!tenant.success) {
+      return reply.code(tenant.status).header("content-type", SCIM_JSON).send(tenant.body);
+    }
+    const auth = await authenticateScimGroupsRequest(request, tenant, options, "scim.groups.write");
+    if (!auth.success) {
+      return reply.code(auth.status).header("content-type", SCIM_JSON).send(auth.body);
+    }
+    const body = scimCreateGroupBody.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM Group create request."));
+    }
+    try {
+      const group = await auth.groups.createGroup({
+        orgId: tenant.id,
+        name: body.data.displayName,
+        externalId: body.data.externalId ?? null,
+        email: null,
+        kind: "group",
+        description: "",
+        orgUnitId: null,
+        createdBy: auth.actor.id,
+      });
+      await reconcileScimGroupMembers(auth.groups, {
+        orgId: tenant.id,
+        groupId: group.id,
+        actorId: auth.actor.id,
+        members: scimGroupMemberValues(body.data.members),
+      });
+      const resource = await scimGroupResource(auth.groups, tenant.slug, group);
+      return await reply
+        .code(201)
+        .header("content-type", SCIM_JSON)
+        .header("location", resource.meta.location)
+        .send(resource);
+    } catch (error) {
+      if (error instanceof GroupsConflictError) {
+        return reply
+          .code(409)
+          .header("content-type", SCIM_JSON)
+          .send(scimError(409, "SCIM group already exists."));
+      }
+      throw error;
+    }
+  });
+
+  app.get("/api/scim/v2/:tenantSlug/Groups/:groupId", async (request, reply) => {
+    const tenant = await resolveActiveScimTenant(request.params, options);
+    if (!tenant.success) {
+      return reply.code(tenant.status).header("content-type", SCIM_JSON).send(tenant.body);
+    }
+    const params = scimGroupParams.safeParse(request.params);
+    if (!params.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM Group id."));
+    }
+    const auth = await authenticateScimGroupsRequest(request, tenant, options, "scim.groups.read");
+    if (!auth.success) {
+      return reply.code(auth.status).header("content-type", SCIM_JSON).send(auth.body);
+    }
+    const group = await auth.groups.getGroup(tenant.id, params.data.groupId);
+    if (group === null) {
+      return reply
+        .code(404)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(404, "SCIM group was not found."));
+    }
+    return reply
+      .code(200)
+      .header("content-type", SCIM_JSON)
+      .header("cache-control", "no-store")
+      .send(await scimGroupResource(auth.groups, tenant.slug, group));
+  });
+
+  app.put("/api/scim/v2/:tenantSlug/Groups/:groupId", async (request, reply) => {
+    const tenant = await resolveActiveScimTenant(request.params, options);
+    if (!tenant.success) {
+      return reply.code(tenant.status).header("content-type", SCIM_JSON).send(tenant.body);
+    }
+    const params = scimGroupParams.safeParse(request.params);
+    if (!params.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM Group id."));
+    }
+    const auth = await authenticateScimGroupsRequest(request, tenant, options, "scim.groups.write");
+    if (!auth.success) {
+      return reply.code(auth.status).header("content-type", SCIM_JSON).send(auth.body);
+    }
+    const body = scimPutGroupBody.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM Group replace request."));
+    }
+    const group = await auth.groups.updateGroup({
+      orgId: tenant.id,
+      id: params.data.groupId,
+      name: body.data.displayName,
+      externalId: body.data.externalId ?? null,
+    });
+    if (group === null) {
+      return reply
+        .code(404)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(404, "SCIM group was not found."));
+    }
+    await reconcileScimGroupMembers(auth.groups, {
+      orgId: tenant.id,
+      groupId: group.id,
+      actorId: auth.actor.id,
+      members: scimGroupMemberValues(body.data.members),
+    });
+    return reply
+      .code(200)
+      .header("content-type", SCIM_JSON)
+      .send(await scimGroupResource(auth.groups, tenant.slug, group));
+  });
+
+  app.patch("/api/scim/v2/:tenantSlug/Groups/:groupId", async (request, reply) => {
+    const tenant = await resolveActiveScimTenant(request.params, options);
+    if (!tenant.success) {
+      return reply.code(tenant.status).header("content-type", SCIM_JSON).send(tenant.body);
+    }
+    const params = scimGroupParams.safeParse(request.params);
+    if (!params.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM Group id."));
+    }
+    const auth = await authenticateScimGroupsRequest(request, tenant, options, "scim.groups.write");
+    if (!auth.success) {
+      return reply.code(auth.status).header("content-type", SCIM_JSON).send(auth.body);
+    }
+    const body = scimPatchGroupBody.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM Group patch request."));
+    }
+    const patch = scimPatchGroupInput(body.data.Operations);
+    if (patch === "unsupported") {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Unsupported SCIM Group patch operation."));
+    }
+    const existing = await auth.groups.getGroup(tenant.id, params.data.groupId);
+    if (existing === null) {
+      return reply
+        .code(404)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(404, "SCIM group was not found."));
+    }
+    const group =
+      patch.name === undefined && patch.externalId === undefined
+        ? existing
+        : await auth.groups.updateGroup({
+            orgId: tenant.id,
+            id: params.data.groupId,
+            ...(patch.name === undefined ? {} : { name: patch.name }),
+            ...(patch.externalId === undefined ? {} : { externalId: patch.externalId }),
+          });
+    if (group === null) {
+      return reply
+        .code(404)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(404, "SCIM group was not found."));
+    }
+    await applyScimGroupMemberPatch(auth.groups, {
+      orgId: tenant.id,
+      groupId: group.id,
+      actorId: auth.actor.id,
+      addMembers: patch.addMembers,
+      removeMembers: patch.removeMembers,
+      replaceMembers: patch.replaceMembers,
+    });
+    return reply
+      .code(200)
+      .header("content-type", SCIM_JSON)
+      .send(await scimGroupResource(auth.groups, tenant.slug, group));
+  });
+
+  app.delete("/api/scim/v2/:tenantSlug/Groups/:groupId", async (request, reply) => {
+    const tenant = await resolveActiveScimTenant(request.params, options);
+    if (!tenant.success) {
+      return reply.code(tenant.status).header("content-type", SCIM_JSON).send(tenant.body);
+    }
+    const params = scimGroupParams.safeParse(request.params);
+    if (!params.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM Group id."));
+    }
+    const auth = await authenticateScimGroupsRequest(request, tenant, options, "scim.groups.write");
+    if (!auth.success) {
+      return reply.code(auth.status).header("content-type", SCIM_JSON).send(auth.body);
+    }
+    const deleted = await auth.groups.deleteGroup(tenant.id, params.data.groupId);
+    if (!deleted) {
+      return reply
+        .code(404)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(404, "SCIM group was not found."));
+    }
+    return reply.code(204).send();
   });
 }
 
@@ -596,9 +881,9 @@ function serviceProviderConfig(documentationUri: string | undefined) {
   return {
     schemas: ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
     ...(documentationUri === undefined ? {} : { documentationUri }),
-    patch: { supported: false },
+    patch: { supported: true },
     bulk: { supported: false, maxOperations: 0, maxPayloadSize: 0 },
-    filter: { supported: false, maxResults: 0 },
+    filter: { supported: true, maxResults: 200 },
     changePassword: { supported: false },
     sort: { supported: false },
     etag: { supported: false },
@@ -606,8 +891,7 @@ function serviceProviderConfig(documentationUri: string | undefined) {
       {
         type: "oauthbearertoken",
         name: "OAuth Bearer Token",
-        description:
-          "Per-tenant SCIM bearer token. Rotation UI and provisioning writes are pending.",
+        description: "Per-tenant SCIM bearer token for tenant-scoped provisioning clients.",
         specUri: "https://www.rfc-editor.org/rfc/rfc6750",
         primary: true,
       },
@@ -641,7 +925,7 @@ function scimSchemas() {
     {
       id: "urn:ietf:params:scim:schemas:core:2.0:User",
       name: "User",
-      description: "User account representation. CRUD provisioning is pending.",
+      description: "User account representation for tenant-scoped actor provisioning.",
       attributes: [
         {
           name: "userName",
@@ -683,7 +967,7 @@ function scimSchemas() {
     {
       id: "urn:ietf:params:scim:schemas:core:2.0:Group",
       name: "Group",
-      description: "Group representation. CRUD provisioning is pending.",
+      description: "Group representation backed by tenant-scoped admin groups.",
       attributes: [
         {
           name: "displayName",
@@ -774,6 +1058,53 @@ async function authenticateScimUsersRequest(
   return { success: true, users: options.users };
 }
 
+async function authenticateScimGroupsRequest(
+  request: FastifyRequest,
+  tenant: { readonly id: string; readonly slug: string },
+  options: RegisterTenantScimRoutesOptions,
+  requiredScope: "scim.groups.read" | "scim.groups.write",
+): Promise<
+  | { readonly success: true; readonly actor: Actor; readonly groups: GroupsStore }
+  | { readonly success: false; readonly status: number; readonly body: unknown }
+> {
+  if (options.groups === undefined || options.actorFromRequest === undefined) {
+    return {
+      success: false,
+      status: 501,
+      body: scimError(501, "Groups SCIM provisioning is not configured."),
+    };
+  }
+  const actor = await options.actorFromRequest(request);
+  if (actor.id === "anonymous") {
+    return {
+      success: false,
+      status: 401,
+      body: scimError(401, "SCIM authentication is required."),
+    };
+  }
+  if (actor.orgId !== tenant.id) {
+    return {
+      success: false,
+      status: 403,
+      body: scimError(403, "SCIM tenant permission denied."),
+    };
+  }
+  const scopes = actor.scopes ?? [];
+  if (
+    !scopes.includes(requiredScope) &&
+    !scopes.includes("scim.groups.*") &&
+    !scopes.includes("scim.*") &&
+    !scopes.includes("admin.*")
+  ) {
+    return {
+      success: false,
+      status: 403,
+      body: scimError(403, "SCIM Groups permission denied."),
+    };
+  }
+  return { success: true, actor, groups: options.groups };
+}
+
 function scimUserNameFilter(
   filter: string | undefined,
 ): string | typeof unsupportedScimUserNameFilter | undefined {
@@ -785,6 +1116,19 @@ function scimUserNameFilter(
   return userName === undefined || userName.length === 0
     ? unsupportedScimUserNameFilter
     : normalizeUserName(userName);
+}
+
+function scimGroupDisplayNameFilter(
+  filter: string | undefined,
+): string | typeof unsupportedScimGroupFilter | undefined {
+  if (filter === undefined) {
+    return undefined;
+  }
+  const match = /^displayName\s+eq\s+"(?<displayName>[^"]+)"$/iu.exec(filter);
+  const displayName = match?.groups?.["displayName"]?.trim();
+  return displayName === undefined || displayName.length === 0
+    ? unsupportedScimGroupFilter
+    : displayName.toLowerCase();
 }
 
 function scimPatchUserInput(
@@ -919,6 +1263,247 @@ function scimUserResource(user: ScimUserRecord, tenantSlug: string) {
       resourceType: "User",
       created: user.createdAt,
       lastModified: user.updatedAt,
+      location,
+    },
+  };
+}
+
+interface ScimGroupPatch {
+  readonly name?: string | undefined;
+  readonly externalId?: string | null | undefined;
+  readonly addMembers: readonly string[];
+  readonly removeMembers: readonly string[];
+  readonly replaceMembers?: readonly string[] | undefined;
+}
+
+function scimPatchGroupInput(
+  operations: z.output<typeof scimPatchGroupBody>["Operations"],
+): ScimGroupPatch | "unsupported" {
+  const patch: {
+    name?: string;
+    externalId?: string | null;
+    addMembers: string[];
+    removeMembers: string[];
+    replaceMembers?: string[];
+  } = { addMembers: [], removeMembers: [] };
+  for (const operation of operations) {
+    const op = operation.op;
+    if (op !== "replace" && op !== "add" && op !== "remove") {
+      return "unsupported";
+    }
+    if (operation.path === undefined) {
+      if (op === "remove" || !applyScimGroupPatchObject(patch, operation.value)) {
+        return "unsupported";
+      }
+      continue;
+    }
+    if (!applyScimGroupPatchPath(patch, op, operation.path, operation.value)) {
+      return "unsupported";
+    }
+  }
+  return patch;
+}
+
+function applyScimGroupPatchObject(
+  patch: {
+    name?: string;
+    externalId?: string | null;
+    addMembers: string[];
+    removeMembers: string[];
+    replaceMembers?: string[];
+  },
+  value: unknown,
+): boolean {
+  const record = readRecord(value);
+  if (record === undefined) {
+    return false;
+  }
+  for (const [key, entry] of Object.entries(record)) {
+    if (!applyScimGroupPatchPath(patch, "replace", key, entry)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function applyScimGroupPatchPath(
+  patch: {
+    name?: string;
+    externalId?: string | null;
+    addMembers: string[];
+    removeMembers: string[];
+    replaceMembers?: string[];
+  },
+  op: "add" | "replace" | "remove",
+  path: string,
+  value: unknown,
+): boolean {
+  const normalizedPath = path.trim().toLowerCase();
+  if (normalizedPath === "displayname") {
+    if (op === "remove" || typeof value !== "string" || value.trim().length === 0) {
+      return false;
+    }
+    patch.name = value.trim();
+    return true;
+  }
+  if (normalizedPath === "externalid") {
+    if (op === "remove" || value === null) {
+      patch.externalId = null;
+      return true;
+    }
+    if (typeof value === "string") {
+      patch.externalId = value.trim();
+      return patch.externalId.length > 0;
+    }
+    return false;
+  }
+  if (normalizedPath === "members") {
+    const members = scimGroupMemberValuesFromUnknown(value);
+    if (members === undefined) {
+      return false;
+    }
+    if (op === "remove") {
+      patch.removeMembers.push(...members);
+      return true;
+    }
+    if (op === "replace") {
+      patch.replaceMembers = [...members];
+      return true;
+    }
+    patch.addMembers.push(...members);
+    return true;
+  }
+  const memberValue = /^members\[value\s+eq\s+"(?<actorId>[^"]+)"\]$/iu.exec(path.trim())?.groups?.[
+    "actorId"
+  ];
+  if (memberValue !== undefined && op === "remove") {
+    const parsed = scimGroupMemberValue.safeParse(memberValue);
+    if (!parsed.success) {
+      return false;
+    }
+    patch.removeMembers.push(parsed.data);
+    return true;
+  }
+  return false;
+}
+
+const scimGroupMemberValue = z.string().uuid();
+
+function scimGroupMemberValues(
+  members: z.output<typeof scimCreateGroupBody>["members"],
+): readonly string[] {
+  return [...new Set((members ?? []).map((member) => member.value))];
+}
+
+function scimGroupMemberValuesFromUnknown(value: unknown): readonly string[] | undefined {
+  const values = Array.isArray(value) ? value : [value];
+  const members = z.array(scimGroupMemberBody).safeParse(values);
+  return members.success ? scimGroupMemberValues(members.data) : undefined;
+}
+
+async function reconcileScimGroupMembers(
+  store: GroupsStore,
+  input: {
+    readonly orgId: string;
+    readonly groupId: string;
+    readonly actorId: string;
+    readonly members: readonly string[];
+  },
+): Promise<void> {
+  const current = await store.listGroupMembers(input.orgId, input.groupId);
+  const next = new Set(input.members);
+  await Promise.all(
+    current
+      .filter((member) => !next.has(member.actorId))
+      .map((member) => store.removeGroupMember(input.orgId, input.groupId, member.actorId)),
+  );
+  const currentActorIds = new Set(current.map((member) => member.actorId));
+  for (const actorId of next) {
+    if (currentActorIds.has(actorId)) {
+      continue;
+    }
+    await addScimGroupMember(store, {
+      orgId: input.orgId,
+      groupId: input.groupId,
+      actorId,
+      addedBy: input.actorId,
+    });
+  }
+}
+
+async function applyScimGroupMemberPatch(
+  store: GroupsStore,
+  input: {
+    readonly orgId: string;
+    readonly groupId: string;
+    readonly actorId: string;
+    readonly addMembers: readonly string[];
+    readonly removeMembers: readonly string[];
+    readonly replaceMembers?: readonly string[] | undefined;
+  },
+): Promise<void> {
+  if (input.replaceMembers !== undefined) {
+    await reconcileScimGroupMembers(store, {
+      orgId: input.orgId,
+      groupId: input.groupId,
+      actorId: input.actorId,
+      members: input.replaceMembers,
+    });
+    return;
+  }
+  for (const actorId of input.removeMembers) {
+    await store.removeGroupMember(input.orgId, input.groupId, actorId);
+  }
+  for (const actorId of input.addMembers) {
+    await addScimGroupMember(store, {
+      orgId: input.orgId,
+      groupId: input.groupId,
+      actorId,
+      addedBy: input.actorId,
+    });
+  }
+}
+
+async function addScimGroupMember(
+  store: GroupsStore,
+  input: {
+    readonly orgId: string;
+    readonly groupId: string;
+    readonly actorId: string;
+    readonly addedBy: string;
+  },
+): Promise<void> {
+  try {
+    await store.addGroupMember({
+      orgId: input.orgId,
+      groupId: input.groupId,
+      actorId: input.actorId,
+      role: "member",
+      addedBy: input.addedBy,
+    });
+  } catch (error) {
+    if (!(error instanceof GroupsConflictError)) {
+      throw error;
+    }
+  }
+}
+
+async function scimGroupResource(store: GroupsStore, tenantSlug: string, group: GroupRecord) {
+  const location = `/api/scim/v2/${tenantSlug}/Groups/${group.id}`;
+  const members = await store.listGroupMembers(group.orgId, group.id);
+  return {
+    schemas: [GROUP_SCHEMA],
+    id: group.id,
+    externalId: group.externalId ?? undefined,
+    displayName: group.name,
+    members: members.map((member) => ({
+      value: member.actorId,
+      $ref: `/api/scim/v2/${tenantSlug}/Users/${member.actorId}`,
+    })),
+    meta: {
+      resourceType: "Group",
+      created: group.createdAt,
+      lastModified: group.updatedAt,
       location,
     },
   };

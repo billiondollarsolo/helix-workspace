@@ -12,11 +12,16 @@ import {
   type ScimUserStore,
   type UpdateScimUserInput,
 } from "./scim-routes.js";
+import { InMemoryGroupsStore } from "../admin/groups.js";
 import type { OrgRecord, OrgStore } from "../tenancy/orgs.js";
 
 interface RecordedQuery {
   readonly text: string;
   readonly values: readonly unknown[];
+}
+
+function responseBody(response: { json: () => unknown }): Record<string, unknown> {
+  return response.json() as Record<string, unknown>;
 }
 
 describe("tenant SCIM discovery routes", () => {
@@ -38,8 +43,8 @@ describe("tenant SCIM discovery routes", () => {
     expect(response.json()).toMatchObject({
       schemas: ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
       documentationUri: "https://docs.helix.example/scim",
-      patch: { supported: false },
-      filter: { supported: false },
+      patch: { supported: true },
+      filter: { supported: true, maxResults: 200 },
       authenticationSchemes: [{ type: "oauthbearertoken", primary: true }],
     });
     await app.close();
@@ -284,7 +289,7 @@ describe("tenant SCIM discovery routes", () => {
     await app.close();
   });
 
-  it("protects SCIM Users with tenant-scoped provisioning scopes and leaves Groups pending", async () => {
+  it("protects SCIM Users with tenant-scoped provisioning scopes and leaves unconfigured Groups pending", async () => {
     const app = fastify();
     await registerTenantScimRoutes(app, {
       orgs: orgStore({ acme: orgRecord({ id: "org-1", slug: "acme" }) }),
@@ -322,7 +327,133 @@ describe("tenant SCIM discovery routes", () => {
     expect(groups.statusCode).toBe(501);
     expect(groups.json()).toMatchObject({
       status: "501",
-      detail: "Groups SCIM provisioning is not implemented yet.",
+      detail: "Groups SCIM provisioning is not configured.",
+    });
+    await app.close();
+  });
+
+  it("creates, reconciles, lists, fetches, and deletes SCIM Groups", async () => {
+    const groups = new InMemoryGroupsStore();
+    const app = fastify();
+    await registerTenantScimRoutes(app, {
+      orgs: orgStore({ acme: orgRecord({ id: "org-1", slug: "acme" }) }),
+      groups,
+      actorFromRequest,
+    });
+    const memberOne = "11111111-1111-4111-8111-111111111111";
+    const memberTwo = "22222222-2222-4222-8222-222222222222";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/scim/v2/acme/Groups",
+      headers: scimHeaders({ orgId: "org-1", scopes: "scim.groups.write" }),
+      payload: {
+        displayName: "Engineering",
+        externalId: "okta-group-1",
+        members: [{ value: memberOne }],
+      },
+    });
+    const groupId = String(responseBody(created).id);
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/scim/v2/acme/Groups?filter=displayName%20eq%20%22Engineering%22&count=10",
+      headers: scimHeaders({ orgId: "org-1", scopes: "scim.groups.read" }),
+    });
+    const fetched = await app.inject({
+      method: "GET",
+      url: `/api/scim/v2/acme/Groups/${groupId}`,
+      headers: scimHeaders({ orgId: "org-1", scopes: "scim.groups.read" }),
+    });
+    const patched = await app.inject({
+      method: "PATCH",
+      url: `/api/scim/v2/acme/Groups/${groupId}`,
+      headers: scimHeaders({ orgId: "org-1", scopes: "scim.groups.write" }),
+      payload: {
+        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        Operations: [
+          { op: "replace", path: "displayName", value: "Platform Engineering" },
+          { op: "add", path: "members", value: [{ value: memberTwo }] },
+          { op: "remove", path: `members[value eq "${memberOne}"]` },
+        ],
+      },
+    });
+    const replaced = await app.inject({
+      method: "PUT",
+      url: `/api/scim/v2/acme/Groups/${groupId}`,
+      headers: scimHeaders({ orgId: "org-1", scopes: "scim.groups.write" }),
+      payload: {
+        displayName: "Engineering Leads",
+        externalId: "okta-group-2",
+        members: [{ value: memberOne }],
+      },
+    });
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/scim/v2/acme/Groups/${groupId}`,
+      headers: scimHeaders({ orgId: "org-1", scopes: "scim.groups.write" }),
+    });
+
+    expect(created.statusCode).toBe(201);
+    expect(created.headers.location).toBe(`/api/scim/v2/acme/Groups/${groupId}`);
+    expect(created.json()).toMatchObject({
+      schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+      displayName: "Engineering",
+      externalId: "okta-group-1",
+      members: [{ value: memberOne }],
+      meta: { resourceType: "Group" },
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toMatchObject({
+      totalResults: 1,
+      Resources: [{ id: groupId, displayName: "Engineering" }],
+    });
+    expect(fetched.statusCode).toBe(200);
+    expect(fetched.json()).toMatchObject({ id: groupId, members: [{ value: memberOne }] });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json()).toMatchObject({
+      displayName: "Platform Engineering",
+      members: [{ value: memberTwo }],
+    });
+    expect(replaced.statusCode).toBe(200);
+    expect(replaced.json()).toMatchObject({
+      displayName: "Engineering Leads",
+      externalId: "okta-group-2",
+      members: [{ value: memberOne }],
+    });
+    expect(deleted.statusCode).toBe(204);
+    expect(await groups.getGroup("org-1", groupId)).toBeNull();
+    await app.close();
+  });
+
+  it("protects SCIM Groups with tenant-scoped provisioning scopes", async () => {
+    const app = fastify();
+    await registerTenantScimRoutes(app, {
+      orgs: orgStore({ acme: orgRecord({ id: "org-1", slug: "acme" }) }),
+      groups: new InMemoryGroupsStore(),
+      actorFromRequest,
+    });
+
+    const missingAuth = await app.inject({ method: "GET", url: "/api/scim/v2/acme/Groups" });
+    const crossTenant = await app.inject({
+      method: "GET",
+      url: "/api/scim/v2/acme/Groups",
+      headers: scimHeaders({ orgId: "org-2", scopes: "scim.groups.read" }),
+    });
+    const wrongScope = await app.inject({
+      method: "POST",
+      url: "/api/scim/v2/acme/Groups",
+      headers: scimHeaders({ orgId: "org-1", scopes: "scim.users.write" }),
+      payload: { displayName: "Engineering" },
+    });
+
+    expect(missingAuth.statusCode).toBe(401);
+    expect(missingAuth.json()).toMatchObject({ status: "401" });
+    expect(crossTenant.statusCode).toBe(403);
+    expect(crossTenant.json()).toMatchObject({ status: "403" });
+    expect(wrongScope.statusCode).toBe(403);
+    expect(wrongScope.json()).toMatchObject({
+      status: "403",
+      detail: "SCIM Groups permission denied.",
     });
     await app.close();
   });

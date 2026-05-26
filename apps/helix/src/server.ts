@@ -847,6 +847,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const appPasswordStore = new PostgresAppPasswordStore(sql);
   const adminUsersStore = new PostgresAdminUsersStore(sql);
   const scimUserStore = new PostgresScimUserStore(sql);
+  const groupsStore = new PostgresGroupsStore(sql);
   const orgStore = new PostgresOrgStore(sql);
   const planStore = new PostgresPlanStore(sql);
   const tenantIdpConfigStore = new PostgresTenantIdpConfigStore(sql);
@@ -1689,6 +1690,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerTenantScimRoutes(app, {
     orgs: orgStore,
     users: scimUserStore,
+    groups: groupsStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     documentationUri: process.env.HELIX_SCIM_DOCS_URL ?? "https://docs.helix.example/scim",
   });
@@ -1764,7 +1766,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // billing, and domain/DNS management. Each route group writes through the
   // immutable audit store so admin-console changes are tamper-evidently logged.
   await registerAdminGroupsRoutes(app, {
-    store: new PostgresGroupsStore(sql),
+    store: groupsStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
   });

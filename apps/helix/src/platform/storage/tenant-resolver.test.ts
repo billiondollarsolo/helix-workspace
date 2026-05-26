@@ -89,6 +89,73 @@ describe("tenant storage resolver", () => {
     expect(storage.calls).toEqual(["delete:drive/file.txt"]);
   });
 
+  it("dual-writes server-side puts while a live migration targets another storage client", async () => {
+    const source = new RecordingStorageClient();
+    const destination = new RecordingStorageClient();
+    const seen: unknown[] = [];
+    const resolver = createTenantStorageResolver({
+      defaultClient: source,
+      loadByoConfig: () => ({}),
+      migrationWriteCoordinator: {
+        resolveWriteTarget(input) {
+          seen.push(input);
+          return { jobId: "job-1", target: "byo", client: destination };
+        },
+      },
+    });
+    const resolved = await resolver({ orgId: "org-1" });
+
+    await resolved?.client.put({ key: "drive/file.txt", body: new Uint8Array([1]) });
+    const object = await resolved?.client.get("drive/file.txt");
+    await expect(resolved?.client.delete("drive/file.txt")).rejects.toThrow(
+      "Tenant storage migration job-1 is in progress; deletes are blocked until cutover completes.",
+    );
+    await expect(resolved?.client.presignPutRequest?.("drive/upload.bin")).rejects.toThrow(
+      "Tenant storage migration job-1 is in progress; presigned uploads are blocked until cutover completes.",
+    );
+
+    expect(seen).toEqual([
+      {
+        orgId: "org-1",
+        currentStorage: { managedBy: "helix-default", storage: null },
+      },
+      {
+        orgId: "org-1",
+        currentStorage: { managedBy: "helix-default", storage: null },
+      },
+      {
+        orgId: "org-1",
+        currentStorage: { managedBy: "helix-default", storage: null },
+      },
+    ]);
+    expect(destination.calls).toEqual(["put:drive/file.txt"]);
+    expect(source.calls).toEqual(["put:drive/file.txt", "get:drive/file.txt"]);
+    expect(object?.key).toBe("drive/file.txt");
+  });
+
+  it("keeps primary write behavior when no live migration target is active", async () => {
+    const storage = new RecordingStorageClient();
+    const resolver = createTenantStorageResolver({
+      defaultClient: storage,
+      loadByoConfig: () => ({}),
+      migrationWriteCoordinator: {
+        resolveWriteTarget: () => undefined,
+      },
+    });
+    const resolved = await resolver({ orgId: "org-1" });
+
+    await resolved?.client.put({ key: "drive/file.txt", body: new Uint8Array([1]) });
+    await resolved?.client.delete("drive/file.txt");
+    const putUrl = await resolved?.client.presignPutUrl?.("drive/file.txt");
+
+    expect(putUrl).toBe("put://drive/file.txt");
+    expect(storage.calls).toEqual([
+      "put:drive/file.txt",
+      "delete:drive/file.txt",
+      "presign-put:drive/file.txt:",
+    ]);
+  });
+
   it("resolves BYO s3-compatible storage from a Vault-path secret without changing logical keys", async () => {
     const created: unknown[] = [];
     const storage = new RecordingStorageClient();

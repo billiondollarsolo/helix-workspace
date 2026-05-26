@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { StorageObject } from "@helix/sdk-types";
 import {
   createTenantStorageMigrationPairResolver,
+  createTenantStorageMigrationWriteCoordinator,
   listTenantStorageMigrationObjects,
   PostgresTenantStorageMigrationJobStore,
   runTenantStorageMigration,
@@ -364,6 +365,89 @@ describe("PostgresTenantStorageMigrationJobStore", () => {
       "running",
       25,
     ]);
+  });
+
+  it("finds active live migration jobs for write coordination", async () => {
+    const currentStorage = { managedBy: "helix-default" as const, storage: null };
+    const recording = createRecordingSql([
+      [
+        jobRow({
+          id: "job-live",
+          status: "running",
+          dry_run: false,
+          source_storage: currentStorage,
+          target_storage: {
+            managedBy: "byo",
+            storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
+          },
+        }),
+      ],
+    ]);
+    const store = new PostgresTenantStorageMigrationJobStore(recording.sql);
+
+    const job = await store.findLiveWriteTargetForOrg({
+      orgId: "org-1",
+      currentStorage,
+    });
+
+    expect(job).toMatchObject({
+      id: "job-live",
+      status: "running",
+      dryRun: false,
+      sourceStorage: currentStorage,
+      targetStorage: {
+        managedBy: "byo",
+        storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
+      },
+    });
+    expect(recording.calls[0]?.text).toContain("dry_run = false");
+    expect(recording.calls[0]?.text).toContain(
+      "status in ('queued', 'running', 'failed', 'succeeded')",
+    );
+    expect(recording.calls[0]?.text).toContain("source_storage = ?");
+    expect(recording.calls[0]?.text).toContain("target_storage is not null");
+    expect(recording.calls[0]?.values).toContain("org-1");
+    expect(recording.calls[0]?.values).toContainEqual(currentStorage);
+  });
+});
+
+describe("createTenantStorageMigrationWriteCoordinator", () => {
+  it("resolves the target storage snapshot for live migration dual-writes", async () => {
+    const targetStorage = new MemoryStorageClient();
+    const currentStorage = { managedBy: "helix-default" as const, storage: null };
+    const coordinator = createTenantStorageMigrationWriteCoordinator({
+      store: {
+        async findLiveWriteTargetForOrg(input) {
+          expect(input).toEqual({ orgId: "org-1", currentStorage });
+          return migrationJob({
+            id: "job-1",
+            status: "running",
+            dryRun: false,
+            sourceStorage: currentStorage,
+            targetStorage: {
+              managedBy: "byo",
+              storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
+            },
+          });
+        },
+      },
+      snapshotStorageResolver: ({ orgId, state }) => {
+        expect(orgId).toBe("org-1");
+        expect(state).toEqual({
+          managedBy: "byo",
+          storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
+        });
+        return { client: targetStorage, managedBy: "byo", prefix: "" };
+      },
+    });
+
+    await expect(
+      coordinator.resolveWriteTarget({ orgId: "org-1", currentStorage }),
+    ).resolves.toEqual({
+      jobId: "job-1",
+      target: "byo",
+      client: targetStorage,
+    });
   });
 });
 

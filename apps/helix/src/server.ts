@@ -290,6 +290,7 @@ import {
   createDefaultTenantStorageResolver,
   createS3CompatibleStorage,
   createTenantStorageMigrationPairResolver,
+  createTenantStorageMigrationWriteCoordinator,
   createTenantStorageResolver,
   PostgresTenantStorageMigrationJobStore,
   resolveTenantStorageSnapshot,
@@ -847,7 +848,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   });
   const webhookStore = new PostgresWebhookStore(sql);
   const chatStore = new PostgresChatStore(sql);
-  const docsStore = new PostgresDocsStore(sql);
   const docsPdfRenderTimeoutMs = Number.parseInt(
     process.env.HELIX_DOCS_PDF_RENDER_TIMEOUT_MS ?? "15000",
     10,
@@ -1023,13 +1023,28 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           forcePathStyle: true,
         });
   const tenantStorageSecretReader = createVaultTenantStorageSecretReaderFromEnv(process.env);
+  const tenantStorageMigrationJobStore = new PostgresTenantStorageMigrationJobStore(sql);
   const driveStorageResolver = createTenantStorageResolver({
     defaultClient: driveStorage,
     loadByoConfig: async (orgId: string) => (await orgStore.findById(orgId))?.byoConfig,
     ...(tenantStorageSecretReader === undefined ? {} : { secretReader: tenantStorageSecretReader }),
+    migrationWriteCoordinator: createTenantStorageMigrationWriteCoordinator({
+      store: tenantStorageMigrationJobStore,
+      snapshotStorageResolver: ({ orgId, state }) =>
+        resolveTenantStorageSnapshot({
+          orgId,
+          state,
+          defaultClient: driveStorage,
+          ...(tenantStorageSecretReader === undefined
+            ? {}
+            : { secretReader: tenantStorageSecretReader }),
+        }),
+    }),
   });
   const helixDefaultStorageResolver = createDefaultTenantStorageResolver(driveStorage);
-  const tenantStorageMigrationJobStore = new PostgresTenantStorageMigrationJobStore(sql);
+  const docsStore = new PostgresDocsStore(sql, {
+    storageResolver: driveStorageResolver,
+  });
   const tenantStorageMigrationWorker = envFlag(
     "HELIX_TENANT_STORAGE_MIGRATION_WORKER_ENABLED",
     false,
@@ -1446,8 +1461,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // Wave-1 backend domains. Sheets and Slides stores are instantiated here so
   // they can be shared with the drive.create tool (unified "New" entry-point)
   // and their own domain tool registrations below.
-  const sheetsStore = new PostgresSheetsStore(sql);
-  const slidesStore = new PostgresSlidesStore(sql);
+  const sheetsStore = new PostgresSheetsStore(sql, {
+    storageResolver: driveStorageResolver,
+  });
+  const slidesStore = new PostgresSlidesStore(sql, {
+    storageResolver: driveStorageResolver,
+  });
   if (coreApps.shouldRegister("drive")) {
     registerDriveTools(tools, {
       store: driveStore,

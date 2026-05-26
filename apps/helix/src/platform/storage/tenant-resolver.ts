@@ -49,6 +49,22 @@ export interface TenantStorageStateSnapshot {
   readonly storage: JsonObject | null;
 }
 
+export interface TenantStorageMigrationWriteTarget {
+  readonly jobId: string;
+  readonly target: "helix-default" | "byo";
+  readonly client: TenantStorageClient;
+}
+
+export interface TenantStorageMigrationWriteCoordinator {
+  resolveWriteTarget(input: {
+    readonly orgId: string;
+    readonly currentStorage: TenantStorageStateSnapshot;
+  }):
+    | Promise<TenantStorageMigrationWriteTarget | undefined>
+    | TenantStorageMigrationWriteTarget
+    | undefined;
+}
+
 export interface TenantStorageSecretReader {
   read(path: string): Promise<Record<string, string> | undefined>;
 }
@@ -74,6 +90,7 @@ export function createTenantStorageResolver(options: {
   readonly cacheIdleTtlMs?: number | undefined;
   readonly cacheNow?: (() => number) | undefined;
   readonly metrics?: TenantStoragePoolMetrics | undefined;
+  readonly migrationWriteCoordinator?: TenantStorageMigrationWriteCoordinator | undefined;
 }): TenantStorageResolver {
   const cache = new TenantStorageResolutionCache({
     maxEntries: options.cacheMaxEntries ?? 100,
@@ -82,7 +99,9 @@ export function createTenantStorageResolver(options: {
     metrics: options.metrics,
   });
   return async ({ orgId, refresh = false }) => {
-    const storageConfig = storageConfigFromByo(await options.loadByoConfig(orgId));
+    const byoConfig = await options.loadByoConfig(orgId);
+    const storageConfig = storageConfigFromByo(byoConfig);
+    const currentStorage = tenantStorageStateSnapshotFromByoConfig(byoConfig);
     const cacheKey = storageResolutionCacheKey(orgId, storageConfig, options.defaultClient);
     if (!refresh) {
       const cached = cache.get(cacheKey);
@@ -100,6 +119,12 @@ export function createTenantStorageResolver(options: {
         managedBy: "helix-default",
         prefix: "",
       };
+      resolved = withMigrationWriteCoordination({
+        orgId,
+        currentStorage,
+        resolved,
+        coordinator: options.migrationWriteCoordinator,
+      });
       cache.set(cacheKey, resolved);
       return resolved;
     }
@@ -110,6 +135,12 @@ export function createTenantStorageResolver(options: {
         managedBy: "byo",
         prefix: storageConfig.prefix,
       };
+      resolved = withMigrationWriteCoordination({
+        orgId,
+        currentStorage,
+        resolved,
+        coordinator: options.migrationWriteCoordinator,
+      });
       cache.set(cacheKey, resolved);
       return resolved;
     }
@@ -121,6 +152,12 @@ export function createTenantStorageResolver(options: {
       managedBy: "helix-default",
       prefix: storageConfig.prefix,
     };
+    resolved = withMigrationWriteCoordination({
+      orgId,
+      currentStorage,
+      resolved,
+      coordinator: options.migrationWriteCoordinator,
+    });
     cache.set(cacheKey, resolved);
     return resolved;
   };
@@ -239,6 +276,132 @@ function storageConfigFromByo(byoConfig: JsonObject | undefined):
     };
   }
   return undefined;
+}
+
+function tenantStorageStateSnapshotFromByoConfig(
+  byoConfig: JsonObject | undefined,
+): TenantStorageStateSnapshot {
+  const storage = readRecord(byoConfig?.storage);
+  if (storage === undefined) {
+    return { managedBy: "helix-default", storage: null };
+  }
+  if (storage.kind !== "byo" && storage.kind !== "helix-default") {
+    return { managedBy: "helix-default", storage: null };
+  }
+  return {
+    managedBy: storage.kind,
+    storage: JSON.parse(JSON.stringify(storage)) as JsonObject,
+  };
+}
+
+function withMigrationWriteCoordination(input: {
+  readonly orgId: string;
+  readonly currentStorage: TenantStorageStateSnapshot;
+  readonly resolved: ResolvedTenantStorage;
+  readonly coordinator: TenantStorageMigrationWriteCoordinator | undefined;
+}): ResolvedTenantStorage {
+  if (input.coordinator === undefined) {
+    return input.resolved;
+  }
+  return {
+    ...input.resolved,
+    client: createMigrationAwareStorageClient({
+      orgId: input.orgId,
+      currentStorage: input.currentStorage,
+      primary: input.resolved.client,
+      coordinator: input.coordinator,
+    }),
+  };
+}
+
+function createMigrationAwareStorageClient(input: {
+  readonly orgId: string;
+  readonly currentStorage: TenantStorageStateSnapshot;
+  readonly primary: TenantStorageClient;
+  readonly coordinator: TenantStorageMigrationWriteCoordinator;
+}): TenantStorageClient {
+  const presignGetUrl = input.primary.presignGetUrl?.bind(input.primary);
+  return {
+    async put(object: StorageObject): Promise<void> {
+      const target = await input.coordinator.resolveWriteTarget({
+        orgId: input.orgId,
+        currentStorage: input.currentStorage,
+      });
+      if (target === undefined) {
+        await input.primary.put(object);
+        return;
+      }
+      await input.primary.put(object);
+      await target.client.put(object);
+    },
+    async get(key: string): Promise<StorageObject | null> {
+      return input.primary.get(key);
+    },
+    async delete(key: string): Promise<void> {
+      const target = await input.coordinator.resolveWriteTarget({
+        orgId: input.orgId,
+        currentStorage: input.currentStorage,
+      });
+      if (target !== undefined) {
+        throw new Error(
+          `Tenant storage migration ${target.jobId} is in progress; deletes are blocked until cutover completes.`,
+        );
+      }
+      await input.primary.delete(key);
+    },
+    ...(presignGetUrl === undefined
+      ? {}
+      : {
+          async presignGetUrl(
+            key: string,
+            options?: Parameters<NonNullable<TenantStorageClient["presignGetUrl"]>>[1],
+          ): Promise<string> {
+            return presignGetUrl(key, options);
+          },
+        }),
+    async presignPutUrl(
+      key: string,
+      options?: Parameters<NonNullable<TenantStorageClient["presignPutUrl"]>>[1],
+    ): Promise<string> {
+      const target = await input.coordinator.resolveWriteTarget({
+        orgId: input.orgId,
+        currentStorage: input.currentStorage,
+      });
+      if (target !== undefined) {
+        throw new Error(
+          `Tenant storage migration ${target.jobId} is in progress; presigned uploads are blocked until cutover completes.`,
+        );
+      }
+      if (input.primary.presignPutUrl === undefined) {
+        throw new Error("Resolved storage client does not support presigned PUT URLs.");
+      }
+      return input.primary.presignPutUrl(key, options);
+    },
+    async presignPutRequest(
+      key: string,
+      options?: Parameters<NonNullable<TenantStorageClient["presignPutRequest"]>>[1],
+    ): Promise<TenantPresignedPutUpload> {
+      const target = await input.coordinator.resolveWriteTarget({
+        orgId: input.orgId,
+        currentStorage: input.currentStorage,
+      });
+      if (target !== undefined) {
+        throw new Error(
+          `Tenant storage migration ${target.jobId} is in progress; presigned uploads are blocked until cutover completes.`,
+        );
+      }
+      if (input.primary.presignPutRequest !== undefined) {
+        return input.primary.presignPutRequest(key, options);
+      }
+      if (input.primary.presignPutUrl === undefined) {
+        throw new Error("Resolved storage client does not support presigned PUT URLs.");
+      }
+      return {
+        url: await input.primary.presignPutUrl(key, options),
+        headers: presignedPutHeadersFromOptions(options),
+      };
+    },
+  };
 }
 
 function createByoS3StorageClient(

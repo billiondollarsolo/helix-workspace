@@ -1558,6 +1558,21 @@ class InMemoryTenantStorageMigrationJobStore implements TenantStorageMigrationJo
       .slice(0, input.limit ?? 10);
   }
 
+  async findLiveWriteTargetForOrg(
+    input: Parameters<TenantStorageMigrationJobStore["findLiveWriteTargetForOrg"]>[0],
+  ): Promise<TenantStorageMigrationJobRecord | null> {
+    return (
+      this.jobs.find(
+        (job) =>
+          job.orgId === input.orgId &&
+          !job.dryRun &&
+          ["queued", "running", "failed", "succeeded"].includes(job.status) &&
+          JSON.stringify(job.sourceStorage) === JSON.stringify(input.currentStorage) &&
+          job.targetStorage !== null,
+      ) ?? null
+    );
+  }
+
   async claimPending(
     input: { readonly limit?: number | undefined } = {},
   ): Promise<readonly TenantStorageMigrationJobRecord[]> {

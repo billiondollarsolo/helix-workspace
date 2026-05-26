@@ -5,6 +5,7 @@ import { withJobSpan } from "../observability/job-span.js";
 import type {
   ResolvedTenantStorage,
   TenantStorageClient,
+  TenantStorageMigrationWriteCoordinator,
   TenantStorageResolver,
   TenantStorageStateSnapshot,
 } from "./tenant-resolver.js";
@@ -109,6 +110,10 @@ export interface TenantStorageMigrationJobStore {
     readonly id: string;
     readonly orgId: string;
   }): Promise<TenantStorageMigrationJobRecord | null>;
+  findLiveWriteTargetForOrg(input: {
+    readonly orgId: string;
+    readonly currentStorage: TenantStorageMigrationStorageState;
+  }): Promise<TenantStorageMigrationJobRecord | null>;
   getObservabilitySnapshot(input: {
     readonly stalledBefore: Date;
     readonly now: Date;
@@ -171,6 +176,14 @@ export interface TenantStorageMigrationPairResolverOptions {
         readonly state: TenantStorageStateSnapshot;
       }) => Promise<ResolvedTenantStorage | undefined> | ResolvedTenantStorage | undefined)
     | undefined;
+}
+
+export interface TenantStorageMigrationWriteCoordinatorOptions {
+  readonly store: Pick<TenantStorageMigrationJobStore, "findLiveWriteTargetForOrg">;
+  readonly snapshotStorageResolver: (input: {
+    readonly orgId: string;
+    readonly state: TenantStorageStateSnapshot;
+  }) => Promise<ResolvedTenantStorage | undefined> | ResolvedTenantStorage | undefined;
 }
 
 export interface TenantStorageMigrationWorkerOptions {
@@ -415,6 +428,53 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
       limit ${boundedJobHistoryLimit(input.limit)}
     `) as unknown as readonly TenantStorageMigrationJobRow[];
     return rows.map(mapTenantStorageMigrationJobRow);
+  }
+
+  async findLiveWriteTargetForOrg(input: {
+    readonly orgId: string;
+    readonly currentStorage: TenantStorageMigrationStorageState;
+  }): Promise<TenantStorageMigrationJobRecord | null> {
+    const rows = (await this.sql`
+      select
+        id,
+        org_id,
+        target,
+        status,
+        dry_run,
+        requested_by_actor_id,
+        source_storage,
+        target_storage,
+        planned_count,
+        copied_count,
+        verified_count,
+        failures,
+        last_error,
+        attempt_count,
+        started_at,
+        completed_at,
+        created_at,
+        updated_at
+      from tenant_storage_migration_jobs
+      where org_id = ${input.orgId}
+        and dry_run = false
+        and status in ('queued', 'running', 'failed', 'succeeded')
+        and source_storage = ${this.sql.json(
+          input.currentStorage as unknown as Parameters<postgres.Sql["json"]>[0],
+        )}
+        and target_storage is not null
+      order by
+        case status
+          when 'running' then 0
+          when 'queued' then 1
+          when 'failed' then 2
+          else 3
+        end,
+        updated_at desc,
+        created_at desc,
+        id desc
+      limit 1
+    `) as unknown as readonly TenantStorageMigrationJobRow[];
+    return rows[0] === undefined ? null : mapTenantStorageMigrationJobRow(rows[0]);
   }
 
   async getObservabilitySnapshot(input: {
@@ -824,6 +884,38 @@ export function createTenantStorageMigrationPairResolver(
       source: current.client,
       destination: helixDefault.client,
     };
+  };
+}
+
+export function createTenantStorageMigrationWriteCoordinator(
+  options: TenantStorageMigrationWriteCoordinatorOptions,
+): TenantStorageMigrationWriteCoordinator {
+  return {
+    async resolveWriteTarget(input) {
+      const job = await options.store.findLiveWriteTargetForOrg({
+        orgId: input.orgId,
+        currentStorage: input.currentStorage,
+      });
+      if (job === null) {
+        return undefined;
+      }
+      assertLiveMigrationSnapshots(job);
+      if (job.targetStorage === null) {
+        throw new Error("Live tenant storage migration is missing a target storage snapshot.");
+      }
+      const target = await options.snapshotStorageResolver({
+        orgId: input.orgId,
+        state: job.targetStorage,
+      });
+      if (target === undefined) {
+        throw new Error("Live tenant storage migration target storage could not be resolved.");
+      }
+      return {
+        jobId: job.id,
+        target: job.target,
+        client: target.client,
+      };
+    },
   };
 }
 

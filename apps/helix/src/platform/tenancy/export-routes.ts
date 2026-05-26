@@ -1,0 +1,236 @@
+import type { Actor, EventBus, TraceContext } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { z } from "zod";
+import {
+  adminWildcardScope,
+  auditAdminAction,
+  invalidRequest,
+  notFound,
+  type AdminConsoleAuditSink,
+} from "../admin/console-shared.js";
+import type { TenantHourlyQuotaExceeded, TenantHourlyQuotaLimiter } from "../limits/index.js";
+import { emitTenantQuotaExceededEvent } from "../limits/quota-events.js";
+import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
+import { buildTenantExportArchive, type TenantExportManifestPlanner } from "./export.js";
+import type { OrgRecord, OrgStore } from "./orgs.js";
+
+export const adminTenantsExportScope = "admin.tenants.export";
+
+export interface RegisterTenantExportRoutesOptions {
+  readonly orgs: Pick<OrgStore, "findBySlug">;
+  readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
+  readonly exportPlanner: TenantExportManifestPlanner;
+  readonly storageResolver?: TenantStorageResolver | undefined;
+  readonly auditSink?: AdminConsoleAuditSink | undefined;
+  readonly exportJobLimiter?: TenantHourlyQuotaLimiter | undefined;
+  readonly exportJobLimit?: (input: {
+    readonly org: OrgRecord;
+    readonly actor: Actor;
+  }) => Promise<number | null | undefined> | number | null | undefined;
+  readonly events?: Pick<EventBus, "publish"> | undefined;
+  readonly onEventError?: (error: unknown) => void;
+}
+
+const tenantParams = z.object({
+  slug: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u),
+});
+
+const exportQuery = z.object({
+  includeObjectBytes: z
+    .preprocess((value) => value === "true" || value === true, z.boolean())
+    .default(false),
+});
+
+export async function registerTenantExportRoutes(
+  app: FastifyInstance,
+  options: RegisterTenantExportRoutesOptions,
+): Promise<void> {
+  app.get("/api/admin/tenants/:slug/export/manifest", async (request, reply) => {
+    const loaded = await loadTenantForExport({ request, reply, options });
+    if (loaded === undefined) {
+      return reply;
+    }
+    const quotaDecision = await consumeTenantExportQuota({
+      limiter: options.exportJobLimiter,
+      limit: options.exportJobLimit,
+      org: loaded.org,
+      actor: loaded.actor,
+      events: options.events,
+      onEventError: options.onEventError,
+      trace: (request as { readonly trace?: TraceContext }).trace,
+      surface: "tenant.export.manifest",
+    });
+    if (quotaDecision !== undefined) {
+      return sendQuotaExceeded(reply, quotaDecision);
+    }
+
+    const manifest = await options.exportPlanner(loaded.org);
+    await auditAdminAction(options.auditSink, {
+      orgId: loaded.org.id,
+      actorId: loaded.actor.id,
+      verb: "tenant.export.planned",
+      objectType: "tenant",
+      objectId: loaded.org.id,
+      metadata: exportAuditMetadata({ org: loaded.org, manifest, request }),
+    });
+    return { manifest };
+  });
+
+  app.get("/api/admin/tenants/:slug/export", async (request, reply) => {
+    const loaded = await loadTenantForExport({ request, reply, options });
+    if (loaded === undefined) {
+      return reply;
+    }
+    const query = exportQuery.safeParse(request.query ?? {});
+    if (!query.success) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid tenant export query.", query.error.issues));
+    }
+    const quotaDecision = await consumeTenantExportQuota({
+      limiter: options.exportJobLimiter,
+      limit: options.exportJobLimit,
+      org: loaded.org,
+      actor: loaded.actor,
+      events: options.events,
+      onEventError: options.onEventError,
+      trace: (request as { readonly trace?: TraceContext }).trace,
+      surface: "tenant.export.archive",
+    });
+    if (quotaDecision !== undefined) {
+      return sendQuotaExceeded(reply, quotaDecision);
+    }
+
+    const manifest = await options.exportPlanner(loaded.org);
+    const archive = await buildTenantExportArchive(manifest, {
+      includeObjectBytes: query.data.includeObjectBytes,
+      storageResolver: options.storageResolver,
+    });
+    await auditAdminAction(options.auditSink, {
+      orgId: loaded.org.id,
+      actorId: loaded.actor.id,
+      verb: "tenant.exported",
+      objectType: "tenant",
+      objectId: loaded.org.id,
+      metadata: {
+        ...exportAuditMetadata({ org: loaded.org, manifest, request }),
+        filename: archive.filename,
+        byteSize: archive.byteSize,
+        bytesIncluded: query.data.includeObjectBytes,
+      },
+    });
+
+    return reply
+      .header("content-disposition", `attachment; filename="${archive.filename}"`)
+      .header("content-length", String(archive.byteSize))
+      .type(archive.contentType)
+      .send(archive.bytes);
+  });
+}
+
+async function loadTenantForExport(input: {
+  readonly request: FastifyRequest;
+  readonly reply: FastifyReply;
+  readonly options: RegisterTenantExportRoutesOptions;
+}): Promise<{ readonly actor: Actor; readonly org: OrgRecord } | undefined> {
+  const actor = await input.options.actorFromRequest(input.request);
+  if (!hasExportScope(actor)) {
+    sendExportForbidden(input.reply);
+    return undefined;
+  }
+  const params = tenantParams.safeParse(input.request.params);
+  if (!params.success) {
+    input.reply.code(400).send(invalidRequest("Invalid tenant export slug.", params.error.issues));
+    return undefined;
+  }
+  const org = await input.options.orgs.findBySlug(params.data.slug);
+  if (org === null) {
+    input.reply.code(404).send(notFound("Tenant not found."));
+    return undefined;
+  }
+  if (org.id !== actor.orgId) {
+    sendExportForbidden(input.reply);
+    return undefined;
+  }
+  return { actor, org };
+}
+
+async function consumeTenantExportQuota(input: {
+  readonly limiter?: TenantHourlyQuotaLimiter | undefined;
+  readonly limit?: RegisterTenantExportRoutesOptions["exportJobLimit"];
+  readonly org: OrgRecord;
+  readonly actor: Actor;
+  readonly events?: Pick<EventBus, "publish"> | undefined;
+  readonly onEventError?: ((error: unknown) => void) | undefined;
+  readonly trace?: TraceContext | undefined;
+  readonly surface: string;
+}): Promise<TenantHourlyQuotaExceeded | undefined> {
+  if (input.limiter === undefined || input.limit === undefined) {
+    return undefined;
+  }
+  const limit = await input.limit({ org: input.org, actor: input.actor });
+  const decision = await input.limiter.consume({
+    orgId: input.org.id,
+    quota: "export_jobs_per_hour",
+    limit: limit ?? null,
+  });
+  if (decision.allowed) {
+    return undefined;
+  }
+  emitTenantQuotaExceededEvent({
+    events: input.events,
+    onError: input.onEventError,
+    subject: "quota.export_jobs.exceeded",
+    orgId: input.org.id,
+    surface: input.surface,
+    decision,
+    trace: input.trace,
+    metadata: { slug: input.org.slug },
+  });
+  return decision;
+}
+
+function sendQuotaExceeded(reply: FastifyReply, decision: TenantHourlyQuotaExceeded): FastifyReply {
+  reply.header("retry-after", String(decision.retryAfterSeconds));
+  return reply.code(429).send({
+    error: "Tenant export job quota exceeded.",
+    code: "quota_exceeded",
+    quota: decision.quota,
+    limit: decision.limit,
+    used: decision.used,
+    retryAfterSeconds: decision.retryAfterSeconds,
+    resetsAt: decision.resetsAt,
+  });
+}
+
+function exportAuditMetadata(input: {
+  readonly org: OrgRecord;
+  readonly manifest: Awaited<ReturnType<TenantExportManifestPlanner>>;
+  readonly request: FastifyRequest;
+}): Record<string, unknown> {
+  return {
+    slug: input.org.slug,
+    objectCount: input.manifest.objectInventory.objectCount,
+    totalKnownBytes: input.manifest.objectInventory.totalKnownBytes,
+    tableCount: input.manifest.postgres.rowCounts.length,
+    auditRowCount: input.manifest.auditLog.rowCount,
+    ip: input.request.ip,
+    userAgent: input.request.headers["user-agent"] ?? null,
+  };
+}
+
+function hasExportScope(actor: Actor): boolean {
+  const scopes = actor.scopes ?? [];
+  return scopes.includes(adminWildcardScope) || scopes.includes(adminTenantsExportScope);
+}
+
+function sendExportForbidden(reply: FastifyReply): void {
+  reply.code(403).send({
+    error: "Tenant export permission denied.",
+    code: "forbidden",
+    requiredScope: adminTenantsExportScope,
+  });
+}

@@ -269,7 +269,12 @@ import { tierDefaults } from "./platform/config/tier.js";
 import { evaluateTierReadiness } from "./platform/config/tier-readiness.js";
 import { CoreAppRegistrationPlan } from "./platform/apps/core-apps.js";
 import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
-import { PostgresOrgStore, PostgresPlanStore } from "./platform/tenancy/index.js";
+import {
+  createPostgresTenantExportManifestPlanner,
+  PostgresOrgStore,
+  PostgresPlanStore,
+  registerTenantExportRoutes,
+} from "./platform/tenancy/index.js";
 import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
 import {
   evaluateAdminMfa,
@@ -1773,6 +1778,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     onFeatureFlagEventError: (error) => {
       app.log.error({ error }, "Tenant feature flag change event emission failed");
     },
+  });
+  await registerTenantExportRoutes(app, {
+    orgs: orgStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    exportPlanner: createPostgresTenantExportManifestPlanner(sql),
+    storageResolver: driveStorageResolver,
+    auditSink: auditStore,
   });
   await registerAdminOAuthAppsRoutes(app, {
     store: new PostgresOAuthAppsStore(sql),

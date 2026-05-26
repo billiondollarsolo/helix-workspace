@@ -30,6 +30,7 @@
     "quality:mail-deliverability-smoke": "node infra/scripts/mail-deliverability-smoke.mjs",
     "quality:alertmanager-tenant-storage-routing": "node infra/scripts/alertmanager-tenant-storage-routing-smoke.mjs",
     "quality:byo-storage-credential-rotation-smoke": "node infra/scripts/byo-storage-credential-rotation-smoke.mjs",
+    "quality:byo-storage-migration-smoke": "node infra/scripts/byo-storage-migration-smoke.mjs",
     "infra:build": "docker compose build",
     "infra:config": "docker compose config",
     "infra:config:observability": "docker compose --profile observability config",

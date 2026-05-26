@@ -16,6 +16,20 @@ services:
       - ../../infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../../infra/observability/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
+    depends_on:
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.listen-address=0.0.0.0:9093"
+    ports:
+      - "${ALERTMANAGER_PORT:-28461}:9093"
+    volumes:
+      - ../../infra/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
 
   tempo:
     image: grafana/tempo:latest
@@ -47,6 +61,7 @@ services:
 
 volumes:
   prometheus-data:
+  alertmanager-data:
   tempo-data:
   loki-data:
   grafana-data:

@@ -25,10 +25,12 @@
     "scopes": ["observability:read"],
     "outbound-network": [],
     "filesystem": [
+      "infra/observability/alertmanager",
       "plugins/com.helix.observability-grafana-stack/dashboards",
       "plugins/com.helix.observability-grafana-stack/provisioning"
     ],
     "envVars": [
+      "ALERTMANAGER_PORT",
       "GRAFANA_PORT",
       "PROMETHEUS_PORT",
       "TEMPO_HTTP_PORT",

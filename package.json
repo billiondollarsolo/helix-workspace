@@ -28,6 +28,7 @@
     "quality:sheets-fidelity": "bash infra/scripts/verify-sheets-fidelity.sh",
     "quality:live-restore-drill": "bash infra/scripts/live-restore-drill-smoke.sh",
     "quality:mail-deliverability-smoke": "node infra/scripts/mail-deliverability-smoke.mjs",
+    "quality:alertmanager-tenant-storage-routing": "node infra/scripts/alertmanager-tenant-storage-routing-smoke.mjs",
     "infra:build": "docker compose build",
     "infra:config": "docker compose config",
     "infra:config:observability": "docker compose --profile observability config",

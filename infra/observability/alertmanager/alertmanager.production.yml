@@ -1,0 +1,30 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: helix-null
+  group_by: ["alertname", "severity", "priority", "service", "operation", "target", "status"]
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: helix-tenant-storage-migration-webhook
+      matchers:
+        - service="storage"
+        - operation="tenant_storage_migration"
+      continue: true
+    - receiver: helix-tenant-storage-migration-paging
+      matchers:
+        - service="storage"
+        - operation="tenant_storage_migration"
+
+receivers:
+  - name: helix-null
+  - name: helix-tenant-storage-migration-webhook
+    webhook_configs:
+      - url: http://host.docker.internal:28463/alertmanager/tenant-storage-migration
+        send_resolved: true
+  - name: helix-tenant-storage-migration-paging
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/tenant-storage-migration-paging-webhook-url
+        send_resolved: true

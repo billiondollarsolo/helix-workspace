@@ -515,6 +515,22 @@ services:
       - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/observability/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
+    depends_on:
+      - alertmanager
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.listen-address=0.0.0.0:9093"
+    profiles: ["observability"]
+    ports:
+      - "${ALERTMANAGER_PORT:-28461}:9093"
+    volumes:
+      - ./infra/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
     restart: unless-stopped
 
   tempo:
@@ -572,6 +588,7 @@ volumes:
   caddy-data:
   caddy-config:
   prometheus-data:
+  alertmanager-data:
   tempo-data:
   loki-data:
   grafana-data:

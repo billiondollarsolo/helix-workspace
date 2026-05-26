@@ -84,6 +84,15 @@ monitoring:
 The default runbook target is
 `docs/specs/05-operations/runbooks/tenant-storage-migration.md`.
 
+Alertmanager routing is intentionally outside this chart because production
+receiver secrets and escalation integrations are operator-owned. The local
+observability stack includes
+`infra/observability/alertmanager/alertmanager.production.yml` as a starting
+point: route `service="storage",
+operation="tenant_storage_migration"` to the storage migration webhook and a
+paging receiver loaded from
+`/etc/alertmanager/secrets/tenant-storage-migration-paging-webhook-url`.
+
 ## Role-based Deployments (core-app scaling)
 
 Core apps (mail, chat, drive, docs, calendar, meet, assistant) are toggleable

@@ -93,6 +93,24 @@ operation="tenant_storage_migration"` to the storage migration webhook and a
 paging receiver loaded from
 `/etc/alertmanager/secrets/tenant-storage-migration-paging-webhook-url`.
 
+## Tenant Export Alerts
+
+The chart can also render opt-in Prometheus Operator alerts for durable tenant
+export materialization jobs. These rules page on stalled worker jobs and failed
+exports using low-cardinality export metrics; they deliberately avoid tenant,
+actor, job, filename, and storage-key labels.
+
+```yaml
+monitoring:
+  tenantExportPrometheusRule:
+    enabled: true
+    runbookUrl: https://runbooks.example.com/helix/tenant-export
+```
+
+The default runbook target is
+`docs/specs/05-operations/runbooks/tenant-export-too-large.md`. Alertmanager
+routes should match `service="tenancy", operation="tenant_export"` when enabled.
+
 ## Role-based Deployments (core-app scaling)
 
 Core apps (mail, chat, drive, docs, calendar, meet, assistant) are toggleable

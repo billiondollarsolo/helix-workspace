@@ -160,4 +160,36 @@ describe("platform metrics", () => {
     expect(output).not.toContain("org_id=");
     expect(output).not.toContain("job_id=");
   });
+
+  it("records tenant export job metrics without high-cardinality labels", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordTenantExportJob({ status: "succeeded", objectBytes: "included" });
+    metrics.recordTenantExportJob({ status: "failed", objectBytes: "metadata_only" });
+    metrics.setTenantExportJobObservability({
+      activeJobs: [
+        { status: "queued", count: 2 },
+        { status: "running", count: 1 },
+        { status: "failed", count: 1 },
+      ],
+      stalledJobs: { count: 1, oldestAgeSeconds: 1_950 },
+    });
+
+    const output = await metrics.registry.metrics();
+
+    expect(output).toContain(
+      'helix_tenant_export_jobs_total{status="succeeded",object_bytes="included"} 1',
+    );
+    expect(output).toContain(
+      'helix_tenant_export_jobs_total{status="failed",object_bytes="metadata_only"} 1',
+    );
+    expect(output).toContain('helix_tenant_export_jobs_active{status="queued"} 2');
+    expect(output).toContain('helix_tenant_export_jobs_active{status="running"} 1');
+    expect(output).toContain('helix_tenant_export_jobs_active{status="failed"} 1');
+    expect(output).toContain("helix_tenant_export_stalled_jobs 1");
+    expect(output).toContain("helix_tenant_export_oldest_stalled_age_seconds 1950");
+    expect(output).not.toContain("org_id=");
+    expect(output).not.toContain("job_id=");
+    expect(output).not.toContain("actor_id=");
+  });
 });

@@ -79,6 +79,20 @@ export interface PlatformMetrics {
       readonly oldestAgeSeconds: number;
     }[];
   }): void;
+  recordTenantExportJob(input: {
+    readonly status: "succeeded" | "failed";
+    readonly objectBytes: "included" | "metadata_only";
+  }): void;
+  setTenantExportJobObservability(input: {
+    readonly activeJobs: readonly {
+      readonly status: "queued" | "running" | "failed";
+      readonly count: number;
+    }[];
+    readonly stalledJobs: {
+      readonly count: number;
+      readonly oldestAgeSeconds: number;
+    };
+  }): void;
   /**
    * Records a WebSocket connecting on a route (Follow-up B). Increments the
    * `helix_websocket_connections_active` gauge that the Helm HPA scales on.
@@ -207,6 +221,28 @@ export function createPlatformMetrics(): PlatformMetrics {
     labelNames: ["target"],
     registers: [registry],
   });
+  const tenantExportJobs = new Counter({
+    name: "helix_tenant_export_jobs_total",
+    help: "Total tenant export jobs processed by terminal status and object-byte mode.",
+    labelNames: ["status", "object_bytes"],
+    registers: [registry],
+  });
+  const tenantExportActiveJobs = new Gauge({
+    name: "helix_tenant_export_jobs_active",
+    help: "Active tenant export jobs by retryable status.",
+    labelNames: ["status"],
+    registers: [registry],
+  });
+  const tenantExportStalledJobs = new Gauge({
+    name: "helix_tenant_export_stalled_jobs",
+    help: "Running tenant export jobs older than the stalled threshold.",
+    registers: [registry],
+  });
+  const tenantExportOldestStalledAge = new Gauge({
+    name: "helix_tenant_export_oldest_stalled_age_seconds",
+    help: "Age in seconds of the oldest stalled tenant export job.",
+    registers: [registry],
+  });
   const websocketConnectionsActive = new Gauge({
     name: "helix_websocket_connections_active",
     help: "Currently open WebSocket connections by route. Referenced by the Helm HPA.",
@@ -330,6 +366,17 @@ export function createPlatformMetrics(): PlatformMetrics {
         tenantStorageMigrationStalledJobs.set({ target }, stalled?.count ?? 0);
         tenantStorageMigrationOldestStalledAge.set({ target }, stalled?.oldestAgeSeconds ?? 0);
       }
+    },
+    recordTenantExportJob(input) {
+      tenantExportJobs.inc({ status: input.status, object_bytes: input.objectBytes });
+    },
+    setTenantExportJobObservability(input) {
+      for (const status of ["queued", "running", "failed"] as const) {
+        const count = input.activeJobs.find((entry) => entry.status === status)?.count ?? 0;
+        tenantExportActiveJobs.set({ status }, count);
+      }
+      tenantExportStalledJobs.set(input.stalledJobs.count);
+      tenantExportOldestStalledAge.set(input.stalledJobs.oldestAgeSeconds);
     },
     recordWebsocketConnectionOpened(input) {
       websocketConnectionsActive.inc({ route: input.route });

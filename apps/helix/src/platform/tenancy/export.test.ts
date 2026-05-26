@@ -14,8 +14,10 @@ import {
   streamTenantExportArchive,
   summarizeTenantExportAudit,
   type TenantExportJobRecord,
+  type TenantExportJobObservabilitySnapshot,
   type TenantExportJobStore,
   type TenantExportManifest,
+  type TenantExportMetrics,
 } from "./export.js";
 import { registerTenantExportRoutes } from "./export-routes.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
@@ -269,6 +271,12 @@ describe("PostgresTenantExportJobStore", () => {
           completed_at: new Date("2026-05-24T10:02:00.000Z"),
         }),
       ],
+      [
+        { status: "queued", count: 2 },
+        { status: "running", count: "1" },
+        { status: "failed", count: 1 },
+      ],
+      [{ count: "1", oldest_age_seconds: "1900" }],
     ]);
     const store = new PostgresTenantExportJobStore(recording.sql);
 
@@ -294,6 +302,10 @@ describe("PostgresTenantExportJobStore", () => {
         storageKey: "tenant-exports/jobs/org/job/archive.tar",
       },
     });
+    const snapshot = await store.getObservabilitySnapshot({
+      stalledBefore: new Date("2026-05-24T10:10:00.000Z"),
+      now: new Date("2026-05-24T10:40:00.000Z"),
+    });
 
     expect(created).toMatchObject({
       id: "job-1",
@@ -311,9 +323,19 @@ describe("PostgresTenantExportJobStore", () => {
       filename: "helix-export-acme.tar",
       byteSize: 4096,
     });
+    expect(snapshot).toEqual({
+      activeJobs: [
+        { status: "queued", count: 2 },
+        { status: "running", count: 1 },
+        { status: "failed", count: 1 },
+      ],
+      stalledJobs: { count: 1, oldestAgeSeconds: 1900 },
+    });
     expect(recording.calls[1]?.text).toContain("(created_at, id) <");
     expect(recording.calls[2]?.text).toContain("for update skip locked");
     expect(recording.calls[3]?.text).toContain("storage_key = ?");
+    expect(recording.calls[4]?.text).toContain("group by status");
+    expect(recording.calls[5]?.text).toContain("status = 'running'");
   });
 });
 
@@ -898,8 +920,10 @@ describe("TenantExportMaterializationWorker", () => {
     const store = new InMemoryTenantExportJobStore([
       exportJobRecord({ id: jobId(1), status: "queued", includeObjectBytes: true }),
     ]);
+    const metrics = new RecordingTenantExportMetrics();
     const worker = new TenantExportMaterializationWorker({
       store,
+      metrics,
       orgs: new InMemoryOrgStore([orgRecord()]),
       exportPlanner: () => tenantExportManifest(),
       storageResolver: storageResolverFor(storage),
@@ -920,14 +944,23 @@ describe("TenantExportMaterializationWorker", () => {
     const entries = parseTarEntries(await collectBytesFromStorageObject(stored));
     expect(entries["objects/drive/report.txt"]).toBe("report bytes");
     expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes");
+    expect(metrics.jobs).toEqual([{ status: "succeeded", objectBytes: "included" }]);
+    expect(metrics.snapshots).toEqual([
+      {
+        activeJobs: [],
+        stalledJobs: { count: 0, oldestAgeSeconds: 0 },
+      },
+    ]);
   });
 
   it("marks export jobs failed when materialization cannot resolve storage", async () => {
     const store = new InMemoryTenantExportJobStore([
       exportJobRecord({ id: jobId(1), status: "queued", includeObjectBytes: true }),
     ]);
+    const metrics = new RecordingTenantExportMetrics();
     const worker = new TenantExportMaterializationWorker({
       store,
+      metrics,
       orgs: new InMemoryOrgStore([orgRecord()]),
       exportPlanner: () => tenantExportManifest(),
       storageResolver: () => undefined,
@@ -940,6 +973,38 @@ describe("TenantExportMaterializationWorker", () => {
       status: "failed",
       lastError: "Tenant storage resolver did not resolve storage for tenant export.",
     });
+    expect(metrics.jobs).toEqual([{ status: "failed", objectBytes: "included" }]);
+    expect(metrics.snapshots).toEqual([
+      {
+        activeJobs: [{ status: "failed", count: 1 }],
+        stalledJobs: { count: 0, oldestAgeSeconds: 0 },
+      },
+    ]);
+  });
+
+  it("does not fail completed export work when metrics snapshot refresh fails", async () => {
+    const storage = new MemoryStorageClient([]);
+    const store = new InMemoryTenantExportJobStore(
+      [exportJobRecord({ id: jobId(1), status: "queued", includeObjectBytes: false })],
+      new Error("export metrics snapshot unavailable"),
+    );
+    const metrics = new RecordingTenantExportMetrics();
+    const observedErrors: unknown[] = [];
+    const worker = new TenantExportMaterializationWorker({
+      store,
+      metrics,
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      exportPlanner: () => tenantExportManifest(),
+      storageResolver: storageResolverFor(storage),
+      onError: (error) => observedErrors.push(error),
+    });
+
+    await expect(worker.runOnce()).resolves.toEqual({ claimed: 1, succeeded: 1, failed: 0 });
+
+    expect(metrics.jobs).toEqual([{ status: "succeeded", objectBytes: "metadata_only" }]);
+    expect(metrics.snapshots).toEqual([]);
+    expect(observedErrors).toHaveLength(1);
+    expect(observedErrors[0]).toBeInstanceOf(Error);
   });
 });
 
@@ -1072,7 +1137,13 @@ class InMemoryOrgStore implements Pick<OrgStore, "findById" | "findBySlug"> {
 class InMemoryTenantExportJobStore implements TenantExportJobStore {
   readonly jobs: TenantExportJobRecord[];
 
-  constructor(jobs: readonly TenantExportJobRecord[]) {
+  constructor(
+    jobs: readonly TenantExportJobRecord[],
+    private readonly snapshot: Error | TenantExportJobObservabilitySnapshot = {
+      activeJobs: [],
+      stalledJobs: { count: 0, oldestAgeSeconds: 0 },
+    },
+  ) {
     this.jobs = [...jobs];
   }
 
@@ -1165,11 +1236,45 @@ class InMemoryTenantExportJobStore implements TenantExportJobStore {
     return updated;
   }
 
+  async getObservabilitySnapshot(): Promise<TenantExportJobObservabilitySnapshot> {
+    if (this.snapshot instanceof Error) {
+      throw this.snapshot;
+    }
+    const activeStatuses = new Set(this.snapshot.activeJobs.map((entry) => entry.status));
+    const activeJobs = [
+      ...this.snapshot.activeJobs,
+      ...(["queued", "running", "failed"] as const)
+        .filter((status) => !activeStatuses.has(status))
+        .map((status) => ({
+          status,
+          count: this.jobs.filter((job) => job.status === status).length,
+        }))
+        .filter((entry) => entry.count > 0),
+    ];
+    return {
+      activeJobs,
+      stalledJobs: this.snapshot.stalledJobs,
+    };
+  }
+
   private replaceJob(id: string, job: TenantExportJobRecord): void {
     const index = this.jobs.findIndex((candidate) => candidate.id === id);
     if (index >= 0) {
       this.jobs[index] = job;
     }
+  }
+}
+
+class RecordingTenantExportMetrics implements TenantExportMetrics {
+  readonly jobs: Parameters<TenantExportMetrics["recordTenantExportJob"]>[0][] = [];
+  readonly snapshots: TenantExportJobObservabilitySnapshot[] = [];
+
+  recordTenantExportJob(input: Parameters<TenantExportMetrics["recordTenantExportJob"]>[0]): void {
+    this.jobs.push(input);
+  }
+
+  setTenantExportJobObservability(snapshot: TenantExportJobObservabilitySnapshot): void {
+    this.snapshots.push(snapshot);
   }
 }
 

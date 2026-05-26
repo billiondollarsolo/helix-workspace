@@ -1,0 +1,47 @@
+{{- if .Values.monitoring.tenantExportPrometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "helix.fullname" . }}-tenant-export
+  {{- with .Values.monitoring.tenantExportPrometheusRule.namespace }}
+  namespace: {{ . | quote }}
+  {{- end }}
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+    helix.io/alert-domain: tenant-export
+    {{- with .Values.monitoring.tenantExportPrometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.tenantExportPrometheusRule.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  groups:
+    - name: helix.tenant_export
+      rules:
+        - alert: HelixTenantExportStalled
+          expr: helix_tenant_export_stalled_jobs > 0
+          for: {{ .Values.monitoring.tenantExportPrometheusRule.stalledFor | quote }}
+          labels:
+            severity: warning
+            priority: P2
+            service: tenancy
+            operation: tenant_export
+          annotations:
+            summary: Tenant export job stalled
+            runbook_url: {{ .Values.monitoring.tenantExportPrometheusRule.runbookUrl | quote }}
+            description: {{ printf "Tenant export materialization jobs have been stalled for at least %s after crossing the stalled threshold." .Values.monitoring.tenantExportPrometheusRule.stalledFor | quote }}
+        - alert: HelixTenantExportFailed
+          expr: {{ printf "sum by (status, object_bytes) (increase(helix_tenant_export_jobs_total{status=\"failed\"}[%s])) > 0" .Values.monitoring.tenantExportPrometheusRule.failedWindow | quote }}
+          for: 0m
+          labels:
+            severity: warning
+            priority: P2
+            service: tenancy
+            operation: tenant_export
+          annotations:
+            summary: Tenant export job failed
+            runbook_url: {{ .Values.monitoring.tenantExportPrometheusRule.runbookUrl | quote }}
+            description: {{ printf "Tenant export materialization jobs with object byte mode {{ $labels.object_bytes }} failed in the last %s." .Values.monitoring.tenantExportPrometheusRule.failedWindow | quote }}
+{{- end }}

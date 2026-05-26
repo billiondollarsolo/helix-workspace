@@ -1105,6 +1105,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         storageResolver: driveStorageResolver,
         intervalMs: envPositiveInt("HELIX_TENANT_EXPORT_INTERVAL_MS", 15_000),
         batchSize: envPositiveInt("HELIX_TENANT_EXPORT_BATCH_SIZE", 2),
+        stalledAfterMs: envPositiveInt("HELIX_TENANT_EXPORT_STALLED_AFTER_MS", 30 * 60_000),
+        metrics,
         onResult: (result) => {
           if (result.claimed > 0) {
             app.log.info(result, "Tenant export worker completed");

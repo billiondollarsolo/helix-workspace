@@ -1,6 +1,8 @@
 import type postgres from "postgres";
+import { trace } from "@opentelemetry/api";
 import type { JsonObject, StorageObject } from "@helix/sdk-types";
 import { withJobSpan } from "../observability/job-span.js";
+import { setSpanTenantAttributes } from "../observability/tenant-span.js";
 import {
   listTenantStorageMigrationObjects,
   type TenantStorageMigrationObject,
@@ -188,15 +190,43 @@ export interface TenantExportJobStore {
     readonly id: string;
     readonly error: string;
   }): Promise<TenantExportJobRecord>;
+  getObservabilitySnapshot(input: {
+    readonly stalledBefore: Date;
+    readonly now: Date;
+  }): Promise<TenantExportJobObservabilitySnapshot>;
+}
+
+export interface TenantExportJobObservabilitySnapshot {
+  readonly activeJobs: readonly {
+    readonly status: "queued" | "running" | "failed";
+    readonly count: number;
+  }[];
+  readonly stalledJobs: {
+    readonly count: number;
+    readonly oldestAgeSeconds: number;
+  };
+}
+
+export interface TenantExportMetrics {
+  recordTenantExportJob(input: {
+    readonly status: "succeeded" | "failed";
+    readonly objectBytes: "included" | "metadata_only";
+  }): void;
+  setTenantExportJobObservability(snapshot: TenantExportJobObservabilitySnapshot): void;
 }
 
 export interface TenantExportMaterializationWorkerOptions {
-  readonly store: Pick<TenantExportJobStore, "claimPending" | "markCompleted" | "markFailed">;
+  readonly store: Pick<
+    TenantExportJobStore,
+    "claimPending" | "getObservabilitySnapshot" | "markCompleted" | "markFailed"
+  >;
   readonly orgs: Pick<OrgStore, "findById">;
   readonly exportPlanner: TenantExportManifestPlanner;
   readonly storageResolver: TenantStorageResolver;
   readonly intervalMs?: number | undefined;
   readonly batchSize?: number | undefined;
+  readonly stalledAfterMs?: number | undefined;
+  readonly metrics?: TenantExportMetrics | undefined;
   readonly now?: (() => Date) | undefined;
   readonly onResult?: (result: TenantExportMaterializationWorkerRunResult) => void;
   readonly onError?: (error: unknown) => void;
@@ -240,6 +270,16 @@ interface TenantExportJobRow {
   readonly completed_at: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
+}
+
+interface TenantExportJobActiveCountRow {
+  readonly status: "queued" | "running" | "failed";
+  readonly count: number | string;
+}
+
+interface TenantExportJobStalledCountRow {
+  readonly count: number | string;
+  readonly oldest_age_seconds: number | string | null;
 }
 
 export function createPostgresTenantExportManifestPlanner(
@@ -622,6 +662,41 @@ export class PostgresTenantExportJobStore implements TenantExportJobStore {
     `) as unknown as readonly TenantExportJobRow[];
     return mapTenantExportJobRow(rows[0]);
   }
+
+  async getObservabilitySnapshot(input: {
+    readonly stalledBefore: Date;
+    readonly now: Date;
+  }): Promise<TenantExportJobObservabilitySnapshot> {
+    const activeRows = (await this.sql`
+      select status, count(*)::integer as count
+      from tenant_export_jobs
+      where status in ('queued', 'running', 'failed')
+      group by status
+    `) as unknown as readonly TenantExportJobActiveCountRow[];
+    const stalledRows = (await this.sql`
+      select
+        count(*)::integer as count,
+        floor(extract(epoch from (${input.now}::timestamptz - min(coalesce(started_at, updated_at, created_at)))))::integer as oldest_age_seconds
+      from tenant_export_jobs
+      where status = 'running'
+        and coalesce(started_at, updated_at, created_at) <= ${input.stalledBefore}
+    `) as unknown as readonly TenantExportJobStalledCountRow[];
+    const stalled = stalledRows[0];
+
+    return {
+      activeJobs: activeRows.map((row) => ({
+        status: row.status,
+        count: Number(row.count),
+      })),
+      stalledJobs: {
+        count: stalled === undefined ? 0 : Number(stalled.count),
+        oldestAgeSeconds:
+          stalled?.oldest_age_seconds === null || stalled?.oldest_age_seconds === undefined
+            ? 0
+            : Number(stalled.oldest_age_seconds),
+      },
+    };
+  }
 }
 
 const defaultExportWorkerIntervalMs = 15_000;
@@ -630,6 +705,8 @@ const defaultExportWorkerBatchSize = 2;
 export class TenantExportMaterializationWorker {
   private readonly intervalMs: number;
   private readonly batchSize: number;
+  private readonly stalledAfterMs: number;
+  private readonly metrics: TenantExportMetrics | undefined;
   private readonly now: () => Date;
   private readonly onResult:
     | ((result: TenantExportMaterializationWorkerRunResult) => void)
@@ -641,6 +718,8 @@ export class TenantExportMaterializationWorker {
   constructor(private readonly options: TenantExportMaterializationWorkerOptions) {
     this.intervalMs = options.intervalMs ?? defaultExportWorkerIntervalMs;
     this.batchSize = options.batchSize ?? defaultExportWorkerBatchSize;
+    this.stalledAfterMs = options.stalledAfterMs ?? 30 * 60 * 1000;
+    this.metrics = options.metrics;
     this.now = options.now ?? (() => new Date());
     this.onResult = options.onResult;
     this.onError = options.onError;
@@ -678,30 +757,83 @@ export class TenantExportMaterializationWorker {
       for (const job of jobs) {
         try {
           await withJobSpan("tenant-export-materialization.job", async () => {
-            const org = await this.options.orgs.findById(job.orgId);
-            if (org === null) {
-              throw new Error(`Tenant export job org is unavailable: ${job.orgId}`);
+            const span = trace.getActiveSpan();
+            span?.setAttribute("helix.tenant_export.job_id", job.id);
+            span?.setAttribute("helix.tenant_export.include_object_bytes", job.includeObjectBytes);
+            span?.setAttribute("helix.tenant_export.attempt_count", job.attemptCount);
+
+            try {
+              const org = await this.options.orgs.findById(job.orgId);
+              if (org === null) {
+                throw new Error(`Tenant export job org is unavailable: ${job.orgId}`);
+              }
+              if (span !== undefined) {
+                setSpanTenantAttributes(span, {
+                  orgId: org.id,
+                  orgSlug: org.slug,
+                  orgTier: org.tier,
+                  orgRegion: org.region,
+                });
+              }
+              const manifest = await this.options.exportPlanner(org);
+              const artifact = await materializeTenantExportArchiveArtifact(manifest, {
+                includeObjectBytes: job.includeObjectBytes,
+                objectByteDelivery: "archive",
+                archiveStorageKey: tenantExportJobArtifactStorageKey(job),
+                presignedUrlExpiresSeconds: job.presignedUrlExpiresSeconds,
+                storageResolver: this.options.storageResolver,
+                now: this.now,
+              });
+              const completed = await this.options.store.markCompleted({ id: job.id, artifact });
+              span?.setAttribute("helix.tenant_export.status", completed.status);
+              span?.setAttribute("helix.tenant_export.byte_size", completed.byteSize ?? 0);
+              if (completed.status === "succeeded") {
+                this.metrics?.recordTenantExportJob({
+                  status: completed.status,
+                  objectBytes: tenantExportObjectBytesLabel(completed.includeObjectBytes),
+                });
+              }
+              succeeded += 1;
+            } catch (error) {
+              const failedJob = await this.options.store.markFailed({
+                id: job.id,
+                error: errorMessage(error),
+              });
+              span?.setAttribute("helix.tenant_export.status", failedJob.status);
+              if (failedJob.status === "failed") {
+                this.metrics?.recordTenantExportJob({
+                  status: failedJob.status,
+                  objectBytes: tenantExportObjectBytesLabel(failedJob.includeObjectBytes),
+                });
+              }
+              throw error;
             }
-            const manifest = await this.options.exportPlanner(org);
-            const artifact = await materializeTenantExportArchiveArtifact(manifest, {
-              includeObjectBytes: job.includeObjectBytes,
-              objectByteDelivery: "archive",
-              archiveStorageKey: tenantExportJobArtifactStorageKey(job),
-              presignedUrlExpiresSeconds: job.presignedUrlExpiresSeconds,
-              storageResolver: this.options.storageResolver,
-              now: this.now,
-            });
-            await this.options.store.markCompleted({ id: job.id, artifact });
-            succeeded += 1;
           });
-        } catch (error) {
-          await this.options.store.markFailed({ id: job.id, error: errorMessage(error) });
+        } catch {
           failed += 1;
         }
       }
 
+      await this.recordObservabilitySnapshot();
       return { claimed: jobs.length, succeeded, failed };
     });
+  }
+
+  private async recordObservabilitySnapshot(): Promise<void> {
+    if (this.metrics === undefined) {
+      return;
+    }
+    try {
+      const now = this.now();
+      const stalledBefore = new Date(now.getTime() - this.stalledAfterMs);
+      const snapshot = await this.options.store.getObservabilitySnapshot({
+        stalledBefore,
+        now,
+      });
+      this.metrics.setTenantExportJobObservability(snapshot);
+    } catch (error) {
+      this.onError?.(error);
+    }
   }
 
   private runScheduledMaterialization(): Promise<TenantExportMaterializationWorkerRunResult> {
@@ -723,6 +855,10 @@ export class TenantExportMaterializationWorker {
     this.activeRun = activeRun;
     return activeRun;
   }
+}
+
+function tenantExportObjectBytesLabel(includeObjectBytes: boolean): "included" | "metadata_only" {
+  return includeObjectBytes ? "included" : "metadata_only";
 }
 
 function mapTenantExportJobRow(row: TenantExportJobRow | undefined): TenantExportJobRecord {

@@ -18,6 +18,7 @@ const dashboardFiles = [
   "security.json",
   "audit.json",
   "plugins.json",
+  "tenant-export.json",
 ] as const;
 
 describe("observability plugin assets", () => {
@@ -83,6 +84,26 @@ describe("observability plugin assets", () => {
     ]) {
       expect(panelText).toContain(expected);
     }
+  });
+
+  it("keeps the tenant export dashboard aligned with durable export operations", async () => {
+    const panelText = await dashboardPanelText("tenant-export.json");
+
+    for (const expected of [
+      "Export job outcomes",
+      "Active export jobs",
+      "Stalled export jobs",
+      "Oldest stalled export age",
+      "helix_tenant_export_jobs_total",
+      "helix_tenant_export_jobs_active",
+      "helix_tenant_export_stalled_jobs",
+      "helix_tenant_export_oldest_stalled_age_seconds",
+    ]) {
+      expect(panelText).toContain(expected);
+    }
+    expect(panelText).not.toContain("org_id");
+    expect(panelText).not.toContain("job_id");
+    expect(panelText).not.toContain("actor_id");
   });
 
   it("provisions dashboards and datasources for the bundled Grafana stack", async () => {

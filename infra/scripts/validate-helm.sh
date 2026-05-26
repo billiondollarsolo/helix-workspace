@@ -44,7 +44,9 @@ if ! command -v "$HELM_BIN" >/dev/null 2>&1; then
 fi
 
 render base
-render monitoring --set monitoring.tenantStorageMigrationPrometheusRule.enabled=true
+render monitoring \
+  --set monitoring.tenantStorageMigrationPrometheusRule.enabled=true \
+  --set monitoring.tenantExportPrometheusRule.enabled=true
 render business -f "$CHART_DIR/values-business.yaml"
 render enterprise -f "$CHART_DIR/values-enterprise.yaml"
 render sovereign -f "$CHART_DIR/values-sovereign.yaml"
@@ -66,6 +68,7 @@ assert_contains "$BASE" 'automountServiceAccountToken: false' "service account t
 assert_contains "$BASE" 'runAsNonRoot: true' "pods must run as non-root"
 assert_contains "$BASE" 'readOnlyRootFilesystem: true' "container filesystem must be read-only"
 assert_not_contains "$BASE" 'HelixTenantStorageMigrationStalled' "tenant storage migration alerts must be opt-in"
+assert_not_contains "$BASE" 'HelixTenantExportStalled' "tenant export alerts must be opt-in"
 
 assert_contains "$MONITORING" '^kind: PrometheusRule$' "monitoring overlay must render opt-in PrometheusRule"
 assert_contains "$MONITORING" 'name: helix\.tenant_storage\.migration' "tenant storage migration alert group must render"
@@ -76,6 +79,14 @@ assert_contains "$MONITORING" 'helix_tenant_storage_migration_jobs_total' "faile
 assert_contains "$MONITORING" 'runbook_url: "docs/specs/05-operations/runbooks/tenant-storage-migration.md"' "tenant storage migration alerts must link the runbook"
 assert_contains "$MONITORING" 'operation: tenant_storage_migration' "tenant storage migration alerts must carry operation label"
 assert_not_contains "$MONITORING" 'org_id|job_id|actor_id|email_address|user_agent|ip_address' "tenant storage migration alerts must not add high-cardinality labels"
+assert_contains "$MONITORING" 'name: helix\.tenant_export' "tenant export alert group must render"
+assert_contains "$MONITORING" 'HelixTenantExportStalled' "tenant export stalled alert must render"
+assert_contains "$MONITORING" 'HelixTenantExportFailed' "tenant export failed alert must render"
+assert_contains "$MONITORING" 'helix_tenant_export_stalled_jobs' "tenant export stalled alert must use the committed stalled metric"
+assert_contains "$MONITORING" 'helix_tenant_export_jobs_total' "tenant export failed alert must use the committed job counter"
+assert_contains "$MONITORING" 'runbook_url: "docs/specs/05-operations/runbooks/tenant-export-too-large.md"' "tenant export alerts must link the runbook"
+assert_contains "$MONITORING" 'operation: tenant_export' "tenant export alerts must carry operation label"
+assert_not_contains "$MONITORING" 'tenant_id|filename|storage_key' "tenant export alerts must not add high-cardinality labels"
 
 assert_contains "$BUSINESS" 'helix.io/security-tier: "business"' "business overlay must label the tier"
 assert_contains "$BUSINESS" 'cidr: "10\.0\.0\.0/8"' "business overlay must render private egress allow-list CIDRs"

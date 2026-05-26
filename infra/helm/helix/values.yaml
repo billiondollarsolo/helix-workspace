@@ -224,6 +224,14 @@ monitoring:
     runbookUrl: docs/specs/05-operations/runbooks/tenant-storage-migration.md
     stalledFor: 10m
     failedWindow: 15m
+  tenantExportPrometheusRule:
+    enabled: false
+    namespace: ""
+    labels: {}
+    annotations: {}
+    runbookUrl: docs/specs/05-operations/runbooks/tenant-export-too-large.md
+    stalledFor: 10m
+    failedWindow: 15m
 
 networkPolicy:
   enabled: true

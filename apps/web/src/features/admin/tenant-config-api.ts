@@ -37,6 +37,13 @@ const storageHealthSchema = z.object({
   prefix: z.string().optional(),
 });
 const storageHealthResponseSchema = z.object({ health: storageHealthSchema });
+const storageCredentialsResponseSchema = z.object({
+  credentials: z.object({
+    credentials_vault_path: z.string(),
+    rotated: z.boolean(),
+  }),
+  health: storageHealthSchema,
+});
 const storageMigrationTargetSchema = z.enum(["byo", "helix-default"]);
 const storageMigrationStorageStateSchema = z.object({
   managedBy: storageMigrationTargetSchema,
@@ -97,6 +104,15 @@ export interface RequestTenantStorageMigrationInput {
   readonly targetStorage?: Record<string, unknown>;
 }
 
+export interface RotateByoStorageCredentialsInput {
+  readonly credentials: {
+    readonly accessKeyId: string;
+    readonly secretAccessKey: string;
+    readonly sessionToken?: string;
+  };
+  readonly reason?: string;
+}
+
 export interface FetchTenantStorageMigrationsInput {
   readonly cursor?: string;
   readonly limit?: number;
@@ -105,6 +121,14 @@ export interface FetchTenantStorageMigrationsInput {
 export interface TenantStorageMigrationsPage {
   readonly migrations: readonly TenantStorageMigrationJob[];
   readonly nextCursor: string | null;
+}
+
+export interface RotateByoStorageCredentialsResult {
+  readonly credentials: {
+    readonly credentials_vault_path: string;
+    readonly rotated: boolean;
+  };
+  readonly health: TenantStorageHealthResult;
 }
 
 export const tenantConfigQueryKeys = {
@@ -160,6 +184,22 @@ export async function testByoStorage(
     method: "POST",
   });
   return (await parseResponse(response, "test BYO storage", storageHealthResponseSchema)).health;
+}
+
+export async function rotateByoStorageCredentials(
+  input: RotateByoStorageCredentialsInput,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<RotateByoStorageCredentialsResult> {
+  const response = await fetchImpl("/api/admin/tenant-config/byo-storage/credentials", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+  return parseResponse(
+    response,
+    "rotate BYO storage credentials",
+    storageCredentialsResponseSchema,
+  );
 }
 
 export async function requestTenantStorageMigration(

@@ -1,7 +1,9 @@
 import Fastify from "fastify";
 import type postgres from "postgres";
+import type { JsonObject } from "@helix/sdk-types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WebDavDriveStore } from "../drive/routes.js";
+import type { DriveEntryRecord } from "../drive/types.js";
 import { registerOnlyOfficeRoutes } from "./routes.js";
 import { signOnlyOfficeJwt } from "./jwt.js";
 
@@ -13,6 +15,78 @@ const jwtSecret = "onlyoffice-test-secret";
 describe("OnlyOffice storage persistence", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("does not expose arbitrary inlineBody metadata through the file route", async () => {
+    const inlineBody = Buffer.from("legacy direct bytes").toString("base64");
+    const app = Fastify({ logger: false });
+    await registerOnlyOfficeRoutes(app, {
+      store: {
+        readFile: async () => ({
+          entry: driveEntry({ metadata: { inlineBody, inlineMime: "text/plain" } }),
+          content: null,
+        }),
+      } as unknown as WebDavDriveStore,
+      sql: (() => {
+        throw new Error("file route should not query SQL.");
+      }) as unknown as postgres.Sql,
+      jwtSecret,
+      helixInternalUrl: "http://helix.test",
+      resolveActor: async () => ({
+        id: actorId,
+        type: "user",
+        orgId,
+        email: "owner@example.com",
+        displayName: "Owner",
+      }),
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/onlyoffice/file/${encodeURIComponent(fileRouteToken())}`,
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "File content unavailable." });
+
+    await app.close();
+  });
+
+  it("allows explicitly marked seed inlineBody fallback through the shared policy", async () => {
+    const inlineBody = Buffer.from("seed bytes").toString("base64");
+    const app = Fastify({ logger: false });
+    await registerOnlyOfficeRoutes(app, {
+      store: {
+        readFile: async () => ({
+          entry: driveEntry({
+            metadata: { source: "corpus", inlineBody, inlineMime: "text/plain" },
+          }),
+          content: null,
+        }),
+      } as unknown as WebDavDriveStore,
+      sql: (() => {
+        throw new Error("file route should not query SQL.");
+      }) as unknown as postgres.Sql,
+      jwtSecret,
+      helixInternalUrl: "http://helix.test",
+      resolveActor: async () => ({
+        id: actorId,
+        type: "user",
+        orgId,
+        email: "owner@example.com",
+        displayName: "Owner",
+      }),
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/onlyoffice/file/${encodeURIComponent(fileRouteToken())}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("seed bytes");
+
+    await app.close();
   });
 
   it("finalizes saved DocumentServer bytes through the Drive store", async () => {
@@ -100,3 +174,37 @@ describe("OnlyOffice storage persistence", () => {
     await app.close();
   });
 });
+
+function fileRouteToken(): string {
+  return signOnlyOfficeJwt(
+    {
+      objectId,
+      actorId,
+      orgId,
+      userDisplayName: "Owner",
+      iat: 1,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    },
+    jwtSecret,
+  );
+}
+
+function driveEntry(input: { readonly metadata: JsonObject }): DriveEntryRecord {
+  return {
+    id: objectId,
+    type: "file",
+    name: "doc.docx",
+    folderId: null,
+    ownerActorId: actorId,
+    app: null,
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    byteSize: 0,
+    sha256: null,
+    storageKey: undefined,
+    versionNumber: undefined,
+    metadata: input.metadata,
+    deletedAt: null,
+    createdAt: new Date("2026-05-20T12:00:00.000Z"),
+    updatedAt: new Date("2026-05-20T12:00:00.000Z"),
+  };
+}

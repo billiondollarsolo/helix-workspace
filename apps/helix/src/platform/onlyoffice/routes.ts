@@ -27,6 +27,7 @@ import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
+import { readInlineBodyFallback } from "../drive/inline-body.js";
 import type { WebDavDriveStore } from "../drive/routes.js";
 import { signOnlyOfficeJwt, verifyOnlyOfficeJwt, verifyOnlyOfficeSignatureOnly } from "./jwt.js";
 
@@ -203,8 +204,10 @@ export async function registerOnlyOfficeRoutes(
     if (file === null) {
       return reply.code(404).send({ error: "File not found." });
     }
+    const inlineFallback =
+      file.content === null ? readInlineBodyFallback(file.entry.metadata) : null;
     const bytes =
-      file.content !== null ? Buffer.from(file.content) : extractInlineBody(file.entry.metadata);
+      file.content !== null ? Buffer.from(file.content) : (inlineFallback?.body ?? null);
     if (bytes === null) {
       return reply.code(404).send({ error: "File content unavailable." });
     }
@@ -321,13 +324,6 @@ function documentTypeForName(name: string): "word" | "cell" | "slide" | null {
 function extensionForName(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot < 0 ? "docx" : name.slice(dot + 1).toLowerCase();
-}
-
-function extractInlineBody(metadata: unknown): Buffer | null {
-  if (typeof metadata !== "object" || metadata === null) return null;
-  const inline = (metadata as { inlineBody?: unknown }).inlineBody;
-  if (typeof inline !== "string") return null;
-  return Buffer.from(inline, "base64");
 }
 
 type AccessRole = "owner" | "editor" | "commenter" | "viewer" | "none";

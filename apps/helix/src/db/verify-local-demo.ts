@@ -36,6 +36,7 @@ import { PostgresChatStore } from "../platform/chat/index.js";
 import { PostgresDocsStore } from "../platform/docs/index.js";
 import { PostgresDriveStore } from "../platform/drive/index.js";
 import { PostgresMailStore } from "../platform/mail/index.js";
+import { PostgresMeetStore } from "../platform/meet/index.js";
 import { PostgresSheetsStore } from "../platform/sheets/index.js";
 import { PostgresSlidesStore } from "../platform/slides/index.js";
 import type { SearchEngine } from "../platform/search/index.js";
@@ -61,6 +62,7 @@ export interface LocalDemoVerificationSnapshot {
   readonly docsCount: number;
   readonly sheetsCount: number;
   readonly slideDeckCount: number;
+  readonly meetMeetingCount: number;
   readonly rootDriveEntryCount: number;
   readonly projectDriveEntryCount: number;
   readonly calendarEventCount: number;
@@ -71,6 +73,7 @@ export interface LocalDemoVerificationSnapshot {
   readonly hasQuarterlyPlanningDoc: boolean;
   readonly hasLaunchMetricsSheet: boolean;
   readonly hasMvpReadoutDeck: boolean;
+  readonly hasMvpWalkthroughMeet: boolean;
   readonly hasAiServicesDriveFile: boolean;
   readonly hasProjectsDriveFolder: boolean;
   readonly hasTrainingCourseDriveFile: boolean;
@@ -120,6 +123,7 @@ export async function verifyLocalDemo(
   const driveStore = new PostgresDriveStore(sql);
   const calendarStore = new PostgresCalendarStore(sql);
   const chatStore = new PostgresChatStore(sql);
+  const meetStore = new PostgresMeetStore(sql);
   const sheetsStore = new PostgresSheetsStore(sql);
   const slidesStore = new PostgresSlidesStore(sql);
 
@@ -134,6 +138,7 @@ export async function verifyLocalDemo(
     docs,
     sheets,
     slideDecks,
+    meetMeetings,
     rootDriveEntries,
     projectDriveEntries,
     trainingDriveHits,
@@ -175,6 +180,7 @@ export async function verifyLocalDemo(
     docsStore.listDocumentsForActor({ orgId, actorId, query: "Quarterly", limit: 10 }),
     sheetsStore.listSheets({ orgId, actorId, query: "Launch Metrics", limit: 10, offset: 0 }),
     slidesStore.listDecksForActor({ orgId, actorId, query: "MVP Readiness", limit: 10, offset: 0 }),
+    meetStore.listMeetingsForActor({ orgId, actorId, limit: 10 }),
     driveStore.list({ orgId, actorId, limit: 25 }),
     driveStore.list({
       orgId,
@@ -223,6 +229,7 @@ export async function verifyLocalDemo(
     docsCount: docs.length,
     sheetsCount: sheets.sheets.length,
     slideDeckCount: slideDecks.decks.length,
+    meetMeetingCount: meetMeetings.length,
     rootDriveEntryCount: rootDriveEntries.length,
     projectDriveEntryCount: projectDriveEntries.length,
     calendarEventCount: calendarEvents.length,
@@ -235,6 +242,9 @@ export async function verifyLocalDemo(
     hasQuarterlyPlanningDoc: docs.some((doc) => doc.title === "Quarterly Planning Notes"),
     hasLaunchMetricsSheet: sheets.sheets.some((sheet) => sheet.title === "Launch Metrics Tracker"),
     hasMvpReadoutDeck: slideDecks.decks.some((deck) => deck.title === "MVP Readiness Readout"),
+    hasMvpWalkthroughMeet: meetMeetings.some(
+      (meeting) => meeting.id === LOCAL_DEMO_IDS.meetMvpWalkthrough,
+    ),
     hasAiServicesDriveFile: rootDriveEntries.some((entry) => entry.name === "AI Services and Keys"),
     hasProjectsDriveFolder: rootDriveEntries.some(
       (entry) => entry.name === "Projects" && entry.type === "folder",
@@ -284,6 +294,7 @@ export function assertLocalDemoVerified(snapshot: LocalDemoVerificationSnapshot)
   requireAtLeast(failures, "docs list results", snapshot.docsCount, 1);
   requireAtLeast(failures, "sheets list results", snapshot.sheetsCount, 1);
   requireAtLeast(failures, "slides list results", snapshot.slideDeckCount, 1);
+  requireAtLeast(failures, "Meet meeting results", snapshot.meetMeetingCount, 1);
   requireAtLeast(failures, "root Drive entries", snapshot.rootDriveEntryCount, 2);
   requireAtLeast(failures, "project Drive entries", snapshot.projectDriveEntryCount, 1);
   requireAtLeast(failures, "calendar events", snapshot.calendarEventCount, 2);
@@ -294,6 +305,7 @@ export function assertLocalDemoVerified(snapshot: LocalDemoVerificationSnapshot)
   requireTrue(failures, "Quarterly Planning Notes doc", snapshot.hasQuarterlyPlanningDoc);
   requireTrue(failures, "Launch Metrics Tracker sheet", snapshot.hasLaunchMetricsSheet);
   requireTrue(failures, "MVP Readiness Readout deck", snapshot.hasMvpReadoutDeck);
+  requireTrue(failures, "MVP surface walkthrough Meet room", snapshot.hasMvpWalkthroughMeet);
   requireTrue(failures, "AI Services and Keys Drive file", snapshot.hasAiServicesDriveFile);
   requireTrue(failures, "Projects Drive folder", snapshot.hasProjectsDriveFolder);
   requireTrue(failures, "Training Course Links Drive file", snapshot.hasTrainingCourseDriveFile);

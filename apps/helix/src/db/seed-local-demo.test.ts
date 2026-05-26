@@ -31,6 +31,7 @@ describe("seedLocalDemo", () => {
       docs: 2,
       sheets: 1,
       slides: 1,
+      meetRooms: 1,
       calendarEvents: 3,
       chatRooms: 1,
       chatMessages: 3,
@@ -61,6 +62,7 @@ describe("seedLocalDemo", () => {
     expect(sqlText).toContain("insert into sheet_cells");
     expect(sqlText).toContain("insert into slide_decks");
     expect(sqlText).toContain("insert into slides");
+    expect(sqlText).toContain("insert into meet_rooms");
     expect(sqlText).toContain("insert into cal_events");
     expect(sqlText).toContain("insert into chat_room_settings");
     expect(sqlText).toContain("insert into chat_read_receipts");
@@ -72,6 +74,8 @@ describe("seedLocalDemo", () => {
     expect(recording.arrays.some((value) => value.includes("admin.console.read"))).toBe(true);
     expect(sqlText).toContain("Launch Metrics Tracker");
     expect(sqlText).toContain("MVP Readiness Readout");
+    expect(sqlText).toContain("mvp-surface-walkthrough");
+    expect(sqlText).toContain("subject ilike 'k6 %'");
     expect(recording.calls.some((call) => call.values.includes("MVP surface walkthrough"))).toBe(
       true,
     );

@@ -48,6 +48,7 @@ export interface SeedLocalDemoResult {
   readonly docs: number;
   readonly sheets: number;
   readonly slides: number;
+  readonly meetRooms: number;
   readonly calendarEvents: number;
   readonly chatRooms: number;
   readonly chatMessages: number;
@@ -126,6 +127,8 @@ const demoIds = {
   eventPlanningThread: "00000000-0000-4000-8000-000000000505",
   eventMvpWalkthrough: "00000000-0000-4000-8000-000000000506",
   eventMvpWalkthroughThread: "00000000-0000-4000-8000-000000000507",
+  meetMvpWalkthrough: "00000000-0000-4000-8000-000000000551",
+  meetMvpWalkthroughThread: "00000000-0000-4000-8000-000000000552",
   mailAmazonThread: "00000000-0000-4000-8000-000000000601",
   mailAmazonMessage: "00000000-0000-4000-8000-000000000602",
   mailRenovateThread: "00000000-0000-4000-8000-000000000603",
@@ -149,6 +152,7 @@ const demoThreads = [
   demoIds.eventOrderMatchThread,
   demoIds.eventPlanningThread,
   demoIds.eventMvpWalkthroughThread,
+  demoIds.meetMvpWalkthroughThread,
   demoIds.mailAmazonThread,
   demoIds.mailRenovateThread,
   demoIds.mailPlanningThread,
@@ -168,6 +172,7 @@ const demoFolders = [demoIds.driveFolderProjects] as const;
 const demoDocuments = [demoIds.docsQuarterly, demoIds.docsRunbook] as const;
 const demoSheets = [demoIds.sheetLaunchMetrics] as const;
 const demoSlideDecks = [demoIds.slidesMvpReadout] as const;
+const demoMeetRooms = [demoIds.meetMvpWalkthrough] as const;
 const demoEvents = [
   demoIds.eventOrderMatch,
   demoIds.eventPlanning,
@@ -212,6 +217,7 @@ export async function seedLocalDemo(
     await seedSheets(tx, orgId, actorId);
     await seedSlides(tx, orgId, actorId);
     await seedCalendar(tx, orgId, actorId, email, timeline);
+    await seedMeet(tx, orgId, actorId, timeline);
     await seedMail(tx, orgId, actorId, email, storage, timeline);
     if (volumeMailMessages > 0) {
       await seedVolumeMail(tx, orgId, actorId, email, volumeMailMessages, timeline);
@@ -228,6 +234,7 @@ export async function seedLocalDemo(
     docs: 2,
     sheets: 1,
     slides: 1,
+    meetRooms: 1,
     calendarEvents: 3,
     chatRooms: 1,
     chatMessages: 3,
@@ -343,6 +350,7 @@ async function clearDemoContent(sql: SeedSql, orgId: string): Promise<void> {
         or (resource_type = 'document' and resource_id = any(${sql.array([...demoDocuments])}::uuid[]))
         or (resource_type = 'sheet' and resource_id = any(${sql.array([...demoSheets])}::uuid[]))
         or (resource_type = 'slide_deck' and resource_id = any(${sql.array([...demoSlideDecks])}::uuid[]))
+        or (resource_type = 'meet_room' and resource_id = any(${sql.array([...demoMeetRooms])}::uuid[]))
         or (resource_type = 'calendar' and resource_id = ${demoIds.calendarPrimary})
         or (resource_type = 'event' and resource_id = any(${sql.array([...demoEvents])}::uuid[]))
       )
@@ -362,11 +370,208 @@ async function clearDemoContent(sql: SeedSql, orgId: string): Promise<void> {
   await sql`delete from cal_attendees where event_id = any(${sql.array([...demoEvents])}::uuid[])`;
   await sql`delete from cal_events where id = any(${sql.array([...demoEvents])}::uuid[])`;
   await sql`delete from cal_calendars where id = ${demoIds.calendarPrimary}`;
+  await sql`delete from meet_rooms where id = any(${sql.array([...demoMeetRooms])}::uuid[])`;
   await sql`delete from drive_versions where object_id = any(${sql.array([...demoObjects])}::uuid[])`;
   await sql`delete from objects where id = any(${sql.array([...demoObjects, ...demoSheets, ...demoSlideDecks])}::uuid[])`;
   await sql`delete from drive_folders where id = any(${sql.array([...demoFolders])}::uuid[])`;
   await sql`delete from threads where id = any(${sql.array([...demoThreads])}::uuid[])`;
   await clearVolumeDemoContent(sql, orgId);
+  await clearSyntheticSmokeContent(sql, orgId);
+}
+
+async function clearSyntheticSmokeContent(sql: SeedSql, orgId: string): Promise<void> {
+  await sql`
+    delete from permissions
+    where org_id = ${orgId}
+      and (
+        (resource_type = 'thread' and resource_id in (
+          select id from threads
+          where org_id = ${orgId}
+            and (
+              subject ilike 'k6 %'
+              or subject ilike '% k6 %'
+              or subject ilike '%helix-live%'
+              or metadata->>'source' = 'k6'
+            )
+        ))
+        or (resource_type = 'document' and resource_id in (
+          select id from docs_documents
+          where org_id = ${orgId}
+            and (
+              title ilike 'k6 %'
+              or metadata->>'source' = 'k6'
+              or metadata->>'marker' ilike '%k6%'
+            )
+        ))
+        or (resource_type = 'meet_room' and resource_id in (
+          select r.id
+          from meet_rooms r
+          join threads t on t.id = r.thread_id
+          where r.org_id = ${orgId}
+            and (
+              t.subject ilike 'k6 %'
+              or t.subject ilike '% k6 %'
+              or t.metadata->>'source' = 'k6'
+            )
+        ))
+        or (resource_type = 'object' and resource_id in (
+          select id from objects
+          where org_id = ${orgId}
+            and (
+              metadata->>'source' = 'k6'
+              or metadata->>'marker' ilike '%k6%'
+              or metadata->>'name' ilike 'k6 %'
+              or metadata->>'title' ilike 'k6 %'
+              or storage_key ilike '%k6%'
+            )
+        ))
+      )
+  `;
+  await sql`
+    delete from message_attachments
+    where message_id in (
+      select m.id
+      from messages m
+      join threads t on t.id = m.thread_id
+      where m.org_id = ${orgId}
+        and (
+          t.subject ilike 'k6 %'
+          or t.subject ilike '% k6 %'
+          or t.subject ilike '%helix-live%'
+          or t.metadata->>'source' = 'k6'
+          or m.metadata->>'source' = 'k6'
+        )
+    )
+      or object_id in (
+        select id from objects
+        where org_id = ${orgId}
+          and (
+            metadata->>'source' = 'k6'
+            or metadata->>'marker' ilike '%k6%'
+            or metadata->>'name' ilike 'k6 %'
+            or metadata->>'title' ilike 'k6 %'
+            or storage_key ilike '%k6%'
+          )
+      )
+  `;
+  await sql`
+    delete from mail_thread_state
+    where org_id = ${orgId}
+      and thread_id in (
+        select id from threads
+        where org_id = ${orgId}
+          and (
+            subject ilike 'k6 %'
+            or subject ilike '% k6 %'
+            or subject ilike '%helix-live%'
+            or metadata->>'source' = 'k6'
+          )
+      )
+  `;
+  await sql`
+    delete from docs_comments
+    where org_id = ${orgId}
+      and document_id in (
+        select id from docs_documents
+        where org_id = ${orgId}
+          and (
+            title ilike 'k6 %'
+            or metadata->>'source' = 'k6'
+            or metadata->>'marker' ilike '%k6%'
+          )
+      )
+  `;
+  await sql`
+    delete from docs_updates
+    where org_id = ${orgId}
+      and document_id in (
+        select id from docs_documents
+        where org_id = ${orgId}
+          and (
+            title ilike 'k6 %'
+            or metadata->>'source' = 'k6'
+            or metadata->>'marker' ilike '%k6%'
+          )
+      )
+  `;
+  await sql`
+    delete from docs_documents
+    where org_id = ${orgId}
+      and (
+        title ilike 'k6 %'
+        or metadata->>'source' = 'k6'
+        or metadata->>'marker' ilike '%k6%'
+      )
+  `;
+  await sql`
+    delete from drive_versions
+    where org_id = ${orgId}
+      and object_id in (
+        select id from objects
+        where org_id = ${orgId}
+          and (
+            metadata->>'source' = 'k6'
+            or metadata->>'marker' ilike '%k6%'
+            or metadata->>'name' ilike 'k6 %'
+            or metadata->>'title' ilike 'k6 %'
+            or storage_key ilike '%k6%'
+          )
+      )
+  `;
+  await sql`
+    delete from objects
+    where org_id = ${orgId}
+      and (
+        metadata->>'source' = 'k6'
+        or metadata->>'marker' ilike '%k6%'
+        or metadata->>'name' ilike 'k6 %'
+        or metadata->>'title' ilike 'k6 %'
+        or storage_key ilike '%k6%'
+      )
+  `;
+  await sql`
+    delete from meet_rooms
+    where org_id = ${orgId}
+      and (
+        metadata->>'source' = 'k6'
+        or thread_id in (
+          select id from threads
+          where org_id = ${orgId}
+            and (
+              subject ilike 'k6 %'
+              or subject ilike '% k6 %'
+              or metadata->>'source' = 'k6'
+            )
+        )
+      )
+  `;
+  await sql`
+    delete from messages
+    where org_id = ${orgId}
+      and (
+        metadata->>'source' = 'k6'
+        or thread_id in (
+          select id from threads
+          where org_id = ${orgId}
+            and (
+              subject ilike 'k6 %'
+              or subject ilike '% k6 %'
+              or subject ilike '%helix-live%'
+              or metadata->>'source' = 'k6'
+            )
+        )
+      )
+  `;
+  await sql`
+    delete from threads
+    where org_id = ${orgId}
+      and (
+        subject ilike 'k6 %'
+        or subject ilike '% k6 %'
+        or subject ilike '%helix-live%'
+        or metadata->>'source' = 'k6'
+      )
+  `;
 }
 
 async function clearVolumeDemoContent(sql: SeedSql, orgId: string): Promise<void> {
@@ -1027,6 +1232,74 @@ async function seedCalendarEvent(
   }
   await grant(sql, input.orgId, input.actorId, "thread", input.threadId, "owner", input.actorId);
   await grant(sql, input.orgId, input.actorId, "event", input.eventId, "owner", input.actorId);
+}
+
+async function seedMeet(
+  sql: SeedSql,
+  orgId: string,
+  actorId: string,
+  timeline: DemoTimeline,
+): Promise<void> {
+  const scheduledStartAt = timeline.at("2026-05-26T14:00:00.000Z");
+  const scheduledEndAt = timeline.at("2026-05-26T15:00:00.000Z");
+  await sql`
+    insert into threads (id, org_id, kind, subject, created_by_actor_id, metadata)
+    values (
+      ${demoIds.meetMvpWalkthroughThread},
+      ${orgId},
+      'call',
+      'MVP surface walkthrough',
+      ${actorId},
+      ${json(sql, {
+        source: LOCAL_DEMO_SOURCE,
+        jitsiDomain: "meet.localhost",
+        roomName: "mvp-surface-walkthrough",
+      })}
+    )
+  `;
+  await sql`
+    insert into meet_rooms (
+      id, org_id, thread_id, room_name, subject, jitsi_domain, created_by_actor_id,
+      started_at, scheduled_start_at, scheduled_end_at, status, metadata
+    )
+    values (
+      ${demoIds.meetMvpWalkthrough},
+      ${orgId},
+      ${demoIds.meetMvpWalkthroughThread},
+      'mvp-surface-walkthrough',
+      'MVP surface walkthrough',
+      'meet.localhost',
+      ${actorId},
+      ${scheduledStartAt},
+      ${scheduledStartAt},
+      ${scheduledEndAt},
+      'scheduled',
+      ${json(sql, {
+        source: LOCAL_DEMO_SOURCE,
+        agenda: ["Mail", "Drive", "Docs", "Sheets", "Slides", "Calendar", "Chat", "Assistant"],
+      })}
+    )
+  `;
+  await grant(sql, orgId, actorId, "thread", demoIds.meetMvpWalkthroughThread, "owner", actorId);
+  await grant(
+    sql,
+    orgId,
+    demoIds.colleagueActor,
+    "thread",
+    demoIds.meetMvpWalkthroughThread,
+    "member",
+    actorId,
+  );
+  await grant(sql, orgId, actorId, "meet_room", demoIds.meetMvpWalkthrough, "owner", actorId);
+  await grant(
+    sql,
+    orgId,
+    demoIds.colleagueActor,
+    "meet_room",
+    demoIds.meetMvpWalkthrough,
+    "member",
+    actorId,
+  );
 }
 
 async function seedMail(

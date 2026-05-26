@@ -54,11 +54,11 @@ Relevant `values.yaml` keys:
 autoscaling:
   websocketConnections:
     enabled: true
-    metricType: Pods            # or External
+    metricType: Pods # or External
     metricName: helix_websocket_connections_active
-    targetAverageValue: "150"   # Pods mode
-    targetValue: "1200"         # External mode
-  behavior:                     # spiky WS traffic: scale out fast, in slow
+    targetAverageValue: "150" # Pods mode
+    targetValue: "1200" # External mode
+  behavior: # spiky WS traffic: scale out fast, in slow
     scaleUp: { stabilizationWindowSeconds: 30 }
     scaleDown: { stabilizationWindowSeconds: 300 }
 ```
@@ -67,6 +67,22 @@ The Deployment also carries `prometheus.io/scrape`, `prometheus.io/path`, and
 `prometheus.io/port` annotations so the adapter can discover the endpoint. Set
 `autoscaling.websocketConnections.enabled=false` to fall back to CPU/memory-only
 autoscaling.
+
+## Tenant Storage Migration Alerts
+
+The chart can render opt-in Prometheus Operator alerts for tenant object-store
+migrations. The rules page on stalled jobs and failed or completed-with-errors
+jobs using the low-cardinality migration metrics exposed by the app.
+
+```yaml
+monitoring:
+  tenantStorageMigrationPrometheusRule:
+    enabled: true
+    runbookUrl: https://runbooks.example.com/helix/tenant-storage-migration
+```
+
+The default runbook target is
+`docs/specs/05-operations/runbooks/tenant-storage-migration.md`.
 
 ## Role-based Deployments (core-app scaling)
 
@@ -79,8 +95,8 @@ To scale WebSocket-heavy apps independently, add extra Deployments of the
 
 ```yaml
 roleDeployments:
-  - name: realtime          # Deployment suffix: <release>-helix-realtime
-    role: realtime          # named role -> sets HELIX_ROLE (runs chat + meet)
+  - name: realtime # Deployment suffix: <release>-helix-realtime
+    role: realtime # named role -> sets HELIX_ROLE (runs chat + meet)
     replicaCount: 3
     autoscaling:
       enabled: true
@@ -88,7 +104,7 @@ roleDeployments:
       maxReplicas: 8
     nodeSelector: { workload: realtime }
   - name: mailer
-    apps: "mail"            # explicit subset -> sets HELIX_APPS (overrides role)
+    apps: "mail" # explicit subset -> sets HELIX_APPS (overrides role)
 ```
 
 Each entry renders an additional `Deployment` (and an `HPA` when

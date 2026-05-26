@@ -215,6 +215,16 @@ env: []
 extraVolumes: []
 extraVolumeMounts: []
 
+monitoring:
+  tenantStorageMigrationPrometheusRule:
+    enabled: false
+    namespace: ""
+    labels: {}
+    annotations: {}
+    runbookUrl: docs/specs/05-operations/runbooks/tenant-storage-migration.md
+    stalledFor: 10m
+    failedWindow: 15m
+
 networkPolicy:
   enabled: true
   ingress:

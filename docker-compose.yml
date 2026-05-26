@@ -513,6 +513,7 @@ services:
       - "${PROMETHEUS_PORT:-28446}:9090"
     volumes:
       - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/observability/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     restart: unless-stopped
 

@@ -1,0 +1,47 @@
+{{- if .Values.monitoring.tenantStorageMigrationPrometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "helix.fullname" . }}-tenant-storage-migration
+  {{- with .Values.monitoring.tenantStorageMigrationPrometheusRule.namespace }}
+  namespace: {{ . | quote }}
+  {{- end }}
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+    helix.io/alert-domain: tenant-storage-migration
+    {{- with .Values.monitoring.tenantStorageMigrationPrometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.tenantStorageMigrationPrometheusRule.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  groups:
+    - name: helix.tenant_storage.migration
+      rules:
+        - alert: HelixTenantStorageMigrationStalled
+          expr: sum by (target) (helix_tenant_storage_migration_stalled_jobs) > 0
+          for: {{ .Values.monitoring.tenantStorageMigrationPrometheusRule.stalledFor | quote }}
+          labels:
+            severity: warning
+            priority: P2
+            service: storage
+            operation: tenant_storage_migration
+          annotations:
+            summary: Tenant storage migration stalled
+            runbook_url: {{ .Values.monitoring.tenantStorageMigrationPrometheusRule.runbookUrl | quote }}
+            description: {{ printf "Tenant storage migration jobs targeting {{ $labels.target }} have been stalled for at least %s after crossing the stalled threshold." .Values.monitoring.tenantStorageMigrationPrometheusRule.stalledFor | quote }}
+        - alert: HelixTenantStorageMigrationFailed
+          expr: {{ printf "sum by (target, status) (increase(helix_tenant_storage_migration_jobs_total{status=~\"failed|succeeded_with_errors\"}[%s])) > 0" .Values.monitoring.tenantStorageMigrationPrometheusRule.failedWindow | quote }}
+          for: 0m
+          labels:
+            severity: warning
+            priority: P2
+            service: storage
+            operation: tenant_storage_migration
+          annotations:
+            summary: Tenant storage migration failed
+            runbook_url: {{ .Values.monitoring.tenantStorageMigrationPrometheusRule.runbookUrl | quote }}
+            description: {{ printf "Tenant storage migration jobs targeting {{ $labels.target }} reached {{ $labels.status }} in the last %s." .Values.monitoring.tenantStorageMigrationPrometheusRule.failedWindow | quote }}
+{{- end }}

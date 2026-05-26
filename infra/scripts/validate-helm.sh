@@ -44,11 +44,13 @@ if ! command -v "$HELM_BIN" >/dev/null 2>&1; then
 fi
 
 render base
+render monitoring --set monitoring.tenantStorageMigrationPrometheusRule.enabled=true
 render business -f "$CHART_DIR/values-business.yaml"
 render enterprise -f "$CHART_DIR/values-enterprise.yaml"
 render sovereign -f "$CHART_DIR/values-sovereign.yaml"
 
 BASE="$WORK_DIR/base.yaml"
+MONITORING="$WORK_DIR/monitoring.yaml"
 BUSINESS="$WORK_DIR/business.yaml"
 ENTERPRISE="$WORK_DIR/enterprise.yaml"
 SOVEREIGN="$WORK_DIR/sovereign.yaml"
@@ -63,6 +65,17 @@ assert_contains "$BASE" '^kind: NetworkPolicy$' "base chart must render a Networ
 assert_contains "$BASE" 'automountServiceAccountToken: false' "service account token automount must be disabled by default"
 assert_contains "$BASE" 'runAsNonRoot: true' "pods must run as non-root"
 assert_contains "$BASE" 'readOnlyRootFilesystem: true' "container filesystem must be read-only"
+assert_not_contains "$BASE" 'HelixTenantStorageMigrationStalled' "tenant storage migration alerts must be opt-in"
+
+assert_contains "$MONITORING" '^kind: PrometheusRule$' "monitoring overlay must render opt-in PrometheusRule"
+assert_contains "$MONITORING" 'name: helix\.tenant_storage\.migration' "tenant storage migration alert group must render"
+assert_contains "$MONITORING" 'HelixTenantStorageMigrationStalled' "tenant storage migration stalled alert must render"
+assert_contains "$MONITORING" 'HelixTenantStorageMigrationFailed' "tenant storage migration failed alert must render"
+assert_contains "$MONITORING" 'helix_tenant_storage_migration_stalled_jobs' "stalled alert must use the committed migration stalled metric"
+assert_contains "$MONITORING" 'helix_tenant_storage_migration_jobs_total' "failed alert must use the committed migration job counter"
+assert_contains "$MONITORING" 'runbook_url: "docs/specs/05-operations/runbooks/tenant-storage-migration.md"' "tenant storage migration alerts must link the runbook"
+assert_contains "$MONITORING" 'operation: tenant_storage_migration' "tenant storage migration alerts must carry operation label"
+assert_not_contains "$MONITORING" 'org_id|job_id|actor_id|email_address|user_agent|ip_address' "tenant storage migration alerts must not add high-cardinality labels"
 
 assert_contains "$BUSINESS" 'helix.io/security-tier: "business"' "business overlay must label the tier"
 assert_contains "$BUSINESS" 'cidr: "10\.0\.0\.0/8"' "business overlay must render private egress allow-list CIDRs"
@@ -88,9 +101,9 @@ assert_not_contains "$SOVEREIGN" '^    - \{\}$' "sovereign overlay must not allo
 assert_not_contains "$SOVEREIGN" 'kube-system' "sovereign overlay must not allow DNS egress by default"
 
 if command -v kubeconform >/dev/null 2>&1; then
-  kubeconform -strict -ignore-missing-schemas "$BASE" "$BUSINESS" "$ENTERPRISE" "$SOVEREIGN"
+  kubeconform -strict -ignore-missing-schemas "$BASE" "$MONITORING" "$BUSINESS" "$ENTERPRISE" "$SOVEREIGN"
 else
   echo "kubeconform not found; skipped Kubernetes schema validation."
 fi
 
-echo "Helm validation passed: base, business, enterprise, and sovereign overlays rendered expected PRD hardening evidence."
+echo "Helm validation passed: base, monitoring, business, enterprise, and sovereign overlays rendered expected PRD hardening evidence."

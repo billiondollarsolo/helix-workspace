@@ -3,7 +3,7 @@
 Provides the local observability stack for Helix:
 
 - Grafana dashboards provisioned from `dashboards/`
-- Prometheus datasource for `/metrics`
+- Prometheus datasource for `/metrics` and local alert rules from `infra/observability/prometheus/rules/`
 - Tempo datasource for OpenTelemetry traces
 - Loki datasource for container logs when a log shipper is connected
 

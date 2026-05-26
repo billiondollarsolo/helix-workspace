@@ -1,0 +1,27 @@
+groups:
+  - name: helix.tenant_storage.migration
+    rules:
+      - alert: HelixTenantStorageMigrationStalled
+        expr: sum by (target) (helix_tenant_storage_migration_stalled_jobs) > 0
+        for: 10m
+        labels:
+          severity: warning
+          priority: P2
+          service: storage
+          operation: tenant_storage_migration
+        annotations:
+          summary: Tenant storage migration stalled
+          runbook_url: docs/specs/05-operations/runbooks/tenant-storage-migration.md
+          description: Tenant storage migration jobs targeting {{ $labels.target }} have been stalled for at least 10 minutes after crossing the stalled threshold.
+      - alert: HelixTenantStorageMigrationFailed
+        expr: sum by (target, status) (increase(helix_tenant_storage_migration_jobs_total{status=~"failed|succeeded_with_errors"}[15m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+          priority: P2
+          service: storage
+          operation: tenant_storage_migration
+        annotations:
+          summary: Tenant storage migration failed
+          runbook_url: docs/specs/05-operations/runbooks/tenant-storage-migration.md
+          description: Tenant storage migration jobs targeting {{ $labels.target }} reached {{ $labels.status }} in the last 15 minutes.

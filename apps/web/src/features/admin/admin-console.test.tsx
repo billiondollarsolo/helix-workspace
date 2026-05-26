@@ -199,6 +199,11 @@ describe("AdminConsole", () => {
       expect(container.textContent).toContain("Billing & licenses");
     });
 
+    await clickButton("Settings");
+    await waitFor(() => {
+      expect(container.textContent).toContain("Tenant settings");
+    });
+
     await clickButton("Audit log");
     // The audit section now renders the live AuditLogList component, which
     // fetches from /api/admin/audit-log. The mocked fetch returns the users

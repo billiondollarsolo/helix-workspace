@@ -26,6 +26,7 @@ import { AICostLimitsManagement } from "@/features/admin/ai-cost-limits-manageme
 import { AIObservabilityDashboard } from "@/features/admin/ai-observability";
 import { CoreAppsManagement } from "@/features/admin/core-apps-management";
 import { IdentityManagement } from "@/features/admin/identity-management";
+import { TenantConfigManagement } from "@/features/admin/tenant-config-management";
 import { AuditLogList } from "@/features/admin/audit-log";
 import { WebhookManagement } from "@/features/webhooks/webhook-management";
 import {
@@ -2021,6 +2022,7 @@ const SECTION_CONTENT: Record<AdminSectionId, () => ReactNode> = {
   apps: AdminApps,
   "core-apps": withPageScroll(CoreAppsManagement),
   services: withPageScroll(AdminServicesOverview),
+  settings: withPageScroll(TenantConfigManagement),
   "app-passwords": withPageScroll(AppPasswordsManagement),
   agents: withPageScroll(AgentCredentialsManagement),
   "ai-costs": withPageScroll(AICostLimitsManagement),

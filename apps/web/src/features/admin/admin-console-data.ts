@@ -32,6 +32,7 @@ export const ADMIN_NAV = [
   { id: "apps", label: "Apps", icon: "Grid" },
   { id: "core-apps", label: "Core apps", icon: "Briefcase" },
   { id: "services", label: "Services", icon: "Settings" },
+  { id: "settings", label: "Settings", icon: "Settings" },
   { id: "app-passwords", label: "App passwords", icon: "Key" },
   { id: "agents", label: "Agent credentials", icon: "Sparkles" },
   { id: "ai-costs", label: "AI cost limits", icon: "Credit" },

@@ -1112,8 +1112,9 @@ export class PostgresDocsStore
         return mapSuggestion(existing);
       }
 
+      let appliedState: AppliedSuggestionDocumentState | null = null;
       if (input.status === "accepted") {
-        await applySuggestionToDocument(tx, {
+        appliedState = await applySuggestionToDocument(tx, {
           orgId: input.orgId,
           actorId: input.actorId,
           documentId: existing.document_id,
@@ -1141,6 +1142,9 @@ export class PostgresDocsStore
         documentId: existing.document_id,
         payload: { suggestionId: input.suggestionId },
       });
+      if (appliedState !== null) {
+        await this.persistAcceptedSuggestionState(tx, appliedState);
+      }
       return rows[0] === undefined ? null : mapSuggestion(rows[0]);
     });
   }
@@ -1173,6 +1177,7 @@ export class PostgresDocsStore
 
       const rowById = new Map(existingRows.map((row) => [row.id, row]));
       const resolved: DocsSuggestionRecord[] = [];
+      let latestAppliedState: AppliedSuggestionDocumentState | null = null;
       for (const suggestionId of suggestionIds) {
         const existing = rowById.get(suggestionId);
         if (existing === undefined) {
@@ -1184,7 +1189,7 @@ export class PostgresDocsStore
         }
 
         if (input.status === "accepted") {
-          await applySuggestionToDocument(tx, {
+          latestAppliedState = await applySuggestionToDocument(tx, {
             orgId: input.orgId,
             actorId: input.actorId,
             documentId: existing.document_id,
@@ -1218,6 +1223,9 @@ export class PostgresDocsStore
           return null;
         }
         resolved.push(mapSuggestion(updated));
+      }
+      if (latestAppliedState !== null) {
+        await this.persistAcceptedSuggestionState(tx, latestAppliedState);
       }
       return resolved;
     });
@@ -1738,6 +1746,33 @@ export class PostgresDocsStore
       },
     });
   }
+
+  private async persistAcceptedSuggestionState(
+    sql: SqlLike,
+    input: AppliedSuggestionDocumentState,
+  ): Promise<void> {
+    const storageKey = docsDocumentStorageKey(input.orgId, input.documentId);
+    const stateSha256 = sha256Hex(input.state);
+    await sql`
+      update objects
+      set
+        storage_key = ${storageKey},
+        mime_type = ${docsDocumentMimeType},
+        byte_size = ${input.state.byteLength},
+        sha256 = ${stateSha256},
+        updated_at = now()
+      where id = ${input.documentId}
+        and org_id = ${input.orgId}
+        and metadata->>'app' = 'docs'
+    `;
+    await this.persistDocumentState({
+      orgId: input.orgId,
+      documentId: input.documentId,
+      storageKey,
+      state: input.state,
+      sha256: stateSha256,
+    });
+  }
 }
 
 function docsDocumentStorageKey(orgId: string, documentId: string): string {
@@ -2188,6 +2223,12 @@ function mapUpdate(row: DocsUpdateRow | undefined): DocsUpdateRecord {
   };
 }
 
+interface AppliedSuggestionDocumentState {
+  readonly orgId: string;
+  readonly documentId: string;
+  readonly state: Buffer;
+}
+
 async function applySuggestionToDocument(
   sql: SqlLike,
   input: {
@@ -2198,9 +2239,9 @@ async function applySuggestionToDocument(
     readonly afterText: string;
     readonly anchorSelection?: NativeDocumentTextSelection | undefined;
   },
-): Promise<void> {
+): Promise<AppliedSuggestionDocumentState | null> {
   if (input.beforeText.length === 0 || input.beforeText === input.afterText) {
-    return;
+    return null;
   }
   const documentRows = (await sql`
     select ydoc_state
@@ -2246,9 +2287,19 @@ async function applySuggestionToDocument(
       ${input.actorId},
       ${seq},
       ${replacement.update},
-      ${sql.json(toSqlJson({ source: "docs.suggestion.accept" }))}
+      ${sql.json(
+        toSqlJson({
+          source: "docs.suggestion.accept",
+          stateBase64: replacement.state.toString("base64"),
+        }),
+      )}
     )
   `;
+  return {
+    orgId: input.orgId,
+    documentId: input.documentId,
+    state: replacement.state,
+  };
 }
 
 function nativeDocumentSuggestionAnchorSelection(

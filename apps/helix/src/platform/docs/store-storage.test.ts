@@ -72,6 +72,7 @@ describe("PostgresDocsStore tenant storage", () => {
   it("accepts anchored native suggestions at the recorded selection", async () => {
     const suggestionId = "55555555-5555-4555-8555-555555555555";
     const initial = createNativeDocumentState("First repeat\n\nSecond repeat");
+    const storage = new RecordingStorageClient();
     const recording = createRecordingSql([
       [
         suggestionRow({
@@ -111,7 +112,9 @@ describe("PostgresDocsStore tenant storage", () => {
       ],
       [],
     ]);
-    const store = new PostgresDocsStore(recording.sql);
+    const store = new PostgresDocsStore(recording.sql, {
+      storageResolver: async () => ({ client: storage, managedBy: "helix-default", prefix: "" }),
+    });
 
     const resolved = await store.resolveSuggestion({
       orgId,
@@ -125,6 +128,22 @@ describe("PostgresDocsStore tenant storage", () => {
     const updatedState = documentUpdate?.values.find((value) => Buffer.isBuffer(value));
     expect(Buffer.isBuffer(updatedState)).toBe(true);
     expect(documentTextFromStoredState(updatedState as Buffer)).toBe("First repeat\nSecond choice");
+    expect(storage.puts).toHaveLength(1);
+    expect(storage.puts[0]).toMatchObject({
+      key: `docs/${orgId}/${documentId}`,
+      contentType: "application/vnd.helix.document",
+      metadata: { documentId, orgId },
+    });
+    expect(documentTextFromStoredState(storagePutBody(storage, 0))).toBe(
+      "First repeat\nSecond choice",
+    );
+    const docsUpdate = recording.calls.find((call) =>
+      call.text.includes("insert into docs_updates"),
+    );
+    expect(JSON.stringify(docsUpdate?.values)).toContain("docs.suggestion.accept");
+    expect(JSON.stringify(docsUpdate?.values)).toContain("stateBase64");
+    const objectUpdate = recording.calls.find((call) => call.text.includes("update objects"));
+    expect(objectUpdate?.values).toContain(`docs/${orgId}/${documentId}`);
   });
 
   it("accepts multiple native suggestions in one batch transaction", async () => {
@@ -136,6 +155,7 @@ describe("PostgresDocsStore tenant storage", () => {
       beforeText: "teh",
       afterText: "the",
     });
+    const storage = new RecordingStorageClient();
     if (afterFirst === null) {
       throw new Error("Expected first suggestion replacement to succeed.");
     }
@@ -186,7 +206,9 @@ describe("PostgresDocsStore tenant storage", () => {
       ],
       [],
     ]);
-    const store = new PostgresDocsStore(recording.sql);
+    const store = new PostgresDocsStore(recording.sql, {
+      storageResolver: async () => ({ client: storage, managedBy: "helix-default", prefix: "" }),
+    });
 
     const resolved = await store.resolveSuggestions({
       orgId,
@@ -201,6 +223,15 @@ describe("PostgresDocsStore tenant storage", () => {
     const finalState = documentUpdates.at(-1)?.values.find((value) => Buffer.isBuffer(value));
     expect(Buffer.isBuffer(finalState)).toBe(true);
     expect(documentTextFromStoredState(finalState as Buffer)).toBe("the plan\nreceive update");
+    expect(storage.puts).toHaveLength(1);
+    expect(documentTextFromStoredState(storagePutBody(storage, 0))).toBe(
+      "the plan\nreceive update",
+    );
+    const docsUpdatePayloads = recording.calls
+      .filter((call) => call.text.includes("insert into docs_updates"))
+      .map((call) => JSON.stringify(call.values));
+    expect(docsUpdatePayloads).toHaveLength(2);
+    expect(docsUpdatePayloads.every((payload) => payload.includes("stateBase64"))).toBe(true);
   });
 
   it("fans out Docs comment mention notifications to matched actors", async () => {

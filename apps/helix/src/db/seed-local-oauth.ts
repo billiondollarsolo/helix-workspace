@@ -14,6 +14,7 @@ export const DEFAULT_LOCAL_OAUTH_SCOPES = [
   "platform.read",
   "mail.read",
   "mail.send",
+  "mail.external",
   "mail.write",
   "chat.read",
   "chat.write",

@@ -261,6 +261,7 @@ async function seedActors(
         "mail.read",
         "mail.write",
         "mail.send",
+        "mail.external",
         "drive.read",
         "drive.write",
         "docs.read",
@@ -391,6 +392,7 @@ async function clearSyntheticSmokeContent(sql: SeedSql, orgId: string): Promise<
               subject ilike 'k6 %'
               or subject ilike '% k6 %'
               or subject ilike '%helix-live%'
+              or subject ilike 'MVP workflow smoke%'
               or metadata->>'source' = 'k6'
             )
         ))
@@ -438,6 +440,7 @@ async function clearSyntheticSmokeContent(sql: SeedSql, orgId: string): Promise<
           t.subject ilike 'k6 %'
           or t.subject ilike '% k6 %'
           or t.subject ilike '%helix-live%'
+          or t.subject ilike 'MVP workflow smoke%'
           or t.metadata->>'source' = 'k6'
           or m.metadata->>'source' = 'k6'
         )
@@ -464,9 +467,16 @@ async function clearSyntheticSmokeContent(sql: SeedSql, orgId: string): Promise<
             subject ilike 'k6 %'
             or subject ilike '% k6 %'
             or subject ilike '%helix-live%'
+            or subject ilike 'MVP workflow smoke%'
             or metadata->>'source' = 'k6'
           )
       )
+  `;
+  await sql`
+    delete from pending_actions
+    where org_id = ${orgId}
+      and tool_id = 'mail.send'
+      and input->>'subject' ilike 'MVP workflow smoke%'
   `;
   await sql`
     delete from docs_comments
@@ -546,6 +556,34 @@ async function clearSyntheticSmokeContent(sql: SeedSql, orgId: string): Promise<
       )
   `;
   await sql`
+    with doomed_messages as (
+      select m.id
+      from messages m
+      join threads t on t.id = m.thread_id
+      where m.org_id = ${orgId}
+        and (
+          t.subject ilike 'k6 %'
+          or t.subject ilike '% k6 %'
+          or t.subject ilike '%helix-live%'
+          or t.subject ilike 'MVP workflow smoke%'
+          or t.metadata->>'source' = 'k6'
+          or m.metadata->>'source' = 'k6'
+        )
+    ),
+    deleted_outbound_messages as (
+      delete from mail_outbound_messages
+      where org_id = ${orgId}
+        and message_id in (select id from doomed_messages)
+      returning outbox_id
+    )
+    delete from outbox
+    where id in (
+      select outbox_id
+      from deleted_outbound_messages
+      where outbox_id is not null
+    )
+  `;
+  await sql`
     delete from messages
     where org_id = ${orgId}
       and (
@@ -557,6 +595,7 @@ async function clearSyntheticSmokeContent(sql: SeedSql, orgId: string): Promise<
               subject ilike 'k6 %'
               or subject ilike '% k6 %'
               or subject ilike '%helix-live%'
+              or subject ilike 'MVP workflow smoke%'
               or metadata->>'source' = 'k6'
             )
         )
@@ -569,6 +608,7 @@ async function clearSyntheticSmokeContent(sql: SeedSql, orgId: string): Promise<
         subject ilike 'k6 %'
         or subject ilike '% k6 %'
         or subject ilike '%helix-live%'
+        or subject ilike 'MVP workflow smoke%'
         or metadata->>'source' = 'k6'
       )
   `;

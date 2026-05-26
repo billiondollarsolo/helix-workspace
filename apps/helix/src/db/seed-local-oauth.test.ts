@@ -42,6 +42,7 @@ describe("seedLocalOAuth", () => {
     expect(recording.arrays).toContainEqual(
       expect.arrayContaining([
         "notifications.read",
+        "mail.external",
         "search.read",
         "sheets.write",
         "slides.write",

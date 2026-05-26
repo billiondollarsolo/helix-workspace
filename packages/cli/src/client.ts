@@ -148,10 +148,10 @@ export function buildHelixRequest(
       }
       return createBinaryRequest(
         env,
-        withQuery(
-          `/api/admin/tenants/${encodeURIComponent(command.slug)}/import/dry-run`,
-          command.conflictPolicy === undefined ? {} : { ...command.conflictPolicy },
-        ),
+        withQuery(`/api/admin/tenants/${encodeURIComponent(command.slug)}/import/dry-run`, {
+          ...(command.conflictPolicy === undefined ? {} : command.conflictPolicy),
+          ...(command.remaps === undefined ? {} : { remaps: base64UrlJson(command.remaps) }),
+        }),
         input,
         "application/x-tar",
       );
@@ -440,6 +440,10 @@ function queryStringValue(value: unknown): string {
     return String(value);
   }
   throw new Error("Query parameters must be primitive values.");
+}
+
+function base64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -88,6 +88,7 @@ export type HelixCommand =
       readonly slug: string;
       readonly archive: string;
       readonly conflictPolicy?: TenantImportDryRunConflictPolicy;
+      readonly remaps?: TenantImportDryRunRemaps;
     }
   | {
       readonly kind: "tenant-import-list";
@@ -136,6 +137,11 @@ export interface TenantImportDryRunConflictPolicy {
   readonly resourceReferences?: "require-remap" | "preserve" | undefined;
   readonly verifiedState?: "regenerate" | "preserve" | undefined;
   readonly primaryDomain?: "preserve" | "null" | undefined;
+}
+
+export interface TenantImportDryRunRemaps {
+  readonly principals?: Record<string, string | null> | undefined;
+  readonly resources?: Record<string, string> | undefined;
 }
 
 export type JsonArgument =
@@ -2323,8 +2329,19 @@ function parseTenantImportDryRunCommand(
     throw new CliUsageError(adminTenantImportsDryRunUsage);
   }
   const conflictPolicy: Partial<Record<keyof TenantImportDryRunConflictPolicy, string>> = {};
+  let remaps: TenantImportDryRunRemaps | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
+    if (flag === "--remaps") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--") || remaps !== undefined) {
+        throw new CliUsageError(adminTenantImportsDryRunUsage);
+      }
+      remaps = parseTenantImportDryRunRemaps(value);
+      index += 1;
+      continue;
+    }
+
     const field = tenantImportConflictPolicyFlags.get(flag ?? "");
     const value = args[index + 1];
     if (
@@ -2347,13 +2364,14 @@ function parseTenantImportDryRunCommand(
     ...(Object.keys(parsedConflictPolicy).length === 0
       ? {}
       : { conflictPolicy: parsedConflictPolicy }),
+    ...(remaps === undefined ? {} : { remaps }),
   };
 }
 
 const adminTenantImportsUsage =
   "Usage: helix admin tenant-imports <dry-run|list|status|get> <slug> [options]";
 const adminTenantImportsDryRunUsage =
-  "Usage: helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>]";
+  "Usage: helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]";
 const adminTenantImportsListUsage =
   "Usage: helix admin tenant-imports list <slug> [--status <succeeded|failed>] [--limit <number>] [--cursor <cursor>]";
 const adminTenantImportsStatusUsage =
@@ -2377,6 +2395,37 @@ const tenantImportConflictPolicyValues: Record<
   verifiedState: new Set(["regenerate", "preserve"]),
   primaryDomain: new Set(["preserve", "null"]),
 };
+
+function parseTenantImportDryRunRemaps(value: string): TenantImportDryRunRemaps {
+  const parsed = parseJsonObjectFlag(value, adminTenantImportsDryRunUsage);
+  let principals: Record<string, string | null> | undefined;
+  let resources: Record<string, string> | undefined;
+
+  for (const key of Object.keys(parsed)) {
+    if (key !== "principals" && key !== "resources") {
+      throw new CliUsageError(adminTenantImportsDryRunUsage);
+    }
+  }
+
+  if (parsed.principals !== undefined) {
+    if (!isUuidToNullableUuidRecord(parsed.principals)) {
+      throw new CliUsageError(adminTenantImportsDryRunUsage);
+    }
+    principals = parsed.principals;
+  }
+
+  if (parsed.resources !== undefined) {
+    if (!isBoundedStringRecord(parsed.resources)) {
+      throw new CliUsageError(adminTenantImportsDryRunUsage);
+    }
+    resources = parsed.resources;
+  }
+
+  return {
+    ...(principals === undefined ? {} : { principals }),
+    ...(resources === undefined ? {} : { resources }),
+  };
+}
 
 const adminUsage =
   "Usage: helix admin <app-passwords|agent-credentials|users|audit|storage|storage-migrations|tenant-exports|tenant-imports> <command> [--json [JSON]]";
@@ -3138,6 +3187,34 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return Object.values(value).every((entry) => typeof entry === "string");
 }
 
+function isUuidToNullableUuidRecord(value: unknown): value is Record<string, string | null> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.entries(value).every(
+    ([key, entry]) =>
+      isUuid(key) && (entry === null || (typeof entry === "string" && isUuid(entry))),
+  );
+}
+
+function isBoundedStringRecord(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.entries(value).every(
+    ([key, entry]) =>
+      key.length > 0 &&
+      key.length <= 500 &&
+      typeof entry === "string" &&
+      entry.length > 0 &&
+      entry.length <= 500,
+  );
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
+}
+
 function parseAuthTokenCommand(
   args: readonly string[],
   commandName: "helix auth token" | "helix login",
@@ -3272,7 +3349,7 @@ export const usage = `Usage:
   helix admin tenant-exports list <slug> [--status <queued|running|succeeded|failed>] [--limit <number>] [--cursor <cursor>]
   helix admin tenant-exports status <slug> <job-id>
   helix admin tenant-exports download <slug> <job-id> --output <path> [--force]
-  helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>]
+  helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]
   helix admin tenant-imports list <slug> [--status <succeeded|failed>] [--limit <number>] [--cursor <cursor>]
   helix admin tenant-imports <status|get> <slug> <job-id>
   helix backup create

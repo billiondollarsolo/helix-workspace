@@ -438,6 +438,7 @@ const adminActionFlags: Record<string, readonly string[]> = {
     "--resource-references",
     "--verified-state",
     "--primary-domain",
+    "--remaps",
   ],
   "tenant-imports:list": ["--status", "--limit", "--cursor"],
   "tenant-imports:get": [],

@@ -118,6 +118,7 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("tenant-imports");
     expect(stdout.output).toContain("dry-run list get status");
     expect(stdout.output).toContain("--row-id-conflicts --principal-references");
+    expect(stdout.output).toContain("--primary-domain --remaps");
     expect(stdout.output).toContain("--status --limit --cursor");
     expect(stdout.output).toContain("tenant-imports ]] && COMPREPLY");
     expect(stdout.output).toContain('compgen -W "succeeded failed"');
@@ -157,6 +158,7 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("tenant-exports");
     expect(stdout.output).toContain("tenant-imports");
     expect(stdout.output).toContain("dry-run list get status");
+    expect(stdout.output).toContain("-l remaps -x");
     expect(stdout.output).toContain('-l status -x -a "succeeded failed"');
     expect(stdout.output).toContain("install enable disable uninstall");
     expect(stdout.output).toContain("-l from -x");
@@ -624,6 +626,8 @@ describe("runCli durable tenant export operator commands", () => {
             "null",
             "--verified-state",
             "preserve",
+            "--remaps",
+            '{"principals":{"11111111-1111-4111-8111-111111111111":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","33333333-3333-4333-8333-333333333333":null},"resources":{"mail.message:msg-1":"target-msg-1"}}',
           ],
           { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
           {
@@ -637,7 +641,7 @@ describe("runCli durable tenant export operator commands", () => {
 
       expect(requests).toEqual([
         {
-          url: "https://helix.example/api/admin/tenants/acme/import/dry-run?rowIdConflicts=preserve&principalReferences=null&verifiedState=preserve",
+          url: "https://helix.example/api/admin/tenants/acme/import/dry-run?rowIdConflicts=preserve&principalReferences=null&verifiedState=preserve&remaps=eyJwcmluY2lwYWxzIjp7IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSI6ImFhYWFhYWFhLWFhYWEtNGFhYS04YWFhLWFhYWFhYWFhYWFhYSIsIjMzMzMzMzMzLTMzMzMtNDMzMy04MzMzLTMzMzMzMzMzMzMzMyI6bnVsbH0sInJlc291cmNlcyI6eyJtYWlsLm1lc3NhZ2U6bXNnLTEiOiJ0YXJnZXQtbXNnLTEifX0",
           init: {
             method: "POST",
             headers: {

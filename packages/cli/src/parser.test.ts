@@ -1098,6 +1098,28 @@ describe("parseCliArgs", () => {
         primaryDomain: "null",
       },
     });
+    expect(
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "dry-run",
+        "acme",
+        "./acme.tar",
+        "--remaps",
+        '{"principals":{"11111111-1111-4111-8111-111111111111":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","33333333-3333-4333-8333-333333333333":null},"resources":{"mail.message:msg-1":"target-msg-1"}}',
+      ]),
+    ).toEqual({
+      kind: "tenant-import-dry-run",
+      slug: "acme",
+      archive: "./acme.tar",
+      remaps: {
+        principals: {
+          "11111111-1111-4111-8111-111111111111": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "33333333-3333-4333-8333-333333333333": null,
+        },
+        resources: { "mail.message:msg-1": "target-msg-1" },
+      },
+    });
   });
 
   it("parses tenant import job readback operator commands", () => {
@@ -1175,6 +1197,39 @@ describe("parseCliArgs", () => {
         "preserve",
         "--verified-state",
         "regenerate",
+      ]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "dry-run",
+        "acme",
+        "./acme.tar",
+        "--remaps",
+        '{"principals":["old-user"]}',
+      ]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "dry-run",
+        "acme",
+        "./acme.tar",
+        "--remaps",
+        '{"resources":{"old-doc":null}}',
+      ]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "dry-run",
+        "acme",
+        "./acme.tar",
+        "--remaps",
+        '{"principals":{"old-user":"new-user"},"other":{}}',
       ]),
     ).toThrow(CliUsageError);
     expect(() =>

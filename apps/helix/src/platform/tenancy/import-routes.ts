@@ -17,6 +17,7 @@ import {
 } from "../admin/console-shared.js";
 import type {
   TenantImportJobRecord,
+  TenantImportJobRemapInputSummary,
   TenantImportJobResultSummary,
   TenantImportJobStatus,
   TenantImportJobStore,
@@ -27,6 +28,7 @@ import {
   type TenantImportDryRunConflictPolicy,
   type TenantImportPlanConflict,
   type TenantImportPlanIssue,
+  type TenantImportPlanProvidedRemaps,
   type TenantImportPlanTargetState,
 } from "./import-plan.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
@@ -62,6 +64,35 @@ const conflictPolicyQuery = z
   })
   .strict();
 
+const remapsSchema = z
+  .object({
+    principals: z.record(z.string().uuid(), z.union([z.string().uuid(), z.null()])).optional(),
+    resources: z.record(z.string().min(1).max(500), z.string().min(1).max(500)).optional(),
+  })
+  .strict();
+
+const remapsQuerySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(65_536)
+  .transform((value, ctx) => {
+    try {
+      return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown;
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Remaps must be base64url-encoded JSON.",
+      });
+      return z.NEVER;
+    }
+  })
+  .pipe(remapsSchema);
+
+const importDryRunQuery = conflictPolicyQuery.extend({
+  remaps: remapsQuerySchema.optional(),
+});
+
 const importJobListQuery = z.object({
   limit: limitQuerySchema,
   cursor: cursorQuerySchema,
@@ -80,11 +111,12 @@ export async function registerTenantImportRoutes(
     if (loaded === undefined) {
       return reply;
     }
-    const query = conflictPolicyQuery.safeParse(request.query);
+    const query = importDryRunQuery.safeParse(request.query);
     if (!query.success) {
-      return reply
-        .code(400)
-        .send(invalidRequest("Invalid tenant import conflict-policy query.", query.error.issues));
+      const message = hasRemapsQueryInput(request.query)
+        ? "Invalid tenant import remaps query."
+        : "Invalid tenant import conflict-policy query.";
+      return reply.code(400).send(invalidRequest(message, query.error.issues));
     }
     const archive = requestBodyBytes(request.body);
     if (archive === undefined) {
@@ -94,13 +126,17 @@ export async function registerTenantImportRoutes(
     }
 
     const targetState = await options.targetStateLoader(loaded.org);
-    const hasPolicyInput = hasConflictPolicyInput(query.data);
+    const { remaps, ...conflictPolicy } = query.data;
+    const hasPolicyInput = hasConflictPolicyInput(conflictPolicy);
+    const remapSummary = remapInputSummary(remaps);
+    const hasRemapInput = remapSummary.sha256 !== null;
     const result = buildTenantImportPlanFromArchive({
       archive,
       targetOrgId: loaded.org.id,
       targetSlug: loaded.org.slug,
       targetState,
-      ...(hasPolicyInput ? { conflictPolicy: query.data } : {}),
+      ...(hasPolicyInput ? { conflictPolicy } : {}),
+      ...(hasRemapInput ? { remaps } : {}),
     });
     const importJob =
       options.importJobs === undefined
@@ -111,7 +147,9 @@ export async function registerTenantImportRoutes(
             archiveByteSize: archive.byteLength,
             archiveSha256: sha256Hex(archive),
             hasConflictPolicyInput: hasPolicyInput,
-            conflictPolicy: hasPolicyInput ? query.data : {},
+            conflictPolicy: hasPolicyInput ? conflictPolicy : {},
+            hasRemapInput,
+            remapInputSummary: remapSummary,
             ok: result.ok,
             sourceOrgId: result.plan?.source.orgId ?? null,
             sourceSlug: result.plan?.source.slug ?? null,
@@ -136,6 +174,10 @@ export async function registerTenantImportRoutes(
         slug: loaded.org.slug,
         archiveByteSize: archive.byteLength,
         hasConflictPolicyInput: hasPolicyInput,
+        hasRemapInput,
+        remapInputPrincipalCount: remapSummary.principalCount,
+        remapInputResourceCount: remapSummary.resourceCount,
+        remapInputSha256: remapSummary.sha256,
         importJobId: importJob?.id ?? null,
         ok: result.ok,
         issueCount: result.issues.length + (result.plan?.issues.length ?? 0),
@@ -220,6 +262,8 @@ export interface TenantImportJobView {
   readonly archiveSha256: string;
   readonly hasConflictPolicyInput: boolean;
   readonly conflictPolicy: TenantImportDryRunConflictPolicy;
+  readonly hasRemapInput: boolean;
+  readonly remapInputSummary: TenantImportJobRemapInputSummary;
   readonly ok: boolean;
   readonly sourceOrgId: string | null;
   readonly sourceSlug: string | null;
@@ -248,6 +292,8 @@ export function tenantImportJobView(job: TenantImportJobRecord): TenantImportJob
     archiveSha256: job.archiveSha256,
     hasConflictPolicyInput: job.hasConflictPolicyInput,
     conflictPolicy: job.conflictPolicy,
+    hasRemapInput: job.hasRemapInput,
+    remapInputSummary: job.remapInputSummary,
     ok: job.ok,
     sourceOrgId: job.sourceOrgId,
     sourceSlug: job.sourceSlug,
@@ -316,8 +362,41 @@ function hasConflictPolicyInput(policy: TenantImportDryRunConflictPolicy): boole
   return Object.values(policy).some((value) => value !== undefined);
 }
 
+function hasRemapsQueryInput(query: unknown): boolean {
+  return typeof query === "object" && query !== null && "remaps" in query;
+}
+
 function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function remapInputSummary(
+  remaps: TenantImportPlanProvidedRemaps | undefined,
+): TenantImportJobRemapInputSummary {
+  const principalCount = Object.keys(remaps?.principals ?? {}).length;
+  const resourceCount = Object.keys(remaps?.resources ?? {}).length;
+  if (principalCount === 0 && resourceCount === 0) {
+    return { principalCount: 0, resourceCount: 0, sha256: null };
+  }
+  return {
+    principalCount,
+    resourceCount,
+    sha256: sha256Hex(Buffer.from(stableJson(remaps), "utf8")),
+  };
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.entries(value)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJson(entryValue)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function importJobErrorCode(

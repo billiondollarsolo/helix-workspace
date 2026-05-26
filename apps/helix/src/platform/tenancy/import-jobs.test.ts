@@ -39,6 +39,12 @@ describe("PostgresTenantImportJobStore", () => {
       archiveSha256: "a".repeat(64),
       hasConflictPolicyInput: true,
       conflictPolicy: { rowIdConflicts: "preserve" },
+      hasRemapInput: true,
+      remapInputSummary: {
+        principalCount: 1,
+        resourceCount: 1,
+        sha256: "b".repeat(64),
+      },
       ok: false,
       sourceOrgId: orgId,
       sourceSlug: "acme",
@@ -79,6 +85,12 @@ describe("PostgresTenantImportJobStore", () => {
       sourceSlug: "acme",
       objectBytesMode: "metadata_only",
       errorCode: "invalid_tar_archive",
+      hasRemapInput: true,
+      remapInputSummary: {
+        principalCount: 1,
+        resourceCount: 1,
+        sha256: "b".repeat(64),
+      },
       resultSummary: {
         ok: false,
         archiveIssues: [expect.objectContaining({ code: "invalid_tar_archive" })],
@@ -118,6 +130,12 @@ function importJobRow(overrides: Partial<TenantImportJobRow> = {}): TenantImport
     archive_sha256: "a".repeat(64),
     has_conflict_policy_input: true,
     conflict_policy: { rowIdConflicts: "preserve" },
+    has_remap_input: true,
+    remap_input_summary: {
+      principalCount: 1,
+      resourceCount: 1,
+      sha256: "b".repeat(64),
+    },
     ok: true,
     source_org_id: orgId,
     source_slug: "acme",
@@ -180,6 +198,8 @@ interface TenantImportJobRow {
   readonly archive_sha256: string;
   readonly has_conflict_policy_input: boolean;
   readonly conflict_policy: unknown;
+  readonly has_remap_input: boolean;
+  readonly remap_input_summary: unknown;
   readonly ok: boolean;
   readonly source_org_id: string | null;
   readonly source_slug: string | null;

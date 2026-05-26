@@ -24,6 +24,7 @@ const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
 const importJobId = "88888888-8888-4888-8888-888888888888";
 const olderImportJobId = "99999999-9999-4999-8999-999999999999";
+const targetActorId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("registerTenantImportRoutes", () => {
   it("builds a no-write import dry-run plan from an export archive and live target facts", async () => {
@@ -301,6 +302,117 @@ describe("registerTenantImportRoutes", () => {
     await app.close();
   });
 
+  it("accepts base64url remap query input while preserving the raw archive body", async () => {
+    const archive = await buildTenantExportArchive(tenantExportManifest());
+    const auditRecords: unknown[] = [];
+    const importJobs = new InMemoryTenantImportJobStore([]);
+    const remaps = {
+      principals: {
+        [actorId]: targetActorId,
+      },
+      resources: {
+        "mail.message:msg-1": "target-msg-1",
+      },
+    };
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => ({
+        existingRowIds: [],
+        existingNaturalKeys: [],
+        primaryDomain: null,
+      }),
+      importJobs,
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/tenants/acme/import/dry-run?remaps=${encodeQueryJson(remaps)}`,
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body: ImportDryRunResponseBody = response.json();
+    expect(body.plan.operations[0]).toMatchObject({
+      table: "admin_domains",
+      remappedFields: {
+        createdBy: targetActorId,
+      },
+    });
+    expect(body.plan.operations[2]).toMatchObject({
+      table: "resource_classifications",
+      remappedFields: {
+        actorId: targetActorId,
+        resourceId: "target-msg-1",
+      },
+      action: "insert",
+    });
+    expect(body.importJob).toMatchObject({
+      hasRemapInput: true,
+      remapInputSummary: {
+        principalCount: 1,
+        resourceCount: 1,
+      },
+    });
+    expect(String(body.importJob?.remapInputSummary?.["sha256"])).toMatch(/^[a-f0-9]{64}$/u);
+    expect(JSON.stringify(body.importJob)).not.toContain(targetActorId);
+    expect(JSON.stringify(body.importJob)).not.toContain("target-msg-1");
+    expect(importJobs.jobs[0]).toMatchObject({
+      hasRemapInput: true,
+      remapInputSummary: {
+        principalCount: 1,
+        resourceCount: 1,
+      },
+    });
+    expect(importJobs.jobs[0]?.remapInputSummary.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(JSON.stringify(importJobs.jobs[0])).not.toContain(targetActorId);
+    const auditJson = JSON.stringify(auditRecords);
+    expect(auditJson).not.toContain(targetActorId);
+    expect(auditJson).toMatch(/"remapInputSha256":"[a-f0-9]{64}"/u);
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          hasRemapInput: true,
+          remapInputPrincipalCount: 1,
+          remapInputResourceCount: 1,
+        }) as unknown,
+      }),
+    );
+    await app.close();
+  });
+
+  it("rejects invalid remap query input before loading target state", async () => {
+    let loadedTargetState = false;
+    const archive = await buildTenantExportArchive(tenantExportManifest());
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => {
+        loadedTargetState = true;
+        return { existingRowIds: [], existingNaturalKeys: [], primaryDomain: null };
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/tenants/acme/import/dry-run?remaps=${encodeQueryJson({ actors: {} })}`,
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: "Invalid tenant import remaps query.",
+      code: "invalid_request",
+    });
+    expect(loadedTargetState).toBe(false);
+    await app.close();
+  });
+
   it("rejects invalid conflict-policy query before loading target state", async () => {
     let loadedTargetState = false;
     const archive = await buildTenantExportArchive(tenantExportManifest());
@@ -461,6 +573,15 @@ interface ImportDryRunResponseBody {
   readonly plan: {
     readonly operations: readonly Record<string, unknown>[];
   };
+  readonly importJob?: {
+    readonly remapInputSummary?: {
+      readonly sha256?: string | null;
+    };
+  } & Record<string, unknown>;
+}
+
+function encodeQueryJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
 function importJobRecord(overrides: Partial<TenantImportJobRecord> = {}): TenantImportJobRecord {
@@ -475,6 +596,8 @@ function importJobRecord(overrides: Partial<TenantImportJobRecord> = {}): Tenant
     archiveSha256: "a".repeat(64),
     hasConflictPolicyInput: false,
     conflictPolicy: {},
+    hasRemapInput: false,
+    remapInputSummary: { principalCount: 0, resourceCount: 0, sha256: null },
     ok: true,
     sourceOrgId: orgId,
     sourceSlug: "acme",
@@ -576,6 +699,12 @@ class InMemoryTenantImportJobStore implements TenantImportJobStore {
       archiveSha256: input.archiveSha256,
       hasConflictPolicyInput: input.hasConflictPolicyInput,
       conflictPolicy: input.conflictPolicy,
+      hasRemapInput: input.hasRemapInput ?? false,
+      remapInputSummary: input.remapInputSummary ?? {
+        principalCount: 0,
+        resourceCount: 0,
+        sha256: null,
+      },
       ok: input.ok,
       sourceOrgId: input.sourceOrgId ?? null,
       sourceSlug: input.sourceSlug ?? null,

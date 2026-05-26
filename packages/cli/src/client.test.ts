@@ -590,6 +590,36 @@ describe("buildHelixRequest", () => {
         body: archiveBytes,
       },
     });
+
+    expect(
+      buildHelixRequest(
+        {
+          kind: "tenant-import-dry-run",
+          slug: "acme",
+          archive: "./acme.tar",
+          remaps: {
+            principals: {
+              "11111111-1111-4111-8111-111111111111": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "33333333-3333-4333-8333-333333333333": null,
+            },
+            resources: { "mail.message:msg-1": "target-msg-1" },
+          },
+        },
+        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+        archiveBytes,
+      ),
+    ).toEqual({
+      url: "https://helix.example/api/admin/tenants/acme/import/dry-run?remaps=eyJwcmluY2lwYWxzIjp7IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSI6ImFhYWFhYWFhLWFhYWEtNGFhYS04YWFhLWFhYWFhYWFhYWFhYSIsIjMzMzMzMzMzLTMzMzMtNDMzMy04MzMzLTMzMzMzMzMzMzMzMyI6bnVsbH0sInJlc291cmNlcyI6eyJtYWlsLm1lc3NhZ2U6bXNnLTEiOiJ0YXJnZXQtbXNnLTEifX0",
+      init: {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: "Bearer token-1",
+          "content-type": "application/x-tar",
+        },
+        body: archiveBytes,
+      },
+    });
   });
 
   it("builds an action status polling request", () => {

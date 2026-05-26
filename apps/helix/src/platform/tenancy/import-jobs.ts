@@ -6,6 +6,12 @@ import type {
 
 export type TenantImportJobStatus = "succeeded" | "failed";
 
+export interface TenantImportJobRemapInputSummary {
+  readonly principalCount: number;
+  readonly resourceCount: number;
+  readonly sha256: string | null;
+}
+
 export interface TenantImportJobResultSummary {
   readonly ok: boolean;
   readonly archiveIssues: readonly TenantImportJobIssueSummary[];
@@ -73,6 +79,8 @@ export interface TenantImportJobRecord {
   readonly archiveSha256: string;
   readonly hasConflictPolicyInput: boolean;
   readonly conflictPolicy: TenantImportDryRunConflictPolicy;
+  readonly hasRemapInput: boolean;
+  readonly remapInputSummary: TenantImportJobRemapInputSummary;
   readonly ok: boolean;
   readonly sourceOrgId: string | null;
   readonly sourceSlug: string | null;
@@ -98,6 +106,8 @@ export interface CreateTenantImportJobInput {
   readonly archiveSha256: string;
   readonly hasConflictPolicyInput: boolean;
   readonly conflictPolicy: TenantImportDryRunConflictPolicy;
+  readonly hasRemapInput?: boolean | undefined;
+  readonly remapInputSummary?: TenantImportJobRemapInputSummary | undefined;
   readonly ok: boolean;
   readonly sourceOrgId?: string | null | undefined;
   readonly sourceSlug?: string | null | undefined;
@@ -143,6 +153,8 @@ interface TenantImportJobRow {
   readonly archive_sha256: string;
   readonly has_conflict_policy_input: boolean;
   readonly conflict_policy: unknown;
+  readonly has_remap_input: boolean;
+  readonly remap_input_summary: unknown;
   readonly ok: boolean;
   readonly source_org_id: string | null;
   readonly source_slug: string | null;
@@ -173,6 +185,8 @@ export class PostgresTenantImportJobStore implements TenantImportJobStore {
         archive_sha256,
         has_conflict_policy_input,
         conflict_policy,
+        has_remap_input,
+        remap_input_summary,
         ok,
         source_org_id,
         source_slug,
@@ -194,6 +208,8 @@ export class PostgresTenantImportJobStore implements TenantImportJobStore {
         ${input.archiveSha256},
         ${input.hasConflictPolicyInput},
         ${this.sql.json(sqlJson(input.conflictPolicy))},
+        ${input.hasRemapInput ?? false},
+        ${this.sql.json(sqlJson(input.remapInputSummary ?? emptyRemapInputSummary()))},
         ${input.ok},
         ${input.sourceOrgId ?? null},
         ${input.sourceSlug ?? null},
@@ -217,6 +233,8 @@ export class PostgresTenantImportJobStore implements TenantImportJobStore {
         archive_sha256,
         has_conflict_policy_input,
         conflict_policy,
+        has_remap_input,
+        remap_input_summary,
         ok,
         source_org_id,
         source_slug,
@@ -251,6 +269,8 @@ export class PostgresTenantImportJobStore implements TenantImportJobStore {
         archive_sha256,
         has_conflict_policy_input,
         conflict_policy,
+        has_remap_input,
+        remap_input_summary,
         ok,
         source_org_id,
         source_slug,
@@ -289,6 +309,8 @@ export class PostgresTenantImportJobStore implements TenantImportJobStore {
         archive_sha256,
         has_conflict_policy_input,
         conflict_policy,
+        has_remap_input,
+        remap_input_summary,
         ok,
         source_org_id,
         source_slug,
@@ -332,6 +354,8 @@ export function mapTenantImportJobRow(row: TenantImportJobRow | undefined): Tena
     archiveSha256: row.archive_sha256,
     hasConflictPolicyInput: row.has_conflict_policy_input,
     conflictPolicy: importJobConflictPolicy(row.conflict_policy),
+    hasRemapInput: row.has_remap_input,
+    remapInputSummary: importJobRemapInputSummary(row.remap_input_summary),
     ok: row.ok,
     sourceOrgId: row.source_org_id,
     sourceSlug: row.source_slug,
@@ -354,6 +378,13 @@ function importJobConflictPolicy(value: unknown): TenantImportDryRunConflictPoli
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
 }
 
+function importJobRemapInputSummary(value: unknown): TenantImportJobRemapInputSummary {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as TenantImportJobRemapInputSummary;
+  }
+  return emptyRemapInputSummary();
+}
+
 function importJobResultSummary(value: unknown): TenantImportJobResultSummary {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     return value as TenantImportJobResultSummary;
@@ -363,6 +394,10 @@ function importJobResultSummary(value: unknown): TenantImportJobResultSummary {
 
 function sqlJson(value: unknown): postgres.JSONValue {
   return value as postgres.JSONValue;
+}
+
+function emptyRemapInputSummary(): TenantImportJobRemapInputSummary {
+  return { principalCount: 0, resourceCount: 0, sha256: null };
 }
 
 function boundedImportJobHistoryLimit(limit: number | undefined): number {

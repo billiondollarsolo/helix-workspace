@@ -673,6 +673,318 @@ describe("registerTenantImportRoutes", () => {
     await app.close();
   });
 
+  it("roundtrips self-fetch export object bytes through gated import execute", async () => {
+    const reportBytes = Buffer.from("report bytes", "utf8");
+    const deckBytes = Buffer.from("deck bytes", "utf8");
+    const sourceStorage = new RecordingStorageClient();
+    const archive = await buildTenantExportArchive(
+      tenantExportManifest({
+        objects: [
+          {
+            storageKey: "drive/report.txt",
+            byteSize: reportBytes.byteLength,
+            sha256: sha256Hex(reportBytes),
+          },
+          {
+            storageKey: "slides/deck-1/versions/2",
+            byteSize: deckBytes.byteLength,
+            sha256: sha256Hex(deckBytes),
+          },
+        ],
+      }),
+      {
+        includeObjectBytes: true,
+        objectByteDelivery: "self-fetch",
+        presignedUrlExpiresSeconds: 600,
+        storageResolver: async () => ({
+          client: sourceStorage,
+          managedBy: "helix-default",
+          prefix: "tenants/source/",
+        }),
+        now: () => new Date("2026-05-24T10:30:00.000Z"),
+      },
+    );
+    const importJobs = new InMemoryTenantImportJobStore([]);
+    const targetStorage = new RecordingStorageClient();
+    const downloads: unknown[] = [];
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => ({
+        existingRowIds: [],
+        existingNaturalKeys: [],
+        primaryDomain: null,
+      }),
+      importJobs,
+      rowApplyStore: new RecordingRowApplyStore(),
+      storageResolver: async () => ({
+        client: targetStorage,
+        managedBy: "helix-default",
+        prefix: "tenants/acme/",
+      }),
+      auditContinuityStore: new InMemoryTenantImportAuditContinuityStore(),
+      selfFetchDownloader: async (download) => {
+        downloads.push(download);
+        const body =
+          download.storageKey === "drive/report.txt"
+            ? reportBytes
+            : download.storageKey === "slides/deck-1/versions/2"
+              ? deckBytes
+              : undefined;
+        if (body === undefined) {
+          throw new Error(`Unexpected self-fetch storage key: ${download.storageKey}.`);
+        }
+        return {
+          body,
+          contentType: "text/plain",
+          metadata: {
+            "helix-import-self-fetch-test": "ok",
+          },
+        };
+      },
+      auditSink: auditSink([]),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/tenants/acme/import/execute?confirm=EXECUTE_INTERNAL_TENANT_IMPORT&verifiedState=preserve&remaps=${encodeQueryJson(
+        executableRemaps(),
+      )}`,
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(sourceStorage.presignedGets).toEqual([
+      { key: "drive/report.txt", expiresSeconds: 600 },
+      { key: "slides/deck-1/versions/2", expiresSeconds: 600 },
+    ]);
+    expect(sourceStorage.gets).toEqual([]);
+    expect(downloads).toEqual([
+      {
+        storageKey: "drive/report.txt",
+        targetStorageKey: "drive/report.txt",
+        url: "https://storage.example/drive%2Freport.txt?expires=600",
+        expectedByteSize: reportBytes.byteLength,
+        expectedSha256: sha256Hex(reportBytes),
+      },
+      {
+        storageKey: "slides/deck-1/versions/2",
+        targetStorageKey: "slides/deck-1/versions/2",
+        url: "https://storage.example/slides%2Fdeck-1%2Fversions%2F2?expires=600",
+        expectedByteSize: deckBytes.byteLength,
+        expectedSha256: sha256Hex(deckBytes),
+      },
+    ]);
+    expect(targetStorage.puts).toHaveLength(2);
+    expect(targetStorage.puts).toEqual([
+      expect.objectContaining({
+        key: "drive/report.txt",
+        contentType: "text/plain",
+        metadata: expect.objectContaining({
+          "helix-import-source": "self-fetch",
+          "helix-import-source-key": "drive/report.txt",
+          "helix-import-sha256": sha256Hex(reportBytes),
+          "helix-import-self-fetch-test": "ok",
+        }) as unknown,
+      }),
+      expect.objectContaining({
+        key: "slides/deck-1/versions/2",
+        contentType: "text/plain",
+        metadata: expect.objectContaining({
+          "helix-import-source": "self-fetch",
+          "helix-import-source-key": "slides/deck-1/versions/2",
+          "helix-import-sha256": sha256Hex(deckBytes),
+          "helix-import-self-fetch-test": "ok",
+        }) as unknown,
+      }),
+    ]);
+    expect(Buffer.from(targetStorage.puts[0]?.body as Uint8Array).toString("utf8")).toBe(
+      "report bytes",
+    );
+    expect(Buffer.from(targetStorage.puts[1]?.body as Uint8Array).toString("utf8")).toBe(
+      "deck bytes",
+    );
+    expect(targetStorage.puts[0]?.metadata).not.toHaveProperty("helix-import-self-fetch-url");
+    expect(targetStorage.puts[1]?.metadata).not.toHaveProperty("helix-import-self-fetch-url");
+    expect(response.json()).toMatchObject({
+      ok: true,
+      plan: {
+        objectBytes: {
+          mode: "metadata_only",
+          objectCount: 2,
+          totalKnownBytes: reportBytes.byteLength + deckBytes.byteLength,
+        },
+      },
+      execution: {
+        status: "succeeded",
+        objectRestore: {
+          summary: {
+            total: 2,
+            restorable: 2,
+            blocked: 0,
+          },
+          operations: expect.arrayContaining([
+            expect.objectContaining({
+              source: "self_fetch",
+              action: "restore",
+              storageKey: "drive/report.txt",
+              selfFetchUrl: "https://storage.example/drive%2Freport.txt?expires=600",
+            }),
+            expect.objectContaining({
+              source: "self_fetch",
+              action: "restore",
+              storageKey: "slides/deck-1/versions/2",
+              selfFetchUrl: "https://storage.example/slides%2Fdeck-1%2Fversions%2F2?expires=600",
+            }),
+          ]) as unknown,
+        },
+      },
+      importJob: {
+        dryRun: false,
+        status: "succeeded",
+        objectBytesMode: "metadata_only",
+        resultSummary: {
+          execution: {
+            objectRestore: {
+              summary: {
+                total: 2,
+                restorable: 2,
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(importJobs.jobs[0]).toMatchObject({
+      dryRun: false,
+      status: "succeeded",
+      objectBytesMode: "metadata_only",
+      resultSummary: {
+        execution: {
+          objectRestore: {
+            summary: {
+              total: 2,
+              restorable: 2,
+            },
+          },
+        },
+      },
+    });
+    await app.close();
+  });
+
+  it("blocks self-fetch import execute before writes when downloader is missing", async () => {
+    const reportBytes = Buffer.from("report bytes", "utf8");
+    const sourceStorage = new RecordingStorageClient();
+    const archive = await buildTenantExportArchive(
+      tenantExportManifest({
+        objects: [
+          {
+            storageKey: "drive/report.txt",
+            byteSize: reportBytes.byteLength,
+            sha256: sha256Hex(reportBytes),
+          },
+        ],
+      }),
+      {
+        includeObjectBytes: true,
+        objectByteDelivery: "self-fetch",
+        presignedUrlExpiresSeconds: 600,
+        storageResolver: async () => ({
+          client: sourceStorage,
+          managedBy: "helix-default",
+          prefix: "tenants/source/",
+        }),
+      },
+    );
+    const auditRecords: unknown[] = [];
+    const importJobs = new InMemoryTenantImportJobStore([]);
+    const rowApplyStore = new RecordingRowApplyStore();
+    const targetStorage = new RecordingStorageClient();
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => ({
+        existingRowIds: [],
+        existingNaturalKeys: [],
+        primaryDomain: null,
+      }),
+      importJobs,
+      rowApplyStore,
+      storageResolver: async () => ({
+        client: targetStorage,
+        managedBy: "helix-default",
+        prefix: "tenants/acme/",
+      }),
+      auditContinuityStore: new InMemoryTenantImportAuditContinuityStore(),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/tenants/acme/import/execute?confirm=EXECUTE_INTERNAL_TENANT_IMPORT&verifiedState=preserve&remaps=${encodeQueryJson(
+        executableRemaps(),
+      )}`,
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(targetStorage.puts).toEqual([]);
+    expect(rowApplyStore.operations).toEqual([]);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      execution: {
+        status: "blocked",
+        stoppedAt: "preflight",
+        blockers: [
+          expect.objectContaining({
+            code: "self_fetch_downloader_required",
+          }),
+        ],
+        rowApply: null,
+        objectRestore: null,
+        auditContinuity: null,
+      },
+      importJob: {
+        dryRun: false,
+        status: "blocked",
+        ok: false,
+        errorCode: "self_fetch_downloader_required",
+        resultSummary: {
+          execution: {
+            status: "blocked",
+            stoppedAt: "preflight",
+          },
+        },
+      },
+    });
+    expect(importJobs.jobs[0]).toMatchObject({
+      dryRun: false,
+      status: "blocked",
+      ok: false,
+      errorCode: "self_fetch_downloader_required",
+    });
+    expect(auditRecords).not.toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.import.audit_continuity.recorded",
+      }),
+    );
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.import.execution.completed",
+        metadata: expect.objectContaining({
+          status: "blocked",
+          importJobId,
+        }) as unknown,
+      }),
+    );
+    await app.close();
+  });
+
   it("rejects tenant import execute without confirmation before reading target state", async () => {
     let loadedTargetState = false;
     const archive = await buildTenantExportArchive(tenantExportManifest());
@@ -1250,6 +1562,8 @@ class RecordingRowApplyStore implements TenantImportRowApplyStore {
 
 class RecordingStorageClient implements TenantStorageClient {
   readonly gets: string[] = [];
+  readonly presignedGets: { readonly key: string; readonly expiresSeconds: number | undefined }[] =
+    [];
   readonly puts: StorageObject[] = [];
   readonly objects: Map<string, StorageObject>;
 
@@ -1269,6 +1583,16 @@ class RecordingStorageClient implements TenantStorageClient {
 
   async delete(key: string): Promise<void> {
     this.objects.delete(key);
+  }
+
+  async presignGetUrl(
+    key: string,
+    options?: { readonly expiresSeconds?: number | undefined },
+  ): Promise<string> {
+    this.presignedGets.push({ key, expiresSeconds: options?.expiresSeconds });
+    return `https://storage.example/${encodeURIComponent(key)}?expires=${String(
+      options?.expiresSeconds ?? "",
+    )}`;
   }
 }
 

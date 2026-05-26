@@ -14,12 +14,14 @@ const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
 const driveFolderId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const permissionId = "babababa-baba-4bab-8bab-babababababa";
 const driveVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const targetDomainId = "77777777-7777-4777-8777-777777777777";
 const targetDnsRecordId = "88888888-8888-4888-8888-888888888888";
 const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
 const targetDriveFolderId = "12121212-1212-4212-8212-121212121212";
 const targetObjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const targetPermissionId = "dadadada-dada-4dad-8dad-dadadadadada";
 const targetDriveVersionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 describe("PostgresTenantImportRowApplyStore", () => {
@@ -558,6 +560,85 @@ describe("PostgresTenantImportRowApplyStore", () => {
     ]);
   });
 
+  it("inserts permission rows through object row remaps and keeps actor references non-null", async () => {
+    const recording = createRecordingSql([[], [{ id: targetPermissionId }]]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: permissionOperation({
+          row: {
+            resourceId: targetObjectId,
+          },
+          conflictPolicy: {
+            rowId: "preserve",
+            references: {
+              resourceId: "match",
+              actorId: "preserve",
+              grantedByActorId: "null",
+            },
+            state: {},
+          },
+        }),
+        rowIdRemaps: new Map([[objectId, targetObjectId]]),
+      }),
+    ).resolves.toMatchObject({
+      action: "inserted",
+      targetId: targetPermissionId,
+    });
+
+    expect(recording.calls).toHaveLength(2);
+    expect(recording.calls[0]?.text).toContain("from permissions");
+    expect(recording.calls[0]?.text).toContain("for update");
+    expect(recording.calls[1]?.text).toContain("insert into permissions");
+    expect(recording.calls[1]?.values).toEqual([
+      permissionId,
+      targetOrgId,
+      actorId,
+      "object",
+      targetObjectId,
+      "viewer",
+      null,
+      null,
+      "2026-05-24T10:02:00.000Z",
+      "2026-05-24T10:07:00.000Z",
+    ]);
+  });
+
+  it("blocks permission inserts when resource or non-null actor remaps are unavailable", async () => {
+    const recording = createRecordingSql([]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: permissionOperation(),
+      }),
+    ).resolves.toMatchObject({
+      action: "blocked",
+      blockedReason: "resource_id_remap_missing",
+    });
+
+    await expect(
+      store.applyOperation({
+        operation: permissionOperation({
+          conflictPolicy: {
+            rowId: "preserve",
+            references: {
+              resourceId: "match",
+              actorId: "null",
+            },
+            state: {},
+          },
+        }),
+        rowIdRemaps: new Map([[objectId, targetObjectId]]),
+      }),
+    ).resolves.toMatchObject({
+      action: "blocked",
+      blockedReason: "actor_id_remap_missing",
+    });
+    expect(recording.calls).toEqual([]);
+  });
+
   it("rejects unsupported table/kind combinations without issuing SQL", async () => {
     const recording = createRecordingSql([]);
     const store = new PostgresTenantImportRowApplyStore(recording.sql);
@@ -639,6 +720,8 @@ describe("applyTenantImportPlanRows", () => {
       [{ id: targetDriveFolderId }],
       [],
       [{ id: targetObjectId }],
+      [],
+      [{ id: targetPermissionId }],
     ]);
     const store = new PostgresTenantImportRowApplyStore(recording.sql);
 
@@ -666,14 +749,26 @@ describe("applyTenantImportPlanRows", () => {
                 state: {},
               },
             }),
+            permissionOperation({
+              order: 3,
+              conflictPolicy: {
+                rowId: "regenerate",
+                references: {
+                  resourceId: "preserve",
+                  actorId: "preserve",
+                  grantedByActorId: "null",
+                },
+                state: {},
+              },
+            }),
           ],
         },
       }),
     ).resolves.toMatchObject({
       ok: true,
       summary: {
-        total: 2,
-        inserted: 2,
+        total: 3,
+        inserted: 3,
         blocked: 0,
       },
     });
@@ -683,6 +778,8 @@ describe("applyTenantImportPlanRows", () => {
       folderId: targetDriveFolderId,
       name: "report.txt",
     });
+    expect(recording.calls[5]?.text).toContain("insert into permissions");
+    expect(recording.calls[5]?.values).toContain(targetObjectId);
   });
 });
 
@@ -832,6 +929,49 @@ function resourceClassificationOperation(
       source: "explicit",
       reason: "Imported label",
       actorId,
+      createdAt: "2026-05-24T10:02:00.000Z",
+      updatedAt: "2026-05-24T10:07:00.000Z",
+      ...overrides.row,
+    },
+  });
+}
+
+function permissionOperation(
+  overrides: Partial<TenantImportPlanOperation> & {
+    readonly row?: Partial<TenantImportPlanOperation["row"]>;
+    readonly conflictPolicy?: Partial<TenantImportPlanOperation["conflictPolicy"]>;
+  } = {},
+): TenantImportPlanOperation {
+  return operation({
+    order: 4,
+    kind: "upsert_permission",
+    table: "permissions",
+    path: "postgres/data/chunks/permissions/000000.jsonl",
+    sourceId: permissionId,
+    naturalKey: ["object", objectId, actorId, "viewer"],
+    dependsOn: [`objects:${objectId}`],
+    ...overrides,
+    conflictPolicy: {
+      rowId: overrides.conflictPolicy?.rowId ?? "preserve",
+      references: {
+        resourceId: "preserve",
+        actorId: "preserve",
+        grantedByActorId: "preserve",
+        ...overrides.conflictPolicy?.references,
+      },
+      state: {
+        ...overrides.conflictPolicy?.state,
+      },
+    },
+    row: {
+      id: permissionId,
+      orgId: targetOrgId,
+      actorId,
+      resourceType: "object",
+      resourceId: objectId,
+      role: "viewer",
+      grantedByActorId: actorId,
+      expiresAt: null,
       createdAt: "2026-05-24T10:02:00.000Z",
       updatedAt: "2026-05-24T10:07:00.000Z",
       ...overrides.row,

@@ -31,6 +31,7 @@ const otherOrgId = "33333333-3333-4333-8333-333333333333";
 const actorId = "11111111-1111-4111-8111-111111111111";
 const driveFolderId = "99999999-9999-4999-8999-999999999999";
 const exportedObjectId = "77777777-7777-4777-8777-777777777777";
+const permissionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const driveVersionId = "88888888-8888-4888-8888-888888888888";
 
 describe("tenant export archive", () => {
@@ -120,11 +121,13 @@ describe("tenant export archive", () => {
       "postgres/data/chunks/drive_versions/000000.jsonl",
     );
     expect(Object.keys(entries).sort()).toContain("postgres/data/chunks/objects/000000.jsonl");
+    expect(Object.keys(entries).sort()).toContain("postgres/data/chunks/permissions/000000.jsonl");
     expect(rowChunkManifest.includedTables).toEqual([
       "admin_domains",
       "admin_dns_records",
       "drive_folders",
       "objects",
+      "permissions",
       "drive_versions",
       "resource_classifications",
     ]);
@@ -152,6 +155,12 @@ describe("tenant export archive", () => {
         path: "postgres/data/chunks/objects/000000.jsonl",
         rowCount: 1,
         orderBy: ["kind", "storage_key", "id"],
+      }),
+      expect.objectContaining({
+        table: "permissions",
+        path: "postgres/data/chunks/permissions/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["resource_type", "resource_id", "actor_id", "role", "id"],
       }),
       expect.objectContaining({
         table: "drive_versions",
@@ -230,6 +239,20 @@ describe("tenant export archive", () => {
         createdByActorId: actorId,
         metadata: { color: "blue" },
         deletedAt: null,
+        createdAt: "2026-05-24T09:00:00.000Z",
+        updatedAt: "2026-05-24T09:30:00.000Z",
+      },
+    ]);
+    expect(parseJsonl(entries["postgres/data/chunks/permissions/000000.jsonl"] ?? "")).toEqual([
+      {
+        id: permissionId,
+        orgId,
+        actorId,
+        resourceType: "object",
+        resourceId: exportedObjectId,
+        role: "viewer",
+        grantedByActorId: actorId,
+        expiresAt: null,
         createdAt: "2026-05-24T09:00:00.000Z",
         updatedAt: "2026-05-24T09:30:00.000Z",
       },
@@ -448,6 +471,12 @@ describe("tenant export SQL helpers", () => {
         orderBy: ["kind", "storage_key", "id"],
       }),
       expect.objectContaining({
+        table: "permissions",
+        path: "postgres/data/chunks/permissions/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["resource_type", "resource_id", "actor_id", "role", "id"],
+      }),
+      expect.objectContaining({
         table: "drive_versions",
         path: "postgres/data/chunks/drive_versions/000000.jsonl",
         rowCount: 1,
@@ -489,19 +518,29 @@ describe("tenant export SQL helpers", () => {
     expect(recording.calls[3]?.text).toContain("where org_id = ?");
     expect(recording.calls[3]?.text).toContain("order by kind asc, storage_key asc, id asc");
     expect(recording.calls[4]?.text).toContain(
+      "select id, org_id, actor_id, resource_type, resource_id, role",
+    );
+    expect(recording.calls[4]?.text).toContain("from permissions");
+    expect(recording.calls[4]?.text).toContain(
+      "where org_id = ? and resource_type in ('object', 'drive_folder')",
+    );
+    expect(recording.calls[4]?.text).toContain(
+      "order by resource_type asc, resource_id asc, actor_id asc, role asc, id asc",
+    );
+    expect(recording.calls[5]?.text).toContain(
       "select id, org_id, object_id, version_number, storage_key, mime_type",
     );
-    expect(recording.calls[4]?.text).toContain("from drive_versions");
-    expect(recording.calls[4]?.text).toContain("where org_id = ?");
-    expect(recording.calls[4]?.text).toContain(
-      "order by object_id asc, version_number asc, id asc",
-    );
-    expect(recording.calls[5]?.text).toContain(
-      "select id, org_id, resource_type, resource_id, classification, source, reason",
-    );
-    expect(recording.calls[5]?.text).toContain("from resource_classifications");
+    expect(recording.calls[5]?.text).toContain("from drive_versions");
     expect(recording.calls[5]?.text).toContain("where org_id = ?");
     expect(recording.calls[5]?.text).toContain(
+      "order by object_id asc, version_number asc, id asc",
+    );
+    expect(recording.calls[6]?.text).toContain(
+      "select id, org_id, resource_type, resource_id, classification, source, reason",
+    );
+    expect(recording.calls[6]?.text).toContain("from resource_classifications");
+    expect(recording.calls[6]?.text).toContain("where org_id = ?");
+    expect(recording.calls[6]?.text).toContain(
       "order by resource_type asc, resource_id asc, id asc",
     );
     expect(recording.calls.flatMap((call) => call.values).every((value) => value === orgId)).toBe(
@@ -534,6 +573,7 @@ describe("tenant export SQL helpers", () => {
     expect(recording.calls[0]?.text).toContain("from activity where org_id = ?");
     expect(recording.calls[0]?.text).toContain("from admin_domains where org_id = ?");
     expect(recording.calls[0]?.text).toContain("from admin_dns_records where org_id = ?");
+    expect(recording.calls[0]?.text).toContain("from permissions where org_id = ?");
     expect(recording.calls[0]?.text).toContain("from resource_classifications where org_id = ?");
     expect(recording.calls[0]?.text).toContain(
       "from message_attachments join messages on messages.id = message_attachments.message_id where messages.org_id = ?",
@@ -1425,6 +1465,20 @@ function adminDomainChunkSqlResults(): readonly unknown[][] {
         classification: "internal",
         metadata: { folderId: driveFolderId, name: "report.txt" },
         deleted_at: null,
+        created_at: new Date("2026-05-24T09:00:00.000Z"),
+        updated_at: new Date("2026-05-24T09:30:00.000Z"),
+      },
+    ],
+    [
+      {
+        id: permissionId,
+        org_id: orgId,
+        actor_id: actorId,
+        resource_type: "object",
+        resource_id: exportedObjectId,
+        role: "viewer",
+        granted_by_actor_id: actorId,
+        expires_at: null,
         created_at: new Date("2026-05-24T09:00:00.000Z"),
         updated_at: new Date("2026-05-24T09:30:00.000Z"),
       },

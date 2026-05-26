@@ -18,12 +18,14 @@ const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
 const driveFolderId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const permissionId = "babababa-baba-4bab-8bab-babababababa";
 const driveVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const targetDomainId = "77777777-7777-4777-8777-777777777777";
 const targetDnsRecordId = "88888888-8888-4888-8888-888888888888";
 const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
 const targetDriveFolderId = "12121212-1212-4212-8212-121212121212";
 const targetObjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const targetPermissionId = "dadadada-dada-4dad-8dad-dadadadadada";
 const targetDriveVersionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 describe("buildTenantImportPlan", () => {
@@ -56,14 +58,15 @@ describe("buildTenantImportPlan", () => {
         totalKnownBytes: 25,
       },
       summary: {
-        postgresRows: 6,
+        postgresRows: 7,
         adminDomainRows: 1,
         adminDnsRecordRows: 1,
         driveFolderRows: 1,
         objectRows: 1,
+        permissionRows: 1,
         driveVersionRows: 1,
         resourceClassificationRows: 1,
-        operationCount: 6,
+        operationCount: 7,
       },
     });
     expect(plan.operations.map((operation) => operation.kind)).toEqual([
@@ -71,10 +74,11 @@ describe("buildTenantImportPlan", () => {
       "upsert_admin_dns_record",
       "upsert_drive_folder",
       "upsert_object",
+      "upsert_permission",
       "upsert_drive_version",
       "upsert_resource_classification",
     ]);
-    expect(plan.operations.map((operation) => operation.order)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(plan.operations.map((operation) => operation.order)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(plan.operations[1]).toMatchObject({
       table: "admin_dns_records",
       dependsOn: [`admin_domains:${domainId}`],
@@ -121,17 +125,31 @@ describe("buildTenantImportPlan", () => {
     expect(plan.operations[4]?.conflictPolicy).toEqual({
       rowId: "preserve",
       references: {
+        resourceId: "preserve",
+        actorId: "preserve",
+        grantedByActorId: "preserve",
+      },
+      state: {},
+    });
+    expect(plan.operations[4]).toMatchObject({
+      table: "permissions",
+      dependsOn: [`objects:${objectId}`],
+      naturalKey: ["object", objectId, actorId, "viewer"],
+    });
+    expect(plan.operations[5]?.conflictPolicy).toEqual({
+      rowId: "preserve",
+      references: {
         objectId: "preserve",
         createdByActorId: "preserve",
       },
       state: {},
     });
-    expect(plan.operations[4]).toMatchObject({
+    expect(plan.operations[5]).toMatchObject({
       table: "drive_versions",
       dependsOn: [`objects:${objectId}`],
       naturalKey: [objectId, "1"],
     });
-    expect(plan.operations[5]?.conflictPolicy).toEqual({
+    expect(plan.operations[6]?.conflictPolicy).toEqual({
       rowId: "preserve",
       references: {
         actorId: "preserve",
@@ -142,6 +160,7 @@ describe("buildTenantImportPlan", () => {
     expect(plan.steps.map((step) => step.kind)).toEqual([
       "tenant_config",
       "storage_objects",
+      "postgres_rows",
       "postgres_rows",
       "postgres_rows",
       "postgres_rows",
@@ -220,6 +239,11 @@ describe("buildTenantImportPlan", () => {
             targetId: targetObjectId,
           },
           {
+            table: "permissions",
+            naturalKey: ["object", targetObjectId, actorId, "viewer"],
+            targetId: targetPermissionId,
+          },
+          {
             table: "drive_versions",
             naturalKey: [targetObjectId, "1"],
             targetId: targetDriveVersionId,
@@ -234,8 +258,8 @@ describe("buildTenantImportPlan", () => {
     });
 
     expect(plan.summary).toMatchObject({
-      remapCount: 12,
-      conflictCount: 7,
+      remapCount: 13,
+      conflictCount: 8,
     });
     expect(plan.operations[0]).toMatchObject({
       action: "update",
@@ -340,6 +364,33 @@ describe("buildTenantImportPlan", () => {
       metadata: { folderId: targetDriveFolderId, name: "report.txt" },
     });
     expect(plan.operations[4]).toMatchObject({
+      action: "blocked",
+      table: "permissions",
+      sourceId: permissionId,
+      targetId: targetPermissionId,
+      naturalKey: ["object", targetObjectId, actorId, "viewer"],
+      dependsOn: [`objects:${targetObjectId}`],
+      remappedFields: {
+        orgId: targetOrgId,
+        resourceId: targetObjectId,
+        grantedByActorId: null,
+      },
+      conflictPolicy: {
+        rowId: "match",
+        references: {
+          resourceId: "match",
+          actorId: "null",
+          grantedByActorId: "null",
+        },
+        state: {},
+      },
+    });
+    expect(plan.operations[4]?.row).toMatchObject({
+      orgId: targetOrgId,
+      resourceId: targetObjectId,
+      grantedByActorId: null,
+    });
+    expect(plan.operations[5]).toMatchObject({
       action: "update",
       table: "drive_versions",
       sourceId: driveVersionId,
@@ -360,12 +411,12 @@ describe("buildTenantImportPlan", () => {
         state: {},
       },
     });
-    expect(plan.operations[4]?.row).toMatchObject({
+    expect(plan.operations[5]?.row).toMatchObject({
       orgId: targetOrgId,
       objectId: targetObjectId,
       createdByActorId: null,
     });
-    expect(plan.operations[5]).toMatchObject({
+    expect(plan.operations[6]).toMatchObject({
       action: "update",
       table: "resource_classifications",
       sourceId: resourceClassificationId,
@@ -385,7 +436,7 @@ describe("buildTenantImportPlan", () => {
         state: {},
       },
     });
-    expect(plan.operations[5]?.row).toMatchObject({
+    expect(plan.operations[6]?.row).toMatchObject({
       orgId: targetOrgId,
       actorId: null,
       resourceId: targetObjectId,
@@ -544,6 +595,21 @@ describe("buildTenantImportPlan", () => {
     });
     expect(plan.operations[4]).toMatchObject({
       row: {
+        actorId,
+        grantedByActorId: actorId,
+        resourceId: objectId,
+      },
+      conflictPolicy: {
+        references: {
+          actorId: "null",
+          grantedByActorId: "null",
+          resourceId: "preserve",
+        },
+      },
+    });
+    expect(plan.operations[4]?.action).toBe("blocked");
+    expect(plan.operations[5]).toMatchObject({
+      row: {
         createdByActorId: actorId,
         objectId,
       },
@@ -554,7 +620,7 @@ describe("buildTenantImportPlan", () => {
         },
       },
     });
-    expect(plan.operations[5]).toMatchObject({
+    expect(plan.operations[6]).toMatchObject({
       row: {
         actorId,
         resourceId: objectId,
@@ -566,7 +632,7 @@ describe("buildTenantImportPlan", () => {
         },
       },
     });
-    expect(plan.operations[5]?.action).toBe("insert");
+    expect(plan.operations[6]?.action).toBe("insert");
   });
 
   it("returns validation blockers and no operations when the archive rows are invalid", () => {
@@ -663,8 +729,8 @@ describe("buildTenantImportPlan", () => {
         totalKnownBytes: 25,
       },
       summary: {
-        postgresRows: 6,
-        operationCount: 6,
+        postgresRows: 7,
+        operationCount: 7,
       },
     });
     expect(result.plan?.operations.map((operation) => operation.kind)).toEqual([
@@ -672,6 +738,7 @@ describe("buildTenantImportPlan", () => {
       "upsert_admin_dns_record",
       "upsert_drive_folder",
       "upsert_object",
+      "upsert_permission",
       "upsert_drive_version",
       "upsert_resource_classification",
     ]);
@@ -742,6 +809,7 @@ function validImportPlanInput(
     readonly dnsRows?: readonly Record<string, unknown>[];
     readonly driveFolderRows?: readonly Record<string, unknown>[];
     readonly objectRows?: readonly Record<string, unknown>[];
+    readonly permissionRows?: readonly Record<string, unknown>[];
     readonly driveVersionRows?: readonly Record<string, unknown>[];
     readonly resourceClassificationRows?: readonly Record<string, unknown>[];
     readonly objects?: readonly TestStorageObject[];
@@ -775,6 +843,12 @@ function validImportPlanInput(
       path: "postgres/data/chunks/objects/000000.jsonl",
       orderBy: ["kind", "storage_key", "id"],
       rows: input.objectRows ?? [objectRow()],
+    }),
+    chunkFile({
+      table: "permissions",
+      path: "postgres/data/chunks/permissions/000000.jsonl",
+      orderBy: ["resource_type", "resource_id", "actor_id", "role", "id"],
+      rows: input.permissionRows ?? [permissionRow()],
     }),
     chunkFile({
       table: "drive_versions",
@@ -927,6 +1001,22 @@ function driveVersionRow(overrides: Record<string, unknown> = {}): Record<string
     metadata: { preview: "ready" },
     createdByActorId: actorId,
     createdAt: "2026-05-24T09:30:00.000Z",
+    ...overrides,
+  };
+}
+
+function permissionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: permissionId,
+    orgId,
+    actorId,
+    resourceType: "object",
+    resourceId: objectId,
+    role: "viewer",
+    grantedByActorId: actorId,
+    expiresAt: null,
+    createdAt: "2026-05-24T09:00:00.000Z",
+    updatedAt: "2026-05-24T09:30:00.000Z",
     ...overrides,
   };
 }

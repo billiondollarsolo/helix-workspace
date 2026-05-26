@@ -24,6 +24,7 @@ export type TenantExportValidationIssueCode =
   | "duplicate_domain"
   | "duplicate_drive_folder"
   | "duplicate_object_storage_key"
+  | "duplicate_permission"
   | "duplicate_drive_version"
   | "duplicate_resource_classification"
   | "missing_domain_reference"
@@ -51,6 +52,7 @@ export interface TenantExportValidationResult {
     readonly adminDnsRecordRows: number;
     readonly driveFolderRows: number;
     readonly objectRows: number;
+    readonly permissionRows: number;
     readonly driveVersionRows: number;
     readonly resourceClassificationRows: number;
   };
@@ -71,6 +73,7 @@ type TenantExportSupportedPostgresDataChunkTable =
   | "admin_dns_records"
   | "drive_folders"
   | "objects"
+  | "permissions"
   | "drive_versions"
   | "resource_classifications";
 
@@ -156,6 +159,23 @@ const supportedChunks: readonly SupportedChunkDefinition[] = [
     ],
   },
   {
+    table: "permissions",
+    path: "postgres/data/chunks/permissions/000000.jsonl",
+    orderBy: ["resource_type", "resource_id", "actor_id", "role", "id"],
+    fields: [
+      "id",
+      "orgId",
+      "actorId",
+      "resourceType",
+      "resourceId",
+      "role",
+      "grantedByActorId",
+      "expiresAt",
+      "createdAt",
+      "updatedAt",
+    ],
+  },
+  {
     table: "drive_versions",
     path: "postgres/data/chunks/drive_versions/000000.jsonl",
     orderBy: ["object_id", "version_number", "id"],
@@ -201,6 +221,7 @@ const dnsRecordTypes = new Set(["MX", "SPF", "DKIM", "DMARC", "TXT", "CNAME", "A
 const objectKinds = new Set(["file", "mail_attachment", "document", "recording", "other"]);
 const dataClassifications = new Set(["public", "standard", "confidential", "restricted"]);
 const classificationSources = new Set(["default", "explicit", "label", "folder", "heuristic"]);
+const permissionResourceTypes = new Set(["object", "drive_folder"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const sha256Pattern = /^[0-9a-f]{64}$/iu;
 const domainPattern = /^[a-z0-9.-]+$/iu;
@@ -327,6 +348,7 @@ export function validateTenantExportPostgresDataChunks(
   validateDnsRows(rowsByTable, expectedOrgId, issues);
   validateDriveFolderRows(rowsByTable.get("drive_folders") ?? [], issues);
   validateObjectRows(rowsByTable, issues);
+  validatePermissionRows(rowsByTable, issues);
   validateDriveVersionRows(rowsByTable, issues);
   validateResourceClassificationRows(rowsByTable.get("resource_classifications") ?? [], issues);
 
@@ -338,6 +360,7 @@ export function validateTenantExportPostgresDataChunks(
       adminDnsRecordRows: rowsByTable.get("admin_dns_records")?.length ?? 0,
       driveFolderRows: rowsByTable.get("drive_folders")?.length ?? 0,
       objectRows: rowsByTable.get("objects")?.length ?? 0,
+      permissionRows: rowsByTable.get("permissions")?.length ?? 0,
       driveVersionRows: rowsByTable.get("drive_versions")?.length ?? 0,
       resourceClassificationRows: rowsByTable.get("resource_classifications")?.length ?? 0,
     },
@@ -836,6 +859,8 @@ function compareRowsForDefinition(
       return compareDriveFolderRows(previous, current);
     case "objects":
       return compareObjectRows(previous, current);
+    case "permissions":
+      return comparePermissionRows(previous, current);
     case "drive_versions":
       return compareDriveVersionRows(previous, current);
     case "resource_classifications":
@@ -870,6 +895,16 @@ function compareObjectRows(a: JsonRecord, b: JsonRecord): number {
   return (
     compareStrings(stringValue(a.kind), stringValue(b.kind)) ||
     compareStrings(stringValue(a.storageKey), stringValue(b.storageKey)) ||
+    compareStrings(stringValue(a.id), stringValue(b.id))
+  );
+}
+
+function comparePermissionRows(a: JsonRecord, b: JsonRecord): number {
+  return (
+    compareStrings(stringValue(a.resourceType), stringValue(b.resourceType)) ||
+    compareStrings(stringValue(a.resourceId), stringValue(b.resourceId)) ||
+    compareStrings(stringValue(a.actorId), stringValue(b.actorId)) ||
+    compareStrings(stringValue(a.role), stringValue(b.role)) ||
     compareStrings(stringValue(a.id), stringValue(b.id))
   );
 }
@@ -1092,6 +1127,105 @@ function validateObjectRows(
         });
       }
       storageKeys.add(row.storageKey);
+    }
+  });
+}
+
+function validatePermissionRows(
+  rowsByTable: ReadonlyMap<TenantExportSupportedPostgresDataChunkTable, readonly JsonRecord[]>,
+  issues: TenantExportValidationIssue[],
+): void {
+  const objectIds = new Set(
+    (rowsByTable.get("objects") ?? [])
+      .map((row) => row.id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const folderIds = new Set(
+    (rowsByTable.get("drive_folders") ?? [])
+      .map((row) => row.id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const permissionKeys = new Set<string>();
+  const rows = rowsByTable.get("permissions") ?? [];
+
+  rows.forEach((row, index) => {
+    const line = index + 1;
+    validateUuidField(row, "id", "permissions", line, issues);
+    validateUuidField(row, "actorId", "permissions", line, issues);
+    validateUuidField(row, "resourceId", "permissions", line, issues);
+    validateUuidField(row, "grantedByActorId", "permissions", line, issues, {
+      nullable: true,
+    });
+    validateTimestampField(row, "expiresAt", "permissions", line, issues, { nullable: true });
+    validateTimestampField(row, "createdAt", "permissions", line, issues);
+    validateTimestampField(row, "updatedAt", "permissions", line, issues);
+    validateNonEmptyString(row, "role", 200, "permissions", line, issues);
+
+    if (typeof row.resourceType !== "string" || !permissionResourceTypes.has(row.resourceType)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("permissions")?.path ?? "",
+        table: "permissions",
+        line,
+        field: "resourceType",
+        message: "Permission row resourceType is not supported.",
+        actual: row.resourceType,
+      });
+    }
+
+    if (typeof row.resourceType === "string" && typeof row.resourceId === "string") {
+      if (row.resourceType === "object" && !objectIds.has(row.resourceId)) {
+        issues.push({
+          severity: "error",
+          code: "missing_object_reference",
+          path: supportedChunksByTable.get("permissions")?.path ?? "",
+          table: "permissions",
+          line,
+          field: "resourceId",
+          message: "Permission row resourceId must reference an exported objects row.",
+          actual: row.resourceId,
+        });
+      }
+      if (row.resourceType === "drive_folder" && !folderIds.has(row.resourceId)) {
+        issues.push({
+          severity: "error",
+          code: "missing_folder_reference",
+          path: supportedChunksByTable.get("permissions")?.path ?? "",
+          table: "permissions",
+          line,
+          field: "resourceId",
+          message: "Permission row resourceId must reference an exported drive_folders row.",
+          actual: row.resourceId,
+        });
+      }
+    }
+
+    if (
+      typeof row.resourceType === "string" &&
+      typeof row.resourceId === "string" &&
+      typeof row.actorId === "string" &&
+      typeof row.role === "string"
+    ) {
+      const key = `${row.resourceType}\u0000${row.resourceId}\u0000${row.actorId}\u0000${row.role}`;
+      if (permissionKeys.has(key)) {
+        issues.push({
+          severity: "error",
+          code: "duplicate_permission",
+          path: supportedChunksByTable.get("permissions")?.path ?? "",
+          table: "permissions",
+          line,
+          message:
+            "Permission rows must not duplicate resourceType, resourceId, actorId, and role.",
+          actual: {
+            resourceType: row.resourceType,
+            resourceId: row.resourceId,
+            actorId: row.actorId,
+            role: row.role,
+          },
+        });
+      }
+      permissionKeys.add(key);
     }
   });
 }

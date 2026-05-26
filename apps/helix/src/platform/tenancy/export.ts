@@ -337,6 +337,19 @@ interface TenantExportObjectRow {
   readonly updated_at: Date;
 }
 
+interface TenantExportPermissionRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly actor_id: string;
+  readonly resource_type: "object" | "drive_folder";
+  readonly resource_id: string;
+  readonly role: string;
+  readonly granted_by_actor_id: string | null;
+  readonly expires_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
 interface TenantExportDriveFolderRow {
   readonly id: string;
   readonly org_id: string;
@@ -1174,6 +1187,13 @@ export async function buildTenantExportPostgresDataChunkFiles(
     where org_id = ${orgId}
     order by kind asc, storage_key asc, id asc
   `) as unknown as readonly TenantExportObjectRow[];
+  const permissions = (await sql`
+    select id, org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id,
+           expires_at, created_at, updated_at
+    from permissions
+    where org_id = ${orgId} and resource_type in ('object', 'drive_folder')
+    order by resource_type asc, resource_id asc, actor_id asc, role asc, id asc
+  `) as unknown as readonly TenantExportPermissionRow[];
   const driveVersions = (await sql`
     select id, org_id, object_id, version_number, storage_key, mime_type, byte_size, sha256,
            metadata, created_by_actor_id, created_at
@@ -1257,6 +1277,23 @@ export async function buildTenantExportPostgresDataChunkFiles(
         classification: row.classification,
         metadata: row.metadata,
         deletedAt: row.deleted_at?.toISOString() ?? null,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      })),
+    }),
+    buildTenantExportPostgresDataChunkFile({
+      table: "permissions",
+      path: "postgres/data/chunks/permissions/000000.jsonl",
+      orderBy: ["resource_type", "resource_id", "actor_id", "role", "id"],
+      rows: permissions.map((row) => ({
+        id: row.id,
+        orgId: row.org_id,
+        actorId: row.actor_id,
+        resourceType: row.resource_type,
+        resourceId: row.resource_id,
+        role: row.role,
+        grantedByActorId: row.granted_by_actor_id,
+        expiresAt: row.expires_at?.toISOString() ?? null,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
       })),

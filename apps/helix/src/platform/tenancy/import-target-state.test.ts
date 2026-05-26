@@ -9,6 +9,8 @@ const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
 const targetDriveFolderId = "12121212-1212-4212-8212-121212121212";
 const targetObjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const targetDriveVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const targetPermissionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const targetActorId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 
 describe("loadTenantImportTargetStateFromPostgres", () => {
   it("loads deterministic target facts for import dry-run conflict and remap planning", async () => {
@@ -46,6 +48,15 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
           id: targetDriveVersionId,
           object_id: targetObjectId,
           version_number: 1,
+        },
+      ],
+      [
+        {
+          id: targetPermissionId,
+          resource_type: "object",
+          resource_id: targetObjectId,
+          actor_id: targetActorId,
+          role: "viewer",
         },
       ],
       [
@@ -90,6 +101,11 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
           targetId: targetDriveVersionId,
         },
         {
+          table: "permissions",
+          id: targetPermissionId,
+          targetId: targetPermissionId,
+        },
+        {
           table: "resource_classifications",
           id: targetResourceClassificationId,
           targetId: targetResourceClassificationId,
@@ -122,6 +138,11 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
           targetId: targetDriveVersionId,
         },
         {
+          table: "permissions",
+          naturalKey: ["object", targetObjectId, targetActorId, "viewer"],
+          targetId: targetPermissionId,
+        },
+        {
           table: "resource_classifications",
           naturalKey: ["mail.message", "target-msg-1"],
           targetId: targetResourceClassificationId,
@@ -129,7 +150,7 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
       ],
       primaryDomain: "example.com",
     });
-    expect(recording.calls).toHaveLength(6);
+    expect(recording.calls).toHaveLength(7);
     expect(recording.calls[0]?.text).toContain("from admin_domains");
     expect(recording.calls[0]?.text).toContain("where org_id = ?");
     expect(recording.calls[0]?.text).toContain(
@@ -153,12 +174,20 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
     expect(recording.calls[4]?.text).toContain(
       "order by object_id asc, version_number asc, id asc",
     );
-    expect(recording.calls[5]?.text).toContain("from resource_classifications");
-    expect(recording.calls[5]?.text).toContain("where org_id = ?");
+    expect(recording.calls[5]?.text).toContain("from permissions");
     expect(recording.calls[5]?.text).toContain(
+      "where org_id = ? and resource_type in ('object', 'drive_folder')",
+    );
+    expect(recording.calls[5]?.text).toContain(
+      "order by resource_type asc, resource_id asc, actor_id asc, role asc, id asc",
+    );
+    expect(recording.calls[6]?.text).toContain("from resource_classifications");
+    expect(recording.calls[6]?.text).toContain("where org_id = ?");
+    expect(recording.calls[6]?.text).toContain(
       "order by resource_type asc, resource_id asc, id asc",
     );
     expect(recording.calls.flatMap((call) => call.values)).toEqual([
+      targetOrgId,
       targetOrgId,
       targetOrgId,
       targetOrgId,
@@ -176,7 +205,7 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
   });
 
   it("returns empty target facts when the target tenant has no import-relevant rows", async () => {
-    const recording = createRecordingSql([[], [], [], [], [], []]);
+    const recording = createRecordingSql([[], [], [], [], [], [], []]);
 
     await expect(
       loadTenantImportTargetStateFromPostgres({

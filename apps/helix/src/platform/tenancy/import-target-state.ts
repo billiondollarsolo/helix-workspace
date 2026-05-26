@@ -40,6 +40,14 @@ interface TargetDriveVersionRow {
   readonly version_number: number;
 }
 
+interface TargetPermissionRow {
+  readonly id: string;
+  readonly resource_type: string;
+  readonly resource_id: string;
+  readonly actor_id: string;
+  readonly role: string;
+}
+
 interface TargetResourceClassificationRow {
   readonly id: string;
   readonly resource_type: string;
@@ -79,6 +87,12 @@ export async function loadTenantImportTargetStateFromPostgres(
     where org_id = ${input.targetOrgId}
     order by object_id asc, version_number asc, id asc
   `) as unknown as readonly TargetDriveVersionRow[];
+  const permissions = (await input.sql`
+    select id, resource_type, resource_id, actor_id, role
+    from permissions
+    where org_id = ${input.targetOrgId} and resource_type in ('object', 'drive_folder')
+    order by resource_type asc, resource_id asc, actor_id asc, role asc, id asc
+  `) as unknown as readonly TargetPermissionRow[];
   const resourceClassifications = (await input.sql`
     select id, resource_type, resource_id
     from resource_classifications
@@ -150,6 +164,19 @@ export async function loadTenantImportTargetStateFromPostgres(
     existingNaturalKeys.push({
       table: "drive_versions",
       naturalKey: [row.object_id, String(row.version_number)],
+      targetId: row.id,
+    });
+  }
+
+  for (const row of permissions) {
+    existingRowIds.push({
+      table: "permissions",
+      id: row.id,
+      targetId: row.id,
+    });
+    existingNaturalKeys.push({
+      table: "permissions",
+      naturalKey: [row.resource_type, row.resource_id, row.actor_id, row.role],
       targetId: row.id,
     });
   }

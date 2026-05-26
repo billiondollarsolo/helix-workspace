@@ -16,6 +16,7 @@ export type TenantImportPlanPostgresTable =
   | "admin_dns_records"
   | "drive_folders"
   | "objects"
+  | "permissions"
   | "drive_versions"
   | "resource_classifications";
 
@@ -44,6 +45,7 @@ export type TenantImportPlanOperationKind =
   | "upsert_admin_dns_record"
   | "upsert_drive_folder"
   | "upsert_object"
+  | "upsert_permission"
   | "upsert_drive_version"
   | "upsert_resource_classification";
 
@@ -55,6 +57,7 @@ export type TenantImportPlanConflictPolicyReferenceField =
   | "createdBy"
   | "createdByActorId"
   | "actorId"
+  | "grantedByActorId"
   | "ownerActorId"
   | "domainId"
   | "folderId"
@@ -265,6 +268,7 @@ export interface TenantImportPlan {
     readonly adminDnsRecordRows: number;
     readonly driveFolderRows: number;
     readonly objectRows: number;
+    readonly permissionRows: number;
     readonly driveVersionRows: number;
     readonly resourceClassificationRows: number;
     readonly operationCount: number;
@@ -311,6 +315,12 @@ const chunkDefinitions: readonly ChunkDefinition[] = [
     path: "postgres/data/chunks/objects/000000.jsonl",
     operationKind: "upsert_object",
     label: "Plan object metadata rows",
+  },
+  {
+    table: "permissions",
+    path: "postgres/data/chunks/permissions/000000.jsonl",
+    operationKind: "upsert_permission",
+    label: "Plan Drive-visible permission rows",
   },
   {
     table: "drive_versions",
@@ -520,6 +530,7 @@ function planSummary(
     adminDnsRecordRows,
     driveFolderRows,
     objectRows,
+    permissionRows,
     driveVersionRows,
     resourceClassificationRows,
   } = validation.summary;
@@ -529,12 +540,14 @@ function planSummary(
       adminDnsRecordRows +
       driveFolderRows +
       objectRows +
+      permissionRows +
       driveVersionRows +
       resourceClassificationRows,
     adminDomainRows,
     adminDnsRecordRows,
     driveFolderRows,
     objectRows,
+    permissionRows,
     driveVersionRows,
     resourceClassificationRows,
     operationCount,
@@ -593,6 +606,8 @@ function rowCountForTable(
       return validation.summary.driveFolderRows;
     case "objects":
       return validation.summary.objectRows;
+    case "permissions":
+      return validation.summary.permissionRows;
     case "drive_versions":
       return validation.summary.driveVersionRows;
     case "resource_classifications":
@@ -612,6 +627,7 @@ function buildPlanIssues(input: {
   const dnsRows = input.rowsByTable.get("admin_dns_records") ?? [];
   const driveFolderRows = input.rowsByTable.get("drive_folders") ?? [];
   const objectRows = input.rowsByTable.get("objects") ?? [];
+  const permissionRows = input.rowsByTable.get("permissions") ?? [];
   const driveVersionRows = input.rowsByTable.get("drive_versions") ?? [];
   const classificationRows = input.rowsByTable.get("resource_classifications") ?? [];
 
@@ -647,6 +663,28 @@ function buildPlanIssues(input: {
     });
   }
 
+  if (permissionRows.some((row) => row.resourceType === "object")) {
+    issues.push({
+      severity: "warning",
+      code: "object_id_remap_required",
+      table: "permissions",
+      path: tablePath("permissions"),
+      field: "resourceId",
+      message: "Object permission rows depend on object ID mapping before import can apply.",
+    });
+  }
+
+  if (permissionRows.some((row) => row.resourceType === "drive_folder")) {
+    issues.push({
+      severity: "warning",
+      code: "folder_id_remap_required",
+      table: "permissions",
+      path: tablePath("permissions"),
+      field: "resourceId",
+      message: "Drive folder permission rows depend on folder ID mapping before import can apply.",
+    });
+  }
+
   if (objectRows.some((row) => folderIdFromMetadata(row.metadata) !== null)) {
     issues.push({
       severity: "warning",
@@ -663,6 +701,7 @@ function buildPlanIssues(input: {
     domainRows.some((row) => row.createdBy !== null) ||
     driveFolderRows.some((row) => row.ownerActorId !== null || row.createdByActorId !== null) ||
     objectRows.some((row) => row.ownerActorId !== null) ||
+    permissionRows.some((row) => row.actorId !== null || row.grantedByActorId !== null) ||
     driveVersionRows.some((row) => row.createdByActorId !== null) ||
     classificationRows.some((row) => row.actorId !== null)
   ) {
@@ -771,6 +810,40 @@ function buildPlanIssues(input: {
     }
   });
 
+  permissionRows.forEach((row, index) => {
+    const actorId = row.actorId;
+    if (typeof actorId === "string" && input.providedRemaps?.principals?.[actorId] === undefined) {
+      issues.push({
+        severity: "warning",
+        code: "principal_remap_missing",
+        table: "permissions",
+        path: tablePath("permissions"),
+        line: index + 1,
+        sourceId: stringField(row, "id"),
+        field: "actorId",
+        actual: actorId,
+        message: "Permission actor reference has no target principal remap.",
+      });
+    }
+    const grantedByActorId = row.grantedByActorId;
+    if (
+      typeof grantedByActorId === "string" &&
+      input.providedRemaps?.principals?.[grantedByActorId] === undefined
+    ) {
+      issues.push({
+        severity: "warning",
+        code: "principal_remap_missing",
+        table: "permissions",
+        path: tablePath("permissions"),
+        line: index + 1,
+        sourceId: stringField(row, "id"),
+        field: "grantedByActorId",
+        actual: grantedByActorId,
+        message: "Permission grantor reference has no target principal remap.",
+      });
+    }
+  });
+
   classificationRows.forEach((row, index) => {
     const actorId = row.actorId;
     if (typeof actorId === "string" && input.providedRemaps?.principals?.[actorId] === undefined) {
@@ -812,6 +885,17 @@ function buildPlanIssues(input: {
       path: tablePath("resource_classifications"),
       message:
         "Resource classifications should apply after referenced tenant resources and resource ID remaps exist.",
+    });
+  }
+
+  if (permissionRows.length > 0) {
+    issues.push({
+      severity: "warning",
+      code: "resource_reference_deferred",
+      table: "permissions",
+      path: tablePath("permissions"),
+      message:
+        "Permission rows should apply after referenced Drive resources and row ID remaps exist.",
     });
   }
 
@@ -921,6 +1005,10 @@ function buildRemaps(input: {
   }
   for (const row of input.rowsByTable.get("drive_versions") ?? []) {
     addStringSetValue(principalIds, row.createdByActorId);
+  }
+  for (const row of input.rowsByTable.get("permissions") ?? []) {
+    addStringSetValue(principalIds, row.actorId);
+    addStringSetValue(principalIds, row.grantedByActorId);
   }
   for (const row of input.rowsByTable.get("resource_classifications") ?? []) {
     addStringSetValue(principalIds, row.actorId);
@@ -1172,6 +1260,15 @@ function operationActionForRow(
   targetId: string | null,
   providedConflictPolicy: TenantImportDryRunConflictPolicy | undefined,
 ): TenantImportPlanOperationAction {
+  if (table === "permissions") {
+    const actorId = stringField(row, "actorId");
+    if (
+      providedRemaps?.principals?.[actorId] === null ||
+      providedConflictPolicy?.principalReferences === "null"
+    ) {
+      return "blocked";
+    }
+  }
   if (table === "resource_classifications") {
     const resourceKey = resourceReferenceKey(
       stringField(row, "resourceType"),
@@ -1257,6 +1354,29 @@ function remappedFieldsForRow(input: {
       input.providedRemaps?.principals?.[createdByActorId] !== undefined
     ) {
       remapped.createdByActorId = input.providedRemaps.principals[createdByActorId];
+    }
+  }
+  if (input.table === "permissions") {
+    const resourceId = stringField(input.row, "resourceId");
+    remapped.resourceId =
+      permissionResourceTargetId({
+        resourceType: stringField(input.row, "resourceType"),
+        resourceId,
+        folderIdTargets: input.folderIdTargets,
+        objectIdTargets: input.objectIdTargets,
+      }) ?? resourceId;
+    const actorId = input.row.actorId;
+    const actorTargetId =
+      typeof actorId === "string" ? input.providedRemaps?.principals?.[actorId] : undefined;
+    if (typeof actorTargetId === "string") {
+      remapped.actorId = actorTargetId;
+    }
+    const grantedByActorId = input.row.grantedByActorId;
+    if (
+      typeof grantedByActorId === "string" &&
+      input.providedRemaps?.principals?.[grantedByActorId] !== undefined
+    ) {
+      remapped.grantedByActorId = input.providedRemaps.principals[grantedByActorId];
     }
   }
   if (input.table === "resource_classifications") {
@@ -1408,6 +1528,35 @@ function referenceConflictPolicyForRow(input: {
       );
     }
   }
+  if (input.table === "permissions") {
+    const resourceType = stringField(input.row, "resourceType");
+    const resourceId = stringField(input.row, "resourceId");
+    references.resourceId = referencePolicyOverride(
+      "resourceId",
+      permissionResourceTargetId({
+        resourceType,
+        resourceId,
+        folderIdTargets: input.folderIdTargets,
+        objectIdTargets: input.objectIdTargets,
+      }) === null
+        ? "preserve"
+        : "match",
+      input.providedConflictPolicy,
+    );
+    references.actorId = referencePolicyOverride(
+      "actorId",
+      principalReferencePolicy(stringField(input.row, "actorId"), input.providedRemaps),
+      input.providedConflictPolicy,
+    );
+    const grantedByActorId = input.row.grantedByActorId;
+    if (typeof grantedByActorId === "string") {
+      references.grantedByActorId = referencePolicyOverride(
+        "grantedByActorId",
+        principalReferencePolicy(grantedByActorId, input.providedRemaps),
+        input.providedConflictPolicy,
+      );
+    }
+  }
   if (input.table === "resource_classifications") {
     const actorId = input.row.actorId;
     if (typeof actorId === "string") {
@@ -1439,6 +1588,7 @@ function referencePolicyOverride(
     (field === "createdBy" ||
       field === "createdByActorId" ||
       field === "actorId" ||
+      field === "grantedByActorId" ||
       field === "ownerActorId") &&
     fallback === "preserve" &&
     providedConflictPolicy?.principalReferences !== undefined
@@ -1550,6 +1700,13 @@ function naturalKeyForRow(
       return [nullableStringField(row, "parentFolderId") ?? "", stringField(row, "name")];
     case "objects":
       return [stringField(row, "storageKey")];
+    case "permissions":
+      return [
+        stringField(row, "resourceType"),
+        stringField(row, "resourceId"),
+        stringField(row, "actorId"),
+        stringField(row, "role"),
+      ];
     case "drive_versions":
       return [stringField(row, "objectId"), String(numberField(row, "versionNumber"))];
     case "resource_classifications":
@@ -1567,6 +1724,16 @@ function dependsOnForRow(table: TenantImportPlanPostgresTable, row: JsonRecord):
   if (table === "drive_folders") {
     const parentFolderId = nullableStringField(row, "parentFolderId");
     return parentFolderId === null ? [] : [`drive_folders:${parentFolderId}`];
+  }
+  if (table === "permissions") {
+    const resourceType = stringField(row, "resourceType");
+    const resourceId = stringField(row, "resourceId");
+    if (resourceType === "object") {
+      return [`objects:${resourceId}`];
+    }
+    if (resourceType === "drive_folder") {
+      return [`drive_folders:${resourceId}`];
+    }
   }
   return [];
 }
@@ -1653,6 +1820,21 @@ function folderIdFromMetadata(metadata: unknown): string | null {
 
 function resourceReferenceKey(resourceType: string, resourceId: string): string {
   return `${resourceType}:${resourceId}`;
+}
+
+function permissionResourceTargetId(input: {
+  readonly resourceType: string;
+  readonly resourceId: string;
+  readonly folderIdTargets: ReadonlyMap<string, string>;
+  readonly objectIdTargets: ReadonlyMap<string, string>;
+}): string | null {
+  if (input.resourceType === "object") {
+    return input.objectIdTargets.get(input.resourceId) ?? null;
+  }
+  if (input.resourceType === "drive_folder") {
+    return input.folderIdTargets.get(input.resourceId) ?? null;
+  }
+  return null;
 }
 
 function arraysEqual(left: readonly string[], right: readonly string[]): boolean {

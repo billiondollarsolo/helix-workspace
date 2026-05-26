@@ -21,6 +21,7 @@ const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
 const driveFolderId = "99999999-9999-4999-8999-999999999999";
 const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const permissionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const driveVersionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("validateTenantExportPostgresDataChunks", () => {
@@ -37,6 +38,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
         adminDnsRecordRows: 1,
         driveFolderRows: 1,
         objectRows: 1,
+        permissionRows: 1,
         driveVersionRows: 1,
         resourceClassificationRows: 1,
       },
@@ -56,6 +58,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
         adminDnsRecordRows: 0,
         driveFolderRows: 0,
         objectRows: 0,
+        permissionRows: 0,
         driveVersionRows: 0,
         resourceClassificationRows: 0,
       },
@@ -69,6 +72,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
       objectRows: [],
       driveFolderRows: [],
       driveVersionRows: [],
+      permissionRows: [],
       resourceClassificationRows: [],
     });
 
@@ -82,6 +86,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
         adminDnsRecordRows: 0,
         driveFolderRows: 0,
         objectRows: 0,
+        permissionRows: 0,
         driveVersionRows: 0,
         resourceClassificationRows: 0,
       },
@@ -409,6 +414,45 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects invalid permission rows, missing resource references, duplicates, and bad ordering", () => {
+    const input = validValidationInput({
+      permissionRows: [
+        permissionRow({
+          id: "not-a-uuid",
+          resourceId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          actorId: "not-a-uuid",
+          grantedByActorId: "not-a-uuid",
+          expiresAt: "not-a-date",
+        }),
+        permissionRow({
+          id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          resourceType: "calendar",
+          resourceId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          actorId: "not-a-uuid",
+          grantedByActorId: "not-a-uuid",
+          expiresAt: "not-a-date",
+        }),
+        permissionRow({
+          id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        }),
+        permissionRow(),
+      ],
+    });
+
+    const result = validateTenantExportPostgresDataChunks(input);
+
+    expect(issueCodes(result)).toEqual(
+      expect.arrayContaining([
+        "invalid_row_shape",
+        "missing_object_reference",
+        "duplicate_permission",
+        "invalid_chunk_order",
+        "invalid_timestamp",
+      ]),
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects invalid resource classification rows and duplicate identities", () => {
     const input = validValidationInput({
       resourceClassificationRows: [
@@ -459,6 +503,7 @@ function validValidationInput(
     readonly dnsRows?: readonly Record<string, unknown>[];
     readonly driveFolderRows?: readonly Record<string, unknown>[];
     readonly objectRows?: readonly Record<string, unknown>[];
+    readonly permissionRows?: readonly Record<string, unknown>[];
     readonly driveVersionRows?: readonly Record<string, unknown>[];
     readonly resourceClassificationRows?: readonly Record<string, unknown>[];
   } = {},
@@ -490,6 +535,12 @@ function validValidationInput(
       path: "postgres/data/chunks/objects/000000.jsonl",
       orderBy: ["kind", "storage_key", "id"],
       rows: input.objectRows ?? [objectRow()],
+    }),
+    chunkFile({
+      table: "permissions",
+      path: "postgres/data/chunks/permissions/000000.jsonl",
+      orderBy: ["resource_type", "resource_id", "actor_id", "role", "id"],
+      rows: input.permissionRows ?? [permissionRow()],
     }),
     chunkFile({
       table: "drive_versions",
@@ -635,6 +686,22 @@ function driveVersionRow(overrides: Record<string, unknown> = {}): Record<string
     metadata: { name: "report.txt" },
     createdByActorId: actorId,
     createdAt: "2026-05-24T09:30:00.000Z",
+    ...overrides,
+  };
+}
+
+function permissionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: permissionId,
+    orgId,
+    actorId,
+    resourceType: "object",
+    resourceId: objectId,
+    role: "viewer",
+    grantedByActorId: actorId,
+    expiresAt: null,
+    createdAt: "2026-05-24T09:00:00.000Z",
+    updatedAt: "2026-05-24T09:30:00.000Z",
     ...overrides,
   };
 }

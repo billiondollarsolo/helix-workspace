@@ -93,6 +93,8 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
         return this.applyDriveFolder(operation, input.rowIdRemaps);
       case "objects":
         return this.applyObject(operation, input.rowIdRemaps);
+      case "permissions":
+        return this.applyPermission(operation, input.rowIdRemaps);
       case "drive_versions":
         return this.applyDriveVersion(operation, input.rowIdRemaps);
       case "resource_classifications":
@@ -415,6 +417,97 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
     return applied(operation, "inserted", targetId);
   }
 
+  private async applyPermission(
+    operation: TenantImportPlanOperation,
+    rowIdRemaps: ReadonlyMap<string, string> | undefined,
+  ): Promise<TenantImportRowApplyOperationResult> {
+    const row = operation.row;
+    const rowResourceId = stringField(row, "resourceId");
+    const remappedResourceId = rowIdRemaps?.get(rowResourceId);
+    if (
+      remappedResourceId === undefined &&
+      operation.conflictPolicy.references.resourceId === "preserve"
+    ) {
+      return blocked(operation, "resource_id_remap_missing");
+    }
+    const resourceId = remappedResourceId ?? rowResourceId;
+    if (resourceId.length === 0) {
+      return blocked(operation, "resource_id_remap_missing");
+    }
+    const actorId = referenceValue(operation, "actorId");
+    if (actorId === null) {
+      return blocked(operation, "actor_id_remap_missing");
+    }
+    const grantedByActorId = referenceValue(operation, "grantedByActorId");
+
+    if (operation.action === "update") {
+      if (operation.targetId === null) {
+        return blocked(operation, "missing_update_target_id");
+      }
+      const rows = (await this.sql`
+        update permissions
+        set actor_id = ${actorId},
+            resource_type = ${stringField(row, "resourceType")},
+            resource_id = ${resourceId},
+            role = ${stringField(row, "role")},
+            granted_by_actor_id = ${grantedByActorId},
+            expires_at = ${nullableStringField(row, "expiresAt")},
+            updated_at = ${stringField(row, "updatedAt")}
+        where org_id = ${operation.targetOrgId} and id = ${operation.targetId}
+        returning id
+      `) as unknown as readonly ReturnedIdRow[];
+      const targetId = rows[0]?.id;
+      if (targetId === undefined) {
+        return blocked(operation, "update_target_missing");
+      }
+      return applied(operation, "updated", targetId);
+    }
+
+    const existing = (await this.sql`
+      select id
+      from permissions
+      where org_id = ${operation.targetOrgId}
+        and resource_type = ${stringField(row, "resourceType")}
+        and resource_id = ${resourceId}
+        and actor_id = ${actorId}
+        and role = ${stringField(row, "role")}
+      for update
+    `) as unknown as readonly ReturnedIdRow[];
+    if (existing.length > 0) {
+      return blocked(operation, "target_natural_key_conflict");
+    }
+
+    const rows =
+      operation.conflictPolicy.rowId === "regenerate"
+        ? ((await this.sql`
+            insert into permissions
+              (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id, expires_at,
+               created_at, updated_at)
+            values
+              (${operation.targetOrgId}, ${actorId}, ${stringField(row, "resourceType")},
+               ${resourceId}, ${stringField(row, "role")}, ${grantedByActorId},
+               ${nullableStringField(row, "expiresAt")}, ${stringField(row, "createdAt")},
+               ${stringField(row, "updatedAt")})
+            returning id
+          `) as unknown as readonly ReturnedIdRow[])
+        : ((await this.sql`
+            insert into permissions
+              (id, org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id,
+               expires_at, created_at, updated_at)
+            values
+              (${stringField(row, "id")}, ${operation.targetOrgId}, ${actorId},
+               ${stringField(row, "resourceType")}, ${resourceId}, ${stringField(row, "role")},
+               ${grantedByActorId}, ${nullableStringField(row, "expiresAt")},
+               ${stringField(row, "createdAt")}, ${stringField(row, "updatedAt")})
+            returning id
+          `) as unknown as readonly ReturnedIdRow[]);
+    const targetId = rows[0]?.id;
+    if (targetId === undefined) {
+      return blocked(operation, "insert_failed");
+    }
+    return applied(operation, "inserted", targetId);
+  }
+
   private async applyDriveFolder(
     operation: TenantImportPlanOperation,
     rowIdRemaps: ReadonlyMap<string, string> | undefined,
@@ -597,6 +690,7 @@ function isSupportedOperation(operation: TenantImportPlanOperation): boolean {
     (operation.table === "admin_dns_records" && operation.kind === "upsert_admin_dns_record") ||
     (operation.table === "drive_folders" && operation.kind === "upsert_drive_folder") ||
     (operation.table === "objects" && operation.kind === "upsert_object") ||
+    (operation.table === "permissions" && operation.kind === "upsert_permission") ||
     (operation.table === "drive_versions" && operation.kind === "upsert_drive_version") ||
     (operation.table === "resource_classifications" &&
       operation.kind === "upsert_resource_classification")

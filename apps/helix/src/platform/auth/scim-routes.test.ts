@@ -230,6 +230,60 @@ describe("tenant SCIM discovery routes", () => {
     await app.close();
   });
 
+  it("replaces and deletes SCIM Users without local login credential writes", async () => {
+    const store = new FakeScimUserStore([
+      scimUser({ id: "user-1", orgId: "org-1", userName: "casey@example.com" }),
+    ]);
+    const app = fastify();
+    await registerTenantScimRoutes(app, {
+      orgs: orgStore({ acme: orgRecord({ id: "org-1", slug: "acme" }) }),
+      users: store,
+      actorFromRequest,
+    });
+
+    const replaced = await app.inject({
+      method: "PUT",
+      url: "/api/scim/v2/acme/Users/user-1",
+      headers: scimHeaders({ orgId: "org-1", scopes: "scim.users.write" }),
+      payload: {
+        userName: "casey.renamed@example.com",
+        externalId: "okta-789",
+        displayName: "Casey Replaced",
+        active: true,
+        emails: [{ value: "casey.renamed@example.com", primary: true }],
+        name: { givenName: "Casey", familyName: "Replaced" },
+      },
+    });
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/api/scim/v2/acme/Users/user-1",
+      headers: scimHeaders({ orgId: "org-1", scopes: "scim.users.write" }),
+    });
+
+    expect(replaced.statusCode).toBe(200);
+    expect(replaced.json()).toMatchObject({
+      id: "user-1",
+      userName: "casey.renamed@example.com",
+      displayName: "Casey Replaced",
+      externalId: "okta-789",
+      active: true,
+    });
+    expect(deleted.statusCode).toBe(204);
+    expect(store.updated[0]).toMatchObject({
+      orgId: "org-1",
+      id: "user-1",
+      userName: "casey.renamed@example.com",
+      displayName: "Casey Replaced",
+      externalId: "okta-789",
+      email: "casey.renamed@example.com",
+      givenName: "Casey",
+      familyName: "Replaced",
+    });
+    expect(store.deleted).toEqual([{ orgId: "org-1", id: "user-1" }]);
+    expect(store.localLoginCredentialWrites).toBe(0);
+    await app.close();
+  });
+
   it("protects SCIM Users with tenant-scoped provisioning scopes and leaves Groups pending", async () => {
     const app = fastify();
     await registerTenantScimRoutes(app, {
@@ -415,6 +469,42 @@ describe("PostgresScimUserStore", () => {
           updated_at: updatedAt,
         },
       ],
+      [
+        {
+          id: "user-1",
+          org_id: "org-1",
+          email: "casey@example.com",
+          display_name: "Casey Disabled",
+          disabled_at: updatedAt,
+          metadata: {
+            scim: {
+              userName: "casey@example.com",
+              externalId: "okta-456",
+              name: {},
+            },
+          },
+          created_at: createdAt,
+          updated_at: updatedAt,
+        },
+      ],
+      [
+        {
+          id: "user-1",
+          org_id: "org-1",
+          email: "casey@example.com",
+          display_name: "Casey Disabled",
+          disabled_at: updatedAt,
+          metadata: {
+            scim: {
+              userName: "casey@example.com",
+              externalId: "okta-456",
+              name: {},
+            },
+          },
+          created_at: createdAt,
+          updated_at: updatedAt,
+        },
+      ],
     ]);
     const store = new PostgresScimUserStore(recording.sql);
 
@@ -440,11 +530,18 @@ describe("PostgresScimUserStore", () => {
       displayName: "Casey Disabled",
       externalId: "okta-456",
     });
+    await expect(store.deleteUser({ orgId: "org-1", id: "user-1" })).resolves.toMatchObject({
+      id: "user-1",
+      active: false,
+    });
     expect(recording.calls[0]?.text).toContain("from actors");
     expect(recording.calls[0]?.text).toContain("where org_id =");
     expect(recording.calls[2]?.text).toContain("where org_id =");
     expect(recording.calls[3]?.text).toContain("update actors");
     expect(recording.calls[3]?.text).toContain("and type = 'user'");
+    expect(recording.calls[5]?.text).toContain("update actors");
+    expect(recording.calls[5]?.text).toContain("disabled_at =");
+    expect(recording.calls[5]?.text).not.toContain("delete from actors");
   });
 });
 
@@ -469,6 +566,7 @@ class FakeScimUserStore implements ScimUserStore {
   readonly created: CreateScimUserInput[] = [];
   readonly listCalls: ListScimUsersInput[] = [];
   readonly updated: UpdateScimUserInput[] = [];
+  readonly deleted: { readonly orgId: string; readonly id: string }[] = [];
   readonly localLoginCredentialWrites = 0;
 
   constructor(private users: readonly ScimUserRecord[] = []) {}
@@ -514,15 +612,25 @@ class FakeScimUserStore implements ScimUserStore {
     }
     const updated = {
       ...user,
+      ...(input.userName === undefined ? {} : { userName: input.userName }),
       ...(input.active === undefined ? {} : { active: input.active }),
       ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
       ...(input.externalId === undefined ? {} : { externalId: input.externalId }),
+      ...(input.email === undefined ? {} : { email: input.email }),
       ...(input.givenName === undefined ? {} : { givenName: input.givenName }),
       ...(input.familyName === undefined ? {} : { familyName: input.familyName }),
       updatedAt: "2026-05-24T10:05:00.000Z",
     };
     this.users = this.users.map((candidate) => (candidate.id === input.id ? updated : candidate));
     return updated;
+  }
+
+  async deleteUser(input: {
+    readonly orgId: string;
+    readonly id: string;
+  }): Promise<ScimUserRecord | null> {
+    this.deleted.push(input);
+    return this.updateUser({ ...input, active: false });
   }
 }
 

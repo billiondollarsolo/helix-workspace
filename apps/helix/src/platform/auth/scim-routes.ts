@@ -46,9 +46,11 @@ export interface CreateScimUserInput {
 export interface UpdateScimUserInput {
   readonly orgId: string;
   readonly id: string;
+  readonly userName?: string | undefined;
   readonly active?: boolean | undefined;
   readonly displayName?: string | undefined;
   readonly externalId?: string | null | undefined;
+  readonly email?: string | null | undefined;
   readonly givenName?: string | null | undefined;
   readonly familyName?: string | null | undefined;
 }
@@ -63,6 +65,10 @@ export interface ScimUserStore {
   getUser(input: { readonly orgId: string; readonly id: string }): Promise<ScimUserRecord | null>;
   createUser(input: CreateScimUserInput): Promise<ScimUserRecord>;
   updateUser(input: UpdateScimUserInput): Promise<ScimUserRecord | null>;
+  deleteUser(input: {
+    readonly orgId: string;
+    readonly id: string;
+  }): Promise<ScimUserRecord | null>;
 }
 
 export class ScimUserConflictError extends Error {
@@ -109,6 +115,7 @@ const scimCreateUserBody = z.object({
     .optional(),
   userName: z.string().trim().email().max(320),
 });
+const scimPutUserBody = scimCreateUserBody;
 const scimPatchUserBody = z.object({
   Operations: z
     .array(
@@ -340,9 +347,82 @@ export async function registerTenantScimRoutes(
       .send(scimUserResource(user, tenant.slug));
   });
 
+  app.put("/api/scim/v2/:tenantSlug/Users/:userId", async (request, reply) => {
+    const tenant = await resolveActiveScimTenant(request.params, options);
+    if (!tenant.success) {
+      return reply.code(tenant.status).header("content-type", SCIM_JSON).send(tenant.body);
+    }
+    const params = scimUserParams.safeParse(request.params);
+    if (!params.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM User id."));
+    }
+    const auth = await authenticateScimUsersRequest(request, tenant, options, "scim.users.write");
+    if (!auth.success) {
+      return reply.code(auth.status).header("content-type", SCIM_JSON).send(auth.body);
+    }
+    const body = scimPutUserBody.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM User replace request."));
+    }
+    const primaryEmail = scimPrimaryEmail(body.data);
+    const user = await auth.users.updateUser({
+      orgId: tenant.id,
+      id: params.data.userId,
+      userName: normalizeUserName(body.data.userName),
+      displayName: scimDisplayName(body.data),
+      active: body.data.active ?? true,
+      externalId: body.data.externalId ?? null,
+      email: primaryEmail ?? normalizeUserName(body.data.userName),
+      givenName: body.data.name?.givenName ?? null,
+      familyName: body.data.name?.familyName ?? null,
+    });
+    if (user === null) {
+      return reply
+        .code(404)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(404, "SCIM user was not found."));
+    }
+    return reply
+      .code(200)
+      .header("content-type", SCIM_JSON)
+      .send(scimUserResource(user, tenant.slug));
+  });
+
+  app.delete("/api/scim/v2/:tenantSlug/Users/:userId", async (request, reply) => {
+    const tenant = await resolveActiveScimTenant(request.params, options);
+    if (!tenant.success) {
+      return reply.code(tenant.status).header("content-type", SCIM_JSON).send(tenant.body);
+    }
+    const params = scimUserParams.safeParse(request.params);
+    if (!params.success) {
+      return reply
+        .code(400)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(400, "Invalid SCIM User id."));
+    }
+    const auth = await authenticateScimUsersRequest(request, tenant, options, "scim.users.write");
+    if (!auth.success) {
+      return reply.code(auth.status).header("content-type", SCIM_JSON).send(auth.body);
+    }
+    const user = await auth.users.deleteUser({ orgId: tenant.id, id: params.data.userId });
+    if (user === null) {
+      return reply
+        .code(404)
+        .header("content-type", SCIM_JSON)
+        .send(scimError(404, "SCIM user was not found."));
+    }
+    return reply.code(204).send();
+  });
+
   app.route({
-    method: ["PUT", "DELETE"],
-    url: "/api/scim/v2/:tenantSlug/Users/:userId?",
+    method: ["PUT", "PATCH", "DELETE"],
+    url: "/api/scim/v2/:tenantSlug/Users",
     handler: async (request, reply) => {
       const tenant = await resolveActiveScimTenant(request.params, options);
       if (!tenant.success) {
@@ -472,10 +552,12 @@ export class PostgresScimUserStore implements ScimUserStore {
     if (existing === null) {
       return null;
     }
+    const userName = input.userName ?? existing.userName;
     const active = input.active ?? existing.active;
+    const email = input.email === null ? null : (input.email ?? existing.email);
     const displayName = input.displayName ?? existing.displayName;
     const metadata = scimActorMetadata({
-      userName: existing.userName,
+      userName,
       externalId:
         input.externalId === null
           ? undefined
@@ -489,7 +571,8 @@ export class PostgresScimUserStore implements ScimUserStore {
     });
     const rows = (await this.sql`
       update actors
-      set display_name = ${displayName},
+      set email = ${email},
+          display_name = ${displayName},
           disabled_at = ${active ? null : new Date()},
           metadata = metadata || ${this.sql.json(metadata)},
           updated_at = now()
@@ -499,6 +582,13 @@ export class PostgresScimUserStore implements ScimUserStore {
       returning id, org_id, email, display_name, disabled_at, metadata, created_at, updated_at
     `) as unknown as readonly ScimUserRow[];
     return rowOrNull(rows[0]);
+  }
+
+  async deleteUser(input: {
+    readonly orgId: string;
+    readonly id: string;
+  }): Promise<ScimUserRecord | null> {
+    return this.updateUser({ orgId: input.orgId, id: input.id, active: false });
   }
 }
 

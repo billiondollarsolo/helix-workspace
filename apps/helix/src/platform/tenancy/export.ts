@@ -17,6 +17,39 @@ export interface TenantExportTableCount {
   readonly rowCount: number;
 }
 
+export type TenantExportPostgresDataChunkFormat = "jsonl";
+
+export type TenantExportPostgresDataChunkExclusionReason =
+  | "content_body"
+  | "credential_material"
+  | "customer_secret"
+  | "token_material"
+  | "webhook_payload";
+
+export interface TenantExportPostgresDataChunk {
+  readonly table: string;
+  readonly path: string;
+  readonly rowCount: number;
+  readonly byteSize: number;
+  readonly sha256: string;
+  readonly orderBy: readonly string[];
+}
+
+export interface TenantExportPostgresDataChunkExclusion {
+  readonly table: string;
+  readonly reason: TenantExportPostgresDataChunkExclusionReason;
+  readonly detail: string;
+}
+
+export interface TenantExportPostgresDataChunkManifest {
+  readonly version: 1;
+  readonly format: TenantExportPostgresDataChunkFormat;
+  readonly chunks: readonly TenantExportPostgresDataChunk[];
+  readonly includedTables: readonly string[];
+  readonly excludedTables: readonly TenantExportPostgresDataChunkExclusion[];
+  readonly notes: readonly string[];
+}
+
 export interface TenantExportAuditSummary {
   readonly rowCount: number;
   readonly firstEntryAt: string | null;
@@ -49,6 +82,7 @@ export interface TenantExportManifest {
   };
   readonly postgres: {
     readonly rowCounts: readonly TenantExportTableCount[];
+    readonly rowDataChunks: TenantExportPostgresDataChunkManifest;
   };
   readonly auditLog: TenantExportAuditSummary;
 }
@@ -327,6 +361,7 @@ export function buildTenantExportManifest(
     },
     postgres: {
       rowCounts: input.rowCounts,
+      rowDataChunks: buildTenantExportPostgresDataChunkManifest(),
     },
     auditLog: input.auditSummary,
   };
@@ -961,6 +996,10 @@ async function tenantExportArchiveFiles(
       body: stableJson(metadataManifest.postgres.rowCounts),
     },
     {
+      path: "postgres/data/chunks/manifest.json",
+      body: stableJson(metadataManifest.postgres.rowDataChunks),
+    },
+    {
       path: "audit-log/summary.json",
       body: stableJson(metadataManifest.auditLog),
     },
@@ -1001,7 +1040,7 @@ export async function countTenantExportRows(
     union all select 'objects', count(*)::integer from objects where org_id = ${orgId}
     union all select 'threads', count(*)::integer from threads where org_id = ${orgId}
     union all select 'messages', count(*)::integer from messages where org_id = ${orgId}
-    union all select 'message_attachments', count(*)::integer from message_attachments where org_id = ${orgId}
+    union all select 'message_attachments', count(*)::integer from message_attachments join messages on messages.id = message_attachments.message_id where messages.org_id = ${orgId}
     union all select 'permissions', count(*)::integer from permissions where org_id = ${orgId}
     union all select 'activity', count(*)::integer from activity where org_id = ${orgId}
     union all select 'tenant_config_audit', count(*)::integer from tenant_config_audit where org_id = ${orgId}
@@ -1012,8 +1051,8 @@ export async function countTenantExportRows(
     union all select 'assistant_conversations', count(*)::integer from assistant_conversations where org_id = ${orgId}
     union all select 'assistant_messages', count(*)::integer from assistant_messages where org_id = ${orgId}
     union all select 'assistant_memory_preferences', count(*)::integer from assistant_memory_preferences where org_id = ${orgId}
-    union all select 'app_passwords', count(*)::integer from app_passwords where org_id = ${orgId}
-    union all select 'agent_credentials', count(*)::integer from agent_credentials where org_id = ${orgId}
+    union all select 'app_passwords', count(*)::integer from app_passwords join actors on actors.id = app_passwords.actor_id where actors.org_id = ${orgId}
+    union all select 'agent_credentials', count(*)::integer from agent_credentials join actors on actors.id = agent_credentials.actor_id where actors.org_id = ${orgId}
     union all select 'oauth_access_tokens', count(*)::integer from oauth_access_tokens where org_id = ${orgId}
     union all select 'oauth_authorization_codes', count(*)::integer from oauth_authorization_codes where org_id = ${orgId}
     union all select 'outbound_webhooks', count(*)::integer from outbound_webhooks where org_id = ${orgId}
@@ -1209,6 +1248,74 @@ function hasControlCharacter(value: string): boolean {
   return false;
 }
 
+function buildTenantExportPostgresDataChunkManifest(): TenantExportPostgresDataChunkManifest {
+  return {
+    version: 1,
+    format: "jsonl",
+    chunks: [],
+    includedTables: [],
+    excludedTables: [
+      {
+        table: "app_passwords",
+        reason: "credential_material",
+        detail: "App password hashes are credential material and are never exported as row data.",
+      },
+      {
+        table: "agent_credentials",
+        reason: "credential_material",
+        detail: "Agent client secrets, API key hashes, and certificate material require reissue.",
+      },
+      {
+        table: "oauth_access_tokens",
+        reason: "token_material",
+        detail: "OAuth token hashes are ephemeral token material and are not portable.",
+      },
+      {
+        table: "oauth_authorization_codes",
+        reason: "token_material",
+        detail: "Authorization code hashes are short-lived token material and are not portable.",
+      },
+      {
+        table: "outbound_webhooks",
+        reason: "customer_secret",
+        detail: "Webhook secret references and headers require tenant-controlled redaction rules.",
+      },
+      {
+        table: "inbound_webhooks",
+        reason: "customer_secret",
+        detail: "Webhook secret references require tenant-controlled redaction rules.",
+      },
+      {
+        table: "webhook_deliveries",
+        reason: "webhook_payload",
+        detail: "Webhook delivery payloads and signatures can contain customer data and secrets.",
+      },
+      {
+        table: "activity",
+        reason: "content_body",
+        detail: "Audit payloads are summarized separately until redacted row export is available.",
+      },
+      {
+        table: "docs_documents",
+        reason: "content_body",
+        detail:
+          "Document bodies and CRDT state require import-compatible redaction and replay rules.",
+      },
+      {
+        table: "mail_outbound_messages",
+        reason: "content_body",
+        detail:
+          "Mail bodies and recipient payloads require content export policy before row export.",
+      },
+    ],
+    notes: [
+      "This archive declares the future row-data chunk manifest format but emits no row-data chunk files.",
+      "Future chunks are append-only JSONL under postgres/data/chunks/<table>/000000.jsonl.",
+      "Sensitive, credential, token, webhook payload, and content-body tables require explicit redaction before row export.",
+    ],
+  };
+}
+
 function exportReadme(manifest: TenantExportManifest): string {
   const byteLine = manifest.objectInventory.bytesIncluded
     ? "This archive includes object-store bytes under objects/."
@@ -1224,9 +1331,10 @@ function exportReadme(manifest: TenantExportManifest): string {
     "logical object inventory, org-scoped table row counts, and audit-log summary.",
     byteLine,
     "",
-    "It intentionally does not include PostgreSQL row-data chunks, private credentials, token hashes,",
-    "webhook payloads, document/mail bodies, or encrypted customer secrets. Those remain part of the",
-    "full portability export roadmap.",
+    "It includes PostgreSQL row-data chunk metadata at postgres/data/chunks/manifest.json,",
+    "but intentionally emits no row-data chunk files yet. Private credentials, token hashes, webhook",
+    "payloads, document/mail bodies, and encrypted customer secrets remain excluded until explicit",
+    "redaction and import compatibility rules are implemented.",
     "",
   ].join("\n");
 }

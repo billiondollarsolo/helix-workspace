@@ -18,6 +18,7 @@ import {
   type TenantExportJobStore,
   type TenantExportManifest,
   type TenantExportMetrics,
+  type TenantExportPostgresDataChunkManifest,
 } from "./export.js";
 import { registerTenantExportRoutes } from "./export-routes.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
@@ -43,6 +44,7 @@ describe("tenant export archive", () => {
       "config-snapshot.json",
       "manifest.json",
       "objects/inventory.json",
+      "postgres/data/chunks/manifest.json",
       "postgres/data/row-counts.json",
       "postgres/schema.sql",
       "secrets-public.json",
@@ -52,7 +54,35 @@ describe("tenant export archive", () => {
       org: { slug: "acme" },
       objectInventory: { bytesIncluded: false, objectCount: 2 },
     });
+    const rowChunkManifest = JSON.parse(
+      entries["postgres/data/chunks/manifest.json"] ?? "{}",
+    ) as TenantExportPostgresDataChunkManifest;
+    expect(rowChunkManifest).toMatchObject({
+      version: 1,
+      format: "jsonl",
+      chunks: [],
+      includedTables: [],
+    });
+    expect(
+      Object.fromEntries(
+        rowChunkManifest.excludedTables.map((entry) => [entry.table, entry.reason]),
+      ),
+    ).toMatchObject({
+      app_passwords: "credential_material",
+      agent_credentials: "credential_material",
+      oauth_access_tokens: "token_material",
+      oauth_authorization_codes: "token_material",
+      webhook_deliveries: "webhook_payload",
+      docs_documents: "content_body",
+      mail_outbound_messages: "content_body",
+    });
+    expect(
+      Object.keys(entries).some(
+        (path) => path.startsWith("postgres/data/chunks/") && path.endsWith(".jsonl"),
+      ),
+    ).toBe(false);
     expect(entries["README.md"]).toContain("does not include object bytes");
+    expect(entries["README.md"]).toContain("postgres/data/chunks/manifest.json");
     const serialized = archive.bytes.toString("utf8");
     expect(serialized).not.toContain("plaintext-secret");
     expect(serialized).not.toContain("report bytes");
@@ -221,8 +251,22 @@ describe("tenant export SQL helpers", () => {
     expect(recording.calls[0]?.text).toContain("from objects where org_id = ?");
     expect(recording.calls[0]?.text).toContain("from activity where org_id = ?");
     expect(recording.calls[0]?.text).toContain(
+      "from message_attachments join messages on messages.id = message_attachments.message_id where messages.org_id = ?",
+    );
+    expect(recording.calls[0]?.text).toContain(
+      "from app_passwords join actors on actors.id = app_passwords.actor_id where actors.org_id = ?",
+    );
+    expect(recording.calls[0]?.text).toContain(
+      "from agent_credentials join actors on actors.id = agent_credentials.actor_id where actors.org_id = ?",
+    );
+    expect(recording.calls[0]?.text).toContain(
       "from tenant_storage_migration_jobs where org_id = ?",
     );
+    expect(recording.calls[0]?.text).not.toContain("select *");
+    expect(recording.calls[0]?.text).not.toContain("payload ");
+    expect(recording.calls[0]?.text).not.toContain("body ");
+    expect(recording.calls[0]?.text).not.toContain("hash ");
+    expect(recording.calls[0]?.text).not.toContain("secret_ref");
     expect(recording.calls[0]?.text).not.toContain("signup_email_verifications");
     expect(recording.calls[0]?.text).not.toContain("metering_events");
     expect(recording.calls[0]?.values.every((value) => value === orgId)).toBe(true);

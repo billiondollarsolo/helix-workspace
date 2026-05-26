@@ -231,6 +231,7 @@ import {
   PostgresOAuthAppsStore,
   registerAdminOAuthAppsRoutes,
 } from "./platform/admin/oauth-apps.js";
+import { registerTenantConfigAdminRoutes } from "./platform/admin/tenant-config.js";
 import {
   PostgresBillingStore,
   registerAdminBillingRoutes,
@@ -268,7 +269,7 @@ import { tierDefaults } from "./platform/config/tier.js";
 import { evaluateTierReadiness } from "./platform/config/tier-readiness.js";
 import { CoreAppRegistrationPlan } from "./platform/apps/core-apps.js";
 import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
-import { PostgresOrgStore } from "./platform/tenancy/index.js";
+import { PostgresOrgStore, PostgresPlanStore } from "./platform/tenancy/index.js";
 import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
 import {
   evaluateAdminMfa,
@@ -286,9 +287,10 @@ import {
   ScopeToolAccessPolicy,
 } from "./platform/permissions/tool-access.js";
 import {
-  createDefaultTenantStorageResolver,
   createS3CompatibleStorage,
+  createTenantStorageResolver,
 } from "./platform/storage/index.js";
+import { createVaultTenantStorageSecretReaderFromEnv } from "./platform/secrets/index.js";
 import {
   createToolRegistry,
   type RuntimeToolRegistry,
@@ -831,6 +833,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const appPasswordStore = new PostgresAppPasswordStore(sql);
   const adminUsersStore = new PostgresAdminUsersStore(sql);
   const orgStore = new PostgresOrgStore(sql);
+  const planStore = new PostgresPlanStore(sql);
   const tenantIdpConfigStore = new PostgresTenantIdpConfigStore(sql);
   const auditStore = new PostgresAuditStore(sql, {
     onAppend: (record) => {
@@ -1014,7 +1017,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
               }),
           forcePathStyle: true,
         });
-  const driveStorageResolver = createDefaultTenantStorageResolver(driveStorage);
+  const tenantStorageSecretReader = createVaultTenantStorageSecretReaderFromEnv(process.env);
+  const driveStorageResolver = createTenantStorageResolver({
+    defaultClient: driveStorage,
+    loadByoConfig: async (orgId: string) => (await orgStore.findById(orgId))?.byoConfig,
+    ...(tenantStorageSecretReader === undefined ? {} : { secretReader: tenantStorageSecretReader }),
+  });
   const mailStore = new PostgresMailStore(sql, {
     storageResolver: driveStorageResolver,
   });
@@ -1686,6 +1694,17 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     store: new PostgresSecurityPoliciesStore(sql),
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
+  });
+  await registerTenantConfigAdminRoutes(app, {
+    store: orgStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    auditSink: auditStore,
+    storageResolver: driveStorageResolver,
+    plans: planStore,
+    featureFlagEvents: eventBus,
+    onFeatureFlagEventError: (error) => {
+      app.log.error({ error }, "Tenant feature flag change event emission failed");
+    },
   });
   await registerAdminOAuthAppsRoutes(app, {
     store: new PostgresOAuthAppsStore(sql),

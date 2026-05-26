@@ -6,6 +6,10 @@ import {
   InMemoryOAuthClientStore,
   type AccessTokenRecord,
 } from "./platform/auth/oauth.js";
+import { PostgresOAuthStore } from "./platform/auth/postgres-store.js";
+import { PostgresAuditStore } from "./platform/audit/store.js";
+import { PostgresPlatformConfigStore } from "./platform/config/admin.js";
+import { PostgresOrgStore, PostgresPlanStore, type OrgRecord } from "./platform/tenancy/index.js";
 import { InMemoryAgentRateCostLimiter, type AgentLimitBudget } from "./platform/limits/index.js";
 import { registerSearchTools } from "./platform/search/index.js";
 import type { IndexDocument, SearchEngine, SearchRequest, SearchResponse } from "./platform/search/types.js";
@@ -16,6 +20,7 @@ import {
   aiRoutingPolicyFromConfig,
   createAssistantEmbeddingProvider,
   createAssistantProviders,
+  createHelixServer,
   formatAssistantSseEvent,
   getAuditDestinationConfigs,
   getBetterAuthRuntimeConfig,
@@ -35,6 +40,7 @@ const later = new Date("2026-05-20T01:00:00.000Z");
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("mail server env config", () => {
@@ -93,6 +99,62 @@ describe("BetterAuth server env config", () => {
         NODE_ENV: "production",
       }),
     ).toThrow("BETTER_AUTH_SECRET must be at least 32 characters");
+  });
+});
+
+describe("createHelixServer tenant config admin routes", () => {
+  it("registers tenant config read and BYO storage probe endpoints", async () => {
+    const org = orgRecord();
+    vi.stubEnv("BETTER_AUTH_ENABLED", "false");
+    vi.spyOn(PostgresPlatformConfigStore.prototype, "loadOverrides").mockResolvedValue({});
+    vi.spyOn(PostgresOAuthStore.prototype, "findToken").mockResolvedValue(
+      accessToken({
+        token: "tenant-config-token",
+        actorId: "admin-1",
+        orgId: org.id,
+        scopes: ["admin.console.read", "admin.console.write"],
+      }),
+    );
+    vi.spyOn(PostgresOrgStore.prototype, "findById").mockResolvedValue(org);
+    vi.spyOn(PostgresPlanStore.prototype, "findById").mockResolvedValue(null);
+    vi.spyOn(PostgresAuditStore.prototype, "append").mockResolvedValue({
+      id: "audit-1",
+      thisHash: "hash-1",
+    });
+
+    const app = await createHelixServer();
+    try {
+      const headers = {
+        authorization: "Bearer tenant-config-token",
+        "x-helix-mfa-verified": "true",
+      };
+      const read = await app.inject({
+        method: "GET",
+        url: "/api/admin/tenant-config",
+        headers,
+      });
+      expect(read.statusCode).toBe(200);
+      expect(read.json()).toMatchObject({
+        tenantConfig: {
+          orgId: org.id,
+          features: { ai_smart_compose: true },
+        },
+      });
+
+      const storageProbe = await app.inject({
+        method: "POST",
+        url: "/api/admin/tenant-config/byo-storage/test",
+        headers,
+      });
+      expect(storageProbe.statusCode).toBe(200);
+      expect(storageProbe.json()).toMatchObject({
+        health: {
+          status: "degraded",
+        },
+      });
+    } finally {
+      await app.close();
+    }
   });
 });
 
@@ -840,6 +902,26 @@ function accessToken(
     scopes: input.scopes,
     issuedAt: now,
     expiresAt: later,
+  };
+}
+
+function orgRecord(overrides: Partial<OrgRecord> = {}): OrgRecord {
+  return {
+    id: "org-tenant-config",
+    slug: "tenant-config",
+    displayName: "Tenant Config",
+    status: "active",
+    tier: "business",
+    planId: "business",
+    region: "us-east-1",
+    byoConfig: {},
+    featureFlags: { ai_smart_compose: true },
+    quotas: { api_rps_limit: 25 },
+    branding: { display_name_override: "Tenant Config" },
+    suspendedAt: null,
+    softDeletedAt: null,
+    hardDeletedAt: null,
+    ...overrides,
   };
 }
 

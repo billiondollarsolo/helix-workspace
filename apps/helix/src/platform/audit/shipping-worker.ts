@@ -17,7 +17,10 @@ export interface ListAuditShippingRecordsInput {
 
 export interface AuditShippingStore {
   loadAuditShippingCheckpoint(destination: string): Promise<AuditShippingCheckpoint | null>;
-  saveAuditShippingCheckpoint(destination: string, checkpoint: AuditShippingCheckpoint): Promise<void>;
+  saveAuditShippingCheckpoint(
+    destination: string,
+    checkpoint: AuditShippingCheckpoint,
+  ): Promise<void>;
   listAuditShippingRecords(
     input: ListAuditShippingRecordsInput,
   ): Promise<readonly ImmutableAuditActivityRecord[]>;
@@ -65,8 +68,14 @@ export class AuditShippingWorker {
 
   constructor(private readonly options: AuditShippingWorkerOptions) {
     this.destination = options.destination ?? defaultDestination;
-    this.batchSize = positiveInteger(options.batchSize ?? defaultBatchSize, "audit shipping batchSize");
-    this.intervalMs = positiveInteger(options.intervalMs ?? defaultIntervalMs, "audit shipping intervalMs");
+    this.batchSize = positiveInteger(
+      options.batchSize ?? defaultBatchSize,
+      "audit shipping batchSize",
+    );
+    this.intervalMs = positiveInteger(
+      options.intervalMs ?? defaultIntervalMs,
+      "audit shipping intervalMs",
+    );
     this.now = options.now ?? (() => new Date());
   }
 
@@ -104,7 +113,7 @@ export class AuditShippingWorker {
       });
 
       if (records.length > 0) {
-        const shipResult = await this.options.shipper.ship(records);
+        const shippedRecordCount = await shipRecordsByOrg(this.options.shipper, records);
         checkpoint = checkpointFromRecord(lastRecord(records));
         await this.options.store.saveAuditShippingCheckpoint(this.destination, checkpoint);
         const backlog = await this.options.store.getAuditShippingBacklog(checkpoint);
@@ -114,7 +123,7 @@ export class AuditShippingWorker {
           status: "shipped",
           startedAt: startedAt.toISOString(),
           completedAt: completedAt.toISOString(),
-          shippedRecordCount: shipResult.recordCount,
+          shippedRecordCount,
           checkpoint,
           backlog,
           lagSeconds: lagSecondsFor(backlog, completedAt, checkpoint.createdAt),
@@ -172,11 +181,51 @@ export class AuditShippingWorker {
   }
 }
 
+async function shipRecordsByOrg(
+  shipper: AuditBatchShipper,
+  records: readonly ImmutableAuditActivityRecord[],
+): Promise<number> {
+  let shippedRecordCount = 0;
+  for (const group of contiguousOrgGroups(records)) {
+    const result = await shipper.ship(group);
+    shippedRecordCount += result.recordCount;
+  }
+  return shippedRecordCount;
+}
+
+function contiguousOrgGroups(
+  records: readonly ImmutableAuditActivityRecord[],
+): readonly (readonly ImmutableAuditActivityRecord[])[] {
+  const groups: ImmutableAuditActivityRecord[][] = [];
+  let currentGroup: ImmutableAuditActivityRecord[] = [];
+  let currentOrgId: string | undefined;
+
+  for (const record of records) {
+    if (currentGroup.length === 0 || record.orgId === currentOrgId) {
+      currentGroup.push(record);
+      currentOrgId = record.orgId;
+      continue;
+    }
+
+    groups.push(currentGroup);
+    currentGroup = [record];
+    currentOrgId = record.orgId;
+  }
+
+  if (currentGroup.length > 0) {
+    groups.push(currentGroup);
+  }
+
+  return groups;
+}
+
 function checkpointFromRecord(record: ImmutableAuditActivityRecord): AuditShippingCheckpoint {
   return { id: record.id, createdAt: record.createdAt };
 }
 
-function lastRecord(records: readonly ImmutableAuditActivityRecord[]): ImmutableAuditActivityRecord {
+function lastRecord(
+  records: readonly ImmutableAuditActivityRecord[],
+): ImmutableAuditActivityRecord {
   const record = records[records.length - 1];
   if (record === undefined) {
     throw new Error("Expected at least one audit shipping record.");

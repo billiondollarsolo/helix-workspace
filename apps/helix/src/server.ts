@@ -1283,7 +1283,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // Every worker is leader-gated below alongside the other singleton workers.
   const auditDestinationConfigs = getAuditDestinationConfigs(process.env);
   const auditShippingWorkers = auditDestinationConfigs.map((config) => {
-    const shipper = createAuditDestinationShipper(config, { sql });
+    const shipper = createAuditDestinationShipper(config, {
+      sql,
+      tenantStorageResolver: driveStorageResolver,
+    });
     return {
       name: `audit-shipping-${config.destination}`,
       worker: new AuditShippingWorker({

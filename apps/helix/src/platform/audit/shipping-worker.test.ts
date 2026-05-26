@@ -42,6 +42,9 @@ describe("AuditShippingWorker", () => {
       "00000000-0000-4000-8000-000000000001",
       "00000000-0000-4000-8000-000000000002",
     ]);
+    expect(shipper.shippedGroups).toEqual([
+      ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"],
+    ]);
     expect(store.savedCheckpoints).toEqual([
       {
         id: "00000000-0000-4000-8000-000000000002",
@@ -119,6 +122,53 @@ describe("AuditShippingWorker", () => {
       }),
     );
   });
+
+  it("ships mixed-org pages as contiguous org-scoped batches before checkpointing", async () => {
+    const records = [
+      auditRecord("00000000-0000-4000-8000-000000000001", "2026-05-20T00:00:00.000Z", {
+        orgId: "org-a",
+      }),
+      auditRecord("00000000-0000-4000-8000-000000000002", "2026-05-20T00:01:00.000Z", {
+        orgId: "org-a",
+      }),
+      auditRecord("00000000-0000-4000-8000-000000000003", "2026-05-20T00:02:00.000Z", {
+        orgId: "org-b",
+      }),
+      auditRecord("00000000-0000-4000-8000-000000000004", "2026-05-20T00:03:00.000Z", {
+        orgId: "org-a",
+      }),
+    ];
+    const store = new InMemoryAuditShippingStore(records, { recordCount: 0 });
+    const shipper = new RecordingAuditBatchShipper();
+    const worker = new AuditShippingWorker({
+      store,
+      shipper,
+      batchSize: 10,
+      now: fixedNow("2026-05-20T00:04:00.000Z"),
+    });
+
+    const result = await worker.runOnce();
+
+    expect(result).toMatchObject({
+      status: "shipped",
+      shippedRecordCount: 4,
+      checkpoint: {
+        id: "00000000-0000-4000-8000-000000000004",
+        createdAt: "2026-05-20T00:03:00.000Z",
+      },
+    });
+    expect(shipper.shippedGroups).toEqual([
+      ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"],
+      ["00000000-0000-4000-8000-000000000003"],
+      ["00000000-0000-4000-8000-000000000004"],
+    ]);
+    expect(store.savedCheckpoints).toEqual([
+      {
+        id: "00000000-0000-4000-8000-000000000004",
+        createdAt: "2026-05-20T00:03:00.000Z",
+      },
+    ]);
+  });
 });
 
 class InMemoryAuditShippingStore implements AuditShippingStore {
@@ -147,10 +197,12 @@ class InMemoryAuditShippingStore implements AuditShippingStore {
   }
 
   async getAuditShippingBacklog(): Promise<AuditShippingBacklog> {
-    return this.backlog ?? {
-      recordCount: this.records.length,
-      ...(this.records[0] === undefined ? {} : { oldestCreatedAt: this.records[0].createdAt }),
-    };
+    return (
+      this.backlog ?? {
+        recordCount: this.records.length,
+        ...(this.records[0] === undefined ? {} : { oldestCreatedAt: this.records[0].createdAt }),
+      }
+    );
   }
 }
 
@@ -199,8 +251,10 @@ class FailingCheckpointAuditShippingStore implements AuditShippingStore {
 
 class RecordingAuditBatchShipper implements AuditBatchShipper {
   readonly shippedIds: string[] = [];
+  readonly shippedGroups: string[][] = [];
 
   async ship(records: readonly ImmutableAuditActivityRecord[]): Promise<ImmutableAuditShipResult> {
+    this.shippedGroups.push(records.map((record) => record.id));
     this.shippedIds.push(...records.map((record) => record.id));
     return {
       batchId: "batch-1",
@@ -219,7 +273,11 @@ class FailingAuditBatchShipper implements AuditBatchShipper {
   }
 }
 
-function auditRecord(id: string, createdAt: string): ImmutableAuditActivityRecord {
+function auditRecord(
+  id: string,
+  createdAt: string,
+  overrides: Partial<ImmutableAuditActivityRecord> = {},
+): ImmutableAuditActivityRecord {
   return {
     id,
     orgId: "22222222-2222-4222-8222-222222222222",
@@ -229,6 +287,7 @@ function auditRecord(id: string, createdAt: string): ImmutableAuditActivityRecor
     metadata: {},
     thisHash: "c".repeat(64),
     createdAt,
+    ...overrides,
   };
 }
 

@@ -56,7 +56,10 @@ import {
 import { AuthorizationCodeService } from "./platform/auth/authorization-code.js";
 import { registerOAuthRoutes } from "./platform/auth/routes.js";
 import { registerTenantSamlRoutes } from "./platform/auth/saml-routes.js";
-import { registerTenantScimRoutes } from "./platform/auth/scim-routes.js";
+import {
+  PostgresScimUserStore,
+  registerTenantScimRoutes,
+} from "./platform/auth/scim-routes.js";
 import { PostgresTenantIdpConfigStore } from "./platform/auth/tenant-idp-configs.js";
 import {
   appPasswordScopeCatalog,
@@ -843,6 +846,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   };
   const appPasswordStore = new PostgresAppPasswordStore(sql);
   const adminUsersStore = new PostgresAdminUsersStore(sql);
+  const scimUserStore = new PostgresScimUserStore(sql);
   const orgStore = new PostgresOrgStore(sql);
   const planStore = new PostgresPlanStore(sql);
   const tenantIdpConfigStore = new PostgresTenantIdpConfigStore(sql);
@@ -1684,6 +1688,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   });
   await registerTenantScimRoutes(app, {
     orgs: orgStore,
+    users: scimUserStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     documentationUri: process.env.HELIX_SCIM_DOCS_URL ?? "https://docs.helix.example/scim",
   });
   await registerPlatformConfigAdminRoutes(app, {

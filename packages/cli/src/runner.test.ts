@@ -115,6 +115,12 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("--include-object-bytes --metadata-only");
     expect(stdout.output).toContain("queue list get status download");
     expect(stdout.output).toContain("--output --force");
+    expect(stdout.output).toContain("tenant-imports");
+    expect(stdout.output).toContain("dry-run list get status");
+    expect(stdout.output).toContain("--row-id-conflicts --principal-references");
+    expect(stdout.output).toContain("--status --limit --cursor");
+    expect(stdout.output).toContain("tenant-imports ]] && COMPREPLY");
+    expect(stdout.output).toContain('compgen -W "succeeded failed"');
     expect(stdout.output).toContain("--thread-id --add --remove --json");
     expect(stdout.output).toContain("--name --priority --enabled --disabled --criteria --actions");
     expect(stdout.output).toContain("--room-id --before --limit --json");
@@ -149,6 +155,9 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("backup");
     expect(stdout.output).toContain("restore");
     expect(stdout.output).toContain("tenant-exports");
+    expect(stdout.output).toContain("tenant-imports");
+    expect(stdout.output).toContain("dry-run list get status");
+    expect(stdout.output).toContain('-l status -x -a "succeeded failed"');
     expect(stdout.output).toContain("install enable disable uninstall");
     expect(stdout.output).toContain("-l from -x");
     expect(stdout.output).toContain(
@@ -643,6 +652,65 @@ describe("runCli durable tenant export operator commands", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("lists and reads persisted tenant import jobs", async () => {
+    const importJobId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith(`/${importJobId}`)) {
+        return Response.json({ importJob: { id: importJobId, status: "succeeded" } });
+      }
+      return Response.json({ importJobs: [{ id: importJobId, status: "failed" }] });
+    };
+
+    const commands: readonly (readonly string[])[] = [
+      ["admin", "tenant-imports", "list", "acme", "--status", "failed", "--limit", "10"],
+      ["admin", "tenant-imports", "get", "acme", importJobId],
+    ];
+
+    for (const args of commands) {
+      const stdout = new CaptureStream();
+      const stderr = new CaptureStream();
+      await expect(
+        runCli(
+          args,
+          { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+          {
+            stdin: Readable.from([]),
+            stdout,
+            stderr,
+          },
+          fetchImpl,
+        ),
+      ).resolves.toBe(0);
+      expect(stdout.output).toContain("{\n");
+      expect(stderr.output).toBe("");
+    }
+
+    expect(requests).toEqual([
+      {
+        url: "https://helix.example/api/admin/tenants/acme/import/jobs?status=failed&limit=10",
+        init: {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer token-1",
+          },
+        },
+      },
+      {
+        url: `https://helix.example/api/admin/tenants/acme/import/jobs/${importJobId}`,
+        init: {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer token-1",
+          },
+        },
+      },
+    ]);
   });
 });
 

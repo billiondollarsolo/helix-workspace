@@ -276,6 +276,7 @@ import {
   createPostgresTenantExportManifestPlanner,
   loadTenantImportTargetStateFromPostgres,
   PostgresTenantExportJobStore,
+  PostgresTenantImportJobStore,
   PostgresOrgStore,
   PostgresPlanStore,
   registerTenantImportRoutes,
@@ -1040,6 +1041,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const tenantStorageSecretStore = createVaultTenantStorageSecretStoreFromEnv(process.env);
   const tenantStorageMigrationJobStore = new PostgresTenantStorageMigrationJobStore(sql);
   const tenantExportJobStore = new PostgresTenantExportJobStore(sql);
+  const tenantImportJobStore = new PostgresTenantImportJobStore(sql);
   const driveStorageResolver = createTenantStorageResolver({
     defaultClient: driveStorage,
     loadByoConfig: async (orgId: string) => (await orgStore.findById(orgId))?.byoConfig,
@@ -1842,6 +1844,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerTenantImportRoutes(app, {
     orgs: orgStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    importJobs: tenantImportJobStore,
     targetStateLoader: (org) =>
       loadTenantImportTargetStateFromPostgres({
         sql,

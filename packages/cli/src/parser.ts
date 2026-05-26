@@ -89,6 +89,14 @@ export type HelixCommand =
       readonly archive: string;
       readonly conflictPolicy?: TenantImportDryRunConflictPolicy;
     }
+  | {
+      readonly kind: "tenant-import-list";
+      readonly slug: string;
+      readonly status?: TenantImportJobStatus;
+      readonly limit?: number;
+      readonly cursor?: string;
+    }
+  | { readonly kind: "tenant-import-status"; readonly slug: string; readonly jobId: string }
   | { readonly kind: "backup-create" }
   | { readonly kind: "restore-from"; readonly backupId: string; readonly encrypted?: boolean }
   | { readonly kind: "reindex-all" }
@@ -120,6 +128,7 @@ export type TenantStorageMigrationStatus =
   | "failed"
   | "dry_run";
 export type TenantExportJobStatus = "queued" | "running" | "succeeded" | "failed";
+export type TenantImportJobStatus = "succeeded" | "failed";
 
 export interface TenantImportDryRunConflictPolicy {
   readonly rowIdConflicts?: "regenerate" | "preserve" | undefined;
@@ -2257,9 +2266,47 @@ function parseAdminTenantImportsCommand(
   switch (action) {
     case "dry-run":
       return parseTenantImportDryRunCommand(args[0], args[1], args.slice(2));
+    case "list":
+      return parseTenantImportListCommand(args[0], args.slice(1));
+    case "status":
+    case "get":
+      return parseTenantImportStatusCommand(args[0], args.slice(1));
     default:
       throw new CliUsageError(adminTenantImportsUsage);
   }
+}
+
+function parseTenantImportListCommand(
+  slug: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  if (slug === undefined || slug.startsWith("-")) {
+    throw new CliUsageError(adminTenantImportsListUsage);
+  }
+  const input: {
+    status?: TenantImportJobStatus;
+    limit?: number;
+    cursor?: string;
+  } = {};
+  parseAdminGetFlags(args, adminTenantImportsListUsage, {
+    strings: new Map([["--cursor", "cursor"]]),
+    numbers: new Map([["--limit", "limit"]]),
+    booleans: new Map<string, string>(),
+    enums: new Map([["--status", tenantImportJobStatuses]]),
+    enumFields: new Map([["--status", "status"]]),
+    input,
+  });
+  return { kind: "tenant-import-list", slug, ...input };
+}
+
+function parseTenantImportStatusCommand(
+  slug: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  if (slug === undefined || slug.startsWith("-") || args.length !== 1 || args[0] === undefined) {
+    throw new CliUsageError(adminTenantImportsStatusUsage);
+  }
+  return { kind: "tenant-import-status", slug, jobId: args[0] };
 }
 
 function parseTenantImportDryRunCommand(
@@ -2303,9 +2350,14 @@ function parseTenantImportDryRunCommand(
   };
 }
 
-const adminTenantImportsUsage = "Usage: helix admin tenant-imports dry-run <slug> <archive-path>";
+const adminTenantImportsUsage =
+  "Usage: helix admin tenant-imports <dry-run|list|status|get> <slug> [options]";
 const adminTenantImportsDryRunUsage =
   "Usage: helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>]";
+const adminTenantImportsListUsage =
+  "Usage: helix admin tenant-imports list <slug> [--status <succeeded|failed>] [--limit <number>] [--cursor <cursor>]";
+const adminTenantImportsStatusUsage =
+  "Usage: helix admin tenant-imports <status|get> <slug> <job-id>";
 
 const tenantImportConflictPolicyFlags = new Map<string, keyof TenantImportDryRunConflictPolicy>([
   ["--row-id-conflicts", "rowIdConflicts"],
@@ -2431,6 +2483,7 @@ const tenantExportJobStatuses = new Set<TenantExportJobStatus>([
   "succeeded",
   "failed",
 ]);
+const tenantImportJobStatuses = new Set<TenantImportJobStatus>(["succeeded", "failed"]);
 
 function parseBackupCommand(
   action: string | undefined,
@@ -3220,6 +3273,8 @@ export const usage = `Usage:
   helix admin tenant-exports status <slug> <job-id>
   helix admin tenant-exports download <slug> <job-id> --output <path> [--force]
   helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>]
+  helix admin tenant-imports list <slug> [--status <succeeded|failed>] [--limit <number>] [--cursor <cursor>]
+  helix admin tenant-imports <status|get> <slug> <job-id>
   helix backup create
   helix restore --from <backup-id> [--encrypted]
   helix reindex --all

@@ -155,6 +155,22 @@ export function buildHelixRequest(
         input,
         "application/x-tar",
       );
+    case "tenant-import-list":
+      return createRequest(
+        env,
+        "GET",
+        withQuery(`/api/admin/tenants/${encodeURIComponent(command.slug)}/import/jobs`, {
+          status: command.status,
+          limit: command.limit,
+          cursor: command.cursor,
+        }),
+      );
+    case "tenant-import-status":
+      return createRequest(
+        env,
+        "GET",
+        `/api/admin/tenants/${encodeURIComponent(command.slug)}/import/jobs/${encodeURIComponent(command.jobId)}`,
+      );
     case "backup-create":
       return createRequest(env, "POST", "/api/admin/backups", {});
     case "restore-from":

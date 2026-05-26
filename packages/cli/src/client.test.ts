@@ -436,6 +436,36 @@ describe("buildHelixRequest", () => {
     });
   });
 
+  it("builds tenant import job readback operator requests", () => {
+    const importJobId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+    expect(
+      buildHelixRequest(
+        {
+          kind: "tenant-import-list",
+          slug: "acme",
+          status: "failed",
+          limit: 10,
+          cursor: "cursor-1",
+        },
+        { HELIX_BASE_URL: "https://helix.example" },
+      ),
+    ).toMatchObject({
+      url: "https://helix.example/api/admin/tenants/acme/import/jobs?status=failed&limit=10&cursor=cursor-1",
+      init: { method: "GET" },
+    });
+
+    expect(
+      buildHelixRequest(
+        { kind: "tenant-import-status", slug: "acme", jobId: importJobId },
+        { HELIX_BASE_URL: "https://helix.example" },
+      ),
+    ).toMatchObject({
+      url: `https://helix.example/api/admin/tenants/acme/import/jobs/${importJobId}`,
+      init: { method: "GET" },
+    });
+  });
+
   it("builds tier update requests against admin platform config", () => {
     expect(
       buildHelixRequest(

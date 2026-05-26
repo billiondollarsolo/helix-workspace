@@ -8,6 +8,12 @@ import {
   type TenantExportPostgresDataChunkFile,
 } from "./export.js";
 import { registerTenantImportRoutes } from "./import-routes.js";
+import type {
+  CreateTenantImportJobInput,
+  ListTenantImportJobsInput,
+  TenantImportJobRecord,
+  TenantImportJobStore,
+} from "./import-jobs.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -16,6 +22,8 @@ const actorId = "11111111-1111-4111-8111-111111111111";
 const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
+const importJobId = "88888888-8888-4888-8888-888888888888";
+const olderImportJobId = "99999999-9999-4999-8999-999999999999";
 
 describe("registerTenantImportRoutes", () => {
   it("builds a no-write import dry-run plan from an export archive and live target facts", async () => {
@@ -89,6 +97,124 @@ describe("registerTenantImportRoutes", () => {
         }) as unknown,
       }),
     );
+    await app.close();
+  });
+
+  it("persists import dry-run job history without storing archive bytes", async () => {
+    const archive = Buffer.from("not-a-real-tar", "utf8");
+    const importJobs = new InMemoryTenantImportJobStore([]);
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => ({
+        existingRowIds: [],
+        existingNaturalKeys: [],
+        primaryDomain: null,
+      }),
+      importJobs,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/import/dry-run?rowIdConflicts=preserve",
+      headers: { "content-type": "application/x-tar" },
+      payload: archive,
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      importJob: {
+        id: importJobId,
+        status: "succeeded",
+        dryRun: true,
+        ok: false,
+        archiveByteSize: archive.byteLength,
+        archiveSha256: createHash("sha256").update(archive).digest("hex"),
+        hasConflictPolicyInput: true,
+        conflictPolicy: { rowIdConflicts: "preserve" },
+        errorCode: "invalid_tar_archive",
+        resultSummary: {
+          ok: false,
+          archiveIssues: [expect.objectContaining({ code: "invalid_tar_archive" })],
+          plan: null,
+        },
+      },
+    });
+    expect(importJobs.jobs[0]).toMatchObject({
+      status: "succeeded",
+      ok: false,
+      errorCode: "invalid_tar_archive",
+    });
+    expect(JSON.stringify(importJobs.jobs[0])).not.toContain("not-a-real-tar");
+    await app.close();
+  });
+
+  it("lists and reads persisted import dry-run job history", async () => {
+    const importJobs = new InMemoryTenantImportJobStore([
+      importJobRecord({
+        id: importJobId,
+        createdAt: new Date("2026-05-24T10:02:00.000Z"),
+        updatedAt: new Date("2026-05-24T10:02:00.000Z"),
+        completedAt: new Date("2026-05-24T10:02:00.000Z"),
+      }),
+      importJobRecord({
+        id: olderImportJobId,
+        status: "failed",
+        ok: false,
+        createdAt: new Date("2026-05-24T10:01:00.000Z"),
+        updatedAt: new Date("2026-05-24T10:01:00.000Z"),
+        completedAt: new Date("2026-05-24T10:01:00.000Z"),
+      }),
+    ]);
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => ({
+        existingRowIds: [],
+        existingNaturalKeys: [],
+        primaryDomain: null,
+      }),
+      importJobs,
+    });
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/import/jobs?status=succeeded&limit=1",
+    });
+    const statusResponse = await app.inject({
+      method: "GET",
+      url: `/api/admin/tenants/acme/import/jobs/${importJobId}`,
+    });
+
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toMatchObject({
+      importJobs: [
+        {
+          id: importJobId,
+          status: "succeeded",
+          dryRun: true,
+          sourceOrgId: orgId,
+          sourceSlug: "acme",
+          objectBytesMode: "metadata_only",
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(statusResponse.statusCode).toBe(200);
+    expect(statusResponse.json()).toMatchObject({
+      importJob: {
+        id: importJobId,
+        resultSummary: {
+          ok: true,
+          plan: {
+            source: { orgId, slug: "acme" },
+          },
+        },
+      },
+    });
     await app.close();
   });
 
@@ -337,6 +463,70 @@ interface ImportDryRunResponseBody {
   };
 }
 
+function importJobRecord(overrides: Partial<TenantImportJobRecord> = {}): TenantImportJobRecord {
+  const createdAt = new Date("2026-05-24T10:00:00.000Z");
+  return {
+    id: importJobId,
+    orgId,
+    status: "succeeded",
+    dryRun: true,
+    requestedByActorId: actorId,
+    archiveByteSize: 1024,
+    archiveSha256: "a".repeat(64),
+    hasConflictPolicyInput: false,
+    conflictPolicy: {},
+    ok: true,
+    sourceOrgId: orgId,
+    sourceSlug: "acme",
+    sourceGeneratedAt: new Date("2026-05-24T09:30:00.000Z"),
+    objectBytesMode: "metadata_only",
+    issueCount: 0,
+    operationCount: 3,
+    conflictCount: 0,
+    remapCount: 1,
+    errorCode: null,
+    errorMessage: null,
+    resultSummary: {
+      ok: true,
+      archiveIssues: [],
+      plan: {
+        source: {
+          orgId,
+          slug: "acme",
+          generatedAt: "2026-05-24T09:30:00.000Z",
+        },
+        target: {
+          orgId,
+          slug: "acme",
+          rewritesOrgId: false,
+        },
+        objectBytes: {
+          mode: "metadata_only",
+          objectCount: 0,
+          totalKnownBytes: 0,
+        },
+        summary: {
+          postgresRows: 3,
+          adminDomainRows: 1,
+          adminDnsRecordRows: 1,
+          resourceClassificationRows: 1,
+          operationCount: 3,
+          remapCount: 1,
+          conflictCount: 0,
+        },
+        issueCount: 0,
+        issues: [],
+        conflictCount: 0,
+        conflicts: [],
+      },
+    },
+    completedAt: createdAt,
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides,
+  };
+}
+
 function orgRecord(): OrgRecord {
   return {
     id: orgId,
@@ -365,6 +555,72 @@ class InMemoryOrgStore implements Pick<OrgStore, "findBySlug"> {
 
   async findBySlug(slug: string): Promise<OrgRecord | null> {
     return this.#orgs.find((org) => org.slug === slug) ?? null;
+  }
+}
+
+class InMemoryTenantImportJobStore implements TenantImportJobStore {
+  readonly jobs: TenantImportJobRecord[];
+
+  constructor(jobs: readonly TenantImportJobRecord[]) {
+    this.jobs = [...jobs];
+  }
+
+  async create(input: CreateTenantImportJobInput): Promise<TenantImportJobRecord> {
+    const now = new Date("2026-05-24T10:05:00.000Z");
+    const job = importJobRecord({
+      id: importJobId,
+      orgId: input.orgId,
+      status: input.status ?? "succeeded",
+      requestedByActorId: input.requestedByActorId ?? null,
+      archiveByteSize: input.archiveByteSize,
+      archiveSha256: input.archiveSha256,
+      hasConflictPolicyInput: input.hasConflictPolicyInput,
+      conflictPolicy: input.conflictPolicy,
+      ok: input.ok,
+      sourceOrgId: input.sourceOrgId ?? null,
+      sourceSlug: input.sourceSlug ?? null,
+      sourceGeneratedAt: input.sourceGeneratedAt ?? null,
+      objectBytesMode: input.objectBytesMode ?? null,
+      issueCount: input.issueCount,
+      operationCount: input.operationCount,
+      conflictCount: input.conflictCount,
+      remapCount: input.remapCount,
+      errorCode: input.errorCode ?? null,
+      errorMessage: input.errorMessage ?? null,
+      resultSummary: input.resultSummary,
+      completedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.jobs.unshift(job);
+    return job;
+  }
+
+  async findByIdForOrg(input: {
+    readonly id: string;
+    readonly orgId: string;
+  }): Promise<TenantImportJobRecord | null> {
+    return this.jobs.find((job) => job.id === input.id && job.orgId === input.orgId) ?? null;
+  }
+
+  async listForOrg(input: ListTenantImportJobsInput): Promise<readonly TenantImportJobRecord[]> {
+    return this.jobs
+      .filter((job) => job.orgId === input.orgId)
+      .filter((job) => input.status === undefined || job.status === input.status)
+      .filter((job) => {
+        if (input.cursor === undefined) {
+          return true;
+        }
+        return (
+          job.createdAt.getTime() < input.cursor.createdAt.getTime() ||
+          (job.createdAt.getTime() === input.cursor.createdAt.getTime() && job.id < input.cursor.id)
+        );
+      })
+      .sort((left, right) => {
+        const byTime = right.createdAt.getTime() - left.createdAt.getTime();
+        return byTime === 0 ? right.id.localeCompare(left.id) : byTime;
+      })
+      .slice(0, input.limit ?? 50);
   }
 }
 

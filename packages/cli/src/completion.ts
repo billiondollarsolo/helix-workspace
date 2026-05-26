@@ -139,6 +139,7 @@ const storageMigrationStatusValues = [
   "dry_run",
 ] as const;
 const tenantExportJobStatusValues = ["queued", "running", "succeeded", "failed"] as const;
+const tenantImportJobStatusValues = ["succeeded", "failed"] as const;
 
 const mailActionFlags: Record<string, readonly string[]> = {
   send: ["--to", "--cc", "--bcc", "--from", "--subject", "--body", "--html", "--json"],
@@ -393,7 +394,7 @@ const adminFamilyActions: Record<string, readonly string[]> = {
   storage: ["test"],
   "storage-migrations": ["list", "request", "get", "status", "cutover"],
   "tenant-exports": ["queue", "list", "get", "status", "download"],
-  "tenant-imports": ["dry-run"],
+  "tenant-imports": ["dry-run", "list", "get", "status"],
 };
 
 const adminActionFlags: Record<string, readonly string[]> = {
@@ -438,6 +439,9 @@ const adminActionFlags: Record<string, readonly string[]> = {
     "--verified-state",
     "--primary-domain",
   ],
+  "tenant-imports:list": ["--status", "--limit", "--cursor"],
+  "tenant-imports:get": [],
+  "tenant-imports:status": [],
 };
 
 const dynamicToolIdsScript = String.raw`command helix tool list --source openapi 2>/dev/null | node -e 'let input = ""; process.stdin.on("data", (chunk) => input += chunk); process.stdin.on("end", () => { try { const parsed = JSON.parse(input); for (const tool of Array.isArray(parsed.tools) ? parsed.tools : []) { if (tool && typeof tool.id === "string") console.log(tool.id); } } catch {} });'`;
@@ -475,7 +479,7 @@ function generateBashCompletion(): string {
     `    --direction) COMPREPLY=( $(compgen -W "${wordList(["outbound", "inbound"])}" -- "$cur") ); return ;;`,
     `    --classification) COMPREPLY=( $(compgen -W "${wordList(assistantClassificationValues)}" -- "$cur") ); return ;;`,
     `    --response) COMPREPLY=( $(compgen -W "${wordList(["accepted", "declined", "tentative"])}" -- "$cur") ); return ;;`,
-    `    --status) [[ $scope == meet ]] && COMPREPLY=( $(compgen -W "${wordList(["active", "ended"])}" -- "$cur") ) || [[ $scope == admin && $action == tenant-exports ]] && COMPREPLY=( $(compgen -W "${wordList(tenantExportJobStatusValues)}" -- "$cur") ) || [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationStatusValues)}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["pending", "in_progress", "delivered", "failed", "abandoned"])}" -- "$cur") ); return ;;`,
+    `    --status) [[ $scope == meet ]] && COMPREPLY=( $(compgen -W "${wordList(["active", "ended"])}" -- "$cur") ) || [[ $scope == admin && $action == tenant-exports ]] && COMPREPLY=( $(compgen -W "${wordList(tenantExportJobStatusValues)}" -- "$cur") ) || [[ $scope == admin && $action == tenant-imports ]] && COMPREPLY=( $(compgen -W "${wordList(tenantImportJobStatusValues)}" -- "$cur") ) || [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationStatusValues)}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["pending", "in_progress", "delivered", "failed", "abandoned"])}" -- "$cur") ); return ;;`,
     `    --target) [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationTargetValues)}" -- "$cur") ); return ;;`,
     `    --confirm) [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == request ]] && COMPREPLY=( $(compgen -W "LIVE" -- "$cur") ) || [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == cutover ]] && COMPREPLY=( $(compgen -W "CUTOVER" -- "$cur") ); return ;;`,
     "    --client-id|--client-secret|--scope|--json|--from) return ;;",
@@ -621,6 +625,7 @@ function generateZshCompletion(): string {
     `  storage_migration_target_values=(${storageMigrationTargetValues.join(" ")})`,
     `  storage_migration_status_values=(${storageMigrationStatusValues.join(" ")})`,
     `  tenant_export_status_values=(${tenantExportJobStatusValues.join(" ")})`,
+    `  tenant_import_status_values=(${tenantImportJobStatusValues.join(" ")})`,
     `  classification_values=(${assistantClassificationValues.join(" ")})`,
     "  auth_flags=(--client-id --client-secret --scope)",
     "  json_flag=(--json)",
@@ -727,6 +732,10 @@ function generateZshCompletion(): string {
     "        compadd -- $admin_user_type_values",
     "      elif [[ ${words[CURRENT-1]} == --target ]]; then",
     "        compadd -- $storage_migration_target_values",
+    "      elif [[ ${words[CURRENT-1]} == --status && ${words[3]} == tenant-exports ]]; then",
+    "        compadd -- $tenant_export_status_values",
+    "      elif [[ ${words[CURRENT-1]} == --status && ${words[3]} == tenant-imports ]]; then",
+    "        compadd -- $tenant_import_status_values",
     "      elif [[ ${words[CURRENT-1]} == --status ]]; then",
     "        compadd -- $storage_migration_status_values",
     "      elif [[ ${words[CURRENT-1]} == --confirm && ${words[3]} == storage-migrations && ${words[4]} == request ]]; then",
@@ -971,7 +980,7 @@ function fishAdminFlagCompletions(): string[] {
   return Object.entries(adminActionFlags).flatMap(([key, flags]) => {
     const [family, action] = splitActionKey(key, "admin");
     return flags.map((flag) => {
-      const values = adminFlagValues(flag);
+      const values = adminFlagValues(flag, family);
       return `complete -c helix -n "__fish_seen_subcommand_from admin; and __fish_seen_subcommand_from ${family}; and __fish_seen_subcommand_from ${action}" -l ${flag.slice(2)} -x${values}`;
     });
   });
@@ -1009,7 +1018,7 @@ function webhookFlagValues(flag: string): string {
   return "";
 }
 
-function adminFlagValues(flag: string): string {
+function adminFlagValues(flag: string, family?: string): string {
   if (flag === "--type") {
     return ' -a "user agent service_account system"';
   }
@@ -1017,6 +1026,12 @@ function adminFlagValues(flag: string): string {
     return ' -a "byo helix-default"';
   }
   if (flag === "--status") {
+    if (family === "tenant-exports") {
+      return ' -a "queued running succeeded failed"';
+    }
+    if (family === "tenant-imports") {
+      return ' -a "succeeded failed"';
+    }
     return ' -a "queued running succeeded succeeded_with_errors failed dry_run"';
   }
   if (flag === "--confirm") {

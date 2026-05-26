@@ -1100,6 +1100,40 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("parses tenant import job readback operator commands", () => {
+    const importJobId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    expect(
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "list",
+        "acme",
+        "--status",
+        "failed",
+        "--limit",
+        "10",
+        "--cursor",
+        "cursor-1",
+      ]),
+    ).toEqual({
+      kind: "tenant-import-list",
+      slug: "acme",
+      status: "failed",
+      limit: 10,
+      cursor: "cursor-1",
+    });
+    expect(parseCliArgs(["admin", "tenant-imports", "status", "acme", importJobId])).toEqual({
+      kind: "tenant-import-status",
+      slug: "acme",
+      jobId: importJobId,
+    });
+    expect(parseCliArgs(["admin", "tenant-imports", "get", "acme", importJobId])).toEqual({
+      kind: "tenant-import-status",
+      slug: "acme",
+      jobId: importJobId,
+    });
+  });
+
   it("rejects unsafe tenant import dry-run operator commands", () => {
     expect(() => parseCliArgs(["admin", "tenant-imports"])).toThrow(CliUsageError);
     expect(() => parseCliArgs(["admin", "tenant-imports", "dry-run"])).toThrow(CliUsageError);
@@ -1143,6 +1177,12 @@ describe("parseCliArgs", () => {
         "regenerate",
       ]),
     ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs(["admin", "tenant-imports", "list", "acme", "--status", "queued"]),
+    ).toThrow(CliUsageError);
+    expect(() => parseCliArgs(["admin", "tenant-imports", "status", "acme"])).toThrow(
+      CliUsageError,
+    );
   });
 
   it("rejects unsafe durable tenant export operator commands", () => {

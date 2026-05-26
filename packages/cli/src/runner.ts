@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 
 import {
   buildHelixRequest,
@@ -70,6 +70,10 @@ export async function runCli(
     if (command.kind === "tool-call" && command.transport === "mcp") {
       const input = await resolveToolInput(command.json, io.stdin);
       return await callMcpTool(command.toolId, input, env, io, fetchImpl);
+    }
+
+    if (command.kind === "tenant-export-download") {
+      return await downloadTenantExportArtifact(command, env, io, fetchImpl);
     }
 
     const input =
@@ -261,6 +265,57 @@ async function writeMcpJsonResult(
 
   io.stdout.write(formatJsonValue(result.value));
   return 0;
+}
+
+async function downloadTenantExportArtifact(
+  command: Extract<ReturnType<typeof parseCliArgs>, { readonly kind: "tenant-export-download" }>,
+  env: HelixCliEnv,
+  io: CliIo,
+  fetchImpl: FetchLike,
+): Promise<number> {
+  if (existsSync(command.output) && !command.force) {
+    io.stderr.write(`Refusing to overwrite existing file: ${command.output}\n`);
+    return 1;
+  }
+
+  const statusRequest = buildHelixRequest(
+    { kind: "tenant-export-status", slug: command.slug, jobId: command.jobId },
+    env,
+  );
+  const statusResponse = await fetchImpl(statusRequest.url, statusRequest.init);
+  const statusText = await statusResponse.text();
+  if (!statusResponse.ok) {
+    io.stderr.write(formatHttpError(statusResponse.status, statusText));
+    return 1;
+  }
+
+  const downloadUrl = tenantExportArtifactDownloadUrl(
+    parseJsonText(statusText, "Tenant export job status"),
+  );
+  if (downloadUrl === undefined) {
+    io.stderr.write("Tenant export job does not have a downloadable artifact URL.\n");
+    return 1;
+  }
+
+  const archiveResponse = await fetchImpl(downloadUrl, { method: "GET", headers: {} });
+  if (!archiveResponse.ok) {
+    io.stderr.write(formatHttpError(archiveResponse.status, await archiveResponse.text()));
+    return 1;
+  }
+
+  const bytes = Buffer.from(await archiveResponse.arrayBuffer());
+  writeFileSync(command.output, bytes);
+  io.stdout.write(formatJsonValue({ output: command.output, byteSize: bytes.byteLength }));
+  return 0;
+}
+
+function tenantExportArtifactDownloadUrl(value: unknown): string | undefined {
+  if (!isRecord(value) || !isRecord(value.exportJob) || !isRecord(value.exportJob.artifact)) {
+    return undefined;
+  }
+  return typeof value.exportJob.artifact.downloadUrl === "string"
+    ? value.exportJob.artifact.downloadUrl
+    : undefined;
 }
 
 function projectOpenApiTools(document: unknown): readonly OpenApiToolProjection[] {

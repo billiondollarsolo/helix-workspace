@@ -76,6 +76,13 @@ export type HelixCommand =
       readonly cursor?: string;
     }
   | { readonly kind: "tenant-export-status"; readonly slug: string; readonly jobId: string }
+  | {
+      readonly kind: "tenant-export-download";
+      readonly slug: string;
+      readonly jobId: string;
+      readonly output: string;
+      readonly force: boolean;
+    }
   | { readonly kind: "backup-create" }
   | { readonly kind: "restore-from"; readonly backupId: string; readonly encrypted?: boolean }
   | { readonly kind: "reindex-all" }
@@ -2102,6 +2109,8 @@ function parseAdminTenantExportsCommand(
     case "get":
     case "status":
       return parseTenantExportStatusCommand(args[0], args.slice(1));
+    case "download":
+      return parseTenantExportDownloadCommand(args[0], args.slice(1));
     default:
       throw new CliUsageError(adminTenantExportsUsage);
   }
@@ -2180,13 +2189,50 @@ function parseTenantExportStatusCommand(
   return { kind: "tenant-export-status", slug, jobId: args[0] };
 }
 
+function parseTenantExportDownloadCommand(
+  slug: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  const jobId = args[0];
+  if (slug === undefined || slug.startsWith("-") || jobId === undefined || jobId.startsWith("-")) {
+    throw new CliUsageError(adminTenantExportsDownloadUsage);
+  }
+
+  let output: string | undefined;
+  let force = false;
+  for (let index = 1; index < args.length; index += 1) {
+    const flag = args[index];
+    if (flag === "--output") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new CliUsageError(adminTenantExportsDownloadUsage);
+      }
+      output = value;
+      index += 1;
+      continue;
+    }
+    if (flag === "--force") {
+      force = true;
+      continue;
+    }
+    throw new CliUsageError(adminTenantExportsDownloadUsage);
+  }
+
+  if (output === undefined) {
+    throw new CliUsageError(adminTenantExportsDownloadUsage);
+  }
+  return { kind: "tenant-export-download", slug, jobId, output, force };
+}
+
 const adminTenantExportsUsage =
-  "Usage: helix admin tenant-exports <queue|list|status> <slug> [options]";
+  "Usage: helix admin tenant-exports <queue|list|status|download> <slug> [options]";
 const adminTenantExportsQueueUsage =
   "Usage: helix admin tenant-exports queue <slug> [--include-object-bytes | --metadata-only] [--presigned-url-expires-seconds <seconds>]";
 const adminTenantExportsListUsage =
   "Usage: helix admin tenant-exports list <slug> [--status <queued|running|succeeded|failed>] [--limit <number>] [--cursor <cursor>]";
 const adminTenantExportsStatusUsage = "Usage: helix admin tenant-exports status <slug> <job-id>";
+const adminTenantExportsDownloadUsage =
+  "Usage: helix admin tenant-exports download <slug> <job-id> --output <path> [--force]";
 
 const adminUsage =
   "Usage: helix admin <app-passwords|agent-credentials|users|audit|storage|storage-migrations|tenant-exports> <command> [--json [JSON]]";
@@ -3080,6 +3126,7 @@ export const usage = `Usage:
   helix admin tenant-exports queue <slug> [--include-object-bytes | --metadata-only] [--presigned-url-expires-seconds <seconds>]
   helix admin tenant-exports list <slug> [--status <queued|running|succeeded|failed>] [--limit <number>] [--cursor <cursor>]
   helix admin tenant-exports status <slug> <job-id>
+  helix admin tenant-exports download <slug> <job-id> --output <path> [--force]
   helix backup create
   helix restore --from <backup-id> [--encrypted]
   helix reindex --all

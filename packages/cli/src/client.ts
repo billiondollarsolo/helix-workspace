@@ -178,6 +178,7 @@ export function buildHelixRequest(
     case "help":
     case "completion":
     case "logout":
+    case "tenant-export-download":
     case "tool-describe":
     case "mcp-resource-list":
     case "mcp-resource-read":

@@ -1042,6 +1042,24 @@ describe("parseCliArgs", () => {
       slug: "acme",
       jobId: exportJobId,
     });
+    expect(
+      parseCliArgs([
+        "admin",
+        "tenant-exports",
+        "download",
+        "acme",
+        exportJobId,
+        "--output",
+        "/tmp/acme-export.tar",
+        "--force",
+      ]),
+    ).toEqual({
+      kind: "tenant-export-download",
+      slug: "acme",
+      jobId: exportJobId,
+      output: "/tmp/acme-export.tar",
+      force: true,
+    });
   });
 
   it("rejects unsafe durable tenant export operator commands", () => {
@@ -1055,6 +1073,12 @@ describe("parseCliArgs", () => {
     expect(() => parseCliArgs(["admin", "tenant-exports", "status", "acme"])).toThrow(
       CliUsageError,
     );
+    expect(() =>
+      parseCliArgs(["admin", "tenant-exports", "download", "acme", exportJobId]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs(["admin", "tenant-exports", "download", "acme", exportJobId, "--output"]),
+    ).toThrow(CliUsageError);
   });
 
   it("parses backup and restore operator commands", () => {

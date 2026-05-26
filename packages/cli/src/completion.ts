@@ -391,7 +391,7 @@ const adminFamilyActions: Record<string, readonly string[]> = {
   "audit-log": ["list"],
   storage: ["test"],
   "storage-migrations": ["list", "request", "get", "status", "cutover"],
-  "tenant-exports": ["queue", "list", "get", "status"],
+  "tenant-exports": ["queue", "list", "get", "status", "download"],
 };
 
 const adminActionFlags: Record<string, readonly string[]> = {
@@ -428,6 +428,7 @@ const adminActionFlags: Record<string, readonly string[]> = {
   "tenant-exports:list": ["--status", "--limit", "--cursor"],
   "tenant-exports:get": [],
   "tenant-exports:status": [],
+  "tenant-exports:download": ["--output", "--force"],
 };
 
 const dynamicToolIdsScript = String.raw`command helix tool list --source openapi 2>/dev/null | node -e 'let input = ""; process.stdin.on("data", (chunk) => input += chunk); process.stdin.on("end", () => { try { const parsed = JSON.parse(input); for (const tool of Array.isArray(parsed.tools) ? parsed.tools : []) { if (tool && typeof tool.id === "string") console.log(tool.id); } } catch {} });'`;

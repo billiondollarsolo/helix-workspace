@@ -147,6 +147,7 @@ import {
 import {
   createLibreOfficePreviewClient,
   PostgresDriveStore,
+  readInlineBodyFallback,
   registerDriveEnrichments,
   registerDriveIndexer,
   registerDriveRoutes,
@@ -1857,19 +1858,16 @@ export async function createHelixServer(): Promise<FastifyInstance> {
             .send(Buffer.from(file.content));
         }
 
-        // Dev/seed fallback: the corpus seed writes binaries inline in
-        // `objects.metadata.inlineBody` (base64) so the UI can be tested
-        // without the RustFS path-style/virtual-host setup. Strictly a dev
-        // affordance — production data always has a backing blob.
+        // Dev/seed fallback only. Production data must have a backing blob in
+        // tenant-resolved storage; arbitrary inlineBody metadata is ignored.
         const meta = (file.entry.metadata ?? {}) as Record<string, unknown>;
-        const inlineBody = typeof meta.inlineBody === "string" ? meta.inlineBody : null;
-        const inlineMime = typeof meta.inlineMime === "string" ? meta.inlineMime : file.entry.mimeType;
-        if (inlineBody !== null) {
-          const bytes = Buffer.from(inlineBody, "base64");
+        const inlineFallback = readInlineBodyFallback(meta);
+        if (inlineFallback !== null) {
+          const bytes = inlineFallback.body;
           return reply
             .header("content-disposition", disposition)
             .header("content-length", String(bytes.byteLength))
-            .type(inlineMime ?? "application/octet-stream")
+            .type(inlineFallback.mime ?? file.entry.mimeType ?? "application/octet-stream")
             .send(bytes);
         }
 
@@ -1906,16 +1904,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           return reply.code(404).send({ error: "File not found." });
         }
         const meta = (file.entry.metadata ?? {}) as Record<string, unknown>;
+        const inlineFallback = readInlineBodyFallback(meta);
         const bytes =
           file.content !== null
             ? Buffer.from(file.content)
-            : typeof meta.inlineBody === "string"
-              ? Buffer.from(meta.inlineBody, "base64")
-              : null;
+            : (inlineFallback?.body ?? null);
         if (bytes === null) {
           return reply.code(404).send({ error: "File content unavailable." });
         }
-        const mime = file.entry.mimeType ?? (typeof meta.inlineMime === "string" ? meta.inlineMime : "");
+        const mime = file.entry.mimeType ?? inlineFallback?.mime ?? "";
         const filename = file.entry.name ?? request.params.objectId;
         const rawUrl = `/api/drive/objects/${request.params.objectId}/content`;
 

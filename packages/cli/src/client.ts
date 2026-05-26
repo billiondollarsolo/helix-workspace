@@ -155,6 +155,20 @@ export function buildHelixRequest(
         input,
         "application/x-tar",
       );
+    case "tenant-import-execute":
+      if (!(input instanceof Uint8Array)) {
+        throw new Error("Tenant import execute request requires archive bytes.");
+      }
+      return createBinaryRequest(
+        env,
+        withQuery(`/api/admin/tenants/${encodeURIComponent(command.slug)}/import/execute`, {
+          confirm: command.confirm,
+          ...(command.conflictPolicy === undefined ? {} : command.conflictPolicy),
+          ...(command.remaps === undefined ? {} : { remaps: base64UrlJson(command.remaps) }),
+        }),
+        input,
+        "application/x-tar",
+      );
     case "tenant-import-list":
       return createRequest(
         env,

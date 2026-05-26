@@ -1,5 +1,9 @@
 import type { JsonObject, JsonValue } from "@helix/sdk-types";
-import type { TenantExportManifest, TenantExportPostgresDataChunkManifest } from "./export.js";
+import type {
+  TenantExportManifest,
+  TenantExportPostgresDataChunkManifest,
+  TenantExportSelfFetchManifest,
+} from "./export.js";
 import {
   validateTenantExportPostgresDataChunks,
   type TenantExportValidationFiles,
@@ -131,6 +135,24 @@ export interface TenantImportArchivePlanResult {
   readonly issues: readonly TenantImportArchiveReadIssue[];
   readonly plan?: TenantImportPlan | undefined;
 }
+
+export interface TenantImportPreparedArchive {
+  readonly entries: ReadonlyMap<string, Uint8Array>;
+  readonly manifest: TenantExportManifest;
+  readonly rowChunkFiles: ReadonlyMap<string, Uint8Array>;
+  readonly selfFetchManifest?: TenantExportSelfFetchManifest | undefined;
+}
+
+export type TenantImportPreparedArchiveResult =
+  | {
+      readonly ok: true;
+      readonly issues: readonly [];
+      readonly archive: TenantImportPreparedArchive;
+    }
+  | {
+      readonly ok: false;
+      readonly issues: readonly TenantImportArchiveReadIssue[];
+    };
 
 export interface TenantImportPlanIssue {
   readonly severity: TenantImportPlanIssueSeverity;
@@ -371,7 +393,34 @@ export const buildTenantExportImportPlan = buildTenantImportPlan;
 export function buildTenantImportPlanFromArchive(
   input: BuildTenantImportPlanFromArchiveInput,
 ): TenantImportArchivePlanResult {
-  const archive = readTenantExportArchive(input.archive);
+  const prepared = readTenantImportPreparedArchive(input.archive);
+  if (!prepared.ok) {
+    return {
+      ok: false,
+      issues: prepared.issues,
+    };
+  }
+
+  const plan = buildTenantImportPlan({
+    manifest: prepared.archive.manifest,
+    files: prepared.archive.rowChunkFiles,
+    ...(input.targetOrgId === undefined ? {} : { targetOrgId: input.targetOrgId }),
+    ...(input.targetSlug === undefined ? {} : { targetSlug: input.targetSlug }),
+    ...(input.remaps === undefined ? {} : { remaps: input.remaps }),
+    ...(input.targetState === undefined ? {} : { targetState: input.targetState }),
+    ...(input.conflictPolicy === undefined ? {} : { conflictPolicy: input.conflictPolicy }),
+  });
+  return {
+    ok: plan.ok,
+    issues: [],
+    plan,
+  };
+}
+
+export function readTenantImportPreparedArchive(
+  archiveBytes: Uint8Array,
+): TenantImportPreparedArchiveResult {
+  const archive = readTenantExportArchive(archiveBytes);
   if (archive.issues.length > 0) {
     return {
       ok: false,
@@ -385,11 +434,13 @@ export function buildTenantImportPlanFromArchive(
     archive.entries,
     "postgres/data/chunks/manifest.json",
   );
+  const selfFetchManifest = readOptionalTenantExportSelfFetchManifest(archive.entries);
   const issues = [
     ...manifestJson.issues,
     ...configSnapshot.issues,
     ...objectInventory.issues,
     ...rowDataChunks.issues,
+    ...selfFetchManifest.issues,
   ];
   if (issues.length > 0) {
     return {
@@ -411,20 +462,17 @@ export function buildTenantImportPlanFromArchive(
     };
   }
 
-  const files = tenantExportRowChunkFilesFromArchive(archive.entries);
-  const plan = buildTenantImportPlan({
-    manifest: manifest.value,
-    files,
-    ...(input.targetOrgId === undefined ? {} : { targetOrgId: input.targetOrgId }),
-    ...(input.targetSlug === undefined ? {} : { targetSlug: input.targetSlug }),
-    ...(input.remaps === undefined ? {} : { remaps: input.remaps }),
-    ...(input.targetState === undefined ? {} : { targetState: input.targetState }),
-    ...(input.conflictPolicy === undefined ? {} : { conflictPolicy: input.conflictPolicy }),
-  });
   return {
-    ok: plan.ok,
+    ok: true,
     issues: [],
-    plan,
+    archive: {
+      entries: archive.entries,
+      manifest: manifest.value,
+      rowChunkFiles: tenantExportRowChunkFilesFromArchive(archive.entries),
+      ...(selfFetchManifest.value === undefined
+        ? {}
+        : { selfFetchManifest: selfFetchManifest.value }),
+    },
   };
 }
 
@@ -1298,6 +1346,11 @@ interface TenantExportManifestFromArchiveEntriesResult {
   readonly issues: readonly TenantImportArchiveReadIssue[];
 }
 
+interface OptionalTenantExportSelfFetchManifestResult {
+  readonly value?: TenantExportSelfFetchManifest | undefined;
+  readonly issues: readonly TenantImportArchiveReadIssue[];
+}
+
 function readTenantExportArchive(archive: Uint8Array): ParsedTenantExportArchive {
   const buffer = Buffer.from(archive);
   const entries = new Map<string, Uint8Array>();
@@ -1461,6 +1514,53 @@ function readRequiredJsonRecord(
   }
 }
 
+function readOptionalTenantExportSelfFetchManifest(
+  entries: ReadonlyMap<string, Uint8Array>,
+): OptionalTenantExportSelfFetchManifestResult {
+  const path = "objects/self-fetch-manifest.json";
+  const body = entries.get(path);
+  if (body === undefined) {
+    return { issues: [] };
+  }
+  const decoded = readRequiredJsonRecord(entries, path);
+  if (decoded.issues.length > 0) {
+    return { issues: decoded.issues };
+  }
+  if (!isTenantExportSelfFetchManifest(decoded.value)) {
+    return {
+      issues: [
+        {
+          severity: "error",
+          code: "invalid_archive_manifest",
+          path,
+          message: "Tenant export self-fetch manifest has an invalid shape.",
+        },
+      ],
+    };
+  }
+  return {
+    value: {
+      version: 1,
+      generatedAt: stringValue(decoded.value.generatedAt),
+      org: {
+        id: stringValue((decoded.value.org as JsonRecord).id),
+        slug: stringValue((decoded.value.org as JsonRecord).slug),
+      },
+      delivery: "self-fetch",
+      expiresAt: stringValue(decoded.value.expiresAt),
+      expiresSeconds: numberValue(decoded.value.expiresSeconds),
+      objects: arrayValue(decoded.value.objects).map((object) => ({
+        storageKey: stringValue(object.storageKey),
+        ...(object.byteSize === undefined ? {} : { byteSize: numberValue(object.byteSize) }),
+        ...(object.sha256 === undefined ? {} : { sha256: stringValue(object.sha256) }),
+        url: stringValue(object.url),
+        expiresAt: stringValue(object.expiresAt),
+      })),
+    },
+    issues: [],
+  };
+}
+
 function tenantExportManifestFromArchiveEntries(input: {
   readonly manifest: JsonRecord;
   readonly configSnapshot: JsonRecord;
@@ -1622,6 +1722,29 @@ function isTenantExportPostgresDataChunkManifest(value: JsonRecord): boolean {
     Array.isArray(value.includedTables) &&
     Array.isArray(value.excludedTables) &&
     Array.isArray(value.notes)
+  );
+}
+
+function isTenantExportSelfFetchManifest(value: JsonRecord): boolean {
+  return (
+    value.version === 1 &&
+    value.delivery === "self-fetch" &&
+    typeof value.generatedAt === "string" &&
+    isJsonRecord(value.org) &&
+    typeof value.org.id === "string" &&
+    typeof value.org.slug === "string" &&
+    typeof value.expiresAt === "string" &&
+    typeof value.expiresSeconds === "number" &&
+    Array.isArray(value.objects) &&
+    value.objects.every(
+      (object) =>
+        isJsonRecord(object) &&
+        typeof object.storageKey === "string" &&
+        (object.byteSize === undefined || typeof object.byteSize === "number") &&
+        (object.sha256 === undefined || typeof object.sha256 === "string") &&
+        typeof object.url === "string" &&
+        typeof object.expiresAt === "string",
+    )
   );
 }
 

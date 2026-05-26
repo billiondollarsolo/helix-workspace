@@ -91,6 +91,14 @@ export type HelixCommand =
       readonly remaps?: TenantImportDryRunRemaps;
     }
   | {
+      readonly kind: "tenant-import-execute";
+      readonly slug: string;
+      readonly archive: string;
+      readonly confirm: TenantImportExecuteConfirmation;
+      readonly conflictPolicy?: TenantImportDryRunConflictPolicy;
+      readonly remaps?: TenantImportDryRunRemaps;
+    }
+  | {
       readonly kind: "tenant-import-list";
       readonly slug: string;
       readonly status?: TenantImportJobStatus;
@@ -130,6 +138,7 @@ export type TenantStorageMigrationStatus =
   | "dry_run";
 export type TenantExportJobStatus = "queued" | "running" | "succeeded" | "failed";
 export type TenantImportJobStatus = "succeeded" | "failed" | "blocked";
+export type TenantImportExecuteConfirmation = "EXECUTE_INTERNAL_TENANT_IMPORT";
 
 export interface TenantImportDryRunConflictPolicy {
   readonly rowIdConflicts?: "regenerate" | "preserve" | undefined;
@@ -2272,6 +2281,8 @@ function parseAdminTenantImportsCommand(
   switch (action) {
     case "dry-run":
       return parseTenantImportDryRunCommand(args[0], args[1], args.slice(2));
+    case "execute":
+      return parseTenantImportExecuteCommand(args[0], args[1], args.slice(2));
     case "list":
       return parseTenantImportListCommand(args[0], args.slice(1));
     case "status":
@@ -2328,16 +2339,73 @@ function parseTenantImportDryRunCommand(
   ) {
     throw new CliUsageError(adminTenantImportsDryRunUsage);
   }
+  const parsed = parseTenantImportUploadOptions(args, adminTenantImportsDryRunUsage, false);
+  return {
+    kind: "tenant-import-dry-run",
+    slug,
+    archive,
+    ...(parsed.conflictPolicy === undefined ? {} : { conflictPolicy: parsed.conflictPolicy }),
+    ...(parsed.remaps === undefined ? {} : { remaps: parsed.remaps }),
+  };
+}
+
+function parseTenantImportExecuteCommand(
+  slug: string | undefined,
+  archive: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  if (
+    slug === undefined ||
+    slug.startsWith("-") ||
+    archive === undefined ||
+    archive.startsWith("-")
+  ) {
+    throw new CliUsageError(adminTenantImportsExecuteUsage);
+  }
+  const parsed = parseTenantImportUploadOptions(args, adminTenantImportsExecuteUsage, true);
+  if (parsed.confirm !== "EXECUTE_INTERNAL_TENANT_IMPORT") {
+    throw new CliUsageError(adminTenantImportsExecuteUsage);
+  }
+  return {
+    kind: "tenant-import-execute",
+    slug,
+    archive,
+    confirm: parsed.confirm,
+    ...(parsed.conflictPolicy === undefined ? {} : { conflictPolicy: parsed.conflictPolicy }),
+    ...(parsed.remaps === undefined ? {} : { remaps: parsed.remaps }),
+  };
+}
+
+function parseTenantImportUploadOptions(
+  args: readonly string[],
+  usageText: string,
+  allowConfirm: boolean,
+): {
+  readonly confirm?: string;
+  readonly conflictPolicy?: TenantImportDryRunConflictPolicy;
+  readonly remaps?: TenantImportDryRunRemaps;
+} {
   const conflictPolicy: Partial<Record<keyof TenantImportDryRunConflictPolicy, string>> = {};
   let remaps: TenantImportDryRunRemaps | undefined;
+  let confirm: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
+    if (flag === "--confirm") {
+      const value = args[index + 1];
+      if (!allowConfirm || value === undefined || value.startsWith("--") || confirm !== undefined) {
+        throw new CliUsageError(usageText);
+      }
+      confirm = value;
+      index += 1;
+      continue;
+    }
+
     if (flag === "--remaps") {
       const value = args[index + 1];
       if (value === undefined || value.startsWith("--") || remaps !== undefined) {
-        throw new CliUsageError(adminTenantImportsDryRunUsage);
+        throw new CliUsageError(usageText);
       }
-      remaps = parseTenantImportDryRunRemaps(value);
+      remaps = parseTenantImportDryRunRemaps(value, usageText);
       index += 1;
       continue;
     }
@@ -2351,27 +2419,27 @@ function parseTenantImportDryRunCommand(
       conflictPolicy[field] !== undefined ||
       !tenantImportConflictPolicyValues[field].has(value)
     ) {
-      throw new CliUsageError(adminTenantImportsDryRunUsage);
+      throw new CliUsageError(usageText);
     }
     conflictPolicy[field] = value;
     index += 1;
   }
   const parsedConflictPolicy = conflictPolicy as TenantImportDryRunConflictPolicy;
   return {
-    kind: "tenant-import-dry-run",
-    slug,
-    archive,
     ...(Object.keys(parsedConflictPolicy).length === 0
       ? {}
       : { conflictPolicy: parsedConflictPolicy }),
     ...(remaps === undefined ? {} : { remaps }),
+    ...(confirm === undefined ? {} : { confirm }),
   };
 }
 
 const adminTenantImportsUsage =
-  "Usage: helix admin tenant-imports <dry-run|list|status|get> <slug> [options]";
+  "Usage: helix admin tenant-imports <dry-run|execute|list|status|get> <slug> [options]";
 const adminTenantImportsDryRunUsage =
   "Usage: helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]";
+const adminTenantImportsExecuteUsage =
+  "Usage: helix admin tenant-imports execute <slug> <archive-path> --confirm EXECUTE_INTERNAL_TENANT_IMPORT [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]";
 const adminTenantImportsListUsage =
   "Usage: helix admin tenant-imports list <slug> [--status <succeeded|failed|blocked>] [--limit <number>] [--cursor <cursor>]";
 const adminTenantImportsStatusUsage =
@@ -2396,27 +2464,27 @@ const tenantImportConflictPolicyValues: Record<
   primaryDomain: new Set(["preserve", "null"]),
 };
 
-function parseTenantImportDryRunRemaps(value: string): TenantImportDryRunRemaps {
-  const parsed = parseJsonObjectFlag(value, adminTenantImportsDryRunUsage);
+function parseTenantImportDryRunRemaps(value: string, usageText: string): TenantImportDryRunRemaps {
+  const parsed = parseJsonObjectFlag(value, usageText);
   let principals: Record<string, string | null> | undefined;
   let resources: Record<string, string> | undefined;
 
   for (const key of Object.keys(parsed)) {
     if (key !== "principals" && key !== "resources") {
-      throw new CliUsageError(adminTenantImportsDryRunUsage);
+      throw new CliUsageError(usageText);
     }
   }
 
   if (parsed.principals !== undefined) {
     if (!isUuidToNullableUuidRecord(parsed.principals)) {
-      throw new CliUsageError(adminTenantImportsDryRunUsage);
+      throw new CliUsageError(usageText);
     }
     principals = parsed.principals;
   }
 
   if (parsed.resources !== undefined) {
     if (!isBoundedStringRecord(parsed.resources)) {
-      throw new CliUsageError(adminTenantImportsDryRunUsage);
+      throw new CliUsageError(usageText);
     }
     resources = parsed.resources;
   }
@@ -3350,6 +3418,7 @@ export const usage = `Usage:
   helix admin tenant-exports status <slug> <job-id>
   helix admin tenant-exports download <slug> <job-id> --output <path> [--force]
   helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]
+  helix admin tenant-imports execute <slug> <archive-path> --confirm EXECUTE_INTERNAL_TENANT_IMPORT [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]
   helix admin tenant-imports list <slug> [--status <succeeded|failed|blocked>] [--limit <number>] [--cursor <cursor>]
   helix admin tenant-imports <status|get> <slug> <job-id>
   helix backup create

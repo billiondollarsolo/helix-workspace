@@ -116,9 +116,11 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("queue list get status download");
     expect(stdout.output).toContain("--output --force");
     expect(stdout.output).toContain("tenant-imports");
-    expect(stdout.output).toContain("dry-run list get status");
+    expect(stdout.output).toContain("dry-run execute list get status");
     expect(stdout.output).toContain("--row-id-conflicts --principal-references");
     expect(stdout.output).toContain("--primary-domain --remaps");
+    expect(stdout.output).toContain("--confirm --row-id-conflicts");
+    expect(stdout.output).toContain("EXECUTE_INTERNAL_TENANT_IMPORT");
     expect(stdout.output).toContain("--status --limit --cursor");
     expect(stdout.output).toContain("tenant-imports ]] && COMPREPLY");
     expect(stdout.output).toContain('compgen -W "succeeded failed blocked"');
@@ -157,7 +159,10 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("restore");
     expect(stdout.output).toContain("tenant-exports");
     expect(stdout.output).toContain("tenant-imports");
-    expect(stdout.output).toContain("dry-run list get status");
+    expect(stdout.output).toContain("dry-run execute list get status");
+    expect(stdout.output).toContain(
+      '-l confirm -x -a "LIVE CUTOVER EXECUTE_INTERNAL_TENANT_IMPORT"',
+    );
     expect(stdout.output).toContain("-l remaps -x");
     expect(stdout.output).toContain('-l status -x -a "succeeded failed blocked"');
     expect(stdout.output).toContain("install enable disable uninstall");
@@ -656,6 +661,110 @@ describe("runCli durable tenant export operator commands", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("uploads tenant import archives for synchronous execute", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "helix-import-execute-"));
+    const archive = join(tmp, "acme.tar");
+    const archiveBytes = Buffer.from([0, 1, 2, 3, 255]);
+    writeFileSync(archive, archiveBytes);
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      requests.push({ url, init });
+      return Response.json({
+        ok: true,
+        importJob: { id: "job-1", status: "succeeded" },
+      });
+    };
+
+    try {
+      await expect(
+        runCli(
+          [
+            "admin",
+            "tenant-imports",
+            "execute",
+            "acme",
+            archive,
+            "--confirm",
+            "EXECUTE_INTERNAL_TENANT_IMPORT",
+            "--row-id-conflicts",
+            "preserve",
+            "--principal-references",
+            "null",
+          ],
+          { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+          {
+            stdin: Readable.from([]),
+            stdout,
+            stderr,
+          },
+          fetchImpl,
+        ),
+      ).resolves.toBe(0);
+
+      expect(JSON.parse(stdout.output)).toMatchObject({
+        ok: true,
+        importJob: { id: "job-1", status: "succeeded" },
+      });
+      expect(stderr.output).toBe("");
+      expect(requests).toEqual([
+        {
+          url: "https://helix.example/api/admin/tenants/acme/import/execute?confirm=EXECUTE_INTERNAL_TENANT_IMPORT&rowIdConflicts=preserve&principalReferences=null",
+          init: {
+            method: "POST",
+            headers: {
+              accept: "application/json",
+              authorization: "Bearer token-1",
+              "content-type": "application/x-tar",
+            },
+            body: archiveBytes,
+          },
+        },
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects tenant import execute before reading the archive when confirm is invalid", async () => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      requests.push({ url, init });
+      return Response.json({ ok: true });
+    };
+
+    await expect(
+      runCli(
+        [
+          "admin",
+          "tenant-imports",
+          "execute",
+          "acme",
+          "/path/that/does/not/exist.tar",
+          "--confirm",
+          "LIVE",
+        ],
+        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+        {
+          stdin: Readable.from([]),
+          stdout,
+          stderr,
+        },
+        fetchImpl,
+      ),
+    ).resolves.toBe(1);
+
+    expect(stdout.output).toBe("");
+    expect(stderr.output).toContain(
+      "Usage: helix admin tenant-imports execute <slug> <archive-path> --confirm EXECUTE_INTERNAL_TENANT_IMPORT",
+    );
+    expect(stderr.output).not.toContain("ENOENT");
+    expect(requests).toEqual([]);
   });
 
   it("lists and reads persisted tenant import jobs", async () => {

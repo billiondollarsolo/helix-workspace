@@ -394,7 +394,7 @@ const adminFamilyActions: Record<string, readonly string[]> = {
   storage: ["test"],
   "storage-migrations": ["list", "request", "get", "status", "cutover"],
   "tenant-exports": ["queue", "list", "get", "status", "download"],
-  "tenant-imports": ["dry-run", "list", "get", "status"],
+  "tenant-imports": ["dry-run", "execute", "list", "get", "status"],
 };
 
 const adminActionFlags: Record<string, readonly string[]> = {
@@ -433,6 +433,15 @@ const adminActionFlags: Record<string, readonly string[]> = {
   "tenant-exports:status": [],
   "tenant-exports:download": ["--output", "--force"],
   "tenant-imports:dry-run": [
+    "--row-id-conflicts",
+    "--principal-references",
+    "--resource-references",
+    "--verified-state",
+    "--primary-domain",
+    "--remaps",
+  ],
+  "tenant-imports:execute": [
+    "--confirm",
     "--row-id-conflicts",
     "--principal-references",
     "--resource-references",
@@ -482,7 +491,7 @@ function generateBashCompletion(): string {
     `    --response) COMPREPLY=( $(compgen -W "${wordList(["accepted", "declined", "tentative"])}" -- "$cur") ); return ;;`,
     `    --status) [[ $scope == meet ]] && COMPREPLY=( $(compgen -W "${wordList(["active", "ended"])}" -- "$cur") ) || [[ $scope == admin && $action == tenant-exports ]] && COMPREPLY=( $(compgen -W "${wordList(tenantExportJobStatusValues)}" -- "$cur") ) || [[ $scope == admin && $action == tenant-imports ]] && COMPREPLY=( $(compgen -W "${wordList(tenantImportJobStatusValues)}" -- "$cur") ) || [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationStatusValues)}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["pending", "in_progress", "delivered", "failed", "abandoned"])}" -- "$cur") ); return ;;`,
     `    --target) [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationTargetValues)}" -- "$cur") ); return ;;`,
-    `    --confirm) [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == request ]] && COMPREPLY=( $(compgen -W "LIVE" -- "$cur") ) || [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == cutover ]] && COMPREPLY=( $(compgen -W "CUTOVER" -- "$cur") ); return ;;`,
+    `    --confirm) [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == request ]] && COMPREPLY=( $(compgen -W "LIVE" -- "$cur") ) || [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == cutover ]] && COMPREPLY=( $(compgen -W "CUTOVER" -- "$cur") ) || [[ $scope == admin && $action == tenant-imports && \${COMP_WORDS[3]} == execute ]] && COMPREPLY=( $(compgen -W "EXECUTE_INTERNAL_TENANT_IMPORT" -- "$cur") ); return ;;`,
     "    --client-id|--client-secret|--scope|--json|--from) return ;;",
     "  esac",
     "",
@@ -743,6 +752,8 @@ function generateZshCompletion(): string {
     "        compadd -- LIVE",
     "      elif [[ ${words[CURRENT-1]} == --confirm && ${words[3]} == storage-migrations && ${words[4]} == cutover ]]; then",
     "        compadd -- CUTOVER",
+    "      elif [[ ${words[CURRENT-1]} == --confirm && ${words[3]} == tenant-imports && ${words[4]} == execute ]]; then",
+    "        compadd -- EXECUTE_INTERNAL_TENANT_IMPORT",
     "      else",
     zshAdminFlagCases(),
     "      fi",
@@ -1036,7 +1047,7 @@ function adminFlagValues(flag: string, family?: string): string {
     return ' -a "queued running succeeded succeeded_with_errors failed dry_run"';
   }
   if (flag === "--confirm") {
-    return ' -a "LIVE CUTOVER"';
+    return ' -a "LIVE CUTOVER EXECUTE_INTERNAL_TENANT_IMPORT"';
   }
   return "";
 }

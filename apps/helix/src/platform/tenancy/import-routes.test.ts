@@ -8,12 +8,19 @@ import {
   type TenantExportPostgresDataChunkFile,
 } from "./export.js";
 import { registerTenantImportRoutes } from "./import-routes.js";
+import type { TenantStorageClient } from "../storage/tenant-resolver.js";
+import type { TenantImportAuditContinuityStore } from "./import-audit-continuity.js";
 import type {
   CreateTenantImportJobInput,
   ListTenantImportJobsInput,
   TenantImportJobRecord,
   TenantImportJobStore,
 } from "./import-jobs.js";
+import type {
+  TenantImportRowApplyOperationInput,
+  TenantImportRowApplyOperationResult,
+  TenantImportRowApplyStore,
+} from "./import-row-apply.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -397,6 +404,276 @@ describe("registerTenantImportRoutes", () => {
     await app.close();
   });
 
+  it("executes a gated tenant import and persists terminal execution history", async () => {
+    const archive = await buildTenantExportArchive(tenantExportManifest());
+    const auditRecords: unknown[] = [];
+    const importJobs = new InMemoryTenantImportJobStore([]);
+    const rowApplyStore = new RecordingRowApplyStore();
+    const objectStorage = new RecordingStorageClient();
+    const remaps = {
+      principals: {
+        [actorId]: targetActorId,
+      },
+      resources: {
+        "mail.message:msg-1": "target-msg-1",
+      },
+    };
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => ({
+        existingRowIds: [],
+        existingNaturalKeys: [],
+        primaryDomain: null,
+      }),
+      importJobs,
+      rowApplyStore,
+      storageResolver: async () => ({
+        client: objectStorage,
+        managedBy: "helix-default",
+        prefix: "tenants/acme/",
+      }),
+      auditContinuityStore: new InMemoryTenantImportAuditContinuityStore(),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/tenants/acme/import/execute?confirm=EXECUTE_INTERNAL_TENANT_IMPORT&verifiedState=preserve&remaps=${encodeQueryJson(
+        remaps,
+      )}`,
+      headers: { "content-type": "application/x-tar", "user-agent": "test-agent" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(rowApplyStore.operations).toHaveLength(3);
+    expect(objectStorage.puts).toEqual([]);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      execution: {
+        status: "succeeded",
+        stoppedAt: null,
+        blockers: [],
+        rowApply: {
+          summary: {
+            total: 3,
+            inserted: 3,
+          },
+        },
+        objectRestore: {
+          summary: {
+            total: 0,
+          },
+        },
+        auditContinuity: {
+          ok: true,
+          markerAuditId: "audit-1",
+          markerHash: "hash-1",
+        },
+      },
+      importJob: {
+        id: importJobId,
+        status: "succeeded",
+        dryRun: false,
+        ok: true,
+        hasRemapInput: true,
+        resultSummary: {
+          ok: true,
+          execution: {
+            status: "succeeded",
+          },
+        },
+      },
+    });
+    expect(importJobs.jobs[0]).toMatchObject({
+      dryRun: false,
+      status: "succeeded",
+      ok: true,
+      resultSummary: {
+        execution: {
+          status: "succeeded",
+        },
+      },
+    });
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.import.audit_continuity.recorded",
+        objectType: "tenant",
+        objectId: orgId,
+      }),
+    );
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.import.execution.completed",
+        objectType: "tenant",
+        objectId: orgId,
+        metadata: expect.objectContaining({
+          slug: "acme",
+          status: "succeeded",
+          importJobId,
+          hasRemapInput: true,
+        }) as unknown,
+      }),
+    );
+    await app.close();
+  });
+
+  it("rejects tenant import execute without confirmation before reading target state", async () => {
+    let loadedTargetState = false;
+    const archive = await buildTenantExportArchive(tenantExportManifest());
+    const importJobs = new InMemoryTenantImportJobStore([]);
+    const rowApplyStore = new RecordingRowApplyStore();
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => {
+        loadedTargetState = true;
+        return { existingRowIds: [], existingNaturalKeys: [], primaryDomain: null };
+      },
+      importJobs,
+      rowApplyStore,
+      storageResolver: async () => ({
+        client: new RecordingStorageClient(),
+        managedBy: "helix-default",
+        prefix: "tenants/acme/",
+      }),
+      auditContinuityStore: new InMemoryTenantImportAuditContinuityStore(),
+      auditSink: auditSink([]),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/import/execute",
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: "Invalid tenant import execution query.",
+      code: "invalid_request",
+    });
+    expect(loadedTargetState).toBe(false);
+    expect(rowApplyStore.operations).toEqual([]);
+    expect(importJobs.jobs).toEqual([]);
+    await app.close();
+  });
+
+  it("fails execute configuration closed before target state or mutation work", async () => {
+    let loadedTargetState = false;
+    const archive = await buildTenantExportArchive(tenantExportManifest());
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => {
+        loadedTargetState = true;
+        return { existingRowIds: [], existingNaturalKeys: [], primaryDomain: null };
+      },
+      importJobs: new InMemoryTenantImportJobStore([]),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/import/execute?confirm=EXECUTE_INTERNAL_TENANT_IMPORT",
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      error: "Tenant import execution is not configured: audit sink is missing.",
+      code: "invalid_request",
+    });
+    expect(loadedTargetState).toBe(false);
+    await app.close();
+  });
+
+  it("persists blocked execute attempts without writing audit continuity markers", async () => {
+    const archive = await buildTenantExportArchive(tenantExportManifest());
+    const auditRecords: unknown[] = [];
+    const importJobs = new InMemoryTenantImportJobStore([]);
+    const rowApplyStore = new RecordingRowApplyStore();
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => ({
+        existingRowIds: [],
+        existingNaturalKeys: [],
+        primaryDomain: null,
+      }),
+      importJobs,
+      rowApplyStore,
+      storageResolver: async () => ({
+        client: new RecordingStorageClient(),
+        managedBy: "helix-default",
+        prefix: "tenants/acme/",
+      }),
+      auditContinuityStore: new InMemoryTenantImportAuditContinuityStore(),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/import/execute?confirm=EXECUTE_INTERNAL_TENANT_IMPORT",
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(rowApplyStore.operations).toHaveLength(3);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      execution: {
+        status: "blocked",
+        stoppedAt: "row_apply",
+        blockers: [
+          expect.objectContaining({
+            code: "row_apply_blocked",
+          }),
+        ],
+      },
+      importJob: {
+        status: "blocked",
+        dryRun: false,
+        ok: false,
+        errorCode: "row_apply_blocked",
+        resultSummary: {
+          ok: false,
+          execution: {
+            status: "blocked",
+            stoppedAt: "row_apply",
+          },
+        },
+      },
+    });
+    expect(importJobs.jobs[0]).toMatchObject({
+      dryRun: false,
+      status: "blocked",
+      ok: false,
+      errorCode: "row_apply_blocked",
+    });
+    expect(auditRecords).not.toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.import.audit_continuity.recorded",
+      }),
+    );
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.import.execution.completed",
+        metadata: expect.objectContaining({
+          status: "blocked",
+          importJobId,
+        }) as unknown,
+      }),
+    );
+    await app.close();
+  });
+
   it("rejects invalid remap query input before loading target state", async () => {
     let loadedTargetState = false;
     const archive = await buildTenantExportArchive(tenantExportManifest());
@@ -707,6 +984,7 @@ class InMemoryTenantImportJobStore implements TenantImportJobStore {
       id: importJobId,
       orgId: input.orgId,
       status: input.status ?? "succeeded",
+      dryRun: input.dryRun ?? true,
       requestedByActorId: input.requestedByActorId ?? null,
       archiveByteSize: input.archiveByteSize,
       archiveSha256: input.archiveSha256,
@@ -763,6 +1041,56 @@ class InMemoryTenantImportJobStore implements TenantImportJobStore {
         return byTime === 0 ? right.id.localeCompare(left.id) : byTime;
       })
       .slice(0, input.limit ?? 50);
+  }
+}
+
+class RecordingRowApplyStore implements TenantImportRowApplyStore {
+  readonly operations: TenantImportRowApplyOperationInput[] = [];
+
+  async applyOperation(
+    input: TenantImportRowApplyOperationInput,
+  ): Promise<TenantImportRowApplyOperationResult> {
+    this.operations.push(input);
+    const { operation } = input;
+    if (operation.action === "blocked") {
+      return {
+        order: operation.order,
+        kind: operation.kind,
+        table: operation.table,
+        sourceId: operation.sourceId,
+        targetId: operation.targetId,
+        action: "blocked",
+        blockedReason: "planned_operation_blocked",
+      };
+    }
+    return {
+      order: operation.order,
+      kind: operation.kind,
+      table: operation.table,
+      sourceId: operation.sourceId,
+      targetId: operation.targetId ?? `target-${operation.sourceId}`,
+      action: operation.action === "update" ? "updated" : "inserted",
+    };
+  }
+}
+
+class RecordingStorageClient implements TenantStorageClient {
+  readonly puts: unknown[] = [];
+
+  async put(object: Parameters<TenantStorageClient["put"]>[0]): Promise<void> {
+    this.puts.push(object);
+  }
+
+  async get(): Promise<null> {
+    return null;
+  }
+
+  async delete(): Promise<void> {}
+}
+
+class InMemoryTenantImportAuditContinuityStore implements TenantImportAuditContinuityStore {
+  async getLatestAuditChainHead(): Promise<null> {
+    return null;
   }
 }
 

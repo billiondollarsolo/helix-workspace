@@ -76,8 +76,8 @@ export async function runCli(
       return await downloadTenantExportArtifact(command, env, io, fetchImpl);
     }
 
-    if (command.kind === "tenant-import-dry-run") {
-      return await dryRunTenantImport(command, env, io, fetchImpl);
+    if (command.kind === "tenant-import-dry-run" || command.kind === "tenant-import-execute") {
+      return await uploadTenantImportArchive(command, env, io, fetchImpl);
     }
 
     const input =
@@ -313,8 +313,11 @@ async function downloadTenantExportArtifact(
   return 0;
 }
 
-async function dryRunTenantImport(
-  command: Extract<ReturnType<typeof parseCliArgs>, { readonly kind: "tenant-import-dry-run" }>,
+async function uploadTenantImportArchive(
+  command: Extract<
+    ReturnType<typeof parseCliArgs>,
+    { readonly kind: "tenant-import-dry-run" | "tenant-import-execute" }
+  >,
   env: HelixCliEnv,
   io: CliIo,
   fetchImpl: FetchLike,

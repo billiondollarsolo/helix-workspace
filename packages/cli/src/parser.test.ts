@@ -1122,6 +1122,57 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("parses tenant import execute operator commands", () => {
+    expect(
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "execute",
+        "acme",
+        "./acme.tar",
+        "--confirm",
+        "EXECUTE_INTERNAL_TENANT_IMPORT",
+      ]),
+    ).toEqual({
+      kind: "tenant-import-execute",
+      slug: "acme",
+      archive: "./acme.tar",
+      confirm: "EXECUTE_INTERNAL_TENANT_IMPORT",
+    });
+    expect(
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "execute",
+        "acme",
+        "./acme.tar",
+        "--row-id-conflicts",
+        "preserve",
+        "--principal-references",
+        "null",
+        "--remaps",
+        '{"principals":{"11111111-1111-4111-8111-111111111111":null},"resources":{"mail.message:msg-1":"target-msg-1"}}',
+        "--confirm",
+        "EXECUTE_INTERNAL_TENANT_IMPORT",
+      ]),
+    ).toEqual({
+      kind: "tenant-import-execute",
+      slug: "acme",
+      archive: "./acme.tar",
+      confirm: "EXECUTE_INTERNAL_TENANT_IMPORT",
+      conflictPolicy: {
+        rowIdConflicts: "preserve",
+        principalReferences: "null",
+      },
+      remaps: {
+        principals: {
+          "11111111-1111-4111-8111-111111111111": null,
+        },
+        resources: { "mail.message:msg-1": "target-msg-1" },
+      },
+    });
+  });
+
   it("parses tenant import job readback operator commands", () => {
     const importJobId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     expect(
@@ -1245,6 +1296,36 @@ describe("parseCliArgs", () => {
     expect(() => parseCliArgs(["admin", "tenant-imports", "status", "acme"])).toThrow(
       CliUsageError,
     );
+  });
+
+  it("rejects tenant import execute without the exact confirmation token", () => {
+    expect(() =>
+      parseCliArgs(["admin", "tenant-imports", "execute", "acme", "./acme.tar"]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "execute",
+        "acme",
+        "./acme.tar",
+        "--confirm",
+        "LIVE",
+      ]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "execute",
+        "acme",
+        "./acme.tar",
+        "--confirm",
+        "EXECUTE_INTERNAL_TENANT_IMPORT",
+        "--confirm",
+        "EXECUTE_INTERNAL_TENANT_IMPORT",
+      ]),
+    ).toThrow(CliUsageError);
   });
 
   it("rejects unsafe durable tenant export operator commands", () => {

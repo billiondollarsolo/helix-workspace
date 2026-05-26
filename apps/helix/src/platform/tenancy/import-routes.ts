@@ -17,12 +17,29 @@ import {
 } from "../admin/console-shared.js";
 import type {
   TenantImportJobRecord,
+  TenantImportJobExecutionSummary,
   TenantImportJobRemapInputSummary,
   TenantImportJobResultSummary,
   TenantImportJobStatus,
   TenantImportJobStore,
 } from "./import-jobs.js";
 import {
+  buildTenantImportAuditContinuityPlan,
+  type TenantImportAuditContinuityStore,
+} from "./import-audit-continuity.js";
+import {
+  executeTenantImportPreparedPlan,
+  tenantImportExecutionConfirmation,
+  type TenantImportExecutionBlocker,
+  type TenantImportExecutionResult,
+  type TenantImportExecutionStage,
+} from "./import-execution.js";
+import {
+  buildTenantImportObjectRestorePlan,
+  type TenantImportSelfFetchDownloader,
+} from "./import-object-restore.js";
+import {
+  buildTenantImportPlan,
   buildTenantImportPlanFromArchive,
   type TenantImportArchivePlanResult,
   type TenantImportDryRunConflictPolicy,
@@ -30,8 +47,11 @@ import {
   type TenantImportPlanIssue,
   type TenantImportPlanProvidedRemaps,
   type TenantImportPlanTargetState,
+  readTenantImportPreparedArchive,
 } from "./import-plan.js";
+import type { TenantImportRowApplyStore } from "./import-row-apply.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
+import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 
 export const adminTenantsImportScope = "admin.tenants.import";
 
@@ -41,6 +61,10 @@ export interface RegisterTenantImportRoutesOptions {
   readonly targetStateLoader: (org: OrgRecord) => Promise<TenantImportPlanTargetState>;
   readonly importJobs?: TenantImportJobStore | undefined;
   readonly auditSink?: AdminConsoleAuditSink | undefined;
+  readonly rowApplyStore?: TenantImportRowApplyStore | undefined;
+  readonly storageResolver?: TenantStorageResolver | undefined;
+  readonly auditContinuityStore?: TenantImportAuditContinuityStore | undefined;
+  readonly selfFetchDownloader?: TenantImportSelfFetchDownloader | undefined;
 }
 
 const tenantParams = z.object({
@@ -91,6 +115,10 @@ const remapsQuerySchema = z
 
 const importDryRunQuery = conflictPolicyQuery.extend({
   remaps: remapsQuerySchema.optional(),
+});
+
+const importExecuteQuery = importDryRunQuery.extend({
+  confirm: z.literal(tenantImportExecutionConfirmation),
 });
 
 const importJobListQuery = z.object({
@@ -193,6 +221,164 @@ export async function registerTenantImportRoutes(
       .send(
         importJob === undefined ? result : { ...result, importJob: tenantImportJobView(importJob) },
       );
+  });
+
+  app.post("/api/admin/tenants/:slug/import/execute", async (request, reply) => {
+    const loaded = await loadTenantForImport({ request, reply, options });
+    if (loaded === undefined) {
+      return reply;
+    }
+    const query = importExecuteQuery.safeParse(request.query);
+    if (!query.success) {
+      const message = hasRemapsQueryInput(request.query)
+        ? "Invalid tenant import remaps query."
+        : "Invalid tenant import execution query.";
+      return reply.code(400).send(invalidRequest(message, query.error.issues));
+    }
+    const archiveBytes = requestBodyBytes(request.body);
+    if (archiveBytes === undefined) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Tenant import execute requires a non-empty tar archive body."));
+    }
+    const executeDependencies = importExecuteDependencies(options);
+    if (typeof executeDependencies === "string") {
+      return reply
+        .code(503)
+        .send(invalidRequest(`Tenant import execution is not configured: ${executeDependencies}.`));
+    }
+
+    const archiveSha256 = sha256Hex(archiveBytes);
+    const { confirm, remaps, ...conflictPolicy } = query.data;
+    const hasPolicyInput = hasConflictPolicyInput(conflictPolicy);
+    const remapSummary = remapInputSummary(remaps);
+    const hasRemapInput = remapSummary.sha256 !== null;
+    const targetState = await options.targetStateLoader(loaded.org);
+    const prepared = readTenantImportPreparedArchive(archiveBytes);
+    const planResult: TenantImportArchivePlanResult = prepared.ok
+      ? (() => {
+          const plan = buildTenantImportPlan({
+            manifest: prepared.archive.manifest,
+            files: prepared.archive.rowChunkFiles,
+            targetOrgId: loaded.org.id,
+            targetSlug: loaded.org.slug,
+            targetState,
+            ...(hasPolicyInput ? { conflictPolicy } : {}),
+            ...(hasRemapInput ? { remaps } : {}),
+          });
+          return { ok: plan.ok, issues: [], plan };
+        })()
+      : { ok: false, issues: prepared.issues };
+
+    let execution: TenantImportExecutionResult;
+    if (!prepared.ok || planResult.plan === undefined) {
+      execution = tenantImportBlockedExecution(
+        "preflight",
+        "archive_read_failed",
+        "Tenant import execution requires a readable tenant export archive.",
+      );
+    } else {
+      const objectRestorePlan = await buildTenantImportObjectRestorePlan({
+        manifest: prepared.archive.manifest,
+        archiveEntries: prepared.archive.entries,
+        selfFetchManifest: prepared.archive.selfFetchManifest,
+      });
+      const targetChainHead =
+        await executeDependencies.auditContinuityStore.getLatestAuditChainHead(loaded.org.id);
+      const auditContinuityPlan = buildTenantImportAuditContinuityPlan({
+        manifest: prepared.archive.manifest,
+        targetOrgId: loaded.org.id,
+        targetSlug: loaded.org.slug,
+        targetChainHead,
+        archiveSha256,
+      });
+      const storage = await executeDependencies.storageResolver({ orgId: loaded.org.id });
+      execution =
+        storage === undefined
+          ? tenantImportBlockedExecution(
+              "preflight",
+              "tenant_storage_unresolved",
+              "Tenant import execution requires resolved target tenant storage.",
+            )
+          : await executeTenantImportPreparedPlan({
+              confirmation: confirm,
+              plan: planResult.plan,
+              rowApplyStore: executeDependencies.rowApplyStore,
+              objectRestorePlan,
+              objectArchiveEntries: prepared.archive.entries,
+              objectStorage: storage.client,
+              selfFetchDownloader: executeDependencies.selfFetchDownloader,
+              auditContinuityPlan,
+              auditSink: executeDependencies.auditSink,
+              actorId: loaded.actor.id,
+            });
+    }
+
+    const importJob = await executeDependencies.importJobs.create({
+      orgId: loaded.org.id,
+      status: execution.status,
+      dryRun: false,
+      requestedByActorId: loaded.actor.id,
+      archiveByteSize: archiveBytes.byteLength,
+      archiveSha256,
+      hasConflictPolicyInput: hasPolicyInput,
+      conflictPolicy: hasPolicyInput ? conflictPolicy : {},
+      hasRemapInput,
+      remapInputSummary: remapSummary,
+      ok: execution.ok,
+      sourceOrgId: planResult.plan?.source.orgId ?? null,
+      sourceSlug: planResult.plan?.source.slug ?? null,
+      sourceGeneratedAt:
+        planResult.plan === undefined ? null : new Date(planResult.plan.source.generatedAt),
+      objectBytesMode: planResult.plan?.objectBytes.mode ?? null,
+      issueCount:
+        planResult.issues.length +
+        (planResult.plan?.issues.length ?? 0) +
+        execution.blockers.length,
+      operationCount: planResult.plan?.summary.operationCount ?? 0,
+      conflictCount: planResult.plan?.summary.conflictCount ?? 0,
+      remapCount: planResult.plan?.summary.remapCount ?? 0,
+      errorCode: tenantImportExecutionErrorCode(planResult, execution),
+      errorMessage: tenantImportExecutionErrorMessage(planResult, execution),
+      resultSummary: tenantImportJobResultSummary(planResult, execution),
+    });
+    await auditAdminAction(options.auditSink, {
+      orgId: loaded.org.id,
+      actorId: loaded.actor.id,
+      verb: "tenant.import.execution.completed",
+      objectType: "tenant",
+      objectId: loaded.org.id,
+      metadata: {
+        slug: loaded.org.slug,
+        archiveByteSize: archiveBytes.byteLength,
+        archiveSha256,
+        importJobId: importJob.id,
+        status: execution.status,
+        ok: execution.ok,
+        stoppedAt: execution.stoppedAt,
+        blockerCount: execution.blockers.length,
+        issueCount:
+          planResult.issues.length +
+          (planResult.plan?.issues.length ?? 0) +
+          execution.blockers.length,
+        operationCount: planResult.plan?.summary.operationCount ?? 0,
+        conflictCount: planResult.plan?.summary.conflictCount ?? 0,
+        remapCount: planResult.plan?.summary.remapCount ?? 0,
+        hasConflictPolicyInput: hasPolicyInput,
+        hasRemapInput,
+        remapInputPrincipalCount: remapSummary.principalCount,
+        remapInputResourceCount: remapSummary.resourceCount,
+        remapInputSha256: remapSummary.sha256,
+        ip: request.ip,
+        userAgent: request.headers["user-agent"] ?? null,
+      },
+    });
+    return reply.code(tenantImportExecutionHttpStatus(execution)).send({
+      ...planResult,
+      ok: execution.ok,
+      execution,
+      importJob: tenantImportJobView(importJob),
+    });
   });
 
   app.get("/api/admin/tenants/:slug/import/jobs", async (request, reply) => {
@@ -312,6 +498,92 @@ export function tenantImportJobView(job: TenantImportJobRecord): TenantImportJob
   };
 }
 
+interface TenantImportExecuteDependencies {
+  readonly importJobs: TenantImportJobStore;
+  readonly auditSink: AdminConsoleAuditSink;
+  readonly rowApplyStore: TenantImportRowApplyStore;
+  readonly storageResolver: TenantStorageResolver;
+  readonly auditContinuityStore: TenantImportAuditContinuityStore;
+  readonly selfFetchDownloader?: TenantImportSelfFetchDownloader | undefined;
+}
+
+function importExecuteDependencies(
+  options: RegisterTenantImportRoutesOptions,
+): TenantImportExecuteDependencies | string {
+  if (options.importJobs === undefined) {
+    return "import jobs are missing";
+  }
+  if (options.auditSink === undefined) {
+    return "audit sink is missing";
+  }
+  if (options.rowApplyStore === undefined) {
+    return "row apply store is missing";
+  }
+  if (options.storageResolver === undefined) {
+    return "tenant storage resolver is missing";
+  }
+  if (options.auditContinuityStore === undefined) {
+    return "audit continuity store is missing";
+  }
+  return {
+    importJobs: options.importJobs,
+    auditSink: options.auditSink,
+    rowApplyStore: options.rowApplyStore,
+    storageResolver: options.storageResolver,
+    auditContinuityStore: options.auditContinuityStore,
+    ...(options.selfFetchDownloader === undefined
+      ? {}
+      : { selfFetchDownloader: options.selfFetchDownloader }),
+  };
+}
+
+function tenantImportBlockedExecution(
+  stage: TenantImportExecutionStage,
+  code: string,
+  message: string,
+): TenantImportExecutionResult {
+  return {
+    ok: false,
+    status: "blocked",
+    stoppedAt: stage,
+    blockers: [{ stage, code, message }],
+    rowApply: null,
+    objectRestore: null,
+    auditContinuity: null,
+  };
+}
+
+function tenantImportExecutionHttpStatus(execution: TenantImportExecutionResult): number {
+  switch (execution.status) {
+    case "succeeded":
+      return 200;
+    case "blocked":
+      return 422;
+    case "failed":
+      return 500;
+  }
+}
+
+function tenantImportExecutionErrorCode(
+  result: TenantImportArchivePlanResult,
+  execution: TenantImportExecutionResult,
+): string | null {
+  if (execution.ok) {
+    return null;
+  }
+  return execution.blockers[0]?.code ?? importJobErrorCode(result);
+}
+
+function tenantImportExecutionErrorMessage(
+  result: TenantImportArchivePlanResult,
+  execution: TenantImportExecutionResult,
+): string | null {
+  if (execution.ok) {
+    return null;
+  }
+  return execution.blockers[0]?.message ?? importJobErrorMessage(result);
+}
+
 async function loadTenantForImport(input: {
   readonly request: FastifyRequest;
   readonly reply: FastifyReply;
@@ -427,9 +699,10 @@ function importJobErrorMessage(
 
 function tenantImportJobResultSummary(
   result: TenantImportArchivePlanResult,
+  execution?: TenantImportExecutionResult,
 ): TenantImportJobResultSummary {
   return {
-    ok: result.ok,
+    ok: execution?.ok ?? result.ok,
     archiveIssues: result.issues.map((issue) => ({
       severity: issue.severity,
       code: issue.code,
@@ -449,6 +722,47 @@ function tenantImportJobResultSummary(
             conflictCount: result.plan.conflicts.length,
             conflicts: result.plan.conflicts.map(tenantImportJobConflictSummary),
           },
+    ...(execution === undefined ? {} : { execution: tenantImportJobExecutionSummary(execution) }),
+  };
+}
+
+function tenantImportJobExecutionSummary(
+  execution: TenantImportExecutionResult,
+): TenantImportJobExecutionSummary {
+  return {
+    status: execution.status,
+    stoppedAt: execution.stoppedAt,
+    blockers: execution.blockers.map(tenantImportJobExecutionBlockerSummary),
+    rowApply:
+      execution.rowApply === null
+        ? null
+        : {
+            summary: execution.rowApply.summary,
+            operations: execution.rowApply.operations,
+          },
+    objectRestore:
+      execution.objectRestore === null
+        ? null
+        : {
+            summary: execution.objectRestore.summary,
+            operations: execution.objectRestore.operations,
+          },
+    auditContinuity:
+      execution.auditContinuity === null
+        ? null
+        : {
+            ok: execution.auditContinuity.ok,
+            markerAuditId: execution.auditContinuity.markerAuditId,
+            markerHash: execution.auditContinuity.markerHash,
+          },
+  };
+}
+
+function tenantImportJobExecutionBlockerSummary(blocker: TenantImportExecutionBlocker) {
+  return {
+    stage: blocker.stage,
+    code: blocker.code,
+    message: blocker.message,
   };
 }
 

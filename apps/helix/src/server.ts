@@ -274,9 +274,12 @@ import { CoreAppRegistrationPlan } from "./platform/apps/core-apps.js";
 import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
 import {
   createPostgresTenantExportManifestPlanner,
+  createTenantImportSelfFetchDownloader,
   loadTenantImportTargetStateFromPostgres,
+  PostgresTenantImportAuditContinuityStore,
   PostgresTenantExportJobStore,
   PostgresTenantImportJobStore,
+  PostgresTenantImportRowApplyStore,
   PostgresOrgStore,
   PostgresPlanStore,
   registerTenantImportRoutes,
@@ -1042,6 +1045,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const tenantStorageMigrationJobStore = new PostgresTenantStorageMigrationJobStore(sql);
   const tenantExportJobStore = new PostgresTenantExportJobStore(sql);
   const tenantImportJobStore = new PostgresTenantImportJobStore(sql);
+  const tenantImportRowApplyStore = new PostgresTenantImportRowApplyStore(sql);
+  const tenantImportAuditContinuityStore = new PostgresTenantImportAuditContinuityStore(sql);
   const driveStorageResolver = createTenantStorageResolver({
     defaultClient: driveStorage,
     loadByoConfig: async (orgId: string) => (await orgStore.findById(orgId))?.byoConfig,
@@ -1850,6 +1855,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         sql,
         targetOrgId: org.id,
       }),
+    rowApplyStore: tenantImportRowApplyStore,
+    storageResolver: driveStorageResolver,
+    auditContinuityStore: tenantImportAuditContinuityStore,
+    selfFetchDownloader: createTenantImportSelfFetchDownloader(),
     auditSink: auditStore,
   });
   await registerAdminOAuthAppsRoutes(app, {

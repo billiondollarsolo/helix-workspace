@@ -96,7 +96,7 @@ const importDryRunQuery = conflictPolicyQuery.extend({
 const importJobListQuery = z.object({
   limit: limitQuerySchema,
   cursor: cursorQuerySchema,
-  status: z.enum(["succeeded", "failed"]).optional(),
+  status: z.enum(["succeeded", "failed", "blocked"]).optional(),
 });
 
 export async function registerTenantImportRoutes(
@@ -256,7 +256,7 @@ export interface TenantImportJobView {
   readonly id: string;
   readonly orgId: string;
   readonly status: TenantImportJobStatus;
-  readonly dryRun: true;
+  readonly dryRun: boolean;
   readonly requestedByActorId: string | null;
   readonly archiveByteSize: number;
   readonly archiveSha256: string;

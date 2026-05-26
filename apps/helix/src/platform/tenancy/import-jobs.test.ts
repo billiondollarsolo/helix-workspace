@@ -102,6 +102,63 @@ describe("PostgresTenantImportJobStore", () => {
     expect(recording.calls[1]?.text).toContain("from tenant_import_jobs");
     expect(recording.calls[1]?.values).toContain("succeeded");
   });
+
+  it("creates persisted tenant import execution jobs without requiring dry-run mode", async () => {
+    const recording = createRecordingSql([
+      [
+        importJobRow({
+          id: importJobId,
+          status: "blocked",
+          dry_run: false,
+          ok: false,
+          error_code: "row_apply_blocked",
+          result_summary: blockedExecutionResultSummary(),
+        }),
+      ],
+    ]);
+    const store = new PostgresTenantImportJobStore(recording.sql);
+
+    const created = await store.create({
+      orgId,
+      status: "blocked",
+      dryRun: false,
+      requestedByActorId: actorId,
+      archiveByteSize: 2048,
+      archiveSha256: "a".repeat(64),
+      hasConflictPolicyInput: false,
+      conflictPolicy: {},
+      ok: false,
+      sourceOrgId: orgId,
+      sourceSlug: "acme",
+      sourceGeneratedAt: new Date("2026-05-24T09:30:00.000Z"),
+      objectBytesMode: "metadata_only",
+      issueCount: 0,
+      operationCount: 3,
+      conflictCount: 0,
+      remapCount: 0,
+      errorCode: "row_apply_blocked",
+      errorMessage: "One or more tenant import row operations were blocked.",
+      resultSummary: blockedExecutionResultSummary(),
+    });
+
+    expect(created).toMatchObject({
+      id: importJobId,
+      status: "blocked",
+      dryRun: false,
+      ok: false,
+      errorCode: "row_apply_blocked",
+      resultSummary: {
+        execution: {
+          status: "blocked",
+          stoppedAt: "row_apply",
+          blockers: [expect.objectContaining({ code: "row_apply_blocked" })],
+        },
+      },
+    });
+    expect(recording.calls[0]?.text).toContain("dry_run");
+    expect(recording.calls[0]?.values).toContain("blocked");
+    expect(recording.calls[0]?.values).toContain(false);
+  });
 });
 
 function invalidArchiveResultSummary() {
@@ -115,7 +172,62 @@ function invalidArchiveResultSummary() {
       },
     ],
     plan: null,
-  };
+  } as const;
+}
+
+function blockedExecutionResultSummary() {
+  return {
+    ok: false,
+    archiveIssues: [],
+    plan: {
+      source: {
+        orgId,
+        slug: "acme",
+        generatedAt: "2026-05-24T09:30:00.000Z",
+      },
+      target: {
+        orgId,
+        slug: "acme",
+        rewritesOrgId: false,
+      },
+      objectBytes: {
+        mode: "metadata_only",
+        objectCount: 0,
+        totalKnownBytes: 0,
+      },
+      summary: {
+        postgresRows: 3,
+        adminDomainRows: 1,
+        adminDnsRecordRows: 1,
+        resourceClassificationRows: 1,
+        operationCount: 3,
+        remapCount: 0,
+        conflictCount: 0,
+      },
+      issueCount: 0,
+      issues: [],
+      conflictCount: 0,
+      conflicts: [],
+    },
+    execution: {
+      status: "blocked",
+      stoppedAt: "row_apply",
+      blockers: [
+        {
+          stage: "row_apply",
+          code: "row_apply_blocked",
+          message: "One or more tenant import row operations were blocked.",
+        },
+      ],
+      rowApply: {
+        ok: false,
+      },
+      objectRestore: {
+        ok: true,
+      },
+      auditContinuity: null,
+    },
+  } as const;
 }
 
 function importJobRow(overrides: Partial<TenantImportJobRow> = {}): TenantImportJobRow {
@@ -191,7 +303,7 @@ function importJobRow(overrides: Partial<TenantImportJobRow> = {}): TenantImport
 interface TenantImportJobRow {
   readonly id: string;
   readonly org_id: string;
-  readonly status: "succeeded" | "failed";
+  readonly status: "succeeded" | "failed" | "blocked";
   readonly dry_run: boolean;
   readonly requested_by_actor_id: string | null;
   readonly archive_byte_size: number | string;

@@ -129,7 +129,7 @@ export type TenantStorageMigrationStatus =
   | "failed"
   | "dry_run";
 export type TenantExportJobStatus = "queued" | "running" | "succeeded" | "failed";
-export type TenantImportJobStatus = "succeeded" | "failed";
+export type TenantImportJobStatus = "succeeded" | "failed" | "blocked";
 
 export interface TenantImportDryRunConflictPolicy {
   readonly rowIdConflicts?: "regenerate" | "preserve" | undefined;
@@ -2373,7 +2373,7 @@ const adminTenantImportsUsage =
 const adminTenantImportsDryRunUsage =
   "Usage: helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]";
 const adminTenantImportsListUsage =
-  "Usage: helix admin tenant-imports list <slug> [--status <succeeded|failed>] [--limit <number>] [--cursor <cursor>]";
+  "Usage: helix admin tenant-imports list <slug> [--status <succeeded|failed|blocked>] [--limit <number>] [--cursor <cursor>]";
 const adminTenantImportsStatusUsage =
   "Usage: helix admin tenant-imports <status|get> <slug> <job-id>";
 
@@ -2532,7 +2532,7 @@ const tenantExportJobStatuses = new Set<TenantExportJobStatus>([
   "succeeded",
   "failed",
 ]);
-const tenantImportJobStatuses = new Set<TenantImportJobStatus>(["succeeded", "failed"]);
+const tenantImportJobStatuses = new Set<TenantImportJobStatus>(["succeeded", "failed", "blocked"]);
 
 function parseBackupCommand(
   action: string | undefined,
@@ -3350,7 +3350,7 @@ export const usage = `Usage:
   helix admin tenant-exports status <slug> <job-id>
   helix admin tenant-exports download <slug> <job-id> --output <path> [--force]
   helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]
-  helix admin tenant-imports list <slug> [--status <succeeded|failed>] [--limit <number>] [--cursor <cursor>]
+  helix admin tenant-imports list <slug> [--status <succeeded|failed|blocked>] [--limit <number>] [--cursor <cursor>]
   helix admin tenant-imports <status|get> <slug> <job-id>
   helix backup create
   helix restore --from <backup-id> [--encrypted]

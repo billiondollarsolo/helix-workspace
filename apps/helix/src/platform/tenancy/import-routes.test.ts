@@ -162,7 +162,7 @@ describe("registerTenantImportRoutes", () => {
       }),
       importJobRecord({
         id: olderImportJobId,
-        status: "failed",
+        status: "blocked",
         ok: false,
         createdAt: new Date("2026-05-24T10:01:00.000Z"),
         updatedAt: new Date("2026-05-24T10:01:00.000Z"),
@@ -188,6 +188,10 @@ describe("registerTenantImportRoutes", () => {
     const statusResponse = await app.inject({
       method: "GET",
       url: `/api/admin/tenants/acme/import/jobs/${importJobId}`,
+    });
+    const blockedListResponse = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/import/jobs?status=blocked",
     });
 
     expect(listResponse.statusCode).toBe(200);
@@ -215,6 +219,15 @@ describe("registerTenantImportRoutes", () => {
           },
         },
       },
+    });
+    expect(blockedListResponse.statusCode).toBe(200);
+    expect(blockedListResponse.json()).toMatchObject({
+      importJobs: [
+        {
+          id: olderImportJobId,
+          status: "blocked",
+        },
+      ],
     });
     await app.close();
   });

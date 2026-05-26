@@ -121,7 +121,7 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("--primary-domain --remaps");
     expect(stdout.output).toContain("--status --limit --cursor");
     expect(stdout.output).toContain("tenant-imports ]] && COMPREPLY");
-    expect(stdout.output).toContain('compgen -W "succeeded failed"');
+    expect(stdout.output).toContain('compgen -W "succeeded failed blocked"');
     expect(stdout.output).toContain("--thread-id --add --remove --json");
     expect(stdout.output).toContain("--name --priority --enabled --disabled --criteria --actions");
     expect(stdout.output).toContain("--room-id --before --limit --json");
@@ -159,7 +159,7 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("tenant-imports");
     expect(stdout.output).toContain("dry-run list get status");
     expect(stdout.output).toContain("-l remaps -x");
-    expect(stdout.output).toContain('-l status -x -a "succeeded failed"');
+    expect(stdout.output).toContain('-l status -x -a "succeeded failed blocked"');
     expect(stdout.output).toContain("install enable disable uninstall");
     expect(stdout.output).toContain("-l from -x");
     expect(stdout.output).toContain(

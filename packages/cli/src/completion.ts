@@ -139,7 +139,7 @@ const storageMigrationStatusValues = [
   "dry_run",
 ] as const;
 const tenantExportJobStatusValues = ["queued", "running", "succeeded", "failed"] as const;
-const tenantImportJobStatusValues = ["succeeded", "failed"] as const;
+const tenantImportJobStatusValues = ["succeeded", "failed", "blocked"] as const;
 
 const mailActionFlags: Record<string, readonly string[]> = {
   send: ["--to", "--cc", "--bcc", "--from", "--subject", "--body", "--html", "--json"],
@@ -1031,7 +1031,7 @@ function adminFlagValues(flag: string, family?: string): string {
       return ' -a "queued running succeeded failed"';
     }
     if (family === "tenant-imports") {
-      return ' -a "succeeded failed"';
+      return ' -a "succeeded failed blocked"';
     }
     return ' -a "queued running succeeded succeeded_with_errors failed dry_run"';
   }

@@ -4,7 +4,7 @@ import type {
   TenantImportPlanObjectBytesMode,
 } from "./import-plan.js";
 
-export type TenantImportJobStatus = "succeeded" | "failed";
+export type TenantImportJobStatus = "succeeded" | "failed" | "blocked";
 
 export interface TenantImportJobRemapInputSummary {
   readonly principalCount: number;
@@ -16,6 +16,20 @@ export interface TenantImportJobResultSummary {
   readonly ok: boolean;
   readonly archiveIssues: readonly TenantImportJobIssueSummary[];
   readonly plan: TenantImportJobPlanSummary | null;
+  readonly execution?: TenantImportJobExecutionSummary | null | undefined;
+}
+
+export interface TenantImportJobExecutionSummary {
+  readonly status: TenantImportJobStatus;
+  readonly stoppedAt: string | null;
+  readonly blockers: readonly {
+    readonly stage: string;
+    readonly code: string;
+    readonly message: string;
+  }[];
+  readonly rowApply: Record<string, unknown> | null;
+  readonly objectRestore: Record<string, unknown> | null;
+  readonly auditContinuity: Record<string, unknown> | null;
 }
 
 export interface TenantImportJobIssueSummary {
@@ -73,7 +87,7 @@ export interface TenantImportJobRecord {
   readonly id: string;
   readonly orgId: string;
   readonly status: TenantImportJobStatus;
-  readonly dryRun: true;
+  readonly dryRun: boolean;
   readonly requestedByActorId: string | null;
   readonly archiveByteSize: number;
   readonly archiveSha256: string;
@@ -101,6 +115,7 @@ export interface TenantImportJobRecord {
 export interface CreateTenantImportJobInput {
   readonly orgId: string;
   readonly status?: TenantImportJobStatus | undefined;
+  readonly dryRun?: boolean | undefined;
   readonly requestedByActorId?: string | null | undefined;
   readonly archiveByteSize: number;
   readonly archiveSha256: string;
@@ -180,6 +195,7 @@ export class PostgresTenantImportJobStore implements TenantImportJobStore {
       insert into tenant_import_jobs (
         org_id,
         status,
+        dry_run,
         requested_by_actor_id,
         archive_byte_size,
         archive_sha256,
@@ -203,6 +219,7 @@ export class PostgresTenantImportJobStore implements TenantImportJobStore {
       values (
         ${input.orgId},
         ${input.status ?? "succeeded"},
+        ${input.dryRun ?? true},
         ${input.requestedByActorId ?? null},
         ${input.archiveByteSize},
         ${input.archiveSha256},
@@ -348,7 +365,7 @@ export function mapTenantImportJobRow(row: TenantImportJobRow | undefined): Tena
     id: row.id,
     orgId: row.org_id,
     status: row.status,
-    dryRun: true,
+    dryRun: row.dry_run,
     requestedByActorId: row.requested_by_actor_id,
     archiveByteSize: Number(row.archive_byte_size),
     archiveSha256: row.archive_sha256,

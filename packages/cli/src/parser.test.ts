@@ -1144,6 +1144,13 @@ describe("parseCliArgs", () => {
       limit: 10,
       cursor: "cursor-1",
     });
+    expect(
+      parseCliArgs(["admin", "tenant-imports", "list", "acme", "--status", "blocked"]),
+    ).toEqual({
+      kind: "tenant-import-list",
+      slug: "acme",
+      status: "blocked",
+    });
     expect(parseCliArgs(["admin", "tenant-imports", "status", "acme", importJobId])).toEqual({
       kind: "tenant-import-status",
       slug: "acme",

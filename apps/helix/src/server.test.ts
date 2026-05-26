@@ -11,6 +11,10 @@ import { PostgresAuditStore } from "./platform/audit/store.js";
 import { PostgresPlatformConfigStore } from "./platform/config/admin.js";
 import { PostgresOrgStore, PostgresPlanStore, type OrgRecord } from "./platform/tenancy/index.js";
 import { InMemoryAgentRateCostLimiter, type AgentLimitBudget } from "./platform/limits/index.js";
+import {
+  PostgresTenantStorageMigrationJobStore,
+  type TenantStorageMigrationJobRecord,
+} from "./platform/storage/index.js";
 import { registerSearchTools } from "./platform/search/index.js";
 import type { IndexDocument, SearchEngine, SearchRequest, SearchResponse } from "./platform/search/types.js";
 import { createToolRegistry } from "./platform/tool-registry.js";
@@ -121,6 +125,18 @@ describe("createHelixServer tenant config admin routes", () => {
       id: "audit-1",
       thisHash: "hash-1",
     });
+    const migrationJob = tenantStorageMigrationJobRecord({
+      orgId: org.id,
+      requestedByActorId: "admin-1",
+    });
+    const createMigrationJob = vi
+      .spyOn(PostgresTenantStorageMigrationJobStore.prototype, "create")
+      .mockResolvedValue(migrationJob);
+    const findMigrationJob = vi.spyOn(
+      PostgresTenantStorageMigrationJobStore.prototype,
+      "findByIdForOrg",
+    );
+    findMigrationJob.mockResolvedValue(migrationJob);
 
     const app = await createHelixServer();
     try {
@@ -151,6 +167,54 @@ describe("createHelixServer tenant config admin routes", () => {
         health: {
           status: "degraded",
         },
+      });
+
+      const migration = await app.inject({
+        method: "POST",
+        url: "/api/admin/tenant-config/byo-storage/migrations",
+        headers,
+        payload: { target: "byo", dryRun: true },
+      });
+      expect(migration.statusCode).toBe(202);
+      expect(migration.json()).toMatchObject({
+        migration: {
+          id: migrationJob.id,
+          orgId: org.id,
+          target: "byo",
+          status: "queued",
+          dryRun: true,
+        },
+      });
+      expect(createMigrationJob).toHaveBeenCalledWith({
+        orgId: org.id,
+        target: "byo",
+        dryRun: true,
+        requestedByActorId: "admin-1",
+        sourceStorage: {
+          managedBy: "helix-default",
+          storage: null,
+        },
+        targetStorage: {
+          managedBy: "byo",
+          storage: null,
+        },
+      });
+
+      const migrationStatus = await app.inject({
+        method: "GET",
+        url: `/api/admin/tenant-config/byo-storage/migrations/${migrationJob.id}`,
+        headers,
+      });
+      expect(migrationStatus.statusCode).toBe(200);
+      expect(migrationStatus.json()).toMatchObject({
+        migration: {
+          id: migrationJob.id,
+          status: "queued",
+        },
+      });
+      expect(findMigrationJob).toHaveBeenCalledWith({
+        id: migrationJob.id,
+        orgId: org.id,
       });
     } finally {
       await app.close();
@@ -921,6 +985,39 @@ function orgRecord(overrides: Partial<OrgRecord> = {}): OrgRecord {
     suspendedAt: null,
     softDeletedAt: null,
     hardDeletedAt: null,
+    ...overrides,
+  };
+}
+
+function tenantStorageMigrationJobRecord(
+  overrides: Partial<TenantStorageMigrationJobRecord> = {},
+): TenantStorageMigrationJobRecord {
+  const now = new Date("2026-05-20T02:00:00.000Z");
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    orgId: "org-tenant-config",
+    target: "byo",
+    status: "queued",
+    dryRun: true,
+    requestedByActorId: "admin-1",
+    sourceStorage: {
+      managedBy: "helix-default",
+      storage: null,
+    },
+    targetStorage: {
+      managedBy: "byo",
+      storage: null,
+    },
+    plannedCount: 0,
+    copiedCount: 0,
+    verifiedCount: 0,
+    failures: [],
+    lastError: null,
+    attemptCount: 0,
+    startedAt: null,
+    completedAt: null,
+    createdAt: now,
+    updatedAt: now,
     ...overrides,
   };
 }

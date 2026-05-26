@@ -287,8 +287,13 @@ import {
   ScopeToolAccessPolicy,
 } from "./platform/permissions/tool-access.js";
 import {
+  createDefaultTenantStorageResolver,
   createS3CompatibleStorage,
+  createTenantStorageMigrationPairResolver,
   createTenantStorageResolver,
+  PostgresTenantStorageMigrationJobStore,
+  resolveTenantStorageSnapshot,
+  TenantStorageMigrationWorker,
 } from "./platform/storage/index.js";
 import { createVaultTenantStorageSecretReaderFromEnv } from "./platform/secrets/index.js";
 import {
@@ -1023,6 +1028,40 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     loadByoConfig: async (orgId: string) => (await orgStore.findById(orgId))?.byoConfig,
     ...(tenantStorageSecretReader === undefined ? {} : { secretReader: tenantStorageSecretReader }),
   });
+  const helixDefaultStorageResolver = createDefaultTenantStorageResolver(driveStorage);
+  const tenantStorageMigrationJobStore = new PostgresTenantStorageMigrationJobStore(sql);
+  const tenantStorageMigrationWorker = envFlag(
+    "HELIX_TENANT_STORAGE_MIGRATION_WORKER_ENABLED",
+    false,
+  )
+    ? new TenantStorageMigrationWorker({
+        store: tenantStorageMigrationJobStore,
+        sql,
+        resolveStoragePair: createTenantStorageMigrationPairResolver({
+          currentStorageResolver: driveStorageResolver,
+          helixDefaultStorageResolver,
+          snapshotStorageResolver: ({ orgId, state }) =>
+            resolveTenantStorageSnapshot({
+              orgId,
+              state,
+              defaultClient: driveStorage,
+              ...(tenantStorageSecretReader === undefined
+                ? {}
+                : { secretReader: tenantStorageSecretReader }),
+            }),
+        }),
+        intervalMs: envPositiveInt("HELIX_TENANT_STORAGE_MIGRATION_INTERVAL_MS", 15_000),
+        batchSize: envPositiveInt("HELIX_TENANT_STORAGE_MIGRATION_BATCH_SIZE", 2),
+        onResult: (result) => {
+          if (result.claimed > 0) {
+            app.log.info(result, "Tenant storage migration worker completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Tenant storage migration worker error");
+        },
+      })
+    : undefined;
   const mailStore = new PostgresMailStore(sql, {
     storageResolver: driveStorageResolver,
   });
@@ -1700,6 +1739,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
     storageResolver: driveStorageResolver,
+    storageMigrationJobs: tenantStorageMigrationJobStore,
     plans: planStore,
     featureFlagEvents: eventBus,
     onFeatureFlagEventError: (error) => {
@@ -2062,6 +2102,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // double-ship audit batches.
   for (const { name, worker } of auditShippingWorkers) {
     leaderGatedWorkers.push({ name, worker });
+  }
+  if (tenantStorageMigrationWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "tenant-storage-migration-worker",
+      worker: tenantStorageMigrationWorker,
+    });
   }
   leaderGatedWorkers.push({ name: "pending-action-expiry-worker", worker: pendingActionExpiryWorker });
 
@@ -2833,6 +2879,17 @@ function envFlag(name: string, defaultValue: boolean): boolean {
     return defaultValue;
   }
   return envValueFlag(value, defaultValue);
+}
+
+function envPositiveInt(name: string, defaultValue: number): number {
+  const value = process.env[name];
+  if (value === undefined || value.trim().length === 0) {
+    return defaultValue;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 && String(parsed) === value.trim()
+    ? parsed
+    : defaultValue;
 }
 
 function envValueFlag(value: string, defaultValue: boolean): boolean {

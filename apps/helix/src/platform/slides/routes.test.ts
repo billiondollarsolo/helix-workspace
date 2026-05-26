@@ -294,6 +294,57 @@ describe("slides sync routes", () => {
     expect(socket.messageHandlerCount).toBe(0);
   });
 
+  it("enforces the concurrent editor quota per presentation room", async () => {
+    const store = new InMemorySlidesStore();
+    const deck = await store.createDeck({ orgId, actorId, title: "Quota" });
+    const firstSocket = new FakeSocket();
+    const blockedSocket = new FakeSocket();
+    const state = { rooms: new Map() };
+    const routeOptions = options(store, { concurrentEditorLimit: 1 });
+
+    await handleSlidesSocket(firstSocket, requestFor(deck.id), routeOptions, state);
+    await handleSlidesSocket(blockedSocket, requestFor(deck.id), routeOptions, state);
+
+    expect(firstSocket.closed).toBeNull();
+    expect(blockedSocket.closed).toEqual({
+      code: 1008,
+      reason: "Concurrent editor quota exceeded",
+    });
+    expect(blockedSocket.messageHandlerCount).toBe(0);
+
+    firstSocket.close();
+    const nextSocket = new FakeSocket();
+    await handleSlidesSocket(nextSocket, requestFor(deck.id), routeOptions, state);
+
+    expect(nextSocket.closed).toBeNull();
+    expect(nextSocket.messages[0]).toMatchObject({ type: "ready", deckId: deck.id });
+  });
+
+  it("treats a null concurrent editor quota as unlimited for presentations", async () => {
+    const store = new InMemorySlidesStore();
+    const deck = await store.createDeck({ orgId, actorId, title: "Unlimited" });
+    const firstSocket = new FakeSocket();
+    const secondSocket = new FakeSocket();
+    const state = { rooms: new Map() };
+
+    await handleSlidesSocket(
+      firstSocket,
+      requestFor(deck.id),
+      options(store, { concurrentEditorLimit: null }),
+      state,
+    );
+    await handleSlidesSocket(
+      secondSocket,
+      requestFor(deck.id),
+      options(store, { concurrentEditorLimit: null }),
+      state,
+    );
+
+    expect(firstSocket.closed).toBeNull();
+    expect(secondSocket.closed).toBeNull();
+    expect(secondSocket.messages[0]).toMatchObject({ type: "ready", deckId: deck.id });
+  });
+
   it("tracks active websocket metrics with the slides route label", async () => {
     const store = new InMemorySlidesStore();
     const deck = await store.createDeck({ orgId, actorId, title: "Metrics" });
@@ -322,11 +373,15 @@ function options(
   store: SlidesStore,
   overrides: {
     readonly metrics?: RecordingWebsocketMetrics | undefined;
+    readonly concurrentEditorLimit?: number | null | undefined;
   } = {},
 ): Parameters<typeof handleSlidesSocket>[2] {
   return {
     store,
     actorFromRequest: () => actor,
+    ...(overrides.concurrentEditorLimit === undefined
+      ? {}
+      : { concurrentEditorLimit: () => overrides.concurrentEditorLimit }),
     ...(overrides.metrics === undefined ? {} : { metrics: overrides.metrics }),
   };
 }

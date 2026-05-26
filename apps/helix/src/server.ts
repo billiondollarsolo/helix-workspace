@@ -1862,6 +1862,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ? await registerDocsRoutes(app, {
         store: docsStore,
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+        concurrentEditorLimit: ({ request }) => collabConcurrentEditorLimit(request),
         metrics,
         onError: (error) => {
           app.log.error({ error }, "Docs websocket error");
@@ -1871,6 +1872,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerSheetsRoutes(app, {
     store: sheetsStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    concurrentEditorLimit: ({ request }) => collabConcurrentEditorLimit(request),
     events: eventBus,
     metrics,
     onError: (error) => {
@@ -1880,6 +1882,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerSlidesRoutes(app, {
     store: slidesStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    concurrentEditorLimit: ({ request }) => collabConcurrentEditorLimit(request),
     metrics,
     onError: (error) => {
       app.log.error({ error }, "Slides websocket error");
@@ -2546,6 +2549,10 @@ function assignLimitOverride(
     );
   }
   override[key] = parsed;
+}
+
+function collabConcurrentEditorLimit(request: FastifyRequest): number | null | undefined {
+  return request.effectiveConfig?.quotas.collab_concurrent_editors_per_doc;
 }
 
 async function invokeTool(

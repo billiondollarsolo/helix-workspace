@@ -4,6 +4,7 @@ import type { EventBus, EventEnvelope, JsonObject, Unsubscribe } from "@helix/sd
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { SheetOperation, SheetsStore } from "./store.js";
+import type { SheetWithTabs } from "./types.js";
 import type { WebsocketConnectionMetrics } from "../websocket-metrics.js";
 import { trackWebsocketConnection } from "../websocket-metrics.js";
 
@@ -21,6 +22,11 @@ interface SheetsSocket {
 export interface RegisterSheetsRoutesOptions {
   readonly store: SheetsStore;
   readonly actorFromRequest: (request: FastifyRequest) => Actor | Promise<Actor>;
+  readonly concurrentEditorLimit?: (input: {
+    readonly request: FastifyRequest;
+    readonly actor: Actor;
+    readonly sheet: SheetWithTabs;
+  }) => number | null | undefined | Promise<number | null | undefined>;
   readonly events?: EventBus | undefined;
   readonly operationLogCompaction?: SheetsOperationLogCompactionOptions | undefined;
   readonly metrics?: WebsocketConnectionMetrics | undefined;
@@ -114,6 +120,8 @@ const defaultOperationLogCompaction: SheetsOperationLogCompactionOptions = {
   compactAfterRevisions: 1_000,
   retainRevisions: 500,
 };
+const SHEETS_QUOTA_CLOSE_CODE = 1008;
+const SHEETS_QUOTA_CLOSE_REASON = "Concurrent editor quota exceeded";
 
 export async function registerSheetsRoutes(
   app: FastifyInstance,
@@ -160,6 +168,20 @@ export async function handleSheetsSocket(
   }
 
   const roomKey = sheetRoomKey(actor.orgId, sheet.id);
+  const concurrentEditorLimit = await options.concurrentEditorLimit?.({
+    request,
+    actor,
+    sheet,
+  });
+  if (
+    concurrentEditorLimit !== null &&
+    concurrentEditorLimit !== undefined &&
+    (state.rooms.get(roomKey)?.peers.size ?? 0) >= concurrentEditorLimit
+  ) {
+    socket.close(SHEETS_QUOTA_CLOSE_CODE, SHEETS_QUOTA_CLOSE_REASON);
+    return;
+  }
+
   const room =
     state.rooms.get(roomKey) ??
     (await createSheetsRoom({

@@ -21,6 +21,11 @@ interface SlidesSocket {
 export interface RegisterSlidesRoutesOptions {
   readonly store: SlidesStore;
   readonly actorFromRequest: (request: FastifyRequest) => Actor | Promise<Actor>;
+  readonly concurrentEditorLimit?: (input: {
+    readonly request: FastifyRequest;
+    readonly actor: Actor;
+    readonly deck: SlideDeckSummaryRecord;
+  }) => number | null | undefined | Promise<number | null | undefined>;
   readonly metrics?: WebsocketConnectionMetrics | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
 }
@@ -108,6 +113,8 @@ const operationInboundSchema = z.object({
 });
 
 const inboundSchema = z.discriminatedUnion("type", [operationInboundSchema, awarenessSchema]);
+const SLIDES_QUOTA_CLOSE_CODE = 1008;
+const SLIDES_QUOTA_CLOSE_REASON = "Concurrent editor quota exceeded";
 
 export async function registerSlidesRoutes(
   app: FastifyInstance,
@@ -153,13 +160,29 @@ export async function handleSlidesSocket(
     return;
   }
 
+  const concurrentEditorLimit = await options.concurrentEditorLimit?.({
+    request,
+    actor,
+    deck: deckDetail.deck,
+  });
+  if (
+    concurrentEditorLimit !== null &&
+    concurrentEditorLimit !== undefined &&
+    (state.rooms.get(slidesRoomKey(actor.orgId, parsedParams.deckId))?.sockets.size ?? 0) >=
+      concurrentEditorLimit
+  ) {
+    socket.close(SLIDES_QUOTA_CLOSE_CODE, SLIDES_QUOTA_CLOSE_REASON);
+    return;
+  }
+
   const recentOperations = await options.store.listOperations({
     orgId: actor.orgId,
     actorId: actor.id,
     deckId: parsedParams.deckId,
   });
   const durableRevision = recentOperations.at(-1)?.revision ?? 0;
-  const room = state.rooms.get(parsedParams.deckId) ?? {
+  const roomKey = slidesRoomKey(actor.orgId, parsedParams.deckId);
+  const room = state.rooms.get(roomKey) ?? {
     deckId: parsedParams.deckId,
     sockets: new Set<SlidesSocket>(),
     awareness: new Map<SlidesSocket, SlidesAwarenessState>(),
@@ -167,7 +190,7 @@ export async function handleSlidesSocket(
   };
   room.latestRevision = Math.max(room.latestRevision, durableRevision);
   room.sockets.add(socket);
-  state.rooms.set(parsedParams.deckId, room);
+  state.rooms.set(roomKey, room);
 
   socket.send(
     JSON.stringify({
@@ -211,7 +234,7 @@ export async function handleSlidesSocket(
       });
     }
     if (room.sockets.size === 0) {
-      state.rooms.delete(parsedParams.deckId);
+      state.rooms.delete(roomKey);
     }
   });
 
@@ -340,6 +363,10 @@ function serializeSlide(slide: SlideRecord): JsonObject {
     createdAt: slide.createdAt.toISOString(),
     updatedAt: slide.updatedAt.toISOString(),
   };
+}
+
+function slidesRoomKey(orgId: string, deckId: string): string {
+  return `${orgId}:${deckId}`;
 }
 
 function toJsonObject(value: unknown): JsonObject {

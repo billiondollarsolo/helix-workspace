@@ -23,6 +23,7 @@
     "db:seed:workspace": "tsx src/db/seed-workspace.ts",
     "db:seed:workspace:large": "tsx src/db/seed-workspace-large.ts",
     "db:verify:demo": "tsx src/db/verify-local-demo.ts",
+    "docs:verify-fidelity": "vitest run src/platform/docs/export/docx-fidelity.test.ts",
     "dev": "tsx watch src/index.ts",
     "lint": "eslint src --max-warnings=0",
     "test": "vitest run --passWithNoTests",

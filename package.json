@@ -24,6 +24,7 @@
     "quality:editors-boundaries": "node infra/scripts/verify-workspace-editor-boundaries.mjs",
     "quality:editors-boundaries:test": "vitest run infra/scripts/verify-workspace-editor-boundaries.test.mjs",
     "quality:editors-contract": "bash infra/scripts/verify-editors-contract.sh",
+    "quality:docs-fidelity": "pnpm --filter @helix/app docs:verify-fidelity",
     "quality:sheets-fidelity": "bash infra/scripts/verify-sheets-fidelity.sh",
     "quality:live-restore-drill": "bash infra/scripts/live-restore-drill-smoke.sh",
     "quality:mail-deliverability-smoke": "node infra/scripts/mail-deliverability-smoke.mjs",

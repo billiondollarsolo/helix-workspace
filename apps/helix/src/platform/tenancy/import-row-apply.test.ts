@@ -1,0 +1,514 @@
+import type postgres from "postgres";
+import { describe, expect, it } from "vitest";
+import type { TenantImportPlanOperation } from "./import-plan.js";
+import {
+  applyTenantImportPlanRows,
+  PostgresTenantImportRowApplyStore,
+} from "./import-row-apply.js";
+
+const sourceOrgId = "22222222-2222-4222-8222-222222222222";
+const targetOrgId = "33333333-3333-4333-8333-333333333333";
+const actorId = "11111111-1111-4111-8111-111111111111";
+const domainId = "44444444-4444-4444-8444-444444444444";
+const dnsRecordId = "55555555-5555-4555-8555-555555555555";
+const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
+const targetDomainId = "77777777-7777-4777-8777-777777777777";
+const targetDnsRecordId = "88888888-8888-4888-8888-888888888888";
+const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
+
+describe("PostgresTenantImportRowApplyStore", () => {
+  it("blocks planned blocked operations without issuing SQL", async () => {
+    const recording = createRecordingSql([]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: operation({
+          action: "blocked",
+        }),
+      }),
+    ).resolves.toMatchObject({
+      action: "blocked",
+      blockedReason: "planned_operation_blocked",
+      sourceId: domainId,
+    });
+    expect(recording.calls).toEqual([]);
+  });
+
+  it("inserts admin domains for the target org and regenerates verified state by default", async () => {
+    const recording = createRecordingSql([[{ id: targetDomainId }]]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: operation({
+          conflictPolicy: {
+            rowId: "regenerate",
+            references: { createdBy: "null" },
+            state: {
+              verificationStatus: "regenerate",
+              verifiedAt: "regenerate",
+              isPrimary: "null",
+            },
+          },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      action: "inserted",
+      targetId: targetDomainId,
+    });
+
+    expect(recording.calls).toHaveLength(1);
+    expect(recording.calls[0]?.text).toContain("insert into admin_domains");
+    expect(recording.calls[0]?.text).toContain("(org_id, domain, is_primary");
+    expect(recording.calls[0]?.text).not.toContain("(id, org_id");
+    expect(recording.calls[0]?.values).toEqual([
+      targetOrgId,
+      "example.com",
+      false,
+      "pending",
+      null,
+      null,
+      "2026-05-24T10:00:00.000Z",
+      "2026-05-24T10:05:00.000Z",
+    ]);
+  });
+
+  it("updates matched admin domains by targetId and clears sibling primaries", async () => {
+    const recording = createRecordingSql([[{ id: targetDomainId }], []]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: operation({
+          action: "update",
+          targetId: targetDomainId,
+          row: {
+            isPrimary: true,
+          },
+          conflictPolicy: {
+            rowId: "match",
+            references: { createdBy: "preserve" },
+            state: {
+              verificationStatus: "regenerate",
+              verifiedAt: "regenerate",
+              isPrimary: "preserve",
+            },
+          },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      action: "updated",
+      targetId: targetDomainId,
+    });
+
+    expect(recording.calls).toHaveLength(2);
+    expect(recording.calls[0]?.text).toContain("update admin_domains");
+    expect(recording.calls[0]?.text).toContain("where org_id = ? and id = ?");
+    expect(recording.calls[0]?.values).toEqual([
+      "example.com",
+      true,
+      "pending",
+      null,
+      actorId,
+      "2026-05-24T10:05:00.000Z",
+      targetOrgId,
+      targetDomainId,
+    ]);
+    expect(recording.calls[1]?.text).toContain("update admin_domains set is_primary = false");
+    expect(recording.calls[1]?.values).toEqual([targetOrgId, targetDomainId]);
+  });
+
+  it("blocks DNS inserts when the required domain row remap is unavailable", async () => {
+    const recording = createRecordingSql([]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: dnsOperation(),
+      }),
+    ).resolves.toMatchObject({
+      action: "blocked",
+      blockedReason: "domain_id_remap_missing",
+    });
+    expect(recording.calls).toEqual([]);
+  });
+
+  it("inserts DNS records through defensive natural-key lookup without ON CONFLICT", async () => {
+    const recording = createRecordingSql([[], [{ id: targetDnsRecordId }]]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: dnsOperation({
+          conflictPolicy: {
+            rowId: "preserve",
+            references: { domainId: "match" },
+            state: {
+              status: "regenerate",
+              observedValue: "regenerate",
+              lastCheckedAt: "regenerate",
+            },
+          },
+        }),
+        rowIdRemaps: new Map([[domainId, targetDomainId]]),
+      }),
+    ).resolves.toMatchObject({
+      action: "inserted",
+      targetId: targetDnsRecordId,
+    });
+
+    expect(recording.calls).toHaveLength(2);
+    expect(recording.calls[0]?.text).toContain("select id");
+    expect(recording.calls[0]?.text).toContain("from admin_dns_records");
+    expect(recording.calls[0]?.text).toContain("for update");
+    expect(recording.calls[1]?.text).toContain("insert into admin_dns_records");
+    expect(recording.calls[1]?.text).not.toContain("on conflict");
+    expect(recording.calls[1]?.values).toEqual([
+      dnsRecordId,
+      targetOrgId,
+      targetDomainId,
+      "TXT",
+      "_helix.example.com",
+      "helix-verification=source",
+      null,
+      "pending",
+      null,
+      "2026-05-24T10:01:00.000Z",
+      "2026-05-24T10:06:00.000Z",
+    ]);
+  });
+
+  it("updates matched DNS records by targetId", async () => {
+    const recording = createRecordingSql([[{ id: targetDnsRecordId }]]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: dnsOperation({
+          action: "update",
+          targetId: targetDnsRecordId,
+          row: {
+            domainId: targetDomainId,
+          },
+          conflictPolicy: {
+            rowId: "match",
+            references: { domainId: "match" },
+            state: {
+              status: "regenerate",
+              observedValue: "regenerate",
+              lastCheckedAt: "regenerate",
+            },
+          },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      action: "updated",
+      targetId: targetDnsRecordId,
+    });
+
+    expect(recording.calls).toHaveLength(1);
+    expect(recording.calls[0]?.text).toContain("update admin_dns_records");
+    expect(recording.calls[0]?.text).toContain("where org_id = ? and id = ?");
+    expect(recording.calls[0]?.values).toEqual([
+      targetDomainId,
+      "TXT",
+      "_helix.example.com",
+      "helix-verification=source",
+      null,
+      "pending",
+      null,
+      "2026-05-24T10:06:00.000Z",
+      targetOrgId,
+      targetDnsRecordId,
+    ]);
+  });
+
+  it("upserts resource classifications on their tenant natural key", async () => {
+    const recording = createRecordingSql([[{ id: targetResourceClassificationId }]]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: resourceClassificationOperation({
+          row: {
+            actorId: null,
+            resourceId: "target-msg-1",
+          },
+          conflictPolicy: {
+            rowId: "preserve",
+            references: {
+              actorId: "null",
+              resourceId: "match",
+            },
+            state: {},
+          },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      action: "inserted",
+      targetId: targetResourceClassificationId,
+    });
+
+    expect(recording.calls).toHaveLength(1);
+    expect(recording.calls[0]?.text).toContain("insert into resource_classifications");
+    expect(recording.calls[0]?.text).toContain(
+      "on conflict (org_id, resource_type, resource_id) do update",
+    );
+    expect(recording.calls[0]?.values).toEqual([
+      resourceClassificationId,
+      targetOrgId,
+      "mail.message",
+      "target-msg-1",
+      "confidential",
+      "explicit",
+      "Imported label",
+      null,
+      "2026-05-24T10:02:00.000Z",
+      "2026-05-24T10:07:00.000Z",
+    ]);
+  });
+
+  it("rejects unsupported table/kind combinations without issuing SQL", async () => {
+    const recording = createRecordingSql([]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: {
+          ...operation(),
+          kind: "upsert_admin_dns_record",
+        },
+      }),
+    ).resolves.toMatchObject({
+      action: "blocked",
+      blockedReason: "unsupported_operation",
+    });
+    expect(recording.calls).toEqual([]);
+  });
+});
+
+describe("applyTenantImportPlanRows", () => {
+  it("applies operations in plan order and carries generated row IDs into dependent rows", async () => {
+    const recording = createRecordingSql([
+      [{ id: targetDomainId }],
+      [],
+      [{ id: targetDnsRecordId }],
+    ]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      applyTenantImportPlanRows({
+        store,
+        plan: {
+          operations: [
+            dnsOperation({
+              order: 2,
+              conflictPolicy: {
+                rowId: "preserve",
+                references: { domainId: "preserve" },
+                state: {
+                  status: "regenerate",
+                  observedValue: "regenerate",
+                  lastCheckedAt: "regenerate",
+                },
+              },
+            }),
+            operation({
+              order: 1,
+              conflictPolicy: {
+                rowId: "regenerate",
+                references: { createdBy: "null" },
+                state: {
+                  verificationStatus: "regenerate",
+                  verifiedAt: "regenerate",
+                  isPrimary: "null",
+                },
+              },
+            }),
+          ],
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      summary: {
+        total: 2,
+        inserted: 2,
+        updated: 0,
+        blocked: 0,
+        noop: 0,
+      },
+    });
+
+    expect(recording.calls[2]?.text).toContain("insert into admin_dns_records");
+    expect(recording.calls[2]?.values).toContain(targetDomainId);
+  });
+});
+
+function operation(
+  overrides: Partial<TenantImportPlanOperation> & {
+    readonly row?: Partial<TenantImportPlanOperation["row"]>;
+    readonly conflictPolicy?: Partial<TenantImportPlanOperation["conflictPolicy"]>;
+  } = {},
+): TenantImportPlanOperation {
+  const base: TenantImportPlanOperation = {
+    order: 1,
+    kind: "upsert_admin_domain",
+    table: "admin_domains",
+    path: "postgres/data/chunks/admin_domains/000000.jsonl",
+    line: 1,
+    action: "insert",
+    sourceId: domainId,
+    targetId: null,
+    sourceOrgId,
+    targetOrgId,
+    naturalKey: ["example.com"],
+    dependsOn: [],
+    remappedFields: {
+      orgId: targetOrgId,
+    },
+    conflictPolicy: {
+      rowId: "preserve",
+      references: {
+        createdBy: "preserve",
+      },
+      state: {
+        verificationStatus: "regenerate",
+        verifiedAt: "regenerate",
+        isPrimary: "preserve",
+      },
+    },
+    row: {
+      id: domainId,
+      orgId: targetOrgId,
+      domain: "example.com",
+      isPrimary: false,
+      verificationStatus: "verified",
+      verifiedAt: "2026-05-24T10:03:00.000Z",
+      createdBy: actorId,
+      createdAt: "2026-05-24T10:00:00.000Z",
+      updatedAt: "2026-05-24T10:05:00.000Z",
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    conflictPolicy: {
+      ...base.conflictPolicy,
+      ...overrides.conflictPolicy,
+      references: {
+        ...base.conflictPolicy.references,
+        ...overrides.conflictPolicy?.references,
+      },
+      state: {
+        ...base.conflictPolicy.state,
+        ...overrides.conflictPolicy?.state,
+      },
+    },
+    row: {
+      ...base.row,
+      ...overrides.row,
+    },
+  };
+}
+
+function dnsOperation(
+  overrides: Partial<TenantImportPlanOperation> & {
+    readonly row?: Partial<TenantImportPlanOperation["row"]>;
+    readonly conflictPolicy?: Partial<TenantImportPlanOperation["conflictPolicy"]>;
+  } = {},
+): TenantImportPlanOperation {
+  return operation({
+    order: 2,
+    kind: "upsert_admin_dns_record",
+    table: "admin_dns_records",
+    path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
+    sourceId: dnsRecordId,
+    naturalKey: [domainId, "TXT", "_helix.example.com"],
+    dependsOn: [`admin_domains:${domainId}`],
+    ...overrides,
+    conflictPolicy: {
+      rowId: overrides.conflictPolicy?.rowId ?? "preserve",
+      references: {
+        domainId: "preserve",
+        ...overrides.conflictPolicy?.references,
+      },
+      state: {
+        status: "regenerate",
+        observedValue: "regenerate",
+        lastCheckedAt: "regenerate",
+        ...overrides.conflictPolicy?.state,
+      },
+    },
+    row: {
+      id: dnsRecordId,
+      orgId: targetOrgId,
+      domainId,
+      recordType: "TXT",
+      host: "_helix.example.com",
+      expectedValue: "helix-verification=source",
+      observedValue: "helix-verification=old",
+      status: "verified",
+      lastCheckedAt: "2026-05-24T10:04:00.000Z",
+      createdAt: "2026-05-24T10:01:00.000Z",
+      updatedAt: "2026-05-24T10:06:00.000Z",
+      ...overrides.row,
+    },
+  });
+}
+
+function resourceClassificationOperation(
+  overrides: Partial<TenantImportPlanOperation> & {
+    readonly row?: Partial<TenantImportPlanOperation["row"]>;
+    readonly conflictPolicy?: Partial<TenantImportPlanOperation["conflictPolicy"]>;
+  } = {},
+): TenantImportPlanOperation {
+  return operation({
+    order: 3,
+    kind: "upsert_resource_classification",
+    table: "resource_classifications",
+    path: "postgres/data/chunks/resource_classifications/000000.jsonl",
+    sourceId: resourceClassificationId,
+    naturalKey: ["mail.message", "msg-1"],
+    ...overrides,
+    conflictPolicy: {
+      rowId: overrides.conflictPolicy?.rowId ?? "preserve",
+      references: {
+        actorId: "preserve",
+        resourceId: "preserve",
+        ...overrides.conflictPolicy?.references,
+      },
+      state: {
+        ...overrides.conflictPolicy?.state,
+      },
+    },
+    row: {
+      id: resourceClassificationId,
+      orgId: targetOrgId,
+      resourceType: "mail.message",
+      resourceId: "msg-1",
+      classification: "confidential",
+      source: "explicit",
+      reason: "Imported label",
+      actorId,
+      createdAt: "2026-05-24T10:02:00.000Z",
+      updatedAt: "2026-05-24T10:07:00.000Z",
+      ...overrides.row,
+    },
+  });
+}
+
+function createRecordingSql(results: readonly unknown[][]): {
+  readonly sql: postgres.Sql;
+  readonly calls: readonly { readonly text: string; readonly values: readonly unknown[] }[];
+} {
+  const calls: { readonly text: string; readonly values: readonly unknown[] }[] = [];
+  let index = 0;
+  const sql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+    calls.push({ text: strings.join("?"), values });
+    const result = results[index] ?? [];
+    index += 1;
+    return Promise.resolve(result);
+  }) as unknown as postgres.Sql;
+  return { sql, calls };
+}

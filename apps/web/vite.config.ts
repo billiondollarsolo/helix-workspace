@@ -37,13 +37,11 @@ export default defineConfig({
         "/asyncapi.json",
         "/metrics",
         "/events",
+        "/ws",
         "/sync",
         "/dav",
         "/.well-known",
-      ].map((path) => [
-        path,
-        { target: "http://localhost:3000", changeOrigin: true, ws: true },
-      ]),
+      ].map((path) => [path, { target: "http://localhost:3000", changeOrigin: true, ws: true }]),
     ),
   },
 });

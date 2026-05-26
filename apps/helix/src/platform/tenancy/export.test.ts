@@ -314,11 +314,101 @@ describe("registerTenantExportRoutes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("application/x-tar");
+    expect(response.headers["accept-ranges"]).toBe("bytes");
     expect(response.headers["content-disposition"]).toBe(
       'attachment; filename="helix-export-acme-20260524T100000Z.tar"',
     );
     expect(entries["objects/drive/report.txt"]).toBe("report bytes");
     expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes");
+    await app.close();
+  });
+
+  it("serves bounded, open-ended, and suffix byte ranges for tenant export archives", async () => {
+    const app = fastify();
+    await registerTenantExportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor(),
+      exportPlanner: () => tenantExportManifest(),
+    });
+    const expectedArchive = await buildTenantExportArchive(tenantExportManifest());
+    const expectedArchiveSize = String(expectedArchive.byteSize);
+    const openEndedStart = 100;
+    const openEndedEnd = expectedArchive.byteSize - 1;
+    const suffixStart = expectedArchive.byteSize - 64;
+    const suffixEnd = expectedArchive.byteSize - 1;
+
+    const bounded = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/export",
+      headers: { range: "bytes=0-99" },
+    });
+    const openEnded = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/export",
+      headers: { range: "bytes=100-" },
+    });
+    const suffix = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/export",
+      headers: { range: "bytes=-64" },
+    });
+
+    expect(bounded.statusCode).toBe(206);
+    expect(bounded.headers["accept-ranges"]).toBe("bytes");
+    expect(bounded.headers["content-length"]).toBe("100");
+    expect(bounded.headers["content-range"]).toBe(`bytes 0-99/${expectedArchiveSize}`);
+    expect(rawPayload(bounded)).toEqual(expectedArchive.bytes.subarray(0, 100));
+
+    expect(openEnded.statusCode).toBe(206);
+    expect(openEnded.headers["content-length"]).toBe(
+      String(expectedArchive.byteSize - openEndedStart),
+    );
+    expect(openEnded.headers["content-range"]).toBe(
+      `bytes ${String(openEndedStart)}-${String(openEndedEnd)}/${expectedArchiveSize}`,
+    );
+    expect(rawPayload(openEnded)).toEqual(expectedArchive.bytes.subarray(openEndedStart));
+
+    expect(suffix.statusCode).toBe(206);
+    expect(suffix.headers["content-length"]).toBe("64");
+    expect(suffix.headers["content-range"]).toBe(
+      `bytes ${String(suffixStart)}-${String(suffixEnd)}/${expectedArchiveSize}`,
+    );
+    expect(rawPayload(suffix)).toEqual(expectedArchive.bytes.subarray(suffixStart));
+    await app.close();
+  });
+
+  it("rejects malformed and unsatisfiable tenant export byte ranges without auditing success", async () => {
+    const auditRecords: unknown[] = [];
+    const app = fastify();
+    await registerTenantExportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor(),
+      exportPlanner: () => tenantExportManifest(),
+      auditSink: auditSink(auditRecords),
+    });
+    const expectedArchive = await buildTenantExportArchive(tenantExportManifest());
+    const expectedArchiveSize = String(expectedArchive.byteSize);
+
+    const unsatisfiable = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/export",
+      headers: { range: `bytes=${expectedArchiveSize}-` },
+    });
+    const multiRange = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/export",
+      headers: { range: "bytes=0-1,2-3" },
+    });
+
+    expect(unsatisfiable.statusCode).toBe(416);
+    expect(unsatisfiable.headers["accept-ranges"]).toBe("bytes");
+    expect(unsatisfiable.headers["content-range"]).toBe(`bytes */${expectedArchiveSize}`);
+    expect(unsatisfiable.json()).toMatchObject({
+      code: "range_not_satisfiable",
+    });
+    expect(multiRange.statusCode).toBe(416);
+    expect(multiRange.headers["content-range"]).toBe(`bytes */${expectedArchiveSize}`);
+    expect(auditRecords).toEqual([]);
     await app.close();
   });
 

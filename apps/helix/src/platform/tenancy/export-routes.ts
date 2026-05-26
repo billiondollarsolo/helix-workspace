@@ -162,6 +162,18 @@ export async function registerTenantExportRoutes(
     if (archive === "unavailable") {
       return reply;
     }
+    const range = parseByteRange(request.headers.range, archive.byteSize);
+    const archiveByteSize = String(archive.byteSize);
+    if (range?.satisfiable === false) {
+      return reply
+        .code(416)
+        .header("accept-ranges", "bytes")
+        .header("content-range", `bytes */${archiveByteSize}`)
+        .send({
+          error: "Requested tenant export byte range is not satisfiable.",
+          code: "range_not_satisfiable",
+        });
+    }
     await auditAdminAction(options.auditSink, {
       orgId: loaded.org.id,
       actorId: loaded.actor.id,
@@ -174,10 +186,28 @@ export async function registerTenantExportRoutes(
         byteSize: archive.byteSize,
         bytesIncluded: query.data.includeObjectBytes && query.data.objectByteDelivery === "archive",
         objectByteDelivery: query.data.objectByteDelivery,
+        ...(range?.satisfiable === true
+          ? { range: { start: range.start, end: range.end, size: archive.byteSize } }
+          : {}),
       },
     });
+    if (range?.satisfiable === true) {
+      const bytes = archive.bytes.subarray(range.start, range.end + 1);
+      return reply
+        .code(206)
+        .header("accept-ranges", "bytes")
+        .header("content-disposition", `attachment; filename="${archive.filename}"`)
+        .header("content-length", String(bytes.byteLength))
+        .header(
+          "content-range",
+          `bytes ${String(range.start)}-${String(range.end)}/${archiveByteSize}`,
+        )
+        .type(archive.contentType)
+        .send(bytes);
+    }
 
     return reply
+      .header("accept-ranges", "bytes")
       .header("content-disposition", `attachment; filename="${archive.filename}"`)
       .header("content-length", String(archive.byteSize))
       .type(archive.contentType)
@@ -258,6 +288,51 @@ function sendQuotaExceeded(reply: FastifyReply, decision: TenantHourlyQuotaExcee
     retryAfterSeconds: decision.retryAfterSeconds,
     resetsAt: decision.resetsAt,
   });
+}
+
+type ParsedByteRange =
+  | { readonly satisfiable: true; readonly start: number; readonly end: number }
+  | { readonly satisfiable: false };
+
+function parseByteRange(
+  header: string | string[] | undefined,
+  size: number,
+): ParsedByteRange | undefined {
+  const value = Array.isArray(header) ? header[0] : header;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (size <= 0) {
+    return { satisfiable: false };
+  }
+  const match = /^bytes=(?<start>\d*)-(?<end>\d*)$/u.exec(value.trim());
+  if (match === null) {
+    return { satisfiable: false };
+  }
+  const startText = match.groups?.["start"] ?? "";
+  const endText = match.groups?.["end"] ?? "";
+  if (startText.length === 0 && endText.length === 0) {
+    return { satisfiable: false };
+  }
+  if (startText.length === 0) {
+    const suffixLength = Number.parseInt(endText, 10);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+      return { satisfiable: false };
+    }
+    const start = Math.max(size - suffixLength, 0);
+    return { satisfiable: true, start, end: size - 1 };
+  }
+  const start = Number.parseInt(startText, 10);
+  const requestedEnd = endText.length === 0 ? size - 1 : Number.parseInt(endText, 10);
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    requestedEnd < start ||
+    start >= size
+  ) {
+    return { satisfiable: false };
+  }
+  return { satisfiable: true, start, end: Math.min(requestedEnd, size - 1) };
 }
 
 async function safeBuildExportDelivery<T>(

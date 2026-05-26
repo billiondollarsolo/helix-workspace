@@ -107,7 +107,14 @@ describe("tenant export archive", () => {
     expect(Object.keys(entries).sort()).toContain(
       "postgres/data/chunks/admin_dns_records/000000.jsonl",
     );
-    expect(rowChunkManifest.includedTables).toEqual(["admin_domains", "admin_dns_records"]);
+    expect(Object.keys(entries).sort()).toContain(
+      "postgres/data/chunks/resource_classifications/000000.jsonl",
+    );
+    expect(rowChunkManifest.includedTables).toEqual([
+      "admin_domains",
+      "admin_dns_records",
+      "resource_classifications",
+    ]);
     expect(rowChunkManifest.chunks).toEqual([
       expect.objectContaining({
         table: "admin_domains",
@@ -120,6 +127,12 @@ describe("tenant export archive", () => {
         path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
         rowCount: 1,
         orderBy: ["domain_id", "record_type", "host", "id"],
+      }),
+      expect.objectContaining({
+        table: "resource_classifications",
+        path: "postgres/data/chunks/resource_classifications/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["resource_type", "resource_id", "id"],
       }),
     ]);
 
@@ -157,6 +170,22 @@ describe("tenant export archive", () => {
         lastCheckedAt: "2026-05-24T09:25:00.000Z",
         createdAt: "2026-05-24T09:00:00.000Z",
         updatedAt: "2026-05-24T09:25:00.000Z",
+      },
+    ]);
+    expect(
+      parseJsonl(entries["postgres/data/chunks/resource_classifications/000000.jsonl"] ?? ""),
+    ).toEqual([
+      {
+        id: "66666666-6666-4666-8666-666666666666",
+        orgId,
+        resourceType: "mail.message",
+        resourceId: "msg-1",
+        classification: "confidential",
+        source: "label",
+        reason: "label:HR",
+        actorId,
+        createdAt: "2026-05-24T09:00:00.000Z",
+        updatedAt: "2026-05-24T09:30:00.000Z",
       },
     ]);
     expect(entries["manifest.json"]).not.toContain("expectedValue");
@@ -329,6 +358,12 @@ describe("tenant export SQL helpers", () => {
         rowCount: 1,
         orderBy: ["domain_id", "record_type", "host", "id"],
       }),
+      expect.objectContaining({
+        table: "resource_classifications",
+        path: "postgres/data/chunks/resource_classifications/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["resource_type", "resource_id", "id"],
+      }),
     ]);
     expect(recording.calls[0]?.text).toContain(
       "select id, org_id, domain, is_primary, verification_status, verified_at",
@@ -345,6 +380,14 @@ describe("tenant export SQL helpers", () => {
     expect(recording.calls[1]?.text).toContain("where org_id = ?");
     expect(recording.calls[1]?.text).toContain(
       "order by domain_id asc, record_type asc, host asc, id asc",
+    );
+    expect(recording.calls[2]?.text).toContain(
+      "select id, org_id, resource_type, resource_id, classification, source, reason",
+    );
+    expect(recording.calls[2]?.text).toContain("from resource_classifications");
+    expect(recording.calls[2]?.text).toContain("where org_id = ?");
+    expect(recording.calls[2]?.text).toContain(
+      "order by resource_type asc, resource_id asc, id asc",
     );
     expect(recording.calls.flatMap((call) => call.values).every((value) => value === orgId)).toBe(
       true,
@@ -376,6 +419,7 @@ describe("tenant export SQL helpers", () => {
     expect(recording.calls[0]?.text).toContain("from activity where org_id = ?");
     expect(recording.calls[0]?.text).toContain("from admin_domains where org_id = ?");
     expect(recording.calls[0]?.text).toContain("from admin_dns_records where org_id = ?");
+    expect(recording.calls[0]?.text).toContain("from resource_classifications where org_id = ?");
     expect(recording.calls[0]?.text).toContain(
       "from message_attachments join messages on messages.id = message_attachments.message_id where messages.org_id = ?",
     );
@@ -1237,6 +1281,20 @@ function adminDomainChunkSqlResults(): readonly unknown[][] {
         last_checked_at: new Date("2026-05-24T09:25:00.000Z"),
         created_at: new Date("2026-05-24T09:00:00.000Z"),
         updated_at: new Date("2026-05-24T09:25:00.000Z"),
+      },
+    ],
+    [
+      {
+        id: "66666666-6666-4666-8666-666666666666",
+        org_id: orgId,
+        resource_type: "mail.message",
+        resource_id: "msg-1",
+        classification: "confidential",
+        source: "label",
+        reason: "label:HR",
+        actor_id: actorId,
+        created_at: new Date("2026-05-24T09:00:00.000Z"),
+        updated_at: new Date("2026-05-24T09:30:00.000Z"),
       },
     ],
   ];

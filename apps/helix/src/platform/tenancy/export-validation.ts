@@ -22,6 +22,7 @@ export type TenantExportValidationIssueCode =
   | "invalid_timestamp"
   | "duplicate_primary_domain"
   | "duplicate_domain"
+  | "duplicate_resource_classification"
   | "missing_domain_reference"
   | "invalid_chunk_order";
 
@@ -43,6 +44,7 @@ export interface TenantExportValidationResult {
   readonly summary: {
     readonly adminDomainRows: number;
     readonly adminDnsRecordRows: number;
+    readonly resourceClassificationRows: number;
   };
 }
 
@@ -56,7 +58,10 @@ export interface ValidateTenantExportPostgresDataChunksInput {
   readonly expectedOrgId?: string | undefined;
 }
 
-type TenantExportSupportedPostgresDataChunkTable = "admin_domains" | "admin_dns_records";
+type TenantExportSupportedPostgresDataChunkTable =
+  | "admin_domains"
+  | "admin_dns_records"
+  | "resource_classifications";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -102,6 +107,23 @@ const supportedChunks: readonly SupportedChunkDefinition[] = [
       "updatedAt",
     ],
   },
+  {
+    table: "resource_classifications",
+    path: "postgres/data/chunks/resource_classifications/000000.jsonl",
+    orderBy: ["resource_type", "resource_id", "id"],
+    fields: [
+      "id",
+      "orgId",
+      "resourceType",
+      "resourceId",
+      "classification",
+      "source",
+      "reason",
+      "actorId",
+      "createdAt",
+      "updatedAt",
+    ],
+  },
 ];
 
 const supportedChunksByTable = new Map(supportedChunks.map((chunk) => [chunk.table, chunk]));
@@ -110,6 +132,8 @@ const supportedChunkTables = new Set(supportedChunks.map((chunk) => chunk.table)
 const supportedChunkPaths = new Set(supportedChunks.map((chunk) => chunk.path));
 const verificationStatuses = new Set(["verified", "pending", "failed"]);
 const dnsRecordTypes = new Set(["MX", "SPF", "DKIM", "DMARC", "TXT", "CNAME", "A"]);
+const dataClassifications = new Set(["public", "standard", "confidential", "restricted"]);
+const classificationSources = new Set(["default", "explicit", "label", "folder", "heuristic"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const domainPattern = /^[a-z0-9.-]+$/iu;
 
@@ -233,6 +257,7 @@ export function validateTenantExportPostgresDataChunks(
 
   validateDomainRows(rowsByTable.get("admin_domains") ?? [], expectedOrgId, issues);
   validateDnsRows(rowsByTable, expectedOrgId, issues);
+  validateResourceClassificationRows(rowsByTable.get("resource_classifications") ?? [], issues);
 
   return {
     ok: issues.every((issue) => issue.severity !== "error"),
@@ -240,6 +265,7 @@ export function validateTenantExportPostgresDataChunks(
     summary: {
       adminDomainRows: rowsByTable.get("admin_domains")?.length ?? 0,
       adminDnsRecordRows: rowsByTable.get("admin_dns_records")?.length ?? 0,
+      resourceClassificationRows: rowsByTable.get("resource_classifications")?.length ?? 0,
     },
   };
 }
@@ -706,10 +732,7 @@ function validateDeterministicRowOrder(
     if (previous === undefined || current === undefined) {
       continue;
     }
-    const comparison =
-      definition.table === "admin_domains"
-        ? compareDomainRows(previous, current)
-        : compareDnsRows(previous, current);
+    const comparison = compareRowsForDefinition(definition.table, previous, current);
     if (comparison > 0) {
       issues.push({
         severity: "error",
@@ -722,6 +745,21 @@ function validateDeterministicRowOrder(
       });
       return;
     }
+  }
+}
+
+function compareRowsForDefinition(
+  table: TenantExportSupportedPostgresDataChunkTable,
+  previous: JsonRecord,
+  current: JsonRecord,
+): number {
+  switch (table) {
+    case "admin_domains":
+      return compareDomainRows(previous, current);
+    case "admin_dns_records":
+      return compareDnsRows(previous, current);
+    case "resource_classifications":
+      return compareResourceClassificationRows(previous, current);
   }
 }
 
@@ -740,6 +778,75 @@ function compareDnsRows(a: JsonRecord, b: JsonRecord): number {
     compareStrings(stringValue(a.host), stringValue(b.host)) ||
     compareStrings(stringValue(a.id), stringValue(b.id))
   );
+}
+
+function compareResourceClassificationRows(a: JsonRecord, b: JsonRecord): number {
+  return (
+    compareStrings(stringValue(a.resourceType), stringValue(b.resourceType)) ||
+    compareStrings(stringValue(a.resourceId), stringValue(b.resourceId)) ||
+    compareStrings(stringValue(a.id), stringValue(b.id))
+  );
+}
+
+function validateResourceClassificationRows(
+  rows: readonly JsonRecord[],
+  issues: TenantExportValidationIssue[],
+): void {
+  const resourceKeys = new Set<string>();
+  rows.forEach((row, index) => {
+    const line = index + 1;
+    validateUuidField(row, "id", "resource_classifications", line, issues);
+    validateUuidField(row, "actorId", "resource_classifications", line, issues, {
+      nullable: true,
+    });
+    validateTimestampField(row, "createdAt", "resource_classifications", line, issues);
+    validateTimestampField(row, "updatedAt", "resource_classifications", line, issues);
+    validateNonEmptyString(row, "resourceType", 200, "resource_classifications", line, issues);
+    validateNonEmptyString(row, "resourceId", 500, "resource_classifications", line, issues);
+    validateNonEmptyString(row, "reason", 2000, "resource_classifications", line, issues);
+
+    if (typeof row.classification !== "string" || !dataClassifications.has(row.classification)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("resource_classifications")?.path ?? "",
+        table: "resource_classifications",
+        line,
+        field: "classification",
+        message: "Resource classification row classification is not supported.",
+        actual: row.classification,
+      });
+    }
+
+    if (typeof row.source !== "string" || !classificationSources.has(row.source)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("resource_classifications")?.path ?? "",
+        table: "resource_classifications",
+        line,
+        field: "source",
+        message: "Resource classification row source is not supported.",
+        actual: row.source,
+      });
+    }
+
+    if (typeof row.resourceType === "string" && typeof row.resourceId === "string") {
+      const resourceKey = `${row.resourceType}\u0000${row.resourceId}`;
+      if (resourceKeys.has(resourceKey)) {
+        issues.push({
+          severity: "error",
+          code: "duplicate_resource_classification",
+          path: supportedChunksByTable.get("resource_classifications")?.path ?? "",
+          table: "resource_classifications",
+          line,
+          message: "Resource classification rows must not duplicate resourceType and resourceId.",
+          actual: { resourceType: row.resourceType, resourceId: row.resourceId },
+        });
+      }
+      resourceKeys.add(resourceKey);
+    }
+  });
 }
 
 function validateUuidField(

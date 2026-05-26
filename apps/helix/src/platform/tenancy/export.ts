@@ -321,6 +321,19 @@ interface TenantExportAdminDnsRecordRow {
   readonly updated_at: Date;
 }
 
+interface TenantExportResourceClassificationRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly resource_type: string;
+  readonly resource_id: string;
+  readonly classification: string;
+  readonly source: string;
+  readonly reason: string;
+  readonly actor_id: string | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
 interface TenantExportJobRow {
   readonly id: string;
   readonly org_id: string;
@@ -1091,6 +1104,13 @@ export async function buildTenantExportPostgresDataChunkFiles(
     where org_id = ${orgId}
     order by domain_id asc, record_type asc, host asc, id asc
   `) as unknown as readonly TenantExportAdminDnsRecordRow[];
+  const resourceClassifications = (await sql`
+    select id, org_id, resource_type, resource_id, classification, source, reason,
+           actor_id, created_at, updated_at
+    from resource_classifications
+    where org_id = ${orgId}
+    order by resource_type asc, resource_id asc, id asc
+  `) as unknown as readonly TenantExportResourceClassificationRow[];
 
   return [
     buildTenantExportPostgresDataChunkFile({
@@ -1123,6 +1143,23 @@ export async function buildTenantExportPostgresDataChunkFiles(
         observedValue: row.observed_value,
         status: row.status,
         lastCheckedAt: row.last_checked_at?.toISOString() ?? null,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      })),
+    }),
+    buildTenantExportPostgresDataChunkFile({
+      table: "resource_classifications",
+      path: "postgres/data/chunks/resource_classifications/000000.jsonl",
+      orderBy: ["resource_type", "resource_id", "id"],
+      rows: resourceClassifications.map((row) => ({
+        id: row.id,
+        orgId: row.org_id,
+        resourceType: row.resource_type,
+        resourceId: row.resource_id,
+        classification: row.classification,
+        source: row.source,
+        reason: row.reason,
+        actorId: row.actor_id,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
       })),

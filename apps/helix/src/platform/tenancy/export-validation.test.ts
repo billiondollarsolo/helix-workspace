@@ -18,6 +18,7 @@ const otherOrgId = "33333333-3333-4333-8333-333333333333";
 const actorId = "11111111-1111-4111-8111-111111111111";
 const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
+const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
 
 describe("validateTenantExportPostgresDataChunks", () => {
   it("accepts the current admin domain and DNS chunk contract", () => {
@@ -28,7 +29,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(result).toEqual({
       ok: true,
       issues: [],
-      summary: { adminDomainRows: 1, adminDnsRecordRows: 1 },
+      summary: { adminDomainRows: 1, adminDnsRecordRows: 1, resourceClassificationRows: 1 },
     });
   });
 
@@ -40,19 +41,23 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(result).toMatchObject({
       ok: true,
       issues: [],
-      summary: { adminDomainRows: 0, adminDnsRecordRows: 0 },
+      summary: { adminDomainRows: 0, adminDnsRecordRows: 0, resourceClassificationRows: 0 },
     });
   });
 
   it("accepts declared empty chunk files when metadata matches", () => {
-    const input = validValidationInput({ domainRows: [], dnsRows: [] });
+    const input = validValidationInput({
+      domainRows: [],
+      dnsRows: [],
+      resourceClassificationRows: [],
+    });
 
     const result = validateTenantExportPostgresDataChunks(input);
 
     expect(result).toMatchObject({
       ok: true,
       issues: [],
-      summary: { adminDomainRows: 0, adminDnsRecordRows: 0 },
+      summary: { adminDomainRows: 0, adminDnsRecordRows: 0, resourceClassificationRows: 0 },
     });
   });
 
@@ -246,12 +251,56 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(issueCodes(result)).toContain("invalid_chunk_order");
     expect(result.ok).toBe(false);
   });
+
+  it("rejects invalid resource classification rows and duplicate identities", () => {
+    const input = validValidationInput({
+      resourceClassificationRows: [
+        resourceClassificationRow({
+          classification: "secret",
+          source: "manual",
+          actorId: "not-a-uuid",
+        }),
+        resourceClassificationRow({
+          id: "77777777-7777-4777-8777-777777777777",
+        }),
+      ],
+    });
+
+    const result = validateTenantExportPostgresDataChunks(input);
+
+    expect(issueCodes(result)).toEqual(
+      expect.arrayContaining(["invalid_row_shape", "duplicate_resource_classification"]),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects resource classification rows that do not match deterministic chunk order", () => {
+    const input = validValidationInput({
+      resourceClassificationRows: [
+        resourceClassificationRow({
+          resourceType: "mail.message",
+          resourceId: "z-message",
+        }),
+        resourceClassificationRow({
+          id: "77777777-7777-4777-8777-777777777777",
+          resourceType: "drive.object",
+          resourceId: "a-object",
+        }),
+      ],
+    });
+
+    const result = validateTenantExportPostgresDataChunks(input);
+
+    expect(issueCodes(result)).toContain("invalid_chunk_order");
+    expect(result.ok).toBe(false);
+  });
 });
 
 function validValidationInput(
   input: {
     readonly domainRows?: readonly Record<string, unknown>[];
     readonly dnsRows?: readonly Record<string, unknown>[];
+    readonly resourceClassificationRows?: readonly Record<string, unknown>[];
   } = {},
 ): {
   readonly manifest: TenantExportManifest;
@@ -269,6 +318,12 @@ function validValidationInput(
       path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
       orderBy: ["domain_id", "record_type", "host", "id"],
       rows: input.dnsRows ?? [adminDnsRecordRow()],
+    }),
+    chunkFile({
+      table: "resource_classifications",
+      path: "postgres/data/chunks/resource_classifications/000000.jsonl",
+      orderBy: ["resource_type", "resource_id", "id"],
+      rows: input.resourceClassificationRows ?? [resourceClassificationRow()],
     }),
   ];
 
@@ -350,6 +405,24 @@ function adminDnsRecordRow(overrides: Record<string, unknown> = {}): Record<stri
     lastCheckedAt: "2026-05-24T09:25:00.000Z",
     createdAt: "2026-05-24T09:00:00.000Z",
     updatedAt: "2026-05-24T09:25:00.000Z",
+    ...overrides,
+  };
+}
+
+function resourceClassificationRow(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id: resourceClassificationId,
+    orgId,
+    resourceType: "mail.message",
+    resourceId: "msg-1",
+    classification: "confidential",
+    source: "label",
+    reason: "label:HR",
+    actorId: actorId,
+    createdAt: "2026-05-24T09:00:00.000Z",
+    updatedAt: "2026-05-24T09:30:00.000Z",
     ...overrides,
   };
 }

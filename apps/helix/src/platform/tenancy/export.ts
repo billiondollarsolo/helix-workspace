@@ -337,6 +337,20 @@ interface TenantExportObjectRow {
   readonly updated_at: Date;
 }
 
+interface TenantExportDriveVersionRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly object_id: string;
+  readonly version_number: number;
+  readonly storage_key: string;
+  readonly mime_type: string;
+  readonly byte_size: number;
+  readonly sha256: string;
+  readonly metadata: unknown;
+  readonly created_by_actor_id: string | null;
+  readonly created_at: Date;
+}
+
 interface TenantExportResourceClassificationRow {
   readonly id: string;
   readonly org_id: string;
@@ -1127,6 +1141,13 @@ export async function buildTenantExportPostgresDataChunkFiles(
     where org_id = ${orgId}
     order by kind asc, storage_key asc, id asc
   `) as unknown as readonly TenantExportObjectRow[];
+  const driveVersions = (await sql`
+    select id, org_id, object_id, version_number, storage_key, mime_type, byte_size, sha256,
+           metadata, created_by_actor_id, created_at
+    from drive_versions
+    where org_id = ${orgId}
+    order by object_id asc, version_number asc, id asc
+  `) as unknown as readonly TenantExportDriveVersionRow[];
   const resourceClassifications = (await sql`
     select id, org_id, resource_type, resource_id, classification, source, reason,
            actor_id, created_at, updated_at
@@ -1188,6 +1209,24 @@ export async function buildTenantExportPostgresDataChunkFiles(
         deletedAt: row.deleted_at?.toISOString() ?? null,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
+      })),
+    }),
+    buildTenantExportPostgresDataChunkFile({
+      table: "drive_versions",
+      path: "postgres/data/chunks/drive_versions/000000.jsonl",
+      orderBy: ["object_id", "version_number", "id"],
+      rows: driveVersions.map((row) => ({
+        id: row.id,
+        orgId: row.org_id,
+        objectId: row.object_id,
+        versionNumber: row.version_number,
+        storageKey: row.storage_key,
+        mimeType: row.mime_type,
+        byteSize: row.byte_size,
+        sha256: row.sha256,
+        metadata: row.metadata,
+        createdByActorId: row.created_by_actor_id,
+        createdAt: row.created_at.toISOString(),
       })),
     }),
     buildTenantExportPostgresDataChunkFile({

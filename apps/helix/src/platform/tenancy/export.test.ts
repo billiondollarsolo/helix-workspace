@@ -29,6 +29,8 @@ import type { OrgRecord, OrgStore } from "./orgs.js";
 const orgId = "22222222-2222-4222-8222-222222222222";
 const otherOrgId = "33333333-3333-4333-8333-333333333333";
 const actorId = "11111111-1111-4111-8111-111111111111";
+const exportedObjectId = "77777777-7777-4777-8777-777777777777";
+const driveVersionId = "88888888-8888-4888-8888-888888888888";
 
 describe("tenant export archive", () => {
   it("builds a portable metadata archive without object bytes by default", async () => {
@@ -110,11 +112,15 @@ describe("tenant export archive", () => {
     expect(Object.keys(entries).sort()).toContain(
       "postgres/data/chunks/resource_classifications/000000.jsonl",
     );
+    expect(Object.keys(entries).sort()).toContain(
+      "postgres/data/chunks/drive_versions/000000.jsonl",
+    );
     expect(Object.keys(entries).sort()).toContain("postgres/data/chunks/objects/000000.jsonl");
     expect(rowChunkManifest.includedTables).toEqual([
       "admin_domains",
       "admin_dns_records",
       "objects",
+      "drive_versions",
       "resource_classifications",
     ]);
     expect(rowChunkManifest.chunks).toEqual([
@@ -135,6 +141,12 @@ describe("tenant export archive", () => {
         path: "postgres/data/chunks/objects/000000.jsonl",
         rowCount: 1,
         orderBy: ["kind", "storage_key", "id"],
+      }),
+      expect.objectContaining({
+        table: "drive_versions",
+        path: "postgres/data/chunks/drive_versions/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["object_id", "version_number", "id"],
       }),
       expect.objectContaining({
         table: "resource_classifications",
@@ -195,6 +207,21 @@ describe("tenant export archive", () => {
         deletedAt: null,
         createdAt: "2026-05-24T09:00:00.000Z",
         updatedAt: "2026-05-24T09:30:00.000Z",
+      },
+    ]);
+    expect(parseJsonl(entries["postgres/data/chunks/drive_versions/000000.jsonl"] ?? "")).toEqual([
+      {
+        id: driveVersionId,
+        orgId,
+        objectId: exportedObjectId,
+        versionNumber: 1,
+        storageKey: "drive/report.txt",
+        mimeType: "text/plain",
+        byteSize: 12,
+        sha256: "a".repeat(64),
+        metadata: { preview: "ready" },
+        createdByActorId: actorId,
+        createdAt: "2026-05-24T09:30:00.000Z",
       },
     ]);
     expect(
@@ -390,6 +417,12 @@ describe("tenant export SQL helpers", () => {
         orderBy: ["kind", "storage_key", "id"],
       }),
       expect.objectContaining({
+        table: "drive_versions",
+        path: "postgres/data/chunks/drive_versions/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["object_id", "version_number", "id"],
+      }),
+      expect.objectContaining({
         table: "resource_classifications",
         path: "postgres/data/chunks/resource_classifications/000000.jsonl",
         rowCount: 1,
@@ -419,11 +452,19 @@ describe("tenant export SQL helpers", () => {
     expect(recording.calls[2]?.text).toContain("where org_id = ?");
     expect(recording.calls[2]?.text).toContain("order by kind asc, storage_key asc, id asc");
     expect(recording.calls[3]?.text).toContain(
-      "select id, org_id, resource_type, resource_id, classification, source, reason",
+      "select id, org_id, object_id, version_number, storage_key, mime_type",
     );
-    expect(recording.calls[3]?.text).toContain("from resource_classifications");
+    expect(recording.calls[3]?.text).toContain("from drive_versions");
     expect(recording.calls[3]?.text).toContain("where org_id = ?");
     expect(recording.calls[3]?.text).toContain(
+      "order by object_id asc, version_number asc, id asc",
+    );
+    expect(recording.calls[4]?.text).toContain(
+      "select id, org_id, resource_type, resource_id, classification, source, reason",
+    );
+    expect(recording.calls[4]?.text).toContain("from resource_classifications");
+    expect(recording.calls[4]?.text).toContain("where org_id = ?");
+    expect(recording.calls[4]?.text).toContain(
       "order by resource_type asc, resource_id asc, id asc",
     );
     expect(recording.calls.flatMap((call) => call.values).every((value) => value === orgId)).toBe(
@@ -1322,7 +1363,7 @@ function adminDomainChunkSqlResults(): readonly unknown[][] {
     ],
     [
       {
-        id: "77777777-7777-4777-8777-777777777777",
+        id: exportedObjectId,
         org_id: orgId,
         owner_actor_id: actorId,
         kind: "file",
@@ -1335,6 +1376,21 @@ function adminDomainChunkSqlResults(): readonly unknown[][] {
         deleted_at: null,
         created_at: new Date("2026-05-24T09:00:00.000Z"),
         updated_at: new Date("2026-05-24T09:30:00.000Z"),
+      },
+    ],
+    [
+      {
+        id: driveVersionId,
+        org_id: orgId,
+        object_id: exportedObjectId,
+        version_number: 1,
+        storage_key: "drive/report.txt",
+        mime_type: "text/plain",
+        byte_size: 12,
+        sha256: "a".repeat(64),
+        metadata: { preview: "ready" },
+        created_by_actor_id: actorId,
+        created_at: new Date("2026-05-24T09:30:00.000Z"),
       },
     ],
     [

@@ -13,10 +13,12 @@ const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
 const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const driveVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const targetDomainId = "77777777-7777-4777-8777-777777777777";
 const targetDnsRecordId = "88888888-8888-4888-8888-888888888888";
 const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
 const targetObjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const targetDriveVersionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 describe("PostgresTenantImportRowApplyStore", () => {
   it("blocks planned blocked operations without issuing SQL", async () => {
@@ -308,6 +310,104 @@ describe("PostgresTenantImportRowApplyStore", () => {
       "2026-05-24T10:07:00.000Z",
       targetOrgId,
       targetObjectId,
+    ]);
+  });
+
+  it("blocks Drive version inserts when the required object row remap is unavailable", async () => {
+    const recording = createRecordingSql([]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: driveVersionOperation(),
+      }),
+    ).resolves.toMatchObject({
+      action: "blocked",
+      blockedReason: "object_id_remap_missing",
+    });
+    expect(recording.calls).toEqual([]);
+  });
+
+  it("inserts Drive version metadata through object row remaps", async () => {
+    const recording = createRecordingSql([[], [{ id: targetDriveVersionId }]]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: driveVersionOperation({
+          conflictPolicy: {
+            rowId: "preserve",
+            references: { objectId: "preserve", createdByActorId: "null" },
+            state: {},
+          },
+        }),
+        rowIdRemaps: new Map([[objectId, targetObjectId]]),
+      }),
+    ).resolves.toMatchObject({
+      action: "inserted",
+      targetId: targetDriveVersionId,
+    });
+
+    expect(recording.calls).toHaveLength(2);
+    expect(recording.calls[0]?.text).toContain("from drive_versions");
+    expect(recording.calls[0]?.text).toContain("object_id = ?");
+    expect(recording.calls[0]?.text).toContain("version_number = ?");
+    expect(recording.calls[1]?.text).toContain("insert into drive_versions");
+    expect(recording.calls[1]?.values).toEqual([
+      driveVersionId,
+      targetOrgId,
+      targetObjectId,
+      1,
+      "drive/report.txt",
+      "text/plain",
+      12,
+      "a".repeat(64),
+      { preview: "ready" },
+      null,
+      "2026-05-24T10:08:00.000Z",
+    ]);
+  });
+
+  it("updates matched Drive version metadata by targetId", async () => {
+    const recording = createRecordingSql([[{ id: targetDriveVersionId }]]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: driveVersionOperation({
+          action: "update",
+          targetId: targetDriveVersionId,
+          row: {
+            objectId: targetObjectId,
+            createdByActorId: null,
+          },
+          conflictPolicy: {
+            rowId: "match",
+            references: { objectId: "match", createdByActorId: "null" },
+            state: {},
+          },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      action: "updated",
+      targetId: targetDriveVersionId,
+    });
+
+    expect(recording.calls).toHaveLength(1);
+    expect(recording.calls[0]?.text).toContain("update drive_versions");
+    expect(recording.calls[0]?.text).toContain("where org_id = ? and id = ?");
+    expect(recording.calls[0]?.values).toEqual([
+      targetObjectId,
+      1,
+      "drive/report.txt",
+      "text/plain",
+      12,
+      "a".repeat(64),
+      { preview: "ready" },
+      null,
+      "2026-05-24T10:08:00.000Z",
+      targetOrgId,
+      targetDriveVersionId,
     ]);
   });
 
@@ -623,6 +723,49 @@ function objectOperation(
       deletedAt: null,
       createdAt: "2026-05-24T10:02:00.000Z",
       updatedAt: "2026-05-24T10:07:00.000Z",
+      ...overrides.row,
+    },
+  });
+}
+
+function driveVersionOperation(
+  overrides: Partial<TenantImportPlanOperation> & {
+    readonly row?: Partial<TenantImportPlanOperation["row"]>;
+    readonly conflictPolicy?: Partial<TenantImportPlanOperation["conflictPolicy"]>;
+  } = {},
+): TenantImportPlanOperation {
+  return operation({
+    order: 4,
+    kind: "upsert_drive_version",
+    table: "drive_versions",
+    path: "postgres/data/chunks/drive_versions/000000.jsonl",
+    sourceId: driveVersionId,
+    naturalKey: [objectId, "1"],
+    dependsOn: [`objects:${objectId}`],
+    ...overrides,
+    conflictPolicy: {
+      rowId: overrides.conflictPolicy?.rowId ?? "preserve",
+      references: {
+        objectId: "preserve",
+        createdByActorId: "preserve",
+        ...overrides.conflictPolicy?.references,
+      },
+      state: {
+        ...overrides.conflictPolicy?.state,
+      },
+    },
+    row: {
+      id: driveVersionId,
+      orgId: targetOrgId,
+      objectId,
+      versionNumber: 1,
+      storageKey: "drive/report.txt",
+      mimeType: "text/plain",
+      byteSize: 12,
+      sha256: "a".repeat(64),
+      metadata: { preview: "ready" },
+      createdByActorId: actorId,
+      createdAt: "2026-05-24T10:08:00.000Z",
       ...overrides.row,
     },
   });

@@ -28,6 +28,12 @@ interface TargetObjectRow {
   readonly storage_key: string;
 }
 
+interface TargetDriveVersionRow {
+  readonly id: string;
+  readonly object_id: string;
+  readonly version_number: number;
+}
+
 interface TargetResourceClassificationRow {
   readonly id: string;
   readonly resource_type: string;
@@ -55,6 +61,12 @@ export async function loadTenantImportTargetStateFromPostgres(
     where org_id = ${input.targetOrgId}
     order by storage_key asc, id asc
   `) as unknown as readonly TargetObjectRow[];
+  const driveVersions = (await input.sql`
+    select id, object_id, version_number
+    from drive_versions
+    where org_id = ${input.targetOrgId}
+    order by object_id asc, version_number asc, id asc
+  `) as unknown as readonly TargetDriveVersionRow[];
   const resourceClassifications = (await input.sql`
     select id, resource_type, resource_id
     from resource_classifications
@@ -100,6 +112,19 @@ export async function loadTenantImportTargetStateFromPostgres(
     existingNaturalKeys.push({
       table: "objects",
       naturalKey: [row.storage_key],
+      targetId: row.id,
+    });
+  }
+
+  for (const row of driveVersions) {
+    existingRowIds.push({
+      table: "drive_versions",
+      id: row.id,
+      targetId: row.id,
+    });
+    existingNaturalKeys.push({
+      table: "drive_versions",
+      naturalKey: [row.object_id, String(row.version_number)],
       targetId: row.id,
     });
   }

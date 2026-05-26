@@ -63,6 +63,7 @@ export interface TenantImportJobPlanSummary {
     readonly adminDomainRows: number;
     readonly adminDnsRecordRows: number;
     readonly objectRows: number;
+    readonly driveVersionRows: number;
     readonly resourceClassificationRows: number;
     readonly operationCount: number;
     readonly remapCount: number;

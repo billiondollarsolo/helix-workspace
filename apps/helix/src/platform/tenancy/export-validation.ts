@@ -23,8 +23,10 @@ export type TenantExportValidationIssueCode =
   | "duplicate_primary_domain"
   | "duplicate_domain"
   | "duplicate_object_storage_key"
+  | "duplicate_drive_version"
   | "duplicate_resource_classification"
   | "missing_domain_reference"
+  | "missing_object_reference"
   | "invalid_chunk_order";
 
 export interface TenantExportValidationIssue {
@@ -46,6 +48,7 @@ export interface TenantExportValidationResult {
     readonly adminDomainRows: number;
     readonly adminDnsRecordRows: number;
     readonly objectRows: number;
+    readonly driveVersionRows: number;
     readonly resourceClassificationRows: number;
   };
 }
@@ -64,6 +67,7 @@ type TenantExportSupportedPostgresDataChunkTable =
   | "admin_domains"
   | "admin_dns_records"
   | "objects"
+  | "drive_versions"
   | "resource_classifications";
 
 type JsonRecord = Record<string, unknown>;
@@ -128,6 +132,24 @@ const supportedChunks: readonly SupportedChunkDefinition[] = [
       "deletedAt",
       "createdAt",
       "updatedAt",
+    ],
+  },
+  {
+    table: "drive_versions",
+    path: "postgres/data/chunks/drive_versions/000000.jsonl",
+    orderBy: ["object_id", "version_number", "id"],
+    fields: [
+      "id",
+      "orgId",
+      "objectId",
+      "versionNumber",
+      "storageKey",
+      "mimeType",
+      "byteSize",
+      "sha256",
+      "metadata",
+      "createdByActorId",
+      "createdAt",
     ],
   },
   {
@@ -283,6 +305,7 @@ export function validateTenantExportPostgresDataChunks(
   validateDomainRows(rowsByTable.get("admin_domains") ?? [], expectedOrgId, issues);
   validateDnsRows(rowsByTable, expectedOrgId, issues);
   validateObjectRows(rowsByTable.get("objects") ?? [], issues);
+  validateDriveVersionRows(rowsByTable, issues);
   validateResourceClassificationRows(rowsByTable.get("resource_classifications") ?? [], issues);
 
   return {
@@ -292,6 +315,7 @@ export function validateTenantExportPostgresDataChunks(
       adminDomainRows: rowsByTable.get("admin_domains")?.length ?? 0,
       adminDnsRecordRows: rowsByTable.get("admin_dns_records")?.length ?? 0,
       objectRows: rowsByTable.get("objects")?.length ?? 0,
+      driveVersionRows: rowsByTable.get("drive_versions")?.length ?? 0,
       resourceClassificationRows: rowsByTable.get("resource_classifications")?.length ?? 0,
     },
   };
@@ -787,6 +811,8 @@ function compareRowsForDefinition(
       return compareDnsRows(previous, current);
     case "objects":
       return compareObjectRows(previous, current);
+    case "drive_versions":
+      return compareDriveVersionRows(previous, current);
     case "resource_classifications":
       return compareResourceClassificationRows(previous, current);
   }
@@ -813,6 +839,14 @@ function compareObjectRows(a: JsonRecord, b: JsonRecord): number {
   return (
     compareStrings(stringValue(a.kind), stringValue(b.kind)) ||
     compareStrings(stringValue(a.storageKey), stringValue(b.storageKey)) ||
+    compareStrings(stringValue(a.id), stringValue(b.id))
+  );
+}
+
+function compareDriveVersionRows(a: JsonRecord, b: JsonRecord): number {
+  return (
+    compareStrings(stringValue(a.objectId), stringValue(b.objectId)) ||
+    compareNumbers(numberValue(a.versionNumber), numberValue(b.versionNumber)) ||
     compareStrings(stringValue(a.id), stringValue(b.id))
   );
 }
@@ -908,6 +942,115 @@ function validateObjectRows(
         });
       }
       storageKeys.add(row.storageKey);
+    }
+  });
+}
+
+function validateDriveVersionRows(
+  rowsByTable: ReadonlyMap<TenantExportSupportedPostgresDataChunkTable, readonly JsonRecord[]>,
+  issues: TenantExportValidationIssue[],
+): void {
+  const objects = rowsByTable.get("objects") ?? [];
+  const objectIds = new Set(
+    objects.map((row) => row.id).filter((id): id is string => typeof id === "string"),
+  );
+  const versionKeys = new Set<string>();
+  const rows = rowsByTable.get("drive_versions") ?? [];
+
+  rows.forEach((row, index) => {
+    const line = index + 1;
+    validateUuidField(row, "id", "drive_versions", line, issues);
+    validateUuidField(row, "objectId", "drive_versions", line, issues);
+    validateUuidField(row, "createdByActorId", "drive_versions", line, issues, {
+      nullable: true,
+    });
+    validateTimestampField(row, "createdAt", "drive_versions", line, issues);
+    validateStorageKey(row, "drive_versions", line, issues);
+    validateNonEmptyString(row, "mimeType", 255, "drive_versions", line, issues);
+
+    if (typeof row.objectId === "string" && !objectIds.has(row.objectId)) {
+      issues.push({
+        severity: "error",
+        code: "missing_object_reference",
+        path: supportedChunksByTable.get("drive_versions")?.path ?? "",
+        table: "drive_versions",
+        line,
+        field: "objectId",
+        message: "Drive version row objectId must reference an exported objects row.",
+        actual: row.objectId,
+      });
+    }
+
+    if (
+      typeof row.versionNumber !== "number" ||
+      !Number.isInteger(row.versionNumber) ||
+      row.versionNumber <= 0
+    ) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("drive_versions")?.path ?? "",
+        table: "drive_versions",
+        line,
+        field: "versionNumber",
+        message: "Drive version row versionNumber must be a positive integer.",
+        actual: row.versionNumber,
+      });
+    }
+
+    if (typeof row.byteSize !== "number" || !Number.isInteger(row.byteSize) || row.byteSize < 0) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("drive_versions")?.path ?? "",
+        table: "drive_versions",
+        line,
+        field: "byteSize",
+        message: "Drive version row byteSize must be a non-negative integer.",
+        actual: row.byteSize,
+      });
+    }
+
+    if (typeof row.sha256 !== "string" || !sha256Pattern.test(row.sha256)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("drive_versions")?.path ?? "",
+        table: "drive_versions",
+        line,
+        field: "sha256",
+        message: "Drive version row sha256 must be a 64-character hex digest.",
+        actual: row.sha256,
+      });
+    }
+
+    if (!isJsonRecord(row.metadata)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("drive_versions")?.path ?? "",
+        table: "drive_versions",
+        line,
+        field: "metadata",
+        message: "Drive version row metadata must be a JSON object.",
+        actual: row.metadata,
+      });
+    }
+
+    if (typeof row.objectId === "string" && typeof row.versionNumber === "number") {
+      const key = `${row.objectId}\u0000${String(row.versionNumber)}`;
+      if (versionKeys.has(key)) {
+        issues.push({
+          severity: "error",
+          code: "duplicate_drive_version",
+          path: supportedChunksByTable.get("drive_versions")?.path ?? "",
+          table: "drive_versions",
+          line,
+          message: "Drive version rows must not duplicate objectId and versionNumber.",
+          actual: { objectId: row.objectId, versionNumber: row.versionNumber },
+        });
+      }
+      versionKeys.add(key);
     }
   });
 }
@@ -1071,7 +1214,7 @@ function validateStorageKey(
       line,
       field: "storageKey",
       message:
-        "Object row storageKey must be a relative non-empty key without parent segments or control characters.",
+        "Row storageKey must be a relative non-empty key without parent segments or control characters.",
       actual: value,
     });
   }
@@ -1128,12 +1271,20 @@ function compareStrings(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
+function compareNumbers(a: number, b: number): number {
+  return a - b;
+}
+
 function lowerString(value: unknown): string {
   return typeof value === "string" ? value.toLowerCase() : "";
 }
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function errorMessage(error: unknown): string {

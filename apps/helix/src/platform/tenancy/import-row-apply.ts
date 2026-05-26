@@ -91,6 +91,8 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
         return this.applyAdminDnsRecord(operation, input.rowIdRemaps);
       case "objects":
         return this.applyObject(operation);
+      case "drive_versions":
+        return this.applyDriveVersion(operation, input.rowIdRemaps);
       case "resource_classifications":
         return this.applyResourceClassification(operation);
     }
@@ -322,6 +324,95 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
     return applied(operation, operation.action === "update" ? "updated" : "inserted", targetId);
   }
 
+  private async applyDriveVersion(
+    operation: TenantImportPlanOperation,
+    rowIdRemaps: ReadonlyMap<string, string> | undefined,
+  ): Promise<TenantImportRowApplyOperationResult> {
+    const row = operation.row;
+    const rowObjectId = stringField(row, "objectId");
+    const remappedObjectId = rowIdRemaps?.get(rowObjectId);
+    if (
+      remappedObjectId === undefined &&
+      operation.conflictPolicy.references.objectId === "preserve"
+    ) {
+      return blocked(operation, "object_id_remap_missing");
+    }
+    const objectId = remappedObjectId ?? rowObjectId;
+    if (objectId.length === 0) {
+      return blocked(operation, "object_id_remap_missing");
+    }
+    const createdByActorId = referenceValue(operation, "createdByActorId");
+
+    if (operation.action === "update") {
+      if (operation.targetId === null) {
+        return blocked(operation, "missing_update_target_id");
+      }
+      const rows = (await this.sql`
+        update drive_versions
+        set object_id = ${objectId},
+            version_number = ${numberField(row, "versionNumber")},
+            storage_key = ${stringField(row, "storageKey")},
+            mime_type = ${stringField(row, "mimeType")},
+            byte_size = ${numberField(row, "byteSize")},
+            sha256 = ${stringField(row, "sha256")},
+            metadata = ${this.sql.json(jsonValueField(row, "metadata"))},
+            created_by_actor_id = ${createdByActorId},
+            created_at = ${stringField(row, "createdAt")}
+        where org_id = ${operation.targetOrgId} and id = ${operation.targetId}
+        returning id
+      `) as unknown as readonly ReturnedIdRow[];
+      const targetId = rows[0]?.id;
+      if (targetId === undefined) {
+        return blocked(operation, "update_target_missing");
+      }
+      return applied(operation, "updated", targetId);
+    }
+
+    const existing = (await this.sql`
+      select id
+      from drive_versions
+      where org_id = ${operation.targetOrgId}
+        and object_id = ${objectId}
+        and version_number = ${numberField(row, "versionNumber")}
+      for update
+    `) as unknown as readonly ReturnedIdRow[];
+    if (existing.length > 0) {
+      return blocked(operation, "target_natural_key_conflict");
+    }
+
+    const rows =
+      operation.conflictPolicy.rowId === "regenerate"
+        ? ((await this.sql`
+            insert into drive_versions
+              (org_id, object_id, version_number, storage_key, mime_type, byte_size, sha256,
+               metadata, created_by_actor_id, created_at)
+            values
+              (${operation.targetOrgId}, ${objectId}, ${numberField(row, "versionNumber")},
+               ${stringField(row, "storageKey")}, ${stringField(row, "mimeType")},
+               ${numberField(row, "byteSize")}, ${stringField(row, "sha256")},
+               ${this.sql.json(jsonValueField(row, "metadata"))}, ${createdByActorId},
+               ${stringField(row, "createdAt")})
+            returning id
+          `) as unknown as readonly ReturnedIdRow[])
+        : ((await this.sql`
+            insert into drive_versions
+              (id, org_id, object_id, version_number, storage_key, mime_type, byte_size, sha256,
+               metadata, created_by_actor_id, created_at)
+            values
+              (${stringField(row, "id")}, ${operation.targetOrgId}, ${objectId},
+               ${numberField(row, "versionNumber")}, ${stringField(row, "storageKey")},
+               ${stringField(row, "mimeType")}, ${numberField(row, "byteSize")},
+               ${stringField(row, "sha256")}, ${this.sql.json(jsonValueField(row, "metadata"))},
+               ${createdByActorId}, ${stringField(row, "createdAt")})
+            returning id
+          `) as unknown as readonly ReturnedIdRow[]);
+    const targetId = rows[0]?.id;
+    if (targetId === undefined) {
+      return blocked(operation, "insert_failed");
+    }
+    return applied(operation, "inserted", targetId);
+  }
+
   private async applyObject(
     operation: TenantImportPlanOperation,
   ): Promise<TenantImportRowApplyOperationResult> {
@@ -412,6 +503,7 @@ function isSupportedOperation(operation: TenantImportPlanOperation): boolean {
     (operation.table === "admin_domains" && operation.kind === "upsert_admin_domain") ||
     (operation.table === "admin_dns_records" && operation.kind === "upsert_admin_dns_record") ||
     (operation.table === "objects" && operation.kind === "upsert_object") ||
+    (operation.table === "drive_versions" && operation.kind === "upsert_drive_version") ||
     (operation.table === "resource_classifications" &&
       operation.kind === "upsert_resource_classification")
   );

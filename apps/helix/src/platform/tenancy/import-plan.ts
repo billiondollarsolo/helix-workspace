@@ -15,6 +15,7 @@ export type TenantImportPlanPostgresTable =
   | "admin_domains"
   | "admin_dns_records"
   | "objects"
+  | "drive_versions"
   | "resource_classifications";
 
 export type TenantImportPlanObjectBytesMode = "included" | "metadata_only";
@@ -25,6 +26,7 @@ export type TenantImportPlanIssueCode =
   | "export_validation_failed"
   | "org_id_remap_required"
   | "domain_id_remap_required"
+  | "object_id_remap_required"
   | "principal_remap_required"
   | "resource_reference_deferred"
   | "verified_state_requires_recheck"
@@ -39,6 +41,7 @@ export type TenantImportPlanOperationKind =
   | "upsert_admin_domain"
   | "upsert_admin_dns_record"
   | "upsert_object"
+  | "upsert_drive_version"
   | "upsert_resource_classification";
 
 export type TenantImportPlanOperationAction = "insert" | "update" | "blocked";
@@ -47,9 +50,11 @@ export type TenantImportPlanConflictPolicyMode = "preserve" | "match" | "regener
 
 export type TenantImportPlanConflictPolicyReferenceField =
   | "createdBy"
+  | "createdByActorId"
   | "actorId"
   | "ownerActorId"
   | "domainId"
+  | "objectId"
   | "resourceId";
 
 export type TenantImportPlanConflictPolicyStateField =
@@ -255,6 +260,7 @@ export interface TenantImportPlan {
     readonly adminDomainRows: number;
     readonly adminDnsRecordRows: number;
     readonly objectRows: number;
+    readonly driveVersionRows: number;
     readonly resourceClassificationRows: number;
     readonly operationCount: number;
     readonly remapCount: number;
@@ -294,6 +300,12 @@ const chunkDefinitions: readonly ChunkDefinition[] = [
     path: "postgres/data/chunks/objects/000000.jsonl",
     operationKind: "upsert_object",
     label: "Plan object metadata rows",
+  },
+  {
+    table: "drive_versions",
+    path: "postgres/data/chunks/drive_versions/000000.jsonl",
+    operationKind: "upsert_drive_version",
+    label: "Plan Drive version metadata rows",
   },
   {
     table: "resource_classifications",
@@ -492,13 +504,24 @@ function planSummary(
   remapCount = 0,
   conflictCount = 0,
 ): TenantImportPlan["summary"] {
-  const { adminDomainRows, adminDnsRecordRows, objectRows, resourceClassificationRows } =
-    validation.summary;
-  return {
-    postgresRows: adminDomainRows + adminDnsRecordRows + objectRows + resourceClassificationRows,
+  const {
     adminDomainRows,
     adminDnsRecordRows,
     objectRows,
+    driveVersionRows,
+    resourceClassificationRows,
+  } = validation.summary;
+  return {
+    postgresRows:
+      adminDomainRows +
+      adminDnsRecordRows +
+      objectRows +
+      driveVersionRows +
+      resourceClassificationRows,
+    adminDomainRows,
+    adminDnsRecordRows,
+    objectRows,
+    driveVersionRows,
     resourceClassificationRows,
     operationCount,
     remapCount,
@@ -554,6 +577,8 @@ function rowCountForTable(
       return validation.summary.adminDnsRecordRows;
     case "objects":
       return validation.summary.objectRows;
+    case "drive_versions":
+      return validation.summary.driveVersionRows;
     case "resource_classifications":
       return validation.summary.resourceClassificationRows;
   }
@@ -570,6 +595,7 @@ function buildPlanIssues(input: {
   const domainRows = input.rowsByTable.get("admin_domains") ?? [];
   const dnsRows = input.rowsByTable.get("admin_dns_records") ?? [];
   const objectRows = input.rowsByTable.get("objects") ?? [];
+  const driveVersionRows = input.rowsByTable.get("drive_versions") ?? [];
   const classificationRows = input.rowsByTable.get("resource_classifications") ?? [];
 
   if (input.targetOrgId !== input.sourceOrgId) {
@@ -593,9 +619,21 @@ function buildPlanIssues(input: {
     });
   }
 
+  if (driveVersionRows.length > 0) {
+    issues.push({
+      severity: "warning",
+      code: "object_id_remap_required",
+      table: "drive_versions",
+      path: tablePath("drive_versions"),
+      field: "objectId",
+      message: "Drive version rows depend on object ID mapping before import can apply.",
+    });
+  }
+
   if (
     domainRows.some((row) => row.createdBy !== null) ||
     objectRows.some((row) => row.ownerActorId !== null) ||
+    driveVersionRows.some((row) => row.createdByActorId !== null) ||
     classificationRows.some((row) => row.actorId !== null)
   ) {
     issues.push({
@@ -642,6 +680,26 @@ function buildPlanIssues(input: {
         field: "ownerActorId",
         actual: ownerActorId,
         message: "Object owner reference has no target principal remap.",
+      });
+    }
+  });
+
+  driveVersionRows.forEach((row, index) => {
+    const createdByActorId = row.createdByActorId;
+    if (
+      typeof createdByActorId === "string" &&
+      input.providedRemaps?.principals?.[createdByActorId] === undefined
+    ) {
+      issues.push({
+        severity: "warning",
+        code: "principal_remap_missing",
+        table: "drive_versions",
+        path: tablePath("drive_versions"),
+        line: index + 1,
+        sourceId: stringField(row, "id"),
+        field: "createdByActorId",
+        actual: createdByActorId,
+        message: "Drive version creator reference has no target principal remap.",
       });
     }
   });
@@ -735,6 +793,7 @@ function buildRemaps(input: {
   readonly targetState: TenantImportPlanTargetState | undefined;
 }): readonly TenantImportPlanRemapEntry[] {
   const domainIdTargets = buildDomainIdTargets(input.rowsByTable, input.targetState);
+  const objectIdTargets = buildObjectIdTargets(input.rowsByTable, input.targetState);
   const remaps: TenantImportPlanRemapEntry[] = [
     {
       kind: "org",
@@ -775,6 +834,9 @@ function buildRemaps(input: {
   }
   for (const row of input.rowsByTable.get("objects") ?? []) {
     addStringSetValue(principalIds, row.ownerActorId);
+  }
+  for (const row of input.rowsByTable.get("drive_versions") ?? []) {
+    addStringSetValue(principalIds, row.createdByActorId);
   }
   for (const row of input.rowsByTable.get("resource_classifications") ?? []) {
     addStringSetValue(principalIds, row.actorId);
@@ -842,6 +904,20 @@ function buildRemaps(input: {
       targetId,
       status: "rewrite",
       reason: "DNS domainId values will use the matched target admin domain ID.",
+    });
+  }
+
+  for (const [sourceId, targetId] of objectIdTargets) {
+    if (sourceId === targetId) {
+      continue;
+    }
+    remaps.push({
+      kind: "row_id",
+      table: "objects",
+      sourceId,
+      targetId,
+      status: "rewrite",
+      reason: "Drive version objectId values will use the matched target object ID.",
     });
   }
 
@@ -931,6 +1007,7 @@ function buildOperations(input: {
 }): readonly TenantImportPlanOperation[] {
   const operations: TenantImportPlanOperation[] = [];
   const domainIdTargets = buildDomainIdTargets(input.rowsByTable, input.targetState);
+  const objectIdTargets = buildObjectIdTargets(input.rowsByTable, input.targetState);
   for (const definition of chunkDefinitions) {
     const rows = input.rowsByTable.get(definition.table) ?? [];
     rows.forEach((row, index) => {
@@ -939,6 +1016,7 @@ function buildOperations(input: {
         row,
         targetOrgId: input.targetOrgId,
         domainIdTargets,
+        objectIdTargets,
         providedRemaps: input.providedRemaps,
       });
       const plannedRow = {
@@ -953,6 +1031,7 @@ function buildOperations(input: {
         targetId,
         targetState: input.targetState,
         domainIdTargets,
+        objectIdTargets,
         providedRemaps: input.providedRemaps,
         providedConflictPolicy: input.providedConflictPolicy,
       });
@@ -1011,6 +1090,7 @@ function remappedFieldsForRow(input: {
   readonly row: JsonRecord;
   readonly targetOrgId: string;
   readonly domainIdTargets: ReadonlyMap<string, string>;
+  readonly objectIdTargets: ReadonlyMap<string, string>;
   readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
 }): Readonly<Record<string, unknown>> {
   const remapped: Record<string, unknown> = {
@@ -1038,6 +1118,17 @@ function remappedFieldsForRow(input: {
       remapped.ownerActorId = input.providedRemaps.principals[ownerActorId];
     }
   }
+  if (input.table === "drive_versions") {
+    const objectId = stringField(input.row, "objectId");
+    remapped.objectId = input.objectIdTargets.get(objectId) ?? objectId;
+    const createdByActorId = input.row.createdByActorId;
+    if (
+      typeof createdByActorId === "string" &&
+      input.providedRemaps?.principals?.[createdByActorId] !== undefined
+    ) {
+      remapped.createdByActorId = input.providedRemaps.principals[createdByActorId];
+    }
+  }
   if (input.table === "resource_classifications") {
     const actorId = input.row.actorId;
     if (typeof actorId === "string" && input.providedRemaps?.principals?.[actorId] !== undefined) {
@@ -1061,6 +1152,7 @@ function conflictPolicyForRow(input: {
   readonly targetId: string | null;
   readonly targetState: TenantImportPlanTargetState | undefined;
   readonly domainIdTargets: ReadonlyMap<string, string>;
+  readonly objectIdTargets: ReadonlyMap<string, string>;
   readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
   readonly providedConflictPolicy: TenantImportDryRunConflictPolicy | undefined;
 }): TenantImportPlanOperationConflictPolicy {
@@ -1101,6 +1193,7 @@ function referenceConflictPolicyForRow(input: {
   readonly table: TenantImportPlanPostgresTable;
   readonly row: JsonRecord;
   readonly domainIdTargets: ReadonlyMap<string, string>;
+  readonly objectIdTargets: ReadonlyMap<string, string>;
   readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
   readonly providedConflictPolicy: TenantImportDryRunConflictPolicy | undefined;
 }): Readonly<Record<string, TenantImportPlanConflictPolicyMode>> {
@@ -1133,6 +1226,22 @@ function referenceConflictPolicyForRow(input: {
       );
     }
   }
+  if (input.table === "drive_versions") {
+    const objectId = stringField(input.row, "objectId");
+    references.objectId = referencePolicyOverride(
+      "objectId",
+      input.objectIdTargets.has(objectId) ? "match" : "preserve",
+      input.providedConflictPolicy,
+    );
+    const createdByActorId = input.row.createdByActorId;
+    if (typeof createdByActorId === "string") {
+      references.createdByActorId = referencePolicyOverride(
+        "createdByActorId",
+        principalReferencePolicy(createdByActorId, input.providedRemaps),
+        input.providedConflictPolicy,
+      );
+    }
+  }
   if (input.table === "resource_classifications") {
     const actorId = input.row.actorId;
     if (typeof actorId === "string") {
@@ -1161,7 +1270,10 @@ function referencePolicyOverride(
   providedConflictPolicy: TenantImportDryRunConflictPolicy | undefined,
 ): TenantImportPlanConflictPolicyMode {
   if (
-    (field === "createdBy" || field === "actorId" || field === "ownerActorId") &&
+    (field === "createdBy" ||
+      field === "createdByActorId" ||
+      field === "actorId" ||
+      field === "ownerActorId") &&
     fallback === "preserve" &&
     providedConflictPolicy?.principalReferences !== undefined
   ) {
@@ -1270,6 +1382,8 @@ function naturalKeyForRow(
       ];
     case "objects":
       return [stringField(row, "storageKey")];
+    case "drive_versions":
+      return [stringField(row, "objectId"), String(numberField(row, "versionNumber"))];
     case "resource_classifications":
       return [stringField(row, "resourceType"), stringField(row, "resourceId")];
   }
@@ -1278,6 +1392,9 @@ function naturalKeyForRow(
 function dependsOnForRow(table: TenantImportPlanPostgresTable, row: JsonRecord): readonly string[] {
   if (table === "admin_dns_records") {
     return [`admin_domains:${stringField(row, "domainId")}`];
+  }
+  if (table === "drive_versions") {
+    return [`objects:${stringField(row, "objectId")}`];
   }
   return [];
 }
@@ -1291,6 +1408,22 @@ function buildDomainIdTargets(
     const sourceId = stringField(row, "id");
     const naturalKey = naturalKeyForRow("admin_domains", row);
     const targetId = targetIdForNaturalKey("admin_domains", naturalKey, targetState);
+    if (targetId !== null) {
+      targets.set(sourceId, targetId);
+    }
+  }
+  return targets;
+}
+
+function buildObjectIdTargets(
+  rowsByTable: ReadonlyMap<TenantImportPlanPostgresTable, readonly JsonRecord[]>,
+  targetState: TenantImportPlanTargetState | undefined,
+): ReadonlyMap<string, string> {
+  const targets = new Map<string, string>();
+  for (const row of rowsByTable.get("objects") ?? []) {
+    const sourceId = stringField(row, "id");
+    const naturalKey = naturalKeyForRow("objects", row);
+    const targetId = targetIdForNaturalKey("objects", naturalKey, targetState);
     if (targetId !== null) {
       targets.set(sourceId, targetId);
     }
@@ -1387,6 +1520,14 @@ function stringField(row: JsonRecord, field: string): string {
   const value = row[field];
   if (typeof value !== "string") {
     throw new Error(`Expected ${field} to be a string after validation.`);
+  }
+  return value;
+}
+
+function numberField(row: JsonRecord, field: string): number {
+  const value = row[field];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Expected ${field} to be a number after validation.`);
   }
   return value;
 }

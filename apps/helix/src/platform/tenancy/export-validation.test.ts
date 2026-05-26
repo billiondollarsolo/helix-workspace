@@ -20,6 +20,7 @@ const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
 const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const driveVersionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("validateTenantExportPostgresDataChunks", () => {
   it("accepts the current admin domain and DNS chunk contract", () => {
@@ -34,6 +35,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
         adminDomainRows: 1,
         adminDnsRecordRows: 1,
         objectRows: 1,
+        driveVersionRows: 1,
         resourceClassificationRows: 1,
       },
     });
@@ -51,6 +53,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
         adminDomainRows: 0,
         adminDnsRecordRows: 0,
         objectRows: 0,
+        driveVersionRows: 0,
         resourceClassificationRows: 0,
       },
     });
@@ -61,6 +64,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
       domainRows: [],
       dnsRows: [],
       objectRows: [],
+      driveVersionRows: [],
       resourceClassificationRows: [],
     });
 
@@ -73,6 +77,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
         adminDomainRows: 0,
         adminDnsRecordRows: 0,
         objectRows: 0,
+        driveVersionRows: 0,
         resourceClassificationRows: 0,
       },
     });
@@ -302,6 +307,41 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects invalid Drive version rows, missing object references, duplicates, and bad ordering", () => {
+    const input = validValidationInput({
+      driveVersionRows: [
+        driveVersionRow({
+          id: "not-a-uuid",
+          objectId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          versionNumber: 2,
+          byteSize: -1,
+          sha256: "not-a-digest",
+          metadata: [],
+        }),
+        driveVersionRow({
+          id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          versionNumber: 1,
+        }),
+        driveVersionRow({
+          id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          versionNumber: 1,
+        }),
+      ],
+    });
+
+    const result = validateTenantExportPostgresDataChunks(input);
+
+    expect(issueCodes(result)).toEqual(
+      expect.arrayContaining([
+        "invalid_row_shape",
+        "missing_object_reference",
+        "duplicate_drive_version",
+        "invalid_chunk_order",
+      ]),
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects invalid resource classification rows and duplicate identities", () => {
     const input = validValidationInput({
       resourceClassificationRows: [
@@ -351,6 +391,7 @@ function validValidationInput(
     readonly domainRows?: readonly Record<string, unknown>[];
     readonly dnsRows?: readonly Record<string, unknown>[];
     readonly objectRows?: readonly Record<string, unknown>[];
+    readonly driveVersionRows?: readonly Record<string, unknown>[];
     readonly resourceClassificationRows?: readonly Record<string, unknown>[];
   } = {},
 ): {
@@ -375,6 +416,12 @@ function validValidationInput(
       path: "postgres/data/chunks/objects/000000.jsonl",
       orderBy: ["kind", "storage_key", "id"],
       rows: input.objectRows ?? [objectRow()],
+    }),
+    chunkFile({
+      table: "drive_versions",
+      path: "postgres/data/chunks/drive_versions/000000.jsonl",
+      orderBy: ["object_id", "version_number", "id"],
+      rows: input.driveVersionRows ?? [driveVersionRow()],
     }),
     chunkFile({
       table: "resource_classifications",
@@ -481,6 +528,23 @@ function objectRow(overrides: Record<string, unknown> = {}): Record<string, unkn
     deletedAt: null,
     createdAt: "2026-05-24T09:00:00.000Z",
     updatedAt: "2026-05-24T09:30:00.000Z",
+    ...overrides,
+  };
+}
+
+function driveVersionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: driveVersionId,
+    orgId,
+    objectId,
+    versionNumber: 1,
+    storageKey: "drive/report.txt",
+    mimeType: "text/plain",
+    byteSize: 12,
+    sha256: "a".repeat(64),
+    metadata: { name: "report.txt" },
+    createdByActorId: actorId,
+    createdAt: "2026-05-24T09:30:00.000Z",
     ...overrides,
   };
 }

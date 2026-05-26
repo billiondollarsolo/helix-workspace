@@ -28,6 +28,12 @@ interface TargetObjectRow {
   readonly storage_key: string;
 }
 
+interface TargetDriveFolderRow {
+  readonly id: string;
+  readonly parent_folder_id: string | null;
+  readonly name: string;
+}
+
 interface TargetDriveVersionRow {
   readonly id: string;
   readonly object_id: string;
@@ -61,6 +67,12 @@ export async function loadTenantImportTargetStateFromPostgres(
     where org_id = ${input.targetOrgId}
     order by storage_key asc, id asc
   `) as unknown as readonly TargetObjectRow[];
+  const driveFolders = (await input.sql`
+    select id, parent_folder_id, name
+    from drive_folders
+    where org_id = ${input.targetOrgId}
+    order by parent_folder_id asc nulls first, lower(name) asc, id asc
+  `) as unknown as readonly TargetDriveFolderRow[];
   const driveVersions = (await input.sql`
     select id, object_id, version_number
     from drive_versions
@@ -112,6 +124,19 @@ export async function loadTenantImportTargetStateFromPostgres(
     existingNaturalKeys.push({
       table: "objects",
       naturalKey: [row.storage_key],
+      targetId: row.id,
+    });
+  }
+
+  for (const row of driveFolders) {
+    existingRowIds.push({
+      table: "drive_folders",
+      id: row.id,
+      targetId: row.id,
+    });
+    existingNaturalKeys.push({
+      table: "drive_folders",
+      naturalKey: [row.parent_folder_id ?? "", row.name],
       targetId: row.id,
     });
   }

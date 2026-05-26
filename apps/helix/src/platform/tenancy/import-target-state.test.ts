@@ -6,6 +6,7 @@ const targetOrgId = "33333333-3333-4333-8333-333333333333";
 const targetDomainId = "77777777-7777-4777-8777-777777777777";
 const targetDnsRecordId = "88888888-8888-4888-8888-888888888888";
 const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
+const targetDriveFolderId = "12121212-1212-4212-8212-121212121212";
 const targetObjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const targetDriveVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
@@ -31,6 +32,13 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
         {
           id: targetObjectId,
           storage_key: "drive/report.txt",
+        },
+      ],
+      [
+        {
+          id: targetDriveFolderId,
+          parent_folder_id: null,
+          name: "Projects",
         },
       ],
       [
@@ -72,6 +80,11 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
           targetId: targetObjectId,
         },
         {
+          table: "drive_folders",
+          id: targetDriveFolderId,
+          targetId: targetDriveFolderId,
+        },
+        {
           table: "drive_versions",
           id: targetDriveVersionId,
           targetId: targetDriveVersionId,
@@ -99,6 +112,11 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
           targetId: targetObjectId,
         },
         {
+          table: "drive_folders",
+          naturalKey: ["", "Projects"],
+          targetId: targetDriveFolderId,
+        },
+        {
           table: "drive_versions",
           naturalKey: [targetObjectId, "1"],
           targetId: targetDriveVersionId,
@@ -111,7 +129,7 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
       ],
       primaryDomain: "example.com",
     });
-    expect(recording.calls).toHaveLength(5);
+    expect(recording.calls).toHaveLength(6);
     expect(recording.calls[0]?.text).toContain("from admin_domains");
     expect(recording.calls[0]?.text).toContain("where org_id = ?");
     expect(recording.calls[0]?.text).toContain(
@@ -125,17 +143,23 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
     expect(recording.calls[2]?.text).toContain("from objects");
     expect(recording.calls[2]?.text).toContain("where org_id = ?");
     expect(recording.calls[2]?.text).toContain("order by storage_key asc, id asc");
-    expect(recording.calls[3]?.text).toContain("from drive_versions");
+    expect(recording.calls[3]?.text).toContain("from drive_folders");
     expect(recording.calls[3]?.text).toContain("where org_id = ?");
     expect(recording.calls[3]?.text).toContain(
-      "order by object_id asc, version_number asc, id asc",
+      "order by parent_folder_id asc nulls first, lower(name) asc, id asc",
     );
-    expect(recording.calls[4]?.text).toContain("from resource_classifications");
+    expect(recording.calls[4]?.text).toContain("from drive_versions");
     expect(recording.calls[4]?.text).toContain("where org_id = ?");
     expect(recording.calls[4]?.text).toContain(
+      "order by object_id asc, version_number asc, id asc",
+    );
+    expect(recording.calls[5]?.text).toContain("from resource_classifications");
+    expect(recording.calls[5]?.text).toContain("where org_id = ?");
+    expect(recording.calls[5]?.text).toContain(
       "order by resource_type asc, resource_id asc, id asc",
     );
     expect(recording.calls.flatMap((call) => call.values)).toEqual([
+      targetOrgId,
       targetOrgId,
       targetOrgId,
       targetOrgId,
@@ -152,7 +176,7 @@ describe("loadTenantImportTargetStateFromPostgres", () => {
   });
 
   it("returns empty target facts when the target tenant has no import-relevant rows", async () => {
-    const recording = createRecordingSql([[], [], [], [], []]);
+    const recording = createRecordingSql([[], [], [], [], [], []]);
 
     await expect(
       loadTenantImportTargetStateFromPostgres({

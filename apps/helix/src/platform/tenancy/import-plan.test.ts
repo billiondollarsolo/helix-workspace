@@ -16,11 +16,13 @@ const actorId = "11111111-1111-4111-8111-111111111111";
 const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
+const driveFolderId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const driveVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const targetDomainId = "77777777-7777-4777-8777-777777777777";
 const targetDnsRecordId = "88888888-8888-4888-8888-888888888888";
 const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
+const targetDriveFolderId = "12121212-1212-4212-8212-121212121212";
 const targetObjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const targetDriveVersionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
@@ -54,23 +56,25 @@ describe("buildTenantImportPlan", () => {
         totalKnownBytes: 25,
       },
       summary: {
-        postgresRows: 5,
+        postgresRows: 6,
         adminDomainRows: 1,
         adminDnsRecordRows: 1,
+        driveFolderRows: 1,
         objectRows: 1,
         driveVersionRows: 1,
         resourceClassificationRows: 1,
-        operationCount: 5,
+        operationCount: 6,
       },
     });
     expect(plan.operations.map((operation) => operation.kind)).toEqual([
       "upsert_admin_domain",
       "upsert_admin_dns_record",
+      "upsert_drive_folder",
       "upsert_object",
       "upsert_drive_version",
       "upsert_resource_classification",
     ]);
-    expect(plan.operations.map((operation) => operation.order)).toEqual([1, 2, 3, 4, 5]);
+    expect(plan.operations.map((operation) => operation.order)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(plan.operations[1]).toMatchObject({
       table: "admin_dns_records",
       dependsOn: [`admin_domains:${domainId}`],
@@ -102,10 +106,19 @@ describe("buildTenantImportPlan", () => {
       rowId: "preserve",
       references: {
         ownerActorId: "preserve",
+        createdByActorId: "preserve",
       },
       state: {},
     });
     expect(plan.operations[3]?.conflictPolicy).toEqual({
+      rowId: "preserve",
+      references: {
+        ownerActorId: "preserve",
+        folderId: "preserve",
+      },
+      state: {},
+    });
+    expect(plan.operations[4]?.conflictPolicy).toEqual({
       rowId: "preserve",
       references: {
         objectId: "preserve",
@@ -113,12 +126,12 @@ describe("buildTenantImportPlan", () => {
       },
       state: {},
     });
-    expect(plan.operations[3]).toMatchObject({
+    expect(plan.operations[4]).toMatchObject({
       table: "drive_versions",
       dependsOn: [`objects:${objectId}`],
       naturalKey: [objectId, "1"],
     });
-    expect(plan.operations[4]?.conflictPolicy).toEqual({
+    expect(plan.operations[5]?.conflictPolicy).toEqual({
       rowId: "preserve",
       references: {
         actorId: "preserve",
@@ -134,11 +147,13 @@ describe("buildTenantImportPlan", () => {
       "postgres_rows",
       "postgres_rows",
       "postgres_rows",
+      "postgres_rows",
     ]);
     expect(issueCodes(plan)).toEqual(
       expect.arrayContaining([
         "domain_id_remap_required",
         "object_id_remap_required",
+        "folder_id_remap_required",
         "principal_remap_required",
         "resource_reference_deferred",
         "verified_state_requires_recheck",
@@ -195,6 +210,11 @@ describe("buildTenantImportPlan", () => {
             targetId: targetDnsRecordId,
           },
           {
+            table: "drive_folders",
+            naturalKey: ["", "Projects"],
+            targetId: targetDriveFolderId,
+          },
+          {
             table: "objects",
             naturalKey: ["drive/report.txt"],
             targetId: targetObjectId,
@@ -214,8 +234,8 @@ describe("buildTenantImportPlan", () => {
     });
 
     expect(plan.summary).toMatchObject({
-      remapCount: 10,
-      conflictCount: 6,
+      remapCount: 12,
+      conflictCount: 7,
     });
     expect(plan.operations[0]).toMatchObject({
       action: "update",
@@ -271,18 +291,20 @@ describe("buildTenantImportPlan", () => {
     });
     expect(plan.operations[2]).toMatchObject({
       action: "update",
-      table: "objects",
-      sourceId: objectId,
-      targetId: targetObjectId,
-      naturalKey: ["drive/report.txt"],
+      table: "drive_folders",
+      sourceId: driveFolderId,
+      targetId: targetDriveFolderId,
+      naturalKey: ["", "Projects"],
       remappedFields: {
         orgId: targetOrgId,
         ownerActorId: null,
+        createdByActorId: null,
       },
       conflictPolicy: {
         rowId: "match",
         references: {
           ownerActorId: "null",
+          createdByActorId: "null",
         },
         state: {},
       },
@@ -290,8 +312,34 @@ describe("buildTenantImportPlan", () => {
     expect(plan.operations[2]?.row).toMatchObject({
       orgId: targetOrgId,
       ownerActorId: null,
+      createdByActorId: null,
     });
     expect(plan.operations[3]).toMatchObject({
+      action: "update",
+      table: "objects",
+      sourceId: objectId,
+      targetId: targetObjectId,
+      naturalKey: ["drive/report.txt"],
+      remappedFields: {
+        orgId: targetOrgId,
+        ownerActorId: null,
+        metadata: { folderId: targetDriveFolderId, name: "report.txt" },
+      },
+      conflictPolicy: {
+        rowId: "match",
+        references: {
+          ownerActorId: "null",
+          folderId: "match",
+        },
+        state: {},
+      },
+    });
+    expect(plan.operations[3]?.row).toMatchObject({
+      orgId: targetOrgId,
+      ownerActorId: null,
+      metadata: { folderId: targetDriveFolderId, name: "report.txt" },
+    });
+    expect(plan.operations[4]).toMatchObject({
       action: "update",
       table: "drive_versions",
       sourceId: driveVersionId,
@@ -312,12 +360,12 @@ describe("buildTenantImportPlan", () => {
         state: {},
       },
     });
-    expect(plan.operations[3]?.row).toMatchObject({
+    expect(plan.operations[4]?.row).toMatchObject({
       orgId: targetOrgId,
       objectId: targetObjectId,
       createdByActorId: null,
     });
-    expect(plan.operations[4]).toMatchObject({
+    expect(plan.operations[5]).toMatchObject({
       action: "update",
       table: "resource_classifications",
       sourceId: resourceClassificationId,
@@ -337,7 +385,7 @@ describe("buildTenantImportPlan", () => {
         state: {},
       },
     });
-    expect(plan.operations[4]?.row).toMatchObject({
+    expect(plan.operations[5]?.row).toMatchObject({
       orgId: targetOrgId,
       actorId: null,
       resourceId: targetObjectId,
@@ -474,14 +522,27 @@ describe("buildTenantImportPlan", () => {
     expect(plan.operations[2]).toMatchObject({
       row: {
         ownerActorId: actorId,
+        createdByActorId: actorId,
       },
       conflictPolicy: {
         references: {
           ownerActorId: "null",
+          createdByActorId: "null",
         },
       },
     });
     expect(plan.operations[3]).toMatchObject({
+      row: {
+        ownerActorId: actorId,
+      },
+      conflictPolicy: {
+        references: {
+          ownerActorId: "null",
+          folderId: "preserve",
+        },
+      },
+    });
+    expect(plan.operations[4]).toMatchObject({
       row: {
         createdByActorId: actorId,
         objectId,
@@ -493,7 +554,7 @@ describe("buildTenantImportPlan", () => {
         },
       },
     });
-    expect(plan.operations[4]).toMatchObject({
+    expect(plan.operations[5]).toMatchObject({
       row: {
         actorId,
         resourceId: objectId,
@@ -505,7 +566,7 @@ describe("buildTenantImportPlan", () => {
         },
       },
     });
-    expect(plan.operations[4]?.action).toBe("insert");
+    expect(plan.operations[5]?.action).toBe("insert");
   });
 
   it("returns validation blockers and no operations when the archive rows are invalid", () => {
@@ -602,13 +663,14 @@ describe("buildTenantImportPlan", () => {
         totalKnownBytes: 25,
       },
       summary: {
-        postgresRows: 5,
-        operationCount: 5,
+        postgresRows: 6,
+        operationCount: 6,
       },
     });
     expect(result.plan?.operations.map((operation) => operation.kind)).toEqual([
       "upsert_admin_domain",
       "upsert_admin_dns_record",
+      "upsert_drive_folder",
       "upsert_object",
       "upsert_drive_version",
       "upsert_resource_classification",
@@ -678,6 +740,7 @@ function validImportPlanInput(
   input: {
     readonly domainRows?: readonly Record<string, unknown>[];
     readonly dnsRows?: readonly Record<string, unknown>[];
+    readonly driveFolderRows?: readonly Record<string, unknown>[];
     readonly objectRows?: readonly Record<string, unknown>[];
     readonly driveVersionRows?: readonly Record<string, unknown>[];
     readonly resourceClassificationRows?: readonly Record<string, unknown>[];
@@ -700,6 +763,12 @@ function validImportPlanInput(
       path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
       orderBy: ["domain_id", "record_type", "host", "id"],
       rows: input.dnsRows ?? [adminDnsRecordRow()],
+    }),
+    chunkFile({
+      table: "drive_folders",
+      path: "postgres/data/chunks/drive_folders/000000.jsonl",
+      orderBy: ["path(name,id)"],
+      rows: input.driveFolderRows ?? [driveFolderRow()],
     }),
     chunkFile({
       table: "objects",
@@ -821,7 +890,23 @@ function objectRow(overrides: Record<string, unknown> = {}): Record<string, unkn
     byteSize: 12,
     sha256: "a".repeat(64),
     classification: "internal",
-    metadata: { name: "report.txt" },
+    metadata: { folderId: driveFolderId, name: "report.txt" },
+    deletedAt: null,
+    createdAt: "2026-05-24T09:00:00.000Z",
+    updatedAt: "2026-05-24T09:30:00.000Z",
+    ...overrides,
+  };
+}
+
+function driveFolderRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: driveFolderId,
+    orgId,
+    name: "Projects",
+    parentFolderId: null,
+    ownerActorId: actorId,
+    createdByActorId: actorId,
+    metadata: { color: "blue" },
     deletedAt: null,
     createdAt: "2026-05-24T09:00:00.000Z",
     updatedAt: "2026-05-24T09:30:00.000Z",

@@ -19,6 +19,7 @@ const actorId = "11111111-1111-4111-8111-111111111111";
 const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
+const driveFolderId = "99999999-9999-4999-8999-999999999999";
 const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const driveVersionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
@@ -34,6 +35,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
       summary: {
         adminDomainRows: 1,
         adminDnsRecordRows: 1,
+        driveFolderRows: 1,
         objectRows: 1,
         driveVersionRows: 1,
         resourceClassificationRows: 1,
@@ -52,6 +54,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
       summary: {
         adminDomainRows: 0,
         adminDnsRecordRows: 0,
+        driveFolderRows: 0,
         objectRows: 0,
         driveVersionRows: 0,
         resourceClassificationRows: 0,
@@ -64,6 +67,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
       domainRows: [],
       dnsRows: [],
       objectRows: [],
+      driveFolderRows: [],
       driveVersionRows: [],
       resourceClassificationRows: [],
     });
@@ -76,6 +80,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
       summary: {
         adminDomainRows: 0,
         adminDnsRecordRows: 0,
+        driveFolderRows: 0,
         objectRows: 0,
         driveVersionRows: 0,
         resourceClassificationRows: 0,
@@ -307,6 +312,68 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects invalid Drive folder rows, missing parents, duplicate siblings, and child-before-parent ordering", () => {
+    const childFolderId = "77777777-7777-4777-8777-777777777777";
+    const input = validValidationInput({
+      driveFolderRows: [
+        driveFolderRow({
+          id: childFolderId,
+          name: "Projects",
+          parentFolderId: driveFolderId,
+          metadata: [],
+        }),
+        driveFolderRow({
+          id: driveFolderId,
+          name: "Projects",
+          parentFolderId: null,
+        }),
+        driveFolderRow({
+          id: "88888888-8888-4888-8888-888888888888",
+          name: "Projects",
+          parentFolderId: null,
+        }),
+        driveFolderRow({
+          id: "not-a-uuid",
+          name: "Orphan",
+          parentFolderId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        }),
+      ],
+    });
+
+    const result = validateTenantExportPostgresDataChunks(input);
+
+    expect(issueCodes(result)).toEqual(
+      expect.arrayContaining([
+        "invalid_row_shape",
+        "missing_folder_reference",
+        "duplicate_drive_folder",
+        "invalid_chunk_order",
+      ]),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects object folder metadata that references a non-exported Drive folder", () => {
+    const input = validValidationInput({
+      objectRows: [
+        objectRow({
+          metadata: { folderId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "report.txt" },
+        }),
+      ],
+    });
+
+    const result = validateTenantExportPostgresDataChunks(input);
+
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "missing_folder_reference",
+        table: "objects",
+        field: "metadata.folderId",
+      }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects invalid Drive version rows, missing object references, duplicates, and bad ordering", () => {
     const input = validValidationInput({
       driveVersionRows: [
@@ -390,6 +457,7 @@ function validValidationInput(
   input: {
     readonly domainRows?: readonly Record<string, unknown>[];
     readonly dnsRows?: readonly Record<string, unknown>[];
+    readonly driveFolderRows?: readonly Record<string, unknown>[];
     readonly objectRows?: readonly Record<string, unknown>[];
     readonly driveVersionRows?: readonly Record<string, unknown>[];
     readonly resourceClassificationRows?: readonly Record<string, unknown>[];
@@ -410,6 +478,12 @@ function validValidationInput(
       path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
       orderBy: ["domain_id", "record_type", "host", "id"],
       rows: input.dnsRows ?? [adminDnsRecordRow()],
+    }),
+    chunkFile({
+      table: "drive_folders",
+      path: "postgres/data/chunks/drive_folders/000000.jsonl",
+      orderBy: ["path(name,id)"],
+      rows: input.driveFolderRows ?? [driveFolderRow()],
     }),
     chunkFile({
       table: "objects",
@@ -524,7 +598,23 @@ function objectRow(overrides: Record<string, unknown> = {}): Record<string, unkn
     byteSize: 12,
     sha256: "a".repeat(64),
     classification: "internal",
-    metadata: { name: "report.txt" },
+    metadata: { folderId: driveFolderId, name: "report.txt" },
+    deletedAt: null,
+    createdAt: "2026-05-24T09:00:00.000Z",
+    updatedAt: "2026-05-24T09:30:00.000Z",
+    ...overrides,
+  };
+}
+
+function driveFolderRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: driveFolderId,
+    orgId,
+    name: "Projects",
+    parentFolderId: null,
+    ownerActorId: actorId,
+    createdByActorId: actorId,
+    metadata: { color: "blue" },
     deletedAt: null,
     createdAt: "2026-05-24T09:00:00.000Z",
     updatedAt: "2026-05-24T09:30:00.000Z",

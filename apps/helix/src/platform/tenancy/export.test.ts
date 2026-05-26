@@ -29,6 +29,7 @@ import type { OrgRecord, OrgStore } from "./orgs.js";
 const orgId = "22222222-2222-4222-8222-222222222222";
 const otherOrgId = "33333333-3333-4333-8333-333333333333";
 const actorId = "11111111-1111-4111-8111-111111111111";
+const driveFolderId = "99999999-9999-4999-8999-999999999999";
 const exportedObjectId = "77777777-7777-4777-8777-777777777777";
 const driveVersionId = "88888888-8888-4888-8888-888888888888";
 
@@ -110,6 +111,9 @@ describe("tenant export archive", () => {
       "postgres/data/chunks/admin_dns_records/000000.jsonl",
     );
     expect(Object.keys(entries).sort()).toContain(
+      "postgres/data/chunks/drive_folders/000000.jsonl",
+    );
+    expect(Object.keys(entries).sort()).toContain(
       "postgres/data/chunks/resource_classifications/000000.jsonl",
     );
     expect(Object.keys(entries).sort()).toContain(
@@ -119,6 +123,7 @@ describe("tenant export archive", () => {
     expect(rowChunkManifest.includedTables).toEqual([
       "admin_domains",
       "admin_dns_records",
+      "drive_folders",
       "objects",
       "drive_versions",
       "resource_classifications",
@@ -135,6 +140,12 @@ describe("tenant export archive", () => {
         path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
         rowCount: 1,
         orderBy: ["domain_id", "record_type", "host", "id"],
+      }),
+      expect.objectContaining({
+        table: "drive_folders",
+        path: "postgres/data/chunks/drive_folders/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["path(name,id)"],
       }),
       expect.objectContaining({
         table: "objects",
@@ -203,7 +214,21 @@ describe("tenant export archive", () => {
         byteSize: 12,
         sha256: "a".repeat(64),
         classification: "internal",
-        metadata: { name: "report.txt" },
+        metadata: { folderId: driveFolderId, name: "report.txt" },
+        deletedAt: null,
+        createdAt: "2026-05-24T09:00:00.000Z",
+        updatedAt: "2026-05-24T09:30:00.000Z",
+      },
+    ]);
+    expect(parseJsonl(entries["postgres/data/chunks/drive_folders/000000.jsonl"] ?? "")).toEqual([
+      {
+        id: driveFolderId,
+        orgId,
+        name: "Projects",
+        parentFolderId: null,
+        ownerActorId: actorId,
+        createdByActorId: actorId,
+        metadata: { color: "blue" },
         deletedAt: null,
         createdAt: "2026-05-24T09:00:00.000Z",
         updatedAt: "2026-05-24T09:30:00.000Z",
@@ -411,6 +436,12 @@ describe("tenant export SQL helpers", () => {
         orderBy: ["domain_id", "record_type", "host", "id"],
       }),
       expect.objectContaining({
+        table: "drive_folders",
+        path: "postgres/data/chunks/drive_folders/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["path(name,id)"],
+      }),
+      expect.objectContaining({
         table: "objects",
         path: "postgres/data/chunks/objects/000000.jsonl",
         rowCount: 1,
@@ -446,25 +477,31 @@ describe("tenant export SQL helpers", () => {
       "order by domain_id asc, record_type asc, host asc, id asc",
     );
     expect(recording.calls[2]?.text).toContain(
+      "select id, org_id, name, parent_folder_id, owner_actor_id, created_by_actor_id",
+    );
+    expect(recording.calls[2]?.text).toContain("from drive_folders");
+    expect(recording.calls[2]?.text).toContain("where org_id = ? and parent_folder_id is null");
+    expect(recording.calls[2]?.text).toContain("order by sort_path asc");
+    expect(recording.calls[3]?.text).toContain(
       "select id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256",
     );
-    expect(recording.calls[2]?.text).toContain("from objects");
-    expect(recording.calls[2]?.text).toContain("where org_id = ?");
-    expect(recording.calls[2]?.text).toContain("order by kind asc, storage_key asc, id asc");
-    expect(recording.calls[3]?.text).toContain(
+    expect(recording.calls[3]?.text).toContain("from objects");
+    expect(recording.calls[3]?.text).toContain("where org_id = ?");
+    expect(recording.calls[3]?.text).toContain("order by kind asc, storage_key asc, id asc");
+    expect(recording.calls[4]?.text).toContain(
       "select id, org_id, object_id, version_number, storage_key, mime_type",
     );
-    expect(recording.calls[3]?.text).toContain("from drive_versions");
-    expect(recording.calls[3]?.text).toContain("where org_id = ?");
-    expect(recording.calls[3]?.text).toContain(
-      "order by object_id asc, version_number asc, id asc",
-    );
-    expect(recording.calls[4]?.text).toContain(
-      "select id, org_id, resource_type, resource_id, classification, source, reason",
-    );
-    expect(recording.calls[4]?.text).toContain("from resource_classifications");
+    expect(recording.calls[4]?.text).toContain("from drive_versions");
     expect(recording.calls[4]?.text).toContain("where org_id = ?");
     expect(recording.calls[4]?.text).toContain(
+      "order by object_id asc, version_number asc, id asc",
+    );
+    expect(recording.calls[5]?.text).toContain(
+      "select id, org_id, resource_type, resource_id, classification, source, reason",
+    );
+    expect(recording.calls[5]?.text).toContain("from resource_classifications");
+    expect(recording.calls[5]?.text).toContain("where org_id = ?");
+    expect(recording.calls[5]?.text).toContain(
       "order by resource_type asc, resource_id asc, id asc",
     );
     expect(recording.calls.flatMap((call) => call.values).every((value) => value === orgId)).toBe(
@@ -1363,6 +1400,20 @@ function adminDomainChunkSqlResults(): readonly unknown[][] {
     ],
     [
       {
+        id: driveFolderId,
+        org_id: orgId,
+        name: "Projects",
+        parent_folder_id: null,
+        owner_actor_id: actorId,
+        created_by_actor_id: actorId,
+        metadata: { color: "blue" },
+        deleted_at: null,
+        created_at: new Date("2026-05-24T09:00:00.000Z"),
+        updated_at: new Date("2026-05-24T09:30:00.000Z"),
+      },
+    ],
+    [
+      {
         id: exportedObjectId,
         org_id: orgId,
         owner_actor_id: actorId,
@@ -1372,7 +1423,7 @@ function adminDomainChunkSqlResults(): readonly unknown[][] {
         byte_size: 12,
         sha256: "a".repeat(64),
         classification: "internal",
-        metadata: { name: "report.txt" },
+        metadata: { folderId: driveFolderId, name: "report.txt" },
         deleted_at: null,
         created_at: new Date("2026-05-24T09:00:00.000Z"),
         updated_at: new Date("2026-05-24T09:30:00.000Z"),

@@ -14,6 +14,7 @@ import {
 export type TenantImportPlanPostgresTable =
   | "admin_domains"
   | "admin_dns_records"
+  | "drive_folders"
   | "objects"
   | "drive_versions"
   | "resource_classifications";
@@ -26,6 +27,7 @@ export type TenantImportPlanIssueCode =
   | "export_validation_failed"
   | "org_id_remap_required"
   | "domain_id_remap_required"
+  | "folder_id_remap_required"
   | "object_id_remap_required"
   | "principal_remap_required"
   | "resource_reference_deferred"
@@ -40,6 +42,7 @@ export type TenantImportPlanIssueCode =
 export type TenantImportPlanOperationKind =
   | "upsert_admin_domain"
   | "upsert_admin_dns_record"
+  | "upsert_drive_folder"
   | "upsert_object"
   | "upsert_drive_version"
   | "upsert_resource_classification";
@@ -54,6 +57,7 @@ export type TenantImportPlanConflictPolicyReferenceField =
   | "actorId"
   | "ownerActorId"
   | "domainId"
+  | "folderId"
   | "objectId"
   | "resourceId";
 
@@ -259,6 +263,7 @@ export interface TenantImportPlan {
     readonly postgresRows: number;
     readonly adminDomainRows: number;
     readonly adminDnsRecordRows: number;
+    readonly driveFolderRows: number;
     readonly objectRows: number;
     readonly driveVersionRows: number;
     readonly resourceClassificationRows: number;
@@ -294,6 +299,12 @@ const chunkDefinitions: readonly ChunkDefinition[] = [
     path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
     operationKind: "upsert_admin_dns_record",
     label: "Plan admin DNS record rows",
+  },
+  {
+    table: "drive_folders",
+    path: "postgres/data/chunks/drive_folders/000000.jsonl",
+    operationKind: "upsert_drive_folder",
+    label: "Plan Drive folder metadata rows",
   },
   {
     table: "objects",
@@ -507,6 +518,7 @@ function planSummary(
   const {
     adminDomainRows,
     adminDnsRecordRows,
+    driveFolderRows,
     objectRows,
     driveVersionRows,
     resourceClassificationRows,
@@ -515,11 +527,13 @@ function planSummary(
     postgresRows:
       adminDomainRows +
       adminDnsRecordRows +
+      driveFolderRows +
       objectRows +
       driveVersionRows +
       resourceClassificationRows,
     adminDomainRows,
     adminDnsRecordRows,
+    driveFolderRows,
     objectRows,
     driveVersionRows,
     resourceClassificationRows,
@@ -575,6 +589,8 @@ function rowCountForTable(
       return validation.summary.adminDomainRows;
     case "admin_dns_records":
       return validation.summary.adminDnsRecordRows;
+    case "drive_folders":
+      return validation.summary.driveFolderRows;
     case "objects":
       return validation.summary.objectRows;
     case "drive_versions":
@@ -594,6 +610,7 @@ function buildPlanIssues(input: {
   const issues: TenantImportPlanIssue[] = [];
   const domainRows = input.rowsByTable.get("admin_domains") ?? [];
   const dnsRows = input.rowsByTable.get("admin_dns_records") ?? [];
+  const driveFolderRows = input.rowsByTable.get("drive_folders") ?? [];
   const objectRows = input.rowsByTable.get("objects") ?? [];
   const driveVersionRows = input.rowsByTable.get("drive_versions") ?? [];
   const classificationRows = input.rowsByTable.get("resource_classifications") ?? [];
@@ -630,8 +647,21 @@ function buildPlanIssues(input: {
     });
   }
 
+  if (objectRows.some((row) => folderIdFromMetadata(row.metadata) !== null)) {
+    issues.push({
+      severity: "warning",
+      code: "folder_id_remap_required",
+      table: "objects",
+      path: tablePath("objects"),
+      field: "metadata.folderId",
+      message:
+        "Object metadata folderId values depend on Drive folder ID mapping before import can apply.",
+    });
+  }
+
   if (
     domainRows.some((row) => row.createdBy !== null) ||
+    driveFolderRows.some((row) => row.ownerActorId !== null || row.createdByActorId !== null) ||
     objectRows.some((row) => row.ownerActorId !== null) ||
     driveVersionRows.some((row) => row.createdByActorId !== null) ||
     classificationRows.some((row) => row.actorId !== null)
@@ -680,6 +710,43 @@ function buildPlanIssues(input: {
         field: "ownerActorId",
         actual: ownerActorId,
         message: "Object owner reference has no target principal remap.",
+      });
+    }
+  });
+
+  driveFolderRows.forEach((row, index) => {
+    const ownerActorId = row.ownerActorId;
+    if (
+      typeof ownerActorId === "string" &&
+      input.providedRemaps?.principals?.[ownerActorId] === undefined
+    ) {
+      issues.push({
+        severity: "warning",
+        code: "principal_remap_missing",
+        table: "drive_folders",
+        path: tablePath("drive_folders"),
+        line: index + 1,
+        sourceId: stringField(row, "id"),
+        field: "ownerActorId",
+        actual: ownerActorId,
+        message: "Drive folder owner reference has no target principal remap.",
+      });
+    }
+    const createdByActorId = row.createdByActorId;
+    if (
+      typeof createdByActorId === "string" &&
+      input.providedRemaps?.principals?.[createdByActorId] === undefined
+    ) {
+      issues.push({
+        severity: "warning",
+        code: "principal_remap_missing",
+        table: "drive_folders",
+        path: tablePath("drive_folders"),
+        line: index + 1,
+        sourceId: stringField(row, "id"),
+        field: "createdByActorId",
+        actual: createdByActorId,
+        message: "Drive folder creator reference has no target principal remap.",
       });
     }
   });
@@ -793,6 +860,7 @@ function buildRemaps(input: {
   readonly targetState: TenantImportPlanTargetState | undefined;
 }): readonly TenantImportPlanRemapEntry[] {
   const domainIdTargets = buildDomainIdTargets(input.rowsByTable, input.targetState);
+  const folderIdTargets = buildFolderIdTargets(input.rowsByTable, input.targetState);
   const objectIdTargets = buildObjectIdTargets(input.rowsByTable, input.targetState);
   const remaps: TenantImportPlanRemapEntry[] = [
     {
@@ -810,8 +878,20 @@ function buildRemaps(input: {
   for (const definition of chunkDefinitions) {
     const rows = input.rowsByTable.get(definition.table) ?? [];
     for (const row of rows) {
+      const plannedRow = {
+        ...row,
+        ...remappedFieldsForRow({
+          table: definition.table,
+          row,
+          targetOrgId: input.targetOrgId,
+          domainIdTargets,
+          folderIdTargets,
+          objectIdTargets,
+          providedRemaps: input.providedRemaps,
+        }),
+      };
       const sourceId = stringField(row, "id");
-      const naturalKey = naturalKeyForRow(definition.table, row);
+      const naturalKey = naturalKeyForRow(definition.table, plannedRow);
       const targetId = targetIdForNaturalKey(definition.table, naturalKey, input.targetState);
       remaps.push({
         kind: "row_id",
@@ -834,6 +914,10 @@ function buildRemaps(input: {
   }
   for (const row of input.rowsByTable.get("objects") ?? []) {
     addStringSetValue(principalIds, row.ownerActorId);
+  }
+  for (const row of input.rowsByTable.get("drive_folders") ?? []) {
+    addStringSetValue(principalIds, row.ownerActorId);
+    addStringSetValue(principalIds, row.createdByActorId);
   }
   for (const row of input.rowsByTable.get("drive_versions") ?? []) {
     addStringSetValue(principalIds, row.createdByActorId);
@@ -918,6 +1002,21 @@ function buildRemaps(input: {
       targetId,
       status: "rewrite",
       reason: "Drive version objectId values will use the matched target object ID.",
+    });
+  }
+
+  for (const [sourceId, targetId] of folderIdTargets) {
+    if (sourceId === targetId) {
+      continue;
+    }
+    remaps.push({
+      kind: "row_id",
+      table: "drive_folders",
+      sourceId,
+      targetId,
+      status: "rewrite",
+      reason:
+        "Object metadata folderId and child folder parentFolderId values will use the matched target Drive folder ID.",
     });
   }
 
@@ -1007,6 +1106,7 @@ function buildOperations(input: {
 }): readonly TenantImportPlanOperation[] {
   const operations: TenantImportPlanOperation[] = [];
   const domainIdTargets = buildDomainIdTargets(input.rowsByTable, input.targetState);
+  const folderIdTargets = buildFolderIdTargets(input.rowsByTable, input.targetState);
   const objectIdTargets = buildObjectIdTargets(input.rowsByTable, input.targetState);
   for (const definition of chunkDefinitions) {
     const rows = input.rowsByTable.get(definition.table) ?? [];
@@ -1016,6 +1116,7 @@ function buildOperations(input: {
         row,
         targetOrgId: input.targetOrgId,
         domainIdTargets,
+        folderIdTargets,
         objectIdTargets,
         providedRemaps: input.providedRemaps,
       });
@@ -1031,6 +1132,7 @@ function buildOperations(input: {
         targetId,
         targetState: input.targetState,
         domainIdTargets,
+        folderIdTargets,
         objectIdTargets,
         providedRemaps: input.providedRemaps,
         providedConflictPolicy: input.providedConflictPolicy,
@@ -1090,6 +1192,7 @@ function remappedFieldsForRow(input: {
   readonly row: JsonRecord;
   readonly targetOrgId: string;
   readonly domainIdTargets: ReadonlyMap<string, string>;
+  readonly folderIdTargets: ReadonlyMap<string, string>;
   readonly objectIdTargets: ReadonlyMap<string, string>;
   readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
 }): Readonly<Record<string, unknown>> {
@@ -1109,6 +1212,26 @@ function remappedFieldsForRow(input: {
     const domainId = stringField(input.row, "domainId");
     remapped.domainId = input.domainIdTargets.get(domainId) ?? domainId;
   }
+  if (input.table === "drive_folders") {
+    const parentFolderId = nullableStringField(input.row, "parentFolderId");
+    if (parentFolderId !== null) {
+      remapped.parentFolderId = input.folderIdTargets.get(parentFolderId) ?? parentFolderId;
+    }
+    const ownerActorId = input.row.ownerActorId;
+    if (
+      typeof ownerActorId === "string" &&
+      input.providedRemaps?.principals?.[ownerActorId] !== undefined
+    ) {
+      remapped.ownerActorId = input.providedRemaps.principals[ownerActorId];
+    }
+    const createdByActorId = input.row.createdByActorId;
+    if (
+      typeof createdByActorId === "string" &&
+      input.providedRemaps?.principals?.[createdByActorId] !== undefined
+    ) {
+      remapped.createdByActorId = input.providedRemaps.principals[createdByActorId];
+    }
+  }
   if (input.table === "objects") {
     const ownerActorId = input.row.ownerActorId;
     if (
@@ -1116,6 +1239,13 @@ function remappedFieldsForRow(input: {
       input.providedRemaps?.principals?.[ownerActorId] !== undefined
     ) {
       remapped.ownerActorId = input.providedRemaps.principals[ownerActorId];
+    }
+    const folderId = folderIdFromMetadata(input.row.metadata);
+    if (folderId !== null && input.folderIdTargets.has(folderId)) {
+      remapped.metadata = {
+        ...(input.row.metadata as JsonRecord),
+        folderId: input.folderIdTargets.get(folderId),
+      };
     }
   }
   if (input.table === "drive_versions") {
@@ -1152,6 +1282,7 @@ function conflictPolicyForRow(input: {
   readonly targetId: string | null;
   readonly targetState: TenantImportPlanTargetState | undefined;
   readonly domainIdTargets: ReadonlyMap<string, string>;
+  readonly folderIdTargets: ReadonlyMap<string, string>;
   readonly objectIdTargets: ReadonlyMap<string, string>;
   readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
   readonly providedConflictPolicy: TenantImportDryRunConflictPolicy | undefined;
@@ -1193,6 +1324,7 @@ function referenceConflictPolicyForRow(input: {
   readonly table: TenantImportPlanPostgresTable;
   readonly row: JsonRecord;
   readonly domainIdTargets: ReadonlyMap<string, string>;
+  readonly folderIdTargets: ReadonlyMap<string, string>;
   readonly objectIdTargets: ReadonlyMap<string, string>;
   readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
   readonly providedConflictPolicy: TenantImportDryRunConflictPolicy | undefined;
@@ -1216,12 +1348,46 @@ function referenceConflictPolicyForRow(input: {
       input.providedConflictPolicy,
     );
   }
+  if (input.table === "drive_folders") {
+    const parentFolderId = nullableStringField(input.row, "parentFolderId");
+    if (parentFolderId !== null) {
+      references.folderId = referencePolicyOverride(
+        "folderId",
+        input.folderIdTargets.has(parentFolderId) ? "match" : "preserve",
+        input.providedConflictPolicy,
+      );
+    }
+    const ownerActorId = input.row.ownerActorId;
+    if (typeof ownerActorId === "string") {
+      references.ownerActorId = referencePolicyOverride(
+        "ownerActorId",
+        principalReferencePolicy(ownerActorId, input.providedRemaps),
+        input.providedConflictPolicy,
+      );
+    }
+    const createdByActorId = input.row.createdByActorId;
+    if (typeof createdByActorId === "string") {
+      references.createdByActorId = referencePolicyOverride(
+        "createdByActorId",
+        principalReferencePolicy(createdByActorId, input.providedRemaps),
+        input.providedConflictPolicy,
+      );
+    }
+  }
   if (input.table === "objects") {
     const ownerActorId = input.row.ownerActorId;
     if (typeof ownerActorId === "string") {
       references.ownerActorId = referencePolicyOverride(
         "ownerActorId",
         principalReferencePolicy(ownerActorId, input.providedRemaps),
+        input.providedConflictPolicy,
+      );
+    }
+    const folderId = folderIdFromMetadata(input.row.metadata);
+    if (folderId !== null) {
+      references.folderId = referencePolicyOverride(
+        "folderId",
+        input.folderIdTargets.has(folderId) ? "match" : "preserve",
         input.providedConflictPolicy,
       );
     }
@@ -1280,7 +1446,7 @@ function referencePolicyOverride(
     return providedConflictPolicy.principalReferences;
   }
   if (
-    field === "resourceId" &&
+    (field === "resourceId" || field === "folderId") &&
     fallback === "preserve" &&
     providedConflictPolicy?.resourceReferences === "preserve"
   ) {
@@ -1380,6 +1546,8 @@ function naturalKeyForRow(
         stringField(row, "recordType"),
         stringField(row, "host"),
       ];
+    case "drive_folders":
+      return [nullableStringField(row, "parentFolderId") ?? "", stringField(row, "name")];
     case "objects":
       return [stringField(row, "storageKey")];
     case "drive_versions":
@@ -1395,6 +1563,10 @@ function dependsOnForRow(table: TenantImportPlanPostgresTable, row: JsonRecord):
   }
   if (table === "drive_versions") {
     return [`objects:${stringField(row, "objectId")}`];
+  }
+  if (table === "drive_folders") {
+    const parentFolderId = nullableStringField(row, "parentFolderId");
+    return parentFolderId === null ? [] : [`drive_folders:${parentFolderId}`];
   }
   return [];
 }
@@ -1431,6 +1603,29 @@ function buildObjectIdTargets(
   return targets;
 }
 
+function buildFolderIdTargets(
+  rowsByTable: ReadonlyMap<TenantImportPlanPostgresTable, readonly JsonRecord[]>,
+  targetState: TenantImportPlanTargetState | undefined,
+): ReadonlyMap<string, string> {
+  const targets = new Map<string, string>();
+  for (const row of rowsByTable.get("drive_folders") ?? []) {
+    const sourceId = stringField(row, "id");
+    const parentFolderId = nullableStringField(row, "parentFolderId");
+    const plannedRow = {
+      ...row,
+      ...(parentFolderId === null
+        ? {}
+        : { parentFolderId: targets.get(parentFolderId) ?? parentFolderId }),
+    };
+    const naturalKey = naturalKeyForRow("drive_folders", plannedRow);
+    const targetId = targetIdForNaturalKey("drive_folders", naturalKey, targetState);
+    if (targetId !== null) {
+      targets.set(sourceId, targetId);
+    }
+  }
+  return targets;
+}
+
 function targetIdForNaturalKey(
   table: TenantImportPlanPostgresTable,
   naturalKey: readonly string[],
@@ -1446,6 +1641,14 @@ function addStringSetValue(values: Set<string>, value: unknown): void {
   if (typeof value === "string") {
     values.add(value);
   }
+}
+
+function folderIdFromMetadata(metadata: unknown): string | null {
+  if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
+    return null;
+  }
+  const folderId = (metadata as JsonRecord).folderId;
+  return typeof folderId === "string" && folderId.length > 0 ? folderId : null;
 }
 
 function resourceReferenceKey(resourceType: string, resourceId: string): string {
@@ -1520,6 +1723,17 @@ function stringField(row: JsonRecord, field: string): string {
   const value = row[field];
   if (typeof value !== "string") {
     throw new Error(`Expected ${field} to be a string after validation.`);
+  }
+  return value;
+}
+
+function nullableStringField(row: JsonRecord, field: string): string | null {
+  const value = row[field];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`Expected ${field} to be a nullable string after validation.`);
   }
   return value;
 }

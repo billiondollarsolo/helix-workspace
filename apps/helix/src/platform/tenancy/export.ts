@@ -337,6 +337,19 @@ interface TenantExportObjectRow {
   readonly updated_at: Date;
 }
 
+interface TenantExportDriveFolderRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly name: string;
+  readonly parent_folder_id: string | null;
+  readonly owner_actor_id: string | null;
+  readonly created_by_actor_id: string | null;
+  readonly metadata: JsonObject;
+  readonly deleted_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
 interface TenantExportDriveVersionRow {
   readonly id: string;
   readonly org_id: string;
@@ -1134,6 +1147,26 @@ export async function buildTenantExportPostgresDataChunkFiles(
     where org_id = ${orgId}
     order by domain_id asc, record_type asc, host asc, id asc
   `) as unknown as readonly TenantExportAdminDnsRecordRow[];
+  const driveFolders = (await sql`
+    with recursive folder_tree as (
+      select id, org_id, name, parent_folder_id, owner_actor_id, created_by_actor_id,
+             metadata, deleted_at, created_at, updated_at,
+             array[name, id::text] as sort_path
+      from drive_folders
+      where org_id = ${orgId} and parent_folder_id is null
+      union all
+      select child.id, child.org_id, child.name, child.parent_folder_id, child.owner_actor_id,
+             child.created_by_actor_id, child.metadata, child.deleted_at, child.created_at,
+             child.updated_at, parent.sort_path || child.name || child.id::text
+      from drive_folders child
+      join folder_tree parent on parent.id = child.parent_folder_id
+      where child.org_id = ${orgId}
+    )
+    select id, org_id, name, parent_folder_id, owner_actor_id, created_by_actor_id,
+           metadata, deleted_at, created_at, updated_at
+    from folder_tree
+    order by sort_path asc
+  `) as unknown as readonly TenantExportDriveFolderRow[];
   const objects = (await sql`
     select id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256,
            classification, metadata, deleted_at, created_at, updated_at
@@ -1187,6 +1220,23 @@ export async function buildTenantExportPostgresDataChunkFiles(
         observedValue: row.observed_value,
         status: row.status,
         lastCheckedAt: row.last_checked_at?.toISOString() ?? null,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      })),
+    }),
+    buildTenantExportPostgresDataChunkFile({
+      table: "drive_folders",
+      path: "postgres/data/chunks/drive_folders/000000.jsonl",
+      orderBy: ["path(name,id)"],
+      rows: driveFolders.map((row) => ({
+        id: row.id,
+        orgId: row.org_id,
+        name: row.name,
+        parentFolderId: row.parent_folder_id,
+        ownerActorId: row.owner_actor_id,
+        createdByActorId: row.created_by_actor_id,
+        metadata: row.metadata,
+        deletedAt: row.deleted_at?.toISOString() ?? null,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
       })),

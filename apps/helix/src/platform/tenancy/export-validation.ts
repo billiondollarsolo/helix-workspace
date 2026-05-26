@@ -22,10 +22,12 @@ export type TenantExportValidationIssueCode =
   | "invalid_timestamp"
   | "duplicate_primary_domain"
   | "duplicate_domain"
+  | "duplicate_drive_folder"
   | "duplicate_object_storage_key"
   | "duplicate_drive_version"
   | "duplicate_resource_classification"
   | "missing_domain_reference"
+  | "missing_folder_reference"
   | "missing_object_reference"
   | "invalid_chunk_order";
 
@@ -47,6 +49,7 @@ export interface TenantExportValidationResult {
   readonly summary: {
     readonly adminDomainRows: number;
     readonly adminDnsRecordRows: number;
+    readonly driveFolderRows: number;
     readonly objectRows: number;
     readonly driveVersionRows: number;
     readonly resourceClassificationRows: number;
@@ -66,6 +69,7 @@ export interface ValidateTenantExportPostgresDataChunksInput {
 type TenantExportSupportedPostgresDataChunkTable =
   | "admin_domains"
   | "admin_dns_records"
+  | "drive_folders"
   | "objects"
   | "drive_versions"
   | "resource_classifications";
@@ -110,6 +114,23 @@ const supportedChunks: readonly SupportedChunkDefinition[] = [
       "observedValue",
       "status",
       "lastCheckedAt",
+      "createdAt",
+      "updatedAt",
+    ],
+  },
+  {
+    table: "drive_folders",
+    path: "postgres/data/chunks/drive_folders/000000.jsonl",
+    orderBy: ["path(name,id)"],
+    fields: [
+      "id",
+      "orgId",
+      "name",
+      "parentFolderId",
+      "ownerActorId",
+      "createdByActorId",
+      "metadata",
+      "deletedAt",
       "createdAt",
       "updatedAt",
     ],
@@ -304,7 +325,8 @@ export function validateTenantExportPostgresDataChunks(
 
   validateDomainRows(rowsByTable.get("admin_domains") ?? [], expectedOrgId, issues);
   validateDnsRows(rowsByTable, expectedOrgId, issues);
-  validateObjectRows(rowsByTable.get("objects") ?? [], issues);
+  validateDriveFolderRows(rowsByTable.get("drive_folders") ?? [], issues);
+  validateObjectRows(rowsByTable, issues);
   validateDriveVersionRows(rowsByTable, issues);
   validateResourceClassificationRows(rowsByTable.get("resource_classifications") ?? [], issues);
 
@@ -314,6 +336,7 @@ export function validateTenantExportPostgresDataChunks(
     summary: {
       adminDomainRows: rowsByTable.get("admin_domains")?.length ?? 0,
       adminDnsRecordRows: rowsByTable.get("admin_dns_records")?.length ?? 0,
+      driveFolderRows: rowsByTable.get("drive_folders")?.length ?? 0,
       objectRows: rowsByTable.get("objects")?.length ?? 0,
       driveVersionRows: rowsByTable.get("drive_versions")?.length ?? 0,
       resourceClassificationRows: rowsByTable.get("resource_classifications")?.length ?? 0,
@@ -809,6 +832,8 @@ function compareRowsForDefinition(
       return compareDomainRows(previous, current);
     case "admin_dns_records":
       return compareDnsRows(previous, current);
+    case "drive_folders":
+      return compareDriveFolderRows(previous, current);
     case "objects":
       return compareObjectRows(previous, current);
     case "drive_versions":
@@ -835,6 +860,12 @@ function compareDnsRows(a: JsonRecord, b: JsonRecord): number {
   );
 }
 
+function compareDriveFolderRows(a: JsonRecord, b: JsonRecord): number {
+  void a;
+  void b;
+  return 0;
+}
+
 function compareObjectRows(a: JsonRecord, b: JsonRecord): number {
   return (
     compareStrings(stringValue(a.kind), stringValue(b.kind)) ||
@@ -859,10 +890,115 @@ function compareResourceClassificationRows(a: JsonRecord, b: JsonRecord): number
   );
 }
 
-function validateObjectRows(
+function validateDriveFolderRows(
   rows: readonly JsonRecord[],
   issues: TenantExportValidationIssue[],
 ): void {
+  const folderIds = new Set(
+    rows.map((row) => row.id).filter((id): id is string => typeof id === "string"),
+  );
+  const seenFolderIds = new Set<string>();
+  const siblingKeys = new Set<string>();
+  rows.forEach((row, index) => {
+    const line = index + 1;
+    validateUuidField(row, "id", "drive_folders", line, issues);
+    validateUuidField(row, "parentFolderId", "drive_folders", line, issues, { nullable: true });
+    validateUuidField(row, "ownerActorId", "drive_folders", line, issues, { nullable: true });
+    validateUuidField(row, "createdByActorId", "drive_folders", line, issues, {
+      nullable: true,
+    });
+    validateTimestampField(row, "createdAt", "drive_folders", line, issues);
+    validateTimestampField(row, "updatedAt", "drive_folders", line, issues);
+    validateTimestampField(row, "deletedAt", "drive_folders", line, issues, { nullable: true });
+    validateNonEmptyString(row, "name", 255, "drive_folders", line, issues);
+
+    if (!isJsonRecord(row.metadata)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("drive_folders")?.path ?? "",
+        table: "drive_folders",
+        line,
+        field: "metadata",
+        message: "Drive folder row metadata must be a JSON object.",
+        actual: row.metadata,
+      });
+    }
+
+    if (typeof row.id === "string") {
+      if (seenFolderIds.has(row.id)) {
+        issues.push({
+          severity: "error",
+          code: "duplicate_drive_folder",
+          path: supportedChunksByTable.get("drive_folders")?.path ?? "",
+          table: "drive_folders",
+          line,
+          field: "id",
+          message: "Drive folder rows must not duplicate id values.",
+          actual: row.id,
+        });
+      }
+      seenFolderIds.add(row.id);
+    }
+
+    if (typeof row.parentFolderId === "string") {
+      if (!folderIds.has(row.parentFolderId)) {
+        issues.push({
+          severity: "error",
+          code: "missing_folder_reference",
+          path: supportedChunksByTable.get("drive_folders")?.path ?? "",
+          table: "drive_folders",
+          line,
+          field: "parentFolderId",
+          message: "Drive folder parentFolderId must reference an exported drive_folders row.",
+          actual: row.parentFolderId,
+        });
+      }
+      if (!seenFolderIds.has(row.parentFolderId)) {
+        issues.push({
+          severity: "error",
+          code: "invalid_chunk_order",
+          path: supportedChunksByTable.get("drive_folders")?.path ?? "",
+          table: "drive_folders",
+          line,
+          field: "parentFolderId",
+          message: "Drive folder rows must list parent folders before child folders.",
+          actual: row.parentFolderId,
+        });
+      }
+    }
+
+    if (
+      (row.parentFolderId === null || typeof row.parentFolderId === "string") &&
+      typeof row.name === "string"
+    ) {
+      const key = `${row.parentFolderId ?? ""}\u0000${row.name.toLowerCase()}`;
+      if (siblingKeys.has(key)) {
+        issues.push({
+          severity: "error",
+          code: "duplicate_drive_folder",
+          path: supportedChunksByTable.get("drive_folders")?.path ?? "",
+          table: "drive_folders",
+          line,
+          message: "Drive folder rows must not duplicate names under the same parent folder.",
+          actual: { parentFolderId: row.parentFolderId, name: row.name },
+        });
+      }
+      siblingKeys.add(key);
+    }
+  });
+}
+
+function validateObjectRows(
+  rowsByTable: ReadonlyMap<TenantExportSupportedPostgresDataChunkTable, readonly JsonRecord[]>,
+  issues: TenantExportValidationIssue[],
+): void {
+  const rows = rowsByTable.get("objects") ?? [];
+  const folderIds = new Set(
+    (rowsByTable.get("drive_folders") ?? [])
+      .map((row) => row.id)
+      .filter((id): id is string => typeof id === "string"),
+  );
   const storageKeys = new Set<string>();
   rows.forEach((row, index) => {
     const line = index + 1;
@@ -913,6 +1049,20 @@ function validateObjectRows(
         message: "Object row metadata must be a JSON object.",
         actual: row.metadata,
       });
+    } else {
+      const folderId = row.metadata.folderId;
+      if (typeof folderId === "string" && !folderIds.has(folderId)) {
+        issues.push({
+          severity: "error",
+          code: "missing_folder_reference",
+          path: supportedChunksByTable.get("objects")?.path ?? "",
+          table: "objects",
+          line,
+          field: "metadata.folderId",
+          message: "Object row metadata.folderId must reference an exported drive_folders row.",
+          actual: folderId,
+        });
+      }
     }
 
     if (typeof row.sha256 === "string" && !sha256Pattern.test(row.sha256)) {

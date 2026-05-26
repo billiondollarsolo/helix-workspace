@@ -89,8 +89,10 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
         return this.applyAdminDomain(operation);
       case "admin_dns_records":
         return this.applyAdminDnsRecord(operation, input.rowIdRemaps);
+      case "drive_folders":
+        return this.applyDriveFolder(operation, input.rowIdRemaps);
       case "objects":
-        return this.applyObject(operation);
+        return this.applyObject(operation, input.rowIdRemaps);
       case "drive_versions":
         return this.applyDriveVersion(operation, input.rowIdRemaps);
       case "resource_classifications":
@@ -413,11 +415,102 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
     return applied(operation, "inserted", targetId);
   }
 
+  private async applyDriveFolder(
+    operation: TenantImportPlanOperation,
+    rowIdRemaps: ReadonlyMap<string, string> | undefined,
+  ): Promise<TenantImportRowApplyOperationResult> {
+    const row = operation.row;
+    const rowParentFolderId = nullableStringField(row, "parentFolderId");
+    const remappedParentFolderId =
+      rowParentFolderId === null ? null : rowIdRemaps?.get(rowParentFolderId);
+    if (
+      rowParentFolderId !== null &&
+      remappedParentFolderId === undefined &&
+      operation.conflictPolicy.references.folderId === "preserve"
+    ) {
+      return blocked(operation, "folder_id_remap_missing");
+    }
+    const parentFolderId = remappedParentFolderId ?? rowParentFolderId;
+    const ownerActorId = referenceValue(operation, "ownerActorId");
+    const createdByActorId = referenceValue(operation, "createdByActorId");
+
+    if (operation.action === "update") {
+      if (operation.targetId === null) {
+        return blocked(operation, "missing_update_target_id");
+      }
+      const rows = (await this.sql`
+        update drive_folders
+        set name = ${stringField(row, "name")},
+            parent_folder_id = ${parentFolderId},
+            owner_actor_id = ${ownerActorId},
+            created_by_actor_id = ${createdByActorId},
+            metadata = ${this.sql.json(jsonValueField(row, "metadata"))},
+            deleted_at = ${nullableStringField(row, "deletedAt")},
+            updated_at = ${stringField(row, "updatedAt")}
+        where org_id = ${operation.targetOrgId} and id = ${operation.targetId}
+        returning id
+      `) as unknown as readonly ReturnedIdRow[];
+      const targetId = rows[0]?.id;
+      if (targetId === undefined) {
+        return blocked(operation, "update_target_missing");
+      }
+      return applied(operation, "updated", targetId);
+    }
+
+    const existing = (await this.sql`
+      select id
+      from drive_folders
+      where org_id = ${operation.targetOrgId}
+        and coalesce(parent_folder_id::text, '') = coalesce(${parentFolderId}::text, '')
+        and lower(name) = lower(${stringField(row, "name")})
+      for update
+    `) as unknown as readonly ReturnedIdRow[];
+    if (existing.length > 0) {
+      return blocked(operation, "target_natural_key_conflict");
+    }
+
+    const rows =
+      operation.conflictPolicy.rowId === "regenerate"
+        ? ((await this.sql`
+            insert into drive_folders
+              (org_id, name, parent_folder_id, owner_actor_id, created_by_actor_id, metadata,
+               deleted_at, created_at, updated_at)
+            values
+              (${operation.targetOrgId}, ${stringField(row, "name")}, ${parentFolderId},
+               ${ownerActorId}, ${createdByActorId}, ${this.sql.json(jsonValueField(row, "metadata"))},
+               ${nullableStringField(row, "deletedAt")}, ${stringField(row, "createdAt")},
+               ${stringField(row, "updatedAt")})
+            returning id
+          `) as unknown as readonly ReturnedIdRow[])
+        : ((await this.sql`
+            insert into drive_folders
+              (id, org_id, name, parent_folder_id, owner_actor_id, created_by_actor_id, metadata,
+               deleted_at, created_at, updated_at)
+            values
+              (${stringField(row, "id")}, ${operation.targetOrgId}, ${stringField(row, "name")},
+               ${parentFolderId}, ${ownerActorId}, ${createdByActorId},
+               ${this.sql.json(jsonValueField(row, "metadata"))},
+               ${nullableStringField(row, "deletedAt")},
+               ${stringField(row, "createdAt")}, ${stringField(row, "updatedAt")})
+            returning id
+          `) as unknown as readonly ReturnedIdRow[]);
+    const targetId = rows[0]?.id;
+    if (targetId === undefined) {
+      return blocked(operation, "insert_failed");
+    }
+    return applied(operation, "inserted", targetId);
+  }
+
   private async applyObject(
     operation: TenantImportPlanOperation,
+    rowIdRemaps: ReadonlyMap<string, string> | undefined,
   ): Promise<TenantImportRowApplyOperationResult> {
     const row = operation.row;
     const ownerActorId = referenceValue(operation, "ownerActorId");
+    const metadata = objectMetadataValue(operation, rowIdRemaps);
+    if (metadata === null) {
+      return blocked(operation, "folder_id_remap_missing");
+    }
 
     if (operation.action === "update") {
       if (operation.targetId === null) {
@@ -432,7 +525,7 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
             byte_size = ${numberField(row, "byteSize")},
             sha256 = ${nullableStringField(row, "sha256")},
             classification = ${stringField(row, "classification")},
-            metadata = ${this.sql.json(jsonValueField(row, "metadata"))},
+            metadata = ${this.sql.json(metadata)},
             deleted_at = ${nullableStringField(row, "deletedAt")},
             updated_at = ${stringField(row, "updatedAt")}
         where org_id = ${operation.targetOrgId} and id = ${operation.targetId}
@@ -467,7 +560,7 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
                ${stringField(row, "storageKey")}, ${stringField(row, "mimeType")},
                ${numberField(row, "byteSize")}, ${nullableStringField(row, "sha256")},
                ${stringField(row, "classification")},
-               ${this.sql.json(jsonValueField(row, "metadata"))},
+               ${this.sql.json(metadata)},
                ${nullableStringField(row, "deletedAt")}, ${stringField(row, "createdAt")},
                ${stringField(row, "updatedAt")})
             returning id
@@ -481,7 +574,7 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
                ${stringField(row, "kind")}, ${stringField(row, "storageKey")},
                ${stringField(row, "mimeType")}, ${numberField(row, "byteSize")},
                ${nullableStringField(row, "sha256")}, ${stringField(row, "classification")},
-               ${this.sql.json(jsonValueField(row, "metadata"))},
+               ${this.sql.json(metadata)},
                ${nullableStringField(row, "deletedAt")},
                ${stringField(row, "createdAt")}, ${stringField(row, "updatedAt")})
             returning id
@@ -502,6 +595,7 @@ function isSupportedOperation(operation: TenantImportPlanOperation): boolean {
   return (
     (operation.table === "admin_domains" && operation.kind === "upsert_admin_domain") ||
     (operation.table === "admin_dns_records" && operation.kind === "upsert_admin_dns_record") ||
+    (operation.table === "drive_folders" && operation.kind === "upsert_drive_folder") ||
     (operation.table === "objects" && operation.kind === "upsert_object") ||
     (operation.table === "drive_versions" && operation.kind === "upsert_drive_version") ||
     (operation.table === "resource_classifications" &&
@@ -525,6 +619,28 @@ function referenceValue(operation: TenantImportPlanOperation, field: string): st
     return null;
   }
   return nullableStringField(operation.row, field);
+}
+
+function objectMetadataValue(
+  operation: TenantImportPlanOperation,
+  rowIdRemaps: ReadonlyMap<string, string> | undefined,
+): postgres.JSONValue | null {
+  const metadata = jsonRecordField(operation.row, "metadata");
+  const folderId = metadata.folderId;
+  if (typeof folderId !== "string" || folderId.length === 0) {
+    return metadata as postgres.JSONValue;
+  }
+  const remappedFolderId = rowIdRemaps?.get(folderId);
+  if (
+    remappedFolderId === undefined &&
+    operation.conflictPolicy.references.folderId === "preserve"
+  ) {
+    return null;
+  }
+  return {
+    ...metadata,
+    folderId: remappedFolderId ?? folderId,
+  };
 }
 
 function applied(
@@ -590,4 +706,15 @@ function jsonValueField(row: Readonly<Record<string, unknown>>, field: string): 
     throw new Error(`Expected import row field ${field} to be a JSON object.`);
   }
   return value as postgres.JSONValue;
+}
+
+function jsonRecordField(
+  row: Readonly<Record<string, unknown>>,
+  field: string,
+): Record<string, unknown> {
+  const value = row[field];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Expected import row field ${field} to be a JSON object.`);
+  }
+  return value as Record<string, unknown>;
 }

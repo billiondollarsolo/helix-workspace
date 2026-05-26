@@ -300,6 +300,7 @@ import {
   createTenantStorageMigrationPairResolver,
   createTenantStorageMigrationWriteCoordinator,
   createTenantStorageResolver,
+  ByoStorageHealthWorker,
   PostgresTenantStorageMigrationJobStore,
   resolveTenantStorageSnapshot,
   TenantStorageMigrationWorker,
@@ -1089,6 +1090,22 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
         onError: (error) => {
           app.log.error({ error }, "Tenant storage migration worker error");
+        },
+      })
+    : undefined;
+  const byoStorageHealthWorker = envFlag("HELIX_BYO_STORAGE_HEALTH_WORKER_ENABLED", true)
+    ? new ByoStorageHealthWorker({
+        store: orgStore,
+        storageResolver: driveStorageResolver,
+        intervalMs: envPositiveInt("HELIX_BYO_STORAGE_HEALTH_INTERVAL_MS", 60 * 60_000),
+        batchSize: envPositiveInt("HELIX_BYO_STORAGE_HEALTH_BATCH_SIZE", 100),
+        onResult: (result) => {
+          if (result.checkedCount > 0) {
+            app.log.info(result, "BYO storage health worker completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "BYO storage health worker error");
         },
       })
     : undefined;
@@ -2159,6 +2176,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     leaderGatedWorkers.push({
       name: "tenant-storage-migration-worker",
       worker: tenantStorageMigrationWorker,
+    });
+  }
+  if (byoStorageHealthWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "byo-storage-health-worker",
+      worker: byoStorageHealthWorker,
     });
   }
   leaderGatedWorkers.push({ name: "pending-action-expiry-worker", worker: pendingActionExpiryWorker });

@@ -39,6 +39,8 @@ export const DEFAULT_LOCAL_OAUTH_SCOPES = [
   "admin.config.read",
   "admin.config.write",
   "admin.config.*",
+  "admin.console.read",
+  "admin.console.write",
 ] as const;
 
 export interface SeedLocalOAuthOptions {

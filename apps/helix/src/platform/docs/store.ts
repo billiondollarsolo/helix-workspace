@@ -146,6 +146,7 @@ export interface DocsStore extends DocsExportStore {
     readonly actorId: string;
     readonly documentId: string;
     readonly limit: number;
+    readonly beforeSeq?: number | undefined;
   }): Promise<readonly DocsUpdateRecord[]>;
   nameVersion(input: {
     readonly orgId: string;
@@ -1383,6 +1384,7 @@ export class PostgresDocsStore
     readonly actorId: string;
     readonly documentId: string;
     readonly limit: number;
+    readonly beforeSeq?: number | undefined;
   }): Promise<readonly DocsUpdateRecord[]> {
     await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
     const rows = (await this.sql`
@@ -1390,6 +1392,7 @@ export class PostgresDocsStore
       from docs_updates
       where org_id = ${input.orgId}
         and document_id = ${input.documentId}
+        ${input.beforeSeq === undefined ? this.sql`` : this.sql`and seq < ${input.beforeSeq}`}
       order by seq desc
       limit ${input.limit}
     `) as unknown as readonly DocsUpdateRow[];

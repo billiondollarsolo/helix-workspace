@@ -185,6 +185,11 @@ export interface DocsVersion {
   readonly createdAt: string;
 }
 
+export interface DocsVersionsPage {
+  readonly versions: readonly DocsVersion[];
+  readonly nextBeforeSeq: number | null;
+}
+
 export interface DocsVersionDiffLine {
   readonly kind: "unchanged" | "added" | "removed";
   readonly text: string;
@@ -640,18 +645,37 @@ export async function listDocsVersions(
   input: {
     readonly docId: string;
     readonly limit?: number;
+    readonly beforeSeq?: number | undefined;
   },
   fetchImpl: DocsApiFetch = authenticatedFetch,
 ): Promise<readonly DocsVersion[]> {
-  const output = await callDocsTool<{ readonly versions?: readonly DocsVersion[] }>(
+  return (await listDocsVersionsPage(input, fetchImpl)).versions;
+}
+
+export async function listDocsVersionsPage(
+  input: {
+    readonly docId: string;
+    readonly limit?: number;
+    readonly beforeSeq?: number | undefined;
+  },
+  fetchImpl: DocsApiFetch = authenticatedFetch,
+): Promise<DocsVersionsPage> {
+  const output = await callDocsTool<{
+    readonly versions?: readonly DocsVersion[];
+    readonly nextBeforeSeq?: number | null;
+  }>(
     "docs.version.list",
     {
       docId: input.docId,
       limit: input.limit ?? 25,
+      ...(input.beforeSeq === undefined ? {} : { beforeSeq: input.beforeSeq }),
     },
     fetchImpl,
   );
-  return output.versions ?? [];
+  return {
+    versions: output.versions ?? [],
+    nextBeforeSeq: output.nextBeforeSeq ?? null,
+  };
 }
 
 export async function renameDocsVersion(
@@ -778,7 +802,9 @@ export function createDocsSyncClient(options: DocsSyncClientOptions): DocsSyncCl
       );
     },
     isOpen: () => socket.readyState === WebSocketImpl.OPEN,
-    close: () => socket.close(),
+    close: () => {
+      socket.close();
+    },
   };
 }
 

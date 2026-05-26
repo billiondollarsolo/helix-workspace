@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, type FormEvent, useEffect, useState } from "react";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from "react";
 import {
+  listDocsVersionsPage,
   previewDocsVersion,
   renameDocsVersion,
   restoreDocsVersion,
@@ -8,7 +9,7 @@ import {
   type DocsVersionDiffLine,
   type DocsVersionPreview,
 } from "./api";
-import { docsQueryKeys, docsVersionsQueryOptions } from "./queries";
+import { docsQueryKeys } from "./queries";
 
 interface RestoreConflictBlock {
   readonly startLine: number;
@@ -16,14 +17,31 @@ interface RestoreConflictBlock {
   readonly lines: readonly string[];
 }
 
+const VERSION_PAGE_SIZE = 25;
+
 export interface NativeDocumentVersionsRailProps {
   readonly documentId: string;
 }
 
 export function NativeDocumentVersionsRail({ documentId }: NativeDocumentVersionsRailProps) {
   const queryClient = useQueryClient();
-  const versionsQuery = useQuery(docsVersionsQueryOptions(documentId));
-  const versions = versionsQuery.data ?? [];
+  const versionsQuery = useInfiniteQuery({
+    queryKey: docsQueryKeys.versions(documentId),
+    initialPageParam: null as number | null,
+    queryFn: ({ pageParam }) =>
+      listDocsVersionsPage({
+        docId: documentId,
+        limit: VERSION_PAGE_SIZE,
+        ...(pageParam === null ? {} : { beforeSeq: pageParam }),
+      }),
+    getNextPageParam: (lastPage) => lastPage.nextBeforeSeq,
+    throwOnError: false,
+  });
+  const versions = useMemo(
+    () => versionsQuery.data?.pages.flatMap((page) => page.versions) ?? [],
+    [versionsQuery.data],
+  );
+  const canLoadMoreVersions = versionsQuery.hasNextPage;
   const renameMutation = useMutation({
     mutationFn: (input: { readonly versionId: string; readonly name: string }) =>
       renameDocsVersion(input),
@@ -92,6 +110,20 @@ export function NativeDocumentVersionsRail({ documentId }: NativeDocumentVersion
             />
           ))}
         </ol>
+      ) : null}
+      {canLoadMoreVersions ? (
+        <div style={ACTION_ROW_STYLE}>
+          <button
+            className="btn sm"
+            type="button"
+            disabled={versionsQuery.isFetchingNextPage}
+            onClick={() => {
+              void versionsQuery.fetchNextPage();
+            }}
+          >
+            {versionsQuery.isFetchingNextPage ? "Loading..." : "Load more"}
+          </button>
+        </div>
       ) : null}
       {preview !== null ? (
         <VersionPreview

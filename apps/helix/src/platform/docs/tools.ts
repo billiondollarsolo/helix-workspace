@@ -193,6 +193,7 @@ const clearAskHistorySchema = z.object({
 const listVersionsSchema = z.object({
   docId: uuidSchema,
   limit: z.number().int().positive().max(100).default(25),
+  beforeSeq: z.number().int().positive().optional(),
 });
 
 const nameVersionSchema = z.object({
@@ -940,19 +941,25 @@ export function createDocsToolDefinitions(
       sideEffects: "read",
       inputSchema: zodToolSchema(listVersionsSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) => ({
-        versions: (
-          (await requireStoreMethod(
-            options.store,
-            "listVersions",
-          )({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            documentId: input.docId,
-            limit: input.limit,
-          })) as readonly DocsUpdateRecord[]
-        ).map(serializeVersion),
-      }),
+      handler: async (input, ctx) => {
+        const rows = (await requireStoreMethod(
+          options.store,
+          "listVersions",
+        )({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          documentId: input.docId,
+          limit: input.limit + 1,
+          beforeSeq: input.beforeSeq,
+        })) as readonly DocsUpdateRecord[];
+        const versions = rows.slice(0, input.limit);
+        const nextBeforeSeq =
+          rows.length > input.limit ? (versions.at(-1)?.seq ?? null) : null;
+        return {
+          versions: versions.map(serializeVersion),
+          nextBeforeSeq,
+        };
+      },
     }),
     defineTool<z.output<typeof nameVersionSchema>, unknown>({
       id: "docs.version.rename",

@@ -569,21 +569,55 @@ describe("docs tools", () => {
         orgId,
         actorId,
         documentId: docId,
-        limit: 10,
+        limit: 11,
+      },
+    ]);
+    const output = result.ok
+      ? (result.output as {
+          readonly versions: readonly {
+            readonly id: string;
+            readonly seq: number;
+            readonly byteSize: number;
+          }[];
+          readonly nextBeforeSeq: number | null;
+        })
+      : undefined;
+    expect(output?.versions[0]).toMatchObject({
+      id: "66666666-6666-4666-8666-666666666666",
+      documentId: docId,
+      actorId,
+      seq: 3,
+      byteSize: 12,
+      metadata: { source: "test" },
+      createdAt: now.toISOString(),
+    });
+    expect(output?.nextBeforeSeq).toBeNull();
+  });
+
+  it("paginates update-backed versions through docs.version.list", async () => {
+    const store = new FakeDocsStore();
+    const registry = createToolRegistry();
+    registerDocsTools(registry, { store });
+
+    const result = await registry.invoke(
+      "docs.version.list",
+      { docId, limit: 1, beforeSeq: 4 },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["docs.read"] } },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(store.versionLists).toEqual([
+      {
+        orgId,
+        actorId,
+        documentId: docId,
+        limit: 2,
+        beforeSeq: 4,
       },
     ]);
     expect(result.ok ? result.output : undefined).toMatchObject({
-      versions: [
-        {
-          id: "66666666-6666-4666-8666-666666666666",
-          documentId: docId,
-          actorId,
-          seq: 3,
-          byteSize: 12,
-          metadata: { source: "test" },
-          createdAt: now.toISOString(),
-        },
-      ],
+      versions: [{ seq: 3 }],
+      nextBeforeSeq: 3,
     });
   });
 
@@ -740,6 +774,7 @@ class FakeDocsStore {
     readonly actorId: string;
     readonly documentId: string;
     readonly limit: number;
+    readonly beforeSeq?: number | undefined;
   }> = [];
   readonly versionNames: Array<{
     readonly orgId: string;
@@ -1008,6 +1043,7 @@ class FakeDocsStore {
     readonly actorId: string;
     readonly documentId: string;
     readonly limit: number;
+    readonly beforeSeq?: number | undefined;
   }): Promise<readonly DocsUpdateRecord[]> {
     this.versionLists.push(input);
     return [
@@ -1021,7 +1057,17 @@ class FakeDocsStore {
         metadata: { source: "test" },
         createdAt: now,
       },
-    ];
+      {
+        id: "77777777-7777-4777-8777-777777777777",
+        orgId: input.orgId,
+        documentId: input.documentId,
+        actorId: input.actorId,
+        seq: 2,
+        update: Buffer.from("previous", "utf8"),
+        metadata: { source: "test" },
+        createdAt: now,
+      },
+    ].slice(0, input.limit);
   }
 
   async nameVersion(input: {

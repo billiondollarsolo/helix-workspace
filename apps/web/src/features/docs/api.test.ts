@@ -17,6 +17,7 @@ import {
   listDocsDocuments,
   listDocsSuggestions,
   listDocsVersions,
+  listDocsVersionsPage,
   migrateDocsDocumentToNative,
   previewDocsVersion,
   renameDocsVersion,
@@ -1011,6 +1012,39 @@ describe("docs API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ docId, limit: 5 }),
+    });
+  });
+
+  it("lists paged Docs versions through docs.version.list", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          versions: [
+            {
+              id: "77777777-7777-4777-8777-777777777777",
+              documentId: docId,
+              actorId: "11111111-1111-4111-8111-111111111111",
+              seq: 3,
+              byteSize: 96,
+              metadata: { source: "web.docs-shell" },
+              createdAt: "2026-05-21T12:12:00.000Z",
+            },
+          ],
+          nextBeforeSeq: 3,
+        }),
+      ),
+    );
+
+    await expect(
+      listDocsVersionsPage({ docId, limit: 5, beforeSeq: 9 }, fetchImpl),
+    ).resolves.toMatchObject({
+      versions: [{ seq: 3, byteSize: 96 }],
+      nextBeforeSeq: 3,
+    });
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/docs.version.list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ docId, limit: 5, beforeSeq: 9 }),
     });
   });
 

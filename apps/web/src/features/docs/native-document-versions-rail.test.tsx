@@ -203,6 +203,46 @@ describe("NativeDocumentVersionsRail", () => {
       body: { versionId, expectedCurrentUpdateSeq: 6 },
     });
   });
+
+  it("loads additional versions when more updates are available", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      toolCalls.push({ url, body });
+      if (url === "/api/tools/docs.version.list") {
+        const beforeSeq = (body as { readonly beforeSeq?: number }).beforeSeq;
+        const startSeq = beforeSeq === undefined ? 60 : beforeSeq - 1;
+        const length = beforeSeq === undefined ? 25 : 5;
+        return Promise.resolve(
+          Response.json({
+            versions: Array.from({ length }, (_, index) => versionAt(startSeq - index)),
+            nextBeforeSeq: beforeSeq === undefined ? 36 : null,
+          }),
+        );
+      }
+      return Promise.resolve(Response.json({}));
+    });
+
+    render();
+    await settle();
+
+    expect(container.textContent ?? "").toContain("Update 60");
+    expect(container.textContent ?? "").toContain("Update 36");
+    expect(container.textContent ?? "").not.toContain("Update 31");
+    expect(buttonByLabel("Load more").disabled).toBe(false);
+
+    clickButton("Load more");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/docs.version.list",
+      body: { docId, limit: 25, beforeSeq: 36 },
+    });
+    expect(container.textContent ?? "").toContain("Update 31");
+    expect(
+      Array.from(container.querySelectorAll("button")).map((button) => button.textContent?.trim()),
+    ).not.toContain("Load more");
+  });
 });
 
 function version(overrides: { readonly metadata?: Record<string, unknown> } = {}) {
@@ -214,6 +254,14 @@ function version(overrides: { readonly metadata?: Record<string, unknown> } = {}
     byteSize: 128,
     metadata: overrides.metadata ?? {},
     createdAt: "2026-05-23T12:10:00.000Z",
+  };
+}
+
+function versionAt(seq: number) {
+  return {
+    ...version({ metadata: { source: "web.native-document.editor" } }),
+    id: `version-${String(seq)}`,
+    seq,
   };
 }
 

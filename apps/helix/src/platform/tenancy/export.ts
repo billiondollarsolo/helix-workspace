@@ -57,6 +57,29 @@ export interface TenantExportArchive {
   readonly bytes: Buffer;
 }
 
+export interface TenantExportSelfFetchObject {
+  readonly storageKey: string;
+  readonly byteSize?: number | undefined;
+  readonly sha256?: string | undefined;
+  readonly url: string;
+  readonly expiresAt: string;
+}
+
+export interface TenantExportSelfFetchManifest {
+  readonly version: 1;
+  readonly generatedAt: string;
+  readonly org: {
+    readonly id: string;
+    readonly slug: string;
+  };
+  readonly delivery: "self-fetch";
+  readonly expiresAt: string;
+  readonly expiresSeconds: number;
+  readonly objects: readonly TenantExportSelfFetchObject[];
+}
+
+export type TenantExportObjectByteDelivery = "archive" | "self-fetch";
+
 export interface BuildTenantExportManifestInput {
   readonly org: OrgRecord;
   readonly objects: readonly TenantStorageMigrationObject[];
@@ -68,7 +91,16 @@ export interface BuildTenantExportManifestInput {
 
 export interface BuildTenantExportArchiveOptions {
   readonly includeObjectBytes?: boolean | undefined;
+  readonly objectByteDelivery?: TenantExportObjectByteDelivery | undefined;
+  readonly presignedUrlExpiresSeconds?: number | undefined;
   readonly storageResolver?: TenantStorageResolver | undefined;
+  readonly now?: (() => Date) | undefined;
+}
+
+export interface BuildTenantExportSelfFetchManifestOptions {
+  readonly presignedUrlExpiresSeconds?: number | undefined;
+  readonly storageResolver?: TenantStorageResolver | undefined;
+  readonly now?: (() => Date) | undefined;
 }
 
 export type TenantExportManifestPlanner = (
@@ -141,8 +173,9 @@ export async function buildTenantExportArchive(
   options: BuildTenantExportArchiveOptions = {},
 ): Promise<TenantExportArchive> {
   const generatedStamp = archiveTimestamp(manifest.generatedAt);
+  const objectByteDelivery = options.objectByteDelivery ?? "archive";
   const metadataManifest =
-    options.includeObjectBytes === true
+    options.includeObjectBytes === true && objectByteDelivery === "archive"
       ? {
           ...manifest,
           objectInventory: { ...manifest.objectInventory, bytesIncluded: true },
@@ -205,7 +238,14 @@ export async function buildTenantExportArchive(
   ];
 
   if (options.includeObjectBytes === true) {
-    files.push(...(await objectByteArchiveFiles(metadataManifest, options.storageResolver)));
+    if (objectByteDelivery === "self-fetch") {
+      files.push({
+        path: "objects/self-fetch-manifest.json",
+        body: stableJson(await buildTenantExportSelfFetchManifest(metadataManifest, options)),
+      });
+    } else {
+      files.push(...(await objectByteArchiveFiles(metadataManifest, options.storageResolver)));
+    }
   }
 
   const bytes = buildTarArchive(files, Math.floor(Date.parse(manifest.generatedAt) / 1000));
@@ -338,6 +378,49 @@ async function objectByteArchiveFiles(
   return files;
 }
 
+export async function buildTenantExportSelfFetchManifest(
+  manifest: TenantExportManifest,
+  options: BuildTenantExportSelfFetchManifestOptions,
+): Promise<TenantExportSelfFetchManifest> {
+  if (options.storageResolver === undefined) {
+    throw new Error("Tenant storage resolver is required to presign export object bytes.");
+  }
+  const storage = await options.storageResolver({ orgId: manifest.org.id });
+  if (storage === undefined) {
+    throw new Error("Tenant storage resolver did not resolve storage for tenant export.");
+  }
+  if (storage.client.presignGetUrl === undefined) {
+    throw new Error("Tenant export storage does not support presigned object fetch.");
+  }
+  const expiresSeconds = validatePresignedUrlExpiresSeconds(
+    options.presignedUrlExpiresSeconds ?? 3600,
+  );
+  const now = options.now ?? (() => new Date());
+  const expiresAt = new Date(now().getTime() + expiresSeconds * 1000).toISOString();
+  const objects: TenantExportSelfFetchObject[] = [];
+  for (const object of manifest.objectInventory.objects) {
+    objects.push({
+      storageKey: object.storageKey,
+      ...(object.byteSize === undefined ? {} : { byteSize: object.byteSize }),
+      ...(object.sha256 === undefined ? {} : { sha256: object.sha256 }),
+      url: await storage.client.presignGetUrl(object.storageKey, { expiresSeconds }),
+      expiresAt,
+    });
+  }
+  return {
+    version: tenantExportManifestVersion,
+    generatedAt: manifest.generatedAt,
+    org: {
+      id: manifest.org.id,
+      slug: manifest.org.slug,
+    },
+    delivery: "self-fetch",
+    expiresAt,
+    expiresSeconds,
+    objects,
+  };
+}
+
 async function storageObjectBodyBytes(body: StorageObject["body"]): Promise<Uint8Array> {
   if (Symbol.asyncIterator in body) {
     const chunks: Uint8Array[] = [];
@@ -375,7 +458,7 @@ function hasControlCharacter(value: string): boolean {
 function exportReadme(manifest: TenantExportManifest): string {
   const byteLine = manifest.objectInventory.bytesIncluded
     ? "This archive includes object-store bytes under objects/."
-    : "It intentionally does not include object bytes.";
+    : "It intentionally does not include object bytes unless objects/self-fetch-manifest.json is present.";
   return [
     `# Helix Tenant Export: ${manifest.org.slug}`,
     "",
@@ -409,6 +492,13 @@ function archiveTimestamp(value: string): string {
     .replace(/[-:]/gu, "")
     .replace(/\.\d{3}/u, "")
     .replace(/[^\dTZ]/gu, "");
+}
+
+function validatePresignedUrlExpiresSeconds(expiresSeconds: number): number {
+  if (!Number.isInteger(expiresSeconds) || expiresSeconds < 1 || expiresSeconds > 604_800) {
+    throw new Error("Tenant export presigned URL expiry must be between 1 and 604800 seconds.");
+  }
+  return expiresSeconds;
 }
 
 function buildTarArchive(files: readonly TenantExportArchiveFile[], mtimeSeconds: number): Buffer {

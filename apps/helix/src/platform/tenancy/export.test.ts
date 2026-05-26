@@ -68,6 +68,65 @@ describe("tenant export archive", () => {
     expect(entries["objects/drive/report.txt"]).toBe("report bytes");
     expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes");
   });
+
+  it("emits a self-fetch manifest with presigned object URLs when requested", async () => {
+    const storage = new MemoryStorageClient([
+      { key: "drive/report.txt", body: Buffer.from("report bytes", "utf8") },
+      { key: "slides/deck-1/versions/2", body: Buffer.from("deck bytes", "utf8") },
+    ]);
+
+    const archive = await buildTenantExportArchive(tenantExportManifest(), {
+      includeObjectBytes: true,
+      objectByteDelivery: "self-fetch",
+      presignedUrlExpiresSeconds: 600,
+      storageResolver: storageResolverFor(storage),
+      now: () => new Date("2026-05-24T10:30:00.000Z"),
+    });
+    const entries = parseTarEntries(archive.bytes);
+    const manifest = JSON.parse(entries["objects/self-fetch-manifest.json"] ?? "{}") as {
+      readonly delivery: string;
+      readonly expiresAt: string;
+      readonly expiresSeconds: number;
+      readonly objects: readonly {
+        readonly storageKey: string;
+        readonly byteSize?: number;
+        readonly sha256?: string;
+        readonly url: string;
+        readonly expiresAt: string;
+      }[];
+    };
+
+    expect(JSON.parse(entries["manifest.json"] ?? "{}")).toMatchObject({
+      objectInventory: { bytesIncluded: false, objectCount: 2 },
+    });
+    expect(entries["objects/drive/report.txt"]).toBeUndefined();
+    expect(manifest).toMatchObject({
+      delivery: "self-fetch",
+      expiresAt: "2026-05-24T10:40:00.000Z",
+      expiresSeconds: 600,
+      objects: [
+        {
+          storageKey: "drive/report.txt",
+          byteSize: 12,
+          sha256: "abc",
+          url: "https://storage.example/drive%2Freport.txt?expires=600",
+          expiresAt: "2026-05-24T10:40:00.000Z",
+        },
+        {
+          storageKey: "slides/deck-1/versions/2",
+          byteSize: 23,
+          sha256: "def",
+          url: "https://storage.example/slides%2Fdeck-1%2Fversions%2F2?expires=600",
+          expiresAt: "2026-05-24T10:40:00.000Z",
+        },
+      ],
+    });
+    expect(storage.gets).toEqual([]);
+    expect(storage.presignedGets).toEqual([
+      { key: "drive/report.txt", expiresSeconds: 600 },
+      { key: "slides/deck-1/versions/2", expiresSeconds: 600 },
+    ]);
+  });
 });
 
 describe("tenant export SQL helpers", () => {
@@ -150,6 +209,90 @@ describe("registerTenantExportRoutes", () => {
     await app.close();
   });
 
+  it("returns a tenant export manifest with presigned self-fetch object delivery", async () => {
+    const storage = new MemoryStorageClient([
+      { key: "drive/report.txt", body: Buffer.from("report bytes", "utf8") },
+      { key: "slides/deck-1/versions/2", body: Buffer.from("deck bytes", "utf8") },
+    ]);
+    const auditRecords: unknown[] = [];
+    const app = fastify();
+    await registerTenantExportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor(),
+      exportPlanner: () => tenantExportManifest(),
+      storageResolver: storageResolverFor(storage),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/export/manifest?objectByteDelivery=self-fetch&presignedUrlExpiresSeconds=300",
+      headers: { "user-agent": "test-agent" },
+    });
+    const body: {
+      readonly manifest: TenantExportManifest;
+      readonly delivery: {
+        readonly delivery: string;
+        readonly expiresSeconds: number;
+        readonly objects: readonly { readonly storageKey: string; readonly url: string }[];
+      };
+    } = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(body.manifest).toEqual(tenantExportManifest());
+    expect(body.delivery).toMatchObject({
+      delivery: "self-fetch",
+      expiresSeconds: 300,
+      objects: [
+        {
+          storageKey: "drive/report.txt",
+          url: "https://storage.example/drive%2Freport.txt?expires=300",
+        },
+        {
+          storageKey: "slides/deck-1/versions/2",
+          url: "https://storage.example/slides%2Fdeck-1%2Fversions%2F2?expires=300",
+        },
+      ],
+    });
+    expect(storage.gets).toEqual([]);
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.export.planned",
+        metadata: expect.objectContaining({
+          objectByteDelivery: "self-fetch",
+          objectCount: 2,
+          totalKnownBytes: 35,
+        }) as unknown,
+      }),
+    );
+    await app.close();
+  });
+
+  it("returns a clear service error when self-fetch delivery cannot be presigned", async () => {
+    const auditRecords: unknown[] = [];
+    const app = fastify();
+    await registerTenantExportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor(),
+      exportPlanner: () => tenantExportManifest(),
+      storageResolver: storageResolverFor(new NoPresignStorageClient()),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/export/manifest?objectByteDelivery=self-fetch",
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      error: "Tenant export storage does not support presigned object fetch.",
+      code: "tenant_export_delivery_unavailable",
+    });
+    expect(auditRecords).toEqual([]);
+    await app.close();
+  });
+
   it("returns a tenant export tar archive with BYO/default object bytes when requested", async () => {
     const storage = new MemoryStorageClient([
       { key: "drive/report.txt", body: Buffer.from("report bytes", "utf8") },
@@ -176,6 +319,55 @@ describe("registerTenantExportRoutes", () => {
     );
     expect(entries["objects/drive/report.txt"]).toBe("report bytes");
     expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes");
+    await app.close();
+  });
+
+  it("returns a tenant export tar archive with a presigned self-fetch object manifest", async () => {
+    const storage = new MemoryStorageClient([
+      { key: "drive/report.txt", body: Buffer.from("report bytes", "utf8") },
+      { key: "slides/deck-1/versions/2", body: Buffer.from("deck bytes", "utf8") },
+    ]);
+    const auditRecords: unknown[] = [];
+    const app = fastify();
+    await registerTenantExportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor(),
+      exportPlanner: () => tenantExportManifest(),
+      storageResolver: storageResolverFor(storage),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/export?includeObjectBytes=true&objectByteDelivery=self-fetch&presignedUrlExpiresSeconds=120",
+    });
+    const entries = parseTarEntries(rawPayload(response));
+    const manifest = JSON.parse(entries["objects/self-fetch-manifest.json"] ?? "{}") as {
+      readonly delivery: string;
+      readonly expiresSeconds: number;
+      readonly objects: readonly { readonly url: string }[];
+    };
+
+    expect(response.statusCode).toBe(200);
+    expect(entries["objects/drive/report.txt"]).toBeUndefined();
+    expect(manifest).toMatchObject({
+      delivery: "self-fetch",
+      expiresSeconds: 120,
+    });
+    expect(manifest.objects.map((object) => object.url)).toEqual([
+      "https://storage.example/drive%2Freport.txt?expires=120",
+      "https://storage.example/slides%2Fdeck-1%2Fversions%2F2?expires=120",
+    ]);
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.exported",
+        metadata: expect.objectContaining({
+          bytesIncluded: false,
+          objectByteDelivery: "self-fetch",
+          filename: "helix-export-acme-20260524T100000Z.tar",
+        }) as unknown,
+      }),
+    );
     await app.close();
   });
 
@@ -307,6 +499,8 @@ class InMemoryOrgStore implements Pick<OrgStore, "findBySlug"> {
 
 class MemoryStorageClient implements TenantStorageClient {
   readonly gets: string[] = [];
+  readonly presignedGets: { readonly key: string; readonly expiresSeconds: number | undefined }[] =
+    [];
   readonly objects: Map<string, StorageObject>;
 
   constructor(objects: readonly StorageObject[]) {
@@ -324,6 +518,30 @@ class MemoryStorageClient implements TenantStorageClient {
 
   async delete(key: string): Promise<void> {
     this.objects.delete(key);
+  }
+
+  async presignGetUrl(
+    key: string,
+    options?: { readonly expiresSeconds?: number | undefined },
+  ): Promise<string> {
+    this.presignedGets.push({ key, expiresSeconds: options?.expiresSeconds });
+    return `https://storage.example/${encodeURIComponent(key)}?expires=${String(
+      options?.expiresSeconds ?? "",
+    )}`;
+  }
+}
+
+class NoPresignStorageClient implements TenantStorageClient {
+  async put(): Promise<void> {
+    return undefined;
+  }
+
+  async get(): Promise<StorageObject | null> {
+    return null;
+  }
+
+  async delete(): Promise<void> {
+    return undefined;
   }
 }
 

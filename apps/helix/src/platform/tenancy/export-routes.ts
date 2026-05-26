@@ -11,7 +11,11 @@ import {
 import type { TenantHourlyQuotaExceeded, TenantHourlyQuotaLimiter } from "../limits/index.js";
 import { emitTenantQuotaExceededEvent } from "../limits/quota-events.js";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
-import { buildTenantExportArchive, type TenantExportManifestPlanner } from "./export.js";
+import {
+  buildTenantExportArchive,
+  buildTenantExportSelfFetchManifest,
+  type TenantExportManifestPlanner,
+} from "./export.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
 
 export const adminTenantsExportScope = "admin.tenants.export";
@@ -38,10 +42,31 @@ const tenantParams = z.object({
     .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u),
 });
 
+const manifestQuery = z.object({
+  objectByteDelivery: z.enum(["metadata", "self-fetch"]).default("metadata"),
+  presignedUrlExpiresSeconds: z
+    .preprocess((value) => {
+      if (typeof value !== "string" || value.trim().length === 0) {
+        return undefined;
+      }
+      return Number(value);
+    }, z.number().int().min(1).max(604_800))
+    .optional(),
+});
+
 const exportQuery = z.object({
   includeObjectBytes: z
     .preprocess((value) => value === "true" || value === true, z.boolean())
     .default(false),
+  objectByteDelivery: z.enum(["archive", "self-fetch"]).default("archive"),
+  presignedUrlExpiresSeconds: z
+    .preprocess((value) => {
+      if (typeof value !== "string" || value.trim().length === 0) {
+        return undefined;
+      }
+      return Number(value);
+    }, z.number().int().min(1).max(604_800))
+    .optional(),
 });
 
 export async function registerTenantExportRoutes(
@@ -52,6 +77,12 @@ export async function registerTenantExportRoutes(
     const loaded = await loadTenantForExport({ request, reply, options });
     if (loaded === undefined) {
       return reply;
+    }
+    const query = manifestQuery.safeParse(request.query ?? {});
+    if (!query.success) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid tenant export manifest query.", query.error.issues));
     }
     const quotaDecision = await consumeTenantExportQuota({
       limiter: options.exportJobLimiter,
@@ -68,15 +99,30 @@ export async function registerTenantExportRoutes(
     }
 
     const manifest = await options.exportPlanner(loaded.org);
+    const delivery =
+      query.data.objectByteDelivery === "self-fetch"
+        ? await safeBuildExportDelivery(reply, () =>
+            buildTenantExportSelfFetchManifest(manifest, {
+              presignedUrlExpiresSeconds: query.data.presignedUrlExpiresSeconds,
+              storageResolver: options.storageResolver,
+            }),
+          )
+        : undefined;
+    if (delivery === "unavailable") {
+      return reply;
+    }
     await auditAdminAction(options.auditSink, {
       orgId: loaded.org.id,
       actorId: loaded.actor.id,
       verb: "tenant.export.planned",
       objectType: "tenant",
       objectId: loaded.org.id,
-      metadata: exportAuditMetadata({ org: loaded.org, manifest, request }),
+      metadata: {
+        ...exportAuditMetadata({ org: loaded.org, manifest, request }),
+        objectByteDelivery: query.data.objectByteDelivery,
+      },
     });
-    return { manifest };
+    return delivery === undefined ? { manifest } : { manifest, delivery };
   });
 
   app.get("/api/admin/tenants/:slug/export", async (request, reply) => {
@@ -105,10 +151,17 @@ export async function registerTenantExportRoutes(
     }
 
     const manifest = await options.exportPlanner(loaded.org);
-    const archive = await buildTenantExportArchive(manifest, {
-      includeObjectBytes: query.data.includeObjectBytes,
-      storageResolver: options.storageResolver,
-    });
+    const archive = await safeBuildExportDelivery(reply, () =>
+      buildTenantExportArchive(manifest, {
+        includeObjectBytes: query.data.includeObjectBytes,
+        objectByteDelivery: query.data.objectByteDelivery,
+        presignedUrlExpiresSeconds: query.data.presignedUrlExpiresSeconds,
+        storageResolver: options.storageResolver,
+      }),
+    );
+    if (archive === "unavailable") {
+      return reply;
+    }
     await auditAdminAction(options.auditSink, {
       orgId: loaded.org.id,
       actorId: loaded.actor.id,
@@ -119,7 +172,8 @@ export async function registerTenantExportRoutes(
         ...exportAuditMetadata({ org: loaded.org, manifest, request }),
         filename: archive.filename,
         byteSize: archive.byteSize,
-        bytesIncluded: query.data.includeObjectBytes,
+        bytesIncluded: query.data.includeObjectBytes && query.data.objectByteDelivery === "archive",
+        objectByteDelivery: query.data.objectByteDelivery,
       },
     });
 
@@ -204,6 +258,35 @@ function sendQuotaExceeded(reply: FastifyReply, decision: TenantHourlyQuotaExcee
     retryAfterSeconds: decision.retryAfterSeconds,
     resetsAt: decision.resetsAt,
   });
+}
+
+async function safeBuildExportDelivery<T>(
+  reply: FastifyReply,
+  build: () => Promise<T>,
+): Promise<T | "unavailable"> {
+  try {
+    return await build();
+  } catch (error) {
+    if (isTenantExportDeliveryUnavailable(error)) {
+      reply.code(503).send({
+        error: error.message,
+        code: "tenant_export_delivery_unavailable",
+      });
+      return "unavailable";
+    }
+    throw error;
+  }
+}
+
+function isTenantExportDeliveryUnavailable(error: unknown): error is Error {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message.startsWith("Tenant storage resolver") ||
+    error.message.startsWith("Tenant export storage does not support") ||
+    error.message.startsWith("Tenant export object bytes are unavailable")
+  );
 }
 
 function exportAuditMetadata(input: {

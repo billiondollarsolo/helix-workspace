@@ -159,6 +159,8 @@ async function wipe(sql: postgres.Sql): Promise<void> {
     "app_passwords",
     "agent_credentials",
     "access_tokens",
+    "oauth_access_tokens",
+    "oauth_authorization_codes",
     "outbox",
     "outbound_webhooks_log",
     "search_index",

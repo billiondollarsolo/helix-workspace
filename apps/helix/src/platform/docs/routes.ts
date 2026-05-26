@@ -374,9 +374,14 @@ function handleYjsDocsSocket(
     const awarenessClients = room.awarenessClients.get(socket);
     room.awarenessClients.delete(socket);
     if (awarenessClients !== undefined && awarenessClients.size > 0) {
-      awarenessProtocol.removeAwarenessStates(room.awareness, [...awarenessClients], socket);
-      const update = awarenessProtocol.encodeAwarenessUpdate(room.awareness, [...awarenessClients]);
-      broadcastYjsAwareness(room, update, socket);
+      const clientIds = [...awarenessClients].filter((clientId) =>
+        room.awareness.meta.has(clientId),
+      );
+      if (clientIds.length > 0) {
+        awarenessProtocol.removeAwarenessStates(room.awareness, clientIds, socket);
+        const update = awarenessProtocol.encodeAwarenessUpdate(room.awareness, clientIds);
+        broadcastYjsAwareness(room, update, socket);
+      }
     }
     if (room.sockets.size === 0) {
       room.doc.destroy();

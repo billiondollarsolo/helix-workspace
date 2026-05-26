@@ -146,7 +146,10 @@ import {
   registerDocsIndexer,
   registerDocsRoutes,
   registerDocsTools,
+  type DocsDocumentRecord,
 } from "./platform/docs/index.js";
+import { createNativeDocumentState } from "./platform/docs/native-state.js";
+import { createEditorsRuntimeHost, registerEditorsCoreApp } from "./platform/editors/index.js";
 import {
   createLibreOfficePreviewClient,
   PostgresDriveStore,
@@ -337,6 +340,7 @@ import type {
   AiProviderConfig,
   ChatRequest,
   ChatResponse,
+  EditorsDocumentLayoutSettings,
   JsonObject,
   LLMProviderCapability,
   ModelInfo,
@@ -1944,6 +1948,29 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
       })
     : undefined;
+  if (coreApps.shouldRegister("editors")) {
+    const editorsHost = createEditorsRuntimeHost({
+      logger: app.log,
+      app,
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      tools,
+      documents: {
+        getSession: async ({ actor, orgId, documentId }) => {
+          const document = await docsStore.getDocumentForActor({
+            orgId,
+            actorId: actor.id,
+            documentId,
+          });
+          return document === null ? null : nativeDocumentSession(document);
+        },
+      },
+    });
+    await registerEditorsCoreApp({
+      config: runtimeConfig,
+      logger: app.log,
+      host: editorsHost.host,
+    });
+  }
   await registerSheetsRoutes(app, {
     store: sheetsStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
@@ -2640,6 +2667,54 @@ function assignLimitOverride(
 
 function collabConcurrentEditorLimit(request: FastifyRequest): number | null | undefined {
   return request.effectiveConfig?.quotas.collab_concurrent_editors_per_doc;
+}
+
+function nativeDocumentSession(document: DocsDocumentRecord) {
+  const state = nativeDocumentStateForSession(document);
+  return {
+    id: document.id,
+    orgId: document.orgId,
+    title: document.title,
+    editorEngine: "helix-native-document",
+    formatVersion: 1,
+    updateSeq: document.updateSeq,
+    stateBase64: state.state.toString("base64"),
+    stateVectorBase64: state.stateVector.toString("base64"),
+    layoutSettings: nativeDocumentLayoutSettings(document),
+    updatedAt: document.updatedAt.toISOString(),
+  };
+}
+
+function nativeDocumentStateForSession(document: DocsDocumentRecord): {
+  readonly state: Buffer;
+  readonly stateVector: Buffer;
+} {
+  if (document.ydocState !== null && document.ydocStateVector !== null) {
+    return {
+      state: document.ydocState,
+      stateVector: document.ydocStateVector,
+    };
+  }
+  const plainText =
+    typeof document.metadata.plainText === "string"
+      ? document.metadata.plainText
+      : document.ydocState?.toString("utf8") ?? "";
+  return createNativeDocumentState(plainText);
+}
+
+function nativeDocumentLayoutSettings(document: DocsDocumentRecord): EditorsDocumentLayoutSettings {
+  const layout = document.metadata.nativeDocumentLayout;
+  if (
+    isJsonObjectValue(layout) &&
+    (layout.layoutMode === "page" || layout.layoutMode === "pageless") &&
+    (layout.columnCount === 1 || layout.columnCount === 2)
+  ) {
+    return {
+      layoutMode: layout.layoutMode,
+      columnCount: layout.columnCount,
+    };
+  }
+  return { layoutMode: "page", columnCount: 1 };
 }
 
 async function invokeTool(

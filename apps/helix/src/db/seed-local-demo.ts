@@ -12,6 +12,7 @@ import {
   seedLocalOAuth,
   type SeedLocalOAuthResult,
 } from "./seed-local-oauth.js";
+import { createNativeDocumentState } from "../platform/docs/native-state.js";
 import { createS3CompatibleStorage } from "../platform/storage/index.js";
 
 export const LOCAL_DEMO_SOURCE = "local-demo";
@@ -861,15 +862,16 @@ async function seedDoc(
   },
 ): Promise<void> {
   const storageKey = `docs/${input.orgId}/${input.documentId}`;
+  const nativeState = createNativeDocumentState(input.markdown);
   await putDemoStorageObject(input.storage, {
     key: storageKey,
-    body: input.markdown,
+    body: nativeState.state,
     contentType: "application/vnd.helix.document",
     metadata: {
       source: LOCAL_DEMO_SOURCE,
       objectId: input.documentId,
       documentId: input.documentId,
-      sha256: sha(input.markdown),
+      sha256: shaBuffer(nativeState.state),
     },
   });
   await sql`
@@ -878,7 +880,7 @@ async function seedDoc(
   `;
   await sql`
     insert into docs_documents (
-      id, org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, update_seq, metadata
+      id, org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, ydoc_state_vector, update_seq, metadata
     )
     values (
       ${input.documentId},
@@ -887,9 +889,16 @@ async function seedDoc(
       ${input.threadId},
       ${input.actorId},
       ${input.actorId},
-      ${Buffer.from(input.markdown, "utf8")},
+      ${nativeState.state},
+      ${nativeState.stateVector},
       0,
-      ${json(sql, { source: LOCAL_DEMO_SOURCE, plainText: input.markdown, tags: input.tags })}
+      ${json(sql, {
+        source: LOCAL_DEMO_SOURCE,
+        editorEngine: "helix-native-document",
+        formatVersion: 1,
+        plainText: input.markdown,
+        tags: input.tags,
+      })}
     )
   `;
   await sql`
@@ -901,8 +910,8 @@ async function seedDoc(
       'file',
       ${storageKey},
       'application/vnd.helix.document',
-      ${Buffer.byteLength(input.markdown, "utf8")},
-      ${sha(input.markdown)},
+      ${nativeState.state.byteLength},
+      ${shaBuffer(nativeState.state)},
       ${json(sql, {
         source: LOCAL_DEMO_SOURCE,
         app: "docs",
@@ -910,6 +919,8 @@ async function seedDoc(
         name: `${input.title}.helixdoc`,
         title: input.title,
         folderId: demoIds.driveFolderProjects,
+        editorEngine: "helix-native-document",
+        formatVersion: 1,
       })}
     )
   `;
@@ -1769,6 +1780,10 @@ function sha(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function shaBuffer(value: Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 function normalizeVolumeMailCount(value: number | undefined): number {
   if (value === undefined) {
     return 0;
@@ -1833,7 +1848,7 @@ async function putDemoStorageObject(
   storage: DemoStorageClient | undefined,
   object: {
     readonly key: string;
-    readonly body: string;
+    readonly body: string | Buffer;
     readonly contentType: string;
     readonly metadata: Record<string, string>;
   },
@@ -1843,7 +1858,7 @@ async function putDemoStorageObject(
   }
   await storage.put({
     key: object.key,
-    body: Buffer.from(object.body, "utf8"),
+    body: typeof object.body === "string" ? Buffer.from(object.body, "utf8") : object.body,
     contentType: object.contentType,
     metadata: object.metadata,
   });

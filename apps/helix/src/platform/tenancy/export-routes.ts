@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import type { Actor, EventBus, TraceContext } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -14,6 +15,7 @@ import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import {
   buildTenantExportArchive,
   buildTenantExportSelfFetchManifest,
+  streamTenantExportArchive,
   type TenantExportManifestPlanner,
 } from "./export.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
@@ -151,6 +153,44 @@ export async function registerTenantExportRoutes(
     }
 
     const manifest = await options.exportPlanner(loaded.org);
+    if (
+      request.headers.range === undefined &&
+      query.data.includeObjectBytes &&
+      query.data.objectByteDelivery === "archive"
+    ) {
+      const archive = await safeBuildExportDelivery(reply, () =>
+        streamTenantExportArchive(manifest, {
+          includeObjectBytes: true,
+          objectByteDelivery: "archive",
+          storageResolver: options.storageResolver,
+        }),
+      );
+      if (archive === "unavailable") {
+        return reply;
+      }
+      await auditAdminAction(options.auditSink, {
+        orgId: loaded.org.id,
+        actorId: loaded.actor.id,
+        verb: "tenant.exported",
+        objectType: "tenant",
+        objectId: loaded.org.id,
+        metadata: {
+          ...exportAuditMetadata({ org: loaded.org, manifest, request }),
+          filename: archive.filename,
+          byteSize: archive.byteSize,
+          bytesIncluded: true,
+          objectByteDelivery: "archive",
+          streaming: true,
+        },
+      });
+      return reply
+        .header("accept-ranges", "bytes")
+        .header("content-disposition", `attachment; filename="${archive.filename}"`)
+        .header("content-length", String(archive.byteSize))
+        .type(archive.contentType)
+        .send(Readable.from(archive.body));
+    }
+
     const archive = await safeBuildExportDelivery(reply, () =>
       buildTenantExportArchive(manifest, {
         includeObjectBytes: query.data.includeObjectBytes,

@@ -8,6 +8,7 @@ import {
   buildTenantExportArchive,
   buildTenantExportManifest,
   countTenantExportRows,
+  streamTenantExportArchive,
   summarizeTenantExportAudit,
   type TenantExportManifest,
 } from "./export.js";
@@ -67,6 +68,35 @@ describe("tenant export archive", () => {
     });
     expect(entries["objects/drive/report.txt"]).toBe("report bytes");
     expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes");
+  });
+
+  it("streams object-byte archives without consuming object bodies during setup", async () => {
+    let consumed = false;
+    async function* trackedBytes(): AsyncIterable<Uint8Array> {
+      consumed = true;
+      yield Buffer.from("deck bytes from storage", "utf8");
+    }
+    const storage = new MemoryStorageClient([
+      { key: "drive/report.txt", body: Buffer.from("report bytes", "utf8") },
+      { key: "slides/deck-1/versions/2", body: trackedBytes() },
+    ]);
+
+    const archive = await streamTenantExportArchive(tenantExportManifest(), {
+      includeObjectBytes: true,
+      storageResolver: storageResolverFor(storage),
+    });
+
+    expect(archive.filename).toBe("helix-export-acme-20260524T100000Z.tar");
+    expect(storage.gets).toEqual(["drive/report.txt", "slides/deck-1/versions/2"]);
+    expect(consumed).toBe(false);
+
+    const bytes = await collectBytes(archive.body);
+    const entries = parseTarEntries(bytes);
+
+    expect(consumed).toBe(true);
+    expect(archive.byteSize).toBe(bytes.byteLength);
+    expect(entries["objects/drive/report.txt"]).toBe("report bytes");
+    expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes from storage");
   });
 
   it("emits a self-fetch manifest with presigned object URLs when requested", async () => {
@@ -296,14 +326,16 @@ describe("registerTenantExportRoutes", () => {
   it("returns a tenant export tar archive with BYO/default object bytes when requested", async () => {
     const storage = new MemoryStorageClient([
       { key: "drive/report.txt", body: Buffer.from("report bytes", "utf8") },
-      { key: "slides/deck-1/versions/2", body: Buffer.from("deck bytes", "utf8") },
+      { key: "slides/deck-1/versions/2", body: asyncBytes("deck bytes from storage") },
     ]);
+    const auditRecords: unknown[] = [];
     const app = fastify();
     await registerTenantExportRoutes(app, {
       orgs: new InMemoryOrgStore([orgRecord()]),
       actorFromRequest: () => actor(),
       exportPlanner: () => tenantExportManifest(),
       storageResolver: storageResolverFor(storage),
+      auditSink: auditSink(auditRecords),
     });
 
     const response = await app.inject({
@@ -315,11 +347,23 @@ describe("registerTenantExportRoutes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("application/x-tar");
     expect(response.headers["accept-ranges"]).toBe("bytes");
+    expect(response.headers["content-length"]).toBe(String(rawPayload(response).byteLength));
     expect(response.headers["content-disposition"]).toBe(
       'attachment; filename="helix-export-acme-20260524T100000Z.tar"',
     );
     expect(entries["objects/drive/report.txt"]).toBe("report bytes");
-    expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes");
+    expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes from storage");
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.exported",
+        metadata: expect.objectContaining({
+          bytesIncluded: true,
+          byteSize: rawPayload(response).byteLength,
+          objectByteDelivery: "archive",
+          streaming: true,
+        }) as unknown,
+      }),
+    );
     await app.close();
   });
 
@@ -669,6 +713,14 @@ function createRecordingSql(results: readonly unknown[][]): {
 
 async function* asyncBytes(value: string): AsyncIterable<Uint8Array> {
   yield Buffer.from(value, "utf8");
+}
+
+async function collectBytes(chunks: AsyncIterable<Uint8Array>): Promise<Buffer> {
+  const collected: Uint8Array[] = [];
+  for await (const chunk of chunks) {
+    collected.push(chunk);
+  }
+  return Buffer.concat(collected);
 }
 
 function rawPayload(response: { readonly rawPayload?: Buffer; readonly payload: string }): Buffer {

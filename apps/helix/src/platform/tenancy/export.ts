@@ -57,6 +57,13 @@ export interface TenantExportArchive {
   readonly bytes: Buffer;
 }
 
+export interface TenantExportArchiveStream {
+  readonly filename: string;
+  readonly contentType: "application/x-tar";
+  readonly byteSize: number;
+  readonly body: AsyncIterable<Uint8Array>;
+}
+
 export interface TenantExportSelfFetchObject {
   readonly storageKey: string;
   readonly byteSize?: number | undefined;
@@ -172,7 +179,41 @@ export async function buildTenantExportArchive(
   manifest: TenantExportManifest,
   options: BuildTenantExportArchiveOptions = {},
 ): Promise<TenantExportArchive> {
-  const generatedStamp = archiveTimestamp(manifest.generatedAt);
+  const files = await tenantExportArchiveFiles(manifest, options);
+  const bytes = buildTarArchive(
+    await Promise.all(
+      files.map(async (file) => ({
+        path: file.path,
+        body: await archiveFileBodyBytes(file.body),
+      })),
+    ),
+    Math.floor(Date.parse(manifest.generatedAt) / 1000),
+  );
+  return {
+    filename: `helix-export-${manifest.org.slug}-${archiveTimestamp(manifest.generatedAt)}.tar`,
+    contentType: "application/x-tar",
+    byteSize: bytes.byteLength,
+    bytes,
+  };
+}
+
+export async function streamTenantExportArchive(
+  manifest: TenantExportManifest,
+  options: BuildTenantExportArchiveOptions = {},
+): Promise<TenantExportArchiveStream> {
+  const files = await tenantExportArchiveFiles(manifest, options);
+  return {
+    filename: `helix-export-${manifest.org.slug}-${archiveTimestamp(manifest.generatedAt)}.tar`,
+    contentType: "application/x-tar",
+    byteSize: tarArchiveByteSize(files),
+    body: streamTarArchive(files, Math.floor(Date.parse(manifest.generatedAt) / 1000)),
+  };
+}
+
+async function tenantExportArchiveFiles(
+  manifest: TenantExportManifest,
+  options: BuildTenantExportArchiveOptions,
+): Promise<readonly TenantExportArchiveFile[]> {
   const objectByteDelivery = options.objectByteDelivery ?? "archive";
   const metadataManifest =
     options.includeObjectBytes === true && objectByteDelivery === "archive"
@@ -248,13 +289,7 @@ export async function buildTenantExportArchive(
     }
   }
 
-  const bytes = buildTarArchive(files, Math.floor(Date.parse(manifest.generatedAt) / 1000));
-  return {
-    filename: `helix-export-${manifest.org.slug}-${generatedStamp}.tar`,
-    contentType: "application/x-tar",
-    byteSize: bytes.byteLength,
-    bytes,
-  };
+  return files;
 }
 
 export async function countTenantExportRows(
@@ -350,6 +385,12 @@ export async function summarizeTenantExportAudit(
 
 interface TenantExportArchiveFile {
   readonly path: string;
+  readonly body: AsyncIterable<Uint8Array> | Uint8Array;
+  readonly byteSize?: number | undefined;
+}
+
+interface MaterializedTenantExportArchiveFile {
+  readonly path: string;
   readonly body: Uint8Array;
 }
 
@@ -370,9 +411,16 @@ async function objectByteArchiveFiles(
     if (stored === null) {
       throw new Error(`Tenant export object bytes are unavailable: ${object.storageKey}`);
     }
+    const bodySize =
+      stored.body instanceof Uint8Array
+        ? stored.body.byteLength
+        : object.byteSize === undefined
+          ? undefined
+          : object.byteSize;
     files.push({
       path: objectArchivePath(object.storageKey),
-      body: await storageObjectBodyBytes(stored.body),
+      body: bodySize === undefined ? await storageObjectBodyBytes(stored.body) : stored.body,
+      ...(bodySize === undefined ? {} : { byteSize: bodySize }),
     });
   }
   return files;
@@ -422,6 +470,12 @@ export async function buildTenantExportSelfFetchManifest(
 }
 
 async function storageObjectBodyBytes(body: StorageObject["body"]): Promise<Uint8Array> {
+  return archiveFileBodyBytes(body);
+}
+
+async function archiveFileBodyBytes(
+  body: AsyncIterable<Uint8Array> | Uint8Array,
+): Promise<Uint8Array> {
   if (Symbol.asyncIterator in body) {
     const chunks: Uint8Array[] = [];
     for await (const chunk of body) {
@@ -501,14 +555,74 @@ function validatePresignedUrlExpiresSeconds(expiresSeconds: number): number {
   return expiresSeconds;
 }
 
-function buildTarArchive(files: readonly TenantExportArchiveFile[], mtimeSeconds: number): Buffer {
+function buildTarArchive(
+  files: readonly MaterializedTenantExportArchiveFile[],
+  mtimeSeconds: number,
+): Buffer {
   return Buffer.concat([
-    ...files.flatMap((file) => tarEntry(file, mtimeSeconds)),
+    ...files.flatMap((file) => tarEntry({ ...file, body: Buffer.from(file.body) }, mtimeSeconds)),
     Buffer.alloc(1024),
   ]);
 }
 
-function tarEntry(file: TenantExportArchiveFile, mtimeSeconds: number): readonly Buffer[] {
+async function* streamTarArchive(
+  files: readonly TenantExportArchiveFile[],
+  mtimeSeconds: number,
+): AsyncIterable<Uint8Array> {
+  for (const file of files) {
+    const size = archiveFileSize(file);
+    yield tarHeader({ path: file.path, size, mtimeSeconds });
+    let emitted = 0;
+    for await (const chunk of bodyChunks(file.body)) {
+      emitted += chunk.byteLength;
+      yield chunk;
+    }
+    if (emitted !== size) {
+      throw new Error(
+        `Tenant export stream size mismatch for ${file.path}: expected ${String(size)}, emitted ${String(
+          emitted,
+        )}`,
+      );
+    }
+    yield Buffer.alloc((512 - (size % 512)) % 512);
+  }
+  yield Buffer.alloc(1024);
+}
+
+function tarArchiveByteSize(files: readonly TenantExportArchiveFile[]): number {
+  return (
+    files.reduce((total, file) => {
+      const size = archiveFileSize(file);
+      return total + 512 + size + ((512 - (size % 512)) % 512);
+    }, 0) + 1024
+  );
+}
+
+function archiveFileSize(file: TenantExportArchiveFile): number {
+  const size =
+    file.byteSize ?? (file.body instanceof Uint8Array ? file.body.byteLength : undefined);
+  if (size === undefined) {
+    throw new Error(`Tenant export stream cannot determine tar entry size: ${file.path}`);
+  }
+  return size;
+}
+
+async function* bodyChunks(
+  body: AsyncIterable<Uint8Array> | Uint8Array,
+): AsyncIterable<Uint8Array> {
+  if (Symbol.asyncIterator in body) {
+    for await (const chunk of body) {
+      yield chunk;
+    }
+    return;
+  }
+  yield body;
+}
+
+function tarEntry(
+  file: TenantExportArchiveFile & { readonly body: Uint8Array },
+  mtimeSeconds: number,
+): readonly Buffer[] {
   const body = Buffer.from(file.body);
   const header = tarHeader({
     path: file.path,

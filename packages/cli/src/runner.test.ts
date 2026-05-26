@@ -232,6 +232,120 @@ describe("runCli webhook wrapper commands", () => {
   });
 });
 
+describe("runCli tenant storage migration operator commands", () => {
+  it("calls the tenant storage migration admin API with explicit operator safeguards", async () => {
+    const migrationId = "99999999-9999-4999-8999-999999999999";
+    const targetStorage = {
+      kind: "byo",
+      provider: "aws-s3",
+      bucket: "acme-helix-data",
+      credentials_vault_path: "tenants/acme/byo-storage/aws",
+    };
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith("/byo-storage/test")) {
+        return Response.json({
+          health: { status: "healthy", checked_at: "2026-05-25T10:00:00Z", message: "ok" },
+        });
+      }
+      if (url.endsWith("/cutover")) {
+        return Response.json({
+          migration: { id: migrationId, status: "succeeded" },
+          tenantConfig: { orgId: "org-1" },
+        });
+      }
+      if (init.method === "GET") {
+        return Response.json({ migration: { id: migrationId, status: "queued" } });
+      }
+      return Response.json({ migration: { id: migrationId, status: "queued" } }, { status: 202 });
+    };
+
+    const commands: readonly (readonly string[])[] = [
+      ["admin", "storage", "test"],
+      [
+        "admin",
+        "storage-migrations",
+        "request",
+        "--target",
+        "byo",
+        "--target-storage",
+        JSON.stringify(targetStorage),
+      ],
+      ["admin", "storage-migrations", "get", migrationId],
+      ["admin", "storage-migrations", "cutover", migrationId, "--confirm", "CUTOVER"],
+    ];
+
+    for (const args of commands) {
+      const stdout = new CaptureStream();
+      const stderr = new CaptureStream();
+      await expect(
+        runCli(
+          args,
+          { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+          {
+            stdin: Readable.from([]),
+            stdout,
+            stderr,
+          },
+          fetchImpl,
+        ),
+      ).resolves.toBe(0);
+      expect(stdout.output).toContain("{\n");
+      expect(stderr.output).toBe("");
+    }
+
+    expect(requests).toEqual([
+      {
+        url: "https://helix.example/api/admin/tenant-config/byo-storage/test",
+        init: {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer token-1",
+            "content-type": "application/json",
+          },
+          body: "{}",
+        },
+      },
+      {
+        url: "https://helix.example/api/admin/tenant-config/byo-storage/migrations",
+        init: {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer token-1",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ target: "byo", dryRun: true, targetStorage }),
+        },
+      },
+      {
+        url: `https://helix.example/api/admin/tenant-config/byo-storage/migrations/${migrationId}`,
+        init: {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer token-1",
+          },
+        },
+      },
+      {
+        url: `https://helix.example/api/admin/tenant-config/byo-storage/migrations/${migrationId}/cutover`,
+        init: {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer token-1",
+            "content-type": "application/json",
+          },
+          body: '{"confirm":"CUTOVER"}',
+        },
+      },
+    ]);
+  });
+});
+
 describe("runCli backup and restore operator commands", () => {
   it("posts backup create requests to the admin API", async () => {
     const stdout = new CaptureStream();
@@ -453,7 +567,9 @@ describe("runCli action status commands", () => {
         },
       },
     ]);
-    expect(stdout.output).toBe('{\n  "status": "executed",\n  "output": {\n    "ok": true\n  }\n}\n');
+    expect(stdout.output).toBe(
+      '{\n  "status": "executed",\n  "output": {\n    "ok": true\n  }\n}\n',
+    );
     expect(stderr.output).toBe("");
   });
 

@@ -86,6 +86,34 @@ export function buildHelixRequest(
       return createRequest(env, "GET", withQuery("/api/admin/users", command));
     case "admin-audit-list":
       return createRequest(env, "GET", withQuery("/api/admin/audit-log", command));
+    case "admin-storage-test":
+      return createRequest(env, "POST", "/api/admin/tenant-config/byo-storage/test", {});
+    case "admin-storage-migration-list":
+      return createRequest(
+        env,
+        "GET",
+        withQuery("/api/admin/tenant-config/byo-storage/migrations", command),
+      );
+    case "admin-storage-migration-request":
+      return createRequest(env, "POST", "/api/admin/tenant-config/byo-storage/migrations", {
+        target: command.target,
+        dryRun: command.dryRun,
+        ...(command.sourceStorage === undefined ? {} : { sourceStorage: command.sourceStorage }),
+        ...(command.targetStorage === undefined ? {} : { targetStorage: command.targetStorage }),
+      });
+    case "admin-storage-migration-get":
+      return createRequest(
+        env,
+        "GET",
+        `/api/admin/tenant-config/byo-storage/migrations/${encodeURIComponent(command.migrationId)}`,
+      );
+    case "admin-storage-migration-cutover":
+      return createRequest(
+        env,
+        "POST",
+        `/api/admin/tenant-config/byo-storage/migrations/${encodeURIComponent(command.migrationId)}/cutover`,
+        { confirm: "CUTOVER" },
+      );
     case "backup-create":
       return createRequest(env, "POST", "/api/admin/backups", {});
     case "restore-from":

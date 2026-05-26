@@ -298,6 +298,91 @@ describe("buildHelixRequest", () => {
     });
   });
 
+  it("builds tenant storage migration operator requests", () => {
+    const migrationId = "99999999-9999-4999-8999-999999999999";
+    const targetStorage = {
+      kind: "byo",
+      provider: "aws-s3",
+      bucket: "acme-helix-data",
+      credentials_vault_path: "tenants/acme/byo-storage/aws",
+    };
+
+    expect(
+      buildHelixRequest(
+        { kind: "admin-storage-test" },
+        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+      ),
+    ).toEqual({
+      url: "https://helix.example/api/admin/tenant-config/byo-storage/test",
+      init: {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: "Bearer token-1",
+          "content-type": "application/json",
+        },
+        body: "{}",
+      },
+    });
+
+    expect(
+      buildHelixRequest(
+        {
+          kind: "admin-storage-migration-list",
+          target: "byo",
+          status: "running",
+          limit: 25,
+          cursor: "cursor-1",
+        },
+        { HELIX_BASE_URL: "https://helix.example" },
+      ),
+    ).toMatchObject({
+      url: "https://helix.example/api/admin/tenant-config/byo-storage/migrations?target=byo&status=running&limit=25&cursor=cursor-1",
+      init: { method: "GET" },
+    });
+
+    expect(
+      buildHelixRequest(
+        {
+          kind: "admin-storage-migration-request",
+          target: "byo",
+          dryRun: true,
+          targetStorage,
+        },
+        { HELIX_BASE_URL: "https://helix.example" },
+      ),
+    ).toMatchObject({
+      url: "https://helix.example/api/admin/tenant-config/byo-storage/migrations",
+      init: {
+        method: "POST",
+        body: JSON.stringify({ target: "byo", dryRun: true, targetStorage }),
+      },
+    });
+
+    expect(
+      buildHelixRequest(
+        { kind: "admin-storage-migration-get", migrationId },
+        { HELIX_BASE_URL: "https://helix.example" },
+      ),
+    ).toMatchObject({
+      url: `https://helix.example/api/admin/tenant-config/byo-storage/migrations/${migrationId}`,
+      init: { method: "GET" },
+    });
+
+    expect(
+      buildHelixRequest(
+        { kind: "admin-storage-migration-cutover", migrationId },
+        { HELIX_BASE_URL: "https://helix.example" },
+      ),
+    ).toMatchObject({
+      url: `https://helix.example/api/admin/tenant-config/byo-storage/migrations/${migrationId}/cutover`,
+      init: {
+        method: "POST",
+        body: '{"confirm":"CUTOVER"}',
+      },
+    });
+  });
+
   it("builds tier update requests against admin platform config", () => {
     expect(
       buildHelixRequest(

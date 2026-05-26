@@ -7,6 +7,7 @@ const docId = "55555555-5555-4555-8555-555555555555";
 const webhookId = "66666666-6666-4666-8666-666666666666";
 const deliveryId = "77777777-7777-4777-8777-777777777777";
 const actorId = "88888888-8888-4888-8888-888888888888";
+const migrationId = "99999999-9999-4999-8999-999999999999";
 
 describe("parseCliArgs", () => {
   it("parses tool list", () => {
@@ -123,7 +124,16 @@ describe("parseCliArgs", () => {
 
   it("parses the mail thread-state subcommands as tool calls", () => {
     expect(
-      parseCliArgs(["mail", "label", "--thread-id", threadId, "--add", "work,urgent", "--remove", "inbox"]),
+      parseCliArgs([
+        "mail",
+        "label",
+        "--thread-id",
+        threadId,
+        "--add",
+        "work,urgent",
+        "--remove",
+        "inbox",
+      ]),
     ).toEqual({
       kind: "tool-call",
       toolId: "mail.label.apply",
@@ -224,7 +234,15 @@ describe("parseCliArgs", () => {
       json: { source: "empty" },
     });
     expect(
-      parseCliArgs(["mail", "vacation-set", "--enabled", "--subject", "Away", "--body", "Back soon"]),
+      parseCliArgs([
+        "mail",
+        "vacation-set",
+        "--enabled",
+        "--subject",
+        "Away",
+        "--body",
+        "Back soon",
+      ]),
     ).toEqual({
       kind: "tool-call",
       toolId: "mail.vacation.set",
@@ -257,7 +275,9 @@ describe("parseCliArgs", () => {
       toolId: "docs.list",
       json: { source: "inline", value: '{"query":"spec","limit":5}' },
     });
-    expect(parseCliArgs(["calendar", "event-list", "--calendar-id", folderId, "--limit", "50"])).toEqual({
+    expect(
+      parseCliArgs(["calendar", "event-list", "--calendar-id", folderId, "--limit", "50"]),
+    ).toEqual({
       kind: "tool-call",
       toolId: "calendar.event.list",
       json: { source: "inline", value: `{"calendarId":"${folderId}","limit":50}` },
@@ -849,6 +869,124 @@ describe("parseCliArgs", () => {
       verb: "webhook.created",
       limit: 10,
     });
+  });
+
+  it("parses tenant storage migration operator commands", () => {
+    const targetStorage = {
+      kind: "byo",
+      provider: "aws-s3",
+      bucket: "acme-helix-data",
+      credentials_vault_path: "tenants/acme/byo-storage/aws",
+    };
+    const sourceStorage = {
+      kind: "byo",
+      provider: "aws-s3",
+      bucket: "acme-helix-data",
+      credentials_vault_path: "tenants/acme/byo-storage/aws",
+    };
+
+    expect(parseCliArgs(["admin", "storage", "test"])).toEqual({
+      kind: "admin-storage-test",
+    });
+    expect(
+      parseCliArgs([
+        "admin",
+        "storage-migrations",
+        "list",
+        "--target",
+        "byo",
+        "--status",
+        "running",
+        "--limit",
+        "25",
+        "--cursor",
+        "cursor-1",
+      ]),
+    ).toEqual({
+      kind: "admin-storage-migration-list",
+      target: "byo",
+      status: "running",
+      limit: 25,
+      cursor: "cursor-1",
+    });
+    expect(
+      parseCliArgs([
+        "admin",
+        "storage-migrations",
+        "request",
+        "--target",
+        "byo",
+        "--target-storage",
+        JSON.stringify(targetStorage),
+      ]),
+    ).toEqual({
+      kind: "admin-storage-migration-request",
+      target: "byo",
+      dryRun: true,
+      targetStorage,
+    });
+    expect(
+      parseCliArgs([
+        "admin",
+        "storage-migrations",
+        "request",
+        "--target",
+        "helix-default",
+        "--live",
+        "--confirm",
+        "LIVE",
+        "--source-storage",
+        JSON.stringify(sourceStorage),
+      ]),
+    ).toEqual({
+      kind: "admin-storage-migration-request",
+      target: "helix-default",
+      dryRun: false,
+      sourceStorage,
+    });
+    expect(parseCliArgs(["admin", "storage-migrations", "get", migrationId])).toEqual({
+      kind: "admin-storage-migration-get",
+      migrationId,
+    });
+    expect(parseCliArgs(["admin", "storage-migrations", "status", migrationId])).toEqual({
+      kind: "admin-storage-migration-get",
+      migrationId,
+    });
+    expect(
+      parseCliArgs(["admin", "storage-migrations", "cutover", migrationId, "--confirm", "CUTOVER"]),
+    ).toEqual({
+      kind: "admin-storage-migration-cutover",
+      migrationId,
+    });
+  });
+
+  it("rejects unsafe tenant storage migration operator commands", () => {
+    expect(() => parseCliArgs(["admin", "storage", "test", "--json"])).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs(["admin", "storage-migrations", "request", "--target", "unknown"]),
+    ).toThrow(CliUsageError);
+    expect(() => parseCliArgs(["admin", "storage-migrations", "request"])).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs(["admin", "storage-migrations", "request", "--target", "byo", "--live"]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs([
+        "admin",
+        "storage-migrations",
+        "request",
+        "--target",
+        "byo",
+        "--target-storage",
+        "[]",
+      ]),
+    ).toThrow(CliUsageError);
+    expect(() => parseCliArgs(["admin", "storage-migrations", "get"])).toThrow(CliUsageError);
+    expect(() => parseCliArgs(["admin", "storage-migrations", "cutover", migrationId])).toThrow(
+      CliUsageError,
+    );
+    expect(() =>
+      parseCliArgs(["admin", "storage-migrations", "cutover", migrationId, "--confirm", "LIVE"]),
+    ).toThrow(CliUsageError);
   });
 
   it("parses backup and restore operator commands", () => {

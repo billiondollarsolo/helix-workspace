@@ -45,6 +45,23 @@ export type HelixCommand =
       readonly limit?: number;
       readonly cursor?: string;
     }
+  | { readonly kind: "admin-storage-test" }
+  | {
+      readonly kind: "admin-storage-migration-list";
+      readonly target?: TenantStorageMigrationTarget;
+      readonly status?: TenantStorageMigrationStatus;
+      readonly limit?: number;
+      readonly cursor?: string;
+    }
+  | {
+      readonly kind: "admin-storage-migration-request";
+      readonly target: TenantStorageMigrationTarget;
+      readonly dryRun: boolean;
+      readonly sourceStorage?: Record<string, unknown>;
+      readonly targetStorage?: Record<string, unknown>;
+    }
+  | { readonly kind: "admin-storage-migration-get"; readonly migrationId: string }
+  | { readonly kind: "admin-storage-migration-cutover"; readonly migrationId: string }
   | { readonly kind: "backup-create" }
   | { readonly kind: "restore-from"; readonly backupId: string; readonly encrypted?: boolean }
   | { readonly kind: "reindex-all" }
@@ -67,6 +84,14 @@ export type SearchType = "mail" | "chat" | "docs" | "drive" | "calendar";
 export type AdminUserType = "user" | "agent" | "service_account" | "system";
 export type SecurityTier = "personal" | "business" | "enterprise" | "sovereign";
 export type PluginLifecycleAction = "enable" | "disable" | "uninstall";
+export type TenantStorageMigrationTarget = "byo" | "helix-default";
+export type TenantStorageMigrationStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "succeeded_with_errors"
+  | "failed"
+  | "dry_run";
 
 export type JsonArgument =
   | { readonly source: "empty" }
@@ -503,8 +528,7 @@ const mailDeleteUsage = "Usage: helix mail delete [--thread-id <id>] [--json [JS
 const mailThreadGetUsage = "Usage: helix mail thread-get [--thread-id <id>] [--json [JSON]]";
 const mailSnoozeUsage =
   "Usage: helix mail snooze [--thread-id <id>] [--until <iso>] [--json [JSON]]";
-const mailReadSetUsage =
-  "Usage: helix mail read [--thread-id <id>] [--unread] [--json [JSON]]";
+const mailReadSetUsage = "Usage: helix mail read [--thread-id <id>] [--unread] [--json [JSON]]";
 const mailStarSetUsage =
   "Usage: helix mail star [--thread-id <id>] [--starred] [--unstarred] [--json [JSON]]";
 const mailFilterCreateUsage =
@@ -1657,8 +1681,7 @@ function parseAssistantCommand(
   }
 }
 
-const assistantUsage =
-  "Usage: helix assistant <chat|new|forget|approve|cancel> [--json [JSON]]";
+const assistantUsage = "Usage: helix assistant <chat|new|forget|approve|cancel> [--json [JSON]]";
 const assistantConfirmationUsage =
   "Usage: helix assistant <approve|cancel> [--conversation-id <id>] [--pending-id <id>] [--classification <public|standard|confidential|restricted>] [--json [JSON]]";
 
@@ -1775,6 +1798,10 @@ function parseAdminCommand(
     case "audit":
     case "audit-log":
       return parseAdminAuditCommand(action, args);
+    case "storage":
+      return parseAdminStorageCommand(action, args);
+    case "storage-migrations":
+      return parseAdminStorageMigrationsCommand(action, args);
     default:
       throw new CliUsageError(adminUsage);
   }
@@ -1904,8 +1931,150 @@ function parseAdminAuditCommand(action: string | undefined, args: readonly strin
   return { kind: "admin-audit-list", ...input };
 }
 
+function parseAdminStorageCommand(
+  action: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  if (action !== "test" || args.length > 0) {
+    throw new CliUsageError(adminStorageUsage);
+  }
+  return { kind: "admin-storage-test" };
+}
+
+function parseAdminStorageMigrationsCommand(
+  action: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  switch (action) {
+    case "list":
+      return parseAdminStorageMigrationListCommand(args);
+    case "request":
+      return parseAdminStorageMigrationRequestCommand(args);
+    case "get":
+    case "status":
+      return parseAdminStorageMigrationGetCommand(args);
+    case "cutover":
+      return parseAdminStorageMigrationCutoverCommand(args);
+    default:
+      throw new CliUsageError(adminStorageMigrationsUsage);
+  }
+}
+
+function parseAdminStorageMigrationListCommand(args: readonly string[]): HelixCommand {
+  const input: {
+    target?: TenantStorageMigrationTarget;
+    status?: TenantStorageMigrationStatus;
+    limit?: number;
+    cursor?: string;
+  } = {};
+  parseAdminGetFlags(args, adminStorageMigrationsListUsage, {
+    strings: new Map([["--cursor", "cursor"]]),
+    numbers: new Map([["--limit", "limit"]]),
+    booleans: new Map<string, string>(),
+    enums: new Map<string, ReadonlySet<string>>([
+      ["--target", tenantStorageMigrationTargets],
+      ["--status", tenantStorageMigrationStatuses],
+    ]),
+    enumFields: new Map([
+      ["--target", "target"],
+      ["--status", "status"],
+    ]),
+    input,
+  });
+  return { kind: "admin-storage-migration-list", ...input };
+}
+
+function parseAdminStorageMigrationRequestCommand(args: readonly string[]): HelixCommand {
+  let target: TenantStorageMigrationTarget | undefined;
+  let dryRun = true;
+  let liveRequested = false;
+  let liveConfirmed = false;
+  let sourceStorage: Record<string, unknown> | undefined;
+  let targetStorage: Record<string, unknown> | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    if (flag === undefined) {
+      throw new CliUsageError(adminStorageMigrationsRequestUsage);
+    }
+
+    if (flag === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (flag === "--live") {
+      dryRun = false;
+      liveRequested = true;
+      continue;
+    }
+
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new CliUsageError(adminStorageMigrationsRequestUsage);
+    }
+
+    if (flag === "--target") {
+      if (!isTenantStorageMigrationTarget(value)) {
+        throw new CliUsageError(adminStorageMigrationsRequestUsage);
+      }
+      target = value;
+      index += 1;
+      continue;
+    }
+    if (flag === "--source-storage") {
+      sourceStorage = parseJsonObjectFlag(value, adminStorageMigrationsRequestUsage);
+      index += 1;
+      continue;
+    }
+    if (flag === "--target-storage") {
+      targetStorage = parseJsonObjectFlag(value, adminStorageMigrationsRequestUsage);
+      index += 1;
+      continue;
+    }
+    if (flag === "--confirm") {
+      if (value !== "LIVE") {
+        throw new CliUsageError(adminStorageMigrationsRequestUsage);
+      }
+      liveConfirmed = true;
+      index += 1;
+      continue;
+    }
+
+    throw new CliUsageError(adminStorageMigrationsRequestUsage);
+  }
+
+  if (target === undefined || (liveRequested && !liveConfirmed)) {
+    throw new CliUsageError(adminStorageMigrationsRequestUsage);
+  }
+
+  return {
+    kind: "admin-storage-migration-request",
+    target,
+    dryRun,
+    ...(sourceStorage === undefined ? {} : { sourceStorage }),
+    ...(targetStorage === undefined ? {} : { targetStorage }),
+  };
+}
+
+function parseAdminStorageMigrationGetCommand(args: readonly string[]): HelixCommand {
+  if (args.length !== 1 || args[0] === undefined || args[0].startsWith("-")) {
+    throw new CliUsageError(adminStorageMigrationsGetUsage);
+  }
+  return { kind: "admin-storage-migration-get", migrationId: args[0] };
+}
+
+function parseAdminStorageMigrationCutoverCommand(args: readonly string[]): HelixCommand {
+  if (args.length !== 3 || args[0] === undefined || args[0].startsWith("-")) {
+    throw new CliUsageError(adminStorageMigrationsCutoverUsage);
+  }
+  if (args[1] !== "--confirm" || args[2] !== "CUTOVER") {
+    throw new CliUsageError(adminStorageMigrationsCutoverUsage);
+  }
+  return { kind: "admin-storage-migration-cutover", migrationId: args[0] };
+}
+
 const adminUsage =
-  "Usage: helix admin <app-passwords|agent-credentials|users|audit> <command> [--json [JSON]]";
+  "Usage: helix admin <app-passwords|agent-credentials|users|audit|storage|storage-migrations> <command> [--json [JSON]]";
 const adminAppPasswordsUsage =
   "Usage: helix admin app-passwords <list|create|revoke> [--json [JSON]]";
 const adminAppPasswordsListUsage =
@@ -1928,6 +2097,17 @@ const adminUsersListUsage = adminUsersUsage;
 const adminAuditUsage =
   "Usage: helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]";
 const adminAuditListUsage = adminAuditUsage;
+const adminStorageUsage = "Usage: helix admin storage test";
+const adminStorageMigrationsUsage =
+  "Usage: helix admin storage-migrations <list|request|get|status|cutover>";
+const adminStorageMigrationsListUsage =
+  "Usage: helix admin storage-migrations list [--target <byo|helix-default>] [--status <queued|running|succeeded|succeeded_with_errors|failed|dry_run>] [--limit <number>] [--cursor <cursor>]";
+const adminStorageMigrationsRequestUsage =
+  "Usage: helix admin storage-migrations request --target <byo|helix-default> [--dry-run | --live --confirm LIVE] [--source-storage <json-object>] [--target-storage <json-object>]";
+const adminStorageMigrationsGetUsage =
+  "Usage: helix admin storage-migrations <get|status> <migration-id>";
+const adminStorageMigrationsCutoverUsage =
+  "Usage: helix admin storage-migrations cutover <migration-id> --confirm CUTOVER";
 
 const adminAppPasswordsListOptions = {
   arrays: new Map<string, string>(),
@@ -1980,6 +2160,18 @@ const adminAgentCredentialsRevokeOptions = {
 
 const adminUserTypes = new Set<AdminUserType>(["user", "agent", "service_account", "system"]);
 const securityTiers = new Set<SecurityTier>(["personal", "business", "enterprise", "sovereign"]);
+const tenantStorageMigrationTargets = new Set<TenantStorageMigrationTarget>([
+  "byo",
+  "helix-default",
+]);
+const tenantStorageMigrationStatuses = new Set<TenantStorageMigrationStatus>([
+  "queued",
+  "running",
+  "succeeded",
+  "succeeded_with_errors",
+  "failed",
+  "dry_run",
+]);
 
 function parseBackupCommand(
   action: string | undefined,
@@ -2063,6 +2255,10 @@ function parseTierCommand(
 
 function isSecurityTier(value: string): value is SecurityTier {
   return securityTiers.has(value as SecurityTier);
+}
+
+function isTenantStorageMigrationTarget(value: string): value is TenantStorageMigrationTarget {
+  return tenantStorageMigrationTargets.has(value as TenantStorageMigrationTarget);
 }
 
 const tierSetUsage = "Usage: helix tier set <personal|business|enterprise|sovereign>";
@@ -2755,6 +2951,11 @@ export const usage = `Usage:
   helix admin agent-credentials revoke [--client-id <id>] [--json [JSON]]
   helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]
   helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]
+  helix admin storage test
+  helix admin storage-migrations list [--target <byo|helix-default>] [--status <queued|running|succeeded|succeeded_with_errors|failed|dry_run>] [--limit <number>] [--cursor <cursor>]
+  helix admin storage-migrations request --target <byo|helix-default> [--dry-run | --live --confirm LIVE] [--source-storage <json-object>] [--target-storage <json-object>]
+  helix admin storage-migrations get <migration-id>
+  helix admin storage-migrations cutover <migration-id> --confirm CUTOVER
   helix backup create
   helix restore --from <backup-id> [--encrypted]
   helix reindex --all

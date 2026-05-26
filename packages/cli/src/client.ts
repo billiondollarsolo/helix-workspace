@@ -148,7 +148,10 @@ export function buildHelixRequest(
       }
       return createBinaryRequest(
         env,
-        `/api/admin/tenants/${encodeURIComponent(command.slug)}/import/dry-run`,
+        withQuery(
+          `/api/admin/tenants/${encodeURIComponent(command.slug)}/import/dry-run`,
+          command.conflictPolicy === undefined ? {} : { ...command.conflictPolicy },
+        ),
         input,
         "application/x-tar",
       );

@@ -1068,6 +1068,36 @@ describe("parseCliArgs", () => {
       slug: "acme",
       archive: "./acme.tar",
     });
+    expect(
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "dry-run",
+        "acme",
+        "./acme.tar",
+        "--row-id-conflicts",
+        "preserve",
+        "--principal-references",
+        "null",
+        "--resource-references",
+        "preserve",
+        "--verified-state",
+        "preserve",
+        "--primary-domain",
+        "null",
+      ]),
+    ).toEqual({
+      kind: "tenant-import-dry-run",
+      slug: "acme",
+      archive: "./acme.tar",
+      conflictPolicy: {
+        rowIdConflicts: "preserve",
+        principalReferences: "null",
+        resourceReferences: "preserve",
+        verifiedState: "preserve",
+        primaryDomain: "null",
+      },
+    });
   });
 
   it("rejects unsafe tenant import dry-run operator commands", () => {
@@ -1078,6 +1108,40 @@ describe("parseCliArgs", () => {
     );
     expect(() =>
       parseCliArgs(["admin", "tenant-imports", "dry-run", "acme", "./acme.tar", "--live"]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "dry-run",
+        "acme",
+        "./acme.tar",
+        "--principal-references",
+      ]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "dry-run",
+        "acme",
+        "./acme.tar",
+        "--principal-references",
+        "delete",
+      ]),
+    ).toThrow(CliUsageError);
+    expect(() =>
+      parseCliArgs([
+        "admin",
+        "tenant-imports",
+        "dry-run",
+        "acme",
+        "./acme.tar",
+        "--verified-state",
+        "preserve",
+        "--verified-state",
+        "regenerate",
+      ]),
     ).toThrow(CliUsageError);
   });
 

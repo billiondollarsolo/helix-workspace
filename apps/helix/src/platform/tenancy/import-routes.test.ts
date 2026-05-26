@@ -119,6 +119,91 @@ describe("registerTenantImportRoutes", () => {
     await app.close();
   });
 
+  it("accepts dry-run conflict-policy query input", async () => {
+    const archive = await buildTenantExportArchive(tenantExportManifest());
+    const auditRecords: unknown[] = [];
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => ({
+        existingRowIds: [],
+        existingNaturalKeys: [],
+        primaryDomain: null,
+      }),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/import/dry-run?principalReferences=null&verifiedState=preserve&resourceReferences=preserve",
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body: ImportDryRunResponseBody = response.json();
+    expect(body.ok).toBe(true);
+    expect(body.plan.operations[0]).toMatchObject({
+      table: "admin_domains",
+      conflictPolicy: {
+        rowId: "preserve",
+        references: {
+          createdBy: "null",
+        },
+        state: {
+          verificationStatus: "preserve",
+          verifiedAt: "preserve",
+        },
+      },
+    });
+    expect(body.plan.operations[2]).toMatchObject({
+      table: "resource_classifications",
+      conflictPolicy: {
+        references: {
+          actorId: "null",
+        },
+      },
+    });
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          hasConflictPolicyInput: true,
+        }) as unknown,
+      }),
+    );
+    await app.close();
+  });
+
+  it("rejects invalid conflict-policy query before loading target state", async () => {
+    let loadedTargetState = false;
+    const archive = await buildTenantExportArchive(tenantExportManifest());
+    const app = fastify();
+    await registerTenantImportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor("admin.tenants.import"),
+      targetStateLoader: async () => {
+        loadedTargetState = true;
+        return { existingRowIds: [], existingNaturalKeys: [], primaryDomain: null };
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/import/dry-run?principalReferences=delete",
+      headers: { "content-type": "application/x-tar" },
+      payload: archive.bytes,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: "Invalid tenant import conflict-policy query.",
+      code: "invalid_request",
+    });
+    expect(loadedTargetState).toBe(false);
+    await app.close();
+  });
+
   it("forbids actors without tenant import scope or same-tenant access", async () => {
     const app = fastify();
     await registerTenantImportRoutes(app, {
@@ -242,6 +327,13 @@ function chunkFile(input: {
       orderBy: input.orderBy,
     },
     body,
+  };
+}
+
+interface ImportDryRunResponseBody {
+  readonly ok: boolean;
+  readonly plan: {
+    readonly operations: readonly Record<string, unknown>[];
   };
 }
 

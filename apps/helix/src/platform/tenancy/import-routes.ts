@@ -11,6 +11,7 @@ import {
 } from "../admin/console-shared.js";
 import {
   buildTenantImportPlanFromArchive,
+  type TenantImportDryRunConflictPolicy,
   type TenantImportPlanTargetState,
 } from "./import-plan.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
@@ -31,6 +32,16 @@ const tenantParams = z.object({
     .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u),
 });
 
+const conflictPolicyQuery = z
+  .object({
+    rowIdConflicts: z.enum(["regenerate", "preserve"]).optional(),
+    principalReferences: z.enum(["preserve", "null"]).optional(),
+    resourceReferences: z.enum(["require-remap", "preserve"]).optional(),
+    verifiedState: z.enum(["regenerate", "preserve"]).optional(),
+    primaryDomain: z.enum(["preserve", "null"]).optional(),
+  })
+  .strict();
+
 export async function registerTenantImportRoutes(
   app: FastifyInstance,
   options: RegisterTenantImportRoutesOptions,
@@ -42,6 +53,12 @@ export async function registerTenantImportRoutes(
     const loaded = await loadTenantForImport({ request, reply, options });
     if (loaded === undefined) {
       return reply;
+    }
+    const query = conflictPolicyQuery.safeParse(request.query);
+    if (!query.success) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid tenant import conflict-policy query.", query.error.issues));
     }
     const archive = requestBodyBytes(request.body);
     if (archive === undefined) {
@@ -56,6 +73,7 @@ export async function registerTenantImportRoutes(
       targetOrgId: loaded.org.id,
       targetSlug: loaded.org.slug,
       targetState,
+      ...(hasConflictPolicyInput(query.data) ? { conflictPolicy: query.data } : {}),
     });
     await auditAdminAction(options.auditSink, {
       orgId: loaded.org.id,
@@ -66,6 +84,7 @@ export async function registerTenantImportRoutes(
       metadata: {
         slug: loaded.org.slug,
         archiveByteSize: archive.byteLength,
+        hasConflictPolicyInput: hasConflictPolicyInput(query.data),
         ok: result.ok,
         issueCount: result.issues.length + (result.plan?.issues.length ?? 0),
         operationCount: result.plan?.summary.operationCount ?? 0,
@@ -123,6 +142,10 @@ function requestBodyBytes(body: unknown): Uint8Array | undefined {
     return body;
   }
   return undefined;
+}
+
+function hasConflictPolicyInput(policy: TenantImportDryRunConflictPolicy): boolean {
+  return Object.values(policy).some((value) => value !== undefined);
 }
 
 function safeAddContentTypeParser(app: FastifyInstance, contentType: string): void {

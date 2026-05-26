@@ -431,7 +431,13 @@ const adminActionFlags: Record<string, readonly string[]> = {
   "tenant-exports:get": [],
   "tenant-exports:status": [],
   "tenant-exports:download": ["--output", "--force"],
-  "tenant-imports:dry-run": [],
+  "tenant-imports:dry-run": [
+    "--row-id-conflicts",
+    "--principal-references",
+    "--resource-references",
+    "--verified-state",
+    "--primary-domain",
+  ],
 };
 
 const dynamicToolIdsScript = String.raw`command helix tool list --source openapi 2>/dev/null | node -e 'let input = ""; process.stdin.on("data", (chunk) => input += chunk); process.stdin.on("end", () => { try { const parsed = JSON.parse(input); for (const tool of Array.isArray(parsed.tools) ? parsed.tools : []) { if (tool && typeof tool.id === "string") console.log(tool.id); } } catch {} });'`;

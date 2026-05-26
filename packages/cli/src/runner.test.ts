@@ -597,6 +597,49 @@ describe("runCli durable tenant export operator commands", () => {
           },
         },
       ]);
+      requests.length = 0;
+      stdout.output = "";
+      stderr.output = "";
+
+      await expect(
+        runCli(
+          [
+            "admin",
+            "tenant-imports",
+            "dry-run",
+            "acme",
+            archive,
+            "--row-id-conflicts",
+            "preserve",
+            "--principal-references",
+            "null",
+            "--verified-state",
+            "preserve",
+          ],
+          { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+          {
+            stdin: Readable.from([]),
+            stdout,
+            stderr,
+          },
+          fetchImpl,
+        ),
+      ).resolves.toBe(0);
+
+      expect(requests).toEqual([
+        {
+          url: "https://helix.example/api/admin/tenants/acme/import/dry-run?rowIdConflicts=preserve&principalReferences=null&verifiedState=preserve",
+          init: {
+            method: "POST",
+            headers: {
+              accept: "application/json",
+              authorization: "Bearer token-1",
+              "content-type": "application/x-tar",
+            },
+            body: archiveBytes,
+          },
+        },
+      ]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

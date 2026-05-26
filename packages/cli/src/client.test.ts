@@ -532,6 +532,34 @@ describe("buildHelixRequest", () => {
         body: archiveBytes,
       },
     });
+
+    expect(
+      buildHelixRequest(
+        {
+          kind: "tenant-import-dry-run",
+          slug: "acme",
+          archive: "./acme.tar",
+          conflictPolicy: {
+            rowIdConflicts: "preserve",
+            principalReferences: "null",
+            verifiedState: "preserve",
+          },
+        },
+        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+        archiveBytes,
+      ),
+    ).toEqual({
+      url: "https://helix.example/api/admin/tenants/acme/import/dry-run?rowIdConflicts=preserve&principalReferences=null&verifiedState=preserve",
+      init: {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: "Bearer token-1",
+          "content-type": "application/x-tar",
+        },
+        body: archiveBytes,
+      },
+    });
   });
 
   it("builds an action status polling request", () => {

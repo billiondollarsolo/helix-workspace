@@ -87,6 +87,7 @@ export type HelixCommand =
       readonly kind: "tenant-import-dry-run";
       readonly slug: string;
       readonly archive: string;
+      readonly conflictPolicy?: TenantImportDryRunConflictPolicy;
     }
   | { readonly kind: "backup-create" }
   | { readonly kind: "restore-from"; readonly backupId: string; readonly encrypted?: boolean }
@@ -119,6 +120,14 @@ export type TenantStorageMigrationStatus =
   | "failed"
   | "dry_run";
 export type TenantExportJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface TenantImportDryRunConflictPolicy {
+  readonly rowIdConflicts?: "regenerate" | "preserve" | undefined;
+  readonly principalReferences?: "preserve" | "null" | undefined;
+  readonly resourceReferences?: "require-remap" | "preserve" | undefined;
+  readonly verifiedState?: "regenerate" | "preserve" | undefined;
+  readonly primaryDomain?: "preserve" | "null" | undefined;
+}
 
 export type JsonArgument =
   | { readonly source: "empty" }
@@ -2262,17 +2271,60 @@ function parseTenantImportDryRunCommand(
     slug === undefined ||
     slug.startsWith("-") ||
     archive === undefined ||
-    archive.startsWith("-") ||
-    args.length > 0
+    archive.startsWith("-")
   ) {
     throw new CliUsageError(adminTenantImportsDryRunUsage);
   }
-  return { kind: "tenant-import-dry-run", slug, archive };
+  const conflictPolicy: Partial<Record<keyof TenantImportDryRunConflictPolicy, string>> = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    const field = tenantImportConflictPolicyFlags.get(flag ?? "");
+    const value = args[index + 1];
+    if (
+      field === undefined ||
+      value === undefined ||
+      value.startsWith("--") ||
+      conflictPolicy[field] !== undefined ||
+      !tenantImportConflictPolicyValues[field].has(value)
+    ) {
+      throw new CliUsageError(adminTenantImportsDryRunUsage);
+    }
+    conflictPolicy[field] = value;
+    index += 1;
+  }
+  const parsedConflictPolicy = conflictPolicy as TenantImportDryRunConflictPolicy;
+  return {
+    kind: "tenant-import-dry-run",
+    slug,
+    archive,
+    ...(Object.keys(parsedConflictPolicy).length === 0
+      ? {}
+      : { conflictPolicy: parsedConflictPolicy }),
+  };
 }
 
 const adminTenantImportsUsage = "Usage: helix admin tenant-imports dry-run <slug> <archive-path>";
 const adminTenantImportsDryRunUsage =
-  "Usage: helix admin tenant-imports dry-run <slug> <archive-path>";
+  "Usage: helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>]";
+
+const tenantImportConflictPolicyFlags = new Map<string, keyof TenantImportDryRunConflictPolicy>([
+  ["--row-id-conflicts", "rowIdConflicts"],
+  ["--principal-references", "principalReferences"],
+  ["--resource-references", "resourceReferences"],
+  ["--verified-state", "verifiedState"],
+  ["--primary-domain", "primaryDomain"],
+]);
+
+const tenantImportConflictPolicyValues: Record<
+  keyof TenantImportDryRunConflictPolicy,
+  ReadonlySet<string>
+> = {
+  rowIdConflicts: new Set(["regenerate", "preserve"]),
+  principalReferences: new Set(["preserve", "null"]),
+  resourceReferences: new Set(["require-remap", "preserve"]),
+  verifiedState: new Set(["regenerate", "preserve"]),
+  primaryDomain: new Set(["preserve", "null"]),
+};
 
 const adminUsage =
   "Usage: helix admin <app-passwords|agent-credentials|users|audit|storage|storage-migrations|tenant-exports|tenant-imports> <command> [--json [JSON]]";
@@ -3167,7 +3219,7 @@ export const usage = `Usage:
   helix admin tenant-exports list <slug> [--status <queued|running|succeeded|failed>] [--limit <number>] [--cursor <cursor>]
   helix admin tenant-exports status <slug> <job-id>
   helix admin tenant-exports download <slug> <job-id> --output <path> [--force]
-  helix admin tenant-imports dry-run <slug> <archive-path>
+  helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>]
   helix backup create
   helix restore --from <backup-id> [--encrypted]
   helix reindex --all

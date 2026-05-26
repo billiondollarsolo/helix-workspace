@@ -313,6 +313,90 @@ describe("buildTenantImportPlan", () => {
     );
   });
 
+  it("applies explicit row ID conflict policy without mutating target IDs", () => {
+    const input = validImportPlanInput();
+
+    const plan = buildTenantImportPlan({
+      ...input,
+      conflictPolicy: {
+        rowIdConflicts: "preserve",
+      },
+      targetState: {
+        existingRowIds: [
+          {
+            table: "admin_domains",
+            id: domainId,
+          },
+        ],
+      },
+    });
+
+    expect(plan.operations[0]).toMatchObject({
+      action: "insert",
+      targetId: null,
+      row: {
+        id: domainId,
+      },
+      conflictPolicy: {
+        rowId: "preserve",
+      },
+    });
+    expect(plan.conflicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "target_primary_key_conflict",
+          sourceId: domainId,
+        }),
+      ]),
+    );
+  });
+
+  it("applies explicit conflict policy input without mutating planned rows", () => {
+    const input = validImportPlanInput();
+
+    const plan = buildTenantImportPlan({
+      ...input,
+      conflictPolicy: {
+        principalReferences: "null",
+        resourceReferences: "preserve",
+        verifiedState: "preserve",
+      },
+    });
+
+    expect(plan.operations[0]).toMatchObject({
+      targetId: null,
+      row: {
+        id: domainId,
+        createdBy: actorId,
+        verificationStatus: "verified",
+      },
+      conflictPolicy: {
+        rowId: "preserve",
+        references: {
+          createdBy: "null",
+        },
+        state: {
+          verificationStatus: "preserve",
+          verifiedAt: "preserve",
+          isPrimary: "preserve",
+        },
+      },
+    });
+    expect(plan.operations[2]).toMatchObject({
+      row: {
+        actorId,
+        resourceId: "msg-1",
+      },
+      conflictPolicy: {
+        references: {
+          actorId: "null",
+          resourceId: "preserve",
+        },
+      },
+    });
+    expect(plan.operations[2]?.action).toBe("insert");
+  });
+
   it("returns validation blockers and no operations when the archive rows are invalid", () => {
     const input = validImportPlanInput();
     const manifest = withChunkManifest(input.manifest, {

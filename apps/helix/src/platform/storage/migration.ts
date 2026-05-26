@@ -93,6 +93,10 @@ export interface TenantStorageMigrationJobStore {
     readonly id: string;
     readonly orgId: string;
   }): Promise<TenantStorageMigrationJobRecord | null>;
+  getObservabilitySnapshot(input: {
+    readonly stalledBefore: Date;
+    readonly now: Date;
+  }): Promise<TenantStorageMigrationObservabilitySnapshot>;
   claimPending(input?: {
     readonly limit?: number | undefined;
   }): Promise<readonly TenantStorageMigrationJobRecord[]>;
@@ -104,6 +108,33 @@ export interface TenantStorageMigrationJobStore {
     readonly id: string;
     readonly error: string;
   }): Promise<TenantStorageMigrationJobRecord>;
+}
+
+export interface TenantStorageMigrationStatusCount {
+  readonly target: TenantStorageMigrationTarget;
+  readonly status: TenantStorageMigrationJobStatus;
+  readonly count: number;
+}
+
+export interface TenantStorageMigrationStalledCount {
+  readonly target: TenantStorageMigrationTarget;
+  readonly count: number;
+  readonly oldestAgeSeconds: number;
+}
+
+export interface TenantStorageMigrationObservabilitySnapshot {
+  readonly activeJobs: readonly TenantStorageMigrationStatusCount[];
+  readonly stalledJobs: readonly TenantStorageMigrationStalledCount[];
+}
+
+export interface TenantStorageMigrationMetrics {
+  recordTenantStorageMigrationJob(input: {
+    readonly target: TenantStorageMigrationTarget;
+    readonly status: TenantStorageMigrationJobStatus;
+  }): void;
+  setTenantStorageMigrationObservability(
+    snapshot: TenantStorageMigrationObservabilitySnapshot,
+  ): void;
 }
 
 export interface TenantStorageMigrationStoragePair {
@@ -129,7 +160,7 @@ export interface TenantStorageMigrationPairResolverOptions {
 export interface TenantStorageMigrationWorkerOptions {
   readonly store: Pick<
     TenantStorageMigrationJobStore,
-    "claimPending" | "markCompleted" | "markFailed"
+    "claimPending" | "getObservabilitySnapshot" | "markCompleted" | "markFailed"
   >;
   readonly resolveStoragePair: TenantStorageMigrationPairResolver;
   readonly listObjects?: (
@@ -138,6 +169,9 @@ export interface TenantStorageMigrationWorkerOptions {
   readonly sql?: postgres.Sql | undefined;
   readonly intervalMs?: number | undefined;
   readonly batchSize?: number | undefined;
+  readonly stalledAfterMs?: number | undefined;
+  readonly now?: (() => Date) | undefined;
+  readonly metrics?: TenantStorageMigrationMetrics | undefined;
   readonly onResult?: (result: TenantStorageMigrationWorkerRunResult) => void;
   readonly onError?: (error: unknown) => void;
 }
@@ -174,6 +208,18 @@ interface TenantStorageMigrationJobRow {
   readonly completed_at: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
+}
+
+interface TenantStorageMigrationStatusCountRow {
+  readonly target: TenantStorageMigrationTarget;
+  readonly status: TenantStorageMigrationJobStatus;
+  readonly count: number | string;
+}
+
+interface TenantStorageMigrationStalledCountRow {
+  readonly target: TenantStorageMigrationTarget;
+  readonly count: number | string;
+  readonly oldest_age_seconds: number | string | null;
 }
 
 export async function listTenantStorageMigrationObjects(
@@ -314,6 +360,45 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
     return rows[0] === undefined ? null : mapTenantStorageMigrationJobRow(rows[0]);
   }
 
+  async getObservabilitySnapshot(input: {
+    readonly stalledBefore: Date;
+    readonly now: Date;
+  }): Promise<TenantStorageMigrationObservabilitySnapshot> {
+    const activeRows = (await this.sql`
+      select
+        target,
+        status,
+        count(*)::integer as count
+      from tenant_storage_migration_jobs
+      where status in ('queued', 'running', 'failed')
+      group by target, status
+      order by target, status
+    `) as unknown as readonly TenantStorageMigrationStatusCountRow[];
+    const stalledRows = (await this.sql`
+      select
+        target,
+        count(*)::integer as count,
+        extract(epoch from (${input.now}::timestamptz - min(updated_at)))::double precision as oldest_age_seconds
+      from tenant_storage_migration_jobs
+      where status = 'running'
+        and updated_at < ${input.stalledBefore}
+      group by target
+      order by target
+    `) as unknown as readonly TenantStorageMigrationStalledCountRow[];
+    return {
+      activeJobs: activeRows.map((row) => ({
+        target: row.target,
+        status: row.status,
+        count: numericCount(row.count),
+      })),
+      stalledJobs: stalledRows.map((row) => ({
+        target: row.target,
+        count: numericCount(row.count),
+        oldestAgeSeconds: numericCount(row.oldest_age_seconds ?? 0),
+      })),
+    };
+  }
+
   async claimPending(
     input: { readonly limit?: number | undefined } = {},
   ): Promise<readonly TenantStorageMigrationJobRecord[]> {
@@ -440,6 +525,9 @@ const defaultMigrationWorkerBatchSize = 2;
 export class TenantStorageMigrationWorker {
   private readonly intervalMs: number;
   private readonly batchSize: number;
+  private readonly stalledAfterMs: number;
+  private readonly now: () => Date;
+  private readonly metrics: TenantStorageMigrationMetrics | undefined;
   private readonly onResult: ((result: TenantStorageMigrationWorkerRunResult) => void) | undefined;
   private readonly onError: ((error: unknown) => void) | undefined;
   private timer: NodeJS.Timeout | undefined;
@@ -448,6 +536,9 @@ export class TenantStorageMigrationWorker {
   constructor(private readonly options: TenantStorageMigrationWorkerOptions) {
     this.intervalMs = options.intervalMs ?? defaultMigrationWorkerIntervalMs;
     this.batchSize = options.batchSize ?? defaultMigrationWorkerBatchSize;
+    this.stalledAfterMs = options.stalledAfterMs ?? 30 * 60 * 1000;
+    this.now = options.now ?? (() => new Date());
+    this.metrics = options.metrics;
     this.onResult = options.onResult;
     this.onError = options.onError;
   }
@@ -496,6 +587,10 @@ export class TenantStorageMigrationWorker {
               dryRun: job.dryRun,
             });
             await this.options.store.markCompleted({ id: job.id, result });
+            this.metrics?.recordTenantStorageMigrationJob({
+              target: job.target,
+              status: jobStatusFromMigrationResult(result),
+            });
             if (result.status === "dry_run") {
               dryRun += 1;
             } else {
@@ -504,11 +599,17 @@ export class TenantStorageMigrationWorker {
           });
         } catch (error) {
           await this.options.store.markFailed({ id: job.id, error: errorMessage(error) });
+          this.metrics?.recordTenantStorageMigrationJob({
+            target: job.target,
+            status: "failed",
+          });
           failed += 1;
         }
       }
 
-      return { claimed: jobs.length, succeeded, dryRun, failed };
+      const result = { claimed: jobs.length, succeeded, dryRun, failed };
+      await this.recordObservabilitySnapshot();
+      return result;
     });
   }
 
@@ -527,6 +628,23 @@ export class TenantStorageMigrationWorker {
   ): Promise<TenantStorageMigrationStoragePair> | TenantStorageMigrationStoragePair {
     assertLiveMigrationSnapshots(job);
     return this.options.resolveStoragePair(job);
+  }
+
+  private async recordObservabilitySnapshot(): Promise<void> {
+    if (this.metrics === undefined) {
+      return;
+    }
+    try {
+      const now = this.now();
+      const stalledBefore = new Date(now.getTime() - this.stalledAfterMs);
+      const snapshot = await this.options.store.getObservabilitySnapshot({
+        stalledBefore,
+        now,
+      });
+      this.metrics.setTenantStorageMigrationObservability(snapshot);
+    } catch (error) {
+      this.onError?.(error);
+    }
   }
 
   private runScheduledMigration(): Promise<TenantStorageMigrationWorkerRunResult> {
@@ -840,6 +958,10 @@ function mapTenantStorageMigrationJobRow(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function numericCount(value: number | string): number {
+  return typeof value === "number" ? value : Number.parseInt(value, 10);
 }
 
 function errorMessage(error: unknown): string {

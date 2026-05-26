@@ -125,4 +125,39 @@ describe("platform metrics", () => {
     expect(output).toContain('helix_websocket_connections_active{route="/ws/chat"} 1');
     expect(output).toContain('helix_websocket_connections_active{route="/sync/docs/:docId"} 1');
   });
+
+  it("records tenant storage migration metrics without high-cardinality labels", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordTenantStorageMigrationJob({ target: "byo", status: "succeeded" });
+    metrics.recordTenantStorageMigrationJob({ target: "helix-default", status: "failed" });
+    metrics.setTenantStorageMigrationObservability({
+      activeJobs: [
+        { target: "byo", status: "running", count: 2 },
+        { target: "helix-default", status: "failed", count: 1 },
+      ],
+      stalledJobs: [{ target: "byo", count: 1, oldestAgeSeconds: 2_400 }],
+    });
+
+    const output = await metrics.registry.metrics();
+
+    expect(output).toContain(
+      'helix_tenant_storage_migration_jobs_total{target="byo",status="succeeded"} 1',
+    );
+    expect(output).toContain(
+      'helix_tenant_storage_migration_jobs_total{target="helix-default",status="failed"} 1',
+    );
+    expect(output).toContain(
+      'helix_tenant_storage_migration_jobs_active{target="byo",status="running"} 2',
+    );
+    expect(output).toContain(
+      'helix_tenant_storage_migration_jobs_active{target="helix-default",status="failed"} 1',
+    );
+    expect(output).toContain('helix_tenant_storage_migration_stalled_jobs{target="byo"} 1');
+    expect(output).toContain(
+      'helix_tenant_storage_migration_oldest_stalled_age_seconds{target="byo"} 2400',
+    );
+    expect(output).not.toContain("org_id=");
+    expect(output).not.toContain("job_id=");
+  });
 });

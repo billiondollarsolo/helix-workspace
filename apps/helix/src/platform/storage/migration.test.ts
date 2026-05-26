@@ -10,6 +10,8 @@ import {
   TenantStorageMigrationWorker,
   type TenantStorageMigrationJobRecord,
   type TenantStorageMigrationJobStore,
+  type TenantStorageMigrationMetrics,
+  type TenantStorageMigrationObservabilitySnapshot,
 } from "./migration.js";
 import type { TenantStorageClient } from "./tenant-resolver.js";
 
@@ -285,6 +287,32 @@ describe("PostgresTenantStorageMigrationJobStore", () => {
     expect(recording.calls[0]?.text).toContain("source_storage");
     expect(recording.calls[0]?.text).toContain("target_storage");
   });
+
+  it("builds low-cardinality observability snapshots for active and stalled jobs", async () => {
+    const recording = createRecordingSql([
+      [
+        { target: "byo", status: "running", count: "2" },
+        { target: "helix-default", status: "failed", count: 1 },
+      ],
+      [{ target: "byo", count: "1", oldest_age_seconds: "2400" }],
+    ]);
+    const store = new PostgresTenantStorageMigrationJobStore(recording.sql);
+
+    const snapshot = await store.getObservabilitySnapshot({
+      stalledBefore: new Date("2026-05-24T10:00:00.000Z"),
+      now: new Date("2026-05-24T10:40:00.000Z"),
+    });
+
+    expect(snapshot).toEqual({
+      activeJobs: [
+        { target: "byo", status: "running", count: 2 },
+        { target: "helix-default", status: "failed", count: 1 },
+      ],
+      stalledJobs: [{ target: "byo", count: 1, oldestAgeSeconds: 2400 }],
+    });
+    expect(recording.calls[0]?.text).toContain("group by target, status");
+    expect(recording.calls[1]?.text).toContain("updated_at < ?");
+  });
 });
 
 describe("TenantStorageMigrationWorker", () => {
@@ -367,6 +395,85 @@ describe("TenantStorageMigrationWorker", () => {
       failed: 1,
     });
     expect(store.failed).toEqual([{ id: "job-1", error: "BYO storage config is not ready." }]);
+  });
+
+  it("records migration job and stalled-job metrics after worker runs", async () => {
+    const store = new InMemoryTenantStorageMigrationJobStore(
+      [
+        migrationJob({
+          id: "job-1",
+          orgId: "org-1",
+          target: "byo",
+          sourceStorage: { managedBy: "helix-default", storage: null },
+          targetStorage: {
+            managedBy: "byo",
+            storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
+          },
+        }),
+      ],
+      {
+        activeJobs: [{ target: "byo", status: "failed", count: 1 }],
+        stalledJobs: [{ target: "byo", count: 1, oldestAgeSeconds: 1_900 }],
+      },
+    );
+    const metrics = new RecordingTenantStorageMigrationMetrics();
+    const worker = new TenantStorageMigrationWorker({
+      store,
+      metrics,
+      now: () => new Date("2026-05-24T10:40:00.000Z"),
+      stalledAfterMs: 30 * 60_000,
+      listObjects: () => [],
+      resolveStoragePair: () => {
+        throw new Error("BYO storage config is not ready.");
+      },
+    });
+
+    await worker.runOnce();
+
+    expect(metrics.jobs).toEqual([{ target: "byo", status: "failed" }]);
+    expect(metrics.snapshots).toEqual([
+      {
+        activeJobs: [{ target: "byo", status: "failed", count: 1 }],
+        stalledJobs: [{ target: "byo", count: 1, oldestAgeSeconds: 1_900 }],
+      },
+    ]);
+    expect(store.stalledBeforeValues).toEqual([new Date("2026-05-24T10:10:00.000Z")]);
+  });
+
+  it("does not fail completed migration work when metrics snapshot refresh fails", async () => {
+    const store = new InMemoryTenantStorageMigrationJobStore(
+      [
+        migrationJob({
+          id: "job-1",
+          orgId: "org-1",
+          target: "byo",
+          dryRun: true,
+        }),
+      ],
+      new Error("metrics snapshot unavailable"),
+    );
+    const errors: unknown[] = [];
+    const worker = new TenantStorageMigrationWorker({
+      store,
+      metrics: new RecordingTenantStorageMigrationMetrics(),
+      listObjects: () => [{ storageKey: "drive/report.txt" }],
+      resolveStoragePair: () => {
+        throw new Error("storage pair should not be resolved for dry-run jobs");
+      },
+      onError: (error) => {
+        errors.push(error);
+      },
+    });
+
+    await expect(worker.runOnce()).resolves.toEqual({
+      claimed: 1,
+      succeeded: 0,
+      dryRun: 1,
+      failed: 0,
+    });
+    expect(store.completed).toHaveLength(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toEqual(new Error("metrics snapshot unavailable"));
   });
 
   it("fails live jobs before copy when staged storage snapshots are missing", async () => {
@@ -742,12 +849,19 @@ function migrationJob(
 
 class InMemoryTenantStorageMigrationJobStore implements Pick<
   TenantStorageMigrationJobStore,
-  "claimPending" | "markCompleted" | "markFailed"
+  "claimPending" | "getObservabilitySnapshot" | "markCompleted" | "markFailed"
 > {
   readonly completed: Parameters<TenantStorageMigrationJobStore["markCompleted"]>[0][] = [];
   readonly failed: Parameters<TenantStorageMigrationJobStore["markFailed"]>[0][] = [];
+  readonly stalledBeforeValues: Date[] = [];
 
-  constructor(private readonly jobs: TenantStorageMigrationJobRecord[]) {}
+  constructor(
+    private readonly jobs: TenantStorageMigrationJobRecord[],
+    private readonly snapshot: Error | TenantStorageMigrationObservabilitySnapshot = {
+      activeJobs: [],
+      stalledJobs: [],
+    },
+  ) {}
 
   async claimPending(): Promise<readonly TenantStorageMigrationJobRecord[]> {
     return this.jobs.splice(0, this.jobs.length).map((job) => ({
@@ -779,5 +893,33 @@ class InMemoryTenantStorageMigrationJobStore implements Pick<
   ): Promise<TenantStorageMigrationJobRecord> {
     this.failed.push(input);
     return migrationJob({ id: input.id, status: "failed", lastError: input.error });
+  }
+
+  async getObservabilitySnapshot(input: {
+    readonly stalledBefore: Date;
+  }): Promise<TenantStorageMigrationObservabilitySnapshot> {
+    this.stalledBeforeValues.push(input.stalledBefore);
+    if (this.snapshot instanceof Error) {
+      throw this.snapshot;
+    }
+    return this.snapshot;
+  }
+}
+
+class RecordingTenantStorageMigrationMetrics implements TenantStorageMigrationMetrics {
+  readonly jobs: Parameters<TenantStorageMigrationMetrics["recordTenantStorageMigrationJob"]>[0][] =
+    [];
+  readonly snapshots: TenantStorageMigrationObservabilitySnapshot[] = [];
+
+  recordTenantStorageMigrationJob(
+    input: Parameters<TenantStorageMigrationMetrics["recordTenantStorageMigrationJob"]>[0],
+  ): void {
+    this.jobs.push(input);
+  }
+
+  setTenantStorageMigrationObservability(
+    snapshot: TenantStorageMigrationObservabilitySnapshot,
+  ): void {
+    this.snapshots.push(snapshot);
   }
 }

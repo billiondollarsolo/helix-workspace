@@ -57,6 +57,28 @@ export interface PlatformMetrics {
     readonly recordCount: number;
     readonly lagSeconds: number;
   }): void;
+  recordTenantStorageMigrationJob(input: {
+    readonly target: "byo" | "helix-default";
+    readonly status:
+      | "queued"
+      | "running"
+      | "succeeded"
+      | "succeeded_with_errors"
+      | "failed"
+      | "dry_run";
+  }): void;
+  setTenantStorageMigrationObservability(input: {
+    readonly activeJobs: readonly {
+      readonly target: "byo" | "helix-default";
+      readonly status: "queued" | "running" | "failed";
+      readonly count: number;
+    }[];
+    readonly stalledJobs: readonly {
+      readonly target: "byo" | "helix-default";
+      readonly count: number;
+      readonly oldestAgeSeconds: number;
+    }[];
+  }): void;
   /**
    * Records a WebSocket connecting on a route (Follow-up B). Increments the
    * `helix_websocket_connections_active` gauge that the Helm HPA scales on.
@@ -159,6 +181,30 @@ export function createPlatformMetrics(): PlatformMetrics {
     name: "helix_audit_shipping_backlog_records",
     help: "Number of audit records waiting to be shipped by destination.",
     labelNames: ["destination"],
+    registers: [registry],
+  });
+  const tenantStorageMigrationJobs = new Counter({
+    name: "helix_tenant_storage_migration_jobs_total",
+    help: "Total tenant storage migration jobs processed by target and terminal status.",
+    labelNames: ["target", "status"],
+    registers: [registry],
+  });
+  const tenantStorageMigrationActiveJobs = new Gauge({
+    name: "helix_tenant_storage_migration_jobs_active",
+    help: "Active tenant storage migration jobs by target and status.",
+    labelNames: ["target", "status"],
+    registers: [registry],
+  });
+  const tenantStorageMigrationStalledJobs = new Gauge({
+    name: "helix_tenant_storage_migration_stalled_jobs",
+    help: "Running tenant storage migration jobs older than the stalled threshold.",
+    labelNames: ["target"],
+    registers: [registry],
+  });
+  const tenantStorageMigrationOldestStalledAge = new Gauge({
+    name: "helix_tenant_storage_migration_oldest_stalled_age_seconds",
+    help: "Age in seconds of the oldest stalled tenant storage migration job by target.",
+    labelNames: ["target"],
     registers: [registry],
   });
   const websocketConnectionsActive = new Gauge({
@@ -268,6 +314,22 @@ export function createPlatformMetrics(): PlatformMetrics {
       const labels: LabelValues<"destination"> = { destination: input.destination };
       auditShippingBacklog.set(labels, input.recordCount);
       auditShippingLag.set(labels, input.lagSeconds);
+    },
+    recordTenantStorageMigrationJob(input) {
+      tenantStorageMigrationJobs.inc({ target: input.target, status: input.status });
+    },
+    setTenantStorageMigrationObservability(input) {
+      for (const target of ["byo", "helix-default"] as const) {
+        for (const status of ["queued", "running", "failed"] as const) {
+          const count =
+            input.activeJobs.find((entry) => entry.target === target && entry.status === status)
+              ?.count ?? 0;
+          tenantStorageMigrationActiveJobs.set({ target, status }, count);
+        }
+        const stalled = input.stalledJobs.find((entry) => entry.target === target);
+        tenantStorageMigrationStalledJobs.set({ target }, stalled?.count ?? 0);
+        tenantStorageMigrationOldestStalledAge.set({ target }, stalled?.oldestAgeSeconds ?? 0);
+      }
     },
     recordWebsocketConnectionOpened(input) {
       websocketConnectionsActive.inc({ route: input.route });

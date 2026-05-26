@@ -1052,6 +1052,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         }),
         intervalMs: envPositiveInt("HELIX_TENANT_STORAGE_MIGRATION_INTERVAL_MS", 15_000),
         batchSize: envPositiveInt("HELIX_TENANT_STORAGE_MIGRATION_BATCH_SIZE", 2),
+        stalledAfterMs: envPositiveInt(
+          "HELIX_TENANT_STORAGE_MIGRATION_STALLED_AFTER_MS",
+          30 * 60_000,
+        ),
+        metrics,
         onResult: (result) => {
           if (result.claimed > 0) {
             app.log.info(result, "Tenant storage migration worker completed");

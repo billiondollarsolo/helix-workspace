@@ -566,6 +566,74 @@ describe("PostgresSlidesStore tenant storage snapshots", () => {
     );
     expect(recording.calls.some((call) => call.text.includes("insert into objects"))).toBe(false);
   });
+
+  it("restores presentation state from a tenant-stored snapshot version", async () => {
+    const recording = createRecordingSlidesSql();
+    const storage = new RecordingStorageClient();
+    const store = new PostgresSlidesStore(recording.sql, {
+      storageResolver: storageResolverFor(storage),
+    });
+
+    const deck = await store.createDeck({ orgId, actorId, title: "Storage Deck" });
+    const slide = await store.createSlide({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      content: shapedBulletsContent,
+      speakerNotes: "Review metrics",
+    });
+    const versionTwoSnapshot = storage.puts[3];
+    await store.updateDeck({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      title: "Updated Storage Deck",
+    });
+
+    const restored = await store.restoreSnapshotVersion({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      versionNumber: 2,
+    });
+
+    expect(restored?.deck).toMatchObject({ id: deck.id, title: "Storage Deck", slideCount: 1 });
+    expect(restored?.slides).toEqual([
+      expect.objectContaining({
+        id: slide.id,
+        position: 0,
+        layout: "bullets",
+        content: shapedBulletsContent,
+        speakerNotes: "Review metrics",
+      }),
+    ]);
+    expect(storage.puts).toHaveLength(8);
+    expect(new TextDecoder().decode(storage.puts[6]?.body)).toBe(
+      new TextDecoder().decode(versionTwoSnapshot?.body),
+    );
+    expect(storage.puts[7]?.key).toBe(`slides/${orgId}/${deck.id}/versions/4`);
+    const deckUpdate = recording.calls
+      .filter(
+        (call) => call.text.includes("update slide_decks") && call.text.includes("returning *"),
+      )
+      .at(-1);
+    expect(deckUpdate?.values).toContain("Storage Deck");
+    expect(recording.calls.some((call) => call.text.includes("delete from slides"))).toBe(true);
+    const restoreVersionInsert = recording.calls
+      .filter((call) => call.text.includes("insert into drive_versions"))
+      .at(-1);
+    expect(restoreVersionInsert?.values).toContain(4);
+    expect(restoreVersionInsert?.values).toContain(storage.puts[7]?.key);
+    expect(restoreVersionInsert?.values).toContain(
+      sha256Hex(storage.puts[7]?.body ?? new Uint8Array()),
+    );
+    const restoreActivity = recording.calls.find(
+      (call) =>
+        call.text.includes("insert into activity") &&
+        call.values.includes("slides.version.restored"),
+    );
+    expect(restoreActivity?.values).toContain(deck.id);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -612,18 +680,55 @@ function createRecordingSlidesSql(): {
     updated_at: Date;
   }> = [];
   let versionCount = 0;
+  const driveVersions: Array<{
+    id: string;
+    org_id: string;
+    object_id: string;
+    version_number: number;
+    storage_key: string;
+    mime_type: string;
+    byte_size: number;
+    sha256: string | null;
+    metadata: Record<string, unknown>;
+    created_by_actor_id: string | null;
+    created_at: Date;
+  }> = [];
   const tx = Object.assign(
     (strings: TemplateStringsArray, ...values: unknown[]) => {
       const text = strings.join("?");
       calls.push({ text, values });
       if (text.includes("insert into slide_decks")) {
-        return Promise.resolve([{ ...deckRow, title: String(values[1]) }]);
+        Object.assign(deckRow, { title: String(values[1]) });
+        return Promise.resolve([deckRow]);
+      }
+      if (text.includes("update slide_decks") && text.includes("returning *")) {
+        Object.assign(deckRow, {
+          title: String(values[0]),
+          metadata: values[1] as Record<string, unknown>,
+          updated_at: now,
+        });
+        return Promise.resolve([deckRow]);
       }
       if (text.includes("from slide_decks")) {
         return Promise.resolve([deckRow]);
       }
       if (text.includes("count(*)::int as slide_count")) {
         return Promise.resolve([{ slide_count: slides.length }]);
+      }
+      if (text.includes("insert into slides (id")) {
+        const slide = {
+          id: String(values[0]),
+          org_id: orgId,
+          deck_id: String(values[2]),
+          position: Number(values[3]),
+          layout: String(values[4]),
+          content: values[5] as Record<string, unknown>,
+          speaker_notes: String(values[6]),
+          created_at: now,
+          updated_at: now,
+        };
+        slides.push(slide);
+        return Promise.resolve([]);
       }
       if (text.includes("insert into slides")) {
         const slide = {
@@ -640,11 +745,38 @@ function createRecordingSlidesSql(): {
         slides.splice(0, slides.length, slide);
         return Promise.resolve([slide]);
       }
+      if (text.includes("delete from slides")) {
+        slides.splice(0, slides.length);
+        return Promise.resolve([]);
+      }
       if (text.includes("max(version_number)")) {
         return Promise.resolve([{ version_number: versionCount + 1 }]);
       }
+      if (text.includes("from drive_versions")) {
+        return Promise.resolve(
+          driveVersions.filter(
+            (version) =>
+              version.org_id === values[0] &&
+              version.object_id === values[1] &&
+              version.version_number === values[2],
+          ),
+        );
+      }
       if (text.includes("insert into drive_versions")) {
         versionCount += 1;
+        driveVersions.push({
+          id: `version-${String(versionCount)}`,
+          org_id: String(values[0]),
+          object_id: String(values[1]),
+          version_number: Number(values[2]),
+          storage_key: String(values[3]),
+          mime_type: "application/vnd.helix.presentation+json",
+          byte_size: Number(values[4]),
+          sha256: values[5] as string | null,
+          metadata: values[6] as Record<string, unknown>,
+          created_by_actor_id: String(values[7]),
+          created_at: now,
+        });
         return Promise.resolve([]);
       }
       if (text.includes("from slides")) {
@@ -684,8 +816,12 @@ class RecordingStorageClient implements TenantStorageClient {
     this.puts.push(object);
   }
 
-  async get(): Promise<null> {
-    return null;
+  async get(key: string): Promise<{
+    readonly key: string;
+    readonly body: Uint8Array;
+    readonly contentType?: string;
+  } | null> {
+    return this.puts.find((object) => object.key === key) ?? null;
   }
 
   async delete(): Promise<void> {}

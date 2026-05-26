@@ -73,6 +73,13 @@ export interface ReorderSlidesInput {
   readonly slideIds: readonly string[];
 }
 
+export interface RestoreSlideDeckSnapshotVersionInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly deckId: string;
+  readonly versionNumber: number;
+}
+
 export interface SlideOperationLogRecord {
   readonly id: string;
   readonly orgId: string;
@@ -181,6 +188,10 @@ export interface SlidesStore {
   }): Promise<readonly SlideOperationLogRecord[]>;
   appendOperation(input: AppendSlideOperationInput): Promise<SlideOperationLogRecord>;
   applyOperation(input: ApplySlideOperationInput): Promise<ApplySlideOperationResult>;
+  restoreSnapshotVersion(input: RestoreSlideDeckSnapshotVersionInput): Promise<{
+    readonly deck: SlideDeckSummaryRecord;
+    readonly slides: readonly SlideRecord[];
+  } | null>;
 }
 
 interface SlideDeckRow {
@@ -220,6 +231,20 @@ interface SlideOperationLogRow {
   readonly revision: number;
   readonly base_revision: number;
   readonly operation: JsonObject;
+  readonly created_at: Date;
+}
+
+interface DriveVersionRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly object_id: string;
+  readonly version_number: number;
+  readonly storage_key: string;
+  readonly mime_type: string;
+  readonly byte_size: number;
+  readonly sha256: string | null;
+  readonly metadata: JsonObject;
+  readonly created_by_actor_id: string | null;
   readonly created_at: Date;
 }
 
@@ -707,6 +732,88 @@ export class PostgresSlidesStore implements SlidesStore {
     });
   }
 
+  async restoreSnapshotVersion(input: RestoreSlideDeckSnapshotVersionInput): Promise<{
+    readonly deck: SlideDeckSummaryRecord;
+    readonly slides: readonly SlideRecord[];
+  } | null> {
+    return this.sql.begin(async (tx) => {
+      await requireDeckAccessForUpdate(tx, input.orgId, input.actorId, input.deckId);
+      const versionRows = (await tx`
+        select *
+        from drive_versions
+        where org_id = ${input.orgId}
+          and object_id = ${input.deckId}
+          and version_number = ${input.versionNumber}
+          and mime_type = 'application/vnd.helix.presentation+json'
+        limit 1
+      `) as unknown as readonly DriveVersionRow[];
+      const version = versionRows[0];
+      if (version === undefined) {
+        return null;
+      }
+      const storage = await this.options.storageResolver?.({ orgId: input.orgId });
+      if (storage === undefined) {
+        throw new Error("Tenant storage resolver is required to restore a presentation snapshot.");
+      }
+      const object = await storage.client.get(version.storage_key);
+      if (object === null) {
+        throw new Error("Presentation snapshot version bytes are unavailable.");
+      }
+      const body = await storageObjectBodyBytes(object.body);
+      if (version.sha256 !== null && sha256Hex(body) !== version.sha256) {
+        throw new Error("Presentation snapshot version checksum mismatch.");
+      }
+      const snapshot = parseSlideDeckStorageSnapshot(body, {
+        orgId: input.orgId,
+        deckId: input.deckId,
+      });
+      const deckRows = (await tx`
+        update slide_decks
+        set title = ${snapshot.deck.title},
+            metadata = ${tx.json(toSqlJson(snapshot.deck.metadata))},
+            updated_at = now()
+        where id = ${input.deckId}
+          and org_id = ${input.orgId}
+          and deleted_at is null
+        returning *
+      `) as unknown as readonly SlideDeckRow[];
+      const restoredDeck = mapDeck(deckRows[0]);
+      await tx`
+        delete from slides
+        where org_id = ${input.orgId}
+          and deck_id = ${input.deckId}
+      `;
+      for (const slide of snapshot.slides) {
+        await tx`
+          insert into slides (id, org_id, deck_id, position, layout, content, speaker_notes)
+          values (
+            ${slide.id},
+            ${input.orgId},
+            ${input.deckId},
+            ${slide.position},
+            ${slide.layout},
+            ${tx.json(toSqlJson(slide.content))},
+            ${slide.speakerNotes}
+          )
+        `;
+      }
+      await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
+      await appendSlidesActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "slides.version.restored",
+        deckId: input.deckId,
+        payload: {
+          restoredVersionNumber: input.versionNumber,
+          restoredStorageKey: version.storage_key,
+          slideCount: snapshot.slides.length,
+        },
+      });
+      const slides = await selectSlidesForDeck(tx, input.orgId, input.deckId);
+      return { deck: { ...restoredDeck, slideCount: slides.length }, slides };
+    });
+  }
+
   async #applySyncOperation(
     tx: postgres.TransactionSql,
     input: ApplySlideOperationInput,
@@ -1180,6 +1287,133 @@ async function writeSlideDeckStorageSnapshot(input: {
   return { byteSize: body.byteLength, sha256: sha256Hex(body) };
 }
 
+interface SlideDeckStorageSnapshot {
+  readonly deck: {
+    readonly id: string;
+    readonly orgId: string;
+    readonly title: string;
+    readonly metadata: JsonObject;
+  };
+  readonly slides: readonly {
+    readonly id: string;
+    readonly position: number;
+    readonly layout: SlideLayout;
+    readonly content: SlideContent;
+    readonly speakerNotes: string;
+  }[];
+}
+
+function parseSlideDeckStorageSnapshot(
+  body: Uint8Array,
+  expected: { readonly orgId: string; readonly deckId: string },
+): SlideDeckStorageSnapshot {
+  const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
+  if (!isObjectRecord(parsed) || parsed["app"] !== "slides" || parsed["version"] !== 1) {
+    throw new Error("Presentation snapshot version has an unsupported format.");
+  }
+  const deck = parsed["deck"];
+  if (!isObjectRecord(deck)) {
+    throw new Error("Presentation snapshot version is missing deck metadata.");
+  }
+  const deckId = requiredString(deck["id"], "snapshot deck id");
+  const orgId = requiredString(deck["orgId"], "snapshot org id");
+  if (deckId !== expected.deckId || orgId !== expected.orgId) {
+    throw new Error("Presentation snapshot version belongs to a different deck.");
+  }
+  const slides = requiredArray(parsed["slides"], "snapshot slides").map(parseSlideSnapshotSlide);
+  const slideIds = new Set(slides.map((slide) => slide.id));
+  if (slideIds.size !== slides.length) {
+    throw new Error("Presentation snapshot slide ids must be unique.");
+  }
+  const positions = new Set(slides.map((slide) => slide.position));
+  if (positions.size !== slides.length || slides.some((slide) => slide.position >= slides.length)) {
+    throw new Error("Presentation snapshot slide positions must be contiguous.");
+  }
+  return {
+    deck: {
+      id: deckId,
+      orgId,
+      title: stringValue(deck["title"], "snapshot deck title"),
+      metadata: jsonObjectValue(deck["metadata"], "snapshot deck metadata"),
+    },
+    slides,
+  };
+}
+
+function parseSlideSnapshotSlide(value: unknown): SlideDeckStorageSnapshot["slides"][number] {
+  if (!isObjectRecord(value)) {
+    throw new Error("Presentation snapshot slide must be an object.");
+  }
+  const content = parseSlideContent(jsonObjectValue(value["content"], "snapshot slide content"));
+  const layout = normalizeLayout(requiredString(value["layout"], "snapshot slide layout"));
+  if (layout !== content.layout) {
+    throw new Error("Presentation snapshot slide layout does not match its content.");
+  }
+  return {
+    id: requiredString(value["id"], "snapshot slide id"),
+    position: nonNegativeInteger(value["position"], "snapshot slide position"),
+    layout,
+    content,
+    speakerNotes: stringValue(value["speakerNotes"], "snapshot slide speaker notes"),
+  };
+}
+
+async function storageObjectBodyBytes(
+  body: AsyncIterable<Uint8Array> | Uint8Array,
+): Promise<Uint8Array> {
+  if (Symbol.asyncIterator in body) {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of body) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }
+  return body;
+}
+
+function requiredString(value: unknown, label: string): string {
+  const string = stringValue(value, label);
+  if (string.length === 0) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return string;
+}
+
+function stringValue(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return value;
+}
+
+function nonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return value;
+}
+
+function requiredArray(value: unknown, label: string): readonly unknown[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return value;
+}
+
+function jsonObjectValue(value: unknown, label: string): JsonObject {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isObjectRecord(value)) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return value as JsonObject;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function mapDeck(row: SlideDeckRow | undefined): SlideDeckRecord {
   if (row === undefined) {
     throw new Error("Expected slide deck row.");
@@ -1533,6 +1767,14 @@ export class InMemorySlidesStore implements SlidesStore {
       operation: input.operation,
       snapshot,
     };
+  }
+
+  async restoreSnapshotVersion(input: RestoreSlideDeckSnapshotVersionInput): Promise<{
+    readonly deck: SlideDeckSummaryRecord;
+    readonly slides: readonly SlideRecord[];
+  } | null> {
+    void input;
+    return null;
   }
 
   private async applySyncOperation(input: ApplySlideOperationInput): Promise<void> {

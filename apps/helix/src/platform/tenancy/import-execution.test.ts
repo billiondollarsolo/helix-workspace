@@ -134,6 +134,7 @@ describe("executeTenantImportPreparedPlan", () => {
         contentType: "application/octet-stream",
         metadata: {
           "helix-import-source-key": "docs/doc-1",
+          "helix-import-source": "included-archive-bytes",
           "helix-import-sha256": sha256Hex(body),
         },
       },
@@ -228,7 +229,7 @@ describe("executeTenantImportPreparedPlan", () => {
     expect(auditSink.records).toEqual([]);
   });
 
-  it("preflights self-fetch object restore plans until downloader execution is wired", async () => {
+  it("preflights self-fetch object restore plans until a downloader is provided", async () => {
     const rowApplyStore = new RecordingRowApplyStore();
     const objectStorage = new RecordingStorageClient();
     const auditSink = new RecordingAuditSink();
@@ -274,14 +275,99 @@ describe("executeTenantImportPreparedPlan", () => {
       blockers: [
         {
           stage: "preflight",
-          code: "self_fetch_restore_not_wired",
-          message: "Tenant import execution cannot restore self-fetch object bytes yet.",
+          code: "self_fetch_downloader_required",
+          message:
+            "Tenant import execution requires a self-fetch downloader for self-fetch objects.",
         },
       ],
     });
     expect(rowApplyStore.calls).toEqual([]);
     expect(objectStorage.puts).toEqual([]);
     expect(auditSink.records).toEqual([]);
+  });
+
+  it("restores self-fetch object bytes when a downloader is provided", async () => {
+    const body = Buffer.from("hello world", "utf8");
+    const rowApplyStore = new RecordingRowApplyStore();
+    const objectStorage = new RecordingStorageClient();
+    const auditSink = new RecordingAuditSink();
+
+    await expect(
+      executeTenantImportPreparedPlan({
+        confirmation: tenantImportExecutionConfirmation,
+        plan: importPlan(),
+        rowApplyStore,
+        objectRestorePlan: await buildTenantImportObjectRestorePlan({
+          manifest: manifestWithObject({
+            bytesIncluded: false,
+            byteSize: body.byteLength,
+            sha256: sha256Hex(body),
+          }),
+          selfFetchManifest: {
+            version: 1,
+            generatedAt: "2026-05-24T10:00:00.000Z",
+            org: {
+              id: sourceOrgId,
+              slug: "acme",
+            },
+            delivery: "self-fetch",
+            expiresAt: "2026-05-24T11:00:00.000Z",
+            expiresSeconds: 3600,
+            objects: [
+              {
+                storageKey: "docs/doc-1",
+                byteSize: body.byteLength,
+                sha256: sha256Hex(body),
+                url: "https://example.test/docs/doc-1",
+                expiresAt: "2026-05-24T11:00:00.000Z",
+              },
+            ],
+          },
+        }),
+        objectArchiveEntries: new Map(),
+        objectStorage,
+        selfFetchDownloader: async (download) => {
+          expect(download).toMatchObject({
+            storageKey: "docs/doc-1",
+            targetStorageKey: "docs/doc-1",
+            url: "https://example.test/docs/doc-1",
+            expectedByteSize: body.byteLength,
+            expectedSha256: sha256Hex(body),
+          });
+          return { body, contentType: "text/plain" };
+        },
+        auditContinuityPlan: auditContinuityPlan(),
+        auditSink,
+        actorId,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      status: "succeeded",
+      objectRestore: {
+        ok: true,
+        summary: {
+          total: 1,
+          restorable: 1,
+          blocked: 0,
+          totalKnownBytes: body.byteLength,
+        },
+      },
+    });
+
+    expect(rowApplyStore.calls).toHaveLength(1);
+    expect(objectStorage.puts).toEqual([
+      {
+        key: "docs/doc-1",
+        body,
+        contentType: "text/plain",
+        metadata: {
+          "helix-import-source-key": "docs/doc-1",
+          "helix-import-source": "self-fetch",
+          "helix-import-sha256": sha256Hex(body),
+        },
+      },
+    ]);
+    expect(auditSink.records).toHaveLength(1);
   });
 
   it("fails execution when mandatory audit continuity append fails", async () => {

@@ -2,7 +2,10 @@ import type { JsonObject } from "@helix/sdk-types";
 import type { AdminConsoleAuditSink } from "../admin/console-shared.js";
 import type { TenantStorageClient } from "../storage/tenant-resolver.js";
 import type { TenantImportAuditContinuityPlan } from "./import-audit-continuity.js";
-import type { TenantImportObjectRestorePlan } from "./import-object-restore.js";
+import type {
+  TenantImportObjectRestorePlan,
+  TenantImportSelfFetchDownloader,
+} from "./import-object-restore.js";
 import { restoreTenantImportObjectBytes } from "./import-object-restore.js";
 import type { TenantImportPlan } from "./import-plan.js";
 import type { TenantImportRowApplyStore } from "./import-row-apply.js";
@@ -23,6 +26,7 @@ export interface ExecuteTenantImportPreparedPlanInput {
   readonly objectRestorePlan: TenantImportObjectRestorePlan;
   readonly objectArchiveEntries: ReadonlyMap<string, Uint8Array>;
   readonly objectStorage: TenantStorageClient;
+  readonly selfFetchDownloader?: TenantImportSelfFetchDownloader | undefined;
   readonly auditContinuityPlan: TenantImportAuditContinuityPlan;
   readonly auditSink: AdminConsoleAuditSink;
   readonly actorId: string;
@@ -64,6 +68,7 @@ export async function executeTenantImportPreparedPlan(
       plan: input.objectRestorePlan,
       archiveEntries: input.objectArchiveEntries,
       storage: input.objectStorage,
+      selfFetchDownloader: input.selfFetchDownloader,
     });
   } catch (error) {
     return {
@@ -180,11 +185,14 @@ function preflightBlockers(
       message: "Tenant import execution requires an object restore plan without blockers.",
     });
   }
-  if (input.objectRestorePlan.operations.some((operation) => operation.source === "self_fetch")) {
+  if (
+    input.selfFetchDownloader === undefined &&
+    input.objectRestorePlan.operations.some((operation) => operation.source === "self_fetch")
+  ) {
     blockers.push({
       stage: "preflight",
-      code: "self_fetch_restore_not_wired",
-      message: "Tenant import execution cannot restore self-fetch object bytes yet.",
+      code: "self_fetch_downloader_required",
+      message: "Tenant import execution requires a self-fetch downloader for self-fetch objects.",
     });
   }
   if (input.auditContinuityPlan.blockers.length > 0) {

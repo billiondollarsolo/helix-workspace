@@ -5,6 +5,7 @@ import type { TenantStorageClient } from "../storage/tenant-resolver.js";
 import type { TenantExportManifest, TenantExportSelfFetchManifest } from "./export.js";
 import {
   buildTenantImportObjectRestorePlan,
+  createTenantImportSelfFetchDownloader,
   restoreTenantImportObjectBytes,
 } from "./import-object-restore.js";
 
@@ -238,13 +239,98 @@ describe("restoreTenantImportObjectBytes", () => {
         contentType: "application/octet-stream",
         metadata: {
           "helix-import-source-key": "docs/source-org/doc-1",
+          "helix-import-source": "included-archive-bytes",
           "helix-import-sha256": sha256Hex(body),
         },
       },
     ]);
   });
 
-  it("keeps self-fetch restore execution blocked until a downloader is wired", async () => {
+  it("writes self-fetch object bytes after downloader size and hash verification", async () => {
+    const body = Buffer.from("hello world", "utf8");
+    const manifest = manifestWithObjects({
+      bytesIncluded: false,
+      objects: [
+        {
+          storageKey: "docs/doc-1",
+          byteSize: body.byteLength,
+          sha256: sha256Hex(body),
+        },
+      ],
+    });
+    const plan = await buildTenantImportObjectRestorePlan({
+      manifest,
+      selfFetchManifest: {
+        version: 1,
+        generatedAt: "2026-05-24T10:00:00.000Z",
+        org: {
+          id: orgId,
+          slug: "acme",
+        },
+        delivery: "self-fetch",
+        expiresAt: "2026-05-24T11:00:00.000Z",
+        expiresSeconds: 3600,
+        objects: [
+          {
+            storageKey: "docs/doc-1",
+            byteSize: body.byteLength,
+            sha256: sha256Hex(body),
+            url: "https://example.test/docs/doc-1",
+            expiresAt: "2026-05-24T11:00:00.000Z",
+          },
+        ],
+      },
+    });
+    const storage = new RecordingStorageClient();
+
+    await expect(
+      restoreTenantImportObjectBytes({
+        plan,
+        archiveEntries: new Map(),
+        storage,
+        selfFetchDownloader: createTenantImportSelfFetchDownloader({
+          fetchImpl: async (url, init) => {
+            const requestUrl =
+              url instanceof URL ? url.href : typeof url === "string" ? url : url.url;
+            expect(requestUrl).toBe("https://example.test/docs/doc-1");
+            expect(init?.method).toBe("GET");
+            expect(init?.signal).toBeDefined();
+            return new Response(body, {
+              status: 200,
+              headers: {
+                "content-length": String(body.byteLength),
+                "content-type": "text/plain",
+              },
+            });
+          },
+          maxBytes: body.byteLength,
+        }),
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      operations: [
+        {
+          action: "restore",
+        },
+      ],
+    });
+
+    expect(storage.puts).toHaveLength(1);
+    expect(storage.puts[0]).toMatchObject({
+      key: "docs/doc-1",
+      contentType: "text/plain",
+      metadata: {
+        "helix-import-source-key": "docs/doc-1",
+        "helix-import-source": "self-fetch",
+        "helix-import-sha256": sha256Hex(body),
+      },
+    });
+    expect(Buffer.from(storage.puts[0]?.body as Uint8Array)).toEqual(body);
+    expect(storage.puts[0]?.metadata?.["helix-import-self-fetch-url-sha256"]).toHaveLength(64);
+    expect(storage.puts[0]?.metadata).not.toHaveProperty("helix-import-self-fetch-url");
+  });
+
+  it("keeps self-fetch restore execution blocked when no downloader is provided", async () => {
     const manifest = manifestWithObjects({
       bytesIncluded: false,
       objects: [
@@ -288,11 +374,62 @@ describe("restoreTenantImportObjectBytes", () => {
       operations: [
         {
           action: "blocked",
-          blockedReason: "restore_source_not_local",
+          blockedReason: "self_fetch_downloader_missing",
         },
       ],
     });
     expect(storage.puts).toEqual([]);
+  });
+
+  it("fails self-fetch downloads on unsafe scheme, HTTP failure, size mismatch, or hash mismatch", async () => {
+    const body = Buffer.from("hello world", "utf8");
+
+    await expect(
+      createTenantImportSelfFetchDownloader({
+        fetchImpl: async () => new Response(body),
+      })({
+        storageKey: "docs/doc-1",
+        targetStorageKey: "docs/doc-1",
+        url: "http://example.test/docs/doc-1",
+      }),
+    ).rejects.toThrow("Tenant import self-fetch URL must use HTTPS.");
+
+    await expect(
+      createTenantImportSelfFetchDownloader({
+        fetchImpl: async () => new Response("nope", { status: 403 }),
+      })({
+        storageKey: "docs/doc-1",
+        targetStorageKey: "docs/doc-1",
+        url: "https://example.test/docs/doc-1",
+      }),
+    ).rejects.toThrow("Tenant import self-fetch failed with HTTP 403.");
+
+    await expect(
+      createTenantImportSelfFetchDownloader({
+        fetchImpl: async () =>
+          new Response(body, {
+            headers: {
+              "content-length": String(body.byteLength + 1),
+            },
+          }),
+      })({
+        storageKey: "docs/doc-1",
+        targetStorageKey: "docs/doc-1",
+        url: "https://example.test/docs/doc-1",
+        expectedByteSize: body.byteLength,
+      }),
+    ).rejects.toThrow("Tenant import self-fetch content-length did not match the manifest.");
+
+    await expect(
+      createTenantImportSelfFetchDownloader({
+        fetchImpl: async () => new Response(body),
+      })({
+        storageKey: "docs/doc-1",
+        targetStorageKey: "docs/doc-1",
+        url: "https://example.test/docs/doc-1",
+        expectedSha256: sha256Hex(Buffer.from("different", "utf8")),
+      }),
+    ).rejects.toThrow("Tenant import self-fetch object sha256 did not match the manifest.");
   });
 });
 

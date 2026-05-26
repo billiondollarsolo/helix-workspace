@@ -1566,6 +1566,49 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         }
         return result;
       },
+      resolveShareActorRefs: async ({ orgId, refs }) => {
+        const normalizedRefs = [...new Set(refs.map((ref) => ref.trim()).filter(Boolean))];
+        if (normalizedRefs.length === 0) {
+          return { actorIds: [], unresolvedRefs: [] };
+        }
+        const loweredRefs = normalizedRefs.map((ref) => ref.toLowerCase());
+        const rows = (await sql`
+          select id, display_name, email
+          from actors
+          where org_id = ${orgId}
+            and disabled_at is null
+            and (
+              id::text in ${sql(normalizedRefs)}
+              or lower(email) in ${sql(loweredRefs)}
+              or lower(display_name) in ${sql(loweredRefs)}
+            )
+        `) as unknown as readonly {
+          readonly id: string;
+          readonly display_name: string | null;
+          readonly email: string | null;
+        }[];
+        const resolved = new Map<string, string>();
+        for (const row of rows) {
+          resolved.set(row.id.toLowerCase(), row.id);
+          if (row.email !== null) {
+            resolved.set(row.email.toLowerCase(), row.id);
+          }
+          if (row.display_name !== null) {
+            resolved.set(row.display_name.toLowerCase(), row.id);
+          }
+        }
+        const actorIds = new Set<string>();
+        const unresolvedRefs: string[] = [];
+        for (const ref of normalizedRefs) {
+          const id = resolved.get(ref.toLowerCase());
+          if (id === undefined) {
+            unresolvedRefs.push(ref);
+          } else {
+            actorIds.add(id);
+          }
+        }
+        return { actorIds: [...actorIds], unresolvedRefs };
+      },
     });
   }
   const calendarInvitationSender = createMailCalendarInvitationSender({

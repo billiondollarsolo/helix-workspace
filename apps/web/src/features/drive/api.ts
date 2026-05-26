@@ -58,7 +58,8 @@ export interface DriveApiSearchHit {
 
 export interface DriveShareInput {
   readonly objectId: string;
-  readonly actorIds: readonly string[];
+  readonly actorIds?: readonly string[];
+  readonly actorRefs?: readonly string[];
   readonly role?: "reader" | "commenter" | "editor" | "owner";
   readonly expiresAt?: string | null;
 }
@@ -268,7 +269,8 @@ export async function shareDrive(
     "drive.share",
     {
       objectId: input.objectId,
-      actorIds: input.actorIds,
+      actorIds: input.actorIds ?? [],
+      actorRefs: input.actorRefs ?? [],
       role: input.role ?? "reader",
       expiresAt: input.expiresAt ?? null,
     },
@@ -305,8 +307,7 @@ export function driveDownloadResult(entry: DriveApiEntry): DriveDownloadResult {
   // (`/preview`) — it returns HTML for DOCX/XLSX, forwards PDFs / images
   // / text directly, and shows a friendly placeholder + download link for
   // formats the browser can't display.
-  const url =
-    editorUrl ?? entry.preview?.url ?? `/api/drive/objects/${entry.id}/preview`;
+  const url = editorUrl ?? entry.preview?.url ?? `/api/drive/objects/${entry.id}/preview`;
   return {
     url,
     name: entry.name,
@@ -467,14 +468,11 @@ async function approvePendingDriveAction<Output>(
   pendingId: string,
   fetchImpl: DriveApiFetch,
 ): Promise<Output> {
-  const response = await fetchImpl(
-    `/api/tools/pending/${encodeURIComponent(pendingId)}/approve`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    },
-  );
+  const response = await fetchImpl(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
   const output: unknown = await response.json().catch(() => ({}));
 
   if (!response.ok) {

@@ -57,12 +57,23 @@ const listSchema = z.object({
   acrossFolders: z.boolean().optional(),
 });
 
-const shareSchema = z.object({
-  objectId: uuidSchema,
-  actorIds: z.array(uuidSchema).min(1),
-  role: z.enum(["reader", "commenter", "editor", "owner"]).default("reader"),
-  expiresAt: z.string().datetime().nullable().optional(),
-});
+const shareSchema = z
+  .object({
+    objectId: uuidSchema,
+    actorIds: z.array(uuidSchema).default([]),
+    actorRefs: z.array(z.string().trim().min(1)).default([]),
+    role: z.enum(["reader", "commenter", "editor", "owner"]).default("reader"),
+    expiresAt: z.string().datetime().nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.actorIds.length === 0 && value.actorRefs.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide at least one actor id, email, or display name.",
+        path: ["actorRefs"],
+      });
+    }
+  });
 
 const moveSchema = z.object({
   objectId: uuidSchema,
@@ -162,6 +173,15 @@ export interface CreateDriveToolDefinitionsOptions {
   readonly resolveActorNames?: (
     ids: readonly string[],
   ) => Promise<ReadonlyMap<string, { readonly displayName: string; readonly email?: string }>>;
+  /** Resolve user-facing share targets such as `maya@helix.local` or
+   *  `Maya Sharma` into tenant-scoped actor ids. */
+  readonly resolveShareActorRefs?: (input: {
+    readonly orgId: string;
+    readonly refs: readonly string[];
+  }) => Promise<{
+    readonly actorIds: readonly string[];
+    readonly unresolvedRefs: readonly string[];
+  }>;
 }
 
 export function createDriveToolDefinitions(
@@ -333,24 +353,33 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof shareSchema>, unknown>({
       id: "drive.share",
-      description: "Share a Drive object with actors by adding platform permission grants.",
+      description: "Share a Drive object with actors by id, email, or display name.",
       permission: "drive.write",
       sideEffects: "write",
       confirmationRequired: true,
       inputSchema: zodToolSchema(shareSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) =>
-        options.store.share({
+      handler: async (input, ctx) => {
+        const resolvedActorIds =
+          input.actorRefs.length === 0
+            ? []
+            : await resolveDriveShareActorRefs(options, ctx.actor.orgId, input.actorRefs);
+        const actorIds = [...new Set([...input.actorIds, ...resolvedActorIds])];
+        if (actorIds.length === 0) {
+          throw new Error("Drive share requires at least one workspace user.");
+        }
+        return options.store.share({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           objectId: input.objectId,
-          targetActorIds: input.actorIds,
+          targetActorIds: actorIds,
           role: input.role,
           expiresAt:
             input.expiresAt === undefined || input.expiresAt === null
               ? null
               : new Date(input.expiresAt),
-        }),
+        });
+      },
     }),
     defineTool<z.output<typeof moveSchema>, unknown>({
       id: "drive.move",
@@ -662,6 +691,21 @@ function defineTool<Input, Output>(
   tool: ToolDefinition<Input, Output>,
 ): ToolDefinition<Input, Output> {
   return tool;
+}
+
+async function resolveDriveShareActorRefs(
+  options: CreateDriveToolDefinitionsOptions,
+  orgId: string,
+  refs: readonly string[],
+): Promise<readonly string[]> {
+  if (options.resolveShareActorRefs === undefined) {
+    throw new Error("Drive share by email or name is not configured.");
+  }
+  const result = await options.resolveShareActorRefs({ orgId, refs });
+  if (result.unresolvedRefs.length > 0) {
+    throw new Error(`Could not find workspace user(s): ${result.unresolvedRefs.join(", ")}`);
+  }
+  return result.actorIds;
 }
 
 function serializeUpload(record: DriveUploadRecord) {

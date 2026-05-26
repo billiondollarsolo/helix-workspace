@@ -208,6 +208,8 @@ const APP_ICON_META: Record<string, { readonly icon: keyof typeof Icons; readonl
     slides: { icon: "Image", color: "#ea580c" },
   };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
 /** A folder in the breadcrumb trail. `null` id is the scope root. */
 interface DriveCrumb {
   readonly id: string | null;
@@ -386,8 +388,17 @@ export function DriveShell() {
   });
 
   const shareMutation = useMutation({
-    mutationFn: (vars: { readonly objectId: string; readonly actorIds: readonly string[] }) =>
-      shareDrive({ objectId: vars.objectId, actorIds: vars.actorIds, role: "reader" }),
+    mutationFn: (vars: {
+      readonly objectId: string;
+      readonly actorIds: readonly string[];
+      readonly actorRefs: readonly string[];
+    }) =>
+      shareDrive({
+        objectId: vars.objectId,
+        actorIds: vars.actorIds,
+        actorRefs: vars.actorRefs,
+        role: "reader",
+      }),
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => {
@@ -609,7 +620,7 @@ export function DriveShell() {
               folderId: trail.length > 1 ? (trail[trail.length - 2]?.id ?? null) : null,
             })
           }
-          onShare={(id, actorIds) => shareMutation.mutate({ objectId: id, actorIds })}
+          onShare={(id, targets) => shareMutation.mutate({ objectId: id, ...targets })}
           shareDone={shareMutation.isSuccess}
         />
       ) : null}
@@ -1449,7 +1460,10 @@ function DriveDetailsPanel({
   readonly onRestore: (id: string) => void;
   readonly onDelete: (id: string) => void;
   readonly onMoveToParent: (id: string) => void;
-  readonly onShare: (id: string, actorIds: readonly string[]) => void;
+  readonly onShare: (
+    id: string,
+    targets: { readonly actorIds: readonly string[]; readonly actorRefs: readonly string[] },
+  ) => void;
   readonly shareDone: boolean;
 }) {
   const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
@@ -1490,12 +1504,14 @@ function DriveDetailsPanel({
   const download = entry === null ? null : driveDownloadResult(entry);
 
   const onShareSubmit = () => {
-    const ids = shareInput
+    const targets = shareInput
       .split(/[\s,]+/)
       .map((value) => value.trim())
       .filter((value) => value.length > 0);
-    if (ids.length > 0) {
-      onShare(file.id, ids);
+    const actorIds = targets.filter((value) => UUID_RE.test(value));
+    const actorRefs = targets.filter((value) => !UUID_RE.test(value));
+    if (actorIds.length > 0 || actorRefs.length > 0) {
+      onShare(file.id, { actorIds, actorRefs });
       setShareInput("");
     }
   };
@@ -1705,7 +1721,7 @@ function DriveDetailsPanel({
                 className="input"
                 value={shareInput}
                 onChange={(event) => setShareInput(event.target.value)}
-                placeholder="Actor ID(s) to share with"
+                placeholder="Email, name, or actor ID"
                 style={{ width: "100%", fontSize: "var(--text-meta)", marginBottom: 6 }}
               />
               <button

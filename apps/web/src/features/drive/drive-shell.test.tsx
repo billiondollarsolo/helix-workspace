@@ -27,6 +27,19 @@ function firstFileCard(container: HTMLElement): HTMLButtonElement | null {
   );
 }
 
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const descriptor = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(input) as HTMLInputElement,
+    "value",
+  );
+  if (descriptor?.set !== undefined) {
+    Reflect.apply(descriptor.set, input, [value]);
+  } else {
+    input.value = value;
+  }
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 function entry(
   overrides: Partial<DriveApiEntry> & Pick<DriveApiEntry, "id" | "type" | "name">,
 ): DriveApiEntry {
@@ -211,6 +224,40 @@ describe("DriveShell", () => {
     expect(panel).not.toBeNull();
     expect(panel?.textContent ?? "").toContain("Recent activity");
     expect(panel?.textContent ?? "").toContain("Owner");
+  });
+
+  it("shares a file by email instead of requiring a raw actor id", async () => {
+    render();
+    await settle();
+
+    act(() => {
+      firstFileCard(container)?.click();
+    });
+    const shareInput = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Email, name, or actor ID"]',
+    );
+    expect(shareInput).not.toBeNull();
+    act(() => {
+      if (shareInput !== null) {
+        setInputValue(shareInput, "maya@helix.local");
+      }
+    });
+    const shareButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Share",
+    );
+    expect(shareButton).not.toBeNull();
+    act(() => {
+      shareButton?.click();
+    });
+    await settle();
+
+    const shareCall = toolCalls.find((call) => call.url === "/api/tools/drive.share");
+    expect(shareCall?.body).toMatchObject({
+      objectId: "file-roadmap",
+      actorIds: [],
+      actorRefs: ["maya@helix.local"],
+      role: "reader",
+    });
   });
 
   it("trashes a file via the drive.trash tool", async () => {

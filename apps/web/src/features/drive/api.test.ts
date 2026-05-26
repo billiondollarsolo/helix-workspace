@@ -81,6 +81,7 @@ describe("drive API", () => {
       body: JSON.stringify({
         objectId: "33333333-3333-4333-8333-333333333333",
         actorIds: ["66666666-6666-4666-8666-666666666666"],
+        actorRefs: [],
         role: "reader",
         expiresAt: null,
       }),
@@ -224,6 +225,30 @@ describe("drive API", () => {
       "/api/tools/pending/55555555-5555-4555-8555-555555555555/approve",
       { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
     );
+  });
+
+  it("sends Drive share email refs for server-side actor resolution", async () => {
+    const fetchImpl = vi.fn(() => Promise.resolve(Response.json({ shared: true })));
+
+    await shareDrive(
+      {
+        objectId: "33333333-3333-4333-8333-333333333333",
+        actorRefs: ["maya@helix.local"],
+      },
+      fetchImpl,
+    );
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/drive.share", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        objectId: "33333333-3333-4333-8333-333333333333",
+        actorIds: [],
+        actorRefs: ["maya@helix.local"],
+        role: "reader",
+        expiresAt: null,
+      }),
+    });
   });
 
   it("approves a confirmation-gated permanent delete inline", async () => {

@@ -123,6 +123,40 @@ describe("drive tools", () => {
     });
   });
 
+  it("resolves drive.share email refs before granting access", async () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      resolveShareActorRefs: async (input) => {
+        expect(input).toEqual({ orgId, refs: ["maya@helix.local"] });
+        return {
+          actorIds: ["66666666-6666-4666-8666-666666666666"],
+          unresolvedRefs: [],
+        };
+      },
+    });
+    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
+
+    await expect(
+      registry.invoke(
+        "drive.share",
+        {
+          objectId,
+          actorRefs: ["maya@helix.local"],
+          role: "reader",
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: {
+        objectId,
+        role: "reader",
+        sharedWithActorIds: ["66666666-6666-4666-8666-666666666666"],
+      },
+    });
+  });
+
   it("creates, lists, and resolves Drive object comments", async () => {
     const store = new FakeDriveStore();
     const registry = createToolRegistry();

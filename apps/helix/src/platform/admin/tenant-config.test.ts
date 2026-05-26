@@ -750,26 +750,316 @@ describe("tenant config admin routes", () => {
     expect(unavailable.statusCode).toBe(503);
     await app.close();
   });
+
+  it("cuts over a succeeded BYO storage migration into tenant config", async () => {
+    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore();
+    const store = new InMemoryTenantConfigAdminStore();
+    const auditRecords: unknown[] = [];
+    const featureFlagEvents: unknown[] = [];
+    const targetStorage = {
+      kind: "byo",
+      provider: "aws-s3",
+      bucket: "acme-helix-data",
+      credentials_vault_path: "tenants/acme/byo-storage/aws",
+    } as const;
+    storageMigrationJobs.jobs.push(
+      migrationJob({
+        target: "byo",
+        status: "succeeded",
+        dryRun: false,
+        sourceStorage: { managedBy: "helix-default", storage: null },
+        targetStorage: { managedBy: "byo", storage: targetStorage },
+        plannedCount: 3,
+        copiedCount: 3,
+        verifiedCount: 3,
+        completedAt: new Date("2026-05-24T10:05:00.000Z"),
+      }),
+    );
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store,
+      actorFromRequest,
+      storageMigrationJobs,
+      auditSink: {
+        async append(record) {
+          auditRecords.push(record);
+          return { id: "audit-cutover", thisHash: "hash-cutover" };
+        },
+      },
+      featureFlagEvents: {
+        async publish(subject, payload) {
+          featureFlagEvents.push({ subject, payload });
+        },
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/migrations/33333333-3333-4333-8333-333333333333/cutover",
+      headers: headers("admin.console.write"),
+      payload: { confirm: "CUTOVER" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(store.updates).toEqual([
+      {
+        orgId,
+        byoConfig: { storage: targetStorage },
+        featureFlags: { ai_smart_compose: false, byo_storage: true },
+        changedByActorId: actorId,
+        reason: "tenant storage migration cutover: 33333333-3333-4333-8333-333333333333",
+      },
+    ]);
+    expect(response.json()).toMatchObject({
+      migration: { status: "succeeded", target: "byo" },
+      tenantConfig: {
+        byo: { storage: targetStorage },
+        features: { ai_smart_compose: false, byo_storage: true },
+      },
+    });
+    expect(auditRecords).toEqual([
+      expect.objectContaining({
+        verb: "admin.tenant_config.byo_storage_migration_cutover",
+        objectType: "tenant_storage_migration_job",
+        objectId: "33333333-3333-4333-8333-333333333333",
+        metadata: { target: "byo", dryRun: false, status: "succeeded" },
+      }),
+    ]);
+    expect(featureFlagEvents).toEqual([
+      {
+        subject: `flags.changed.${orgId}`,
+        payload: {
+          orgId,
+          changedByActorId: actorId,
+          reason: "tenant storage migration cutover: 33333333-3333-4333-8333-333333333333",
+          keys: ["byo_storage"],
+        },
+      },
+    ]);
+    await app.close();
+  });
+
+  it("cuts over a rollback to Helix default storage with the tenant prefix", async () => {
+    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore();
+    const sourceStorage = {
+      kind: "byo",
+      provider: "aws-s3",
+      bucket: "acme-helix-data",
+      credentials_vault_path: "tenants/acme/byo-storage/aws",
+    } as const;
+    const store = new InMemoryTenantConfigAdminStore({
+      byoConfig: { storage: sourceStorage },
+      featureFlags: { ai_smart_compose: false, byo_storage: true },
+    });
+    storageMigrationJobs.jobs.push(
+      migrationJob({
+        target: "helix-default",
+        status: "succeeded",
+        dryRun: false,
+        sourceStorage: { managedBy: "byo", storage: sourceStorage },
+        targetStorage: { managedBy: "helix-default", storage: null },
+        plannedCount: 2,
+        copiedCount: 2,
+        verifiedCount: 2,
+        completedAt: new Date("2026-05-24T10:05:00.000Z"),
+      }),
+    );
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store,
+      actorFromRequest,
+      storageMigrationJobs,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/migrations/33333333-3333-4333-8333-333333333333/cutover",
+      headers: headers("admin.console.write"),
+      payload: { confirm: "CUTOVER" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(store.updates).toEqual([
+      {
+        orgId,
+        byoConfig: { storage: { kind: "helix-default", prefix: `tenants/${orgId}/` } },
+        changedByActorId: actorId,
+        reason: "tenant storage migration cutover: 33333333-3333-4333-8333-333333333333",
+      },
+    ]);
+    expect(response.json()).toMatchObject({
+      tenantConfig: {
+        byo: { storage: { kind: "helix-default", prefix: `tenants/${orgId}/` } },
+      },
+    });
+    await app.close();
+  });
+
+  it("rejects storage migration cutover before the job is safe to cut over", async () => {
+    const rejectedJobs = [
+      migrationJob({
+        id: "33333333-3333-4333-8333-333333333331",
+        target: "byo",
+        status: "dry_run",
+        dryRun: true,
+        sourceStorage: { managedBy: "helix-default", storage: null },
+        targetStorage: {
+          managedBy: "byo",
+          storage: {
+            kind: "byo",
+            provider: "aws-s3",
+            bucket: "acme-helix-data",
+            credentials_vault_path: "tenants/acme/byo-storage/aws",
+          },
+        },
+        plannedCount: 1,
+        copiedCount: 1,
+        verifiedCount: 1,
+        completedAt: new Date("2026-05-24T10:05:00.000Z"),
+      }),
+      migrationJob({
+        id: "33333333-3333-4333-8333-333333333332",
+        target: "byo",
+        status: "succeeded_with_errors",
+        dryRun: false,
+        sourceStorage: { managedBy: "helix-default", storage: null },
+        targetStorage: {
+          managedBy: "byo",
+          storage: {
+            kind: "byo",
+            provider: "aws-s3",
+            bucket: "acme-helix-data",
+            credentials_vault_path: "tenants/acme/byo-storage/aws",
+          },
+        },
+        plannedCount: 2,
+        copiedCount: 2,
+        verifiedCount: 1,
+        failures: [{ storageKey: "docs/1", reason: "checksum mismatch" }],
+        completedAt: new Date("2026-05-24T10:05:00.000Z"),
+      }),
+      migrationJob({
+        id: "33333333-3333-4333-8333-333333333334",
+        target: "byo",
+        status: "succeeded",
+        dryRun: false,
+        sourceStorage: { managedBy: "helix-default", storage: null },
+        targetStorage: {
+          managedBy: "byo",
+          storage: {
+            kind: "byo",
+            provider: "aws-s3",
+            bucket: "acme-helix-data",
+            credentials_vault_path: "tenants/acme/byo-storage/aws",
+          },
+        },
+        plannedCount: 2,
+        copiedCount: 2,
+        verifiedCount: 1,
+        completedAt: new Date("2026-05-24T10:05:00.000Z"),
+      }),
+    ];
+    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore(rejectedJobs);
+    const store = new InMemoryTenantConfigAdminStore();
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store,
+      actorFromRequest,
+      storageMigrationJobs,
+    });
+
+    for (const job of rejectedJobs) {
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/admin/tenant-config/byo-storage/migrations/${job.id}/cutover`,
+        headers: headers("admin.console.write"),
+        payload: { confirm: "CUTOVER" },
+      });
+      expect(response.statusCode).toBe(409);
+    }
+    expect(store.updates).toEqual([]);
+    await app.close();
+  });
+
+  it("rejects storage migration cutover when the source snapshot is stale", async () => {
+    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore([
+      migrationJob({
+        target: "helix-default",
+        status: "succeeded",
+        dryRun: false,
+        sourceStorage: {
+          managedBy: "byo",
+          storage: {
+            kind: "byo",
+            provider: "aws-s3",
+            bucket: "old-bucket",
+            credentials_vault_path: "tenants/acme/byo-storage/old",
+          },
+        },
+        targetStorage: { managedBy: "helix-default", storage: null },
+        plannedCount: 1,
+        copiedCount: 1,
+        verifiedCount: 1,
+        completedAt: new Date("2026-05-24T10:05:00.000Z"),
+      }),
+    ]);
+    const store = new InMemoryTenantConfigAdminStore({
+      byoConfig: {
+        storage: {
+          kind: "byo",
+          provider: "aws-s3",
+          bucket: "new-bucket",
+          credentials_vault_path: "tenants/acme/byo-storage/new",
+        },
+      },
+    });
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store,
+      actorFromRequest,
+      storageMigrationJobs,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/migrations/33333333-3333-4333-8333-333333333333/cutover",
+      headers: headers("admin.console.write"),
+      payload: { confirm: "CUTOVER" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      code: "conflict",
+      error: "Tenant storage config changed after the migration job was created.",
+    });
+    expect(store.updates).toEqual([]);
+    await app.close();
+  });
 });
 
 class InMemoryTenantConfigAdminStore implements TenantConfigAdminStore {
   readonly updates: UpdateTenantConfigInput[] = [];
-  #org: OrgRecord | null = {
-    id: orgId,
-    slug: "acme",
-    displayName: "Acme",
-    status: "active",
-    tier: "business",
-    planId: "business",
-    region: "us-east-1",
-    byoConfig: {},
-    featureFlags: { ai_smart_compose: false },
-    quotas: { api_rps_limit: 5 },
-    branding: {},
-    suspendedAt: null,
-    softDeletedAt: null,
-    hardDeletedAt: null,
-  };
+  #org: OrgRecord | null;
+
+  constructor(overrides: Partial<OrgRecord> = {}) {
+    this.#org = {
+      id: orgId,
+      slug: "acme",
+      displayName: "Acme",
+      status: "active",
+      tier: "business",
+      planId: "business",
+      region: "us-east-1",
+      byoConfig: {},
+      featureFlags: { ai_smart_compose: false },
+      quotas: { api_rps_limit: 5 },
+      branding: {},
+      suspendedAt: null,
+      softDeletedAt: null,
+      hardDeletedAt: null,
+      ...overrides,
+    };
+  }
 
   async findById(id: string): Promise<OrgRecord | null> {
     return id === this.#org?.id ? this.#org : null;
@@ -831,7 +1121,11 @@ class InMemoryTenantStorageMigrationJobStore implements Pick<
   "create" | "findByIdForOrg"
 > {
   readonly creates: CreateTenantStorageMigrationJobInput[] = [];
-  readonly jobs: TenantStorageMigrationJobRecord[] = [];
+  readonly jobs: TenantStorageMigrationJobRecord[];
+
+  constructor(jobs: readonly TenantStorageMigrationJobRecord[] = []) {
+    this.jobs = [...jobs];
+  }
 
   async create(
     input: CreateTenantStorageMigrationJobInput,

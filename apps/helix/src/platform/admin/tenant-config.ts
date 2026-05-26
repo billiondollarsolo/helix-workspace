@@ -15,6 +15,7 @@ import {
 } from "./console-shared.js";
 import {
   assertLiveMigrationStorageStates,
+  defaultTenantStoragePrefix,
   testTenantStorageConnection,
   type TenantStorageResolver,
   type TenantStorageMigrationJobRecord,
@@ -239,6 +240,12 @@ const storageMigrationParams = z.object({
   id: z.string().uuid(),
 });
 
+const storageMigrationCutoverBody = z
+  .object({
+    confirm: z.literal("CUTOVER"),
+  })
+  .strict();
+
 export async function registerTenantConfigAdminRoutes(
   app: FastifyInstance,
   options: RegisterTenantConfigAdminRoutesOptions,
@@ -437,6 +444,106 @@ export async function registerTenantConfigAdminRoutes(
     }
     return { migration: tenantStorageMigrationJobView(job) };
   });
+
+  app.post(
+    "/api/admin/tenant-config/byo-storage/migrations/:id/cutover",
+    async (request, reply) => {
+      const actor = await options.actorFromRequest(request);
+      if (!canWriteAdminConsole(actor)) {
+        return sendForbidden(reply, adminConsoleWriteScope);
+      }
+      if (options.storageMigrationJobs === undefined) {
+        return reply
+          .code(503)
+          .send(invalidRequest("Tenant storage migration jobs are not configured.", []));
+      }
+      const params = storageMigrationParams.safeParse(request.params);
+      if (!params.success) {
+        return reply
+          .code(400)
+          .send(invalidRequest("Invalid tenant storage migration id.", params.error.issues));
+      }
+      const body = storageMigrationCutoverBody.safeParse(request.body ?? {});
+      if (!body.success) {
+        return reply
+          .code(400)
+          .send(
+            invalidRequest("Invalid tenant storage migration cutover request.", body.error.issues),
+          );
+      }
+      const job = await options.storageMigrationJobs.findByIdForOrg({
+        id: params.data.id,
+        orgId: actor.orgId,
+      });
+      if (job === null) {
+        return reply.code(404).send(notFound("Tenant storage migration job not found."));
+      }
+      const org = await options.store.findById(actor.orgId);
+      if (org === null) {
+        return reply.code(404).send(notFound("Tenant config not found."));
+      }
+
+      let storageConfig: JsonObject;
+      try {
+        storageConfig = cutoverStorageConfig(job);
+        assertCurrentStorageMatchesCutoverJob(org, job, storageConfig);
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message.length > 0
+            ? error.message
+            : "Tenant storage migration is not ready for cutover.";
+        return reply.code(409).send(conflict(message));
+      }
+
+      const featureFlags =
+        job.target === "byo" && org.featureFlags.byo_storage !== true
+          ? { ...org.featureFlags, byo_storage: true }
+          : undefined;
+      const updatedOrg = await options.store.updateTenantConfig({
+        orgId: actor.orgId,
+        byoConfig: {
+          ...org.byoConfig,
+          storage: storageConfig,
+        },
+        ...(featureFlags === undefined ? {} : { featureFlags }),
+        changedByActorId: actor.id,
+        reason: `tenant storage migration cutover: ${job.id}`,
+      });
+      if (updatedOrg === null) {
+        return reply.code(404).send(notFound("Tenant config not found."));
+      }
+
+      await auditAdminAction(options.auditSink, {
+        orgId: actor.orgId,
+        actorId: actor.id,
+        verb: "admin.tenant_config.byo_storage_migration_cutover",
+        objectType: "tenant_storage_migration_job",
+        objectId: job.id,
+        metadata: {
+          target: job.target,
+          dryRun: job.dryRun,
+          status: job.status,
+        },
+      });
+      if (featureFlags !== undefined) {
+        void options.featureFlagEvents
+          ?.publish(`flags.changed.${actor.orgId}`, {
+            orgId: actor.orgId,
+            changedByActorId: actor.id,
+            reason: `tenant storage migration cutover: ${job.id}`,
+            keys: ["byo_storage"],
+          })
+          .catch((error: unknown) => {
+            options.onFeatureFlagEventError?.(error);
+          });
+      }
+
+      return {
+        migration: tenantStorageMigrationJobView(job),
+        tenantConfig: await tenantConfigView(updatedOrg, options.plans),
+      };
+    },
+  );
 }
 
 async function tenantConfigView(
@@ -526,6 +633,74 @@ function currentTenantStorageMigrationState(org: OrgRecord): TenantStorageMigrat
     return { managedBy: "helix-default", storage: null };
   }
   return tenantStorageMigrationState(parsed.data, "helix-default");
+}
+
+function cutoverStorageConfig(job: TenantStorageMigrationJobRecord): JsonObject {
+  if (job.dryRun) {
+    throw new Error("Dry-run tenant storage migrations cannot be cut over.");
+  }
+  if (job.status !== "succeeded") {
+    throw new Error("Only succeeded tenant storage migrations can be cut over.");
+  }
+  if (job.completedAt === null) {
+    throw new Error("Tenant storage migration must be completed before cutover.");
+  }
+  if (job.lastError !== null || job.failures.length > 0) {
+    throw new Error("Tenant storage migration has unresolved errors.");
+  }
+  if (job.plannedCount !== job.copiedCount || job.plannedCount !== job.verifiedCount) {
+    throw new Error("Tenant storage migration object counts are not fully verified.");
+  }
+  assertLiveMigrationStorageStates({
+    target: job.target,
+    sourceStorage: job.sourceStorage,
+    targetStorage: job.targetStorage,
+  });
+  if (job.targetStorage === null) {
+    throw new Error("Tenant storage migration is missing a target storage snapshot.");
+  }
+  if (job.target === "byo") {
+    const parsed = byoStorageSchema.safeParse(job.targetStorage.storage);
+    if (!parsed.success || parsed.data.kind !== "byo") {
+      throw new Error("Tenant storage migration cutover requires a staged BYO target config.");
+    }
+    return toJsonObject(parsed.data);
+  }
+  if (job.targetStorage.storage === null) {
+    return { kind: "helix-default", prefix: defaultTenantStoragePrefix(job.orgId) };
+  }
+  const parsed = byoStorageSchema.safeParse(job.targetStorage.storage);
+  if (!parsed.success || parsed.data.kind !== "helix-default") {
+    throw new Error(
+      "Tenant storage migration cutover requires a staged Helix default target config.",
+    );
+  }
+  return toJsonObject(parsed.data);
+}
+
+function assertCurrentStorageMatchesCutoverJob(
+  org: OrgRecord,
+  job: TenantStorageMigrationJobRecord,
+  targetStorageConfig: JsonObject,
+): void {
+  const current = currentTenantStorageMigrationState(org);
+  const target = tenantStorageMigrationState(
+    byoStorageSchema.parse(targetStorageConfig),
+    job.target,
+  );
+  if (storageStatesEqual(current, target)) {
+    return;
+  }
+  if (!storageStatesEqual(current, job.sourceStorage)) {
+    throw new Error("Tenant storage config changed after the migration job was created.");
+  }
+}
+
+function storageStatesEqual(
+  left: TenantStorageMigrationStorageState | null,
+  right: TenantStorageMigrationStorageState | null,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function unsafeStoragePrefix(value: string): boolean {

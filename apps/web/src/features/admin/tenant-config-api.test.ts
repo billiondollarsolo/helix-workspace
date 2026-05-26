@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AuthFetch } from "@/lib/auth";
 import {
+  cutoverTenantStorageMigration,
   fetchTenantConfig,
   fetchTenantStorageMigration,
   requestTenantStorageMigration,
@@ -170,6 +171,31 @@ describe("tenant-config-api", () => {
     expect(fetchImpl).toHaveBeenCalledWith(
       "/api/admin/tenant-config/byo-storage/migrations/5f0951a7-8e65-4634-a6a4-af2f2b4797da",
       { method: "GET" },
+    );
+  });
+
+  it("cuts over tenant storage migration jobs through the admin endpoint", async () => {
+    const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(
+      Response.json({
+        ...migrationPayload,
+        tenantConfig: tenantConfigPayload.tenantConfig,
+      }),
+    );
+
+    const result = await cutoverTenantStorageMigration(
+      "5f0951a7-8e65-4634-a6a4-af2f2b4797da",
+      fetchImpl,
+    );
+
+    expect(result.migration.id).toBe("5f0951a7-8e65-4634-a6a4-af2f2b4797da");
+    expect(result.tenantConfig.orgId).toBe("org-1");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/admin/tenant-config/byo-storage/migrations/5f0951a7-8e65-4634-a6a4-af2f2b4797da/cutover",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirm: "CUTOVER" }),
+      },
     );
   });
 

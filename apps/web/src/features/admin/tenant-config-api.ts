@@ -67,6 +67,10 @@ const storageMigrationJobSchema = z.object({
   updatedAt: z.string(),
 });
 const storageMigrationResponseSchema = z.object({ migration: storageMigrationJobSchema });
+const storageMigrationCutoverResponseSchema = z.object({
+  migration: storageMigrationJobSchema,
+  tenantConfig: tenantConfigSchema,
+});
 
 export type TenantConfigAdminView = z.infer<typeof tenantConfigSchema>;
 export type TenantStorageHealthResult = z.infer<typeof storageHealthSchema>;
@@ -161,6 +165,28 @@ export async function fetchTenantStorageMigration(
   return (
     await parseResponse(response, "load tenant storage migration", storageMigrationResponseSchema)
   ).migration;
+}
+
+export async function cutoverTenantStorageMigration(
+  id: string,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<{
+  readonly migration: TenantStorageMigrationJob;
+  readonly tenantConfig: TenantConfigAdminView;
+}> {
+  const response = await fetchImpl(
+    `/api/admin/tenant-config/byo-storage/migrations/${id}/cutover`,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ confirm: "CUTOVER" }),
+    },
+  );
+  return parseResponse(
+    response,
+    "cut over tenant storage migration",
+    storageMigrationCutoverResponseSchema,
+  );
 }
 
 async function parseResponse<T>(

@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import {
   tenantConfigQueryKeys,
   tenantConfigQueryOptions,
+  cutoverTenantStorageMigration,
   fetchTenantStorageMigration,
   requestTenantStorageMigration,
   testByoStorage,
@@ -151,6 +152,8 @@ export function TenantConfigManagement() {
   const [storageHealth, setStorageHealth] = useState<TenantStorageHealthResult | null>(null);
   const [migrationTarget, setMigrationTarget] = useState<TenantStorageMigrationTarget>("byo");
   const [migrationDryRun, setMigrationDryRun] = useState(true);
+  const [migrationRequestConfirmed, setMigrationRequestConfirmed] = useState(false);
+  const [migrationCutoverConfirmed, setMigrationCutoverConfirmed] = useState(false);
   const [storageMigration, setStorageMigration] = useState<TenantStorageMigrationJob | null>(null);
   const query = useQuery(tenantConfigQueryOptions());
 
@@ -163,6 +166,8 @@ export function TenantConfigManagement() {
     setBranding(brandingStateFromConfig(query.data));
     setByoStorage(byoStorageStateFromConfig(query.data));
     setMigrationTarget(defaultMigrationTarget(query.data));
+    setMigrationRequestConfirmed(false);
+    setMigrationCutoverConfirmed(false);
   }, [query.data]);
 
   const mutation = useMutation({
@@ -210,6 +215,7 @@ export function TenantConfigManagement() {
     },
     onSuccess: (migration) => {
       setStorageMigration(migration);
+      setMigrationCutoverConfirmed(false);
     },
   });
   const storageMigrationStatusMutation = useMutation({
@@ -226,6 +232,26 @@ export function TenantConfigManagement() {
     },
     onSuccess: (migration) => {
       setStorageMigration(migration);
+      setMigrationCutoverConfirmed(false);
+    },
+  });
+  const storageMigrationCutoverMutation = useMutation({
+    mutationFn: (id: string) => cutoverTenantStorageMigration(id),
+    onMutate: () => {
+      setError(null);
+    },
+    onError: (mutationError: unknown) => {
+      setError(
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Failed to cut over tenant storage migration.",
+      );
+    },
+    onSuccess: async (result) => {
+      setStorageMigration(result.migration);
+      setMigrationCutoverConfirmed(false);
+      queryClient.setQueryData(tenantConfigQueryKeys.detail(), result.tenantConfig);
+      await queryClient.invalidateQueries({ queryKey: tenantConfigQueryKeys.detail() });
     },
   });
 
@@ -234,7 +260,19 @@ export function TenantConfigManagement() {
     !storageTestMutation.isPending &&
     !storageMigrationMutation.isPending &&
     !storageMigrationStatusMutation.isPending &&
+    !storageMigrationCutoverMutation.isPending &&
     !query.isLoading;
+  const canRequestMigration = canSave && (migrationDryRun || migrationRequestConfirmed);
+  const canCutoverMigration =
+    canSave &&
+    migrationCutoverConfirmed &&
+    storageMigration !== null &&
+    storageMigration.dryRun === false &&
+    storageMigration.status === "succeeded" &&
+    storageMigration.failures.length === 0 &&
+    storageMigration.lastError === null &&
+    storageMigration.plannedCount === storageMigration.copiedCount &&
+    storageMigration.plannedCount === storageMigration.verifiedCount;
   const orgId = query.data?.orgId ?? "tenant";
   const booleanFeatureRows = useMemo(() => [...BOOLEAN_FEATURE_FLAGS], []);
   const selectFeatureRows = useMemo(() => [...SELECT_FEATURE_FLAGS], []);
@@ -308,6 +346,12 @@ export function TenantConfigManagement() {
       return;
     }
     storageMigrationStatusMutation.mutate(storageMigration.id);
+  };
+  const cutoverStorageMigration = () => {
+    if (storageMigration === null) {
+      return;
+    }
+    storageMigrationCutoverMutation.mutate(storageMigration.id);
   };
 
   function buildStorageMigrationRequest(): Parameters<typeof requestTenantStorageMigration>[0] {
@@ -581,6 +625,7 @@ export function TenantConfigManagement() {
                   className="h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
                   onChange={(event) => {
                     setMigrationTarget(event.currentTarget.value as TenantStorageMigrationTarget);
+                    setMigrationRequestConfirmed(false);
                   }}
                   value={migrationTarget}
                 >
@@ -595,11 +640,29 @@ export function TenantConfigManagement() {
                   className="size-4"
                   onChange={(event) => {
                     setMigrationDryRun(event.currentTarget.checked);
+                    setMigrationRequestConfirmed(false);
                   }}
                   type="checkbox"
                 />
               </label>
-              <Button disabled={!canSave} onClick={requestStorageMigration} size="sm" type="button">
+              <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
+                <span>Confirm live migration request</span>
+                <input
+                  checked={migrationRequestConfirmed}
+                  className="size-4"
+                  disabled={migrationDryRun}
+                  onChange={(event) => {
+                    setMigrationRequestConfirmed(event.currentTarget.checked);
+                  }}
+                  type="checkbox"
+                />
+              </label>
+              <Button
+                disabled={!canRequestMigration}
+                onClick={requestStorageMigration}
+                size="sm"
+                type="button"
+              >
                 <ArrowRightLeft aria-hidden="true" />
                 {storageMigrationMutation.isPending ? "Requesting migration" : "Request migration"}
               </Button>
@@ -643,6 +706,32 @@ export function TenantConfigManagement() {
                       {storageMigration.failures.length === 1 ? "" : "s"}
                     </span>
                   )}
+                  {storageMigration.dryRun === false && storageMigration.status === "succeeded" ? (
+                    <div className="grid gap-2 border-t border-border/70 pt-2">
+                      <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
+                        <span>Confirm migration cutover</span>
+                        <input
+                          checked={migrationCutoverConfirmed}
+                          className="size-4"
+                          onChange={(event) => {
+                            setMigrationCutoverConfirmed(event.currentTarget.checked);
+                          }}
+                          type="checkbox"
+                        />
+                      </label>
+                      <Button
+                        disabled={!canCutoverMigration}
+                        onClick={cutoverStorageMigration}
+                        size="sm"
+                        type="button"
+                      >
+                        <ArrowRightLeft aria-hidden="true" />
+                        {storageMigrationCutoverMutation.isPending
+                          ? "Cutting over"
+                          : "Cut over storage"}
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>

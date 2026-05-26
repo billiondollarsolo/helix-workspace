@@ -111,6 +111,19 @@ const storageMigrationPayload = {
   },
 };
 
+const liveStorageMigrationPayload = {
+  migration: {
+    ...storageMigrationPayload.migration,
+    target: "helix-default",
+    status: "succeeded",
+    dryRun: false,
+    plannedCount: 12,
+    copiedCount: 12,
+    verifiedCount: 12,
+    completedAt: "2026-05-25T10:01:00.000Z",
+  },
+};
+
 describe("TenantConfigManagement", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -411,6 +424,7 @@ describe("TenantConfigManagement", () => {
     });
     await act(async () => {
       checkboxByLabel("Dry run only").click();
+      checkboxByLabel("Confirm live migration request").click();
       buttonByLabel("Request migration").click();
       await Promise.resolve();
     });
@@ -432,6 +446,83 @@ describe("TenantConfigManagement", () => {
         requestUrlOf(call[0]).includes("/api/admin/tenant-config/byo-storage/migrations/"),
     );
     expect(requestUrlOf(getCall?.[0])).toContain(storageMigrationPayload.migration.id);
+  });
+
+  it("requires confirmation before requesting live migration and cutting over", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      const url = requestUrlOf(input);
+      if (
+        init?.method === "POST" &&
+        url.includes("/api/admin/tenant-config/byo-storage/migrations/") &&
+        url.endsWith("/cutover")
+      ) {
+        return Promise.resolve(
+          Response.json({
+            ...liveStorageMigrationPayload,
+            tenantConfig: {
+              ...tenantConfigPayload.tenantConfig,
+              byo: {
+                storage: {
+                  kind: "helix-default",
+                  prefix: "tenants/org-1/",
+                },
+              },
+            },
+          }),
+        );
+      }
+      if (
+        init?.method === "POST" &&
+        url.includes("/api/admin/tenant-config/byo-storage/migrations")
+      ) {
+        return Promise.resolve(Response.json(liveStorageMigrationPayload));
+      }
+      return Promise.resolve(Response.json(tenantConfigPayload));
+    });
+
+    await render();
+
+    await waitFor(() => {
+      expect(buttonByLabel("Request migration").disabled).toBe(false);
+    });
+    await act(async () => {
+      checkboxByLabel("Dry run only").click();
+      await Promise.resolve();
+    });
+    expect(buttonByLabel("Request migration").disabled).toBe(true);
+
+    await act(async () => {
+      checkboxByLabel("Confirm live migration request").click();
+      buttonByLabel("Request migration").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Succeeded");
+      expect(container.textContent).toContain("Planned 12, copied 12, verified 12");
+      expect(buttonByLabel("Cut over storage").disabled).toBe(true);
+    });
+    expect(postBody("/api/admin/tenant-config/byo-storage/migrations")).toMatchObject({
+      target: "helix-default",
+      dryRun: false,
+    });
+
+    await act(async () => {
+      checkboxByLabel("Confirm migration cutover").click();
+      buttonByLabel("Cut over storage").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Helix default storage live migration");
+    });
+    expect(postBody("/api/admin/tenant-config/byo-storage/migrations/")).toMatchObject({
+      confirm: "CUTOVER",
+    });
+    expect(fetchMock.mock.calls.some((call) => requestUrlOf(call[0]).endsWith("/cutover"))).toBe(
+      true,
+    );
+    expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
   });
 
   it("surfaces storage migration request errors without mutating tenant config", async () => {
@@ -460,6 +551,7 @@ describe("TenantConfigManagement", () => {
     });
     await act(async () => {
       checkboxByLabel("Dry run only").click();
+      checkboxByLabel("Confirm live migration request").click();
       buttonByLabel("Request migration").click();
       await Promise.resolve();
     });

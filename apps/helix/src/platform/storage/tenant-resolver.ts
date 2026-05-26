@@ -187,7 +187,7 @@ export function resolveTenantStorageSnapshot(input: {
   };
 }
 
-function defaultTenantStoragePrefix(orgId: string): string {
+export function defaultTenantStoragePrefix(orgId: string): string {
   return `tenants/${orgId}/`;
 }
 

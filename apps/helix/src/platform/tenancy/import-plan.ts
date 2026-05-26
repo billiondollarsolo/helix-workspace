@@ -23,24 +23,58 @@ export type TenantImportPlanIssueCode =
   | "principal_remap_required"
   | "resource_reference_deferred"
   | "verified_state_requires_recheck"
-  | "primary_domain_conflict_check_required";
+  | "primary_domain_conflict_check_required"
+  | "target_primary_key_conflict"
+  | "target_natural_key_conflict"
+  | "target_primary_domain_conflict"
+  | "principal_remap_missing"
+  | "resource_remap_missing";
 
 export type TenantImportPlanOperationKind =
   | "upsert_admin_domain"
   | "upsert_admin_dns_record"
   | "upsert_resource_classification";
 
+export type TenantImportPlanOperationAction = "insert" | "update" | "blocked";
+
 export interface BuildTenantImportPlanInput {
   readonly manifest: TenantExportManifest;
   readonly files: TenantExportValidationFiles;
   readonly targetOrgId?: string | undefined;
   readonly targetSlug?: string | undefined;
+  readonly remaps?: TenantImportPlanProvidedRemaps | undefined;
+  readonly targetState?: TenantImportPlanTargetState | undefined;
 }
 
 export interface BuildTenantImportPlanFromArchiveInput {
   readonly archive: Uint8Array;
   readonly targetOrgId?: string | undefined;
   readonly targetSlug?: string | undefined;
+  readonly remaps?: TenantImportPlanProvidedRemaps | undefined;
+  readonly targetState?: TenantImportPlanTargetState | undefined;
+}
+
+export interface TenantImportPlanProvidedRemaps {
+  readonly principals?: Readonly<Record<string, string | null>> | undefined;
+  readonly resources?: Readonly<Record<string, string>> | undefined;
+}
+
+export interface TenantImportPlanTargetState {
+  readonly existingRowIds?: readonly TenantImportPlanExistingRowId[] | undefined;
+  readonly existingNaturalKeys?: readonly TenantImportPlanExistingNaturalKey[] | undefined;
+  readonly primaryDomain?: string | null | undefined;
+}
+
+export interface TenantImportPlanExistingRowId {
+  readonly table: TenantImportPlanPostgresTable;
+  readonly id: string;
+  readonly targetId?: string | undefined;
+}
+
+export interface TenantImportPlanExistingNaturalKey {
+  readonly table: TenantImportPlanPostgresTable;
+  readonly naturalKey: readonly string[];
+  readonly targetId?: string | undefined;
 }
 
 export type TenantImportArchiveReadIssueCode =
@@ -86,12 +120,48 @@ export interface TenantImportPlanOperation {
   readonly table: TenantImportPlanPostgresTable;
   readonly path: string;
   readonly line: number;
+  readonly action: TenantImportPlanOperationAction;
   readonly sourceId: string;
+  readonly targetId: string | null;
   readonly sourceOrgId: string;
   readonly targetOrgId: string;
   readonly naturalKey: readonly string[];
   readonly dependsOn: readonly string[];
+  readonly remappedFields: Readonly<Record<string, unknown>>;
   readonly row: Readonly<Record<string, unknown>>;
+}
+
+export type TenantImportPlanRemapKind = "org" | "row_id" | "principal" | "resource";
+
+export type TenantImportPlanRemapStatus = "identity" | "rewrite" | "pending" | "unresolved";
+
+export interface TenantImportPlanRemapEntry {
+  readonly kind: TenantImportPlanRemapKind;
+  readonly status: TenantImportPlanRemapStatus;
+  readonly sourceId: string;
+  readonly targetId?: string | undefined;
+  readonly table?: TenantImportPlanPostgresTable | undefined;
+  readonly naturalKey?: readonly string[] | undefined;
+  readonly resourceType?: string | undefined;
+  readonly reason: string;
+}
+
+export type TenantImportPlanConflictSeverity = "warning" | "error";
+
+export type TenantImportPlanConflictCode =
+  | "target_primary_key_conflict"
+  | "target_natural_key_conflict"
+  | "target_primary_domain_conflict";
+
+export interface TenantImportPlanConflict {
+  readonly severity: TenantImportPlanConflictSeverity;
+  readonly code: TenantImportPlanConflictCode;
+  readonly table: TenantImportPlanPostgresTable;
+  readonly message: string;
+  readonly sourceId?: string | undefined;
+  readonly targetId?: string | undefined;
+  readonly naturalKey?: readonly string[] | undefined;
+  readonly field?: string | undefined;
 }
 
 export interface TenantImportPlanStep {
@@ -128,9 +198,13 @@ export interface TenantImportPlan {
     readonly adminDnsRecordRows: number;
     readonly resourceClassificationRows: number;
     readonly operationCount: number;
+    readonly remapCount: number;
+    readonly conflictCount: number;
   };
   readonly steps: readonly TenantImportPlanStep[];
   readonly issues: readonly TenantImportPlanIssue[];
+  readonly remaps: readonly TenantImportPlanRemapEntry[];
+  readonly conflicts: readonly TenantImportPlanConflict[];
   readonly operations: readonly TenantImportPlanOperation[];
 }
 
@@ -211,29 +285,49 @@ export function buildTenantImportPlan(input: BuildTenantImportPlanInput): Tenant
           validationIssues: validationErrors,
         },
       ],
+      remaps: [],
+      conflicts: [],
       operations: [],
     };
   }
 
   const files = normalizeFiles(input.files);
   const rowsByTable = readRowsByTable(input.manifest, files);
-  const issues = buildPlanIssues({
+  const remaps = buildRemaps({
     sourceOrgId,
     targetOrgId,
     rowsByTable,
+    providedRemaps: input.remaps,
+    targetState: input.targetState,
   });
   const operations = buildOperations({
     sourceOrgId,
     targetOrgId,
     rowsByTable,
+    providedRemaps: input.remaps,
+    targetState: input.targetState,
+  });
+  const conflicts = buildConflicts({
+    targetState: input.targetState,
+    operations,
+    rowsByTable,
+  });
+  const issues = buildPlanIssues({
+    sourceOrgId,
+    targetOrgId,
+    rowsByTable,
+    conflicts,
+    providedRemaps: input.remaps,
   });
 
   return {
     ...base,
     ok: issues.every((issue) => issue.severity !== "error"),
-    summary: planSummary(validation, operations.length),
+    summary: planSummary(validation, operations.length, remaps.length, conflicts.length),
     steps: buildSteps(input.manifest, validation),
     issues,
+    remaps,
+    conflicts,
     operations,
   };
 }
@@ -289,6 +383,8 @@ export function buildTenantImportPlanFromArchive(
     files,
     ...(input.targetOrgId === undefined ? {} : { targetOrgId: input.targetOrgId }),
     ...(input.targetSlug === undefined ? {} : { targetSlug: input.targetSlug }),
+    ...(input.remaps === undefined ? {} : { remaps: input.remaps }),
+    ...(input.targetState === undefined ? {} : { targetState: input.targetState }),
   });
   return {
     ok: plan.ok,
@@ -300,6 +396,8 @@ export function buildTenantImportPlanFromArchive(
 function planSummary(
   validation: TenantExportValidationResult,
   operationCount: number,
+  remapCount = 0,
+  conflictCount = 0,
 ): TenantImportPlan["summary"] {
   const { adminDomainRows, adminDnsRecordRows, resourceClassificationRows } = validation.summary;
   return {
@@ -308,6 +406,8 @@ function planSummary(
     adminDnsRecordRows,
     resourceClassificationRows,
     operationCount,
+    remapCount,
+    conflictCount,
   };
 }
 
@@ -366,6 +466,8 @@ function buildPlanIssues(input: {
   readonly sourceOrgId: string;
   readonly targetOrgId: string;
   readonly rowsByTable: ReadonlyMap<TenantImportPlanPostgresTable, readonly JsonRecord[]>;
+  readonly conflicts: readonly TenantImportPlanConflict[];
+  readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
 }): readonly TenantImportPlanIssue[] {
   const issues: TenantImportPlanIssue[] = [];
   const domainRows = input.rowsByTable.get("admin_domains") ?? [];
@@ -405,6 +507,59 @@ function buildPlanIssues(input: {
     });
   }
 
+  domainRows.forEach((row, index) => {
+    const createdBy = row.createdBy;
+    if (
+      typeof createdBy === "string" &&
+      input.providedRemaps?.principals?.[createdBy] === undefined
+    ) {
+      issues.push({
+        severity: "warning",
+        code: "principal_remap_missing",
+        table: "admin_domains",
+        path: tablePath("admin_domains"),
+        line: index + 1,
+        sourceId: stringField(row, "id"),
+        field: "createdBy",
+        actual: createdBy,
+        message: "Admin domain creator reference has no target principal remap.",
+      });
+    }
+  });
+
+  classificationRows.forEach((row, index) => {
+    const actorId = row.actorId;
+    if (typeof actorId === "string" && input.providedRemaps?.principals?.[actorId] === undefined) {
+      issues.push({
+        severity: "warning",
+        code: "principal_remap_missing",
+        table: "resource_classifications",
+        path: tablePath("resource_classifications"),
+        line: index + 1,
+        sourceId: stringField(row, "id"),
+        field: "actorId",
+        actual: actorId,
+        message: "Resource classification actor reference has no target principal remap.",
+      });
+    }
+    const resourceType = stringField(row, "resourceType");
+    const resourceId = stringField(row, "resourceId");
+    const resourceKey = resourceReferenceKey(resourceType, resourceId);
+    if (input.providedRemaps?.resources?.[resourceKey] === undefined) {
+      issues.push({
+        severity: "warning",
+        code: "resource_remap_missing",
+        table: "resource_classifications",
+        path: tablePath("resource_classifications"),
+        line: index + 1,
+        sourceId: stringField(row, "id"),
+        field: "resourceId",
+        actual: resourceKey,
+        message: "Resource classification reference has no target resource remap.",
+      });
+    }
+  });
+
   if (classificationRows.length > 0) {
     issues.push({
       severity: "warning",
@@ -437,7 +592,203 @@ function buildPlanIssues(input: {
     });
   }
 
+  for (const conflict of input.conflicts) {
+    issues.push({
+      severity: conflict.severity,
+      code: conflict.code,
+      table: conflict.table,
+      sourceId: conflict.sourceId,
+      field: conflict.field,
+      message: conflict.message,
+      expected: conflict.naturalKey,
+      actual: conflict.targetId,
+    });
+  }
+
   return issues;
+}
+
+function buildRemaps(input: {
+  readonly sourceOrgId: string;
+  readonly targetOrgId: string;
+  readonly rowsByTable: ReadonlyMap<TenantImportPlanPostgresTable, readonly JsonRecord[]>;
+  readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
+  readonly targetState: TenantImportPlanTargetState | undefined;
+}): readonly TenantImportPlanRemapEntry[] {
+  const domainIdTargets = buildDomainIdTargets(input.rowsByTable, input.targetState);
+  const remaps: TenantImportPlanRemapEntry[] = [
+    {
+      kind: "org",
+      sourceId: input.sourceOrgId,
+      ...(input.targetOrgId === input.sourceOrgId ? {} : { targetId: input.targetOrgId }),
+      status: input.targetOrgId === input.sourceOrgId ? "identity" : "rewrite",
+      reason:
+        input.targetOrgId === input.sourceOrgId
+          ? "Exported rows already target the source org ID."
+          : "Exported row orgId values will be rewritten to the target org ID.",
+    },
+  ];
+
+  for (const definition of chunkDefinitions) {
+    const rows = input.rowsByTable.get(definition.table) ?? [];
+    for (const row of rows) {
+      const sourceId = stringField(row, "id");
+      const naturalKey = naturalKeyForRow(definition.table, row);
+      const targetId = targetIdForNaturalKey(definition.table, naturalKey, input.targetState);
+      remaps.push({
+        kind: "row_id",
+        table: definition.table,
+        sourceId,
+        ...(targetId === null ? {} : { targetId }),
+        status: targetId === null ? "pending" : "rewrite",
+        naturalKey,
+        reason:
+          targetId === null
+            ? "Target row ID must be preserved, matched, or regenerated during apply."
+            : "Target row already matches this exported row natural key.",
+      });
+    }
+  }
+
+  const principalIds = new Set<string>();
+  for (const row of input.rowsByTable.get("admin_domains") ?? []) {
+    addStringSetValue(principalIds, row.createdBy);
+  }
+  for (const row of input.rowsByTable.get("resource_classifications") ?? []) {
+    addStringSetValue(principalIds, row.actorId);
+  }
+  for (const sourceId of [...principalIds].sort()) {
+    const providedTargetId = input.providedRemaps?.principals?.[sourceId];
+    remaps.push({
+      kind: "principal",
+      sourceId,
+      ...(providedTargetId === undefined || providedTargetId === null
+        ? {}
+        : { targetId: providedTargetId }),
+      status: providedTargetId === undefined ? "unresolved" : "rewrite",
+      reason:
+        providedTargetId === undefined
+          ? "Principal references need an explicit target principal remap or null/preserve policy."
+          : providedTargetId === null
+            ? "Principal reference will be nulled during apply."
+            : "Principal reference will be rewritten to a provided target principal.",
+    });
+  }
+
+  const resourceReferences = new Map<
+    string,
+    { readonly resourceType: string; readonly resourceId: string }
+  >();
+  for (const row of input.rowsByTable.get("resource_classifications") ?? []) {
+    const resourceType = stringField(row, "resourceType");
+    const resourceId = stringField(row, "resourceId");
+    resourceReferences.set(resourceReferenceKey(resourceType, resourceId), {
+      resourceType,
+      resourceId,
+    });
+  }
+  for (const reference of [...resourceReferences.values()].sort((left, right) =>
+    `${left.resourceType}:${left.resourceId}`.localeCompare(
+      `${right.resourceType}:${right.resourceId}`,
+    ),
+  )) {
+    const targetId =
+      input.providedRemaps?.resources?.[
+        resourceReferenceKey(reference.resourceType, reference.resourceId)
+      ];
+    remaps.push({
+      kind: "resource",
+      sourceId: reference.resourceId,
+      resourceType: reference.resourceType,
+      ...(targetId === undefined ? {} : { targetId }),
+      status: targetId === undefined ? "unresolved" : "rewrite",
+      reason:
+        targetId === undefined
+          ? "Resource classifications must resolve target resource IDs after resource import."
+          : "Resource classification reference will be rewritten to a provided target resource.",
+    });
+  }
+
+  for (const [sourceId, targetId] of domainIdTargets) {
+    if (sourceId === targetId) {
+      continue;
+    }
+    remaps.push({
+      kind: "row_id",
+      table: "admin_domains",
+      sourceId,
+      targetId,
+      status: "rewrite",
+      reason: "DNS domainId values will use the matched target admin domain ID.",
+    });
+  }
+
+  return remaps;
+}
+
+function buildConflicts(input: {
+  readonly targetState: TenantImportPlanTargetState | undefined;
+  readonly operations: readonly TenantImportPlanOperation[];
+  readonly rowsByTable: ReadonlyMap<TenantImportPlanPostgresTable, readonly JsonRecord[]>;
+}): readonly TenantImportPlanConflict[] {
+  if (input.targetState === undefined) {
+    return [];
+  }
+  const conflicts: TenantImportPlanConflict[] = [];
+  for (const operation of input.operations) {
+    const existingRow = input.targetState.existingRowIds?.find(
+      (row) => row.table === operation.table && row.id === operation.sourceId,
+    );
+    if (existingRow !== undefined) {
+      conflicts.push({
+        severity: "warning",
+        code: "target_primary_key_conflict",
+        table: operation.table,
+        sourceId: operation.sourceId,
+        ...(existingRow.targetId === undefined ? {} : { targetId: existingRow.targetId }),
+        message: "Target already has a row with the exported source ID.",
+      });
+    }
+
+    const existingNaturalKey = input.targetState.existingNaturalKeys?.find(
+      (entry) =>
+        entry.table === operation.table && arraysEqual(entry.naturalKey, operation.naturalKey),
+    );
+    if (existingNaturalKey !== undefined) {
+      conflicts.push({
+        severity: "warning",
+        code: "target_natural_key_conflict",
+        table: operation.table,
+        sourceId: operation.sourceId,
+        naturalKey: operation.naturalKey,
+        ...(existingNaturalKey.targetId === undefined
+          ? {}
+          : { targetId: existingNaturalKey.targetId }),
+        message: "Target already has a row with the exported natural key.",
+      });
+    }
+  }
+
+  const targetPrimaryDomain = input.targetState.primaryDomain?.toLowerCase();
+  if (targetPrimaryDomain !== undefined) {
+    const importedPrimaryDomains = (input.rowsByTable.get("admin_domains") ?? [])
+      .filter((row) => row.isPrimary === true)
+      .map((row) => stringField(row, "domain").toLowerCase());
+    for (const domain of importedPrimaryDomains) {
+      if (domain !== targetPrimaryDomain) {
+        conflicts.push({
+          severity: "warning",
+          code: "target_primary_domain_conflict",
+          table: "admin_domains",
+          naturalKey: [domain],
+          field: "isPrimary",
+          message: "Target org already has a different primary domain.",
+        });
+      }
+    }
+  }
+
+  return conflicts;
 }
 
 function hasVerifiedDomainState(row: JsonRecord): boolean {
@@ -452,30 +803,104 @@ function buildOperations(input: {
   readonly sourceOrgId: string;
   readonly targetOrgId: string;
   readonly rowsByTable: ReadonlyMap<TenantImportPlanPostgresTable, readonly JsonRecord[]>;
+  readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
+  readonly targetState: TenantImportPlanTargetState | undefined;
 }): readonly TenantImportPlanOperation[] {
   const operations: TenantImportPlanOperation[] = [];
+  const domainIdTargets = buildDomainIdTargets(input.rowsByTable, input.targetState);
   for (const definition of chunkDefinitions) {
     const rows = input.rowsByTable.get(definition.table) ?? [];
     rows.forEach((row, index) => {
+      const remappedFields = remappedFieldsForRow({
+        table: definition.table,
+        row,
+        targetOrgId: input.targetOrgId,
+        domainIdTargets,
+        providedRemaps: input.providedRemaps,
+      });
+      const plannedRow = {
+        ...row,
+        ...remappedFields,
+      };
+      const naturalKey = naturalKeyForRow(definition.table, plannedRow);
+      const targetId = targetIdForNaturalKey(definition.table, naturalKey, input.targetState);
       operations.push({
         order: operations.length + 1,
         kind: definition.operationKind,
         table: definition.table,
         path: definition.path,
         line: index + 1,
+        action: operationActionForRow(definition.table, row, input.providedRemaps, targetId),
         sourceId: stringField(row, "id"),
+        targetId,
         sourceOrgId: input.sourceOrgId,
         targetOrgId: input.targetOrgId,
-        naturalKey: naturalKeyForRow(definition.table, row),
-        dependsOn: dependsOnForRow(definition.table, row),
-        row: {
-          ...row,
-          orgId: input.targetOrgId,
-        },
+        naturalKey,
+        dependsOn: dependsOnForRow(definition.table, plannedRow),
+        remappedFields,
+        row: plannedRow,
       });
     });
   }
   return operations;
+}
+
+function operationActionForRow(
+  table: TenantImportPlanPostgresTable,
+  row: JsonRecord,
+  providedRemaps: TenantImportPlanProvidedRemaps | undefined,
+  targetId: string | null,
+): TenantImportPlanOperationAction {
+  if (table === "resource_classifications") {
+    const resourceKey = resourceReferenceKey(
+      stringField(row, "resourceType"),
+      stringField(row, "resourceId"),
+    );
+    if (providedRemaps?.resources?.[resourceKey] === undefined) {
+      return "blocked";
+    }
+  }
+  return targetId === null ? "insert" : "update";
+}
+
+function remappedFieldsForRow(input: {
+  readonly table: TenantImportPlanPostgresTable;
+  readonly row: JsonRecord;
+  readonly targetOrgId: string;
+  readonly domainIdTargets: ReadonlyMap<string, string>;
+  readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
+}): Readonly<Record<string, unknown>> {
+  const remapped: Record<string, unknown> = {
+    orgId: input.targetOrgId,
+  };
+  if (input.table === "admin_domains") {
+    const createdBy = input.row.createdBy;
+    if (
+      typeof createdBy === "string" &&
+      input.providedRemaps?.principals?.[createdBy] !== undefined
+    ) {
+      remapped.createdBy = input.providedRemaps.principals[createdBy];
+    }
+  }
+  if (input.table === "admin_dns_records") {
+    const domainId = stringField(input.row, "domainId");
+    remapped.domainId = input.domainIdTargets.get(domainId) ?? domainId;
+  }
+  if (input.table === "resource_classifications") {
+    const actorId = input.row.actorId;
+    if (typeof actorId === "string" && input.providedRemaps?.principals?.[actorId] !== undefined) {
+      remapped.actorId = input.providedRemaps.principals[actorId];
+    }
+    const resourceKey = resourceReferenceKey(
+      stringField(input.row, "resourceType"),
+      stringField(input.row, "resourceId"),
+    );
+    const targetResourceId = input.providedRemaps?.resources?.[resourceKey];
+    if (targetResourceId !== undefined) {
+      remapped.resourceId = targetResourceId;
+    }
+  }
+  return remapped;
 }
 
 function naturalKeyForRow(
@@ -501,6 +926,47 @@ function dependsOnForRow(table: TenantImportPlanPostgresTable, row: JsonRecord):
     return [`admin_domains:${stringField(row, "domainId")}`];
   }
   return [];
+}
+
+function buildDomainIdTargets(
+  rowsByTable: ReadonlyMap<TenantImportPlanPostgresTable, readonly JsonRecord[]>,
+  targetState: TenantImportPlanTargetState | undefined,
+): ReadonlyMap<string, string> {
+  const targets = new Map<string, string>();
+  for (const row of rowsByTable.get("admin_domains") ?? []) {
+    const sourceId = stringField(row, "id");
+    const naturalKey = naturalKeyForRow("admin_domains", row);
+    const targetId = targetIdForNaturalKey("admin_domains", naturalKey, targetState);
+    if (targetId !== null) {
+      targets.set(sourceId, targetId);
+    }
+  }
+  return targets;
+}
+
+function targetIdForNaturalKey(
+  table: TenantImportPlanPostgresTable,
+  naturalKey: readonly string[],
+  targetState: TenantImportPlanTargetState | undefined,
+): string | null {
+  const match = targetState?.existingNaturalKeys?.find(
+    (entry) => entry.table === table && arraysEqual(entry.naturalKey, naturalKey),
+  );
+  return match?.targetId ?? null;
+}
+
+function addStringSetValue(values: Set<string>, value: unknown): void {
+  if (typeof value === "string") {
+    values.add(value);
+  }
+}
+
+function resourceReferenceKey(resourceType: string, resourceId: string): string {
+  return `${resourceType}:${resourceId}`;
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function readRowsByTable(

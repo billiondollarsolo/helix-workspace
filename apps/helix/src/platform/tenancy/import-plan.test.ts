@@ -16,6 +16,9 @@ const actorId = "11111111-1111-4111-8111-111111111111";
 const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
+const targetDomainId = "77777777-7777-4777-8777-777777777777";
+const targetDnsRecordId = "88888888-8888-4888-8888-888888888888";
+const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
 
 describe("buildTenantImportPlan", () => {
   it("builds a pure dry-run plan for the current row chunks", () => {
@@ -101,6 +104,115 @@ describe("buildTenantImportPlan", () => {
     expect(plan.operations.every((operation) => operation.row.orgId === targetOrgId)).toBe(true);
     expect(input.manifest.org.id).toBe(orgId);
     expect(issueCodes(plan)).toContain("org_id_remap_required");
+  });
+
+  it("uses target facts and provided remaps to shape operations and conflicts", () => {
+    const input = validImportPlanInput();
+
+    const plan = buildTenantImportPlan({
+      ...input,
+      targetOrgId,
+      remaps: {
+        principals: {
+          [actorId]: null,
+        },
+        resources: {
+          "mail.message:msg-1": "target-msg-1",
+        },
+      },
+      targetState: {
+        primaryDomain: "other.example.com",
+        existingNaturalKeys: [
+          {
+            table: "admin_domains",
+            naturalKey: ["example.com"],
+            targetId: targetDomainId,
+          },
+          {
+            table: "admin_dns_records",
+            naturalKey: [targetDomainId, "TXT", "_helix.example.com"],
+            targetId: targetDnsRecordId,
+          },
+          {
+            table: "resource_classifications",
+            naturalKey: ["mail.message", "target-msg-1"],
+            targetId: targetResourceClassificationId,
+          },
+        ],
+      },
+    });
+
+    expect(plan.summary).toMatchObject({
+      remapCount: 7,
+      conflictCount: 4,
+    });
+    expect(plan.operations[0]).toMatchObject({
+      action: "update",
+      table: "admin_domains",
+      sourceId: domainId,
+      targetId: targetDomainId,
+      remappedFields: {
+        orgId: targetOrgId,
+        createdBy: null,
+      },
+    });
+    expect(plan.operations[0]?.row).toMatchObject({
+      orgId: targetOrgId,
+      createdBy: null,
+    });
+    expect(plan.operations[1]).toMatchObject({
+      action: "update",
+      table: "admin_dns_records",
+      sourceId: dnsRecordId,
+      targetId: targetDnsRecordId,
+      naturalKey: [targetDomainId, "TXT", "_helix.example.com"],
+      dependsOn: [`admin_domains:${targetDomainId}`],
+      remappedFields: {
+        orgId: targetOrgId,
+        domainId: targetDomainId,
+      },
+    });
+    expect(plan.operations[1]?.row).toMatchObject({
+      orgId: targetOrgId,
+      domainId: targetDomainId,
+    });
+    expect(plan.operations[2]).toMatchObject({
+      action: "update",
+      table: "resource_classifications",
+      sourceId: resourceClassificationId,
+      targetId: targetResourceClassificationId,
+      naturalKey: ["mail.message", "target-msg-1"],
+      remappedFields: {
+        orgId: targetOrgId,
+        actorId: null,
+        resourceId: "target-msg-1",
+      },
+    });
+    expect(plan.operations[2]?.row).toMatchObject({
+      orgId: targetOrgId,
+      actorId: null,
+      resourceId: "target-msg-1",
+    });
+    expect(plan.remaps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "principal",
+          sourceId: actorId,
+          status: "rewrite",
+          reason: "Principal reference will be nulled during apply.",
+        }),
+        expect.objectContaining({
+          kind: "resource",
+          sourceId: "msg-1",
+          targetId: "target-msg-1",
+          status: "rewrite",
+        }),
+      ]),
+    );
+    expect(plan.conflicts.map((conflict) => conflict.code)).toEqual(
+      expect.arrayContaining(["target_natural_key_conflict", "target_primary_domain_conflict"]),
+    );
+    expect(input.manifest.org.id).toBe(orgId);
   });
 
   it("returns validation blockers and no operations when the archive rows are invalid", () => {

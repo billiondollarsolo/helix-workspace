@@ -47,12 +47,17 @@ export interface DriveApiEntry {
 export interface DriveApiSearchHit {
   readonly objectId: string;
   readonly name: string;
+  readonly ownerActorId: string | null;
+  readonly ownerDisplayName?: string;
+  readonly ownerEmail?: string;
+  readonly app?: string | null;
   readonly mimeType: string;
   readonly byteSize: number;
   readonly sha256: string | null;
   readonly folderId: string | null;
   readonly preview: string;
   readonly previewMetadata?: DriveApiPreview;
+  readonly metadata?: Record<string, unknown>;
   readonly updatedAt: string;
 }
 

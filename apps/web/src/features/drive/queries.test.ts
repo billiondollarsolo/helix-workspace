@@ -226,11 +226,16 @@ describe("entryFromSearchHit", () => {
     const hit: DriveApiSearchHit = {
       objectId: "obj-9",
       name: "Spec.pdf",
+      ownerActorId: "actor-other",
+      ownerDisplayName: "Maya Sharma",
+      ownerEmail: "maya@helix.local",
+      app: "docs",
       mimeType: "application/pdf",
       byteSize: 512,
       sha256: "abc",
       folderId: "folder-1",
       preview: "Spec preview",
+      metadata: { app: "docs" },
       updatedAt: "2026-05-20T10:00:00.000Z",
     };
     const entry = entryFromSearchHit(hit);
@@ -239,6 +244,11 @@ describe("entryFromSearchHit", () => {
       type: "file",
       name: "Spec.pdf",
       folderId: "folder-1",
+      ownerActorId: "actor-other",
+      ownerDisplayName: "Maya Sharma",
+      ownerEmail: "maya@helix.local",
+      app: "docs",
+      metadata: { app: "docs" },
       deletedAt: null,
     });
   });

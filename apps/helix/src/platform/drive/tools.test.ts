@@ -446,6 +446,7 @@ describe("drive tools", () => {
           {
             objectId,
             name: "report.pdf",
+            ownerActorId: actorId,
             previewMetadata: {
               kind: "pdf",
               status: "available",
@@ -457,6 +458,31 @@ describe("drive tools", () => {
       },
     });
   });
+
+  it("drive.search decorates hits with owner display metadata when a resolver is provided", async () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      resolveActorNames: async (ids) =>
+        new Map(ids.map((id) => [id, { displayName: "Local Helix Admin", email: "admin@helix.local" }])),
+    });
+    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.read"] };
+
+    await expect(registry.invoke("drive.search", { query: "report" }, { actor })).resolves.toMatchObject({
+      ok: true,
+      output: {
+        hits: [
+          {
+            objectId,
+            ownerActorId: actorId,
+            ownerDisplayName: "Local Helix Admin",
+            ownerEmail: "admin@helix.local",
+          },
+        ],
+      },
+    });
+  });
+
   it("drive.create with kind:folder creates a drive_folders row", async () => {
     const driveStore = new FakeDriveStore();
     const registry = createToolRegistry();
@@ -852,6 +878,8 @@ class FakeDriveStore implements DriveStore {
       {
         objectId,
         name: "report.pdf",
+        ownerActorId: actorId,
+        app: null,
         mimeType: "application/pdf",
         byteSize: 128,
         sha256,
@@ -863,6 +891,7 @@ class FakeDriveStore implements DriveStore {
           mimeType: "application/pdf",
           url: "https://cdn.example/report.pdf",
         },
+        metadata: {},
         updatedAt: now,
       },
     ];

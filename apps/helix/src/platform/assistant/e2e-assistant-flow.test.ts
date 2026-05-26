@@ -947,11 +947,14 @@ class FakeDriveStore implements DriveStore {
       {
         objectId: this.prdObjectId,
         name: "Q3 Launch PRD",
+        ownerActorId: input.actorId,
+        app: null,
         mimeType: "application/vnd.helix.prd",
         byteSize: 42_000,
         sha256: "abc123",
         folderId: null,
         preview: "Q3 Launch PRD share plan for Bruno.",
+        metadata: {},
         updatedAt: new Date("2026-05-20T14:00:00.000Z"),
       },
     ];

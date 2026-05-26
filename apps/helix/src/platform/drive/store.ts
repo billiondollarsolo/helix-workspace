@@ -1860,12 +1860,15 @@ function mapSearchHit(row: DriveSearchRow): DriveSearchHit {
   return {
     objectId: row.id,
     name,
+    ownerActorId: row.owner_actor_id,
+    app: stringMetadata(row.metadata, "app") ?? null,
     mimeType: row.mime_type,
     byteSize: row.byte_size,
     sha256: row.sha256,
     folderId: nullableStringMetadata(row.metadata, "folderId"),
     preview: `${name} ${row.mime_type}`.slice(0, 240),
     ...driveSearchPreviewProperty(row.mime_type, row.metadata),
+    metadata: row.metadata,
     updatedAt: row.updated_at,
   };
 }

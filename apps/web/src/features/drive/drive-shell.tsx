@@ -64,6 +64,7 @@ import {
   driveActorQueryOptions,
   driveItemsQueryOptions,
   driveQueryKeys,
+  entryFromSearchHit,
   type DriveScope,
 } from "./queries";
 
@@ -231,6 +232,7 @@ export function DriveShell() {
   const [trail, setTrail] = useState<readonly DriveCrumb[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(driveSearch.file ?? null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchQuery = driveSearch.q?.trim() ?? "";
 
   const folderId =
     trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : (driveSearch.folder ?? null);
@@ -255,7 +257,12 @@ export function DriveShell() {
   const actorId = actorQuery.data?.actorId ?? null;
 
   const itemsQuery = useQuery(
-    driveItemsQueryOptions({ folderId, scope, limit: scope === "recent" ? 50 : 100 }),
+    driveItemsQueryOptions({
+      folderId,
+      scope,
+      query: searchQuery,
+      limit: searchQuery.length > 0 || scope === "recent" ? 50 : 100,
+    }),
   );
 
   const invalidateDrive = () => queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
@@ -452,20 +459,7 @@ export function DriveShell() {
     if (data.mode === "list") {
       return applyDriveScope(data.entries, scope, actorId);
     }
-    return data.hits.map((hit) => ({
-      id: hit.objectId,
-      type: "file" as const,
-      name: hit.name,
-      folderId: hit.folderId,
-      ownerActorId: null,
-      mimeType: hit.mimeType,
-      byteSize: hit.byteSize,
-      sha256: hit.sha256,
-      ...(hit.previewMetadata === undefined ? {} : { preview: hit.previewMetadata }),
-      deletedAt: null,
-      createdAt: hit.updatedAt,
-      updatedAt: hit.updatedAt,
-    }));
+    return applyDriveScope(data.hits.map(entryFromSearchHit), scope, actorId);
   }, [itemsQuery.data, scope, actorId]);
 
   const folders = useMemo<readonly DriveFolderItem[]>(

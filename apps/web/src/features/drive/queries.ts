@@ -152,11 +152,15 @@ export function entryFromSearchHit(hit: DriveApiSearchHit): DriveApiEntry {
     type: "file",
     name: hit.name,
     folderId: hit.folderId,
-    ownerActorId: null,
+    ownerActorId: hit.ownerActorId,
+    ...(hit.ownerDisplayName === undefined ? {} : { ownerDisplayName: hit.ownerDisplayName }),
+    ...(hit.ownerEmail === undefined ? {} : { ownerEmail: hit.ownerEmail }),
+    app: hit.app ?? null,
     mimeType: hit.mimeType,
     byteSize: hit.byteSize,
     sha256: hit.sha256,
     ...(hit.previewMetadata === undefined ? {} : { preview: hit.previewMetadata }),
+    metadata: hit.metadata ?? {},
     deletedAt: null,
     createdAt: hit.updatedAt,
     updatedAt: hit.updatedAt,
@@ -247,8 +251,8 @@ export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriv
       // `my` + `trash` are folder-scoped views — `drive.list` returns the
       // folders and files of the active folder. The other scopes (Recent /
       // Shared / Starred) are cross-folder file views, so they ride
-      // `drive.search` with an empty query, which returns every visible file
-      // ordered by recency. Folder-scope filtering then happens client-side.
+      // `drive.list` with `acrossFolders` and keep full owner/app/metadata for
+      // client-side scope filtering.
       if (scope === "my" || scope === "trash") {
         return {
           mode: "list",
@@ -274,8 +278,14 @@ export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriv
         };
       }
 
-      const hits = await searchDrive({ query: "", folderId: null, limit: input.limit ?? 100 });
-      return { mode: "list", entries: hits.map(entryFromSearchHit) };
+      return {
+        mode: "list",
+        entries: await listDrive({
+          folderId: null,
+          acrossFolders: true,
+          limit: input.limit ?? 100,
+        }),
+      };
     },
     throwOnError: false,
   });

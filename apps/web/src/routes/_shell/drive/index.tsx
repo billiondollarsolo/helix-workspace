@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
@@ -20,20 +20,45 @@ const driveSearchSchema = z.object({
 export const Route = createFileRoute("/_shell/drive/")({
   component: DriveRoute,
   validateSearch: (search) => driveSearchSchema.parse(search),
-  loaderDeps: ({ search }) => ({ folder: search.folder ?? null, scope: search.scope ?? "my" }),
+  loaderDeps: ({ search }) => ({
+    folder: search.folder ?? null,
+    scope: search.scope ?? "my",
+    q: search.q?.trim() ?? "",
+  }),
   loader: async ({ context, deps }) => {
     await context.queryClient
-      .ensureQueryData(driveItemsQueryOptions({ folderId: deps.folder, scope: deps.scope }))
+      .ensureQueryData(
+        driveItemsQueryOptions({
+          folderId: deps.folder,
+          scope: deps.scope,
+          query: deps.q,
+          limit: deps.q.length > 0 ? 50 : 100,
+        }),
+      )
       .catch(() => undefined);
   },
 });
 
 function DriveRoute() {
+  const search = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const query = search.q?.trim() ?? "";
+
   return (
     <SurfaceFrame
       title="Drive"
       icon={<Icons.Drive />}
       searchPlaceholder="Search Drive"
+      searchValue={query}
+      onSearchChange={(nextQuery) => {
+        void navigate({
+          search: (previous) => ({
+            ...previous,
+            q: nextQuery.trim().length === 0 ? undefined : nextQuery,
+            file: undefined,
+          }),
+        });
+      }}
     >
       <DriveShell />
     </SurfaceFrame>

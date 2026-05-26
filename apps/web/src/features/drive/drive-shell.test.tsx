@@ -9,9 +9,10 @@ import type { DriveApiEntry } from "./api";
 
 // Mock @tanstack/react-router so DriveShell can call router hooks without a router context.
 const navigateMock = vi.fn();
+let routerSearch: Record<string, unknown> = {};
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
-  useSearch: () => ({}),
+  useSearch: () => routerSearch,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -90,6 +91,7 @@ describe("DriveShell", () => {
 
   beforeEach(() => {
     navigateMock.mockClear();
+    routerSearch = {};
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -122,7 +124,26 @@ describe("DriveShell", () => {
         return Promise.resolve(Response.json({ entries }));
       }
       if (url === "/api/tools/drive.search") {
-        return Promise.resolve(Response.json({ hits: [] }));
+        return Promise.resolve(
+          Response.json({
+            hits: [
+              {
+                objectId: "file-roadmap",
+                name: "Roadmap.docx",
+                ownerActorId: "owner-1",
+                ownerDisplayName: "Avery Park",
+                app: null,
+                mimeType: "application/msword",
+                byteSize: 2048,
+                sha256: null,
+                folderId: null,
+                preview: "Roadmap.docx application/msword",
+                metadata: {},
+                updatedAt: "2026-05-20T12:00:00.000Z",
+              },
+            ],
+          }),
+        );
       }
       if (url === "/api/tools/drive.trash") {
         return Promise.resolve(Response.json({ id: "file-roadmap", deletedAt: "now" }));
@@ -292,8 +313,110 @@ describe("DriveShell", () => {
     });
     await settle();
     expect(sharedButton?.getAttribute("aria-current")).toBe("page");
-    // Non-folder scopes ride drive.search.
-    expect(toolCalls.some((call) => call.url === "/api/tools/drive.search")).toBe(true);
+    // Empty non-folder scopes use cross-folder drive.list so owner/app metadata survives.
+    expect(
+      toolCalls.some(
+        (call) =>
+          call.url === "/api/tools/drive.list" &&
+          (call.body as { acrossFolders?: boolean }).acrossFolders === true,
+      ),
+    ).toBe(true);
+  });
+
+  it("uses /drive?q route state to search Drive instead of returning the unfiltered list", async () => {
+    routerSearch = { q: "roadmap" };
+    render();
+    await settle();
+
+    expect(
+      toolCalls.some(
+        (call) =>
+          call.url === "/api/tools/drive.search" &&
+          (call.body as { query?: string }).query === "roadmap",
+      ),
+    ).toBe(true);
+    expect(container.textContent ?? "").toContain("Roadmap.docx");
+  });
+
+  it("renders shared entries using owner metadata from cross-folder drive.list", async () => {
+    routerSearch = { scope: "shared" };
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      if (url !== "/api/auth/get-session") {
+        toolCalls.push({ url, body });
+      }
+      if (url === "/api/auth/get-session") {
+        return Promise.resolve(
+          Response.json({
+            user: {
+              id: "user-self",
+              email: "local-admin@helix.local",
+              name: "Local Helix Admin",
+              actorId: "actor-self",
+            },
+          }),
+        );
+      }
+      if (url === "/api/tools/drive.list") {
+        return Promise.resolve(
+          Response.json({
+            entries: [
+              {
+                id: "shared-file",
+                type: "file",
+                name: "Maya Shared Plan.pdf",
+                folderId: null,
+                ownerActorId: "actor-maya",
+                ownerDisplayName: "Maya Sharma",
+                ownerEmail: "maya@helix.local",
+                app: null,
+                mimeType: "application/pdf",
+                byteSize: 1024,
+                sha256: null,
+                metadata: {},
+                deletedAt: null,
+                createdAt: "2026-05-21T12:00:00.000Z",
+                updatedAt: "2026-05-21T12:00:00.000Z",
+              },
+              {
+                id: "owned-file",
+                type: "file",
+                name: "My Private Plan.pdf",
+                folderId: null,
+                ownerActorId: "actor-self",
+                ownerDisplayName: "Local Helix Admin",
+                app: null,
+                mimeType: "application/pdf",
+                byteSize: 1024,
+                sha256: null,
+                metadata: {},
+                deletedAt: null,
+                createdAt: "2026-05-21T12:00:00.000Z",
+                updatedAt: "2026-05-21T12:00:00.000Z",
+              },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(Response.json({ entries: [] }));
+    });
+
+    render();
+    await settle();
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("Maya Shared Plan.pdf");
+    expect(text).not.toContain("My Private Plan.pdf");
+
+    act(() => {
+      const sharedCard = Array.from(
+        container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]"),
+      ).find((button) => button.textContent?.includes("Maya Shared Plan.pdf"));
+      sharedCard?.click();
+    });
+
+    expect(container.textContent ?? "").toContain("Maya Sharma");
   });
 
   it("surfaces a clean error state when the backend listing errors", async () => {

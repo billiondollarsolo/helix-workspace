@@ -440,11 +440,14 @@ class FakeDriveStore {
       {
         objectId: "file-text",
         name: "Launch notes.txt",
+        ownerActorId: "actor-1",
+        app: null,
         mimeType: "text/plain",
         byteSize: 16,
         sha256: null,
         folderId: null,
         preview: "Launch text file",
+        metadata: {},
         updatedAt: new Date("2026-05-20T12:30:00.000Z"),
       },
     ];

@@ -463,8 +463,8 @@ export function createDriveToolDefinitions(
       sideEffects: "read",
       inputSchema: zodToolSchema(searchSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) => ({
-        hits: (
+      handler: async (input, ctx) => {
+        const hits = (
           await options.store.search({
             orgId: ctx.actor.orgId,
             actorId: ctx.actor.id,
@@ -472,8 +472,33 @@ export function createDriveToolDefinitions(
             folderId: input.folderId ?? null,
             limit: input.limit,
           })
-        ).map(serializeSearchHit),
-      }),
+        ).map(serializeSearchHit);
+        if (options.resolveActorNames === undefined) {
+          return { hits };
+        }
+        const ownerIds = Array.from(
+          new Set(
+            hits
+              .map((hit) => hit.ownerActorId)
+              .filter((id): id is string => typeof id === "string"),
+          ),
+        );
+        if (ownerIds.length === 0) {
+          return { hits };
+        }
+        const names = await options.resolveActorNames(ownerIds);
+        return {
+          hits: hits.map((hit) => {
+            const owner = hit.ownerActorId !== null ? names.get(hit.ownerActorId) : undefined;
+            if (owner === undefined) return hit;
+            return {
+              ...hit,
+              ownerDisplayName: owner.displayName,
+              ...(owner.email === undefined ? {} : { ownerEmail: owner.email }),
+            };
+          }),
+        };
+      },
     }),
     defineTool<z.output<typeof createCommentSchema>, unknown>({
       id: "drive.comment.create",

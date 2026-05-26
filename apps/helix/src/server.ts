@@ -1093,6 +1093,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         });
   const driveStore = new PostgresDriveStore(sql, driveStorage, {
     ...(officePreviewConverter === undefined ? {} : { officePreviewConverter }),
+    storageResolver: driveStorageResolver,
   });
   const searchEngine = await createSearchEngine();
   const semanticEmbeddingProvider = createSemanticSearchEmbeddingProvider(runtimeConfig.ai);

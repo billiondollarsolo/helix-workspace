@@ -17,22 +17,18 @@
  *   POST /api/onlyoffice/callback/:token
  *        Receives DS save events (status 2 = "saved", status 6/7 =
  *        "force-saved mid-edit"). Same token auth as the file route.
- *        On save we fetch the URL DS provides, base64-encode the bytes
- *        into objects.metadata.inlineBody (matching the dev seed
- *        affordance), and bump sha256 / byte_size.
+ *        On save we fetch the URL DS provides and finalize a new Drive
+ *        version through the tenant-resolved object storage path.
  *
  * Spec ref: https://api.onlyoffice.com/editors/callback
  */
 
+import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { WebDavDriveStore } from "../drive/routes.js";
-import {
-  signOnlyOfficeJwt,
-  verifyOnlyOfficeJwt,
-  verifyOnlyOfficeSignatureOnly,
-} from "./jwt.js";
+import { signOnlyOfficeJwt, verifyOnlyOfficeJwt, verifyOnlyOfficeSignatureOnly } from "./jwt.js";
 
 export interface OnlyOfficeRouteOptions {
   readonly store: WebDavDriveStore;
@@ -63,6 +59,10 @@ interface OnlyOfficeCallback {
   readonly token?: string;
 }
 
+interface OnlyOfficeTokenParams {
+  readonly "*": string;
+}
+
 export async function registerOnlyOfficeRoutes(
   app: FastifyInstance,
   options: OnlyOfficeRouteOptions,
@@ -85,7 +85,7 @@ export async function registerOnlyOfficeRoutes(
       if (file === null) {
         return reply.code(404).send({ error: "File not found." });
       }
-      const filename = file.entry.name ?? `${request.params.objectId}.docx`;
+      const filename = file.entry.name;
       const documentType = documentTypeForName(filename);
       if (documentType === null) {
         return reply.code(400).send({
@@ -116,7 +116,7 @@ export async function registerOnlyOfficeRoutes(
       // opens the iframe shell but never loads the document). Strip to a
       // safe charset; the timestamp is just to invalidate cache when the
       // file changes, so a sanitized form preserves the semantic.
-      const updatedAtRaw = String(file.entry.updatedAt ?? file.entry.createdAt ?? "");
+      const updatedAtRaw = String(file.entry.updatedAt);
       const updatedAtSafe = updatedAtRaw.replace(/[^A-Za-z0-9]/g, "").slice(0, 64);
       const documentKey = `${request.params.objectId}-${updatedAtSafe}`.slice(0, 128);
       const documentUrl = `${options.helixInternalUrl}/api/onlyoffice/file/${fileToken}`;
@@ -189,52 +189,48 @@ export async function registerOnlyOfficeRoutes(
   // --------------------------------------------------------------
   // GET /api/onlyoffice/file/:token — DS streams content from here
   // --------------------------------------------------------------
-  app.get<{ Params: { token: string } }>(
-    "/api/onlyoffice/file/:token",
-    async (request, reply) => {
-      const verified = verifyOnlyOfficeJwt(request.params.token, options.jwtSecret);
-      if (!verified.ok) {
-        return reply.code(401).send({ error: `Invalid token: ${verified.reason}` });
-      }
-      const { payload } = verified;
-      const file = await options.store.readFile({
-        orgId: payload.orgId,
-        actorId: payload.actorId,
-        objectId: payload.objectId,
-      });
-      if (file === null) {
-        return reply.code(404).send({ error: "File not found." });
-      }
-      const bytes =
-        file.content !== null
-          ? Buffer.from(file.content)
-          : extractInlineBody(file.entry.metadata);
-      if (bytes === null) {
-        return reply.code(404).send({ error: "File content unavailable." });
-      }
-      return reply
-        .header(
-          "content-disposition",
-          `inline; filename*=UTF-8''${encodeURIComponent(file.entry.name ?? payload.objectId)}`,
-        )
-        .header("content-length", String(bytes.byteLength))
-        .type(file.entry.mimeType ?? "application/octet-stream")
-        .send(bytes);
-    },
-  );
+  app.get<{ Params: OnlyOfficeTokenParams }>("/api/onlyoffice/file/*", async (request, reply) => {
+    const verified = verifyOnlyOfficeJwt(request.params["*"], options.jwtSecret);
+    if (!verified.ok) {
+      return reply.code(401).send({ error: `Invalid token: ${verified.reason}` });
+    }
+    const { payload } = verified;
+    const file = await options.store.readFile({
+      orgId: payload.orgId,
+      actorId: payload.actorId,
+      objectId: payload.objectId,
+    });
+    if (file === null) {
+      return reply.code(404).send({ error: "File not found." });
+    }
+    const bytes =
+      file.content !== null ? Buffer.from(file.content) : extractInlineBody(file.entry.metadata);
+    if (bytes === null) {
+      return reply.code(404).send({ error: "File content unavailable." });
+    }
+    const mimeType = file.entry.mimeType;
+    return reply
+      .header(
+        "content-disposition",
+        `inline; filename*=UTF-8''${encodeURIComponent(file.entry.name)}`,
+      )
+      .header("content-length", String(bytes.byteLength))
+      .type(mimeType === undefined ? "application/octet-stream" : mimeType)
+      .send(bytes);
+  });
 
   // --------------------------------------------------------------
   // POST /api/onlyoffice/callback/:token — DS posts save events
   // --------------------------------------------------------------
-  app.post<{ Params: { token: string }; Body: OnlyOfficeCallback }>(
-    "/api/onlyoffice/callback/:token",
+  app.post<{ Params: OnlyOfficeTokenParams; Body: OnlyOfficeCallback }>(
+    "/api/onlyoffice/callback/*",
     async (request, reply) => {
-      const verified = verifyOnlyOfficeJwt(request.params.token, options.jwtSecret);
+      const verified = verifyOnlyOfficeJwt(request.params["*"], options.jwtSecret);
       if (!verified.ok) {
         return reply.code(401).send({ error: `Invalid token: ${verified.reason}` });
       }
       const { payload } = verified;
-      const body = request.body ?? ({ status: 0 } as OnlyOfficeCallback);
+      const body = request.body;
 
       // DS signs its callback body in `body.token`. The body JWT has a
       // DS-specific payload shape (`{ key, status, users, actions }`) —
@@ -267,22 +263,20 @@ export async function registerOnlyOfficeRoutes(
       }
       const buf = Buffer.from(await fetched.arrayBuffer());
 
-      // Persist back into objects. We update mime + sha256 + byte_size +
-      // metadata.inlineBody (so the read path keeps working in dev where
-      // RustFS is bypassed; in prod we'd also write the new blob to
-      // RustFS via the storage client).
-      const { createHash } = await import("node:crypto");
       const sha = createHash("sha256").update(buf).digest("hex");
-      await options.sql`
-        update objects
-        set byte_size = ${buf.byteLength},
-            sha256 = ${sha},
-            metadata = metadata || ${options.sql.json({
-              inlineBody: buf.toString("base64"),
-            })},
-            updated_at = now()
-        where id = ${payload.objectId} and org_id = ${payload.orgId}
-      `;
+      await options.store.finalizeUpload({
+        orgId: payload.orgId,
+        actorId: payload.actorId,
+        objectId: payload.objectId,
+        byteSize: buf.byteLength,
+        sha256: sha,
+        content: new Uint8Array(buf),
+        metadata: {
+          source: "onlyoffice",
+          status: body.status,
+          ...(body.key === undefined ? {} : { key: body.key }),
+        },
+      });
       request.log.info(
         { objectId: payload.objectId, bytes: buf.byteLength, sha: sha.slice(0, 12) },
         "OnlyOffice save persisted",
@@ -301,10 +295,21 @@ export async function registerOnlyOfficeRoutes(
  *  the file isn't natively supported (PDF, ZIP, image, etc.). */
 function documentTypeForName(name: string): "word" | "cell" | "slide" | null {
   const lower = name.toLowerCase();
-  if (lower.endsWith(".docx") || lower.endsWith(".doc") || lower.endsWith(".odt") || lower.endsWith(".rtf") || lower.endsWith(".txt")) {
+  if (
+    lower.endsWith(".docx") ||
+    lower.endsWith(".doc") ||
+    lower.endsWith(".odt") ||
+    lower.endsWith(".rtf") ||
+    lower.endsWith(".txt")
+  ) {
     return "word";
   }
-  if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".ods") || lower.endsWith(".csv")) {
+  if (
+    lower.endsWith(".xlsx") ||
+    lower.endsWith(".xls") ||
+    lower.endsWith(".ods") ||
+    lower.endsWith(".csv")
+  ) {
     return "cell";
   }
   if (lower.endsWith(".pptx") || lower.endsWith(".ppt") || lower.endsWith(".odp")) {
@@ -357,8 +362,9 @@ async function resolveAccessRole(
       and actor_id = ${actorId}
     limit 1
   `) as unknown as readonly { readonly role: string }[];
-  if (permissionRows.length === 0) return "none";
-  const role = permissionRows[0]!.role;
+  const permissionRow = permissionRows[0];
+  if (permissionRow === undefined) return "none";
+  const role = permissionRow.role;
   if (role === "owner" || role === "editor" || role === "commenter" || role === "viewer") {
     return role;
   }

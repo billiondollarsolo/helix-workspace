@@ -4,6 +4,7 @@ import type { JsonObject, StorageClient } from "@helix/sdk-types";
 import { computeAuditHash } from "../audit/hash.js";
 import { insertNotification } from "../notifications/store.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
+import type { TenantStorageResolver } from "../storage/index.js";
 import type {
   DriveAutoTagWrite,
   DriveCommentListItem,
@@ -195,6 +196,7 @@ export interface DriveFileReadResult {
 
 export interface PostgresDriveStoreOptions {
   readonly officePreviewConverter?: OfficePreviewConverter;
+  readonly storageResolver?: TenantStorageResolver;
 }
 
 interface ObjectRow {
@@ -352,7 +354,7 @@ export class PostgresDriveStore
 
       return {
         ...mapUpload(rows[0]),
-        uploadUrl: await this.presignPutUrl(storageKey, input.mimeType),
+        uploadUrl: await this.presignPutUrl(input.orgId, storageKey, input.mimeType),
       };
     });
   }
@@ -367,7 +369,11 @@ export class PostgresDriveStore
         if (actualSha256 !== input.sha256) {
           throw new Error("Drive upload sha256 does not match provided content.");
         }
-        await this.storage?.put({
+        const storage = await this.storageForOrg(input.orgId);
+        if (storage === undefined) {
+          throw new Error("Drive content storage is not configured.");
+        }
+        await storage.put({
           key: storageKey,
           body: input.content,
           contentType: mimeType,
@@ -631,7 +637,7 @@ export class PostgresDriveStore
       from drive_versions
       where object_id = ${input.objectId}
     `) as unknown as readonly { readonly version_number: number | null }[];
-    const content = await this.readObjectBytes(object.storage_key);
+    const content = await this.readObjectBytes(input.orgId, object.storage_key);
     return {
       entry: mapObjectEntry({
         ...object,
@@ -750,11 +756,12 @@ export class PostgresDriveStore
         where id = ${input.objectId} and org_id = ${input.orgId} and kind = 'file'
       `;
       if (deleted.count > 0) {
+        const storage = await this.storageForOrg(input.orgId);
         for (const storageKey of new Set([
           object.storage_key,
           ...versionRows.map((row) => row.storage_key),
         ])) {
-          await this.storage?.delete(storageKey);
+          await storage?.delete(storageKey);
         }
         await appendDriveActivity(tx, {
           orgId: input.orgId,
@@ -1212,17 +1219,30 @@ export class PostgresDriveStore
     `;
   }
 
-  private async presignPutUrl(storageKey: string, mimeType: string): Promise<string | null> {
-    return this.storage?.presignPutUrl === undefined
+  private async storageForOrg(orgId: string): Promise<DriveStorageClient | undefined> {
+    const resolved = await this.options.storageResolver?.({ orgId });
+    return resolved?.client ?? this.storage;
+  }
+
+  private async presignPutUrl(
+    orgId: string,
+    storageKey: string,
+    mimeType: string,
+  ): Promise<string | null> {
+    const storage = await this.storageForOrg(orgId);
+    return storage?.presignPutUrl === undefined
       ? null
-      : this.storage.presignPutUrl(storageKey, {
+      : storage.presignPutUrl(storageKey, {
           contentType: mimeType,
           expiresSeconds: 900,
         });
   }
 
-  private async presignGetUrl(storageKey: string): Promise<string | undefined> {
-    return this.storage?.presignGetUrl?.(storageKey, { expiresSeconds: 3600 });
+  private async presignGetUrl(
+    storage: DriveStorageClient | undefined,
+    storageKey: string,
+  ): Promise<string | undefined> {
+    return storage?.presignGetUrl?.(storageKey, { expiresSeconds: 3600 });
   }
 
   private async generatePreview(input: {
@@ -1239,7 +1259,8 @@ export class PostgresDriveStore
     }
 
     const converter = this.options.officePreviewConverter;
-    if (converter === undefined || this.storage === undefined) {
+    const storage = await this.storageForOrg(input.orgId);
+    if (converter === undefined || storage === undefined) {
       return {
         preview: unsupportedOfficePreview(
           input.mimeType,
@@ -1248,7 +1269,8 @@ export class PostgresDriveStore
       };
     }
 
-    const content = input.inlineContent ?? (await this.readObjectBytes(input.storageKey));
+    const content =
+      input.inlineContent ?? (await this.readObjectBytesFromStorage(storage, input.storageKey));
     if (content === undefined) {
       return {
         preview: unsupportedOfficePreview(
@@ -1271,13 +1293,13 @@ export class PostgresDriveStore
         input.objectId,
         input.versionNumber,
       );
-      await this.storage.put({
+      await storage.put({
         key: previewStorageKey,
         body: converted.pdf,
         contentType: "application/pdf",
         metadata: { objectId: input.objectId, sourceStorageKey: input.storageKey },
       });
-      const previewUrl = await this.presignGetUrl(previewStorageKey);
+      const previewUrl = await this.presignGetUrl(storage, previewStorageKey);
       return {
         preview: {
           kind: "pdf",
@@ -1299,8 +1321,19 @@ export class PostgresDriveStore
     }
   }
 
-  private async readObjectBytes(storageKey: string): Promise<Uint8Array | undefined> {
-    const object = await this.storage?.get(storageKey);
+  private async readObjectBytes(
+    orgId: string,
+    storageKey: string,
+  ): Promise<Uint8Array | undefined> {
+    const storage = await this.storageForOrg(orgId);
+    return this.readObjectBytesFromStorage(storage, storageKey);
+  }
+
+  private async readObjectBytesFromStorage(
+    storage: DriveStorageClient | undefined,
+    storageKey: string,
+  ): Promise<Uint8Array | undefined> {
+    const object = await storage?.get(storageKey);
     if (object === null || object === undefined) {
       return undefined;
     }

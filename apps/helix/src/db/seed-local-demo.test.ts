@@ -61,6 +61,16 @@ describe("seedLocalDemo", () => {
     expect(sqlText).toContain("insert into permissions");
     expect(recording.jsonValues).toContainEqual({ source: LOCAL_DEMO_SOURCE });
     expect(recording.arrays.some((value) => value.includes("mail.read"))).toBe(true);
+    expect(recording.arrays.some((value) => value.includes("notifications.read"))).toBe(true);
+    expect(recording.arrays.some((value) => value.includes("admin.console.read"))).toBe(true);
+    expect(sqlText).toContain("delete from actors");
+    expect(sqlText).toContain("metadata -> 'betterAuth' ->> 'userId'");
+    expect(recording.jsonValues).toContainEqual({
+      betterAuth: {
+        userId: `demo-${DEFAULT_LOCAL_OAUTH_ACTOR_ID}`,
+        emailVerified: true,
+      },
+    });
     expect(storage.ensureBucketCalls).toBe(1);
     expect(storage.puts.map((put) => put.key)).toEqual([
       "demo/00000000-0000-4000-8000-000000000100/00000000-0000-4000-8000-000000000302/AI Services and Keys",

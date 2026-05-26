@@ -27,10 +27,19 @@ export const DEFAULT_LOCAL_OAUTH_SCOPES = [
   "calendar.read:freebusy",
   "calendar.write",
   "calendar.write:respond",
+  "notifications.read",
+  "notifications.write",
+  "search.read",
+  "sheets.read",
+  "sheets.write",
+  "slides.read",
+  "slides.write",
+  "assistant.read",
   "assistant.write",
   "assistant.memory",
   "meet.read",
   "meet.write",
+  "admin",
   "admin.users",
   "admin.audit",
   "admin.agents",
@@ -105,7 +114,7 @@ export async function seedLocalOAuth(
       ${displayName},
       ${sql.array(scopes, 1009)},
       null,
-      ${JSON.stringify({ source: "local-seed" })}::jsonb
+      ${json(sql, { source: "local-seed" })}
     )
     on conflict (id) do update
     set
@@ -115,7 +124,12 @@ export async function seedLocalOAuth(
       display_name = excluded.display_name,
       scopes = excluded.scopes,
       disabled_at = null,
-      metadata = actors.metadata || excluded.metadata,
+      metadata = (
+        case
+          when jsonb_typeof(actors.metadata) = 'object' then actors.metadata
+          else '{}'::jsonb
+        end
+      ) || excluded.metadata,
       updated_at = now()
   `;
 
@@ -140,7 +154,7 @@ export async function seedLocalOAuth(
       null,
       null,
       ${actorId},
-      ${JSON.stringify({ source: "local-seed" })}::jsonb
+      ${json(sql, { source: "local-seed" })}
     )
     on conflict (client_id) where revoked_at is null do update
     set
@@ -151,7 +165,12 @@ export async function seedLocalOAuth(
       expires_at = null,
       revoked_at = null,
       created_by = excluded.created_by,
-      metadata = agent_credentials.metadata || excluded.metadata
+      metadata = (
+        case
+          when jsonb_typeof(agent_credentials.metadata) = 'object' then agent_credentials.metadata
+          else '{}'::jsonb
+        end
+      ) || excluded.metadata
   `;
 
   return {
@@ -168,6 +187,10 @@ export async function seedLocalOAuth(
 
 function uniqueScopes(scopes: readonly string[]): string[] {
   return [...new Set(scopes)];
+}
+
+function json(sql: SeedSql, value: postgres.JSONValue): postgres.Parameter | string {
+  return typeof sql.json === "function" ? sql.json(value) : JSON.stringify(value);
 }
 
 function buildSampleTokenCommand(input: {

@@ -240,8 +240,28 @@ async function seedActors(
         "calendar.write",
         "chat.read",
         "chat.write",
+        "meet.read",
+        "meet.write",
+        "assistant.read",
         "assistant.write",
         "assistant.memory",
+        "sheets.read",
+        "sheets.write",
+        "slides.read",
+        "slides.write",
+        "notifications.read",
+        "notifications.write",
+        "search.read",
+        "admin",
+        "admin.users",
+        "admin.audit",
+        "admin.agents",
+        "admin.plugins",
+        "admin.webhooks",
+        "admin.config.read",
+        "admin.config.write",
+        "admin.console.read",
+        "admin.console.write",
       ],
     },
     {
@@ -279,7 +299,12 @@ async function seedActors(
         display_name = excluded.display_name,
         scopes = excluded.scopes,
         disabled_at = null,
-        metadata = actors.metadata || excluded.metadata,
+        metadata = (
+          case
+            when jsonb_typeof(actors.metadata) = 'object' then actors.metadata
+            else '{}'::jsonb
+          end
+        ) || excluded.metadata,
         updated_at = now()
     `;
   }
@@ -368,6 +393,24 @@ async function seedBetterAuthUser(
     returning id
   `;
   const userId = rows[0]?.id ?? defaultUserId;
+  await sql`
+    delete from actors
+    where lower(email) = ${email.toLowerCase()}
+      and id <> ${actorId}
+      and metadata -> 'betterAuth' ->> 'userId' = ${userId}
+  `;
+  await sql`
+    update actors
+    set
+      metadata = (
+        case
+          when jsonb_typeof(metadata) = 'object' then metadata
+          else '{}'::jsonb
+        end
+      ) || ${json(sql, { betterAuth: { userId, emailVerified: true } })},
+      updated_at = now()
+    where id = ${actorId}
+  `;
   await sql`
     insert into account (
       id,

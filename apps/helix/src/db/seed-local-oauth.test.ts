@@ -35,9 +35,19 @@ describe("seedLocalOAuth", () => {
     expect(recording.calls).toHaveLength(2);
     expect(recording.calls[0]?.text).toContain("insert into actors");
     expect(recording.calls[0]?.text).toContain("on conflict (id) do update");
+    expect(recording.calls[0]?.text).toContain("jsonb_typeof(actors.metadata)");
     expect(recording.calls[0]?.values).toContain(DEFAULT_LOCAL_OAUTH_ACTOR_ID);
     expect(recording.calls[0]?.values).toContain(DEFAULT_LOCAL_OAUTH_ORG_ID);
     expect(recording.calls[0]?.values).toContain("user");
+    expect(recording.arrays).toContainEqual(
+      expect.arrayContaining([
+        "notifications.read",
+        "search.read",
+        "sheets.write",
+        "slides.write",
+        "admin.console.read",
+      ]),
+    );
 
     expect(recording.calls[1]?.text).toContain("insert into agent_credentials");
     expect(recording.calls[1]?.text).toContain("credential_type");
@@ -88,9 +98,11 @@ function createRecordingSql(): {
   readonly sql: postgres.Sql;
   readonly calls: readonly RecordedQuery[];
   readonly arrays: readonly (readonly unknown[])[];
+  readonly jsonValues: readonly unknown[];
 } {
   const calls: RecordedQuery[] = [];
   const arrays: (readonly unknown[])[] = [];
+  const jsonValues: unknown[] = [];
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
     calls.push({ text: strings.join("$"), values });
     return Promise.resolve([]);
@@ -100,6 +112,10 @@ function createRecordingSql(): {
       arrays.push(value);
       return value;
     },
+    json: (value: unknown) => {
+      jsonValues.push(value);
+      return value;
+    },
   }) as unknown as postgres.Sql;
-  return { sql, calls, arrays };
+  return { sql, calls, arrays, jsonValues };
 }

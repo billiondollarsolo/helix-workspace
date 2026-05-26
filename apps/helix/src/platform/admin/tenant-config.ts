@@ -8,8 +8,13 @@ import {
   canReadAdminConsole,
   canWriteAdminConsole,
   conflict,
+  cursorQuerySchema,
+  decodeCursor,
   invalidRequest,
+  invalidCursor,
+  limitQuerySchema,
   notFound,
+  paginate,
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "./console-shared.js";
@@ -50,13 +55,34 @@ export interface TenantConfigAdminView {
   };
 }
 
+interface TenantStorageMigrationJobView {
+  readonly id: string;
+  readonly orgId: string;
+  readonly target: TenantStorageMigrationJobRecord["target"];
+  readonly status: TenantStorageMigrationJobRecord["status"];
+  readonly dryRun: boolean;
+  readonly sourceStorage: TenantStorageMigrationStorageState | null;
+  readonly targetStorage: TenantStorageMigrationStorageState | null;
+  readonly plannedCount: number;
+  readonly copiedCount: number;
+  readonly verifiedCount: number;
+  readonly failures: TenantStorageMigrationJobRecord["failures"];
+  readonly lastError: string | null;
+  readonly attemptCount: number;
+  readonly requestedByActorId: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface RegisterTenantConfigAdminRoutesOptions {
   readonly store: TenantConfigAdminStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly auditSink?: AdminConsoleAuditSink | undefined;
   readonly storageResolver?: TenantStorageResolver | undefined;
   readonly storageMigrationJobs?:
-    | Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg">
+    | Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg" | "listForOrg">
     | undefined;
   readonly plans?: Pick<PlanStore, "findById"> | undefined;
   readonly featureFlagEvents?: Pick<EventBus, "publish"> | undefined;
@@ -240,6 +266,15 @@ const storageMigrationParams = z.object({
   id: z.string().uuid(),
 });
 
+const storageMigrationListQuery = z.object({
+  cursor: cursorQuerySchema,
+  limit: limitQuerySchema,
+  status: z
+    .enum(["queued", "running", "succeeded", "succeeded_with_errors", "failed", "dry_run"])
+    .optional(),
+  target: z.enum(["byo", "helix-default"]).optional(),
+});
+
 const storageMigrationCutoverBody = z
   .object({
     confirm: z.literal("CUTOVER"),
@@ -352,6 +387,38 @@ export async function registerTenantConfigAdminRoutes(
       },
     });
     return { health };
+  });
+
+  app.get("/api/admin/tenant-config/byo-storage/migrations", async (request, reply) => {
+    const actor = await options.actorFromRequest(request);
+    if (!canReadAdminConsole(actor)) {
+      return sendForbidden(reply, adminConsoleReadScope);
+    }
+    if (options.storageMigrationJobs === undefined) {
+      return reply
+        .code(503)
+        .send(invalidRequest("Tenant storage migration jobs are not configured.", []));
+    }
+    const query = storageMigrationListQuery.safeParse(request.query ?? {});
+    if (!query.success) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid tenant storage migration list request.", query.error.issues));
+    }
+    const cursor = query.data.cursor === undefined ? undefined : decodeCursor(query.data.cursor);
+    if (cursor === null) {
+      return reply.code(400).send(invalidCursor());
+    }
+    const limit = query.data.limit;
+    const jobs = await options.storageMigrationJobs.listForOrg({
+      orgId: actor.orgId,
+      limit: limit + 1,
+      ...(cursor === undefined ? {} : { cursor }),
+      ...(query.data.status === undefined ? {} : { status: query.data.status }),
+      ...(query.data.target === undefined ? {} : { target: query.data.target }),
+    });
+    const page = paginate(jobs.map(tenantStorageMigrationJobView), limit);
+    return { migrations: page.items, nextCursor: page.nextCursor };
   });
 
   app.post("/api/admin/tenant-config/byo-storage/migrations", async (request, reply) => {
@@ -577,7 +644,7 @@ function planView(plan: PlanRecord | null): TenantConfigAdminView["plan"] {
 
 function tenantStorageMigrationJobView(
   job: TenantStorageMigrationJobRecord,
-): Record<string, unknown> {
+): TenantStorageMigrationJobView {
   return {
     id: job.id,
     orgId: job.orgId,

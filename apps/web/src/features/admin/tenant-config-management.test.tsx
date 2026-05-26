@@ -386,6 +386,64 @@ describe("TenantConfigManagement", () => {
     expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
   });
 
+  it("renders storage migration history without blocking tenant settings", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      const url = requestUrlOf(input);
+      if (
+        init?.method === "GET" &&
+        url.includes("/api/admin/tenant-config/byo-storage/migrations")
+      ) {
+        return Promise.resolve(
+          Response.json({
+            migrations: [
+              storageMigrationPayload.migration,
+              {
+                ...liveStorageMigrationPayload.migration,
+                id: "6f0951a7-8e65-4634-a6a4-af2f2b4797db",
+                createdAt: "2026-05-25T09:00:00.000Z",
+              },
+            ],
+            nextCursor: "cursor-2",
+          }),
+        );
+      }
+      return Promise.resolve(Response.json(tenantConfigPayload));
+    });
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Migration history");
+      expect(container.textContent).toContain("Dry Run");
+      expect(container.textContent).toContain("Succeeded");
+      expect(container.textContent).toContain("More migration jobs are available in history.");
+      expect(inputByLabel("Display name").value).toBe("Acme");
+    });
+    expect(fetchMock.mock.calls.some((call) => requestUrlOf(call[0]).endsWith("?limit=10"))).toBe(
+      true,
+    );
+  });
+
+  it("shows migration history errors without blocking tenant settings", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      const url = requestUrlOf(input);
+      if (
+        init?.method === "GET" &&
+        url.includes("/api/admin/tenant-config/byo-storage/migrations")
+      ) {
+        return Promise.resolve(Response.json({ error: "history unavailable" }, { status: 503 }));
+      }
+      return Promise.resolve(Response.json(tenantConfigPayload));
+    });
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Storage migration history unavailable.");
+      expect(inputByLabel("Display name").value).toBe("Acme");
+    });
+  });
+
   it("refreshes the latest storage migration status", async () => {
     fetchMock.mockImplementation((input, init) => {
       const url = requestUrlOf(input);

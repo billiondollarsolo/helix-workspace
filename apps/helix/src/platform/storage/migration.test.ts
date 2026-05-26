@@ -313,6 +313,58 @@ describe("PostgresTenantStorageMigrationJobStore", () => {
     expect(recording.calls[0]?.text).toContain("group by target, status");
     expect(recording.calls[1]?.text).toContain("updated_at < ?");
   });
+
+  it("lists recent migration jobs for one org newest first", async () => {
+    const recording = createRecordingSql([
+      [
+        jobRow({
+          id: "job-new",
+          org_id: "org-1",
+          status: "running",
+          created_at: new Date("2026-05-24T10:05:00.000Z"),
+        }),
+        jobRow({
+          id: "job-old",
+          org_id: "org-1",
+          status: "dry_run",
+          dry_run: true,
+          created_at: new Date("2026-05-24T10:00:00.000Z"),
+        }),
+      ],
+    ]);
+    const store = new PostgresTenantStorageMigrationJobStore(recording.sql);
+
+    const cursorCreatedAt = new Date("2026-05-24T10:10:00.000Z");
+    const jobs = await store.listForOrg({
+      orgId: "org-1",
+      limit: 25,
+      cursor: {
+        createdAt: cursorCreatedAt,
+        id: "99999999-9999-4999-8999-999999999999",
+      },
+      target: "byo",
+      status: "running",
+    });
+
+    expect(jobs.map((job) => job.id)).toEqual(["job-new", "job-old"]);
+    expect(recording.calls[0]?.text).toContain("where org_id = ?");
+    expect(recording.calls[0]?.text).toContain("(created_at, id) <");
+    expect(recording.calls[0]?.text).toContain("target = ?");
+    expect(recording.calls[0]?.text).toContain("status = ?");
+    expect(recording.calls[0]?.text).toContain("order by created_at desc, id desc");
+    expect(recording.calls[0]?.text).toContain("limit ?");
+    expect(recording.calls[0]?.values).toEqual([
+      "org-1",
+      cursorCreatedAt,
+      cursorCreatedAt,
+      "99999999-9999-4999-8999-999999999999",
+      "byo",
+      "byo",
+      "running",
+      "running",
+      25,
+    ]);
+  });
 });
 
 describe("TenantStorageMigrationWorker", () => {

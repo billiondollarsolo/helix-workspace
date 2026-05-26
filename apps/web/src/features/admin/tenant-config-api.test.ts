@@ -4,6 +4,7 @@ import {
   cutoverTenantStorageMigration,
   fetchTenantConfig,
   fetchTenantStorageMigration,
+  fetchTenantStorageMigrations,
   requestTenantStorageMigration,
   testByoStorage,
   updateTenantConfig,
@@ -170,6 +171,34 @@ describe("tenant-config-api", () => {
     expect(result.dryRun).toBe(true);
     expect(fetchImpl).toHaveBeenCalledWith(
       "/api/admin/tenant-config/byo-storage/migrations/5f0951a7-8e65-4634-a6a4-af2f2b4797da",
+      { method: "GET" },
+    );
+  });
+
+  it("fetches tenant storage migration history", async () => {
+    const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(
+      Response.json({
+        migrations: [
+          migrationPayload.migration,
+          {
+            ...migrationPayload.migration,
+            id: "6f0951a7-8e65-4634-a6a4-af2f2b4797db",
+            status: "dry_run",
+          },
+        ],
+        nextCursor: "cursor-2",
+      }),
+    );
+
+    const result = await fetchTenantStorageMigrations(
+      { limit: 10, cursor: " cursor-1 " },
+      fetchImpl,
+    );
+
+    expect(result.migrations).toHaveLength(2);
+    expect(result.nextCursor).toBe("cursor-2");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/admin/tenant-config/byo-storage/migrations?limit=10&cursor=cursor-1",
       { method: "GET" },
     );
   });

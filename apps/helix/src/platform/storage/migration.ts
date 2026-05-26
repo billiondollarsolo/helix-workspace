@@ -87,8 +87,24 @@ export interface CreateTenantStorageMigrationJobInput {
   readonly targetStorage?: TenantStorageMigrationStorageState | null | undefined;
 }
 
+export interface ListTenantStorageMigrationJobsInput {
+  readonly orgId: string;
+  readonly limit?: number | undefined;
+  readonly cursor?:
+    | {
+        readonly createdAt: Date;
+        readonly id: string;
+      }
+    | undefined;
+  readonly target?: TenantStorageMigrationTarget | undefined;
+  readonly status?: TenantStorageMigrationJobStatus | undefined;
+}
+
 export interface TenantStorageMigrationJobStore {
   create(input: CreateTenantStorageMigrationJobInput): Promise<TenantStorageMigrationJobRecord>;
+  listForOrg(
+    input: ListTenantStorageMigrationJobsInput,
+  ): Promise<readonly TenantStorageMigrationJobRecord[]>;
   findByIdForOrg(input: {
     readonly id: string;
     readonly orgId: string;
@@ -358,6 +374,47 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
       limit 1
     `) as unknown as readonly TenantStorageMigrationJobRow[];
     return rows[0] === undefined ? null : mapTenantStorageMigrationJobRow(rows[0]);
+  }
+
+  async listForOrg(
+    input: ListTenantStorageMigrationJobsInput,
+  ): Promise<readonly TenantStorageMigrationJobRecord[]> {
+    const cursorCreatedAt = input.cursor?.createdAt ?? null;
+    const cursorId = input.cursor?.id ?? null;
+    const target = input.target ?? null;
+    const status = input.status ?? null;
+    const rows = (await this.sql`
+      select
+        id,
+        org_id,
+        target,
+        status,
+        dry_run,
+        requested_by_actor_id,
+        source_storage,
+        target_storage,
+        planned_count,
+        copied_count,
+        verified_count,
+        failures,
+        last_error,
+        attempt_count,
+        started_at,
+        completed_at,
+        created_at,
+        updated_at
+      from tenant_storage_migration_jobs
+      where org_id = ${input.orgId}
+        and (
+          ${cursorCreatedAt}::timestamptz is null
+          or (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
+        )
+        and (${target}::text is null or target = ${target})
+        and (${status}::text is null or status = ${status})
+      order by created_at desc, id desc
+      limit ${boundedJobHistoryLimit(input.limit)}
+    `) as unknown as readonly TenantStorageMigrationJobRow[];
+    return rows.map(mapTenantStorageMigrationJobRow);
   }
 
   async getObservabilitySnapshot(input: {
@@ -962,6 +1019,13 @@ function mapTenantStorageMigrationJobRow(
 
 function numericCount(value: number | string): number {
   return typeof value === "number" ? value : Number.parseInt(value, 10);
+}
+
+function boundedJobHistoryLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return 51;
+  }
+  return Math.min(Math.max(Math.trunc(limit), 1), 201);
 }
 
 function errorMessage(error: unknown): string {

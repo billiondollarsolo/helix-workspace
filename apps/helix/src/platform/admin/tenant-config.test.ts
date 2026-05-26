@@ -492,6 +492,104 @@ describe("tenant config admin routes", () => {
     await app.close();
   });
 
+  it("lists recent tenant storage migration jobs for the actor org", async () => {
+    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore([
+      migrationJob({
+        id: "33333333-3333-4333-8333-333333333333",
+        orgId,
+        target: "byo",
+        status: "running",
+        createdAt: new Date("2026-05-24T10:05:00.000Z"),
+      }),
+      migrationJob({
+        id: "44444444-4444-4444-8444-444444444444",
+        orgId,
+        target: "helix-default",
+        status: "dry_run",
+        dryRun: true,
+        createdAt: new Date("2026-05-24T10:00:00.000Z"),
+      }),
+      migrationJob({
+        id: "22222222-2222-4222-8222-222222222222",
+        orgId,
+        target: "byo",
+        status: "succeeded",
+        createdAt: new Date("2026-05-24T09:55:00.000Z"),
+      }),
+      migrationJob({
+        id: "55555555-5555-4555-8555-555555555555",
+        orgId: "other-org",
+        target: "byo",
+        status: "failed",
+      }),
+    ]);
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store: new InMemoryTenantConfigAdminStore(),
+      actorFromRequest,
+      storageMigrationJobs,
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenant-config/byo-storage/migrations?limit=2",
+      headers: headers("admin.console.read"),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      migrations: [
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          orgId,
+          status: "running",
+          target: "byo",
+        },
+        {
+          id: "44444444-4444-4444-8444-444444444444",
+          orgId,
+          status: "dry_run",
+          target: "helix-default",
+          dryRun: true,
+        },
+      ],
+    });
+    const firstPageBody = body(response);
+    const cursor = firstPageBody.nextCursor;
+    if (typeof cursor !== "string") {
+      throw new Error("Expected first migration history page to include a cursor.");
+    }
+    const secondPage = await app.inject({
+      method: "GET",
+      url: `/api/admin/tenant-config/byo-storage/migrations?limit=2&cursor=${encodeURIComponent(cursor)}`,
+      headers: headers("admin.console.read"),
+    });
+
+    expect(secondPage.statusCode).toBe(200);
+    expect(secondPage.json()).toMatchObject({
+      migrations: [
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          orgId,
+          status: "succeeded",
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(storageMigrationJobs.listInputs).toEqual([
+      { orgId, limit: 3 },
+      {
+        orgId,
+        limit: 3,
+        cursor: {
+          createdAt: new Date("2026-05-24T10:00:00.000Z"),
+          id: "44444444-4444-4444-8444-444444444444",
+        },
+      },
+    ]);
+    await app.close();
+  });
+
   it("captures staged target storage on dry-run migration jobs without changing tenant config", async () => {
     const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore();
     const store = new InMemoryTenantConfigAdminStore();
@@ -745,9 +843,22 @@ describe("tenant config admin routes", () => {
       headers: headers("admin.console.write"),
       payload: { target: "byo" },
     });
+    const listForbidden = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenant-config/byo-storage/migrations",
+      headers: headers("tools.invoke"),
+    });
+    const listUnavailable = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenant-config/byo-storage/migrations",
+      headers: headers("admin.console.read"),
+    });
 
     expect(forbidden.statusCode).toBe(403);
     expect(unavailable.statusCode).toBe(503);
+    expect(listForbidden.statusCode).toBe(403);
+    expect(body(listForbidden).requiredScope).toBe("admin.console.read");
+    expect(listUnavailable.statusCode).toBe(503);
     await app.close();
   });
 
@@ -1118,9 +1229,10 @@ class RecordingStorageClient {
 
 class InMemoryTenantStorageMigrationJobStore implements Pick<
   TenantStorageMigrationJobStore,
-  "create" | "findByIdForOrg"
+  "create" | "findByIdForOrg" | "listForOrg"
 > {
   readonly creates: CreateTenantStorageMigrationJobInput[] = [];
+  readonly listInputs: Parameters<TenantStorageMigrationJobStore["listForOrg"]>[0][] = [];
   readonly jobs: TenantStorageMigrationJobRecord[];
 
   constructor(jobs: readonly TenantStorageMigrationJobRecord[] = []) {
@@ -1149,6 +1261,30 @@ class InMemoryTenantStorageMigrationJobStore implements Pick<
     readonly orgId: string;
   }): Promise<TenantStorageMigrationJobRecord | null> {
     return this.jobs.find((job) => job.id === input.id && job.orgId === input.orgId) ?? null;
+  }
+
+  async listForOrg(
+    input: Parameters<TenantStorageMigrationJobStore["listForOrg"]>[0],
+  ): Promise<readonly TenantStorageMigrationJobRecord[]> {
+    this.listInputs.push(input);
+    return this.jobs
+      .filter((job) => job.orgId === input.orgId)
+      .filter((job) => input.target === undefined || job.target === input.target)
+      .filter((job) => input.status === undefined || job.status === input.status)
+      .filter((job) => {
+        if (input.cursor === undefined) {
+          return true;
+        }
+        if (job.createdAt.getTime() !== input.cursor.createdAt.getTime()) {
+          return job.createdAt.getTime() < input.cursor.createdAt.getTime();
+        }
+        return job.id < input.cursor.id;
+      })
+      .sort((left, right) => {
+        const createdAtDiff = right.createdAt.getTime() - left.createdAt.getTime();
+        return createdAtDiff === 0 ? right.id.localeCompare(left.id) : createdAtDiff;
+      })
+      .slice(0, input.limit ?? 10);
   }
 }
 

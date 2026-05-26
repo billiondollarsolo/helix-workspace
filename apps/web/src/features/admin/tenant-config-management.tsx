@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import {
   tenantConfigQueryKeys,
   tenantConfigQueryOptions,
+  tenantStorageMigrationsQueryOptions,
   cutoverTenantStorageMigration,
   fetchTenantStorageMigration,
   requestTenantStorageMigration,
@@ -156,6 +157,7 @@ export function TenantConfigManagement() {
   const [migrationCutoverConfirmed, setMigrationCutoverConfirmed] = useState(false);
   const [storageMigration, setStorageMigration] = useState<TenantStorageMigrationJob | null>(null);
   const query = useQuery(tenantConfigQueryOptions());
+  const storageMigrationHistoryQuery = useQuery(tenantStorageMigrationsQueryOptions());
 
   useEffect(() => {
     if (query.data === undefined) {
@@ -216,6 +218,9 @@ export function TenantConfigManagement() {
     onSuccess: (migration) => {
       setStorageMigration(migration);
       setMigrationCutoverConfirmed(false);
+      void queryClient.invalidateQueries({
+        queryKey: tenantConfigQueryKeys.storageMigrations(),
+      });
     },
   });
   const storageMigrationStatusMutation = useMutation({
@@ -233,6 +238,9 @@ export function TenantConfigManagement() {
     onSuccess: (migration) => {
       setStorageMigration(migration);
       setMigrationCutoverConfirmed(false);
+      void queryClient.invalidateQueries({
+        queryKey: tenantConfigQueryKeys.storageMigrations(),
+      });
     },
   });
   const storageMigrationCutoverMutation = useMutation({
@@ -251,6 +259,7 @@ export function TenantConfigManagement() {
       setStorageMigration(result.migration);
       setMigrationCutoverConfirmed(false);
       queryClient.setQueryData(tenantConfigQueryKeys.detail(), result.tenantConfig);
+      await queryClient.invalidateQueries({ queryKey: tenantConfigQueryKeys.storageMigrations() });
       await queryClient.invalidateQueries({ queryKey: tenantConfigQueryKeys.detail() });
     },
   });
@@ -346,6 +355,9 @@ export function TenantConfigManagement() {
       return;
     }
     storageMigrationStatusMutation.mutate(storageMigration.id);
+  };
+  const refreshStorageMigrationJob = (id: string) => {
+    storageMigrationStatusMutation.mutate(id);
   };
   const cutoverStorageMigration = () => {
     if (storageMigration === null) {
@@ -734,6 +746,99 @@ export function TenantConfigManagement() {
                   ) : null}
                 </div>
               )}
+              <div className="grid gap-2 border-t border-border/70 pt-3">
+                <div className="flex items-center justify-between gap-3">
+                  <SectionHeader
+                    icon={<RefreshCcw aria-hidden="true" />}
+                    title="Migration history"
+                  />
+                  <Button
+                    disabled={storageMigrationHistoryQuery.isFetching}
+                    onClick={() =>
+                      void queryClient.invalidateQueries({
+                        queryKey: tenantConfigQueryKeys.storageMigrations(),
+                      })
+                    }
+                    size="sm"
+                    type="button"
+                  >
+                    <RefreshCcw aria-hidden="true" />
+                    {storageMigrationHistoryQuery.isFetching ? "Loading" : "Refresh history"}
+                  </Button>
+                </div>
+                {storageMigrationHistoryQuery.isError ? (
+                  <p className="text-xs text-muted-foreground" role="status">
+                    Storage migration history unavailable.
+                  </p>
+                ) : storageMigrationHistoryQuery.data === undefined ||
+                  storageMigrationHistoryQuery.data.migrations.length === 0 ? (
+                  <p className="text-xs text-muted-foreground" role="status">
+                    No storage migration jobs yet.
+                  </p>
+                ) : (
+                  <div className="grid gap-2" role="list">
+                    {storageMigrationHistoryQuery.data.migrations.map((migration) => (
+                      <div
+                        className={`grid gap-1 rounded-md border px-3 py-2 text-xs ${
+                          storageMigration?.id === migration.id
+                            ? "border-ring bg-surface-container"
+                            : "border-border/70"
+                        }`}
+                        key={migration.id}
+                        role="listitem"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-medium text-foreground">
+                            {formatMigrationStatus(migration.status)}
+                          </span>
+                          <Button
+                            disabled={!canSave}
+                            onClick={() => refreshStorageMigrationJob(migration.id)}
+                            size="sm"
+                            type="button"
+                          >
+                            <RefreshCcw aria-hidden="true" />
+                            Refresh job
+                          </Button>
+                        </div>
+                        <span>
+                          Target {formatMigrationTarget(migration.target)}
+                          {migration.dryRun ? " dry run" : " live migration"}
+                        </span>
+                        <span>
+                          Planned {migration.plannedCount}, copied {migration.copiedCount}, verified{" "}
+                          {migration.verifiedCount}
+                        </span>
+                        <span>
+                          Source {migration.sourceStorage?.managedBy ?? "unknown"} to target{" "}
+                          {migration.targetStorage?.managedBy ?? "unknown"}
+                        </span>
+                        <span>
+                          Created {formatTimestamp(migration.createdAt)}
+                          {migration.completedAt === null
+                            ? ""
+                            : `, completed ${formatTimestamp(migration.completedAt)}`}
+                        </span>
+                        {migration.lastError === null ? null : (
+                          <span className="text-destructive">{migration.lastError}</span>
+                        )}
+                        {migration.failures.length === 0 ? null : (
+                          <span className="text-destructive">
+                            {migration.failures.length} object failure
+                            {migration.failures.length === 1 ? "" : "s"}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {storageMigrationHistoryQuery.data?.nextCursor === null ||
+                storageMigrationHistoryQuery.data?.nextCursor === undefined ? null : (
+                  <p className="text-xs text-muted-foreground" role="status">
+                    More migration jobs are available in history.
+                  </p>
+                )}
+              </div>
             </div>
           </form>
         </div>
@@ -925,6 +1030,13 @@ function formatMigrationStatus(status: TenantStorageMigrationJob["status"]): str
 
 function formatMigrationTarget(target: TenantStorageMigrationTarget): string {
   return target === "byo" ? "customer-owned storage" : "Helix default storage";
+}
+
+function formatTimestamp(value: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function brandingPlaceholder(key: BrandingKey): string | undefined {

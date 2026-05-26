@@ -67,6 +67,10 @@ const storageMigrationJobSchema = z.object({
   updatedAt: z.string(),
 });
 const storageMigrationResponseSchema = z.object({ migration: storageMigrationJobSchema });
+const storageMigrationListResponseSchema = z.object({
+  migrations: z.array(storageMigrationJobSchema),
+  nextCursor: z.string().nullable(),
+});
 const storageMigrationCutoverResponseSchema = z.object({
   migration: storageMigrationJobSchema,
   tenantConfig: tenantConfigSchema,
@@ -93,8 +97,19 @@ export interface RequestTenantStorageMigrationInput {
   readonly targetStorage?: Record<string, unknown>;
 }
 
+export interface FetchTenantStorageMigrationsInput {
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export interface TenantStorageMigrationsPage {
+  readonly migrations: readonly TenantStorageMigrationJob[];
+  readonly nextCursor: string | null;
+}
+
 export const tenantConfigQueryKeys = {
   detail: () => ["admin", "tenant-config"] as const,
+  storageMigrations: () => ["admin", "tenant-config", "storage-migrations"] as const,
 };
 
 export function tenantConfigQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
@@ -103,6 +118,16 @@ export function tenantConfigQueryOptions(fetchImpl: AuthFetch = authenticatedFet
     queryFn: () => fetchTenantConfig(fetchImpl),
     retry: false,
     staleTime: 30_000,
+    throwOnError: false,
+  });
+}
+
+export function tenantStorageMigrationsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
+  return queryOptions({
+    queryKey: tenantConfigQueryKeys.storageMigrations(),
+    queryFn: () => fetchTenantStorageMigrations({ limit: 10 }, fetchImpl),
+    retry: false,
+    staleTime: 15_000,
     throwOnError: false,
   });
 }
@@ -153,6 +178,28 @@ export async function requestTenantStorageMigration(
       storageMigrationResponseSchema,
     )
   ).migration;
+}
+
+export async function fetchTenantStorageMigrations(
+  input: FetchTenantStorageMigrationsInput = {},
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<TenantStorageMigrationsPage> {
+  const params = new URLSearchParams();
+  if (input.limit !== undefined) {
+    params.set("limit", String(input.limit));
+  }
+  if (input.cursor !== undefined && input.cursor.trim().length > 0) {
+    params.set("cursor", input.cursor.trim());
+  }
+  const query = params.size === 0 ? "" : `?${params.toString()}`;
+  const response = await fetchImpl(`/api/admin/tenant-config/byo-storage/migrations${query}`, {
+    method: "GET",
+  });
+  return parseResponse(
+    response,
+    "load tenant storage migrations",
+    storageMigrationListResponseSchema,
+  );
 }
 
 export async function fetchTenantStorageMigration(

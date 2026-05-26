@@ -1,4 +1,4 @@
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import {
   buildHelixRequest,
@@ -74,6 +74,10 @@ export async function runCli(
 
     if (command.kind === "tenant-export-download") {
       return await downloadTenantExportArtifact(command, env, io, fetchImpl);
+    }
+
+    if (command.kind === "tenant-import-dry-run") {
+      return await dryRunTenantImport(command, env, io, fetchImpl);
     }
 
     const input =
@@ -306,6 +310,25 @@ async function downloadTenantExportArtifact(
   const bytes = Buffer.from(await archiveResponse.arrayBuffer());
   writeFileSync(command.output, bytes);
   io.stdout.write(formatJsonValue({ output: command.output, byteSize: bytes.byteLength }));
+  return 0;
+}
+
+async function dryRunTenantImport(
+  command: Extract<ReturnType<typeof parseCliArgs>, { readonly kind: "tenant-import-dry-run" }>,
+  env: HelixCliEnv,
+  io: CliIo,
+  fetchImpl: FetchLike,
+): Promise<number> {
+  const archive = readFileSync(command.archive);
+  const request = buildHelixRequest(command, env, archive);
+  const response = await fetchImpl(request.url, request.init);
+  const text = await response.text();
+  if (!response.ok) {
+    io.stderr.write(formatHttpError(response.status, text));
+    return 1;
+  }
+
+  io.stdout.write(formatJsonText(text));
   return 0;
 }
 

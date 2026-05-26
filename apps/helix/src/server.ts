@@ -274,9 +274,11 @@ import { CoreAppRegistrationPlan } from "./platform/apps/core-apps.js";
 import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
 import {
   createPostgresTenantExportManifestPlanner,
+  loadTenantImportTargetStateFromPostgres,
   PostgresTenantExportJobStore,
   PostgresOrgStore,
   PostgresPlanStore,
+  registerTenantImportRoutes,
   registerTenantExportRoutes,
   TenantExportMaterializationWorker,
 } from "./platform/tenancy/index.js";
@@ -1835,6 +1837,16 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     exportPlanner: tenantExportManifestPlanner,
     exportJobs: tenantExportJobStore,
     storageResolver: driveStorageResolver,
+    auditSink: auditStore,
+  });
+  await registerTenantImportRoutes(app, {
+    orgs: orgStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    targetStateLoader: (org) =>
+      loadTenantImportTargetStateFromPostgres({
+        sql,
+        targetOrgId: org.id,
+      }),
     auditSink: auditStore,
   });
   await registerAdminOAuthAppsRoutes(app, {

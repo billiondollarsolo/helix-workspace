@@ -83,6 +83,11 @@ export type HelixCommand =
       readonly output: string;
       readonly force: boolean;
     }
+  | {
+      readonly kind: "tenant-import-dry-run";
+      readonly slug: string;
+      readonly archive: string;
+    }
   | { readonly kind: "backup-create" }
   | { readonly kind: "restore-from"; readonly backupId: string; readonly encrypted?: boolean }
   | { readonly kind: "reindex-all" }
@@ -1826,6 +1831,8 @@ function parseAdminCommand(
       return parseAdminStorageMigrationsCommand(action, args);
     case "tenant-exports":
       return parseAdminTenantExportsCommand(action, args);
+    case "tenant-imports":
+      return parseAdminTenantImportsCommand(action, args);
     default:
       throw new CliUsageError(adminUsage);
   }
@@ -2234,8 +2241,41 @@ const adminTenantExportsStatusUsage = "Usage: helix admin tenant-exports status 
 const adminTenantExportsDownloadUsage =
   "Usage: helix admin tenant-exports download <slug> <job-id> --output <path> [--force]";
 
+function parseAdminTenantImportsCommand(
+  action: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  switch (action) {
+    case "dry-run":
+      return parseTenantImportDryRunCommand(args[0], args[1], args.slice(2));
+    default:
+      throw new CliUsageError(adminTenantImportsUsage);
+  }
+}
+
+function parseTenantImportDryRunCommand(
+  slug: string | undefined,
+  archive: string | undefined,
+  args: readonly string[],
+): HelixCommand {
+  if (
+    slug === undefined ||
+    slug.startsWith("-") ||
+    archive === undefined ||
+    archive.startsWith("-") ||
+    args.length > 0
+  ) {
+    throw new CliUsageError(adminTenantImportsDryRunUsage);
+  }
+  return { kind: "tenant-import-dry-run", slug, archive };
+}
+
+const adminTenantImportsUsage = "Usage: helix admin tenant-imports dry-run <slug> <archive-path>";
+const adminTenantImportsDryRunUsage =
+  "Usage: helix admin tenant-imports dry-run <slug> <archive-path>";
+
 const adminUsage =
-  "Usage: helix admin <app-passwords|agent-credentials|users|audit|storage|storage-migrations|tenant-exports> <command> [--json [JSON]]";
+  "Usage: helix admin <app-passwords|agent-credentials|users|audit|storage|storage-migrations|tenant-exports|tenant-imports> <command> [--json [JSON]]";
 const adminAppPasswordsUsage =
   "Usage: helix admin app-passwords <list|create|revoke> [--json [JSON]]";
 const adminAppPasswordsListUsage =
@@ -3127,6 +3167,7 @@ export const usage = `Usage:
   helix admin tenant-exports list <slug> [--status <queued|running|succeeded|failed>] [--limit <number>] [--cursor <cursor>]
   helix admin tenant-exports status <slug> <job-id>
   helix admin tenant-exports download <slug> <job-id> --output <path> [--force]
+  helix admin tenant-imports dry-run <slug> <archive-path>
   helix backup create
   helix restore --from <backup-id> [--encrypted]
   helix reindex --all

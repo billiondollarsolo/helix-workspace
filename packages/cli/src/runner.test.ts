@@ -540,6 +540,67 @@ describe("runCli durable tenant export operator commands", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("uploads tenant import archives for dry-run planning", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "helix-import-dry-run-"));
+    const archive = join(tmp, "acme.tar");
+    const archiveBytes = Buffer.from([0, 1, 2, 3, 255]);
+    writeFileSync(archive, archiveBytes);
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      requests.push({ url, init });
+      return Response.json({
+        ok: true,
+        issues: [],
+        plan: {
+          dryRun: true,
+          summary: { operationCount: 3 },
+        },
+      });
+    };
+
+    try {
+      await expect(
+        runCli(
+          ["admin", "tenant-imports", "dry-run", "acme", archive],
+          { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
+          {
+            stdin: Readable.from([]),
+            stdout,
+            stderr,
+          },
+          fetchImpl,
+        ),
+      ).resolves.toBe(0);
+
+      expect(JSON.parse(stdout.output)).toMatchObject({
+        ok: true,
+        plan: {
+          dryRun: true,
+          summary: { operationCount: 3 },
+        },
+      });
+      expect(stderr.output).toBe("");
+      expect(requests).toEqual([
+        {
+          url: "https://helix.example/api/admin/tenants/acme/import/dry-run",
+          init: {
+            method: "POST",
+            headers: {
+              accept: "application/json",
+              authorization: "Bearer token-1",
+              "content-type": "application/x-tar",
+            },
+            body: archiveBytes,
+          },
+        },
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("runCli backup and restore operator commands", () => {

@@ -37,7 +37,7 @@ export interface HelixRequest {
   readonly init: {
     readonly method: "GET" | "POST" | "PATCH";
     readonly headers: Record<string, string>;
-    readonly body?: string;
+    readonly body?: string | Uint8Array;
   };
 }
 
@@ -141,6 +141,16 @@ export function buildHelixRequest(
         env,
         "GET",
         `/api/admin/tenants/${encodeURIComponent(command.slug)}/export/jobs/${encodeURIComponent(command.jobId)}`,
+      );
+    case "tenant-import-dry-run":
+      if (!(input instanceof Uint8Array)) {
+        throw new Error("Tenant import dry-run request requires archive bytes.");
+      }
+      return createBinaryRequest(
+        env,
+        `/api/admin/tenants/${encodeURIComponent(command.slug)}/import/dry-run`,
+        input,
+        "application/x-tar",
       );
     case "backup-create":
       return createRequest(env, "POST", "/api/admin/backups", {});
@@ -299,6 +309,25 @@ function createRawJsonRequest(env: HelixCliEnv, path: string, body: string): Hel
       headers: {
         ...commonHeaders(env),
         "content-type": "application/json",
+      },
+      body,
+    },
+  };
+}
+
+function createBinaryRequest(
+  env: HelixCliEnv,
+  path: string,
+  body: Uint8Array,
+  contentType: string,
+): HelixRequest {
+  return {
+    url: new URL(path, baseUrl(env).href).href,
+    init: {
+      method: "POST",
+      headers: {
+        ...commonHeaders(env),
+        "content-type": contentType,
       },
       body,
     },

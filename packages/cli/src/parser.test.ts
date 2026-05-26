@@ -1062,6 +1062,25 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("parses tenant import dry-run operator commands", () => {
+    expect(parseCliArgs(["admin", "tenant-imports", "dry-run", "acme", "./acme.tar"])).toEqual({
+      kind: "tenant-import-dry-run",
+      slug: "acme",
+      archive: "./acme.tar",
+    });
+  });
+
+  it("rejects unsafe tenant import dry-run operator commands", () => {
+    expect(() => parseCliArgs(["admin", "tenant-imports"])).toThrow(CliUsageError);
+    expect(() => parseCliArgs(["admin", "tenant-imports", "dry-run"])).toThrow(CliUsageError);
+    expect(() => parseCliArgs(["admin", "tenant-imports", "dry-run", "acme"])).toThrow(
+      CliUsageError,
+    );
+    expect(() =>
+      parseCliArgs(["admin", "tenant-imports", "dry-run", "acme", "./acme.tar", "--live"]),
+    ).toThrow(CliUsageError);
+  });
+
   it("rejects unsafe durable tenant export operator commands", () => {
     expect(() => parseCliArgs(["admin", "tenant-exports", "queue"])).toThrow(CliUsageError);
     expect(() =>

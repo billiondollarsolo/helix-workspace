@@ -68,6 +68,36 @@ describe("buildTenantImportPlan", () => {
       dependsOn: [`admin_domains:${domainId}`],
       naturalKey: [domainId, "TXT", "_helix.example.com"],
     });
+    expect(plan.operations[0]?.conflictPolicy).toEqual({
+      rowId: "preserve",
+      references: {
+        createdBy: "preserve",
+      },
+      state: {
+        isPrimary: "preserve",
+        verificationStatus: "regenerate",
+        verifiedAt: "regenerate",
+      },
+    });
+    expect(plan.operations[1]?.conflictPolicy).toEqual({
+      rowId: "preserve",
+      references: {
+        domainId: "preserve",
+      },
+      state: {
+        status: "regenerate",
+        observedValue: "regenerate",
+        lastCheckedAt: "regenerate",
+      },
+    });
+    expect(plan.operations[2]?.conflictPolicy).toEqual({
+      rowId: "preserve",
+      references: {
+        actorId: "preserve",
+        resourceId: "preserve",
+      },
+      state: {},
+    });
     expect(plan.steps.map((step) => step.kind)).toEqual([
       "tenant_config",
       "storage_objects",
@@ -155,6 +185,17 @@ describe("buildTenantImportPlan", () => {
         orgId: targetOrgId,
         createdBy: null,
       },
+      conflictPolicy: {
+        rowId: "match",
+        references: {
+          createdBy: "null",
+        },
+        state: {
+          isPrimary: "preserve",
+          verificationStatus: "regenerate",
+          verifiedAt: "regenerate",
+        },
+      },
     });
     expect(plan.operations[0]?.row).toMatchObject({
       orgId: targetOrgId,
@@ -171,6 +212,17 @@ describe("buildTenantImportPlan", () => {
         orgId: targetOrgId,
         domainId: targetDomainId,
       },
+      conflictPolicy: {
+        rowId: "match",
+        references: {
+          domainId: "match",
+        },
+        state: {
+          status: "regenerate",
+          observedValue: "regenerate",
+          lastCheckedAt: "regenerate",
+        },
+      },
     });
     expect(plan.operations[1]?.row).toMatchObject({
       orgId: targetOrgId,
@@ -186,6 +238,14 @@ describe("buildTenantImportPlan", () => {
         orgId: targetOrgId,
         actorId: null,
         resourceId: "target-msg-1",
+      },
+      conflictPolicy: {
+        rowId: "match",
+        references: {
+          actorId: "null",
+          resourceId: "match",
+        },
+        state: {},
       },
     });
     expect(plan.operations[2]?.row).toMatchObject({
@@ -213,6 +273,44 @@ describe("buildTenantImportPlan", () => {
       expect.arrayContaining(["target_natural_key_conflict", "target_primary_domain_conflict"]),
     );
     expect(input.manifest.org.id).toBe(orgId);
+  });
+
+  it("chooses regenerate policy for source row ID conflicts without mutating target IDs", () => {
+    const input = validImportPlanInput();
+
+    const plan = buildTenantImportPlan({
+      ...input,
+      targetState: {
+        existingRowIds: [
+          {
+            table: "admin_domains",
+            id: domainId,
+            targetId: "target-existing-domain-row",
+          },
+        ],
+      },
+    });
+
+    expect(plan.operations[0]).toMatchObject({
+      action: "insert",
+      table: "admin_domains",
+      sourceId: domainId,
+      targetId: null,
+      conflictPolicy: {
+        rowId: "regenerate",
+      },
+    });
+    expect(plan.operations[0]?.row.id).toBe(domainId);
+    expect(plan.conflicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "target_primary_key_conflict",
+          table: "admin_domains",
+          sourceId: domainId,
+          targetId: "target-existing-domain-row",
+        }),
+      ]),
+    );
   });
 
   it("returns validation blockers and no operations when the archive rows are invalid", () => {
@@ -318,6 +416,12 @@ describe("buildTenantImportPlan", () => {
       "upsert_admin_dns_record",
       "upsert_resource_classification",
     ]);
+    expect(result.plan?.operations[0]?.conflictPolicy).toMatchObject({
+      rowId: "preserve",
+      references: {
+        createdBy: "preserve",
+      },
+    });
     expect(result.plan?.issues.map((issue) => issue.code)).toContain("org_id_remap_required");
   });
 

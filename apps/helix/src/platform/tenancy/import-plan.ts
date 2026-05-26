@@ -37,6 +37,14 @@ export type TenantImportPlanOperationKind =
 
 export type TenantImportPlanOperationAction = "insert" | "update" | "blocked";
 
+export type TenantImportPlanConflictPolicyMode = "preserve" | "match" | "regenerate" | "null";
+
+export interface TenantImportPlanOperationConflictPolicy {
+  readonly rowId: TenantImportPlanConflictPolicyMode;
+  readonly references: Readonly<Record<string, TenantImportPlanConflictPolicyMode>>;
+  readonly state: Readonly<Record<string, TenantImportPlanConflictPolicyMode>>;
+}
+
 export interface BuildTenantImportPlanInput {
   readonly manifest: TenantExportManifest;
   readonly files: TenantExportValidationFiles;
@@ -128,6 +136,7 @@ export interface TenantImportPlanOperation {
   readonly naturalKey: readonly string[];
   readonly dependsOn: readonly string[];
   readonly remappedFields: Readonly<Record<string, unknown>>;
+  readonly conflictPolicy: TenantImportPlanOperationConflictPolicy;
   readonly row: Readonly<Record<string, unknown>>;
 }
 
@@ -824,6 +833,14 @@ function buildOperations(input: {
       };
       const naturalKey = naturalKeyForRow(definition.table, plannedRow);
       const targetId = targetIdForNaturalKey(definition.table, naturalKey, input.targetState);
+      const conflictPolicy = conflictPolicyForRow({
+        table: definition.table,
+        row,
+        targetId,
+        targetState: input.targetState,
+        domainIdTargets,
+        providedRemaps: input.providedRemaps,
+      });
       operations.push({
         order: operations.length + 1,
         kind: definition.operationKind,
@@ -838,6 +855,7 @@ function buildOperations(input: {
         naturalKey,
         dependsOn: dependsOnForRow(definition.table, plannedRow),
         remappedFields,
+        conflictPolicy,
         row: plannedRow,
       });
     });
@@ -901,6 +919,115 @@ function remappedFieldsForRow(input: {
     }
   }
   return remapped;
+}
+
+function conflictPolicyForRow(input: {
+  readonly table: TenantImportPlanPostgresTable;
+  readonly row: JsonRecord;
+  readonly targetId: string | null;
+  readonly targetState: TenantImportPlanTargetState | undefined;
+  readonly domainIdTargets: ReadonlyMap<string, string>;
+  readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
+}): TenantImportPlanOperationConflictPolicy {
+  return {
+    rowId: rowIdConflictPolicy({
+      table: input.table,
+      row: input.row,
+      targetId: input.targetId,
+      targetState: input.targetState,
+    }),
+    references: referenceConflictPolicyForRow(input),
+    state: stateConflictPolicyForRow(input),
+  };
+}
+
+function rowIdConflictPolicy(input: {
+  readonly table: TenantImportPlanPostgresTable;
+  readonly row: JsonRecord;
+  readonly targetId: string | null;
+  readonly targetState: TenantImportPlanTargetState | undefined;
+}): TenantImportPlanConflictPolicyMode {
+  if (input.targetId !== null) {
+    return "match";
+  }
+  const sourceId = stringField(input.row, "id");
+  const hasPrimaryKeyConflict =
+    input.targetState?.existingRowIds?.some(
+      (existing) => existing.table === input.table && existing.id === sourceId,
+    ) ?? false;
+  return hasPrimaryKeyConflict ? "regenerate" : "preserve";
+}
+
+function referenceConflictPolicyForRow(input: {
+  readonly table: TenantImportPlanPostgresTable;
+  readonly row: JsonRecord;
+  readonly domainIdTargets: ReadonlyMap<string, string>;
+  readonly providedRemaps: TenantImportPlanProvidedRemaps | undefined;
+}): Readonly<Record<string, TenantImportPlanConflictPolicyMode>> {
+  const references: Record<string, TenantImportPlanConflictPolicyMode> = {};
+  if (input.table === "admin_domains") {
+    const createdBy = input.row.createdBy;
+    if (typeof createdBy === "string") {
+      references.createdBy = principalReferencePolicy(createdBy, input.providedRemaps);
+    }
+  }
+  if (input.table === "admin_dns_records") {
+    const domainId = stringField(input.row, "domainId");
+    references.domainId = input.domainIdTargets.has(domainId) ? "match" : "preserve";
+  }
+  if (input.table === "resource_classifications") {
+    const actorId = input.row.actorId;
+    if (typeof actorId === "string") {
+      references.actorId = principalReferencePolicy(actorId, input.providedRemaps);
+    }
+    const resourceKey = resourceReferenceKey(
+      stringField(input.row, "resourceType"),
+      stringField(input.row, "resourceId"),
+    );
+    references.resourceId =
+      input.providedRemaps?.resources?.[resourceKey] === undefined ? "preserve" : "match";
+  }
+  return references;
+}
+
+function principalReferencePolicy(
+  sourceId: string,
+  providedRemaps: TenantImportPlanProvidedRemaps | undefined,
+): TenantImportPlanConflictPolicyMode {
+  if (providedRemaps?.principals?.[sourceId] === undefined) {
+    return "preserve";
+  }
+  return providedRemaps.principals[sourceId] === null ? "null" : "match";
+}
+
+function stateConflictPolicyForRow(input: {
+  readonly table: TenantImportPlanPostgresTable;
+  readonly row: JsonRecord;
+}): Readonly<Record<string, TenantImportPlanConflictPolicyMode>> {
+  const state: Record<string, TenantImportPlanConflictPolicyMode> = {};
+  if (input.table === "admin_domains") {
+    if (input.row.verificationStatus === "verified") {
+      state.verificationStatus = "regenerate";
+    }
+    if (input.row.verifiedAt !== null && input.row.verifiedAt !== undefined) {
+      state.verifiedAt = "regenerate";
+    }
+    if (input.row.isPrimary === true) {
+      state.isPrimary = "preserve";
+    }
+  }
+  if (input.table === "admin_dns_records") {
+    if (input.row.status === "verified") {
+      state.status = "regenerate";
+    }
+    if (input.row.observedValue !== null && input.row.observedValue !== undefined) {
+      state.observedValue = "regenerate";
+    }
+    if (input.row.lastCheckedAt !== null && input.row.lastCheckedAt !== undefined) {
+      state.lastCheckedAt = "regenerate";
+    }
+  }
+  return state;
 }
 
 function naturalKeyForRow(

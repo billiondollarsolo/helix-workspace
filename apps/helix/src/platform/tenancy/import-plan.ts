@@ -14,6 +14,7 @@ import {
 export type TenantImportPlanPostgresTable =
   | "admin_domains"
   | "admin_dns_records"
+  | "objects"
   | "resource_classifications";
 
 export type TenantImportPlanObjectBytesMode = "included" | "metadata_only";
@@ -37,6 +38,7 @@ export type TenantImportPlanIssueCode =
 export type TenantImportPlanOperationKind =
   | "upsert_admin_domain"
   | "upsert_admin_dns_record"
+  | "upsert_object"
   | "upsert_resource_classification";
 
 export type TenantImportPlanOperationAction = "insert" | "update" | "blocked";
@@ -46,6 +48,7 @@ export type TenantImportPlanConflictPolicyMode = "preserve" | "match" | "regener
 export type TenantImportPlanConflictPolicyReferenceField =
   | "createdBy"
   | "actorId"
+  | "ownerActorId"
   | "domainId"
   | "resourceId";
 
@@ -251,6 +254,7 @@ export interface TenantImportPlan {
     readonly postgresRows: number;
     readonly adminDomainRows: number;
     readonly adminDnsRecordRows: number;
+    readonly objectRows: number;
     readonly resourceClassificationRows: number;
     readonly operationCount: number;
     readonly remapCount: number;
@@ -284,6 +288,12 @@ const chunkDefinitions: readonly ChunkDefinition[] = [
     path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
     operationKind: "upsert_admin_dns_record",
     label: "Plan admin DNS record rows",
+  },
+  {
+    table: "objects",
+    path: "postgres/data/chunks/objects/000000.jsonl",
+    operationKind: "upsert_object",
+    label: "Plan object metadata rows",
   },
   {
     table: "resource_classifications",
@@ -482,11 +492,13 @@ function planSummary(
   remapCount = 0,
   conflictCount = 0,
 ): TenantImportPlan["summary"] {
-  const { adminDomainRows, adminDnsRecordRows, resourceClassificationRows } = validation.summary;
+  const { adminDomainRows, adminDnsRecordRows, objectRows, resourceClassificationRows } =
+    validation.summary;
   return {
-    postgresRows: adminDomainRows + adminDnsRecordRows + resourceClassificationRows,
+    postgresRows: adminDomainRows + adminDnsRecordRows + objectRows + resourceClassificationRows,
     adminDomainRows,
     adminDnsRecordRows,
+    objectRows,
     resourceClassificationRows,
     operationCount,
     remapCount,
@@ -540,6 +552,8 @@ function rowCountForTable(
       return validation.summary.adminDomainRows;
     case "admin_dns_records":
       return validation.summary.adminDnsRecordRows;
+    case "objects":
+      return validation.summary.objectRows;
     case "resource_classifications":
       return validation.summary.resourceClassificationRows;
   }
@@ -555,6 +569,7 @@ function buildPlanIssues(input: {
   const issues: TenantImportPlanIssue[] = [];
   const domainRows = input.rowsByTable.get("admin_domains") ?? [];
   const dnsRows = input.rowsByTable.get("admin_dns_records") ?? [];
+  const objectRows = input.rowsByTable.get("objects") ?? [];
   const classificationRows = input.rowsByTable.get("resource_classifications") ?? [];
 
   if (input.targetOrgId !== input.sourceOrgId) {
@@ -580,6 +595,7 @@ function buildPlanIssues(input: {
 
   if (
     domainRows.some((row) => row.createdBy !== null) ||
+    objectRows.some((row) => row.ownerActorId !== null) ||
     classificationRows.some((row) => row.actorId !== null)
   ) {
     issues.push({
@@ -606,6 +622,26 @@ function buildPlanIssues(input: {
         field: "createdBy",
         actual: createdBy,
         message: "Admin domain creator reference has no target principal remap.",
+      });
+    }
+  });
+
+  objectRows.forEach((row, index) => {
+    const ownerActorId = row.ownerActorId;
+    if (
+      typeof ownerActorId === "string" &&
+      input.providedRemaps?.principals?.[ownerActorId] === undefined
+    ) {
+      issues.push({
+        severity: "warning",
+        code: "principal_remap_missing",
+        table: "objects",
+        path: tablePath("objects"),
+        line: index + 1,
+        sourceId: stringField(row, "id"),
+        field: "ownerActorId",
+        actual: ownerActorId,
+        message: "Object owner reference has no target principal remap.",
       });
     }
   });
@@ -736,6 +772,9 @@ function buildRemaps(input: {
   const principalIds = new Set<string>();
   for (const row of input.rowsByTable.get("admin_domains") ?? []) {
     addStringSetValue(principalIds, row.createdBy);
+  }
+  for (const row of input.rowsByTable.get("objects") ?? []) {
+    addStringSetValue(principalIds, row.ownerActorId);
   }
   for (const row of input.rowsByTable.get("resource_classifications") ?? []) {
     addStringSetValue(principalIds, row.actorId);
@@ -990,6 +1029,15 @@ function remappedFieldsForRow(input: {
     const domainId = stringField(input.row, "domainId");
     remapped.domainId = input.domainIdTargets.get(domainId) ?? domainId;
   }
+  if (input.table === "objects") {
+    const ownerActorId = input.row.ownerActorId;
+    if (
+      typeof ownerActorId === "string" &&
+      input.providedRemaps?.principals?.[ownerActorId] !== undefined
+    ) {
+      remapped.ownerActorId = input.providedRemaps.principals[ownerActorId];
+    }
+  }
   if (input.table === "resource_classifications") {
     const actorId = input.row.actorId;
     if (typeof actorId === "string" && input.providedRemaps?.principals?.[actorId] !== undefined) {
@@ -1075,6 +1123,16 @@ function referenceConflictPolicyForRow(input: {
       input.providedConflictPolicy,
     );
   }
+  if (input.table === "objects") {
+    const ownerActorId = input.row.ownerActorId;
+    if (typeof ownerActorId === "string") {
+      references.ownerActorId = referencePolicyOverride(
+        "ownerActorId",
+        principalReferencePolicy(ownerActorId, input.providedRemaps),
+        input.providedConflictPolicy,
+      );
+    }
+  }
   if (input.table === "resource_classifications") {
     const actorId = input.row.actorId;
     if (typeof actorId === "string") {
@@ -1103,7 +1161,7 @@ function referencePolicyOverride(
   providedConflictPolicy: TenantImportDryRunConflictPolicy | undefined,
 ): TenantImportPlanConflictPolicyMode {
   if (
-    (field === "createdBy" || field === "actorId") &&
+    (field === "createdBy" || field === "actorId" || field === "ownerActorId") &&
     fallback === "preserve" &&
     providedConflictPolicy?.principalReferences !== undefined
   ) {
@@ -1210,6 +1268,8 @@ function naturalKeyForRow(
         stringField(row, "recordType"),
         stringField(row, "host"),
       ];
+    case "objects":
+      return [stringField(row, "storageKey")];
     case "resource_classifications":
       return [stringField(row, "resourceType"), stringField(row, "resourceId")];
   }

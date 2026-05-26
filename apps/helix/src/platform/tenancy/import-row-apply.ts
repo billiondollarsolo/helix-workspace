@@ -89,6 +89,8 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
         return this.applyAdminDomain(operation);
       case "admin_dns_records":
         return this.applyAdminDnsRecord(operation, input.rowIdRemaps);
+      case "objects":
+        return this.applyObject(operation);
       case "resource_classifications":
         return this.applyResourceClassification(operation);
     }
@@ -319,6 +321,86 @@ export class PostgresTenantImportRowApplyStore implements TenantImportRowApplySt
     }
     return applied(operation, operation.action === "update" ? "updated" : "inserted", targetId);
   }
+
+  private async applyObject(
+    operation: TenantImportPlanOperation,
+  ): Promise<TenantImportRowApplyOperationResult> {
+    const row = operation.row;
+    const ownerActorId = referenceValue(operation, "ownerActorId");
+
+    if (operation.action === "update") {
+      if (operation.targetId === null) {
+        return blocked(operation, "missing_update_target_id");
+      }
+      const rows = (await this.sql`
+        update objects
+        set owner_actor_id = ${ownerActorId},
+            kind = ${stringField(row, "kind")},
+            storage_key = ${stringField(row, "storageKey")},
+            mime_type = ${stringField(row, "mimeType")},
+            byte_size = ${numberField(row, "byteSize")},
+            sha256 = ${nullableStringField(row, "sha256")},
+            classification = ${stringField(row, "classification")},
+            metadata = ${this.sql.json(jsonValueField(row, "metadata"))},
+            deleted_at = ${nullableStringField(row, "deletedAt")},
+            updated_at = ${stringField(row, "updatedAt")}
+        where org_id = ${operation.targetOrgId} and id = ${operation.targetId}
+        returning id
+      `) as unknown as readonly ReturnedIdRow[];
+      const targetId = rows[0]?.id;
+      if (targetId === undefined) {
+        return blocked(operation, "update_target_missing");
+      }
+      return applied(operation, "updated", targetId);
+    }
+
+    const existing = (await this.sql`
+      select id
+      from objects
+      where org_id = ${operation.targetOrgId}
+        and storage_key = ${stringField(row, "storageKey")}
+      for update
+    `) as unknown as readonly ReturnedIdRow[];
+    if (existing.length > 0) {
+      return blocked(operation, "target_natural_key_conflict");
+    }
+
+    const rows =
+      operation.conflictPolicy.rowId === "regenerate"
+        ? ((await this.sql`
+            insert into objects
+              (org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256,
+               classification, metadata, deleted_at, created_at, updated_at)
+            values
+              (${operation.targetOrgId}, ${ownerActorId}, ${stringField(row, "kind")},
+               ${stringField(row, "storageKey")}, ${stringField(row, "mimeType")},
+               ${numberField(row, "byteSize")}, ${nullableStringField(row, "sha256")},
+               ${stringField(row, "classification")},
+               ${this.sql.json(jsonValueField(row, "metadata"))},
+               ${nullableStringField(row, "deletedAt")}, ${stringField(row, "createdAt")},
+               ${stringField(row, "updatedAt")})
+            returning id
+          `) as unknown as readonly ReturnedIdRow[])
+        : ((await this.sql`
+            insert into objects
+              (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256,
+               classification, metadata, deleted_at, created_at, updated_at)
+            values
+              (${stringField(row, "id")}, ${operation.targetOrgId}, ${ownerActorId},
+               ${stringField(row, "kind")}, ${stringField(row, "storageKey")},
+               ${stringField(row, "mimeType")}, ${numberField(row, "byteSize")},
+               ${nullableStringField(row, "sha256")}, ${stringField(row, "classification")},
+               ${this.sql.json(jsonValueField(row, "metadata"))},
+               ${nullableStringField(row, "deletedAt")},
+               ${stringField(row, "createdAt")}, ${stringField(row, "updatedAt")})
+            returning id
+          `) as unknown as readonly ReturnedIdRow[]);
+    const targetId = rows[0]?.id;
+    if (targetId === undefined) {
+      return blocked(operation, "insert_failed");
+    }
+    return applied(operation, "inserted", targetId);
+  }
 }
 
 interface ReturnedIdRow {
@@ -329,6 +411,7 @@ function isSupportedOperation(operation: TenantImportPlanOperation): boolean {
   return (
     (operation.table === "admin_domains" && operation.kind === "upsert_admin_domain") ||
     (operation.table === "admin_dns_records" && operation.kind === "upsert_admin_dns_record") ||
+    (operation.table === "objects" && operation.kind === "upsert_object") ||
     (operation.table === "resource_classifications" &&
       operation.kind === "upsert_resource_classification")
   );
@@ -399,4 +482,20 @@ function nullableStringField(row: Readonly<Record<string, unknown>>, field: stri
     throw new Error(`Expected import row field ${field} to be a nullable string.`);
   }
   return value;
+}
+
+function numberField(row: Readonly<Record<string, unknown>>, field: string): number {
+  const value = row[field];
+  if (typeof value !== "number") {
+    throw new Error(`Expected import row field ${field} to be a number.`);
+  }
+  return value;
+}
+
+function jsonValueField(row: Readonly<Record<string, unknown>>, field: string): postgres.JSONValue {
+  const value = row[field];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Expected import row field ${field} to be a JSON object.`);
+  }
+  return value as postgres.JSONValue;
 }

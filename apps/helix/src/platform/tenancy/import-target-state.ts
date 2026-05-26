@@ -23,6 +23,11 @@ interface TargetAdminDnsRecordRow {
   readonly host: string;
 }
 
+interface TargetObjectRow {
+  readonly id: string;
+  readonly storage_key: string;
+}
+
 interface TargetResourceClassificationRow {
   readonly id: string;
   readonly resource_type: string;
@@ -44,6 +49,12 @@ export async function loadTenantImportTargetStateFromPostgres(
     where org_id = ${input.targetOrgId}
     order by domain_id asc, record_type asc, host asc, id asc
   `) as unknown as readonly TargetAdminDnsRecordRow[];
+  const objects = (await input.sql`
+    select id, storage_key
+    from objects
+    where org_id = ${input.targetOrgId}
+    order by storage_key asc, id asc
+  `) as unknown as readonly TargetObjectRow[];
   const resourceClassifications = (await input.sql`
     select id, resource_type, resource_id
     from resource_classifications
@@ -76,6 +87,19 @@ export async function loadTenantImportTargetStateFromPostgres(
     existingNaturalKeys.push({
       table: "admin_dns_records",
       naturalKey: [row.domain_id, row.record_type, row.host],
+      targetId: row.id,
+    });
+  }
+
+  for (const row of objects) {
+    existingRowIds.push({
+      table: "objects",
+      id: row.id,
+      targetId: row.id,
+    });
+    existingNaturalKeys.push({
+      table: "objects",
+      naturalKey: [row.storage_key],
       targetId: row.id,
     });
   }

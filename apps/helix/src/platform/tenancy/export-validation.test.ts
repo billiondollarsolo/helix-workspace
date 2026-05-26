@@ -19,6 +19,7 @@ const actorId = "11111111-1111-4111-8111-111111111111";
 const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
+const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("validateTenantExportPostgresDataChunks", () => {
   it("accepts the current admin domain and DNS chunk contract", () => {
@@ -29,7 +30,12 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(result).toEqual({
       ok: true,
       issues: [],
-      summary: { adminDomainRows: 1, adminDnsRecordRows: 1, resourceClassificationRows: 1 },
+      summary: {
+        adminDomainRows: 1,
+        adminDnsRecordRows: 1,
+        objectRows: 1,
+        resourceClassificationRows: 1,
+      },
     });
   });
 
@@ -41,7 +47,12 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(result).toMatchObject({
       ok: true,
       issues: [],
-      summary: { adminDomainRows: 0, adminDnsRecordRows: 0, resourceClassificationRows: 0 },
+      summary: {
+        adminDomainRows: 0,
+        adminDnsRecordRows: 0,
+        objectRows: 0,
+        resourceClassificationRows: 0,
+      },
     });
   });
 
@@ -49,6 +60,7 @@ describe("validateTenantExportPostgresDataChunks", () => {
     const input = validValidationInput({
       domainRows: [],
       dnsRows: [],
+      objectRows: [],
       resourceClassificationRows: [],
     });
 
@@ -57,7 +69,12 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(result).toMatchObject({
       ok: true,
       issues: [],
-      summary: { adminDomainRows: 0, adminDnsRecordRows: 0, resourceClassificationRows: 0 },
+      summary: {
+        adminDomainRows: 0,
+        adminDnsRecordRows: 0,
+        objectRows: 0,
+        resourceClassificationRows: 0,
+      },
     });
   });
 
@@ -252,6 +269,39 @@ describe("validateTenantExportPostgresDataChunks", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects invalid object rows, duplicate storage keys, and bad ordering", () => {
+    const input = validValidationInput({
+      objectRows: [
+        objectRow({
+          id: "not-a-uuid",
+          byteSize: -1,
+          metadata: [],
+          storageKey: "z/report.txt",
+        }),
+        objectRow({
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          storageKey: "drive/report.txt",
+        }),
+        objectRow({
+          id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          kind: "avatar",
+          storageKey: "drive/report.txt",
+        }),
+      ],
+    });
+
+    const result = validateTenantExportPostgresDataChunks(input);
+
+    expect(issueCodes(result)).toEqual(
+      expect.arrayContaining([
+        "invalid_row_shape",
+        "duplicate_object_storage_key",
+        "invalid_chunk_order",
+      ]),
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects invalid resource classification rows and duplicate identities", () => {
     const input = validValidationInput({
       resourceClassificationRows: [
@@ -300,6 +350,7 @@ function validValidationInput(
   input: {
     readonly domainRows?: readonly Record<string, unknown>[];
     readonly dnsRows?: readonly Record<string, unknown>[];
+    readonly objectRows?: readonly Record<string, unknown>[];
     readonly resourceClassificationRows?: readonly Record<string, unknown>[];
   } = {},
 ): {
@@ -318,6 +369,12 @@ function validValidationInput(
       path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
       orderBy: ["domain_id", "record_type", "host", "id"],
       rows: input.dnsRows ?? [adminDnsRecordRow()],
+    }),
+    chunkFile({
+      table: "objects",
+      path: "postgres/data/chunks/objects/000000.jsonl",
+      orderBy: ["kind", "storage_key", "id"],
+      rows: input.objectRows ?? [objectRow()],
     }),
     chunkFile({
       table: "resource_classifications",
@@ -405,6 +462,25 @@ function adminDnsRecordRow(overrides: Record<string, unknown> = {}): Record<stri
     lastCheckedAt: "2026-05-24T09:25:00.000Z",
     createdAt: "2026-05-24T09:00:00.000Z",
     updatedAt: "2026-05-24T09:25:00.000Z",
+    ...overrides,
+  };
+}
+
+function objectRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: objectId,
+    orgId,
+    ownerActorId: actorId,
+    kind: "file",
+    storageKey: "drive/report.txt",
+    mimeType: "text/plain",
+    byteSize: 12,
+    sha256: "a".repeat(64),
+    classification: "internal",
+    metadata: { name: "report.txt" },
+    deletedAt: null,
+    createdAt: "2026-05-24T09:00:00.000Z",
+    updatedAt: "2026-05-24T09:30:00.000Z",
     ...overrides,
   };
 }

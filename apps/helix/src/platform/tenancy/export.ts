@@ -321,6 +321,22 @@ interface TenantExportAdminDnsRecordRow {
   readonly updated_at: Date;
 }
 
+interface TenantExportObjectRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly owner_actor_id: string | null;
+  readonly kind: string;
+  readonly storage_key: string;
+  readonly mime_type: string;
+  readonly byte_size: number;
+  readonly sha256: string | null;
+  readonly classification: string;
+  readonly metadata: JsonObject;
+  readonly deleted_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
 interface TenantExportResourceClassificationRow {
   readonly id: string;
   readonly org_id: string;
@@ -1104,6 +1120,13 @@ export async function buildTenantExportPostgresDataChunkFiles(
     where org_id = ${orgId}
     order by domain_id asc, record_type asc, host asc, id asc
   `) as unknown as readonly TenantExportAdminDnsRecordRow[];
+  const objects = (await sql`
+    select id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256,
+           classification, metadata, deleted_at, created_at, updated_at
+    from objects
+    where org_id = ${orgId}
+    order by kind asc, storage_key asc, id asc
+  `) as unknown as readonly TenantExportObjectRow[];
   const resourceClassifications = (await sql`
     select id, org_id, resource_type, resource_id, classification, source, reason,
            actor_id, created_at, updated_at
@@ -1143,6 +1166,26 @@ export async function buildTenantExportPostgresDataChunkFiles(
         observedValue: row.observed_value,
         status: row.status,
         lastCheckedAt: row.last_checked_at?.toISOString() ?? null,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      })),
+    }),
+    buildTenantExportPostgresDataChunkFile({
+      table: "objects",
+      path: "postgres/data/chunks/objects/000000.jsonl",
+      orderBy: ["kind", "storage_key", "id"],
+      rows: objects.map((row) => ({
+        id: row.id,
+        orgId: row.org_id,
+        ownerActorId: row.owner_actor_id,
+        kind: row.kind,
+        storageKey: row.storage_key,
+        mimeType: row.mime_type,
+        byteSize: row.byte_size,
+        sha256: row.sha256,
+        classification: row.classification,
+        metadata: row.metadata,
+        deletedAt: row.deleted_at?.toISOString() ?? null,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
       })),

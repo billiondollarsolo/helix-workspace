@@ -110,9 +110,11 @@ describe("tenant export archive", () => {
     expect(Object.keys(entries).sort()).toContain(
       "postgres/data/chunks/resource_classifications/000000.jsonl",
     );
+    expect(Object.keys(entries).sort()).toContain("postgres/data/chunks/objects/000000.jsonl");
     expect(rowChunkManifest.includedTables).toEqual([
       "admin_domains",
       "admin_dns_records",
+      "objects",
       "resource_classifications",
     ]);
     expect(rowChunkManifest.chunks).toEqual([
@@ -127,6 +129,12 @@ describe("tenant export archive", () => {
         path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
         rowCount: 1,
         orderBy: ["domain_id", "record_type", "host", "id"],
+      }),
+      expect.objectContaining({
+        table: "objects",
+        path: "postgres/data/chunks/objects/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["kind", "storage_key", "id"],
       }),
       expect.objectContaining({
         table: "resource_classifications",
@@ -170,6 +178,23 @@ describe("tenant export archive", () => {
         lastCheckedAt: "2026-05-24T09:25:00.000Z",
         createdAt: "2026-05-24T09:00:00.000Z",
         updatedAt: "2026-05-24T09:25:00.000Z",
+      },
+    ]);
+    expect(parseJsonl(entries["postgres/data/chunks/objects/000000.jsonl"] ?? "")).toEqual([
+      {
+        id: "77777777-7777-4777-8777-777777777777",
+        orgId,
+        ownerActorId: actorId,
+        kind: "file",
+        storageKey: "drive/report.txt",
+        mimeType: "text/plain",
+        byteSize: 12,
+        sha256: "a".repeat(64),
+        classification: "internal",
+        metadata: { name: "report.txt" },
+        deletedAt: null,
+        createdAt: "2026-05-24T09:00:00.000Z",
+        updatedAt: "2026-05-24T09:30:00.000Z",
       },
     ]);
     expect(
@@ -279,7 +304,7 @@ describe("tenant export archive", () => {
         {
           storageKey: "drive/report.txt",
           byteSize: 12,
-          sha256: "abc",
+          sha256: "a".repeat(64),
           url: "https://storage.example/drive%2Freport.txt?expires=600",
           expiresAt: "2026-05-24T10:40:00.000Z",
         },
@@ -359,6 +384,12 @@ describe("tenant export SQL helpers", () => {
         orderBy: ["domain_id", "record_type", "host", "id"],
       }),
       expect.objectContaining({
+        table: "objects",
+        path: "postgres/data/chunks/objects/000000.jsonl",
+        rowCount: 1,
+        orderBy: ["kind", "storage_key", "id"],
+      }),
+      expect.objectContaining({
         table: "resource_classifications",
         path: "postgres/data/chunks/resource_classifications/000000.jsonl",
         rowCount: 1,
@@ -382,11 +413,17 @@ describe("tenant export SQL helpers", () => {
       "order by domain_id asc, record_type asc, host asc, id asc",
     );
     expect(recording.calls[2]?.text).toContain(
+      "select id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256",
+    );
+    expect(recording.calls[2]?.text).toContain("from objects");
+    expect(recording.calls[2]?.text).toContain("where org_id = ?");
+    expect(recording.calls[2]?.text).toContain("order by kind asc, storage_key asc, id asc");
+    expect(recording.calls[3]?.text).toContain(
       "select id, org_id, resource_type, resource_id, classification, source, reason",
     );
-    expect(recording.calls[2]?.text).toContain("from resource_classifications");
-    expect(recording.calls[2]?.text).toContain("where org_id = ?");
-    expect(recording.calls[2]?.text).toContain(
+    expect(recording.calls[3]?.text).toContain("from resource_classifications");
+    expect(recording.calls[3]?.text).toContain("where org_id = ?");
+    expect(recording.calls[3]?.text).toContain(
       "order by resource_type asc, resource_id asc, id asc",
     );
     expect(recording.calls.flatMap((call) => call.values).every((value) => value === orgId)).toBe(
@@ -1231,7 +1268,7 @@ function tenantExportManifest(
     org: orgRecord(),
     generatedAt: new Date("2026-05-24T10:00:00.000Z"),
     objects: [
-      { storageKey: "drive/report.txt", byteSize: 12, sha256: "abc" },
+      { storageKey: "drive/report.txt", byteSize: 12, sha256: "a".repeat(64) },
       { storageKey: "slides/deck-1/versions/2", byteSize: 23, sha256: "def" },
     ],
     rowCounts: [{ table: "activity", rowCount: 4 }],
@@ -1281,6 +1318,23 @@ function adminDomainChunkSqlResults(): readonly unknown[][] {
         last_checked_at: new Date("2026-05-24T09:25:00.000Z"),
         created_at: new Date("2026-05-24T09:00:00.000Z"),
         updated_at: new Date("2026-05-24T09:25:00.000Z"),
+      },
+    ],
+    [
+      {
+        id: "77777777-7777-4777-8777-777777777777",
+        org_id: orgId,
+        owner_actor_id: actorId,
+        kind: "file",
+        storage_key: "drive/report.txt",
+        mime_type: "text/plain",
+        byte_size: 12,
+        sha256: "a".repeat(64),
+        classification: "internal",
+        metadata: { name: "report.txt" },
+        deleted_at: null,
+        created_at: new Date("2026-05-24T09:00:00.000Z"),
+        updated_at: new Date("2026-05-24T09:30:00.000Z"),
       },
     ],
     [

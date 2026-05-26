@@ -22,6 +22,7 @@ export type TenantExportValidationIssueCode =
   | "invalid_timestamp"
   | "duplicate_primary_domain"
   | "duplicate_domain"
+  | "duplicate_object_storage_key"
   | "duplicate_resource_classification"
   | "missing_domain_reference"
   | "invalid_chunk_order";
@@ -44,6 +45,7 @@ export interface TenantExportValidationResult {
   readonly summary: {
     readonly adminDomainRows: number;
     readonly adminDnsRecordRows: number;
+    readonly objectRows: number;
     readonly resourceClassificationRows: number;
   };
 }
@@ -61,6 +63,7 @@ export interface ValidateTenantExportPostgresDataChunksInput {
 type TenantExportSupportedPostgresDataChunkTable =
   | "admin_domains"
   | "admin_dns_records"
+  | "objects"
   | "resource_classifications";
 
 type JsonRecord = Record<string, unknown>;
@@ -108,6 +111,26 @@ const supportedChunks: readonly SupportedChunkDefinition[] = [
     ],
   },
   {
+    table: "objects",
+    path: "postgres/data/chunks/objects/000000.jsonl",
+    orderBy: ["kind", "storage_key", "id"],
+    fields: [
+      "id",
+      "orgId",
+      "ownerActorId",
+      "kind",
+      "storageKey",
+      "mimeType",
+      "byteSize",
+      "sha256",
+      "classification",
+      "metadata",
+      "deletedAt",
+      "createdAt",
+      "updatedAt",
+    ],
+  },
+  {
     table: "resource_classifications",
     path: "postgres/data/chunks/resource_classifications/000000.jsonl",
     orderBy: ["resource_type", "resource_id", "id"],
@@ -132,9 +155,11 @@ const supportedChunkTables = new Set(supportedChunks.map((chunk) => chunk.table)
 const supportedChunkPaths = new Set(supportedChunks.map((chunk) => chunk.path));
 const verificationStatuses = new Set(["verified", "pending", "failed"]);
 const dnsRecordTypes = new Set(["MX", "SPF", "DKIM", "DMARC", "TXT", "CNAME", "A"]);
+const objectKinds = new Set(["file", "mail_attachment", "document", "recording", "other"]);
 const dataClassifications = new Set(["public", "standard", "confidential", "restricted"]);
 const classificationSources = new Set(["default", "explicit", "label", "folder", "heuristic"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const sha256Pattern = /^[0-9a-f]{64}$/iu;
 const domainPattern = /^[a-z0-9.-]+$/iu;
 
 export function validateTenantExportPostgresDataChunks(
@@ -257,6 +282,7 @@ export function validateTenantExportPostgresDataChunks(
 
   validateDomainRows(rowsByTable.get("admin_domains") ?? [], expectedOrgId, issues);
   validateDnsRows(rowsByTable, expectedOrgId, issues);
+  validateObjectRows(rowsByTable.get("objects") ?? [], issues);
   validateResourceClassificationRows(rowsByTable.get("resource_classifications") ?? [], issues);
 
   return {
@@ -265,6 +291,7 @@ export function validateTenantExportPostgresDataChunks(
     summary: {
       adminDomainRows: rowsByTable.get("admin_domains")?.length ?? 0,
       adminDnsRecordRows: rowsByTable.get("admin_dns_records")?.length ?? 0,
+      objectRows: rowsByTable.get("objects")?.length ?? 0,
       resourceClassificationRows: rowsByTable.get("resource_classifications")?.length ?? 0,
     },
   };
@@ -758,6 +785,8 @@ function compareRowsForDefinition(
       return compareDomainRows(previous, current);
     case "admin_dns_records":
       return compareDnsRows(previous, current);
+    case "objects":
+      return compareObjectRows(previous, current);
     case "resource_classifications":
       return compareResourceClassificationRows(previous, current);
   }
@@ -780,12 +809,107 @@ function compareDnsRows(a: JsonRecord, b: JsonRecord): number {
   );
 }
 
+function compareObjectRows(a: JsonRecord, b: JsonRecord): number {
+  return (
+    compareStrings(stringValue(a.kind), stringValue(b.kind)) ||
+    compareStrings(stringValue(a.storageKey), stringValue(b.storageKey)) ||
+    compareStrings(stringValue(a.id), stringValue(b.id))
+  );
+}
+
 function compareResourceClassificationRows(a: JsonRecord, b: JsonRecord): number {
   return (
     compareStrings(stringValue(a.resourceType), stringValue(b.resourceType)) ||
     compareStrings(stringValue(a.resourceId), stringValue(b.resourceId)) ||
     compareStrings(stringValue(a.id), stringValue(b.id))
   );
+}
+
+function validateObjectRows(
+  rows: readonly JsonRecord[],
+  issues: TenantExportValidationIssue[],
+): void {
+  const storageKeys = new Set<string>();
+  rows.forEach((row, index) => {
+    const line = index + 1;
+    validateUuidField(row, "id", "objects", line, issues);
+    validateUuidField(row, "ownerActorId", "objects", line, issues, { nullable: true });
+    validateTimestampField(row, "createdAt", "objects", line, issues);
+    validateTimestampField(row, "updatedAt", "objects", line, issues);
+    validateTimestampField(row, "deletedAt", "objects", line, issues, { nullable: true });
+    validateStorageKey(row, "objects", line, issues);
+    validateNonEmptyString(row, "mimeType", 255, "objects", line, issues);
+    validateNullableString(row, "sha256", "objects", line, issues);
+    validateNonEmptyString(row, "classification", 100, "objects", line, issues);
+
+    if (typeof row.kind !== "string" || !objectKinds.has(row.kind)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("objects")?.path ?? "",
+        table: "objects",
+        line,
+        field: "kind",
+        message: "Object row kind is not supported.",
+        actual: row.kind,
+      });
+    }
+
+    if (typeof row.byteSize !== "number" || !Number.isInteger(row.byteSize) || row.byteSize < 0) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("objects")?.path ?? "",
+        table: "objects",
+        line,
+        field: "byteSize",
+        message: "Object row byteSize must be a non-negative integer.",
+        actual: row.byteSize,
+      });
+    }
+
+    if (!isJsonRecord(row.metadata)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("objects")?.path ?? "",
+        table: "objects",
+        line,
+        field: "metadata",
+        message: "Object row metadata must be a JSON object.",
+        actual: row.metadata,
+      });
+    }
+
+    if (typeof row.sha256 === "string" && !sha256Pattern.test(row.sha256)) {
+      issues.push({
+        severity: "error",
+        code: "invalid_row_shape",
+        path: supportedChunksByTable.get("objects")?.path ?? "",
+        table: "objects",
+        line,
+        field: "sha256",
+        message: "Object row sha256 must be null or a 64-character hex digest.",
+        actual: row.sha256,
+      });
+    }
+
+    if (typeof row.storageKey === "string") {
+      if (storageKeys.has(row.storageKey)) {
+        issues.push({
+          severity: "error",
+          code: "duplicate_object_storage_key",
+          path: supportedChunksByTable.get("objects")?.path ?? "",
+          table: "objects",
+          line,
+          field: "storageKey",
+          message: "Object rows must not duplicate storageKey values.",
+          actual: row.storageKey,
+        });
+      }
+      storageKeys.add(row.storageKey);
+    }
+  });
 }
 
 function validateResourceClassificationRows(
@@ -922,6 +1046,44 @@ function validateNonEmptyString(
       actual: value,
     });
   }
+}
+
+function validateStorageKey(
+  row: JsonRecord,
+  table: TenantExportSupportedPostgresDataChunkTable,
+  line: number,
+  issues: TenantExportValidationIssue[],
+): void {
+  const value = row.storageKey;
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > 2000 ||
+    value.startsWith("/") ||
+    value.split("/").includes("..") ||
+    hasControlCharacter(value)
+  ) {
+    issues.push({
+      severity: "error",
+      code: "invalid_row_shape",
+      path: supportedChunksByTable.get(table)?.path ?? "",
+      table,
+      line,
+      field: "storageKey",
+      message:
+        "Object row storageKey must be a relative non-empty key without parent segments or control characters.",
+      actual: value,
+    });
+  }
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) <= 0x1f) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function validateNullableString(

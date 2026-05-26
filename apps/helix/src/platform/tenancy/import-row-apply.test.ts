@@ -12,9 +12,11 @@ const actorId = "11111111-1111-4111-8111-111111111111";
 const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
+const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const targetDomainId = "77777777-7777-4777-8777-777777777777";
 const targetDnsRecordId = "88888888-8888-4888-8888-888888888888";
 const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
+const targetObjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("PostgresTenantImportRowApplyStore", () => {
   it("blocks planned blocked operations without issuing SQL", async () => {
@@ -221,6 +223,91 @@ describe("PostgresTenantImportRowApplyStore", () => {
       "2026-05-24T10:06:00.000Z",
       targetOrgId,
       targetDnsRecordId,
+    ]);
+  });
+
+  it("inserts object metadata and nulls owner principals by policy", async () => {
+    const recording = createRecordingSql([[], [{ id: targetObjectId }]]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: objectOperation({
+          conflictPolicy: {
+            rowId: "preserve",
+            references: { ownerActorId: "null" },
+            state: {},
+          },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      action: "inserted",
+      targetId: targetObjectId,
+    });
+
+    expect(recording.calls).toHaveLength(2);
+    expect(recording.calls[0]?.text).toContain("from objects");
+    expect(recording.calls[0]?.text).toContain("storage_key = ?");
+    expect(recording.calls[1]?.text).toContain("insert into objects");
+    expect(recording.calls[1]?.text).toContain("(id, org_id, owner_actor_id");
+    expect(recording.calls[1]?.values).toEqual([
+      objectId,
+      targetOrgId,
+      null,
+      "file",
+      "drive/report.txt",
+      "text/plain",
+      12,
+      "a".repeat(64),
+      "internal",
+      { name: "report.txt" },
+      null,
+      "2026-05-24T10:02:00.000Z",
+      "2026-05-24T10:07:00.000Z",
+    ]);
+  });
+
+  it("updates matched object metadata by targetId", async () => {
+    const recording = createRecordingSql([[{ id: targetObjectId }]]);
+    const store = new PostgresTenantImportRowApplyStore(recording.sql);
+
+    await expect(
+      store.applyOperation({
+        operation: objectOperation({
+          action: "update",
+          targetId: targetObjectId,
+          row: {
+            ownerActorId: null,
+            deletedAt: "2026-05-25T10:00:00.000Z",
+          },
+          conflictPolicy: {
+            rowId: "match",
+            references: { ownerActorId: "null" },
+            state: {},
+          },
+        }),
+      }),
+    ).resolves.toMatchObject({
+      action: "updated",
+      targetId: targetObjectId,
+    });
+
+    expect(recording.calls).toHaveLength(1);
+    expect(recording.calls[0]?.text).toContain("update objects");
+    expect(recording.calls[0]?.text).toContain("where org_id = ? and id = ?");
+    expect(recording.calls[0]?.values).toEqual([
+      null,
+      "file",
+      "drive/report.txt",
+      "text/plain",
+      12,
+      "a".repeat(64),
+      "internal",
+      { name: "report.txt" },
+      "2026-05-25T10:00:00.000Z",
+      "2026-05-24T10:07:00.000Z",
+      targetOrgId,
+      targetObjectId,
     ]);
   });
 
@@ -498,6 +585,49 @@ function resourceClassificationOperation(
   });
 }
 
+function objectOperation(
+  overrides: Partial<TenantImportPlanOperation> & {
+    readonly row?: Partial<TenantImportPlanOperation["row"]>;
+    readonly conflictPolicy?: Partial<TenantImportPlanOperation["conflictPolicy"]>;
+  } = {},
+): TenantImportPlanOperation {
+  return operation({
+    order: 3,
+    kind: "upsert_object",
+    table: "objects",
+    path: "postgres/data/chunks/objects/000000.jsonl",
+    sourceId: objectId,
+    naturalKey: ["drive/report.txt"],
+    ...overrides,
+    conflictPolicy: {
+      rowId: overrides.conflictPolicy?.rowId ?? "preserve",
+      references: {
+        ownerActorId: "preserve",
+        ...overrides.conflictPolicy?.references,
+      },
+      state: {
+        ...overrides.conflictPolicy?.state,
+      },
+    },
+    row: {
+      id: objectId,
+      orgId: targetOrgId,
+      ownerActorId: actorId,
+      kind: "file",
+      storageKey: "drive/report.txt",
+      mimeType: "text/plain",
+      byteSize: 12,
+      sha256: "a".repeat(64),
+      classification: "internal",
+      metadata: { name: "report.txt" },
+      deletedAt: null,
+      createdAt: "2026-05-24T10:02:00.000Z",
+      updatedAt: "2026-05-24T10:07:00.000Z",
+      ...overrides.row,
+    },
+  });
+}
+
 function createRecordingSql(results: readonly unknown[][]): {
   readonly sql: postgres.Sql;
   readonly calls: readonly { readonly text: string; readonly values: readonly unknown[] }[];
@@ -510,5 +640,6 @@ function createRecordingSql(results: readonly unknown[][]): {
     index += 1;
     return Promise.resolve(result);
   }) as unknown as postgres.Sql;
+  (sql as unknown as { json: (value: unknown) => unknown }).json = (value) => value;
   return { sql, calls };
 }

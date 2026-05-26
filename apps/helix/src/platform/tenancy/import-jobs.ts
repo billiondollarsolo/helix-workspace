@@ -62,6 +62,7 @@ export interface TenantImportJobPlanSummary {
     readonly postgresRows: number;
     readonly adminDomainRows: number;
     readonly adminDnsRecordRows: number;
+    readonly objectRows: number;
     readonly resourceClassificationRows: number;
     readonly operationCount: number;
     readonly remapCount: number;

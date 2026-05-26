@@ -1408,6 +1408,7 @@ function importJobRecord(overrides: Partial<TenantImportJobRecord> = {}): Tenant
           postgresRows: 3,
           adminDomainRows: 1,
           adminDnsRecordRows: 1,
+          objectRows: 0,
           resourceClassificationRows: 1,
           operationCount: 3,
           remapCount: 1,

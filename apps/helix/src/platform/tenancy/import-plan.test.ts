@@ -16,9 +16,11 @@ const actorId = "11111111-1111-4111-8111-111111111111";
 const domainId = "44444444-4444-4444-8444-444444444444";
 const dnsRecordId = "55555555-5555-4555-8555-555555555555";
 const resourceClassificationId = "66666666-6666-4666-8666-666666666666";
+const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const targetDomainId = "77777777-7777-4777-8777-777777777777";
 const targetDnsRecordId = "88888888-8888-4888-8888-888888888888";
 const targetResourceClassificationId = "99999999-9999-4999-8999-999999999999";
+const targetObjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("buildTenantImportPlan", () => {
   it("builds a pure dry-run plan for the current row chunks", () => {
@@ -50,19 +52,21 @@ describe("buildTenantImportPlan", () => {
         totalKnownBytes: 25,
       },
       summary: {
-        postgresRows: 3,
+        postgresRows: 4,
         adminDomainRows: 1,
         adminDnsRecordRows: 1,
+        objectRows: 1,
         resourceClassificationRows: 1,
-        operationCount: 3,
+        operationCount: 4,
       },
     });
     expect(plan.operations.map((operation) => operation.kind)).toEqual([
       "upsert_admin_domain",
       "upsert_admin_dns_record",
+      "upsert_object",
       "upsert_resource_classification",
     ]);
-    expect(plan.operations.map((operation) => operation.order)).toEqual([1, 2, 3]);
+    expect(plan.operations.map((operation) => operation.order)).toEqual([1, 2, 3, 4]);
     expect(plan.operations[1]).toMatchObject({
       table: "admin_dns_records",
       dependsOn: [`admin_domains:${domainId}`],
@@ -93,6 +97,13 @@ describe("buildTenantImportPlan", () => {
     expect(plan.operations[2]?.conflictPolicy).toEqual({
       rowId: "preserve",
       references: {
+        ownerActorId: "preserve",
+      },
+      state: {},
+    });
+    expect(plan.operations[3]?.conflictPolicy).toEqual({
+      rowId: "preserve",
+      references: {
         actorId: "preserve",
         resourceId: "preserve",
       },
@@ -101,6 +112,7 @@ describe("buildTenantImportPlan", () => {
     expect(plan.steps.map((step) => step.kind)).toEqual([
       "tenant_config",
       "storage_objects",
+      "postgres_rows",
       "postgres_rows",
       "postgres_rows",
       "postgres_rows",
@@ -147,7 +159,7 @@ describe("buildTenantImportPlan", () => {
           [actorId]: null,
         },
         resources: {
-          "mail.message:msg-1": "target-msg-1",
+          [`object:${objectId}`]: targetObjectId,
         },
       },
       targetState: {
@@ -164,8 +176,13 @@ describe("buildTenantImportPlan", () => {
             targetId: targetDnsRecordId,
           },
           {
+            table: "objects",
+            naturalKey: ["drive/report.txt"],
+            targetId: targetObjectId,
+          },
+          {
             table: "resource_classifications",
-            naturalKey: ["mail.message", "target-msg-1"],
+            naturalKey: ["object", targetObjectId],
             targetId: targetResourceClassificationId,
           },
         ],
@@ -173,8 +190,8 @@ describe("buildTenantImportPlan", () => {
     });
 
     expect(plan.summary).toMatchObject({
-      remapCount: 7,
-      conflictCount: 4,
+      remapCount: 8,
+      conflictCount: 5,
     });
     expect(plan.operations[0]).toMatchObject({
       action: "update",
@@ -230,14 +247,36 @@ describe("buildTenantImportPlan", () => {
     });
     expect(plan.operations[2]).toMatchObject({
       action: "update",
+      table: "objects",
+      sourceId: objectId,
+      targetId: targetObjectId,
+      naturalKey: ["drive/report.txt"],
+      remappedFields: {
+        orgId: targetOrgId,
+        ownerActorId: null,
+      },
+      conflictPolicy: {
+        rowId: "match",
+        references: {
+          ownerActorId: "null",
+        },
+        state: {},
+      },
+    });
+    expect(plan.operations[2]?.row).toMatchObject({
+      orgId: targetOrgId,
+      ownerActorId: null,
+    });
+    expect(plan.operations[3]).toMatchObject({
+      action: "update",
       table: "resource_classifications",
       sourceId: resourceClassificationId,
       targetId: targetResourceClassificationId,
-      naturalKey: ["mail.message", "target-msg-1"],
+      naturalKey: ["object", targetObjectId],
       remappedFields: {
         orgId: targetOrgId,
         actorId: null,
-        resourceId: "target-msg-1",
+        resourceId: targetObjectId,
       },
       conflictPolicy: {
         rowId: "match",
@@ -248,10 +287,10 @@ describe("buildTenantImportPlan", () => {
         state: {},
       },
     });
-    expect(plan.operations[2]?.row).toMatchObject({
+    expect(plan.operations[3]?.row).toMatchObject({
       orgId: targetOrgId,
       actorId: null,
-      resourceId: "target-msg-1",
+      resourceId: targetObjectId,
     });
     expect(plan.remaps).toEqual(
       expect.arrayContaining([
@@ -263,8 +302,8 @@ describe("buildTenantImportPlan", () => {
         }),
         expect.objectContaining({
           kind: "resource",
-          sourceId: "msg-1",
-          targetId: "target-msg-1",
+          sourceId: objectId,
+          targetId: targetObjectId,
           status: "rewrite",
         }),
       ]),
@@ -384,8 +423,18 @@ describe("buildTenantImportPlan", () => {
     });
     expect(plan.operations[2]).toMatchObject({
       row: {
+        ownerActorId: actorId,
+      },
+      conflictPolicy: {
+        references: {
+          ownerActorId: "null",
+        },
+      },
+    });
+    expect(plan.operations[3]).toMatchObject({
+      row: {
         actorId,
-        resourceId: "msg-1",
+        resourceId: objectId,
       },
       conflictPolicy: {
         references: {
@@ -394,7 +443,7 @@ describe("buildTenantImportPlan", () => {
         },
       },
     });
-    expect(plan.operations[2]?.action).toBe("insert");
+    expect(plan.operations[3]?.action).toBe("insert");
   });
 
   it("returns validation blockers and no operations when the archive rows are invalid", () => {
@@ -491,13 +540,14 @@ describe("buildTenantImportPlan", () => {
         totalKnownBytes: 25,
       },
       summary: {
-        postgresRows: 3,
-        operationCount: 3,
+        postgresRows: 4,
+        operationCount: 4,
       },
     });
     expect(result.plan?.operations.map((operation) => operation.kind)).toEqual([
       "upsert_admin_domain",
       "upsert_admin_dns_record",
+      "upsert_object",
       "upsert_resource_classification",
     ]);
     expect(result.plan?.operations[0]?.conflictPolicy).toMatchObject({
@@ -565,6 +615,7 @@ function validImportPlanInput(
   input: {
     readonly domainRows?: readonly Record<string, unknown>[];
     readonly dnsRows?: readonly Record<string, unknown>[];
+    readonly objectRows?: readonly Record<string, unknown>[];
     readonly resourceClassificationRows?: readonly Record<string, unknown>[];
     readonly objects?: readonly TestStorageObject[];
     readonly bytesIncluded?: boolean | undefined;
@@ -585,6 +636,12 @@ function validImportPlanInput(
       path: "postgres/data/chunks/admin_dns_records/000000.jsonl",
       orderBy: ["domain_id", "record_type", "host", "id"],
       rows: input.dnsRows ?? [adminDnsRecordRow()],
+    }),
+    chunkFile({
+      table: "objects",
+      path: "postgres/data/chunks/objects/000000.jsonl",
+      orderBy: ["kind", "storage_key", "id"],
+      rows: input.objectRows ?? [objectRow()],
     }),
     chunkFile({
       table: "resource_classifications",
@@ -683,14 +740,33 @@ function adminDnsRecordRow(overrides: Record<string, unknown> = {}): Record<stri
   };
 }
 
+function objectRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: objectId,
+    orgId,
+    ownerActorId: actorId,
+    kind: "file",
+    storageKey: "drive/report.txt",
+    mimeType: "text/plain",
+    byteSize: 12,
+    sha256: "a".repeat(64),
+    classification: "internal",
+    metadata: { name: "report.txt" },
+    deletedAt: null,
+    createdAt: "2026-05-24T09:00:00.000Z",
+    updatedAt: "2026-05-24T09:30:00.000Z",
+    ...overrides,
+  };
+}
+
 function resourceClassificationRow(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
     id: resourceClassificationId,
     orgId,
-    resourceType: "mail.message",
-    resourceId: "msg-1",
+    resourceType: "object",
+    resourceId: objectId,
     classification: "confidential",
     source: "label",
     reason: "label:HR",

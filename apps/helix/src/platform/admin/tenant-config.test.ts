@@ -2,10 +2,13 @@ import fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import type { JsonObject } from "@helix/sdk-types";
 import { actorFromRequest } from "../../api/actor.js";
-import type {
-  CreateTenantStorageMigrationJobInput,
-  TenantStorageMigrationJobRecord,
-  TenantStorageMigrationJobStore,
+import {
+  TenantStorageMigrationWorker,
+  type CreateTenantStorageMigrationJobInput,
+  type TenantStorageMigrationJobRecord,
+  type TenantStorageMigrationJobStore,
+  type TenantStorageMigrationObservabilitySnapshot,
+  type TenantStorageMigrationResult,
 } from "../storage/index.js";
 import type {
   CutoverTenantStorageConfigInput,
@@ -645,6 +648,192 @@ describe("tenant config admin routes", () => {
       },
     });
     expect(store.updates).toEqual([]);
+    await app.close();
+  });
+
+  it("runs a tenant storage migration from admin request through worker completion and cutover", async () => {
+    const targetStorage = {
+      kind: "byo",
+      provider: "aws-s3",
+      bucket: "acme-helix-data",
+      credentials_vault_path: "tenants/acme/byo-storage/aws",
+    } as const;
+    const sourceStorageClient = new RecordingStorageClient();
+    const destinationStorageClient = new RecordingStorageClient();
+    await sourceStorageClient.put({
+      key: "drive/report.txt",
+      body: new TextEncoder().encode("launch report"),
+    });
+    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore();
+    const store = new InMemoryTenantConfigAdminStore();
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store,
+      actorFromRequest,
+      storageMigrationJobs,
+    });
+
+    const dryRun = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/migrations",
+      headers: headers("admin.console.write"),
+      payload: {
+        target: "byo",
+        dryRun: true,
+        targetStorage,
+      },
+    });
+
+    expect(dryRun.statusCode).toBe(202);
+    expect(dryRun.json()).toMatchObject({
+      migration: {
+        dryRun: true,
+        status: "queued",
+        target: "byo",
+        sourceStorage: { managedBy: "helix-default", storage: null },
+        targetStorage: { managedBy: "byo", storage: targetStorage },
+      },
+    });
+    expect(storageMigrationJobs.creates[0]).toMatchObject({
+      orgId,
+      target: "byo",
+      dryRun: true,
+      requestedByActorId: actorId,
+      sourceStorage: { managedBy: "helix-default", storage: null },
+      targetStorage: { managedBy: "byo", storage: targetStorage },
+    });
+
+    const dryRunWorker = new TenantStorageMigrationWorker({
+      store: storageMigrationJobs,
+      listObjects: () => [{ storageKey: "drive/report.txt" }],
+      resolveStoragePair: () => {
+        throw new Error("dry-run should not resolve storage clients");
+      },
+    });
+    await expect(dryRunWorker.runOnce()).resolves.toEqual({
+      claimed: 1,
+      succeeded: 0,
+      dryRun: 1,
+      failed: 0,
+    });
+    expect(storageMigrationJobs.jobs[0]).toMatchObject({
+      status: "dry_run",
+      plannedCount: 1,
+      copiedCount: 0,
+      verifiedCount: 0,
+    });
+    expect(await destinationStorageClient.get("drive/report.txt")).toBeNull();
+
+    const live = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/migrations",
+      headers: headers("admin.console.write"),
+      payload: {
+        target: "byo",
+        dryRun: false,
+        targetStorage,
+      },
+    });
+
+    expect(live.statusCode).toBe(202);
+    const liveJobId = storageMigrationJobs.jobs[1]?.id;
+    if (liveJobId === undefined) {
+      throw new Error("Expected live migration request to create a second job.");
+    }
+    expect(live.json()).toMatchObject({
+      migration: {
+        id: liveJobId,
+        dryRun: false,
+        status: "queued",
+        target: "byo",
+        sourceStorage: { managedBy: "helix-default", storage: null },
+        targetStorage: { managedBy: "byo", storage: targetStorage },
+      },
+    });
+    expect(storageMigrationJobs.creates[1]).toMatchObject({
+      orgId,
+      target: "byo",
+      dryRun: false,
+      requestedByActorId: actorId,
+      sourceStorage: { managedBy: "helix-default", storage: null },
+      targetStorage: { managedBy: "byo", storage: targetStorage },
+    });
+
+    const resolvedLiveJobs: TenantStorageMigrationJobRecord[] = [];
+    const liveWorker = new TenantStorageMigrationWorker({
+      store: storageMigrationJobs,
+      listObjects: () => [{ storageKey: "drive/report.txt", byteSize: "launch report".length }],
+      resolveStoragePair: (job) => {
+        resolvedLiveJobs.push(job);
+        return {
+          source: sourceStorageClient,
+          destination: destinationStorageClient,
+        };
+      },
+    });
+    await expect(liveWorker.runOnce()).resolves.toEqual({
+      claimed: 1,
+      succeeded: 1,
+      dryRun: 0,
+      failed: 0,
+    });
+    expect(resolvedLiveJobs).toHaveLength(1);
+    expect(resolvedLiveJobs[0]).toMatchObject({
+      id: liveJobId,
+      orgId,
+      dryRun: false,
+      sourceStorage: { managedBy: "helix-default", storage: null },
+      targetStorage: { managedBy: "byo", storage: targetStorage },
+    });
+    const copied = await destinationStorageClient.get("drive/report.txt");
+    if (copied === null) {
+      throw new Error("Expected live migration to copy drive/report.txt.");
+    }
+    expect(new TextDecoder().decode(copied.body)).toBe("launch report");
+
+    const completed = await app.inject({
+      method: "GET",
+      url: `/api/admin/tenant-config/byo-storage/migrations/${liveJobId}`,
+      headers: headers("admin.console.read"),
+    });
+
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({
+      migration: {
+        id: liveJobId,
+        status: "succeeded",
+        plannedCount: 1,
+        copiedCount: 1,
+        verifiedCount: 1,
+        failures: [],
+      },
+    });
+
+    const cutover = await app.inject({
+      method: "POST",
+      url: `/api/admin/tenant-config/byo-storage/migrations/${liveJobId}/cutover`,
+      headers: headers("admin.console.write"),
+      payload: { confirm: "CUTOVER" },
+    });
+
+    expect(cutover.statusCode).toBe(200);
+    expect(cutover.json()).toMatchObject({
+      migration: { id: liveJobId, status: "succeeded" },
+      tenantConfig: {
+        byo: { storage: targetStorage },
+        features: { ai_smart_compose: false, byo_storage: true },
+      },
+    });
+    expect(store.cutovers).toEqual([
+      {
+        orgId,
+        storageConfig: targetStorage,
+        enableByoStorage: true,
+        expectedCurrentStorage: null,
+        changedByActorId: actorId,
+        reason: `tenant storage migration cutover: ${liveJobId}`,
+      },
+    ]);
     await app.close();
   });
 
@@ -1312,10 +1501,7 @@ class RecordingStorageClient {
   }
 }
 
-class InMemoryTenantStorageMigrationJobStore implements Pick<
-  TenantStorageMigrationJobStore,
-  "create" | "findByIdForOrg" | "listForOrg"
-> {
+class InMemoryTenantStorageMigrationJobStore implements TenantStorageMigrationJobStore {
   readonly creates: CreateTenantStorageMigrationJobInput[] = [];
   readonly listInputs: Parameters<TenantStorageMigrationJobStore["listForOrg"]>[0][] = [];
   readonly jobs: TenantStorageMigrationJobRecord[];
@@ -1329,7 +1515,7 @@ class InMemoryTenantStorageMigrationJobStore implements Pick<
   ): Promise<TenantStorageMigrationJobRecord> {
     this.creates.push(input);
     const job = migrationJob({
-      id: "33333333-3333-4333-8333-333333333333",
+      id: generatedMigrationJobId(this.jobs.length),
       orgId: input.orgId,
       target: input.target,
       dryRun: input.dryRun === true,
@@ -1370,6 +1556,110 @@ class InMemoryTenantStorageMigrationJobStore implements Pick<
         return createdAtDiff === 0 ? right.id.localeCompare(left.id) : createdAtDiff;
       })
       .slice(0, input.limit ?? 10);
+  }
+
+  async claimPending(
+    input: { readonly limit?: number | undefined } = {},
+  ): Promise<readonly TenantStorageMigrationJobRecord[]> {
+    const claimed: TenantStorageMigrationJobRecord[] = [];
+    const limit = input.limit ?? 5;
+    for (const job of this.jobs) {
+      if (claimed.length >= limit) {
+        break;
+      }
+      if (job.status !== "queued" && job.status !== "failed") {
+        continue;
+      }
+      const running = {
+        ...job,
+        status: "running" as const,
+        attemptCount: job.attemptCount + 1,
+        lastError: null,
+        startedAt: job.startedAt ?? new Date("2026-05-24T10:01:00.000Z"),
+        updatedAt: new Date("2026-05-24T10:01:00.000Z"),
+      };
+      this.replaceJob(running);
+      claimed.push(running);
+    }
+    return claimed;
+  }
+
+  async markCompleted(input: {
+    readonly id: string;
+    readonly result: TenantStorageMigrationResult;
+  }): Promise<TenantStorageMigrationJobRecord> {
+    const job = this.requireJob(input.id);
+    const completed = {
+      ...job,
+      status: jobStatusFromMigrationResult(input.result),
+      plannedCount: input.result.plannedCount,
+      copiedCount: input.result.copiedCount,
+      verifiedCount: input.result.verifiedCount,
+      failures: input.result.failures,
+      lastError: null,
+      completedAt: new Date(input.result.completedAt),
+      updatedAt: new Date(input.result.completedAt),
+    };
+    this.replaceJob(completed);
+    return completed;
+  }
+
+  async markFailed(input: {
+    readonly id: string;
+    readonly error: string;
+  }): Promise<TenantStorageMigrationJobRecord> {
+    const job = this.requireJob(input.id);
+    const failed = {
+      ...job,
+      status: "failed" as const,
+      lastError: input.error,
+      completedAt: new Date("2026-05-24T10:02:00.000Z"),
+      updatedAt: new Date("2026-05-24T10:02:00.000Z"),
+    };
+    this.replaceJob(failed);
+    return failed;
+  }
+
+  async getObservabilitySnapshot(): Promise<TenantStorageMigrationObservabilitySnapshot> {
+    return { activeJobs: [], stalledJobs: [] };
+  }
+
+  private requireJob(id: string): TenantStorageMigrationJobRecord {
+    const job = this.jobs.find((candidate) => candidate.id === id);
+    if (job === undefined) {
+      throw new Error(`Tenant storage migration job not found: ${id}`);
+    }
+    return job;
+  }
+
+  private replaceJob(job: TenantStorageMigrationJobRecord): void {
+    const index = this.jobs.findIndex((candidate) => candidate.id === job.id);
+    if (index < 0) {
+      throw new Error(`Tenant storage migration job not found: ${job.id}`);
+    }
+    this.jobs[index] = job;
+  }
+}
+
+function generatedMigrationJobId(index: number): string {
+  const ids = [
+    "33333333-3333-4333-8333-333333333333",
+    "44444444-4444-4444-8444-444444444444",
+    "55555555-5555-4555-8555-555555555555",
+  ];
+  return ids[index] ?? "66666666-6666-4666-8666-666666666666";
+}
+
+function jobStatusFromMigrationResult(
+  result: TenantStorageMigrationResult,
+): TenantStorageMigrationJobRecord["status"] {
+  switch (result.status) {
+    case "completed":
+      return "succeeded";
+    case "completed_with_errors":
+      return "succeeded_with_errors";
+    case "dry_run":
+      return "dry_run";
   }
 }
 

@@ -113,13 +113,21 @@ function isTenantExportRecoveryRoute(
   path: string,
 ): boolean {
   if (request.method === "GET") {
-    return /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export(?:\/manifest)?$/u.test(
-      path,
+    return (
+      /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export(?:\/manifest)?$/u.test(
+        path,
+      ) ||
+      /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export\/jobs(?:\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})?$/u.test(
+        path,
+      )
     );
   }
   return (
     request.method === "POST" &&
-    /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export\/artifact$/u.test(path)
+    (/^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export\/artifact$/u.test(
+      path,
+    ) ||
+      /^\/api\/admin\/tenants\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/export\/jobs$/u.test(path))
   );
 }
 

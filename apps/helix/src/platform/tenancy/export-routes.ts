@@ -5,8 +5,13 @@ import { z } from "zod";
 import {
   adminWildcardScope,
   auditAdminAction,
+  cursorQuerySchema,
+  decodeCursor,
   invalidRequest,
+  invalidCursor,
+  limitQuerySchema,
   notFound,
+  paginate,
   type AdminConsoleAuditSink,
 } from "../admin/console-shared.js";
 import type { TenantHourlyQuotaExceeded, TenantHourlyQuotaLimiter } from "../limits/index.js";
@@ -16,7 +21,11 @@ import {
   buildTenantExportArchive,
   buildTenantExportSelfFetchManifest,
   materializeTenantExportArchiveArtifact,
+  presignTenantExportJobArtifact,
   streamTenantExportArchive,
+  type TenantExportJobRecord,
+  type TenantExportJobStatus,
+  type TenantExportJobStore,
   type TenantExportManifestPlanner,
 } from "./export.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
@@ -27,6 +36,7 @@ export interface RegisterTenantExportRoutesOptions {
   readonly orgs: Pick<OrgStore, "findBySlug">;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly exportPlanner: TenantExportManifestPlanner;
+  readonly exportJobs?: TenantExportJobStore | undefined;
   readonly storageResolver?: TenantStorageResolver | undefined;
   readonly auditSink?: AdminConsoleAuditSink | undefined;
   readonly exportJobLimiter?: TenantHourlyQuotaLimiter | undefined;
@@ -43,6 +53,10 @@ const tenantParams = z.object({
     .string()
     .trim()
     .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u),
+});
+
+const exportJobParams = tenantParams.extend({
+  jobId: z.string().uuid(),
 });
 
 const manifestQuery = z.object({
@@ -78,6 +92,12 @@ const exportArtifactBody = z
     presignedUrlExpiresSeconds: z.number().int().min(1).max(604_800).optional(),
   })
   .default({});
+
+const exportJobListQuery = z.object({
+  limit: limitQuerySchema,
+  cursor: cursorQuerySchema,
+  status: z.enum(["queued", "running", "succeeded", "failed"]).optional(),
+});
 
 export async function registerTenantExportRoutes(
   app: FastifyInstance,
@@ -262,6 +282,119 @@ export async function registerTenantExportRoutes(
       .send(archive.bytes);
   });
 
+  app.post("/api/admin/tenants/:slug/export/jobs", async (request, reply) => {
+    const loaded = await loadTenantForExport({ request, reply, options });
+    if (loaded === undefined) {
+      return reply;
+    }
+    if (options.exportJobs === undefined) {
+      return reply.code(503).send(invalidRequest("Tenant export jobs are not configured.", []));
+    }
+    const body = exportArtifactBody.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid tenant export job request.", body.error.issues));
+    }
+    const quotaDecision = await consumeTenantExportQuota({
+      limiter: options.exportJobLimiter,
+      limit: options.exportJobLimit,
+      org: loaded.org,
+      actor: loaded.actor,
+      events: options.events,
+      onEventError: options.onEventError,
+      trace: (request as { readonly trace?: TraceContext }).trace,
+      surface: "tenant.export.job",
+    });
+    if (quotaDecision !== undefined) {
+      return sendQuotaExceeded(reply, quotaDecision);
+    }
+
+    const job = await options.exportJobs.create({
+      orgId: loaded.org.id,
+      includeObjectBytes: body.data.includeObjectBytes,
+      presignedUrlExpiresSeconds: body.data.presignedUrlExpiresSeconds,
+      requestedByActorId: loaded.actor.id,
+    });
+    await auditAdminAction(options.auditSink, {
+      orgId: loaded.org.id,
+      actorId: loaded.actor.id,
+      verb: "tenant.export.job.queued",
+      objectType: "tenant_export_job",
+      objectId: job.id,
+      metadata: {
+        slug: loaded.org.slug,
+        includeObjectBytes: job.includeObjectBytes,
+        presignedUrlExpiresSeconds: job.presignedUrlExpiresSeconds,
+        ip: request.ip,
+        userAgent: request.headers["user-agent"] ?? null,
+      },
+    });
+    return reply.code(202).send({ exportJob: tenantExportJobView(job) });
+  });
+
+  app.get("/api/admin/tenants/:slug/export/jobs", async (request, reply) => {
+    const loaded = await loadTenantForExport({ request, reply, options });
+    if (loaded === undefined) {
+      return reply;
+    }
+    if (options.exportJobs === undefined) {
+      return reply.code(503).send(invalidRequest("Tenant export jobs are not configured.", []));
+    }
+    const query = exportJobListQuery.safeParse(request.query ?? {});
+    if (!query.success) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid tenant export job list request.", query.error.issues));
+    }
+    const cursor = query.data.cursor === undefined ? undefined : decodeCursor(query.data.cursor);
+    if (cursor === null) {
+      return reply.code(400).send(invalidCursor());
+    }
+    const limit = query.data.limit;
+    const jobs = await options.exportJobs.listForOrg({
+      orgId: loaded.org.id,
+      limit: limit + 1,
+      ...(cursor === undefined ? {} : { cursor }),
+      ...(query.data.status === undefined ? {} : { status: query.data.status }),
+    });
+    const page = paginate(
+      jobs.map((job) => tenantExportJobView(job)),
+      limit,
+    );
+    return { exportJobs: page.items, nextCursor: page.nextCursor };
+  });
+
+  app.get("/api/admin/tenants/:slug/export/jobs/:jobId", async (request, reply) => {
+    const loaded = await loadTenantForExport({ request, reply, options });
+    if (loaded === undefined) {
+      return reply;
+    }
+    if (options.exportJobs === undefined) {
+      return reply.code(503).send(invalidRequest("Tenant export jobs are not configured.", []));
+    }
+    const params = exportJobParams.safeParse(request.params);
+    if (!params.success) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid tenant export job id.", params.error.issues));
+    }
+    const job = await options.exportJobs.findByIdForOrg({
+      id: params.data.jobId,
+      orgId: loaded.org.id,
+    });
+    if (job === null) {
+      return reply.code(404).send(notFound("Tenant export job not found."));
+    }
+    const artifact = await safeBuildExportDelivery(reply, () =>
+      presignTenantExportJobArtifact(job, { storageResolver: options.storageResolver }),
+    );
+    if (artifact === "unavailable") {
+      return reply;
+    }
+    return { exportJob: tenantExportJobView(job, artifact) };
+  });
+
   app.post("/api/admin/tenants/:slug/export/artifact", async (request, reply) => {
     const loaded = await loadTenantForExport({ request, reply, options });
     if (loaded === undefined) {
@@ -392,6 +525,84 @@ function sendQuotaExceeded(reply: FastifyReply, decision: TenantHourlyQuotaExcee
     retryAfterSeconds: decision.retryAfterSeconds,
     resetsAt: decision.resetsAt,
   });
+}
+
+interface TenantExportJobView {
+  readonly id: string;
+  readonly orgId: string;
+  readonly status: TenantExportJobStatus;
+  readonly includeObjectBytes: boolean;
+  readonly presignedUrlExpiresSeconds: number;
+  readonly requestedByActorId: string | null;
+  readonly artifact: TenantExportJobArtifactView | null;
+  readonly lastError: string | null;
+  readonly attemptCount: number;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+interface TenantExportJobArtifactView {
+  readonly filename: string;
+  readonly contentType: "application/x-tar";
+  readonly byteSize: number;
+  readonly storageKey: string;
+  readonly downloadUrl?: string | undefined;
+  readonly expiresAt?: string | undefined;
+  readonly expiresSeconds?: number | undefined;
+}
+
+function tenantExportJobView(
+  job: TenantExportJobRecord,
+  artifact?: Awaited<ReturnType<typeof presignTenantExportJobArtifact>>,
+): TenantExportJobView {
+  const artifactView =
+    artifact === undefined
+      ? tenantExportJobStoredArtifactView(job)
+      : {
+          filename: artifact.filename,
+          contentType: artifact.contentType,
+          byteSize: artifact.byteSize,
+          storageKey: artifact.storageKey,
+          downloadUrl: artifact.downloadUrl,
+          expiresAt: artifact.expiresAt,
+          expiresSeconds: artifact.expiresSeconds,
+        };
+  return {
+    id: job.id,
+    orgId: job.orgId,
+    status: job.status,
+    includeObjectBytes: job.includeObjectBytes,
+    presignedUrlExpiresSeconds: job.presignedUrlExpiresSeconds,
+    requestedByActorId: job.requestedByActorId,
+    artifact: artifactView,
+    lastError: job.lastError,
+    attemptCount: job.attemptCount,
+    startedAt: job.startedAt?.toISOString() ?? null,
+    completedAt: job.completedAt?.toISOString() ?? null,
+    createdAt: job.createdAt.toISOString(),
+    updatedAt: job.updatedAt.toISOString(),
+  };
+}
+
+function tenantExportJobStoredArtifactView(
+  job: TenantExportJobRecord,
+): TenantExportJobArtifactView | null {
+  if (
+    job.storageKey === null ||
+    job.filename === null ||
+    job.contentType === null ||
+    job.byteSize === null
+  ) {
+    return null;
+  }
+  return {
+    filename: job.filename,
+    contentType: job.contentType,
+    byteSize: job.byteSize,
+    storageKey: job.storageKey,
+  };
 }
 
 type ParsedByteRange =

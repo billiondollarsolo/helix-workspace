@@ -185,6 +185,35 @@ describe("resolveTenantContext", () => {
       resolveTenantContext({
         config: { mode: "multi-tenant-saas" },
         orgs: storeWith({
+          orgsBySlug: { acme: orgRecord({ slug: "acme", status: "suspended" }) },
+        }),
+        request: requestWith(
+          { host: "acme.helix.app" },
+          { method: "POST", url: "/api/admin/tenants/acme/export/jobs" },
+        ),
+      }),
+    ).resolves.toMatchObject({ orgSlug: "acme" });
+
+    await expect(
+      resolveTenantContext({
+        config: { mode: "multi-tenant-saas" },
+        orgs: storeWith({
+          orgsBySlug: { acme: orgRecord({ slug: "acme", status: "suspended" }) },
+        }),
+        request: requestWith(
+          { host: "acme.helix.app" },
+          {
+            method: "GET",
+            url: "/api/admin/tenants/acme/export/jobs/00000000-0000-4000-8000-000000000001",
+          },
+        ),
+      }),
+    ).resolves.toMatchObject({ orgSlug: "acme" });
+
+    await expect(
+      resolveTenantContext({
+        config: { mode: "multi-tenant-saas" },
+        orgs: storeWith({
           orgsBySlug: { acme: orgRecord({ slug: "acme", status: "soft_deleted" }) },
         }),
         request: requestWith(

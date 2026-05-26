@@ -274,9 +274,11 @@ import { CoreAppRegistrationPlan } from "./platform/apps/core-apps.js";
 import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
 import {
   createPostgresTenantExportManifestPlanner,
+  PostgresTenantExportJobStore,
   PostgresOrgStore,
   PostgresPlanStore,
   registerTenantExportRoutes,
+  TenantExportMaterializationWorker,
 } from "./platform/tenancy/index.js";
 import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
 import {
@@ -1035,6 +1037,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         });
   const tenantStorageSecretStore = createVaultTenantStorageSecretStoreFromEnv(process.env);
   const tenantStorageMigrationJobStore = new PostgresTenantStorageMigrationJobStore(sql);
+  const tenantExportJobStore = new PostgresTenantExportJobStore(sql);
   const driveStorageResolver = createTenantStorageResolver({
     defaultClient: driveStorage,
     loadByoConfig: async (orgId: string) => (await orgStore.findById(orgId))?.byoConfig,
@@ -1053,6 +1056,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     }),
   });
   const helixDefaultStorageResolver = createDefaultTenantStorageResolver(driveStorage);
+  const tenantExportManifestPlanner = createPostgresTenantExportManifestPlanner(sql);
   const docsStore = new PostgresDocsStore(sql, {
     storageResolver: driveStorageResolver,
   });
@@ -1090,6 +1094,24 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
         onError: (error) => {
           app.log.error({ error }, "Tenant storage migration worker error");
+        },
+      })
+    : undefined;
+  const tenantExportWorker = envFlag("HELIX_TENANT_EXPORT_WORKER_ENABLED", false)
+    ? new TenantExportMaterializationWorker({
+        store: tenantExportJobStore,
+        orgs: orgStore,
+        exportPlanner: tenantExportManifestPlanner,
+        storageResolver: driveStorageResolver,
+        intervalMs: envPositiveInt("HELIX_TENANT_EXPORT_INTERVAL_MS", 15_000),
+        batchSize: envPositiveInt("HELIX_TENANT_EXPORT_BATCH_SIZE", 2),
+        onResult: (result) => {
+          if (result.claimed > 0) {
+            app.log.info(result, "Tenant export worker completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Tenant export worker error");
         },
       })
     : undefined;
@@ -1808,7 +1830,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerTenantExportRoutes(app, {
     orgs: orgStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    exportPlanner: createPostgresTenantExportManifestPlanner(sql),
+    exportPlanner: tenantExportManifestPlanner,
+    exportJobs: tenantExportJobStore,
     storageResolver: driveStorageResolver,
     auditSink: auditStore,
   });
@@ -2176,6 +2199,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     leaderGatedWorkers.push({
       name: "tenant-storage-migration-worker",
       worker: tenantStorageMigrationWorker,
+    });
+  }
+  if (tenantExportWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "tenant-export-worker",
+      worker: tenantExportWorker,
     });
   }
   if (byoStorageHealthWorker !== undefined) {

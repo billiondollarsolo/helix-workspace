@@ -9,8 +9,12 @@ import {
   buildTenantExportManifest,
   countTenantExportRows,
   materializeTenantExportArchiveArtifact,
+  PostgresTenantExportJobStore,
+  TenantExportMaterializationWorker,
   streamTenantExportArchive,
   summarizeTenantExportAudit,
+  type TenantExportJobRecord,
+  type TenantExportJobStore,
   type TenantExportManifest,
 } from "./export.js";
 import { registerTenantExportRoutes } from "./export-routes.js";
@@ -240,6 +244,76 @@ describe("tenant export SQL helpers", () => {
     });
     expect(recording.calls[0]?.text).toContain("from activity");
     expect(recording.calls[0]?.text).not.toContain("payload");
+  });
+});
+
+describe("PostgresTenantExportJobStore", () => {
+  it("creates, lists, claims, and completes durable tenant export jobs", async () => {
+    const startedAt = new Date("2026-05-24T10:01:00.000Z");
+    const recording = createRecordingSql([
+      [exportJobRow({ id: "job-1", status: "queued", presigned_url_expires_seconds: 86_400 })],
+      [
+        exportJobRow({ id: "job-new", created_at: new Date("2026-05-24T10:05:00.000Z") }),
+        exportJobRow({ id: "job-old", created_at: new Date("2026-05-24T10:00:00.000Z") }),
+      ],
+      [exportJobRow({ id: "job-1", status: "running", attempt_count: 1, started_at: startedAt })],
+      [
+        exportJobRow({
+          id: "job-1",
+          status: "succeeded",
+          storage_key: "tenant-exports/jobs/org/job/archive.tar",
+          filename: "helix-export-acme.tar",
+          content_type: "application/x-tar",
+          byte_size: "4096",
+          started_at: startedAt,
+          completed_at: new Date("2026-05-24T10:02:00.000Z"),
+        }),
+      ],
+    ]);
+    const store = new PostgresTenantExportJobStore(recording.sql);
+
+    const created = await store.create({
+      orgId,
+      includeObjectBytes: true,
+      presignedUrlExpiresSeconds: 86_400,
+      requestedByActorId: actorId,
+    });
+    const listed = await store.listForOrg({
+      orgId,
+      limit: 25,
+      cursor: { createdAt: new Date("2026-05-24T10:10:00.000Z"), id: jobId(9) },
+      status: "queued",
+    });
+    const claimed = await store.claimPending({ limit: 1 });
+    const completed = await store.markCompleted({
+      id: "job-1",
+      artifact: {
+        byteSize: 4096,
+        contentType: "application/x-tar",
+        filename: "helix-export-acme.tar",
+        storageKey: "tenant-exports/jobs/org/job/archive.tar",
+      },
+    });
+
+    expect(created).toMatchObject({
+      id: "job-1",
+      status: "queued",
+      includeObjectBytes: true,
+      presignedUrlExpiresSeconds: 86_400,
+      requestedByActorId: actorId,
+    });
+    expect(listed.map((job) => job.id)).toEqual(["job-new", "job-old"]);
+    expect(claimed[0]).toMatchObject({ id: "job-1", status: "running", attemptCount: 1 });
+    expect(completed).toMatchObject({
+      id: "job-1",
+      status: "succeeded",
+      storageKey: "tenant-exports/jobs/org/job/archive.tar",
+      filename: "helix-export-acme.tar",
+      byteSize: 4096,
+    });
+    expect(recording.calls[1]?.text).toContain("(created_at, id) <");
+    expect(recording.calls[2]?.text).toContain("for update skip locked");
+    expect(recording.calls[3]?.text).toContain("storage_key = ?");
   });
 });
 
@@ -631,6 +705,119 @@ describe("registerTenantExportRoutes", () => {
     await app.close();
   });
 
+  it("queues, lists, and reads durable tenant export jobs with presigned completed artifacts", async () => {
+    const storage = new MemoryStorageClient([]);
+    const auditRecords: unknown[] = [];
+    const exportJobs = new InMemoryTenantExportJobStore([
+      exportJobRecord({
+        id: jobId(9),
+        status: "succeeded",
+        storageKey: "tenant-exports/jobs/org/job/archive.tar",
+        filename: "helix-export-acme-20260524T100000Z.tar",
+        contentType: "application/x-tar",
+        byteSize: 2048,
+        completedAt: new Date("2026-05-24T10:05:00.000Z"),
+        createdAt: new Date("2026-05-24T10:00:00.000Z"),
+      }),
+    ]);
+    const planner = vi.fn(() => tenantExportManifest());
+    const app = fastify();
+    await registerTenantExportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor(),
+      exportPlanner: planner,
+      exportJobs,
+      storageResolver: storageResolverFor(storage),
+      auditSink: auditSink(auditRecords),
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/export/jobs",
+      payload: { includeObjectBytes: true, presignedUrlExpiresSeconds: 1200 },
+      headers: { "user-agent": "test-agent" },
+    });
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/admin/tenants/acme/export/jobs?limit=10&status=queued",
+    });
+    const completed = await app.inject({
+      method: "GET",
+      url: `/api/admin/tenants/acme/export/jobs/${jobId(9)}`,
+    });
+
+    expect(created.statusCode).toBe(202);
+    expect(created.json()).toMatchObject({
+      exportJob: {
+        status: "queued",
+        includeObjectBytes: true,
+        presignedUrlExpiresSeconds: 1200,
+        requestedByActorId: actorId,
+        artifact: null,
+      },
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toMatchObject({
+      exportJobs: [expect.objectContaining({ status: "queued" })],
+      nextCursor: null,
+    });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({
+      exportJob: {
+        id: jobId(9),
+        status: "succeeded",
+        artifact: {
+          filename: "helix-export-acme-20260524T100000Z.tar",
+          contentType: "application/x-tar",
+          byteSize: 2048,
+          storageKey: "tenant-exports/jobs/org/job/archive.tar",
+          downloadUrl:
+            "https://storage.example/tenant-exports%2Fjobs%2Forg%2Fjob%2Farchive.tar?expires=3600",
+          expiresSeconds: 3600,
+        },
+      },
+    });
+    expect(planner).not.toHaveBeenCalled();
+    expect(auditRecords).toContainEqual(
+      expect.objectContaining({
+        verb: "tenant.export.job.queued",
+        objectType: "tenant_export_job",
+        metadata: expect.objectContaining({
+          includeObjectBytes: true,
+          presignedUrlExpiresSeconds: 1200,
+        }) as unknown,
+      }),
+    );
+    await app.close();
+  });
+
+  it("enforces export job quota before queueing durable export jobs", async () => {
+    const exportJobs = new InMemoryTenantExportJobStore([]);
+    const app = fastify();
+    await registerTenantExportRoutes(app, {
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      actorFromRequest: () => actor(),
+      exportPlanner: () => tenantExportManifest(),
+      exportJobs,
+      exportJobLimiter: new InMemoryTenantHourlyQuotaLimiter(),
+      exportJobLimit: () => 0,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenants/acme/export/jobs",
+      payload: { includeObjectBytes: true },
+    });
+
+    expect(response.statusCode).toBe(429);
+    expect(response.json()).toMatchObject({
+      code: "quota_exceeded",
+      quota: "export_jobs_per_hour",
+    });
+    expect(exportJobs.jobs).toEqual([]);
+    await app.close();
+  });
+
   it("rejects cross-tenant and non-admin export requests", async () => {
     const crossTenant = fastify();
     await registerTenantExportRoutes(crossTenant, {
@@ -702,6 +889,60 @@ describe("registerTenantExportRoutes", () => {
   });
 });
 
+describe("TenantExportMaterializationWorker", () => {
+  it("claims queued jobs, materializes archive artifacts, and marks success", async () => {
+    const storage = new MemoryStorageClient([
+      { key: "drive/report.txt", body: Buffer.from("report bytes", "utf8") },
+      { key: "slides/deck-1/versions/2", body: Buffer.from("deck bytes", "utf8") },
+    ]);
+    const store = new InMemoryTenantExportJobStore([
+      exportJobRecord({ id: jobId(1), status: "queued", includeObjectBytes: true }),
+    ]);
+    const worker = new TenantExportMaterializationWorker({
+      store,
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      exportPlanner: () => tenantExportManifest(),
+      storageResolver: storageResolverFor(storage),
+      now: () => new Date("2026-05-24T11:00:00.000Z"),
+    });
+
+    await expect(worker.runOnce()).resolves.toEqual({ claimed: 1, succeeded: 1, failed: 0 });
+
+    const completed = store.jobs[0];
+    expect(completed).toMatchObject({
+      id: jobId(1),
+      status: "succeeded",
+      storageKey: `tenant-exports/jobs/${orgId}/${jobId(1)}/archive.tar`,
+      filename: "helix-export-acme-20260524T100000Z.tar",
+      contentType: "application/x-tar",
+    });
+    const stored = storage.objects.get(completed?.storageKey ?? "");
+    const entries = parseTarEntries(await collectBytesFromStorageObject(stored));
+    expect(entries["objects/drive/report.txt"]).toBe("report bytes");
+    expect(entries["objects/slides/deck-1/versions/2"]).toBe("deck bytes");
+  });
+
+  it("marks export jobs failed when materialization cannot resolve storage", async () => {
+    const store = new InMemoryTenantExportJobStore([
+      exportJobRecord({ id: jobId(1), status: "queued", includeObjectBytes: true }),
+    ]);
+    const worker = new TenantExportMaterializationWorker({
+      store,
+      orgs: new InMemoryOrgStore([orgRecord()]),
+      exportPlanner: () => tenantExportManifest(),
+      storageResolver: () => undefined,
+    });
+
+    await expect(worker.runOnce()).resolves.toEqual({ claimed: 1, succeeded: 0, failed: 1 });
+
+    expect(store.jobs[0]).toMatchObject({
+      id: jobId(1),
+      status: "failed",
+      lastError: "Tenant storage resolver did not resolve storage for tenant export.",
+    });
+  });
+});
+
 function tenantExportManifest(): TenantExportManifest {
   return buildTenantExportManifest({
     org: orgRecord(),
@@ -749,11 +990,186 @@ function actor(overrides: Partial<Actor> = {}): Actor {
   };
 }
 
-class InMemoryOrgStore implements Pick<OrgStore, "findBySlug"> {
+function exportJobRecord(overrides: Partial<TenantExportJobRecord> = {}): TenantExportJobRecord {
+  return {
+    id: jobId(1),
+    orgId,
+    status: "queued",
+    includeObjectBytes: true,
+    presignedUrlExpiresSeconds: 3600,
+    requestedByActorId: actorId,
+    storageKey: null,
+    filename: null,
+    contentType: null,
+    byteSize: null,
+    lastError: null,
+    attemptCount: 0,
+    startedAt: null,
+    completedAt: null,
+    createdAt: new Date("2026-05-24T10:00:00.000Z"),
+    updatedAt: new Date("2026-05-24T10:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function exportJobRow(
+  overrides: Partial<{
+    readonly id: string;
+    readonly org_id: string;
+    readonly status: string;
+    readonly include_object_bytes: boolean;
+    readonly presigned_url_expires_seconds: number;
+    readonly requested_by_actor_id: string | null;
+    readonly storage_key: string | null;
+    readonly filename: string | null;
+    readonly content_type: string | null;
+    readonly byte_size: number | string | null;
+    readonly last_error: string | null;
+    readonly attempt_count: number;
+    readonly started_at: Date | null;
+    readonly completed_at: Date | null;
+    readonly created_at: Date;
+    readonly updated_at: Date;
+  }> = {},
+) {
+  return {
+    id: jobId(1),
+    org_id: orgId,
+    status: "queued",
+    include_object_bytes: true,
+    presigned_url_expires_seconds: 3600,
+    requested_by_actor_id: actorId,
+    storage_key: null,
+    filename: null,
+    content_type: null,
+    byte_size: null,
+    last_error: null,
+    attempt_count: 0,
+    started_at: null,
+    completed_at: null,
+    created_at: new Date("2026-05-24T10:00:00.000Z"),
+    updated_at: new Date("2026-05-24T10:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function jobId(value: number): string {
+  return `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
+}
+
+class InMemoryOrgStore implements Pick<OrgStore, "findById" | "findBySlug"> {
   constructor(private readonly orgs: readonly OrgRecord[]) {}
+
+  async findById(id: string): Promise<OrgRecord | null> {
+    return this.orgs.find((org) => org.id === id) ?? null;
+  }
 
   async findBySlug(slug: string): Promise<OrgRecord | null> {
     return this.orgs.find((org) => org.slug === slug) ?? null;
+  }
+}
+
+class InMemoryTenantExportJobStore implements TenantExportJobStore {
+  readonly jobs: TenantExportJobRecord[];
+
+  constructor(jobs: readonly TenantExportJobRecord[]) {
+    this.jobs = [...jobs];
+  }
+
+  async create(
+    input: Parameters<TenantExportJobStore["create"]>[0],
+  ): Promise<TenantExportJobRecord> {
+    const job = exportJobRecord({
+      id: jobId(this.jobs.length + 1),
+      orgId: input.orgId,
+      includeObjectBytes: input.includeObjectBytes ?? true,
+      presignedUrlExpiresSeconds: input.presignedUrlExpiresSeconds ?? 86_400,
+      requestedByActorId: input.requestedByActorId ?? null,
+      status: "queued",
+    });
+    this.jobs.unshift(job);
+    return job;
+  }
+
+  async findByIdForOrg(
+    input: Parameters<TenantExportJobStore["findByIdForOrg"]>[0],
+  ): Promise<TenantExportJobRecord | null> {
+    return this.jobs.find((job) => job.id === input.id && job.orgId === input.orgId) ?? null;
+  }
+
+  async listForOrg(
+    input: Parameters<TenantExportJobStore["listForOrg"]>[0],
+  ): Promise<readonly TenantExportJobRecord[]> {
+    return this.jobs
+      .filter((job) => job.orgId === input.orgId)
+      .filter((job) => input.status === undefined || job.status === input.status)
+      .slice(0, input.limit ?? 50);
+  }
+
+  async claimPending(): Promise<readonly TenantExportJobRecord[]> {
+    const pending = this.jobs.filter((job) => job.status === "queued" || job.status === "failed");
+    for (const job of pending) {
+      this.replaceJob(job.id, {
+        ...job,
+        status: "running",
+        attemptCount: job.attemptCount + 1,
+        lastError: null,
+        startedAt: job.startedAt ?? new Date("2026-05-24T10:01:00.000Z"),
+        updatedAt: new Date("2026-05-24T10:01:00.000Z"),
+      });
+    }
+    return pending.map((job) => ({
+      ...job,
+      status: "running",
+      attemptCount: job.attemptCount + 1,
+    }));
+  }
+
+  async markCompleted(
+    input: Parameters<TenantExportJobStore["markCompleted"]>[0],
+  ): Promise<TenantExportJobRecord> {
+    const current = this.jobs.find((job) => job.id === input.id);
+    if (current === undefined) {
+      throw new Error("job not found");
+    }
+    const updated: TenantExportJobRecord = {
+      ...current,
+      status: "succeeded",
+      storageKey: input.artifact.storageKey,
+      filename: input.artifact.filename,
+      contentType: input.artifact.contentType,
+      byteSize: input.artifact.byteSize,
+      lastError: null,
+      completedAt: new Date("2026-05-24T10:02:00.000Z"),
+      updatedAt: new Date("2026-05-24T10:02:00.000Z"),
+    };
+    this.replaceJob(input.id, updated);
+    return updated;
+  }
+
+  async markFailed(
+    input: Parameters<TenantExportJobStore["markFailed"]>[0],
+  ): Promise<TenantExportJobRecord> {
+    const current = this.jobs.find((job) => job.id === input.id);
+    if (current === undefined) {
+      throw new Error("job not found");
+    }
+    const updated: TenantExportJobRecord = {
+      ...current,
+      status: "failed",
+      lastError: input.error,
+      completedAt: new Date("2026-05-24T10:02:00.000Z"),
+      updatedAt: new Date("2026-05-24T10:02:00.000Z"),
+    };
+    this.replaceJob(input.id, updated);
+    return updated;
+  }
+
+  private replaceJob(id: string, job: TenantExportJobRecord): void {
+    const index = this.jobs.findIndex((candidate) => candidate.id === id);
+    if (index >= 0) {
+      this.jobs[index] = job;
+    }
   }
 }
 

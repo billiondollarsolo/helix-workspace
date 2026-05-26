@@ -1,11 +1,12 @@
 import type postgres from "postgres";
 import type { JsonObject, StorageObject } from "@helix/sdk-types";
+import { withJobSpan } from "../observability/job-span.js";
 import {
   listTenantStorageMigrationObjects,
   type TenantStorageMigrationObject,
 } from "../storage/migration.js";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
-import type { OrgRecord } from "./orgs.js";
+import type { OrgRecord, OrgStore } from "./orgs.js";
 
 export const tenantExportManifestVersion = 1;
 
@@ -124,6 +125,89 @@ export interface MaterializeTenantExportArchiveArtifactOptions extends BuildTena
   readonly archiveStorageKey?: string | undefined;
 }
 
+export type TenantExportJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface TenantExportJobRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly status: TenantExportJobStatus;
+  readonly includeObjectBytes: boolean;
+  readonly presignedUrlExpiresSeconds: number;
+  readonly requestedByActorId: string | null;
+  readonly storageKey: string | null;
+  readonly filename: string | null;
+  readonly contentType: "application/x-tar" | null;
+  readonly byteSize: number | null;
+  readonly lastError: string | null;
+  readonly attemptCount: number;
+  readonly startedAt: Date | null;
+  readonly completedAt: Date | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface CreateTenantExportJobInput {
+  readonly orgId: string;
+  readonly includeObjectBytes?: boolean | undefined;
+  readonly presignedUrlExpiresSeconds?: number | undefined;
+  readonly requestedByActorId?: string | null | undefined;
+}
+
+export interface ListTenantExportJobsInput {
+  readonly orgId: string;
+  readonly limit?: number | undefined;
+  readonly cursor?:
+    | {
+        readonly createdAt: Date;
+        readonly id: string;
+      }
+    | undefined;
+  readonly status?: TenantExportJobStatus | undefined;
+}
+
+export interface CompleteTenantExportJobInput {
+  readonly id: string;
+  readonly artifact: Pick<
+    TenantExportArchiveArtifact,
+    "byteSize" | "contentType" | "filename" | "storageKey"
+  >;
+}
+
+export interface TenantExportJobStore {
+  create(input: CreateTenantExportJobInput): Promise<TenantExportJobRecord>;
+  findByIdForOrg(input: {
+    readonly id: string;
+    readonly orgId: string;
+  }): Promise<TenantExportJobRecord | null>;
+  listForOrg(input: ListTenantExportJobsInput): Promise<readonly TenantExportJobRecord[]>;
+  claimPending(input?: {
+    readonly limit?: number | undefined;
+  }): Promise<readonly TenantExportJobRecord[]>;
+  markCompleted(input: CompleteTenantExportJobInput): Promise<TenantExportJobRecord>;
+  markFailed(input: {
+    readonly id: string;
+    readonly error: string;
+  }): Promise<TenantExportJobRecord>;
+}
+
+export interface TenantExportMaterializationWorkerOptions {
+  readonly store: Pick<TenantExportJobStore, "claimPending" | "markCompleted" | "markFailed">;
+  readonly orgs: Pick<OrgStore, "findById">;
+  readonly exportPlanner: TenantExportManifestPlanner;
+  readonly storageResolver: TenantStorageResolver;
+  readonly intervalMs?: number | undefined;
+  readonly batchSize?: number | undefined;
+  readonly now?: (() => Date) | undefined;
+  readonly onResult?: (result: TenantExportMaterializationWorkerRunResult) => void;
+  readonly onError?: (error: unknown) => void;
+}
+
+export interface TenantExportMaterializationWorkerRunResult {
+  readonly claimed: number;
+  readonly succeeded: number;
+  readonly failed: number;
+}
+
 export type TenantExportManifestPlanner = (
   org: OrgRecord,
 ) => Promise<TenantExportManifest> | TenantExportManifest;
@@ -137,6 +221,25 @@ interface TenantExportAuditSummaryRow {
   readonly row_count: number;
   readonly first_entry_at: Date | null;
   readonly last_entry_at: Date | null;
+}
+
+interface TenantExportJobRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly status: TenantExportJobStatus;
+  readonly include_object_bytes: boolean;
+  readonly presigned_url_expires_seconds: number;
+  readonly requested_by_actor_id: string | null;
+  readonly storage_key: string | null;
+  readonly filename: string | null;
+  readonly content_type: string | null;
+  readonly byte_size: number | string | null;
+  readonly last_error: string | null;
+  readonly attempt_count: number;
+  readonly started_at: Date | null;
+  readonly completed_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
 }
 
 export function createPostgresTenantExportManifestPlanner(
@@ -267,6 +370,408 @@ export async function materializeTenantExportArchiveArtifact(
     expiresAt,
     expiresSeconds,
   };
+}
+
+export async function presignTenantExportJobArtifact(
+  job: TenantExportJobRecord,
+  options: {
+    readonly storageResolver: TenantStorageResolver | undefined;
+    readonly now?: (() => Date) | undefined;
+  },
+): Promise<TenantExportArchiveArtifact | undefined> {
+  if (
+    job.status !== "succeeded" ||
+    job.storageKey === null ||
+    job.filename === null ||
+    job.contentType === null ||
+    job.byteSize === null
+  ) {
+    return undefined;
+  }
+  if (options.storageResolver === undefined) {
+    throw new Error("Tenant storage resolver is required to presign export archive artifacts.");
+  }
+  const storage = await options.storageResolver({ orgId: job.orgId });
+  if (storage === undefined) {
+    throw new Error("Tenant storage resolver did not resolve storage for tenant export.");
+  }
+  if (storage.client.presignGetUrl === undefined) {
+    throw new Error("Tenant export storage does not support presigned archive fetch.");
+  }
+  const now = options.now ?? (() => new Date());
+  const expiresAt = new Date(now().getTime() + job.presignedUrlExpiresSeconds * 1000).toISOString();
+  return {
+    filename: job.filename,
+    contentType: job.contentType,
+    byteSize: job.byteSize,
+    storageKey: job.storageKey,
+    downloadUrl: await storage.client.presignGetUrl(job.storageKey, {
+      expiresSeconds: job.presignedUrlExpiresSeconds,
+    }),
+    expiresAt,
+    expiresSeconds: job.presignedUrlExpiresSeconds,
+  };
+}
+
+export class PostgresTenantExportJobStore implements TenantExportJobStore {
+  constructor(private readonly sql: postgres.Sql) {}
+
+  async create(input: CreateTenantExportJobInput): Promise<TenantExportJobRecord> {
+    const rows = (await this.sql`
+      insert into tenant_export_jobs (
+        org_id,
+        include_object_bytes,
+        presigned_url_expires_seconds,
+        requested_by_actor_id
+      )
+      values (
+        ${input.orgId},
+        ${input.includeObjectBytes ?? true},
+        ${validatePresignedUrlExpiresSeconds(input.presignedUrlExpiresSeconds ?? 86_400)},
+        ${input.requestedByActorId ?? null}
+      )
+      returning
+        id,
+        org_id,
+        status,
+        include_object_bytes,
+        presigned_url_expires_seconds,
+        requested_by_actor_id,
+        storage_key,
+        filename,
+        content_type,
+        byte_size,
+        last_error,
+        attempt_count,
+        started_at,
+        completed_at,
+        created_at,
+        updated_at
+    `) as unknown as readonly TenantExportJobRow[];
+    return mapTenantExportJobRow(rows[0]);
+  }
+
+  async findByIdForOrg(input: {
+    readonly id: string;
+    readonly orgId: string;
+  }): Promise<TenantExportJobRecord | null> {
+    const rows = (await this.sql`
+      select
+        id,
+        org_id,
+        status,
+        include_object_bytes,
+        presigned_url_expires_seconds,
+        requested_by_actor_id,
+        storage_key,
+        filename,
+        content_type,
+        byte_size,
+        last_error,
+        attempt_count,
+        started_at,
+        completed_at,
+        created_at,
+        updated_at
+      from tenant_export_jobs
+      where id = ${input.id}
+        and org_id = ${input.orgId}
+      limit 1
+    `) as unknown as readonly TenantExportJobRow[];
+    return rows[0] === undefined ? null : mapTenantExportJobRow(rows[0]);
+  }
+
+  async listForOrg(input: ListTenantExportJobsInput): Promise<readonly TenantExportJobRecord[]> {
+    const cursorCreatedAt = input.cursor?.createdAt ?? null;
+    const cursorId = input.cursor?.id ?? null;
+    const status = input.status ?? null;
+    const rows = (await this.sql`
+      select
+        id,
+        org_id,
+        status,
+        include_object_bytes,
+        presigned_url_expires_seconds,
+        requested_by_actor_id,
+        storage_key,
+        filename,
+        content_type,
+        byte_size,
+        last_error,
+        attempt_count,
+        started_at,
+        completed_at,
+        created_at,
+        updated_at
+      from tenant_export_jobs
+      where org_id = ${input.orgId}
+        and (
+          ${cursorCreatedAt}::timestamptz is null
+          or (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
+        )
+        and (${status}::text is null or status = ${status})
+      order by created_at desc, id desc
+      limit ${boundedExportJobHistoryLimit(input.limit)}
+    `) as unknown as readonly TenantExportJobRow[];
+    return rows.map(mapTenantExportJobRow);
+  }
+
+  async claimPending(
+    input: { readonly limit?: number | undefined } = {},
+  ): Promise<readonly TenantExportJobRecord[]> {
+    const rows = (await this.sql`
+      update tenant_export_jobs
+      set
+        status = 'running',
+        attempt_count = attempt_count + 1,
+        last_error = null,
+        started_at = coalesce(started_at, now()),
+        updated_at = now()
+      where id in (
+        select id
+        from tenant_export_jobs
+        where status in ('queued', 'failed')
+        order by updated_at asc
+        limit ${input.limit ?? 2}
+        for update skip locked
+      )
+      returning
+        id,
+        org_id,
+        status,
+        include_object_bytes,
+        presigned_url_expires_seconds,
+        requested_by_actor_id,
+        storage_key,
+        filename,
+        content_type,
+        byte_size,
+        last_error,
+        attempt_count,
+        started_at,
+        completed_at,
+        created_at,
+        updated_at
+    `) as unknown as readonly TenantExportJobRow[];
+    return rows.map(mapTenantExportJobRow);
+  }
+
+  async markCompleted(input: CompleteTenantExportJobInput): Promise<TenantExportJobRecord> {
+    const rows = (await this.sql`
+      update tenant_export_jobs
+      set
+        status = 'succeeded',
+        storage_key = ${input.artifact.storageKey},
+        filename = ${input.artifact.filename},
+        content_type = ${input.artifact.contentType},
+        byte_size = ${input.artifact.byteSize},
+        last_error = null,
+        completed_at = now(),
+        updated_at = now()
+      where id = ${input.id}
+      returning
+        id,
+        org_id,
+        status,
+        include_object_bytes,
+        presigned_url_expires_seconds,
+        requested_by_actor_id,
+        storage_key,
+        filename,
+        content_type,
+        byte_size,
+        last_error,
+        attempt_count,
+        started_at,
+        completed_at,
+        created_at,
+        updated_at
+    `) as unknown as readonly TenantExportJobRow[];
+    return mapTenantExportJobRow(rows[0]);
+  }
+
+  async markFailed(input: {
+    readonly id: string;
+    readonly error: string;
+  }): Promise<TenantExportJobRecord> {
+    const rows = (await this.sql`
+      update tenant_export_jobs
+      set
+        status = 'failed',
+        last_error = ${input.error},
+        completed_at = now(),
+        updated_at = now()
+      where id = ${input.id}
+      returning
+        id,
+        org_id,
+        status,
+        include_object_bytes,
+        presigned_url_expires_seconds,
+        requested_by_actor_id,
+        storage_key,
+        filename,
+        content_type,
+        byte_size,
+        last_error,
+        attempt_count,
+        started_at,
+        completed_at,
+        created_at,
+        updated_at
+    `) as unknown as readonly TenantExportJobRow[];
+    return mapTenantExportJobRow(rows[0]);
+  }
+}
+
+const defaultExportWorkerIntervalMs = 15_000;
+const defaultExportWorkerBatchSize = 2;
+
+export class TenantExportMaterializationWorker {
+  private readonly intervalMs: number;
+  private readonly batchSize: number;
+  private readonly now: () => Date;
+  private readonly onResult:
+    | ((result: TenantExportMaterializationWorkerRunResult) => void)
+    | undefined;
+  private readonly onError: ((error: unknown) => void) | undefined;
+  private timer: NodeJS.Timeout | undefined;
+  private activeRun: Promise<TenantExportMaterializationWorkerRunResult> | undefined;
+
+  constructor(private readonly options: TenantExportMaterializationWorkerOptions) {
+    this.intervalMs = options.intervalMs ?? defaultExportWorkerIntervalMs;
+    this.batchSize = options.batchSize ?? defaultExportWorkerBatchSize;
+    this.now = options.now ?? (() => new Date());
+    this.onResult = options.onResult;
+    this.onError = options.onError;
+  }
+
+  start(): void {
+    if (this.timer !== undefined) {
+      return;
+    }
+    // eslint-disable-next-line helix/pacer-discipline -- Matches the existing leader-gated worker contract.
+    this.timer = setInterval(() => {
+      void this.runScheduledMaterialization();
+    }, this.intervalMs);
+    this.timer.unref();
+    void this.runScheduledMaterialization();
+  }
+
+  async stop(): Promise<void> {
+    if (this.timer !== undefined) {
+      // eslint-disable-next-line helix/pacer-discipline -- Matches the existing leader-gated worker contract.
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+    if (this.activeRun !== undefined) {
+      await this.activeRun;
+    }
+  }
+
+  async runOnce(): Promise<TenantExportMaterializationWorkerRunResult> {
+    return withJobSpan("tenant-export-materialization", async () => {
+      const jobs = await this.options.store.claimPending({ limit: this.batchSize });
+      let succeeded = 0;
+      let failed = 0;
+
+      for (const job of jobs) {
+        try {
+          await withJobSpan("tenant-export-materialization.job", async () => {
+            const org = await this.options.orgs.findById(job.orgId);
+            if (org === null) {
+              throw new Error(`Tenant export job org is unavailable: ${job.orgId}`);
+            }
+            const manifest = await this.options.exportPlanner(org);
+            const artifact = await materializeTenantExportArchiveArtifact(manifest, {
+              includeObjectBytes: job.includeObjectBytes,
+              objectByteDelivery: "archive",
+              archiveStorageKey: tenantExportJobArtifactStorageKey(job),
+              presignedUrlExpiresSeconds: job.presignedUrlExpiresSeconds,
+              storageResolver: this.options.storageResolver,
+              now: this.now,
+            });
+            await this.options.store.markCompleted({ id: job.id, artifact });
+            succeeded += 1;
+          });
+        } catch (error) {
+          await this.options.store.markFailed({ id: job.id, error: errorMessage(error) });
+          failed += 1;
+        }
+      }
+
+      return { claimed: jobs.length, succeeded, failed };
+    });
+  }
+
+  private runScheduledMaterialization(): Promise<TenantExportMaterializationWorkerRunResult> {
+    if (this.activeRun !== undefined) {
+      return this.activeRun;
+    }
+    const activeRun = this.runOnce()
+      .then((result) => {
+        this.onResult?.(result);
+        return result;
+      })
+      .catch((error: unknown) => {
+        this.onError?.(error);
+        return { claimed: 0, succeeded: 0, failed: 0 };
+      })
+      .finally(() => {
+        this.activeRun = undefined;
+      });
+    this.activeRun = activeRun;
+    return activeRun;
+  }
+}
+
+function mapTenantExportJobRow(row: TenantExportJobRow | undefined): TenantExportJobRecord {
+  if (row === undefined) {
+    throw new Error("Tenant export job query returned no rows.");
+  }
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    status: row.status,
+    includeObjectBytes: row.include_object_bytes,
+    presignedUrlExpiresSeconds: row.presigned_url_expires_seconds,
+    requestedByActorId: row.requested_by_actor_id,
+    storageKey: row.storage_key,
+    filename: row.filename,
+    contentType:
+      row.content_type === null ? null : contentTypeFromTenantExportJobRow(row.content_type),
+    byteSize: row.byte_size === null ? null : Number(row.byte_size),
+    lastError: row.last_error,
+    attemptCount: row.attempt_count,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function contentTypeFromTenantExportJobRow(value: string): "application/x-tar" {
+  if (value !== "application/x-tar") {
+    throw new Error(`Unsupported tenant export job content type: ${value}`);
+  }
+  return value;
+}
+
+function tenantExportJobArtifactStorageKey(
+  job: Pick<TenantExportJobRecord, "id" | "orgId">,
+): string {
+  return `tenant-exports/jobs/${job.orgId}/${job.id}/archive.tar`;
+}
+
+function boundedExportJobHistoryLimit(limit: number | undefined): number {
+  if (limit === undefined) {
+    return 50;
+  }
+  return Math.min(Math.max(Math.trunc(limit), 1), 200);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function tenantExportArchiveFiles(

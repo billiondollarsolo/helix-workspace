@@ -46,6 +46,8 @@ export interface SeedLocalDemoResult {
   readonly mailThreads: number;
   readonly driveEntries: number;
   readonly docs: number;
+  readonly sheets: number;
+  readonly slides: number;
   readonly calendarEvents: number;
   readonly chatRooms: number;
   readonly chatMessages: number;
@@ -110,11 +112,20 @@ const demoIds = {
   docsQuarterlyThread: "00000000-0000-4000-8000-000000000402",
   docsRunbook: "00000000-0000-4000-8000-000000000403",
   docsRunbookThread: "00000000-0000-4000-8000-000000000404",
+  sheetLaunchMetrics: "00000000-0000-4000-8000-000000000451",
+  sheetLaunchMetricsSummaryTab: "00000000-0000-4000-8000-000000000452",
+  sheetLaunchMetricsPipelineTab: "00000000-0000-4000-8000-000000000453",
+  slidesMvpReadout: "00000000-0000-4000-8000-000000000471",
+  slidesMvpReadoutTitle: "00000000-0000-4000-8000-000000000472",
+  slidesMvpReadoutStatus: "00000000-0000-4000-8000-000000000473",
+  slidesMvpReadoutNext: "00000000-0000-4000-8000-000000000474",
   calendarPrimary: "00000000-0000-4000-8000-000000000501",
   eventOrderMatch: "00000000-0000-4000-8000-000000000502",
   eventOrderMatchThread: "00000000-0000-4000-8000-000000000503",
   eventPlanning: "00000000-0000-4000-8000-000000000504",
   eventPlanningThread: "00000000-0000-4000-8000-000000000505",
+  eventMvpWalkthrough: "00000000-0000-4000-8000-000000000506",
+  eventMvpWalkthroughThread: "00000000-0000-4000-8000-000000000507",
   mailAmazonThread: "00000000-0000-4000-8000-000000000601",
   mailAmazonMessage: "00000000-0000-4000-8000-000000000602",
   mailRenovateThread: "00000000-0000-4000-8000-000000000603",
@@ -137,6 +148,7 @@ const demoThreads = [
   demoIds.docsRunbookThread,
   demoIds.eventOrderMatchThread,
   demoIds.eventPlanningThread,
+  demoIds.eventMvpWalkthroughThread,
   demoIds.mailAmazonThread,
   demoIds.mailRenovateThread,
   demoIds.mailPlanningThread,
@@ -154,7 +166,13 @@ const demoObjects = [
 
 const demoFolders = [demoIds.driveFolderProjects] as const;
 const demoDocuments = [demoIds.docsQuarterly, demoIds.docsRunbook] as const;
-const demoEvents = [demoIds.eventOrderMatch, demoIds.eventPlanning] as const;
+const demoSheets = [demoIds.sheetLaunchMetrics] as const;
+const demoSlideDecks = [demoIds.slidesMvpReadout] as const;
+const demoEvents = [
+  demoIds.eventOrderMatch,
+  demoIds.eventPlanning,
+  demoIds.eventMvpWalkthrough,
+] as const;
 const demoMessages = [
   demoIds.mailAmazonMessage,
   demoIds.mailRenovateMessage,
@@ -191,6 +209,8 @@ export async function seedLocalDemo(
     await seedBetterAuthUser(tx, actorId, email, displayName, passwordHash);
     await seedDrive(tx, orgId, actorId, storage);
     await seedDocs(tx, orgId, actorId, storage);
+    await seedSheets(tx, orgId, actorId);
+    await seedSlides(tx, orgId, actorId);
     await seedCalendar(tx, orgId, actorId, email, timeline);
     await seedMail(tx, orgId, actorId, email, storage, timeline);
     if (volumeMailMessages > 0) {
@@ -206,7 +226,9 @@ export async function seedLocalDemo(
     mailThreads: 4,
     driveEntries: 3,
     docs: 2,
-    calendarEvents: 2,
+    sheets: 1,
+    slides: 1,
+    calendarEvents: 3,
     chatRooms: 1,
     chatMessages: 3,
     storageObjects: storage === undefined ? 0 : 5,
@@ -319,6 +341,8 @@ async function clearDemoContent(sql: SeedSql, orgId: string): Promise<void> {
         or (resource_type = 'object' and resource_id = any(${sql.array([...demoObjects])}::uuid[]))
         or (resource_type = 'folder' and resource_id = any(${sql.array([...demoFolders])}::uuid[]))
         or (resource_type = 'document' and resource_id = any(${sql.array([...demoDocuments])}::uuid[]))
+        or (resource_type = 'sheet' and resource_id = any(${sql.array([...demoSheets])}::uuid[]))
+        or (resource_type = 'slide_deck' and resource_id = any(${sql.array([...demoSlideDecks])}::uuid[]))
         or (resource_type = 'calendar' and resource_id = ${demoIds.calendarPrimary})
         or (resource_type = 'event' and resource_id = any(${sql.array([...demoEvents])}::uuid[]))
       )
@@ -330,11 +354,16 @@ async function clearDemoContent(sql: SeedSql, orgId: string): Promise<void> {
   await sql`delete from docs_comments where document_id = any(${sql.array([...demoDocuments])}::uuid[])`;
   await sql`delete from docs_updates where document_id = any(${sql.array([...demoDocuments])}::uuid[])`;
   await sql`delete from docs_documents where id = any(${sql.array([...demoDocuments])}::uuid[])`;
+  await sql`delete from sheet_cells where sheet_tab_id in (select id from sheet_tabs where sheet_id = any(${sql.array([...demoSheets])}::uuid[]))`;
+  await sql`delete from sheet_tabs where sheet_id = any(${sql.array([...demoSheets])}::uuid[])`;
+  await sql`delete from sheets where id = any(${sql.array([...demoSheets])}::uuid[])`;
+  await sql`delete from slides where deck_id = any(${sql.array([...demoSlideDecks])}::uuid[])`;
+  await sql`delete from slide_decks where id = any(${sql.array([...demoSlideDecks])}::uuid[])`;
   await sql`delete from cal_attendees where event_id = any(${sql.array([...demoEvents])}::uuid[])`;
   await sql`delete from cal_events where id = any(${sql.array([...demoEvents])}::uuid[])`;
   await sql`delete from cal_calendars where id = ${demoIds.calendarPrimary}`;
   await sql`delete from drive_versions where object_id = any(${sql.array([...demoObjects])}::uuid[])`;
-  await sql`delete from objects where id = any(${sql.array([...demoObjects])}::uuid[])`;
+  await sql`delete from objects where id = any(${sql.array([...demoObjects, ...demoSheets, ...demoSlideDecks])}::uuid[])`;
   await sql`delete from drive_folders where id = any(${sql.array([...demoFolders])}::uuid[])`;
   await sql`delete from threads where id = any(${sql.array([...demoThreads])}::uuid[])`;
   await clearVolumeDemoContent(sql, orgId);
@@ -652,6 +681,195 @@ async function seedDoc(
   await grant(sql, input.orgId, input.actorId, "object", input.documentId, "owner", input.actorId);
 }
 
+async function seedSheets(sql: SeedSql, orgId: string, actorId: string): Promise<void> {
+  await sql`
+    insert into sheets (id, org_id, owner_actor_id, created_by_actor_id, title, metadata)
+    values (
+      ${demoIds.sheetLaunchMetrics},
+      ${orgId},
+      ${actorId},
+      ${actorId},
+      'Launch Metrics Tracker',
+      ${json(sql, { source: LOCAL_DEMO_SOURCE, app: "sheets" })}
+    )
+  `;
+  await sql`
+    insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
+    values (
+      ${demoIds.sheetLaunchMetrics},
+      ${orgId},
+      ${actorId},
+      'file',
+      ${`sheets/${orgId}/${demoIds.sheetLaunchMetrics}`},
+      'application/vnd.helix.spreadsheet',
+      0,
+      null,
+      ${json(sql, {
+        source: LOCAL_DEMO_SOURCE,
+        app: "sheets",
+        sheetId: demoIds.sheetLaunchMetrics,
+        name: "Launch Metrics Tracker",
+        title: "Launch Metrics Tracker",
+        folderId: null,
+      })}
+    )
+  `;
+
+  const tabs = [
+    {
+      id: demoIds.sheetLaunchMetricsSummaryTab,
+      name: "Summary",
+      rows: [
+        ["Metric", "Target", "Current", "Status"],
+        ["Mail searchable threads", "200", "205", "On track"],
+        ["Drive seeded files", "3", "3", "On track"],
+        ["Docs ready for review", "2", "2", "On track"],
+        ["Open MVP blockers", "0", "3", "Watch"],
+      ],
+    },
+    {
+      id: demoIds.sheetLaunchMetricsPipelineTab,
+      name: "Pipeline",
+      rows: [
+        ["Surface", "Owner", "MVP workflow", "Next check"],
+        ["Mail", "Local Helix Admin", "Search, open, compose", "Today"],
+        ["Drive", "Maya Sharma", "Upload, preview, share", "Today"],
+        ["Calendar", "Local Helix Admin", "Create event, respond", "This week"],
+        ["Assistant", "Local Helix Admin", "Ask, confirm action", "This week"],
+      ],
+    },
+  ] as const;
+
+  for (const [tabIndex, tab] of tabs.entries()) {
+    await sql`
+      insert into sheet_tabs (id, org_id, sheet_id, name, position, metadata)
+      values (
+        ${tab.id},
+        ${orgId},
+        ${demoIds.sheetLaunchMetrics},
+        ${tab.name},
+        ${tabIndex},
+        ${json(sql, { source: LOCAL_DEMO_SOURCE })}
+      )
+    `;
+    for (const [rowIndex, row] of tab.rows.entries()) {
+      for (const [colIndex, value] of row.entries()) {
+        await sql`
+          insert into sheet_cells (id, org_id, sheet_tab_id, row, col, value, format)
+          values (
+            ${demoCellId(tabIndex, rowIndex, colIndex)},
+            ${orgId},
+            ${tab.id},
+            ${rowIndex},
+            ${colIndex},
+            ${value},
+            ${json(sql, rowIndex === 0 ? { bold: true } : {})}
+          )
+        `;
+      }
+    }
+  }
+
+  await grant(sql, orgId, actorId, "sheet", demoIds.sheetLaunchMetrics, "owner", actorId);
+}
+
+async function seedSlides(sql: SeedSql, orgId: string, actorId: string): Promise<void> {
+  await sql`
+    insert into slide_decks (id, org_id, title, owner_actor_id, created_by_actor_id, metadata)
+    values (
+      ${demoIds.slidesMvpReadout},
+      ${orgId},
+      'MVP Readiness Readout',
+      ${actorId},
+      ${actorId},
+      ${json(sql, { source: LOCAL_DEMO_SOURCE, app: "slides" })}
+    )
+  `;
+  await sql`
+    insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
+    values (
+      ${demoIds.slidesMvpReadout},
+      ${orgId},
+      ${actorId},
+      'file',
+      ${`slides/${orgId}/${demoIds.slidesMvpReadout}`},
+      'application/vnd.helix.presentation',
+      0,
+      null,
+      ${json(sql, {
+        source: LOCAL_DEMO_SOURCE,
+        app: "slides",
+        deckId: demoIds.slidesMvpReadout,
+        name: "MVP Readiness Readout",
+        title: "MVP Readiness Readout",
+        slideCount: 3,
+        folderId: null,
+      })}
+    )
+  `;
+
+  const slides = [
+    {
+      id: demoIds.slidesMvpReadoutTitle,
+      layout: "title",
+      content: {
+        layout: "title",
+        eyebrow: "Helix Local Demo",
+        title: "MVP Readiness Readout",
+        subtitle: "A seeded deck for validating native Slides locally.",
+      },
+      notes: "Use this deck to verify list, open, edit, present, and export flows.",
+    },
+    {
+      id: demoIds.slidesMvpReadoutStatus,
+      layout: "stats",
+      content: {
+        layout: "stats",
+        title: "What is live in the demo",
+        subtitle: "Seeded data across the core workspace surfaces",
+        stats: [
+          { value: "205", label: "mail hits", note: "search-indexed" },
+          { value: "3", label: "Drive entries", note: "plus docs, sheets, slides" },
+          { value: "3", label: "calendar events", note: "includes current-week check-in" },
+        ],
+      },
+      notes: "Keep this slide aligned with local demo verification counts.",
+    },
+    {
+      id: demoIds.slidesMvpReadoutNext,
+      layout: "bullets",
+      content: {
+        layout: "bullets",
+        title: "Next feature checks",
+        items: [
+          "Open and edit the seeded spreadsheet.",
+          "Present this deck and test export readiness.",
+          "Create a calendar event from the current week view.",
+          "Ask Helix AI to summarize the launch room.",
+        ],
+      },
+      notes: "These are the next manual MVP checks after shell route verification.",
+    },
+  ] as const;
+
+  for (const [index, slide] of slides.entries()) {
+    await sql`
+      insert into slides (id, org_id, deck_id, position, layout, content, speaker_notes)
+      values (
+        ${slide.id},
+        ${orgId},
+        ${demoIds.slidesMvpReadout},
+        ${index},
+        ${slide.layout},
+        ${json(sql, slide.content)},
+        ${slide.notes}
+      )
+    `;
+  }
+
+  await grant(sql, orgId, actorId, "slide_deck", demoIds.slidesMvpReadout, "owner", actorId);
+}
+
 async function seedCalendar(
   sql: SeedSql,
   orgId: string,
@@ -704,6 +922,22 @@ async function seedCalendar(
     attendees: [
       { actorId: demoIds.colleagueActor, email: "maya@helix.local", displayName: "Maya Sharma" },
       { actorId: demoIds.familyActor, email: "erica@helix.local", displayName: "Erica Johnson" },
+    ],
+  });
+  await seedCalendarEvent(sql, {
+    orgId,
+    actorId,
+    actorEmail,
+    threadId: demoIds.eventMvpWalkthroughThread,
+    eventId: demoIds.eventMvpWalkthrough,
+    uid: "demo-mvp-walkthrough@helix.local",
+    title: "MVP surface walkthrough",
+    description: "Open Mail, Drive, Docs, Sheets, Slides, Calendar, Chat, Meet, and Assistant.",
+    location: "Helix Meet",
+    startsAt: timeline.at("2026-05-26T14:00:00.000Z"),
+    endsAt: timeline.at("2026-05-26T15:00:00.000Z"),
+    attendees: [
+      { actorId: demoIds.colleagueActor, email: "maya@helix.local", displayName: "Maya Sharma" },
     ],
   });
 }
@@ -1275,6 +1509,11 @@ export function parseLocalDemoAnchorDate(anchorDate: string | Date): Date {
 
 function volumeUuid(group: "4100" | "4200", index: number): string {
   return `00000000-0000-${group}-8000-${index.toString().padStart(12, "0")}`;
+}
+
+function demoCellId(tabIndex: number, rowIndex: number, colIndex: number): string {
+  const cellIndex = tabIndex * 100 + rowIndex * 10 + colIndex + 1;
+  return `00000000-0000-4600-8000-${cellIndex.toString().padStart(12, "0")}`;
 }
 
 async function putDemoStorageObject(

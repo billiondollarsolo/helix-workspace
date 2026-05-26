@@ -29,7 +29,9 @@ describe("seedLocalDemo", () => {
       mailThreads: 4,
       driveEntries: 3,
       docs: 2,
-      calendarEvents: 2,
+      sheets: 1,
+      slides: 1,
+      calendarEvents: 3,
       chatRooms: 1,
       chatMessages: 3,
       storageObjects: 5,
@@ -54,6 +56,11 @@ describe("seedLocalDemo", () => {
     expect(sqlText).toContain("insert into messages");
     expect(sqlText).toContain("insert into drive_folders");
     expect(sqlText).toContain("insert into docs_documents");
+    expect(sqlText).toContain("insert into sheets");
+    expect(sqlText).toContain("insert into sheet_tabs");
+    expect(sqlText).toContain("insert into sheet_cells");
+    expect(sqlText).toContain("insert into slide_decks");
+    expect(sqlText).toContain("insert into slides");
     expect(sqlText).toContain("insert into cal_events");
     expect(sqlText).toContain("insert into chat_room_settings");
     expect(sqlText).toContain("insert into chat_read_receipts");
@@ -63,6 +70,11 @@ describe("seedLocalDemo", () => {
     expect(recording.arrays.some((value) => value.includes("mail.read"))).toBe(true);
     expect(recording.arrays.some((value) => value.includes("notifications.read"))).toBe(true);
     expect(recording.arrays.some((value) => value.includes("admin.console.read"))).toBe(true);
+    expect(sqlText).toContain("Launch Metrics Tracker");
+    expect(sqlText).toContain("MVP Readiness Readout");
+    expect(recording.calls.some((call) => call.values.includes("MVP surface walkthrough"))).toBe(
+      true,
+    );
     expect(sqlText).toContain("delete from actors");
     expect(sqlText).toContain("metadata -> 'betterAuth' ->> 'userId'");
     expect(recording.jsonValues).toContainEqual({

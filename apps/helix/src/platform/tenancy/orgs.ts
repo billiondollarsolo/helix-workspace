@@ -49,6 +49,28 @@ export interface CreateOrgInput {
   readonly branding?: JsonObject;
 }
 
+export interface UpdateTenantConfigInput {
+  readonly orgId: string;
+  readonly byoConfig?: JsonObject | undefined;
+  readonly featureFlags?: JsonObject | undefined;
+  readonly quotas?: JsonObject | undefined;
+  readonly branding?: JsonObject | undefined;
+  readonly changedByActorId?: string | null | undefined;
+  readonly reason?: string | undefined;
+}
+
+export interface TenantByoStorageHealth {
+  readonly status: "healthy" | "degraded";
+  readonly checked_at: string;
+  readonly message: string;
+}
+
+export interface UpdateByoStorageHealthInput {
+  readonly orgId: string;
+  readonly health: TenantByoStorageHealth;
+  readonly reason?: string | undefined;
+}
+
 export type TenantLifecycleAction = "suspend" | "unsuspend" | "soft-delete" | "restore";
 
 export function resolveDefaultOrgInput(env: NodeJS.ProcessEnv): Required<DefaultOrgInput> {
@@ -261,6 +283,114 @@ export class PostgresOrgStore implements OrgStore {
     `) as unknown as readonly OrgRow[];
     return rows[0] === undefined ? null : mapOrgRow(rows[0]);
   }
+
+  async updateTenantConfig(input: UpdateTenantConfigInput): Promise<OrgRecord | null> {
+    return this.sql.begin(async (tx) => {
+      await tx`
+        select
+          set_config('helix.tenant_config_changed_by', ${input.changedByActorId ?? ""}, true),
+          set_config('helix.tenant_config_reason', ${
+            input.reason ?? "tenant-config:update"
+          }, true)
+      `;
+      const rows = (await tx`
+        update orgs
+        set
+          byo_config = case
+            when ${input.byoConfig === undefined} then byo_config
+            else ${tx.json(jsonObjectValue(input.byoConfig))}
+          end,
+          feature_flags = case
+            when ${input.featureFlags === undefined} then feature_flags
+            else ${tx.json(jsonObjectValue(input.featureFlags))}
+          end,
+          quotas = case
+            when ${input.quotas === undefined} then quotas
+            else ${tx.json(jsonObjectValue(input.quotas))}
+          end,
+          branding = case
+            when ${input.branding === undefined} then branding
+            else ${tx.json(jsonObjectValue(input.branding))}
+          end,
+          updated_at = now()
+        where id = ${input.orgId}
+        returning
+          id,
+          slug,
+          display_name,
+          status,
+          tier,
+          plan_id,
+          region,
+          byo_config,
+          feature_flags,
+          quotas,
+          branding,
+          suspended_at,
+          soft_deleted_at,
+          hard_deleted_at
+      `) as unknown as readonly OrgRow[];
+      return rows[0] === undefined ? null : mapOrgRow(rows[0]);
+    });
+  }
+
+  async listByoStorageOrgIds(
+    input: { readonly limit?: number | undefined } = {},
+  ): Promise<readonly string[]> {
+    const rows = (await this.sql`
+      select id
+      from orgs
+      where status = 'active'
+        and feature_flags->>'byo_storage' = 'true'
+        and byo_config->'storage'->>'kind' = 'byo'
+      order by updated_at asc
+      limit ${input.limit ?? 100}
+    `) as unknown as readonly { readonly id: string }[];
+    return rows.map((row) => row.id);
+  }
+
+  async updateByoStorageHealth(
+    input: UpdateByoStorageHealthInput,
+  ): Promise<OrgRecord | null> {
+    return this.sql.begin(async (tx) => {
+      await tx`
+        select set_config(
+          'helix.tenant_config_reason',
+          ${input.reason ?? "byo-storage-health:update"},
+          true
+        )
+      `;
+      const rows = (await tx`
+        update orgs
+        set
+          byo_config = jsonb_set(
+            byo_config,
+            '{storage,health}',
+            ${tx.json(jsonSerializable(input.health))},
+            true
+          ),
+          updated_at = now()
+        where id = ${input.orgId}
+          and byo_config->'storage'->>'kind' = 'byo'
+        returning
+          id,
+          slug,
+          display_name,
+          status,
+          tier,
+          plan_id,
+          region,
+          byo_config,
+          feature_flags,
+          quotas,
+          branding,
+          suspended_at,
+          soft_deleted_at,
+          hard_deleted_at
+      `) as unknown as readonly OrgRow[];
+      return rows[0] === undefined ? null : mapOrgRow(rows[0]);
+    });
+  }
 }
 
 function mapOrgRow(row: OrgRow | undefined): OrgRecord {
@@ -283,4 +413,12 @@ function mapOrgRow(row: OrgRow | undefined): OrgRecord {
     softDeletedAt: row.soft_deleted_at ?? null,
     hardDeletedAt: row.hard_deleted_at ?? null,
   };
+}
+
+function jsonObjectValue(value: JsonObject | undefined): Parameters<postgres.Sql["json"]>[0] {
+  return (value ?? {}) as Parameters<postgres.Sql["json"]>[0];
+}
+
+function jsonSerializable(value: unknown): Parameters<postgres.Sql["json"]>[0] {
+  return value as Parameters<postgres.Sql["json"]>[0];
 }

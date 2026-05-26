@@ -129,6 +129,98 @@ describe("PostgresOrgStore", () => {
 
     expect(org).toMatchObject({ slug: "acme", status: "active" });
   });
+
+  it("updates tenant config sections with audit trigger context", async () => {
+    const recording = createRecordingSql([
+      [],
+      [
+        orgRow({
+          featureFlags: { ai_smart_compose: true },
+          quotas: { api_rps_limit: 10 },
+        }),
+      ],
+    ]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    const org = await store.updateTenantConfig({
+      orgId: "11111111-1111-4111-8111-111111111111",
+      featureFlags: { ai_smart_compose: true },
+      quotas: { api_rps_limit: 10 },
+      changedByActorId: "22222222-2222-4222-8222-222222222222",
+      reason: "admin settings update",
+    });
+
+    expect(org).toMatchObject({
+      featureFlags: { ai_smart_compose: true },
+      quotas: { api_rps_limit: 10 },
+    });
+    expect(recording.calls[0]?.text).toContain("helix.tenant_config_changed_by");
+    expect(recording.calls[0]?.text).toContain("helix.tenant_config_reason");
+    expect(recording.calls[0]?.values).toEqual([
+      "22222222-2222-4222-8222-222222222222",
+      "admin settings update",
+    ]);
+    expect(recording.calls[1]?.text).toContain("update orgs");
+    expect(recording.calls[1]?.text).toContain("feature_flags = case");
+    expect(recording.calls[1]?.text).toContain("quotas = case");
+    expect(recording.calls[1]?.values).toContain("11111111-1111-4111-8111-111111111111");
+  });
+
+  it("lists BYO storage orgs and persists bounded health", async () => {
+    const recording = createRecordingSql([
+      [{ id: "org-a" }, { id: "org-b" }],
+      [],
+      [
+        orgRow({
+          id: "org-a",
+          byoConfig: {
+            storage: {
+              kind: "byo",
+              health: {
+                status: "healthy",
+                checked_at: "2026-05-24T00:00:00.000Z",
+                message: "ok",
+              },
+            },
+          },
+        }),
+      ],
+    ]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    await expect(store.listByoStorageOrgIds({ limit: 2 })).resolves.toEqual(["org-a", "org-b"]);
+    await expect(
+      store.updateByoStorageHealth({
+        orgId: "org-a",
+        health: {
+          status: "healthy",
+          checked_at: "2026-05-24T00:00:00.000Z",
+          message: "ok",
+        },
+        reason: "byo-storage-health-worker",
+      }),
+    ).resolves.toMatchObject({
+      id: "org-a",
+      byoConfig: {
+        storage: {
+          kind: "byo",
+          health: {
+            status: "healthy",
+            checked_at: "2026-05-24T00:00:00.000Z",
+            message: "ok",
+          },
+        },
+      },
+    });
+
+    expect(recording.calls[0]?.text).toContain("feature_flags->>'byo_storage' = 'true'");
+    expect(recording.calls[0]?.text).toContain("byo_config->'storage'->>'kind' = 'byo'");
+    expect(recording.calls[0]?.values).toEqual([2]);
+    expect(recording.calls[1]?.text).toContain("helix.tenant_config_reason");
+    expect(recording.calls[2]?.text).toContain("jsonb_set");
+    expect(recording.calls[2]?.text).toContain("'{storage,health}'");
+    expect(recording.calls[2]?.text).toContain("byo_config->'storage'->>'kind' = 'byo'");
+  });
 });
 
 function orgRecord(overrides: Partial<OrgRecord>): OrgRecord {
@@ -154,22 +246,7 @@ function orgRecord(overrides: Partial<OrgRecord>): OrgRecord {
 function sqlReturningOrg(overrides: Partial<OrgRecord> = {}): postgres.Sql {
   const tag = () =>
     Promise.resolve([
-      {
-        id: overrides.id ?? DEFAULT_ORG_ID,
-        slug: overrides.slug ?? DEFAULT_ORG_SLUG,
-        display_name: overrides.displayName ?? DEFAULT_ORG_DISPLAY_NAME,
-        status: overrides.status ?? "active",
-        tier: overrides.tier ?? "personal",
-        plan_id: overrides.planId ?? "personal",
-        region: overrides.region ?? DEFAULT_ORG_REGION,
-        byo_config: overrides.byoConfig ?? {},
-        feature_flags: overrides.featureFlags ?? {},
-        quotas: overrides.quotas ?? {},
-        branding: overrides.branding ?? {},
-        suspended_at: overrides.suspendedAt ?? null,
-        soft_deleted_at: overrides.softDeletedAt ?? null,
-        hard_deleted_at: overrides.hardDeletedAt ?? null,
-      },
+      orgRow(overrides),
     ]);
   const sql = Object.assign(tag, {
     json: (value: unknown) => value,
@@ -178,4 +255,42 @@ function sqlReturningOrg(overrides: Partial<OrgRecord> = {}): postgres.Sql {
       callback(sql as unknown as postgres.TransactionSql),
   }) as unknown as postgres.Sql;
   return sql;
+}
+
+function orgRow(overrides: Partial<OrgRecord> = {}) {
+  return {
+    id: overrides.id ?? DEFAULT_ORG_ID,
+    slug: overrides.slug ?? DEFAULT_ORG_SLUG,
+    display_name: overrides.displayName ?? DEFAULT_ORG_DISPLAY_NAME,
+    status: overrides.status ?? "active",
+    tier: overrides.tier ?? "personal",
+    plan_id: overrides.planId ?? "personal",
+    region: overrides.region ?? DEFAULT_ORG_REGION,
+    byo_config: overrides.byoConfig ?? {},
+    feature_flags: overrides.featureFlags ?? {},
+    quotas: overrides.quotas ?? {},
+    branding: overrides.branding ?? {},
+    suspended_at: overrides.suspendedAt ?? null,
+    soft_deleted_at: overrides.softDeletedAt ?? null,
+    hard_deleted_at: overrides.hardDeletedAt ?? null,
+  };
+}
+
+function createRecordingSql(resultSets: unknown[][]): {
+  readonly calls: { readonly text: string; readonly values: readonly unknown[] }[];
+  readonly sql: postgres.Sql;
+} {
+  const calls: { text: string; values: readonly unknown[] }[] = [];
+  const queue = [...resultSets];
+  const tag = (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
+    calls.push({ text: strings.join("?"), values });
+    return Promise.resolve(queue.shift() ?? []);
+  };
+  const sql = Object.assign(tag, {
+    json: (value: unknown) => value,
+    array: (value: unknown) => value,
+    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) =>
+      callback(sql as unknown as postgres.TransactionSql),
+  }) as unknown as postgres.Sql;
+  return { calls, sql };
 }

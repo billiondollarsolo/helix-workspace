@@ -1,11 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import type { JsonObject, StorageClient } from "@helix/sdk-types";
+import type {
+  EventBus,
+  JsonObject,
+  JsonValue,
+  MeteringClient,
+  StorageClient,
+} from "@helix/sdk-types";
 import { computeAuditHash } from "../audit/hash.js";
 import { insertNotification } from "../notifications/store.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
-import type { TenantStorageResolver } from "../storage/index.js";
+import type { TenantPresignedPutUpload, TenantStorageResolver } from "../storage/index.js";
 import type {
+  DriveAccessGrantRecord,
   DriveAutoTagWrite,
   DriveCommentListItem,
   DriveCommentRecord,
@@ -39,6 +46,14 @@ export interface DriveStorageClient extends StorageClient {
       readonly metadata?: Record<string, string>;
     },
   ): Promise<string>;
+  presignPutRequest?(
+    key: string,
+    options?: {
+      readonly expiresSeconds?: number;
+      readonly contentType?: string;
+      readonly metadata?: Record<string, string>;
+    },
+  ): Promise<TenantPresignedPutUpload>;
 }
 
 export interface PrepareDriveUploadInput {
@@ -91,11 +106,36 @@ export interface DriveStore {
     readonly sharedWithActorIds: readonly string[];
     readonly role: string;
   }>;
+  listAccess?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<readonly DriveAccessGrantRecord[]>;
+  removeAccess?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly targetActorId: string;
+  }): Promise<boolean>;
+  updateAccess?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly targetActorId: string;
+    readonly role: string;
+    readonly expiresAt?: Date | null;
+  }): Promise<DriveAccessGrantRecord | null>;
   move(input: {
     readonly orgId: string;
     readonly actorId: string;
     readonly objectId: string;
     readonly folderId?: string | null;
+  }): Promise<DriveEntryRecord | null>;
+  setStarred?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly starred: boolean;
   }): Promise<DriveEntryRecord | null>;
   trash(input: {
     readonly orgId: string;
@@ -192,10 +232,15 @@ export interface DriveFileReadInput {
 export interface DriveFileReadResult {
   readonly entry: DriveEntryRecord;
   readonly content: Uint8Array | null;
+  readonly previewContent?: Uint8Array | null;
 }
 
 export interface PostgresDriveStoreOptions {
   readonly officePreviewConverter?: OfficePreviewConverter;
+  readonly metering?: MeteringClient;
+  readonly onMeteringError?: (error: unknown) => void;
+  readonly events?: Pick<EventBus, "publish">;
+  readonly onQuotaEventError?: (error: unknown) => void;
   readonly storageResolver?: TenantStorageResolver;
 }
 
@@ -243,12 +288,30 @@ interface DriveFolderRow {
 
 interface DriveSearchRow extends ObjectRow {
   readonly version_number: number | null;
+  readonly mine?: boolean | null;
+  readonly shared_count?: number | string | null;
 }
 
 interface DriveSearchProjectionRow extends ObjectRow {
   readonly owner_display_name: string | null;
   readonly owner_email: string | null;
   readonly folder_path: readonly string[];
+}
+
+interface DriveStorageQuotaRow {
+  readonly storage_bytes_limit: JsonValue | null;
+  readonly storage_used_bytes: string | number;
+}
+
+interface DriveAccessGrantRow {
+  readonly actor_id: string;
+  readonly role: string;
+  readonly display_name: string | null;
+  readonly email: string | null;
+  readonly granted_by_actor_id: string | null;
+  readonly expires_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
 }
 
 interface DriveCommentRow {
@@ -294,6 +357,17 @@ interface PdfFormSourceMetadata {
   readonly byteSize: number | null;
 }
 
+export class DriveStorageQuotaExceededError extends Error {
+  constructor(
+    readonly orgId: string,
+    readonly limit: number,
+    readonly projected: number,
+  ) {
+    super(`Tenant storage quota exceeded: ${String(projected)}/${String(limit)} bytes.`);
+    this.name = "DriveStorageQuotaExceededError";
+  }
+}
+
 export class PostgresDriveStore
   implements DriveStore, DriveSearchProjectionStore, DriveEnrichmentProjectionStore
 {
@@ -308,6 +382,9 @@ export class PostgresDriveStore
       if (input.folderId !== undefined && input.folderId !== null) {
         await requireFolderAccess(tx, input.orgId, input.actorId, input.folderId);
       }
+      await assertStorageQuotaAvailable(tx, input.orgId, input.byteSize ?? 0, (event) => {
+        this.emitStorageQuotaExceeded(input.orgId, event);
+      });
 
       const objectId = randomUUID();
       const storageKey = driveStorageKey(input.orgId, objectId, 1, input.name);
@@ -352,30 +429,46 @@ export class PostgresDriveStore
         },
       });
 
+      const upload = await this.presignPutRequest(input.orgId, storageKey, input.mimeType);
       return {
         ...mapUpload(rows[0]),
-        uploadUrl: await this.presignPutUrl(input.orgId, storageKey, input.mimeType),
+        uploadUrl: upload?.url ?? null,
+        uploadHeaders: upload?.headers ?? {},
       };
     });
   }
 
   async finalizeUpload(input: FinalizeDriveUploadInput): Promise<DriveVersionRecord> {
-    return this.sql.begin(async (tx) => {
+    let storageDelta = 0;
+    const version = await this.sql.begin(async (tx) => {
       const current = await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
       const storageKey = input.storageKey ?? current.storage_key;
+      if (input.storageKey !== undefined) {
+        assertProvidedFinalizeStorageKey(input.storageKey, current.storage_key);
+      }
       const mimeType = input.mimeType ?? current.mime_type;
+      storageDelta = finalizedStorageDelta(current, storageKey, input.byteSize);
       if (input.content !== undefined) {
         const actualSha256 = createHash("sha256").update(input.content).digest("hex");
         if (actualSha256 !== input.sha256) {
           throw new Error("Drive upload sha256 does not match provided content.");
         }
-        const storage = await this.storageForOrg(input.orgId);
+      }
+      const storage = await this.storageForOrg(input.orgId);
+      if (input.content !== undefined && storage === undefined) {
+        throw new Error("Drive upload content storage is not configured.");
+      }
+      await assertStorageQuotaAvailable(tx, input.orgId, storageDelta, (event) => {
+        this.emitStorageQuotaExceeded(input.orgId, event);
+      });
+      const content = input.content;
+      if (content !== undefined) {
         if (storage === undefined) {
-          throw new Error("Drive content storage is not configured.");
+          throw new Error("Drive upload content storage is not configured.");
         }
         await storage.put({
           key: storageKey,
-          body: input.content,
+          body: content,
           contentType: mimeType,
           metadata: { objectId: input.objectId, sha256: input.sha256 },
         });
@@ -443,6 +536,8 @@ export class PostgresDriveStore
 
       return version;
     });
+    this.emitStorageDelta(input.orgId, storageDelta);
+    return version;
   }
 
   async list(input: {
@@ -481,13 +576,25 @@ export class PostgresDriveStore
               or parent_folder_id = ${input.folderId ?? null}
             )
             and (${input.includeTrashed ?? false} or deleted_at is null)
-            and ${canReadFolderSql(this.sql, input.actorId)}
+            and ${canReadFolderSql(this.sql, input.orgId, input.actorId)}
           order by name asc
           limit ${input.limit ?? 100}
         `) as unknown as readonly DriveFolderRow[]);
 
     const fileRows = (await this.sql`
-      select o.*, (select max(version_number) from drive_versions v where v.object_id = o.id) as version_number
+      select
+        o.*,
+        (select max(version_number) from drive_versions v where v.object_id = o.id) as version_number,
+        (o.owner_actor_id = ${input.actorId}) as mine,
+        (
+          select count(distinct p.actor_id)
+          from permissions p
+          where p.org_id = ${input.orgId}
+            and p.resource_type = 'object'
+            and p.resource_id = o.id
+            and (o.owner_actor_id is null or p.actor_id <> o.owner_actor_id)
+            and (p.expires_at is null or p.expires_at > now())
+        ) as shared_count
       from objects o
       where o.org_id = ${input.orgId}
         and o.kind = ${kind}
@@ -496,13 +603,47 @@ export class PostgresDriveStore
           or coalesce(o.metadata->>'folderId', '') = coalesce(${input.folderId ?? null}::text, '')
         )
         and (${input.includeTrashed ?? false} or o.deleted_at is null)
-        and (${input.app ?? null}::text is null or coalesce(o.metadata->>'app', 'file') = ${input.app ?? null})
+        and (
+          ${input.app ?? null}::text is null
+          or coalesce(o.metadata->>'app', 'file') = ${input.app ?? null}
+          or (
+            ${input.app ?? null}::text = 'docs'
+            and (
+              o.mime_type ilike '%wordprocessingml%'
+              or o.mime_type = 'application/msword'
+              or o.mime_type ilike '%opendocument.text%'
+              or o.mime_type = 'application/rtf'
+              or lower(coalesce(o.metadata->>'name', o.storage_key)) ~ '\\.(docx?|docm|dotx?|dotm|rtf|odt|helixdoc)$'
+            )
+          )
+          or (
+            ${input.app ?? null}::text = 'sheets'
+            and (
+              o.mime_type ilike '%spreadsheetml%'
+              or o.mime_type = 'application/vnd.ms-excel'
+              or o.mime_type = 'application/vnd.oasis.opendocument.spreadsheet'
+              or o.mime_type like 'text/csv%'
+              or o.mime_type = 'text/tab-separated-values'
+              or lower(coalesce(o.metadata->>'name', o.storage_key)) ~ '\\.(xlsx?|xlsm|xlsb|xltx?|xltm|csv|tsv|ods|helixsheet)$'
+            )
+          )
+          or (
+            ${input.app ?? null}::text = 'slides'
+            and (
+              o.mime_type ilike '%presentationml%'
+              or o.mime_type = 'application/vnd.ms-powerpoint'
+              or o.mime_type = 'application/vnd.oasis.opendocument.presentation'
+              or lower(coalesce(o.metadata->>'name', o.storage_key)) ~ '\\.(pptx?|pptm|ppsx?|ppsm|potx?|potm|odp|helixdeck)$'
+            )
+          )
+        )
         and (
           o.owner_actor_id = ${input.actorId}
           or exists (
             select 1 from permissions p
             where p.resource_type = 'object'
               and p.resource_id = o.id
+              and p.org_id = ${input.orgId}
               and p.actor_id = ${input.actorId}
               and (p.expires_at is null or p.expires_at > now())
           )
@@ -573,7 +714,7 @@ export class PostgresDriveStore
           where id = ${input.folderId}
             and org_id = ${input.orgId}
             and deleted_at is null
-            and ${canReadFolderSql(tx, input.actorId)}
+            and ${canReadFolderSql(tx, input.orgId, input.actorId)}
           union all
           select child.*
           from drive_folders child
@@ -638,12 +779,20 @@ export class PostgresDriveStore
       where object_id = ${input.objectId}
     `) as unknown as readonly { readonly version_number: number | null }[];
     const content = await this.readObjectBytes(input.orgId, object.storage_key);
+    const entry = mapObjectEntry({
+      ...object,
+      version_number: versionRows[0]?.version_number ?? null,
+    });
+    const previewContent =
+      entry.preview?.kind === "pdf" &&
+      entry.preview.status === "available" &&
+      entry.preview.storageKey !== undefined
+        ? ((await this.readObjectBytes(input.orgId, entry.preview.storageKey)) ?? null)
+        : null;
     return {
-      entry: mapObjectEntry({
-        ...object,
-        version_number: versionRows[0]?.version_number ?? null,
-      }),
+      entry,
       content: content ?? null,
+      previewContent,
     };
   }
 
@@ -680,6 +829,151 @@ export class PostgresDriveStore
     });
   }
 
+  async listAccess(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<readonly DriveAccessGrantRecord[]> {
+    await requireObjectAccess(this.sql, input.orgId, input.actorId, input.objectId);
+    const rows = (await this.sql`
+      select distinct on (p.actor_id)
+        p.actor_id,
+        p.role,
+        a.display_name,
+        a.email,
+        p.granted_by_actor_id,
+        p.expires_at,
+        p.created_at,
+        p.updated_at
+      from permissions p
+      join objects o
+        on o.org_id = p.org_id
+        and o.id = p.resource_id
+        and o.kind in ('file', 'recording')
+        and o.deleted_at is null
+      left join actors a on a.id = p.actor_id and a.org_id = p.org_id
+      where p.org_id = ${input.orgId}
+        and p.resource_type = 'object'
+        and p.resource_id = ${input.objectId}
+        and p.actor_id <> o.owner_actor_id
+        and (p.expires_at is null or p.expires_at > now())
+      order by p.actor_id, p.updated_at desc, p.created_at desc
+    `) as unknown as readonly DriveAccessGrantRow[];
+    return rows.map(mapDriveAccessGrant);
+  }
+
+  async removeAccess(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly targetActorId: string;
+  }): Promise<boolean> {
+    return this.sql.begin(async (tx) => {
+      const rows = (await tx`
+        with target_object as (
+          select id, owner_actor_id
+          from objects
+          where id = ${input.objectId}
+            and org_id = ${input.orgId}
+            and kind in ('file', 'recording')
+            and deleted_at is null
+        ),
+        deleted as (
+          delete from permissions p
+          using target_object o
+          where p.org_id = ${input.orgId}
+            and p.resource_type = 'object'
+            and p.resource_id = o.id
+            and p.actor_id = ${input.targetActorId}
+            and p.actor_id <> o.owner_actor_id
+            and (
+              o.owner_actor_id = ${input.actorId}
+              or p.actor_id = ${input.actorId}
+            )
+          returning p.actor_id
+        )
+        select count(*)::int as removed_count from deleted
+      `) as unknown as readonly { readonly removed_count: number | string }[];
+      const removed = Number(rows[0]?.removed_count ?? 0) > 0;
+      if (removed) {
+        await appendDriveActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "drive.object.access_removed",
+          objectId: input.objectId,
+          payload: { targetActorId: input.targetActorId },
+        });
+      }
+      return removed;
+    });
+  }
+
+  async updateAccess(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly targetActorId: string;
+    readonly role: string;
+    readonly expiresAt?: Date | null;
+  }): Promise<DriveAccessGrantRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const rows = (await tx`
+        with target_object as (
+          select id, owner_actor_id
+          from objects
+          where id = ${input.objectId}
+            and org_id = ${input.orgId}
+            and kind in ('file', 'recording')
+            and deleted_at is null
+        ),
+        updated as (
+          update permissions p
+          set role = ${input.role},
+              expires_at = ${input.expiresAt ?? null},
+              granted_by_actor_id = ${input.actorId},
+              updated_at = now()
+          from target_object o
+          where p.org_id = ${input.orgId}
+            and p.resource_type = 'object'
+            and p.resource_id = o.id
+            and p.actor_id = ${input.targetActorId}
+            and p.actor_id <> o.owner_actor_id
+            and o.owner_actor_id = ${input.actorId}
+          returning
+            p.actor_id,
+            p.role,
+            p.granted_by_actor_id,
+            p.expires_at,
+            p.created_at,
+            p.updated_at
+        )
+        select distinct on (u.actor_id)
+          u.actor_id,
+          u.role,
+          a.display_name,
+          a.email,
+          u.granted_by_actor_id,
+          u.expires_at,
+          u.created_at,
+          u.updated_at
+        from updated u
+        left join actors a on a.id = u.actor_id and a.org_id = ${input.orgId}
+        order by u.actor_id, u.updated_at desc, u.created_at desc
+      `) as unknown as readonly DriveAccessGrantRow[];
+      const grant = rows[0] === undefined ? null : mapDriveAccessGrant(rows[0]);
+      if (grant !== null) {
+        await appendDriveActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "drive.object.access_updated",
+          objectId: input.objectId,
+          payload: { targetActorId: input.targetActorId, role: input.role },
+        });
+      }
+      return grant;
+    });
+  }
+
   async move(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -690,6 +984,40 @@ export class PostgresDriveStore
       ...input,
       verb: "drive.object.moved",
       restore: false,
+    });
+  }
+
+  async setStarred(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly starred: boolean;
+  }): Promise<DriveEntryRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const rows = (await tx`
+        update objects
+        set metadata = case
+              when ${input.starred}
+                then metadata || ${tx.json(toSqlJson({ starred: true }))}::jsonb
+              else metadata - 'starred'
+            end
+        where id = ${input.objectId}
+          and org_id = ${input.orgId}
+          and kind = 'file'
+          and deleted_at is null
+          and ${canReadObjectSql(tx, input.orgId, input.actorId)}
+        returning *, (select max(version_number) from drive_versions v where v.object_id = objects.id) as version_number
+      `) as unknown as readonly DriveSearchRow[];
+      if (rows[0] !== undefined) {
+        await appendDriveActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: input.starred ? "drive.object.starred" : "drive.object.unstarred",
+          objectId: input.objectId,
+          payload: { starred: input.starred },
+        });
+      }
+      return rows[0] === undefined ? null : mapObjectEntry(rows[0]);
     });
   }
 
@@ -706,7 +1034,7 @@ export class PostgresDriveStore
           and org_id = ${input.orgId}
           and kind = 'file'
           and deleted_at is null
-          and ${canReadObjectSql(tx, input.actorId)}
+          and ${canReadObjectSql(tx, input.orgId, input.actorId)}
         returning *, (select max(version_number) from drive_versions v where v.object_id = objects.id) as version_number
       `) as unknown as readonly DriveSearchRow[];
       if (rows[0] !== undefined) {
@@ -741,13 +1069,21 @@ export class PostgresDriveStore
     readonly actorId: string;
     readonly objectId: string;
   }): Promise<boolean> {
-    return this.sql.begin(async (tx) => {
+    let storageDelta = 0;
+    const deletedObject = await this.sql.begin(async (tx) => {
       const object = await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
       const versionRows = (await tx`
-        select storage_key from drive_versions where object_id = ${input.objectId}
-      `) as unknown as readonly { readonly storage_key: string }[];
-      await tx`delete from permissions where resource_type = 'object' and resource_id = ${input.objectId}`;
-      await tx`delete from drive_versions where object_id = ${input.objectId}`;
+        select storage_key, byte_size from drive_versions
+        where object_id = ${input.objectId} and org_id = ${input.orgId}
+      `) as unknown as readonly { readonly storage_key: string; readonly byte_size: number }[];
+      await tx`
+        delete from permissions
+        where resource_type = 'object' and resource_id = ${input.objectId} and org_id = ${input.orgId}
+      `;
+      await tx`
+        delete from drive_versions
+        where object_id = ${input.objectId} and org_id = ${input.orgId}
+      `;
       // syncTargetDeletedAt no-ops when the object has no linked app, so it is
       // called unconditionally here — matching the trash and restore paths.
       await syncTargetDeletedAt(tx, input.orgId, input.objectId, "trash");
@@ -756,12 +1092,18 @@ export class PostgresDriveStore
         where id = ${input.objectId} and org_id = ${input.orgId} and kind = 'file'
       `;
       if (deleted.count > 0) {
-        const storage = await this.storageForOrg(input.orgId);
+        storageDelta = -distinctStoredBytes([
+          { storageKey: object.storage_key, byteSize: object.byte_size },
+          ...versionRows.map((row) => ({
+            storageKey: row.storage_key,
+            byteSize: row.byte_size,
+          })),
+        ]);
         for (const storageKey of new Set([
           object.storage_key,
           ...versionRows.map((row) => row.storage_key),
         ])) {
-          await storage?.delete(storageKey);
+          await (await this.storageForOrg(input.orgId))?.delete(storageKey);
         }
         await appendDriveActivity(tx, {
           orgId: input.orgId,
@@ -773,6 +1115,10 @@ export class PostgresDriveStore
       }
       return deleted.count > 0;
     });
+    if (deletedObject) {
+      this.emitStorageDelta(input.orgId, storageDelta);
+    }
+    return deletedObject;
   }
 
   async search(input: {
@@ -797,6 +1143,7 @@ export class PostgresDriveStore
             select 1 from permissions p
             where p.resource_type = 'object'
               and p.resource_id = o.id
+              and p.org_id = ${input.orgId}
               and p.actor_id = ${input.actorId}
               and (p.expires_at is null or p.expires_at > now())
           )
@@ -1046,7 +1393,7 @@ export class PostgresDriveStore
     readonly actorId: string;
     readonly objectId: string;
   }): Promise<DrivePdfFormStateRecord | null> {
-    await requirePdfObjectAccess(this.sql, input.orgId, input.actorId, input.objectId);
+    await requireObjectAccess(this.sql, input.orgId, input.actorId, input.objectId);
     const rows = (await this.sql`
       with latest_version as (
         select version_number, sha256, byte_size
@@ -1079,7 +1426,7 @@ export class PostgresDriveStore
     readonly fieldValues: readonly JsonObject[];
   }): Promise<DrivePdfFormStateRecord> {
     return this.sql.begin(async (tx) => {
-      const object = await requirePdfObjectAccess(tx, input.orgId, input.actorId, input.objectId);
+      const object = await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
       const source = await pdfFormSourceMetadata(tx, object);
       const rows = (await tx`
         insert into drive_pdf_form_states
@@ -1123,7 +1470,7 @@ export class PostgresDriveStore
     readonly objectId: string;
   }): Promise<boolean> {
     return this.sql.begin(async (tx) => {
-      await requirePdfObjectAccess(tx, input.orgId, input.actorId, input.objectId);
+      await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
       const rows = (await tx`
         delete from drive_pdf_form_states
         where org_id = ${input.orgId}
@@ -1224,24 +1571,30 @@ export class PostgresDriveStore
     return resolved?.client ?? this.storage;
   }
 
-  private async presignPutUrl(
+  private async presignPutRequest(
     orgId: string,
     storageKey: string,
     mimeType: string,
-  ): Promise<string | null> {
+  ): Promise<TenantPresignedPutUpload | null> {
     const storage = await this.storageForOrg(orgId);
-    return storage?.presignPutUrl === undefined
-      ? null
-      : storage.presignPutUrl(storageKey, {
-          contentType: mimeType,
-          expiresSeconds: 900,
-        });
+    const options = {
+      contentType: mimeType,
+      expiresSeconds: 900,
+    };
+    if (storage?.presignPutRequest !== undefined) {
+      return storage.presignPutRequest(storageKey, options);
+    }
+    if (storage?.presignPutUrl === undefined) {
+      return null;
+    }
+    return {
+      url: await storage.presignPutUrl(storageKey, options),
+      headers: { "content-type": mimeType },
+    };
   }
 
-  private async presignGetUrl(
-    storage: DriveStorageClient | undefined,
-    storageKey: string,
-  ): Promise<string | undefined> {
+  private async presignGetUrl(orgId: string, storageKey: string): Promise<string | undefined> {
+    const storage = await this.storageForOrg(orgId);
     return storage?.presignGetUrl?.(storageKey, { expiresSeconds: 3600 });
   }
 
@@ -1254,7 +1607,7 @@ export class PostgresDriveStore
     readonly versionNumber: number;
     readonly inlineContent?: Uint8Array;
   }): Promise<{ readonly preview: DrivePreview } | Record<string, never>> {
-    if (!isOfficeMime(input.mimeType)) {
+    if (!isOfficePreviewCandidate(input.mimeType, input.name)) {
       return {};
     }
 
@@ -1270,7 +1623,7 @@ export class PostgresDriveStore
     }
 
     const content =
-      input.inlineContent ?? (await this.readObjectBytesFromStorage(storage, input.storageKey));
+      input.inlineContent ?? (await this.readObjectBytes(input.orgId, input.storageKey));
     if (content === undefined) {
       return {
         preview: unsupportedOfficePreview(
@@ -1299,7 +1652,7 @@ export class PostgresDriveStore
         contentType: "application/pdf",
         metadata: { objectId: input.objectId, sourceStorageKey: input.storageKey },
       });
-      const previewUrl = await this.presignGetUrl(storage, previewStorageKey);
+      const previewUrl = await this.presignGetUrl(input.orgId, previewStorageKey);
       return {
         preview: {
           kind: "pdf",
@@ -1325,19 +1678,45 @@ export class PostgresDriveStore
     orgId: string,
     storageKey: string,
   ): Promise<Uint8Array | undefined> {
-    const storage = await this.storageForOrg(orgId);
-    return this.readObjectBytesFromStorage(storage, storageKey);
-  }
-
-  private async readObjectBytesFromStorage(
-    storage: DriveStorageClient | undefined,
-    storageKey: string,
-  ): Promise<Uint8Array | undefined> {
-    const object = await storage?.get(storageKey);
+    const object = await (await this.storageForOrg(orgId))?.get(storageKey);
     if (object === null || object === undefined) {
       return undefined;
     }
     return toUint8Array(object.body);
+  }
+
+  private emitStorageDelta(orgId: string, byteDelta: number): void {
+    if (byteDelta === 0) {
+      return;
+    }
+
+    void this.options.metering
+      ?.emit(orgId, {
+        type: "storage.delta",
+        quantity: byteDelta,
+        metadata: {
+          bucket: "drive",
+          byte_delta: byteDelta,
+        },
+      })
+      .catch((error: unknown) => {
+        this.options.onMeteringError?.(error);
+      });
+  }
+
+  private emitStorageQuotaExceeded(
+    orgId: string,
+    event: Omit<StorageQuotaExceededEvent, "bucket" | "quota">,
+  ): void {
+    void this.options.events
+      ?.publish("quota.storage.exceeded", {
+        quota: "storage_bytes_limit",
+        bucket: "drive",
+        ...event,
+      })
+      .catch((error: unknown) => {
+        this.options.onQuotaEventError?.(error);
+      });
   }
 
   private async updateFileFolder(input: {
@@ -1384,6 +1763,84 @@ export class PostgresDriveStore
   }
 }
 
+interface StorageQuotaExceededEvent {
+  readonly quota: "storage_bytes_limit";
+  readonly bucket: "drive";
+  readonly used_bytes: number;
+  readonly limit_bytes: number;
+  readonly byte_delta: number;
+  readonly projected_bytes: number;
+}
+
+async function assertStorageQuotaAvailable(
+  sql: SqlLike,
+  orgId: string,
+  byteDelta: number,
+  onExceeded?: (event: Omit<StorageQuotaExceededEvent, "bucket" | "quota">) => void,
+): Promise<void> {
+  if (byteDelta <= 0) {
+    return;
+  }
+
+  const rows = (await sql`
+    select
+      case
+        when o.quotas ? 'storage_bytes_limit' then o.quotas -> 'storage_bytes_limit'
+        when p.quotas_default ? 'storage_bytes_limit' then p.quotas_default -> 'storage_bytes_limit'
+        else '5000000000'::jsonb
+      end as storage_bytes_limit,
+      (
+        select coalesce(sum(distinct_drive_storage.byte_size), 0)::bigint
+        from (
+          select distinct on (stored.storage_key) stored.storage_key, stored.byte_size
+          from (
+            select obj.storage_key, obj.byte_size, 0 as source_rank
+            from objects obj
+            where obj.org_id = ${orgId}
+              and obj.kind in ('file', 'recording')
+              and obj.deleted_at is null
+              and coalesce(obj.metadata->>'status', 'ready') = 'ready'
+            union all
+            select v.storage_key, v.byte_size, 1 as source_rank
+            from drive_versions v
+            join objects obj on obj.id = v.object_id and obj.org_id = v.org_id
+            where v.org_id = ${orgId}
+              and obj.kind in ('file', 'recording')
+              and obj.deleted_at is null
+              and coalesce(obj.metadata->>'status', 'ready') = 'ready'
+          ) stored
+          order by stored.storage_key, stored.source_rank
+        ) distinct_drive_storage
+      ) as storage_used_bytes
+    from orgs o
+    left join plans p on p.id = o.plan_id
+    where o.id = ${orgId}
+    limit 1
+    for update of o
+  `) as unknown as readonly DriveStorageQuotaRow[];
+  const row = rows[0];
+  if (row === undefined) {
+    return;
+  }
+
+  const limit = storageLimitFromJson(row.storage_bytes_limit);
+  if (limit === null) {
+    return;
+  }
+
+  const used = bytesFromDatabase(row.storage_used_bytes);
+  const projected = used + byteDelta;
+  if (Number.isFinite(projected) && projected > limit) {
+    onExceeded?.({
+      used_bytes: used,
+      limit_bytes: limit,
+      byte_delta: byteDelta,
+      projected_bytes: projected,
+    });
+    throw new DriveStorageQuotaExceededError(orgId, limit, projected);
+  }
+}
+
 async function requireObjectAccess(
   sql: SqlLike,
   orgId: string,
@@ -1400,45 +1857,12 @@ async function requireObjectAccess(
     where id = ${objectId}
       and org_id = ${orgId}
       and kind in ('file', 'recording')
-      and ${canReadObjectSql(sql, actorId)}
+      and ${canReadObjectSql(sql, orgId, actorId)}
     limit 1
   `) as unknown as readonly ObjectRow[];
   const object = rows[0];
   if (object === undefined) {
     throw new Error(`Unknown or inaccessible Drive object: ${objectId}`);
-  }
-  return object;
-}
-
-async function requirePdfObjectAccess(
-  sql: SqlLike,
-  orgId: string,
-  actorId: string,
-  objectId: string,
-): Promise<ObjectRow> {
-  const rows = (await sql`
-    select *
-    from objects
-    where id = ${objectId}
-      and org_id = ${orgId}
-      and kind = 'file'
-      and mime_type = 'application/pdf'
-      and (
-        objects.owner_actor_id = ${actorId}
-        or exists (
-          select 1 from permissions p
-          where p.resource_type = 'object'
-            and p.resource_id = objects.id
-            and p.org_id = ${orgId}
-            and p.actor_id = ${actorId}
-            and (p.expires_at is null or p.expires_at > now())
-        )
-      )
-    limit 1
-  `) as unknown as readonly ObjectRow[];
-  const object = rows[0];
-  if (object === undefined) {
-    throw new Error(`Unknown or inaccessible Drive PDF object: ${objectId}`);
   }
   return object;
 }
@@ -1455,7 +1879,7 @@ async function requireFolderAccess(
     where id = ${folderId}
       and org_id = ${orgId}
       and deleted_at is null
-      and ${canReadFolderSql(sql, actorId)}
+      and ${canReadFolderSql(sql, orgId, actorId)}
     limit 1
   `) as unknown as readonly { readonly id: string }[];
   if (rows[0] === undefined) {
@@ -1484,7 +1908,42 @@ async function requireDriveCommentParent(
   }
 }
 
-function canReadObjectSql(sql: SqlLike, actorId: string): postgres.PendingQuery<postgres.Row[]> {
+async function pdfFormSourceMetadata(
+  sql: SqlLike,
+  object: ObjectRow,
+): Promise<PdfFormSourceMetadata> {
+  const rows = (await sql`
+    select version_number, sha256, byte_size
+    from drive_versions
+    where org_id = ${object.org_id}
+      and object_id = ${object.id}
+    order by version_number desc
+    limit 1
+  `) as unknown as readonly {
+    readonly version_number: number;
+    readonly sha256: string;
+    readonly byte_size: string | number;
+  }[];
+  const latest = rows[0];
+  if (latest === undefined) {
+    return {
+      versionNumber: null,
+      sha256: object.sha256,
+      byteSize: numberFromBigIntLike(object.byte_size),
+    };
+  }
+  return {
+    versionNumber: latest.version_number,
+    sha256: latest.sha256,
+    byteSize: numberFromBigIntLike(latest.byte_size),
+  };
+}
+
+function canReadObjectSql(
+  sql: SqlLike,
+  orgId: string,
+  actorId: string,
+): postgres.PendingQuery<postgres.Row[]> {
   return sql`
     (
       objects.owner_actor_id = ${actorId}
@@ -1492,6 +1951,7 @@ function canReadObjectSql(sql: SqlLike, actorId: string): postgres.PendingQuery<
         select 1 from permissions p
         where p.resource_type = 'object'
           and p.resource_id = objects.id
+          and p.org_id = ${orgId}
           and p.actor_id = ${actorId}
           and (p.expires_at is null or p.expires_at > now())
       )
@@ -1523,7 +1983,11 @@ async function syncTargetDeletedAt(
   }
 }
 
-function canReadFolderSql(sql: SqlLike, actorId: string): postgres.PendingQuery<postgres.Row[]> {
+function canReadFolderSql(
+  sql: SqlLike,
+  orgId: string,
+  actorId: string,
+): postgres.PendingQuery<postgres.Row[]> {
   return sql`
     (
       drive_folders.owner_actor_id = ${actorId}
@@ -1531,6 +1995,7 @@ function canReadFolderSql(sql: SqlLike, actorId: string): postgres.PendingQuery<
         select 1 from permissions p
         where p.resource_type = 'drive_folder'
           and p.resource_id = drive_folders.id
+          and p.org_id = ${orgId}
           and p.actor_id = ${actorId}
           and (p.expires_at is null or p.expires_at > now())
       )
@@ -1774,7 +2239,9 @@ function driveObjectNotificationTitle(object: ObjectRow): string {
   );
 }
 
-function mapUpload(row: ObjectRow | undefined): Omit<DriveUploadRecord, "uploadUrl"> {
+function mapUpload(
+  row: ObjectRow | undefined,
+): Omit<DriveUploadRecord, "uploadUrl" | "uploadHeaders"> {
   if (row === undefined) {
     throw new Error("Expected Drive object row.");
   }
@@ -1848,8 +2315,34 @@ function mapObjectEntry(row: DriveSearchRow): DriveEntryRecord {
     storageKey: row.storage_key,
     versionNumber: row.version_number ?? undefined,
     ...drivePreviewProperty(row.mime_type, row.metadata),
-    metadata: row.metadata,
+    metadata: driveObjectMetadataWithListSignals(row),
     deletedAt: row.deleted_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function driveObjectMetadataWithListSignals(row: DriveSearchRow): JsonObject {
+  if (row.mine === undefined && row.shared_count === undefined) {
+    return row.metadata;
+  }
+  return {
+    ...row.metadata,
+    ...(typeof row.mine === "boolean" ? { mine: row.mine } : {}),
+    ...(row.shared_count === undefined || row.shared_count === null
+      ? {}
+      : { sharedCount: bytesFromDatabase(row.shared_count) }),
+  };
+}
+
+function mapDriveAccessGrant(row: DriveAccessGrantRow): DriveAccessGrantRecord {
+  return {
+    actorId: row.actor_id,
+    role: row.role,
+    ...(row.display_name === null ? {} : { displayName: row.display_name }),
+    ...(row.email === null ? {} : { email: row.email }),
+    grantedByActorId: row.granted_by_actor_id,
+    expiresAt: row.expires_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1860,15 +2353,12 @@ function mapSearchHit(row: DriveSearchRow): DriveSearchHit {
   return {
     objectId: row.id,
     name,
-    ownerActorId: row.owner_actor_id,
-    app: stringMetadata(row.metadata, "app") ?? null,
     mimeType: row.mime_type,
     byteSize: row.byte_size,
     sha256: row.sha256,
     folderId: nullableStringMetadata(row.metadata, "folderId"),
     preview: `${name} ${row.mime_type}`.slice(0, 240),
     ...driveSearchPreviewProperty(row.mime_type, row.metadata),
-    metadata: row.metadata,
     updatedAt: row.updated_at,
   };
 }
@@ -1909,37 +2399,6 @@ function mapDriveCommentListItem(row: DriveCommentProjectionRow): DriveCommentLi
   };
 }
 
-async function pdfFormSourceMetadata(
-  sql: SqlLike,
-  object: ObjectRow,
-): Promise<PdfFormSourceMetadata> {
-  const rows = (await sql`
-    select version_number, sha256, byte_size
-    from drive_versions
-    where org_id = ${object.org_id}
-      and object_id = ${object.id}
-    order by version_number desc
-    limit 1
-  `) as unknown as readonly {
-    readonly version_number: number;
-    readonly sha256: string;
-    readonly byte_size: string | number;
-  }[];
-  const latest = rows[0];
-  if (latest === undefined) {
-    return {
-      versionNumber: null,
-      sha256: object.sha256,
-      byteSize: numberFromDatabaseLike(object.byte_size),
-    };
-  }
-  return {
-    versionNumber: latest.version_number,
-    sha256: latest.sha256,
-    byteSize: numberFromDatabaseLike(latest.byte_size),
-  };
-}
-
 function mapDrivePdfFormState(
   row: DrivePdfFormStateRow | undefined,
   currentSource?: PdfFormSourceMetadata,
@@ -1950,8 +2409,6 @@ function mapDrivePdfFormState(
   const currentVersionNumber =
     currentSource?.versionNumber ?? row.current_source_version_number ?? null;
   const currentSha256 = currentSource?.sha256 ?? row.current_source_sha256 ?? null;
-  const currentByteSize =
-    currentSource?.byteSize ?? numberFromNullableDatabaseLike(row.current_source_byte_size ?? null);
   return {
     orgId: row.org_id,
     objectId: row.object_id,
@@ -1959,17 +2416,12 @@ function mapDrivePdfFormState(
     fieldValues: jsonObjectArray(row.field_values),
     sourceVersionNumber: row.source_version_number,
     sourceSha256: row.source_sha256,
-    sourceByteSize: numberFromNullableDatabaseLike(row.source_byte_size),
+    sourceByteSize: numberFromBigIntLike(row.source_byte_size),
     sourceChanged:
       (row.source_version_number !== null &&
         currentVersionNumber !== null &&
         row.source_version_number !== currentVersionNumber) ||
-      (row.source_sha256 !== null &&
-        currentSha256 !== null &&
-        row.source_sha256 !== currentSha256) ||
-      (row.source_byte_size !== null &&
-        currentByteSize !== null &&
-        numberFromDatabaseLike(row.source_byte_size) !== currentByteSize),
+      (row.source_sha256 !== null && currentSha256 !== null && row.source_sha256 !== currentSha256),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2023,6 +2475,31 @@ function driveStorageKey(
   return `drive/${orgId}/${objectId}/v${String(versionNumber)}/${safeName}`;
 }
 
+function assertProvidedFinalizeStorageKey(storageKey: string, currentStorageKey: string): void {
+  if (
+    storageKey !== currentStorageKey ||
+    storageKey.startsWith("/") ||
+    storageKey.includes("..") ||
+    storageKey.includes("\\") ||
+    storageKey.includes("//") ||
+    storageKey.startsWith("tenants/") ||
+    hasControlCharacter(storageKey) ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(storageKey)
+  ) {
+    throw new Error("Drive upload storageKey must be a logical Drive object key.");
+  }
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 32 || code === 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function driveObjectMetadata(value: JsonObject): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
@@ -2035,6 +2512,57 @@ function stringMetadata(metadata: JsonObject, key: string): string | undefined {
 function nullableStringMetadata(metadata: JsonObject, key: string): string | null {
   const value = metadata[key];
   return typeof value === "string" ? value : null;
+}
+
+function finalizedStorageDelta(current: ObjectRow, storageKey: string, byteSize: number): number {
+  const status = stringMetadata(current.metadata, "status");
+  if (status !== "ready") {
+    return byteSize;
+  }
+  if (storageKey === current.storage_key) {
+    return byteSize - current.byte_size;
+  }
+  return byteSize;
+}
+
+function storageLimitFromJson(value: JsonValue | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 5_000_000_000;
+}
+
+function bytesFromDatabase(value: string | number): number {
+  return typeof value === "number" ? value : Number.parseInt(value, 10);
+}
+
+function numberFromBigIntLike(value: string | number | null): number | null {
+  return value === null ? null : bytesFromDatabase(value);
+}
+
+function jsonObjectArray(value: unknown): readonly JsonObject[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: JsonObject[] = [];
+  for (const item of value) {
+    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+      result.push(item as JsonObject);
+    }
+  }
+  return result;
+}
+
+function distinctStoredBytes(
+  objects: readonly { readonly storageKey: string; readonly byteSize: number }[],
+): number {
+  const bytesByStorageKey = new Map<string, number>();
+  for (const object of objects) {
+    if (!bytesByStorageKey.has(object.storageKey)) {
+      bytesByStorageKey.set(object.storageKey, object.byteSize);
+    }
+  }
+  return [...bytesByStorageKey.values()].reduce((sum, byteSize) => sum + byteSize, 0);
 }
 
 function metadataStringProperty(metadata: JsonObject, key: string): Record<string, string> {
@@ -2171,6 +2699,41 @@ function isTextPreviewMime(mimeType: string): boolean {
   );
 }
 
+function isOfficePreviewCandidate(mimeType: string, filename: string): boolean {
+  const normalizedMime = mimeType.toLowerCase();
+  const normalizedName = filename.toLowerCase();
+  if (
+    [
+      "application/msword",
+      "application/vnd.ms-excel",
+      "application/vnd.ms-powerpoint",
+      "application/vnd.oasis.opendocument.text",
+      "application/vnd.oasis.opendocument.spreadsheet",
+      "application/vnd.oasis.opendocument.presentation",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+      "application/vnd.ms-word.document.macroenabled.12",
+      "application/vnd.ms-word.template.macroenabled.12",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+      "application/vnd.ms-excel.sheet.macroenabled.12",
+      "application/vnd.ms-excel.sheet.binary.macroenabled.12",
+      "application/vnd.ms-excel.template.macroenabled.12",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+      "application/vnd.openxmlformats-officedocument.presentationml.template",
+      "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+      "application/vnd.ms-powerpoint.slideshow.macroenabled.12",
+      "application/vnd.ms-powerpoint.template.macroenabled.12",
+    ].includes(normalizedMime)
+  ) {
+    return true;
+  }
+  return /\.(docx|docm|dotx|dotm|doc|odt|xlsx|xlsm|xltx|xltm|xls|xlsb|ods|pptx|pptm|ppsx|ppsm|potx|potm|ppt|pps|odp)$/iu.test(
+    normalizedName,
+  );
+}
+
 function isOfficeMime(mimeType: string): boolean {
   return [
     "application/msword",
@@ -2227,25 +2790,4 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
 
 function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
-}
-
-function numberFromDatabaseLike(value: string | number): number {
-  return typeof value === "number" ? value : Number.parseInt(value, 10);
-}
-
-function numberFromNullableDatabaseLike(value: string | number | null): number | null {
-  return value === null ? null : numberFromDatabaseLike(value);
-}
-
-function jsonObjectArray(value: unknown): readonly JsonObject[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const output: JsonObject[] = [];
-  for (const item of value) {
-    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
-      output.push(item as JsonObject);
-    }
-  }
-  return output;
 }

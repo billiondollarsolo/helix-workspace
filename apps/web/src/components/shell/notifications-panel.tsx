@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { Icons, type IconComponent } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import {
-  notificationsListQuery,
+  notificationsListQueryOptions,
   useMarkAllRead,
   useMarkRead,
   type NotificationItem,
@@ -78,7 +78,7 @@ export interface NotificationsPanelProps {
 export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<"all" | "unread">("all");
-  const { data, isLoading, isError } = useQuery(notificationsListQuery(false));
+  const { data, isLoading, isError } = useQuery(notificationsListQueryOptions(false));
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
 

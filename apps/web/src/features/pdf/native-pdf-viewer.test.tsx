@@ -224,8 +224,7 @@ describe("NativePdfViewer", () => {
         const remove = body as { readonly commentId: string };
         const deleted = comments.find((comment) => comment.id === remove.commentId);
         comments = comments.filter(
-          (comment) =>
-            comment.id !== remove.commentId && comment.parentCommentId !== remove.commentId,
+          (comment) => comment.id !== remove.commentId && comment.parentCommentId !== remove.commentId,
         );
         return Promise.resolve(Response.json(deleted));
       }
@@ -1260,16 +1259,16 @@ describe("NativePdfViewer", () => {
     expect(freehandCommentBody).toContain('"units":"percent"');
     expect(freehandCommentBody).toContain('"strokeColor":"#2563eb"');
     expect(freehandCommentBody).toContain('"strokeWidth":3');
-    expect(freehandCommentBody).toContain(
-      '"points":[{"x":10,"y":10},{"x":50,"y":30},{"x":80,"y":75}]',
-    );
+    expect(freehandCommentBody).toContain('"points":[{"x":10,"y":10},{"x":50,"y":30},{"x":80,"y":75}]');
     expect(list("PDF comments").textContent).toContain("Circle the renewal risk");
     expect(list("PDF comments").textContent).toContain("Page 1 · freehand annotation 3 points");
     expect(
       container.querySelector('[aria-label="PDF freehand annotation: Circle the renewal risk"]'),
     ).not.toBeNull();
     expect(
-      container.querySelector('[aria-label="PDF freehand annotations"]')?.getAttribute("viewBox"),
+      container
+        .querySelector('[aria-label="PDF freehand annotations"]')
+        ?.getAttribute("viewBox"),
     ).toBe("0 0 100 100");
 
     await clickButton("Copy annotation link: Circle the renewal risk");
@@ -2624,9 +2623,7 @@ async function dragPdfRedaction(
   });
 }
 
-async function dragPdfFreehandAnnotation(
-  points: readonly (readonly [number, number])[],
-): Promise<void> {
+async function dragPdfFreehandAnnotation(points: readonly (readonly [number, number])[]): Promise<void> {
   if (points.length < 2) {
     throw new Error("Freehand annotation drag needs at least two points.");
   }

@@ -1,4 +1,42 @@
-import { afterEach, beforeEach } from "vitest";
+import { afterEach, beforeAll, beforeEach } from "vitest";
+
+// `@tanstack/react-virtual` queries the scroll container's clientHeight,
+// scrollHeight, and offsetHeight to size the virtual window. jsdom returns
+// 0 for all of those by default, which collapses the virtualizer to zero
+// rendered rows and breaks every test that relies on virtualized content.
+// Set the layout properties up-front so the virtualizer believes the
+// container has a normal 800x600 viewport and renders its overscan window.
+function installVirtualizerLayoutShims(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+  if (desc?.get?.toString().includes("HELIX_TEST_LAYOUT")) {
+    return;
+  }
+  const define = (
+    prop: "offsetHeight" | "offsetWidth" | "clientHeight" | "clientWidth" | "scrollHeight",
+    value: number,
+  ) => {
+    Object.defineProperty(HTMLElement.prototype, prop, {
+      configurable: true,
+      get: function HELIX_TEST_LAYOUT(this: HTMLElement) {
+        return value;
+      },
+    });
+  };
+  define("offsetHeight", 600);
+  define("clientHeight", 600);
+  define("offsetWidth", 800);
+  define("clientWidth", 800);
+  define("scrollHeight", 600);
+
+  window.ResizeObserver ??= class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver;
+}
 
 function hasUsableLocalStorage(): boolean {
   if (typeof window === "undefined") {
@@ -48,6 +86,10 @@ function installMemoryLocalStorage(): void {
     value: storage,
   });
 }
+
+beforeAll(() => {
+  installVirtualizerLayoutShims();
+});
 
 beforeEach(() => {
   if (!hasUsableLocalStorage()) {

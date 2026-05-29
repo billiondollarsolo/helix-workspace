@@ -382,57 +382,6 @@ describe("sheets sync routes", () => {
     expect(bus.subjects).toEqual([]);
   });
 
-  it("enforces the concurrent editor quota per spreadsheet room", async () => {
-    const store = new InMemorySheetsStore();
-    const sheet = await store.createSheet({ orgId, actorId, title: "Quota" });
-    const firstSocket = new FakeSocket();
-    const blockedSocket = new FakeSocket();
-    const state = { rooms: new Map(), nodeId: "node-a" };
-    const routeOptions = options(store, { concurrentEditorLimit: 1 });
-
-    await handleSheetsSocket(firstSocket, requestFor(sheet.id), routeOptions, state);
-    await handleSheetsSocket(blockedSocket, requestFor(sheet.id), routeOptions, state);
-
-    expect(firstSocket.closed).toBeNull();
-    expect(blockedSocket.closed).toEqual({
-      code: 1008,
-      reason: "Concurrent editor quota exceeded",
-    });
-    expect(blockedSocket.messageHandlerCount).toBe(0);
-
-    firstSocket.close();
-    const nextSocket = new FakeSocket();
-    await handleSheetsSocket(nextSocket, requestFor(sheet.id), routeOptions, state);
-
-    expect(nextSocket.closed).toBeNull();
-    expect(nextSocket.messages[0]).toMatchObject({ type: "ready", sheetId: sheet.id });
-  });
-
-  it("treats a null concurrent editor quota as unlimited for spreadsheets", async () => {
-    const store = new InMemorySheetsStore();
-    const sheet = await store.createSheet({ orgId, actorId, title: "Unlimited" });
-    const firstSocket = new FakeSocket();
-    const secondSocket = new FakeSocket();
-    const state = { rooms: new Map(), nodeId: "node-a" };
-
-    await handleSheetsSocket(
-      firstSocket,
-      requestFor(sheet.id),
-      options(store, { concurrentEditorLimit: null }),
-      state,
-    );
-    await handleSheetsSocket(
-      secondSocket,
-      requestFor(sheet.id),
-      options(store, { concurrentEditorLimit: null }),
-      state,
-    );
-
-    expect(firstSocket.closed).toBeNull();
-    expect(secondSocket.closed).toBeNull();
-    expect(secondSocket.messages[0]).toMatchObject({ type: "ready", sheetId: sheet.id });
-  });
-
   it("tracks active websocket metrics with the sheets route label", async () => {
     const store = new InMemorySheetsStore();
     const sheet = await store.createSheet({ orgId, actorId, title: "Metrics" });
@@ -465,15 +414,11 @@ function options(
       typeof handleSheetsSocket
     >[2]["operationLogCompaction"];
     readonly metrics?: RecordingWebsocketMetrics | undefined;
-    readonly concurrentEditorLimit?: number | null | undefined;
   } = {},
 ): Parameters<typeof handleSheetsSocket>[2] {
   return {
     store,
     actorFromRequest: () => actor,
-    ...(overrides.concurrentEditorLimit === undefined
-      ? {}
-      : { concurrentEditorLimit: () => overrides.concurrentEditorLimit }),
     ...(overrides.events === undefined ? {} : { events: overrides.events }),
     ...(overrides.operationLogCompaction === undefined
       ? {}

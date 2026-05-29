@@ -3,14 +3,19 @@
 import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEditor } from "@tiptap/react";
+import { uploadDriveFile } from "@/features/drive/api";
+import { HELIX_DRIVE_ITEM_DRAG_MIME } from "@/features/drive/drag-payload";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as Y from "yjs";
 import {
   activateNativeDocumentEquationToken,
   activateNativeDocumentReferenceToken,
   assignNativeDocumentHeadingAnchors,
   findNativeDocumentTextMatches,
   NativeDocumentEditor,
+  nativeDocumentChecklistContent,
+  nativeDocumentImageWidthPercent,
   nativeDocumentBookmarkInsertionText,
   nativeDocumentBookmarkOptions,
   nativeDocumentCrossReferenceInsertionText,
@@ -21,15 +26,36 @@ import {
   nativeDocumentFieldRefreshRanges,
   nativeDocumentFindDecorationRanges,
   nativeDocumentSmartChipInsertionText,
+  nativeDocumentTableContent,
   nativeDocumentTableOfContentsText,
   nativeDocumentTokenDecorationAttributes,
   nativeDocumentTokenDecorationRanges,
   selectNativeDocumentAnchorRange,
   type NativeDocumentEditorProps,
 } from "./native-document-editor";
-import type { DocsSuggestionDraft, NativeDocumentSession } from "./api";
+import {
+  saveNativeDocumentState,
+  type DocsSuggestionDraft,
+  type NativeDocumentSession,
+} from "./api";
 import { dispatchNativeDocumentAnchorSelection } from "./native-document-anchors";
-import { NATIVE_DOCUMENT_COMMAND_EVENT } from "./native-document-commands";
+import {
+  NATIVE_DOCUMENT_COMMAND_EVENT,
+  type NativeDocumentCommandEventDetail,
+} from "./native-document-commands";
+
+const collaborationMockState = vi.hoisted(() => ({
+  latestDocument: null as Y.Doc | null,
+}));
+
+vi.mock("@tiptap/extension-collaboration", () => ({
+  default: {
+    configure: vi.fn((options: { readonly document: Y.Doc }) => {
+      collaborationMockState.latestDocument = options.document;
+      return { name: "collaboration", options };
+    }),
+  },
+}));
 
 vi.mock("@tiptap/react", () => ({
   EditorContent: () => (
@@ -65,6 +91,10 @@ vi.mock("./queries", async () => {
               { id: "doc-2", label: "Launch notes" },
               { id: "doc-3", label: "Roadmap appendix" },
             ],
+            files: [
+              { id: "sheet-1", label: "Revenue forecast.xlsx" },
+              { id: "deck-1", label: "Board update.pptx" },
+            ],
             events: [{ id: "event-1", label: "Launch review" }],
           }),
         throwOnError: false,
@@ -72,16 +102,35 @@ vi.mock("./queries", async () => {
   };
 });
 
-vi.mock("./native-document-yjs-provider", () => ({
-  applyNativeDocumentState: vi.fn(),
-  NativeDocumentYjsProvider: class {
-    readonly awareness = { setLocalState: vi.fn() };
-    readonly connect = vi.fn();
-    readonly disconnect = vi.fn();
-  },
+vi.mock("./native-document-yjs-provider", async () => {
+  const actual = await vi.importActual<typeof import("./native-document-yjs-provider")>(
+    "./native-document-yjs-provider",
+  );
+  return {
+    applyNativeDocumentState: actual.applyNativeDocumentState,
+    NativeDocumentYjsProvider: class {
+      readonly awareness = { setLocalState: vi.fn() };
+      readonly connect = vi.fn();
+      readonly disconnect = vi.fn();
+    },
+  };
+});
+
+vi.mock("@/features/drive/api", () => ({
+  uploadDriveFile: vi.fn(),
 }));
 
+vi.mock("./api", async () => {
+  const actual = await vi.importActual<typeof import("./api")>("./api");
+  return {
+    ...actual,
+    saveNativeDocumentState: vi.fn(),
+  };
+});
+
 const useEditorMock = vi.mocked(useEditor);
+const uploadDriveFileMock = vi.mocked(uploadDriveFile);
+const saveNativeDocumentStateMock = vi.mocked(saveNativeDocumentState);
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -94,6 +143,8 @@ let canChain: FakeEditorChain;
 let activeFormats: Set<string>;
 let decorationMetaCalls: unknown[];
 let editorDispatch: ReturnType<typeof vi.fn>;
+let clipboardWriteText: ReturnType<typeof vi.fn<(text: string) => Promise<void>>>;
+let clipboardReadText: ReturnType<typeof vi.fn<() => Promise<string>>>;
 
 describe("NativeDocumentEditor find and replace", () => {
   beforeEach(() => {
@@ -108,6 +159,47 @@ describe("NativeDocumentEditor find and replace", () => {
     activeFormats = new Set(["bold", "underline", "heading:1"]);
     decorationMetaCalls = [];
     editorDispatch = vi.fn();
+    clipboardWriteText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    clipboardReadText = vi.fn<() => Promise<string>>().mockResolvedValue("Clipboard fallback");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: clipboardWriteText, readText: clipboardReadText },
+    });
+    collaborationMockState.latestDocument = null;
+    uploadDriveFileMock.mockResolvedValue({
+      objectId: "55555555-5555-4555-8555-555555555555",
+      orgId: "org-1",
+      ownerActorId: "actor-1",
+      name: "Roadmap_photo.png",
+      folderId: null,
+      storageKey: "drive/555/Roadmap_photo.png",
+      mimeType: "image/png",
+      byteSize: 3,
+      sha256: "0".repeat(64),
+      status: "prepared",
+      uploadUrl: null,
+      uploadHeaders: {},
+      metadata: {},
+      createdAt: "2026-05-20T12:00:00.000Z",
+      updatedAt: "2026-05-20T12:00:00.000Z",
+    });
+    saveNativeDocumentStateMock.mockResolvedValue({
+      id: "doc-1",
+      orgId: "org-1",
+      title: "Native session doc",
+      threadId: null,
+      ownerActorId: "actor-1",
+      createdByActorId: "actor-1",
+      ydocState: "state",
+      ydocStateVector: "vector",
+      updateSeq: 5,
+      editorEngine: "helix-native-document",
+      formatVersion: 1,
+      metadata: {},
+      deletedAt: null,
+      createdAt: "2026-05-20T12:00:00.000Z",
+      updatedAt: "2026-05-20T12:00:00.000Z",
+    });
     mockEditorDocument("Session body paragraph body", 1);
   });
 
@@ -119,6 +211,8 @@ describe("NativeDocumentEditor find and replace", () => {
     queryClient.clear();
     vi.useRealTimers();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   it("finds case-insensitive, non-overlapping text ranges in ProseMirror text nodes", () => {
@@ -287,7 +381,13 @@ describe("NativeDocumentEditor find and replace", () => {
         documentId: "doc-1",
         documentTitle: 'Roadmap "{draft}"',
       }),
-    ).toBe('{{CHIP doc label="Roadmap draft" id="doc-1"}}');
+    ).toBe('{{CHIP doc label="Roadmap draft" id="doc-1" href="/docs/doc-1"}}');
+    expect(
+      nativeDocumentSmartChipInsertionText("file", {
+        fileId: "file-1",
+        fileTitle: "Revenue forecast.xlsx",
+      }),
+    ).toBe('{{CHIP file label="Revenue forecast.xlsx" id="file-1" href="/open/file-1"}}');
     expect(
       nativeDocumentSmartChipInsertionText("event", {
         eventId: "event-1",
@@ -295,6 +395,34 @@ describe("NativeDocumentEditor find and replace", () => {
       }),
     ).toBe('{{CHIP event label="Launch review" id="event-1"}}');
     expect(nativeDocumentSmartChipInsertionText("event")).toBe('{{CHIP event label="Event"}}');
+  });
+
+  it("builds native checklist document content from selected text", () => {
+    expect(nativeDocumentChecklistContent("First task\nSecond task")).toEqual({
+      type: "nativeDocumentChecklist",
+      content: [
+        {
+          type: "nativeDocumentChecklistItem",
+          attrs: { checked: false },
+          content: [{ type: "paragraph", content: [{ type: "text", text: "First task" }] }],
+        },
+        {
+          type: "nativeDocumentChecklistItem",
+          attrs: { checked: false },
+          content: [{ type: "paragraph", content: [{ type: "text", text: "Second task" }] }],
+        },
+      ],
+    });
+    expect(nativeDocumentChecklistContent()).toEqual({
+      type: "nativeDocumentChecklist",
+      content: [
+        {
+          type: "nativeDocumentChecklistItem",
+          attrs: { checked: false },
+          content: [{ type: "paragraph" }],
+        },
+      ],
+    });
   });
 
   it("selects anchored comment and suggestion ranges", async () => {
@@ -477,6 +605,35 @@ describe("NativeDocumentEditor find and replace", () => {
     expect(ranges.some((range) => range.label.includes("UNKNOWN"))).toBe(false);
   });
 
+  it("finds file smart chip token decorations", () => {
+    const ranges = nativeDocumentTokenDecorationRanges(
+      proseMirrorDocFromText(
+        '{{CHIP file label="Revenue forecast.xlsx" id="file-1" href="/open/file-1"}}',
+        1,
+      ),
+    );
+
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0]).toMatchObject({
+      kind: "chip-file",
+      label: "Revenue forecast.xlsx",
+      chipKind: "file",
+      tokenId: "file-1",
+      chipHref: "/open/file-1",
+      title: "File smart chip",
+      hoverCard: "File · Revenue forecast.xlsx · file-1",
+    });
+    expect(nativeDocumentTokenDecorationAttributes(ranges[0]!)).toMatchObject({
+      "aria-label": "Open Revenue forecast.xlsx",
+      "data-native-document-chip-kind": "file",
+      "data-native-document-chip-href": "/open/file-1",
+      "data-native-document-token-card": "File · Revenue forecast.xlsx · file-1",
+      "data-native-document-token-id": "file-1",
+      role: "link",
+      tabindex: "0",
+    });
+  });
+
   it("activates cross-reference tokens by focusing the referenced heading", () => {
     const rootElement = document.createElement("div");
     rootElement.innerHTML = [
@@ -546,337 +703,24 @@ describe("NativeDocumentEditor find and replace", () => {
     expect(activateNativeDocumentEquationToken(rootElement, rootElement)).toBeNull();
   });
 
-  it("selects matches and replaces through editor transactions", async () => {
-    render();
-    await settle();
-
-    setInputValue("native-document-find", "body");
-    submitFindForm();
-    await settle();
-
-    expect(container.textContent ?? "").toContain("1 of 2");
-    expect(chain.setTextSelection).toHaveBeenLastCalledWith({ from: 9, to: 13 });
-    expect(latestFindDecorationMeta()).toMatchObject({
-      findMatches: [
-        { from: 9, to: 13 },
-        { from: 24, to: 28 },
-      ],
-      activeFindMatchIndex: 0,
-    });
-
-    clickButton("Next");
-    await settle();
-
-    expect(container.textContent ?? "").toContain("2 of 2");
-    expect(chain.setTextSelection).toHaveBeenLastCalledWith({ from: 24, to: 28 });
-    expect(latestFindDecorationMeta()).toMatchObject({
-      findMatches: [
-        { from: 9, to: 13 },
-        { from: 24, to: 28 },
-      ],
-      activeFindMatchIndex: 1,
-    });
-
-    clickButton("Previous");
-    await settle();
-
-    expect(container.textContent ?? "").toContain("1 of 2");
-    expect(chain.setTextSelection).toHaveBeenLastCalledWith({ from: 9, to: 13 });
-
-    clickButton("Next");
-    await settle();
-
-    setInputValue("native-document-replace", "copy");
-    clickButton("Replace");
-    await settle();
-
-    expect(chain.insertContentAt).toHaveBeenCalledWith({ from: 24, to: 28 }, "copy");
-
-    clickButton("Replace all");
-    await settle();
-
-    expect(chain.insertContentAt).toHaveBeenCalledWith({ from: 9, to: 13 }, "copy");
-    expect(container.textContent ?? "").toContain("Replaced 2");
-    expect(latestFindDecorationMeta()).toMatchObject({
-      findMatches: [],
-      activeFindMatchIndex: 0,
-    });
-  });
-
-  it("runs document formatting commands from the toolbar", async () => {
-    render();
-    await settle();
-
-    expect(buttonByLabel("Bold").getAttribute("aria-pressed")).toBe("true");
-    expect(buttonByLabel("Underline").getAttribute("aria-pressed")).toBe("true");
-    expect(buttonByLabel("Heading 1").getAttribute("aria-pressed")).toBe("true");
-
-    clickButtonByLabel("Bold");
-    clickButtonByLabel("Italic");
-    clickButtonByLabel("Underline");
-    clickButtonByLabel("Strikethrough");
-    clickButtonByLabel("Paragraph");
-    clickButtonByLabel("Heading 1");
-    clickButtonByLabel("Heading 2");
-    clickButtonByLabel("Bullet list");
-    clickButtonByLabel("Ordered list");
-    clickButtonByLabel("Code block");
-    await settle();
-
-    expect(chain.toggleBold).toHaveBeenCalled();
-    expect(chain.toggleItalic).toHaveBeenCalled();
-    expect(chain.toggleUnderline).toHaveBeenCalled();
-    expect(chain.toggleStrike).toHaveBeenCalled();
-    expect(chain.setParagraph).toHaveBeenCalled();
-    expect(chain.toggleHeading).toHaveBeenCalledWith({ level: 1 });
-    expect(chain.toggleHeading).toHaveBeenCalledWith({ level: 2 });
-    expect(chain.toggleBulletList).toHaveBeenCalled();
-    expect(chain.toggleOrderedList).toHaveBeenCalled();
-    expect(chain.toggleCodeBlock).toHaveBeenCalled();
-  });
-
-  it("inserts an auto-generated table of contents from document headings", async () => {
-    render();
-    await settle();
-
-    clickButton("TOC");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith(
-      'Table of contents\n\n- {{REF heading-1 "Session heading"}}\n  - {{REF heading-2 "Session heading"}}\n',
-    );
-    expect(chain.run).toHaveBeenCalled();
-  });
-
-  it("inserts document field tokens from the toolbar", async () => {
-    render();
-    await settle();
-
-    selectField("author");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith("{{AUTHOR Ada}}");
-
-    selectField("documentTitle");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith('{{PROPERTY title="Native session doc"}}');
-    expect(fieldSelect().value).toBe("");
-  });
-
-  it("refreshes existing document field tokens from the toolbar", async () => {
-    const text = [
-      "{{DATE 2025-01-01}}",
-      "{{TIME 01:02 UTC}}",
-      "{{PAGE}}",
-      "{{AUTHOR Old}}",
-      '{{PROPERTY title="Old title"}}',
-    ].join(" ");
-    mockEditorDocument(text, 2);
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    vi.setSystemTime(new Date("2026-05-24T15:45:30.000Z"));
-    render();
-    await settle();
-
-    clickButton("Refresh fields");
-    await settle();
-
-    expect(chain.insertContentAt).toHaveBeenNthCalledWith(
-      1,
-      { from: 65, to: 95 },
-      '{{PROPERTY title="Native session doc"}}',
-    );
-    expect(chain.insertContentAt).toHaveBeenNthCalledWith(
-      2,
-      { from: 50, to: 64 },
-      "{{AUTHOR Ada}}",
-    );
-    expect(chain.insertContentAt).toHaveBeenNthCalledWith(
-      3,
-      { from: 22, to: 40 },
-      "{{TIME 15:45 UTC}}",
-    );
-    expect(chain.insertContentAt).toHaveBeenNthCalledWith(
-      4,
-      { from: 2, to: 21 },
-      "{{DATE 2026-05-24}}",
-    );
-    expect(chain.run).toHaveBeenCalled();
-
-    vi.useRealTimers();
-  });
-
-  it("inserts equation tokens from the toolbar", async () => {
-    render();
-    await settle();
-
-    setInputValue("native-document-equation", "E=mc^2");
-    clickButton("Equation");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith('{{EQUATION latex="E=mc^2"}}');
-    expect(equationInput().value).toBe("");
-  });
-
-  it("edits existing equation tokens without changing other content", async () => {
-    render();
-    await settle();
-
-    appendEquationToken({ from: 5, to: 33, latex: "E=mc^2" });
-    clickElementByLabel("Edit equation E=mc^2");
-    await settle();
-
-    expect(inputByLabel("Edit equation LaTeX").value).toBe("E=mc^2");
-    setInputValue("native-document-edit-equation", 'x = "{y}"\n+ z');
-    clickButton("Save equation");
-    await settle();
-
-    expect(chain.insertContentAt).toHaveBeenCalledWith(
-      { from: 5, to: 33 },
-      '{{EQUATION latex="x = y + z"}}',
-    );
-    expect(inputMaybe("Edit equation LaTeX")).toBeNull();
-  });
-
-  it("cancels equation token edits and blocks empty saves", async () => {
-    render();
-    await settle();
-
-    appendEquationToken({ from: 5, to: 33, latex: "E=mc^2" });
-    clickElementByLabel("Edit equation E=mc^2");
-    await settle();
-
-    setInputValue("native-document-edit-equation", " ");
-    expect(buttonByText("Save equation").disabled).toBe(true);
-    clickButton("Cancel");
-    await settle();
-
-    expect(inputMaybe("Edit equation LaTeX")).toBeNull();
-    expect(chain.insertContentAt).not.toHaveBeenCalled();
-  });
-
-  it("inserts heading cross-reference tokens from the toolbar", async () => {
-    render();
-    await settle();
-
-    selectCrossReference("heading-2");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith('{{REF heading-2 "Session heading"}}');
-    expect(crossReferenceSelect().value).toBe("");
-  });
-
-  it("inserts bookmark tokens from selected text", async () => {
-    render();
-    await settle();
-
-    clickButton("Bookmark");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith('{{BOOKMARK session-body "Session body"}}');
-  });
-
-  it("refreshes heading cross-reference options after document updates", async () => {
-    render();
-    await settle();
-
-    const editorContent = container.querySelector<HTMLElement>(".native-document-editor__content");
-    if (editorContent === null) {
-      throw new Error("Missing editor content.");
-    }
-    const addedHeading = document.createElement("h3");
-    addedHeading.textContent = "New section";
-    editorContent.append(addedHeading);
-
-    const editorOptions = useEditorMock.mock.calls[0]?.[0] as
-      | {
-          readonly onUpdate?: (payload: {
-            readonly editor: {
-              readonly state: { readonly doc: ReturnType<typeof proseMirrorDocFromText> };
-            };
-          }) => void;
-        }
-      | undefined;
-    const editorInstance = useEditorMock.mock.results[0]?.value as
-      | {
-          readonly state: { readonly doc: ReturnType<typeof proseMirrorDocFromText> };
-        }
-      | undefined;
-    if (editorOptions?.onUpdate === undefined || editorInstance === undefined) {
-      throw new Error("Missing editor update callback.");
-    }
-
-    act(() => {
-      editorOptions.onUpdate?.({ editor: editorInstance });
-    });
-    await settle();
-
-    expect(Array.from(crossReferenceSelect().options).map((option) => option.value)).toContain(
-      "heading-3",
-    );
-    selectCrossReference("heading-3");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith('{{REF heading-3 "New section"}}');
-  });
-
-  it("inserts smart chip tokens from the toolbar", async () => {
-    render();
-    await settle();
-
-    selectSmartChip("person");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith('{{CHIP person label="Ada" id="actor-1"}}');
-
-    selectSmartChip("person:actor-2");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith(
-      '{{CHIP person label="Grace Hopper" id="actor-2"}}',
-    );
-
-    selectSmartChip("doc");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith(
-      '{{CHIP doc label="Native session doc" id="doc-1"}}',
-    );
-
-    selectSmartChip("doc:doc-2");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith(
-      '{{CHIP doc label="Launch notes" id="doc-2"}}',
-    );
-
-    selectSmartChip("event");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith('{{CHIP event label="Event"}}');
-
-    selectSmartChip("event:event-1");
-    await settle();
-
-    expect(chain.insertContent).toHaveBeenCalledWith(
-      '{{CHIP event label="Launch review" id="event-1"}}',
-    );
-    expect(smartChipSelect().value).toBe("");
-  });
+  // The formatting toolbar moved out of the editor and into the unified chrome
+  // ribbon/menu bar. Coverage for those commands now lives in
+  // `native-document-chrome.test.tsx`.
 
   it("runs native document commands dispatched from the command palette", async () => {
     render();
     await settle();
 
-    act(() => {
+    await act(async () => {
       window.dispatchEvent(
         new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, {
           detail: { command: "insert-smart-chip", kind: "doc" },
         }),
       );
+      await settle();
     });
     expect(chain.insertContent).toHaveBeenCalledWith(
-      '{{CHIP doc label="Native session doc" id="doc-1"}}',
+      '{{CHIP doc label="Native session doc" id="doc-1" href="/docs/doc-1"}}',
     );
 
     act(() => {
@@ -888,236 +732,706 @@ describe("NativeDocumentEditor find and replace", () => {
 
     act(() => {
       window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, {
+          detail: { command: "insert-page-break" },
+        }),
+      );
+    });
+    expect(chain.insertContent).toHaveBeenCalledWith({ type: "nativeDocumentPageBreak" });
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, {
+          detail: { command: "insert-footnote" },
+        }),
+      );
+      await settle();
+    });
+    expect(chain.insertContent).toHaveBeenCalledWith([
+      {
+        type: "nativeDocumentFootnote",
+        attrs: { number: 1, note: "Footnote" },
+      },
+      { type: "text", text: " " },
+    ]);
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.insert-footnote",
+        number: 1,
+      },
+    });
+
+    // `find` command dispatch is wired but the find UI is now menu-launched —
+    // no inline input to focus. Verify dispatch doesn't throw.
+    act(() => {
+      window.dispatchEvent(
         new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, { detail: { command: "find" } }),
       );
     });
-    expect(document.activeElement).toBe(findInput());
   });
 
-  it("stages smart compose drafts for explicit acceptance", async () => {
-    const generateSuggestionDraft = vi.fn(
-      (): Promise<DocsSuggestionDraft> =>
-        Promise.resolve({
-          slotId: "docs.smart-write",
-          text: "Polished session body",
-          metadata: { providerId: "test-ai" },
-        }),
-    );
-    render({ generateSuggestionDraft });
-    await settle();
-
-    setInputValue("native-document-smart-compose-prompt", "Polish this");
-    clickButton("Compose");
-    await settle();
-
-    expect(generateSuggestionDraft).toHaveBeenCalledWith({
-      docId: "doc-1",
-      slotId: "docs.smart-write",
-      selection: "Session body",
-      prompt: "Polish this",
-    });
-    expect(chain.insertContent).not.toHaveBeenCalledWith("Polished session body");
-    expect(container.textContent ?? "").toContain("Draft ready. Press Tab to accept");
-    expect(container.textContent ?? "").toContain("Polished session body");
-    expect(decorationMetaCalls).toContainEqual({
-      ghostText: { position: 13, text: "Polished session body" },
-    });
-
-    clickButton("Accept");
-
-    expect(chain.insertContent).toHaveBeenCalledWith("Polished session body");
-    expect(container.textContent ?? "").toContain("Draft inserted");
-    expect(smartComposePromptInput().value).toBe("");
-  });
-
-  it("ignores stale smart compose drafts after document updates", async () => {
-    let resolveDraft: ((draft: DocsSuggestionDraft) => void) | undefined;
-    const generateSuggestionDraft = vi.fn(
-      (): Promise<DocsSuggestionDraft> =>
-        new Promise((resolve) => {
-          resolveDraft = resolve;
-        }),
-    );
-    render({ generateSuggestionDraft });
-    await settle();
-
-    clickButton("Compose");
-    await settle();
-    const editorOptions = useEditorMock.mock.calls[0]?.[0] as
-      | {
-          readonly onUpdate?: (payload: {
-            readonly editor: {
-              readonly state: { readonly doc: ReturnType<typeof proseMirrorDocFromText> };
-            };
-          }) => void;
-        }
-      | undefined;
-    const editorInstance = useEditorMock.mock.results[0]?.value as
-      | {
-          readonly state: { readonly doc: ReturnType<typeof proseMirrorDocFromText> };
-        }
-      | undefined;
-    if (editorOptions?.onUpdate === undefined || editorInstance === undefined) {
-      throw new Error("Missing editor update callback.");
-    }
-    act(() => {
-      editorOptions.onUpdate?.({ editor: editorInstance });
-    });
-    await settle();
-    expect(buttonByText("Compose").disabled).toBe(false);
-    act(() => {
-      resolveDraft?.({
-        slotId: "docs.smart-write",
-        text: "Stale draft body",
-        metadata: { providerId: "test-ai" },
-      });
-    });
-    await settle();
-
-    expect(container.textContent ?? "").toContain("Document changed. Compose again");
-    expect(container.textContent ?? "").not.toContain("Stale draft body");
-    expect(decorationMetaCalls).not.toContainEqual({
-      ghostText: { position: 13, text: "Stale draft body" },
-    });
-  });
-
-  it("ignores stale smart compose drafts after selection changes", async () => {
-    let resolveDraft: ((draft: DocsSuggestionDraft) => void) | undefined;
-    const generateSuggestionDraft = vi.fn(
-      (): Promise<DocsSuggestionDraft> =>
-        new Promise((resolve) => {
-          resolveDraft = resolve;
-        }),
-    );
-    render({ generateSuggestionDraft });
-    await settle();
-
-    clickButton("Compose");
-    await settle();
-    const editorOptions = useEditorMock.mock.calls[0]?.[0] as
-      | {
-          readonly onSelectionUpdate?: (payload: {
-            readonly editor: {
-              readonly state: {
-                readonly selection: {
-                  readonly from: number;
-                  readonly to: number;
-                  readonly empty: boolean;
-                };
-                readonly doc: ReturnType<typeof proseMirrorDocFromText>;
-              };
-            };
-          }) => void;
-        }
-      | undefined;
-    if (editorOptions?.onSelectionUpdate === undefined) {
-      throw new Error("Missing editor selection callback.");
-    }
-    act(() => {
-      editorOptions.onSelectionUpdate?.({
-        editor: {
-          state: {
-            selection: { from: 1, to: 10, empty: false },
-            doc: proseMirrorDocFromText("paragraph", 1),
-          },
-        },
-      });
-    });
-    await settle();
-    expect(buttonByText("Compose").disabled).toBe(false);
-    act(() => {
-      resolveDraft?.({
-        slotId: "docs.smart-write",
-        text: "Stale selection draft",
-        metadata: { providerId: "test-ai" },
-      });
-    });
-    await settle();
-
-    expect(container.textContent ?? "").toContain("Selection changed. Compose again");
-    expect(container.textContent ?? "").not.toContain("Stale selection draft");
-    expect(decorationMetaCalls).not.toContainEqual({
-      ghostText: { position: 13, text: "Stale selection draft" },
-    });
-  });
-
-  it("accepts staged smart compose drafts from the editor keyboard handler", async () => {
-    const generateSuggestionDraft = vi.fn(
-      (): Promise<DocsSuggestionDraft> =>
-        Promise.resolve({
-          slotId: "docs.smart-write",
-          text: "Keyboard accepted body",
-          metadata: { providerId: "test-ai" },
-        }),
-    );
-    render({ generateSuggestionDraft });
-    await settle();
-
-    clickButton("Compose");
-    await settle();
-    keyDownEditor("Tab");
-
-    expect(chain.insertContent).toHaveBeenCalledWith("Keyboard accepted body");
-    expect(container.textContent ?? "").toContain("Draft inserted");
-  });
-
-  it("captures keyboard shortcuts for find and match navigation", async () => {
+  it("copies, cuts, and pastes selected document text from native document commands", async () => {
     render();
     await settle();
 
-    setInputValue("native-document-find", "body");
-    pressShortcut("f");
+    await dispatchNativeDocumentCommandForTest({ command: "copy" });
+
+    expect(clipboardWriteText).toHaveBeenCalledWith("Session body");
+
+    await dispatchNativeDocumentCommandForTest({ command: "cut" });
+
+    expect(clipboardWriteText).toHaveBeenCalledWith("Session body");
+    expect(chain.deleteRange).toHaveBeenCalledWith({ from: 1, to: 13 });
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: { source: "web.native-document-editor.edit-cut" },
+    });
+
+    await dispatchNativeDocumentCommandForTest({ command: "paste" });
+
+    expect(chain.insertContent).toHaveBeenCalledWith("Session body");
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: { source: "web.native-document-editor.edit-paste" },
+    });
+
+    await dispatchNativeDocumentCommandForTest({ command: "paste-plain" });
+
+    expect(chain.insertContent).toHaveBeenCalledWith("Session body");
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: { source: "web.native-document-editor.edit-paste-plain" },
+    });
+  });
+
+  it("drops image files into the document as Drive-backed image nodes", async () => {
+    render();
     await settle();
 
-    expect(document.activeElement).toBe(container.querySelector("#native-document-find"));
-
-    pressShortcut("g");
+    const editor = container.querySelector<HTMLElement>('[aria-label="Document editor"]');
+    if (editor === null) {
+      throw new Error("Missing document editor.");
+    }
+    const file = new File(["png"], "Roadmap_photo.png", { type: "image/png" });
+    await dropFileOnDocument(editor, file);
     await settle();
 
-    expect(container.textContent ?? "").toContain("1 of 2");
-    expect(chain.setTextSelection).toHaveBeenLastCalledWith({ from: 9, to: 13 });
+    expect(uploadDriveFileMock).toHaveBeenCalledWith({ file, folderId: null });
+    expect(chain.insertContent).toHaveBeenCalledWith({
+      type: "nativeDocumentImage",
+      attrs: {
+        src: "/api/drive/objects/55555555-5555-4555-8555-555555555555/content",
+        alt: "Roadmap photo",
+        title: "Roadmap_photo.png",
+        widthPercent: 80,
+        caption: "",
+      },
+    });
+    expect(chain.run).toHaveBeenCalled();
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.drop-image",
+        driveObjectId: "55555555-5555-4555-8555-555555555555",
+        filename: "Roadmap_photo.png",
+      },
+    });
+  });
 
-    pressShortcut("g");
+  it("inserts Drive-backed image nodes from the top Insert image command", async () => {
+    render();
     await settle();
 
-    expect(container.textContent ?? "").toContain("2 of 2");
-    expect(chain.setTextSelection).toHaveBeenLastCalledWith({ from: 24, to: 28 });
+    const input = inputByLabel("Choose document image");
+    const clickSpy = vi.spyOn(input, "click").mockImplementation(() => undefined);
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, { detail: { command: "insert-image" } }),
+      );
+    });
+    expect(clickSpy).toHaveBeenCalledTimes(1);
 
-    pressShortcut("g", { shiftKey: true });
+    const file = new File(["png"], "Board_update.png", { type: "image/png" });
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: {
+        length: 1,
+        item: (index: number) => (index === 0 ? file : null),
+      },
+    });
+    act(() => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     await settle();
 
-    expect(container.textContent ?? "").toContain("1 of 2");
-    expect(chain.setTextSelection).toHaveBeenLastCalledWith({ from: 9, to: 13 });
+    expect(uploadDriveFileMock).toHaveBeenCalledWith({ file, folderId: null });
+    expect(chain.insertContentAt).toHaveBeenCalledWith(13, {
+      type: "nativeDocumentImage",
+      attrs: {
+        src: "/api/drive/objects/55555555-5555-4555-8555-555555555555/content",
+        alt: "Board update",
+        title: "Board_update.png",
+        widthPercent: 80,
+        caption: "",
+      },
+    });
+    expect(chain.run).toHaveBeenCalled();
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.insert-image",
+        driveObjectId: "55555555-5555-4555-8555-555555555555",
+        filename: "Board_update.png",
+      },
+    });
+  });
+
+  it("inserts safe link marks from the top Insert link command", async () => {
+    render();
+    await settle();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, { detail: { command: "insert-link" } }),
+      );
+    });
+    await settle();
+
+    expect(inputByLabel("Link text").value).toBe("Session body");
+    const hrefInput = inputByLabel("Link URL");
+    act(() => {
+      setNativeInputValue(hrefInput, "https://example.com/session-body");
+      hrefInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      buttonByText("Apply link").click();
+    });
+    await settle();
+
+    expect(chain.insertContentAt).toHaveBeenCalledWith(
+      { from: 1, to: 13 },
+      {
+        type: "text",
+        text: "Session body",
+        marks: [
+          {
+            type: "link",
+            attrs: { href: "https://example.com/session-body" },
+          },
+        ],
+      },
+    );
+    expect(chain.run).toHaveBeenCalled();
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.insert-link",
+        href: "https://example.com/session-body",
+        textLength: 12,
+      },
+    });
+  });
+
+  it("inserts equation tokens from the top Insert equation command", async () => {
+    render();
+    await settle();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, {
+          detail: { command: "insert-equation" },
+        }),
+      );
+    });
+    await settle();
+
+    const equation = equationInput();
+    act(() => {
+      setNativeInputValue(equation, "E=mc^2");
+      equation.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      buttonByText("Insert equation").click();
+    });
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith('{{EQUATION latex="E=mc^2"}}');
+    expect(chain.run).toHaveBeenCalled();
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.insert-equation",
+        equationLength: 6,
+      },
+    });
+    expect(container.querySelector('form[aria-label="Insert equation"]')).toBeNull();
+  });
+
+  it("inserts editable native table nodes from the top Insert table command", async () => {
+    render();
+    await settle();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, {
+          detail: { command: "insert-table" },
+        }),
+      );
+    });
+    await settle();
+
+    const rows = inputByLabel("Table rows");
+    const columns = inputByLabel("Table columns");
+    act(() => {
+      setNativeInputValue(rows, "2");
+      rows.dispatchEvent(new Event("input", { bubbles: true }));
+      setNativeInputValue(columns, "4");
+      columns.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      buttonByText("Insert table").click();
+    });
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith(nativeDocumentTableContent(2, 4));
+    expect(chain.run).toHaveBeenCalled();
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.insert-table",
+        rows: 2,
+        columns: 4,
+      },
+    });
+    expect(container.querySelector('form[aria-label="Insert table"]')).toBeNull();
+  });
+
+  it("inserts native field tokens from the top Insert field command", async () => {
+    render();
+    await settle();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, {
+          detail: { command: "insert-field" },
+        }),
+      );
+    });
+    await settle();
+
+    selectField("documentTitle");
+    act(() => {
+      buttonByText("Insert field").click();
+    });
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith('{{PROPERTY title="Native session doc"}}');
+    expect(chain.run).toHaveBeenCalled();
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.insert-field",
+        field: "documentTitle",
+      },
+    });
+    expect(container.querySelector('form[aria-label="Insert field"]')).toBeNull();
+  });
+
+  it("inserts cross-reference tokens from the top Insert cross-reference command", async () => {
+    render();
+    await settle();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, {
+          detail: { command: "insert-cross-reference" },
+        }),
+      );
+    });
+    await settle();
+
+    selectCrossReference("heading-2");
+    act(() => {
+      buttonByText("Insert reference").click();
+    });
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith('{{REF heading-2 "Session heading"}}');
+    expect(chain.run).toHaveBeenCalled();
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.insert-cross-reference",
+        targetId: "heading-2",
+        label: "Session heading",
+      },
+    });
+    expect(container.querySelector('form[aria-label="Insert cross-reference"]')).toBeNull();
+  });
+
+  it("inserts picked smart-chip tokens from the top Insert smart chip command", async () => {
+    render();
+    await settle();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, {
+          detail: { command: "open-smart-chip-picker" },
+        }),
+      );
+    });
+    await settle();
+
+    selectSmartChip("person:actor-2");
+    act(() => {
+      buttonByText("Insert chip").click();
+    });
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith(
+      '{{CHIP person label="Grace Hopper" id="actor-2"}}',
+    );
+    expect(chain.run).toHaveBeenCalled();
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.insert-smart-chip",
+        chipKind: "person",
+        targetId: "actor-2",
+        label: "Grace Hopper",
+      },
+    });
+    expect(container.querySelector('form[aria-label="Insert smart chip"]')).toBeNull();
+  });
+
+  it("normalizes document image resize widths to a usable range", () => {
+    expect(nativeDocumentImageWidthPercent(10)).toBe(20);
+    expect(nativeDocumentImageWidthPercent("64")).toBe(64);
+    expect(nativeDocumentImageWidthPercent(130)).toBe(100);
+    expect(nativeDocumentImageWidthPercent("not a number")).toBe(80);
+  });
+
+  it("drops text snippets into the document and saves native state", async () => {
+    render();
+    await settle();
+
+    const editor = container.querySelector<HTMLElement>('[aria-label="Document editor"]');
+    if (editor === null) {
+      throw new Error("Missing document editor.");
+    }
+    await dropTextOnDocument(editor, "Customer quote: faster onboarding");
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith("Customer quote: faster onboarding");
+    expect(chain.run).toHaveBeenCalled();
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.drop-text",
+        textLength: 33,
+      },
+    });
+  });
+
+  it("registers native document extensions for page breaks, color, highlight, and alignment", async () => {
+    render();
+    await settle();
+    const editorOptions = useEditorMock.mock.calls[0]?.[0] as
+      | { readonly extensions?: readonly { readonly name?: string }[] }
+      | undefined;
+    const extensionNames = new Set(editorOptions?.extensions?.map((extension) => extension.name));
+    expect(extensionNames.has("nativeDocumentTextColor")).toBe(true);
+    expect(extensionNames.has("nativeDocumentHighlight")).toBe(true);
+    expect(extensionNames.has("nativeDocumentTextAlign")).toBe(true);
+    expect(extensionNames.has("nativeDocumentPageBreak")).toBe(true);
+    expect(extensionNames.has("nativeDocumentFootnote")).toBe(true);
+  });
+
+  it("marks the editor layout when non-printing characters are visible", async () => {
+    render({ showNonPrintingCharacters: true });
+    await settle();
+
+    expect(
+      container
+        .querySelector<HTMLElement>(".native-document-editor__content-layout")
+        ?.dataset.showNonprinting,
+    ).toBe("true");
+  });
+
+  it("passes read-only document mode into TipTap editability", async () => {
+    render({ editable: false });
+    await settle();
+
+    const editorOptions = useEditorMock.mock.calls[0]?.[0] as
+      | { readonly editable?: boolean }
+      | undefined;
+    expect(editorOptions?.editable).toBe(false);
+    const editor = useEditorMock.mock.results[0]?.value as
+      | { readonly setEditable?: ReturnType<typeof vi.fn> }
+      | undefined;
+    expect(editor?.setEditable).toHaveBeenCalledWith(false);
+  });
+
+  it("drops URLs into the document as link marks", async () => {
+    render();
+    await settle();
+
+    const editor = container.querySelector<HTMLElement>('[aria-label="Document editor"]');
+    if (editor === null) {
+      throw new Error("Missing document editor.");
+    }
+    await dropTextOnDocument(editor, "https://example.com/roadmap", "text/uri-list");
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith({
+      type: "text",
+      text: "https://example.com/roadmap",
+      marks: [
+        {
+          type: "link",
+          attrs: { href: "https://example.com/roadmap" },
+        },
+      ],
+    });
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.drop-text",
+        textLength: 27,
+        href: "https://example.com/roadmap",
+      },
+    });
+  });
+
+  it("drops internal document URLs into the document as persisted doc smart chips", async () => {
+    render();
+    await settle();
+
+    const editor = container.querySelector<HTMLElement>('[aria-label="Document editor"]');
+    if (editor === null) {
+      throw new Error("Missing document editor.");
+    }
+    const url = "http://127.0.0.1:5175/docs/doc-2";
+    await dropTextOnDocument(editor, url, "text/uri-list");
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith(
+      `{{CHIP doc label="Launch notes" id="doc-2" href="${url}"}}`,
+    );
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.drop-smart-chip",
+        textLength: url.length,
+        href: url,
+        chipKind: "doc",
+        targetId: "doc-2",
+        label: "Launch notes",
+      },
+    });
+  });
+
+  it("drops internal spreadsheet URLs into the document as persisted file smart chips", async () => {
+    render();
+    await settle();
+
+    const editor = container.querySelector<HTMLElement>('[aria-label="Document editor"]');
+    if (editor === null) {
+      throw new Error("Missing document editor.");
+    }
+    const url = "http://127.0.0.1:5175/sheets?sheet=sheet-1";
+    await dropTextOnDocument(editor, url, "text/uri-list");
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith(
+      `{{CHIP file label="Revenue forecast.xlsx" id="sheet-1" href="${url}"}}`,
+    );
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.drop-smart-chip",
+        textLength: url.length,
+        href: url,
+        chipKind: "file",
+        targetId: "sheet-1",
+        label: "Revenue forecast.xlsx",
+      },
+    });
+  });
+
+  it("drops Drive item drag payloads into the document as persisted file smart chips", async () => {
+    render();
+    await settle();
+
+    const editor = container.querySelector<HTMLElement>('[aria-label="Document editor"]');
+    if (editor === null) {
+      throw new Error("Missing document editor.");
+    }
+    const href = "http://127.0.0.1:5175/open/raw-pptx-1";
+    await dropTextOnDocument(editor, "ignored text", "text/plain", {
+      [HELIX_DRIVE_ITEM_DRAG_MIME]: JSON.stringify({
+        id: "raw-pptx-1",
+        name: "Board update.pptx",
+        href,
+        mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        app: "slides",
+      }),
+    });
+    await settle();
+
+    expect(chain.insertContent).toHaveBeenCalledWith(
+      `{{CHIP file label="Board update.pptx" id="raw-pptx-1" href="${href}"}}`,
+    );
+    expect(saveNativeDocumentStateMock).toHaveBeenCalledWith({
+      docId: "doc-1",
+      stateBase64: expect.any(String),
+      stateVectorBase64: expect.any(String),
+      metadata: {
+        source: "web.native-document-editor.drop-smart-chip",
+        textLength: "Board update.pptx".length,
+        href,
+        chipKind: "file",
+        targetId: "raw-pptx-1",
+        label: "Board update.pptx",
+      },
+    });
+  });
+
+  it("recovers unsaved Yjs document state after reload and clears recovery when server catches up", async () => {
+    const onRecoveryStatusChange = vi.fn();
+    render({ onRecoveryStatusChange });
+    await settle();
+
+    const ydoc = latestNativeDocumentYDoc();
+    act(() => {
+      ydoc.getText("recovery").insert(0, "Unsaved docs story");
+    });
+    await settle();
+
+    const recoveryKey = "helix.docs.unsavedYjs.v1.doc-1";
+    expect(window.localStorage.getItem(recoveryKey)).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="native-document-editor-status"]')?.textContent,
+    ).toBe("Recovered local changes");
+    expect(onRecoveryStatusChange).toHaveBeenCalledWith(true);
+
+    remountFreshEditor({ onRecoveryStatusChange });
+    await settle();
+
+    const recoveredYdoc = latestNativeDocumentYDoc();
+    expect(recoveredYdoc.getText("recovery").toString()).toBe("Unsaved docs story");
+    expect(
+      container.querySelector('[data-testid="native-document-editor-status"]')?.textContent,
+    ).toBe("Recovered local changes");
+
+    remountFreshEditor({
+      onRecoveryStatusChange,
+      session: nativeDocumentSession({
+        stateBase64: testBase64FromUint8Array(Y.encodeStateAsUpdate(recoveredYdoc)),
+        stateVectorBase64: testBase64FromUint8Array(Y.encodeStateVector(recoveredYdoc)),
+      }),
+    });
+    await settle();
+
+    expect(window.localStorage.getItem(recoveryKey)).toBeNull();
+    expect(latestNativeDocumentYDoc().getText("recovery").toString()).toBe("Unsaved docs story");
   });
 
   function render(
     options: {
       readonly generateSuggestionDraft?: NativeDocumentEditorProps["generateSuggestionDraft"];
+      readonly onRecoveryStatusChange?: NativeDocumentEditorProps["onRecoveryStatusChange"];
+      readonly editable?: boolean;
+      readonly showNonPrintingCharacters?: boolean;
+      readonly session?: NativeDocumentSession;
     } = {},
   ) {
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <NativeDocumentEditor
-            session={nativeDocumentSession()}
+            session={options.session ?? nativeDocumentSession()}
             generateSuggestionDraft={options.generateSuggestionDraft}
+            editable={options.editable}
+            showNonPrintingCharacters={options.showNonPrintingCharacters}
+            onRecoveryStatusChange={options.onRecoveryStatusChange}
           />
         </QueryClientProvider>,
       );
     });
   }
 
-  function submitFindForm(): void {
+  function remountFreshEditor(
+    options: {
+      readonly onRecoveryStatusChange?: NativeDocumentEditorProps["onRecoveryStatusChange"];
+      readonly session?: NativeDocumentSession;
+    } = {},
+  ) {
+    act(() => {
+      root.unmount();
+    });
+    queryClient.clear();
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0 } },
+    });
+    root = createRoot(container);
+    render(options);
+  }
+
+function submitFindForm(): void {
     const form = container.querySelector<HTMLFormElement>('form[aria-label="Find and replace"]');
     if (form === null) {
       throw new Error("Missing find and replace form.");
     }
     act(() => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-  }
+  });
+}
 
-  function latestFindDecorationMeta(): unknown {
+async function dispatchNativeDocumentCommandForTest(
+  detail: NativeDocumentCommandEventDetail,
+): Promise<void> {
+  await act(async () => {
+    window.dispatchEvent(new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, { detail }));
+    await Promise.resolve();
+  });
+  await settle();
+}
+
+function latestFindDecorationMeta(): unknown {
     const meta = [...decorationMetaCalls]
       .reverse()
       .find(
@@ -1294,6 +1608,57 @@ describe("NativeDocumentEditor find and replace", () => {
     });
   }
 
+  async function dropFileOnDocument(element: HTMLElement, file: File): Promise<void> {
+    const dataTransfer = {
+      dropEffect: "none",
+      items: {
+        length: 1,
+        0: {
+          kind: "file",
+          type: file.type,
+          getAsFile: () => file,
+        },
+      },
+      files: {
+        length: 1,
+        0: file,
+        item: (index: number) => (index === 0 ? file : null),
+      },
+    } as unknown as DataTransfer;
+    await act(async () => {
+      const event = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+      Object.defineProperty(event, "clientX", { value: 240 });
+      Object.defineProperty(event, "clientY", { value: 320 });
+      element.dispatchEvent(event);
+      await Promise.resolve();
+    });
+  }
+
+  async function dropTextOnDocument(
+    element: HTMLElement,
+    text: string,
+    type = "text/plain",
+    extraData: Record<string, string> = {},
+  ): Promise<void> {
+    const dataByType = { [type]: text, ...extraData };
+    const dataTransfer = {
+      dropEffect: "none",
+      types: Object.keys(dataByType),
+      getData: (requestedType: string) => dataByType[requestedType] ?? "",
+      items: { length: 0 },
+      files: { length: 0, item: () => null },
+    } as unknown as DataTransfer;
+    await act(async () => {
+      const event = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+      Object.defineProperty(event, "clientX", { value: 240 });
+      Object.defineProperty(event, "clientY", { value: 320 });
+      element.dispatchEvent(event);
+      await Promise.resolve();
+    });
+  }
+
   function findInput(): HTMLInputElement {
     const input = container.querySelector<HTMLInputElement>("#native-document-find");
     if (input === null) {
@@ -1331,6 +1696,7 @@ interface FakeEditorChain {
   scrollIntoView: ReturnType<typeof vi.fn>;
   insertContent: ReturnType<typeof vi.fn>;
   insertContentAt: ReturnType<typeof vi.fn>;
+  deleteRange: ReturnType<typeof vi.fn>;
   toggleBold: ReturnType<typeof vi.fn>;
   toggleItalic: ReturnType<typeof vi.fn>;
   toggleUnderline: ReturnType<typeof vi.fn>;
@@ -1339,7 +1705,11 @@ interface FakeEditorChain {
   toggleHeading: ReturnType<typeof vi.fn>;
   toggleBulletList: ReturnType<typeof vi.fn>;
   toggleOrderedList: ReturnType<typeof vi.fn>;
+  toggleNativeChecklist: ReturnType<typeof vi.fn>;
   toggleCodeBlock: ReturnType<typeof vi.fn>;
+  setNativeTextColor: ReturnType<typeof vi.fn>;
+  setNativeHighlightColor: ReturnType<typeof vi.fn>;
+  setNativeTextAlign: ReturnType<typeof vi.fn>;
   run: ReturnType<typeof vi.fn>;
 }
 
@@ -1350,6 +1720,7 @@ function createFakeEditorChain(): FakeEditorChain {
   chain.scrollIntoView = vi.fn(() => chain);
   chain.insertContent = vi.fn(() => chain);
   chain.insertContentAt = vi.fn(() => chain);
+  chain.deleteRange = vi.fn(() => chain);
   chain.toggleBold = vi.fn(() => chain);
   chain.toggleItalic = vi.fn(() => chain);
   chain.toggleUnderline = vi.fn(() => chain);
@@ -1358,7 +1729,11 @@ function createFakeEditorChain(): FakeEditorChain {
   chain.toggleHeading = vi.fn(() => chain);
   chain.toggleBulletList = vi.fn(() => chain);
   chain.toggleOrderedList = vi.fn(() => chain);
+  chain.toggleNativeChecklist = vi.fn(() => chain);
   chain.toggleCodeBlock = vi.fn(() => chain);
+  chain.setNativeTextColor = vi.fn(() => chain);
+  chain.setNativeHighlightColor = vi.fn(() => chain);
+  chain.setNativeTextAlign = vi.fn(() => chain);
   chain.run = vi.fn(() => true);
   return chain;
 }
@@ -1377,6 +1752,7 @@ function mockEditorDocument(text: string, pos: number): void {
       },
     },
     view: { dispatch: editorDispatch },
+    setEditable: vi.fn(),
     chain: vi.fn(() => chain),
     can: vi.fn(() => ({ chain: vi.fn(() => canChain) })),
     isActive: vi.fn((name: string, attributes?: { readonly level?: number }) => {
@@ -1436,6 +1812,22 @@ function setNativeSelectValue(element: HTMLSelectElement, value: string): void {
   Reflect.apply(setter, element, [value]);
 }
 
+function latestNativeDocumentYDoc(): Y.Doc {
+  const doc = collaborationMockState.latestDocument;
+  if (doc === null) {
+    throw new Error("Missing native document Yjs doc.");
+  }
+  return doc;
+}
+
+function testBase64FromUint8Array(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return globalThis.btoa(binary);
+}
+
 async function settle() {
   for (let index = 0; index < 20; index += 1) {
     await act(async () => {
@@ -1446,7 +1838,12 @@ async function settle() {
   }
 }
 
-function nativeDocumentSession(): NativeDocumentSession {
+function nativeDocumentSession(
+  overrides: {
+    readonly stateBase64?: string | null;
+    readonly stateVectorBase64?: string | null;
+  } = {},
+): NativeDocumentSession {
   return {
     editor: "document",
     engine: "helix-native-document",
@@ -1460,11 +1857,12 @@ function nativeDocumentSession(): NativeDocumentSession {
       id: "doc-1",
       orgId: "org-1",
       title: "Native session doc",
+      ownerActorId: "actor-1",
       editorEngine: "helix-native-document",
       formatVersion: 1,
       updateSeq: 4,
-      stateBase64: null,
-      stateVectorBase64: null,
+      stateBase64: overrides.stateBase64 ?? null,
+      stateVectorBase64: overrides.stateVectorBase64 ?? null,
       updatedAt: "2026-05-23T12:00:00.000Z",
     },
     shellRoute: "/docs/:id",

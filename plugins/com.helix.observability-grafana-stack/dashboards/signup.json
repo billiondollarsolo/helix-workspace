@@ -1,0 +1,60 @@
+{
+  "uid": "helix-signup",
+  "title": "Helix Signup",
+  "tags": ["helix", "signup", "slo"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Signup funnel event rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_signup_funnel_events_total[5m])) by (step, tier, plan_id, region)" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "bargauge",
+      "title": "Signup funnel counts",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(helix_signup_funnel_events_total[24h])) by (step, tier, plan_id, region)" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Signup activation p95",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(helix_signup_activation_duration_seconds_bucket[5m])) by (le, tier, plan_id, region))" }],
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Signup activation within 60s rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_signup_activation_duration_seconds_count{within_target=\"true\"}[5m])) by (tier, plan_id, region) / clamp_min(sum(rate(helix_signup_activation_duration_seconds_count[5m])) by (tier, plan_id, region), 1)" }],
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Signup activation SLO misses",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_signup_activation_duration_seconds_count{within_target=\"false\"}[5m])) by (tier, plan_id, region)" }],
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Signup activation SLO by plan",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(helix_signup_activation_duration_seconds_count[24h])) by (tier, plan_id, region, within_target)", "format": "table", "instant": true }],
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 }
+    }
+  ]
+}

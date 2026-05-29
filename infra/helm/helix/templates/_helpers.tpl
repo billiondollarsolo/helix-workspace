@@ -219,6 +219,26 @@ default role. Input is the chart root context.
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: VAULT_NAMESPACE
+- name: HELIX_VAULT_AUTH_PATH
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_VAULT_AUTH_PATH
+- name: HELIX_VAULT_ROLE
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_VAULT_ROLE
+- name: HELIX_BYO_STORAGE_VAULT_MOUNT
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_BYO_STORAGE_VAULT_MOUNT
+- name: HELIX_BYO_STORAGE_VAULT_KV_VERSION
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_BYO_STORAGE_VAULT_KV_VERSION
 {{- end }}
 {{- if .Values.external.siem.enabled }}
 - name: SIEM_ENDPOINT

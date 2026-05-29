@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import {
+  signupActivationSloObservedSubject,
+  signupEventSchemas,
+  signupFunnelSubjects,
+} from "../platform/signup/event-schemas.js";
 import { buildAsyncApiDocument } from "./asyncapi.js";
 
 const payloadSchema = {
@@ -143,6 +148,39 @@ describe("buildAsyncApiDocument", () => {
               tracestate: { type: "string" },
             },
           },
+        },
+      },
+    });
+  });
+
+  it("publishes signup funnel and activation SLO subjects as AsyncAPI channels", () => {
+    const document = buildAsyncApiDocument({}, signupEventSchemas);
+
+    expect(document.channels).toMatchObject({
+      signup_form_submitted: {
+        address: signupFunnelSubjects.formSubmitted,
+      },
+      tenant_signup_activation_slo_observed: {
+        address: signupActivationSloObservedSubject,
+      },
+    });
+    expect(document.operations).toMatchObject({
+      publishEvent_signup_form_submitted: {
+        action: "send",
+        channel: { $ref: "#/channels/signup_form_submitted" },
+        "x-helix-event": {
+          id: signupFunnelSubjects.formSubmitted,
+          subject: signupFunnelSubjects.formSubmitted,
+          direction: "publish",
+        },
+      },
+      publishEvent_tenant_signup_activation_slo_observed: {
+        action: "send",
+        channel: { $ref: "#/channels/tenant_signup_activation_slo_observed" },
+        "x-helix-event": {
+          id: signupActivationSloObservedSubject,
+          subject: signupActivationSloObservedSubject,
+          direction: "publish",
         },
       },
     });

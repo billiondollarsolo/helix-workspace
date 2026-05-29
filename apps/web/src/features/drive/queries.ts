@@ -70,7 +70,7 @@ export interface DriveRouteSearch {
   readonly folder?: string;
   readonly includeTrashed?: boolean;
   readonly q?: string;
-  readonly scope?: "documents" | "sheets" | "slides" | "shared" | "trash";
+  readonly scope?: DriveScope;
 }
 
 export type DriveItemsQueryResult =
@@ -117,7 +117,10 @@ const driveRouteSearchSchema = z
       .optional()
       .catch(undefined),
     q: nonEmptyStringParam,
-    scope: z.enum(["documents", "sheets", "slides", "shared", "trash"]).optional().catch(undefined),
+    scope: z
+      .enum(["my", "shared", "recent", "starred", "recordings", "trash"])
+      .optional()
+      .catch(undefined),
   })
   .catch({});
 
@@ -136,12 +139,14 @@ export function validateDriveRouteSearch(search: Record<string, unknown>): Drive
 
 export function driveItemsInputFromRouteSearch(search: DriveRouteSearch): DriveItemsQueryInput {
   const query = search.q?.trim() ?? "";
+  const scope: DriveScope =
+    search.includeTrashed === true || search.scope === "trash" ? "trash" : (search.scope ?? "my");
   return {
-    folderId: search.includeTrashed === true ? null : (search.folder ?? null),
-    includeTrashed: search.includeTrashed === true,
+    folderId: scope === "my" ? (search.folder ?? null) : null,
+    includeTrashed: scope === "trash",
     query,
     limit: query.length > 0 ? 50 : 100,
-    scope: search.includeTrashed === true ? "trash" : "my",
+    scope,
   };
 }
 
@@ -152,15 +157,11 @@ export function entryFromSearchHit(hit: DriveApiSearchHit): DriveApiEntry {
     type: "file",
     name: hit.name,
     folderId: hit.folderId,
-    ownerActorId: hit.ownerActorId,
-    ...(hit.ownerDisplayName === undefined ? {} : { ownerDisplayName: hit.ownerDisplayName }),
-    ...(hit.ownerEmail === undefined ? {} : { ownerEmail: hit.ownerEmail }),
-    app: hit.app ?? null,
+    ownerActorId: null,
     mimeType: hit.mimeType,
     byteSize: hit.byteSize,
     sha256: hit.sha256,
     ...(hit.previewMetadata === undefined ? {} : { preview: hit.previewMetadata }),
-    metadata: hit.metadata ?? {},
     deletedAt: null,
     createdAt: hit.updatedAt,
     updatedAt: hit.updatedAt,

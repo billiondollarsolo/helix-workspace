@@ -3682,9 +3682,7 @@ function pdfFormStateStatusMessage(status: Exclude<PdfFormStateStatus, "idle">):
   return "Could not update saved draft.";
 }
 
-function validatePdfFormFields(
-  fields: readonly PdfFieldDraft[],
-): readonly PdfFieldValidationError[] {
+function validatePdfFormFields(fields: readonly PdfFieldDraft[]): readonly PdfFieldValidationError[] {
   return fields.flatMap((field): readonly PdfFieldValidationError[] => {
     if (!field.required || !isBlankPdfField(field)) {
       return [];

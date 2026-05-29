@@ -20,6 +20,8 @@ import {
 } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { bucketThreadsByDate, type ThreadSidebarItem } from "./date-buckets";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import { Dialog } from "@/components/ui/helix-dialog";
@@ -51,10 +53,12 @@ const USER_NAME = "You";
 
 /** Maps a backend conversation list item to the seed thread shape. */
 function toThread(item: AssistantConversationListItem): AssistantThread {
+  const updatedAtMs = Date.parse(item.updatedAt);
   return {
     id: item.id,
     title: item.title ?? "Untitled chat",
     time: relativeTime(item.updatedAt),
+    updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : 0,
     ...(item.pinned ? { pinned: true } : {}),
   };
 }
@@ -484,57 +488,18 @@ function AssistantThreadList({
           />
         </div>
       </div>
-      <div style={threadScrollStyle} data-testid="assistant-thread-list">
-        {loading && threads.length === 0 && (
-          <div style={threadEmptyStyle}>Loading chats…</div>
-        )}
-        {errored && threads.length === 0 && (
-          <div style={threadEmptyStyle}>Chats unavailable — try again later.</div>
-        )}
-        {pinned.length > 0 && (
-          <>
-            <div className="section-label" style={sectionLabelStyle}>
-              Pinned
-            </div>
-            {pinned.map((thread) => (
-              <ThreadItem
-                key={thread.id}
-                thread={thread}
-                active={threadId === thread.id}
-                onSelect={onSelect}
-                onTogglePin={onTogglePin}
-                onRename={onRename}
-                onDelete={onDelete}
-              />
-            ))}
-          </>
-        )}
-        {recent.length > 0 && (
-          <>
-            <div className="section-label" style={sectionLabelStyle}>
-              Recent
-            </div>
-            {recent.map((thread) => (
-              <ThreadItem
-                key={thread.id}
-                thread={thread}
-                active={threadId === thread.id}
-                onSelect={onSelect}
-                onTogglePin={onTogglePin}
-                onRename={onRename}
-                onDelete={onDelete}
-              />
-            ))}
-          </>
-        )}
-        {!loading && threads.length === 0 && (
-          <div style={threadEmptyStyle}>
-            {search.trim().length > 0
-              ? `No chats match “${search.trim()}”.`
-              : "No chats yet — start a new one."}
-          </div>
-        )}
-      </div>
+      <VirtualizedThreadList
+        loading={loading}
+        errored={errored}
+        search={search}
+        threadId={threadId}
+        pinned={pinned}
+        recent={recent}
+        onSelect={onSelect}
+        onTogglePin={onTogglePin}
+        onRename={onRename}
+        onDelete={onDelete}
+      />
       <div style={threadFooterStyle}>
         <button
           type="button"
@@ -577,6 +542,157 @@ const threadEmptyStyle: CSSProperties = {
   fontSize: "var(--text-meta)",
   color: "var(--text-3)",
 };
+
+interface VirtualizedThreadListProps {
+  readonly loading: boolean;
+  readonly errored: boolean;
+  readonly search: string;
+  readonly threadId: string | null;
+  readonly pinned: readonly AssistantThread[];
+  readonly recent: readonly AssistantThread[];
+  readonly onSelect: (id: string) => void;
+  readonly onTogglePin: (thread: AssistantThread) => void;
+  readonly onRename: (thread: AssistantThread) => void;
+  readonly onDelete: (thread: AssistantThread) => void;
+}
+
+/**
+ * ChatGPT-style virtualized thread list.
+ *
+ * The Pinned section is rendered eagerly (small, sticky-feeling). The Recent
+ * section is grouped into date buckets (Today / Yesterday / Previous 7 Days /
+ * Previous 30 Days / Month YYYY) and windowed via `useVirtualizer` so a
+ * 10k-conversation history doesn't put 10k DOM rows on the page.
+ *
+ * Headers and rows share one virtualized index; the virtualizer measures each
+ * element after mount so variable row heights (long titles wrap) lay out
+ * correctly without us pre-computing sizes.
+ */
+function VirtualizedThreadList({
+  loading,
+  errored,
+  search,
+  threadId,
+  pinned,
+  recent,
+  onSelect,
+  onTogglePin,
+  onRename,
+  onDelete,
+}: VirtualizedThreadListProps) {
+  const sidebarItems = useMemo<readonly ThreadSidebarItem[]>(
+    () => bucketThreadsByDate(recent),
+    [recent],
+  );
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const virtualizer = useVirtualizer({
+    count: sidebarItems.length,
+    getScrollElement: () => scrollRef.current,
+    // Headers ~28px, threads ~52px on average. Estimate roughly; measureElement
+    // refines after first render.
+    estimateSize: (index) => (sidebarItems[index]?.kind === "header" ? 28 : 52),
+    overscan: 6,
+    getItemKey: (index) => {
+      const item = sidebarItems[index];
+      if (item === undefined) return index;
+      return item.kind === "header" ? `h:${item.id}` : `t:${item.thread.id}`;
+    },
+  });
+
+  if (loading && pinned.length === 0 && recent.length === 0) {
+    return (
+      <div style={threadScrollStyle} data-testid="assistant-thread-list">
+        <div style={threadEmptyStyle}>Loading chats…</div>
+      </div>
+    );
+  }
+  if (errored && pinned.length === 0 && recent.length === 0) {
+    return (
+      <div style={threadScrollStyle} data-testid="assistant-thread-list">
+        <div style={threadEmptyStyle}>Chats unavailable — try again later.</div>
+      </div>
+    );
+  }
+  if (!loading && pinned.length === 0 && recent.length === 0) {
+    return (
+      <div style={threadScrollStyle} data-testid="assistant-thread-list">
+        <div style={threadEmptyStyle}>
+          {search.trim().length > 0
+            ? `No chats match “${search.trim()}”.`
+            : "No chats yet — start a new one."}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={scrollRef} style={threadScrollStyle} data-testid="assistant-thread-list">
+      {pinned.length > 0 && (
+        <>
+          <div className="section-label" style={sectionLabelStyle}>
+            Pinned
+          </div>
+          {pinned.map((thread) => (
+            <ThreadItem
+              key={thread.id}
+              thread={thread}
+              active={threadId === thread.id}
+              onSelect={onSelect}
+              onTogglePin={onTogglePin}
+              onRename={onRename}
+              onDelete={onDelete}
+            />
+          ))}
+        </>
+      )}
+
+      {sidebarItems.length > 0 && (
+        <div
+          style={{
+            position: "relative",
+            height: virtualizer.getTotalSize(),
+            width: "100%",
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtual) => {
+            const item = sidebarItems[virtual.index];
+            if (item === undefined) return null;
+            return (
+              <div
+                key={virtual.key}
+                ref={virtualizer.measureElement}
+                data-index={virtual.index}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${String(virtual.start)}px)`,
+                }}
+              >
+                {item.kind === "header" ? (
+                  <div className="section-label" style={sectionLabelStyle}>
+                    {item.label}
+                  </div>
+                ) : (
+                  <ThreadItem
+                    thread={item.thread}
+                    active={threadId === item.thread.id}
+                    onSelect={onSelect}
+                    onTogglePin={onTogglePin}
+                    onRename={onRename}
+                    onDelete={onDelete}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ThreadItemProps {
   readonly thread: AssistantThread;
@@ -702,7 +818,7 @@ function ThreadItem({
               onDelete(thread);
             }}
           >
-            <Icons.Trash /> Delete
+            <Icons.Trash /> Archive
           </button>
         </div>
       )}
@@ -816,7 +932,7 @@ interface DeleteDialogProps {
 function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProps) {
   return (
     <Dialog
-      title="Delete chat"
+      title="Archive chat"
       onClose={onCancel}
       footer={
         <>
@@ -829,14 +945,14 @@ function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProp
             disabled={pending}
             onClick={onConfirm}
           >
-            {pending ? "Deleting…" : "Delete"}
+            {pending ? "Archiving…" : "Archive"}
           </button>
         </>
       }
     >
       <p style={{ fontSize: "var(--text-body-sm)", margin: 0 }}>
-        Delete <strong>{thread.title}</strong>? This removes it from your thread
-        list and can&apos;t be undone.
+        Archive <strong>{thread.title}</strong>? It will disappear from your
+        thread list. The conversation history is retained server-side.
       </p>
     </Dialog>
   );
@@ -993,25 +1109,80 @@ function AssistantConversation({
     .map((message) => message.text)
     .join("");
 
+  // Total virtualized count = N messages + 1 disclaimer footer row.
+  const totalRows = conversation.length + 1;
+
+  const virtualizer = useVirtualizer({
+    count: totalRows,
+    getScrollElement: () => scrollRef.current,
+    // ChatGPT-ish: bot replies are usually 200-400px tall, user prompts ~80px.
+    // measureElement refines after first paint; estimate is just for layout.
+    estimateSize: (index) => (index === conversation.length ? 56 : 240),
+    overscan: 4,
+    getItemKey: (index) =>
+      index === conversation.length
+        ? "disclaimer"
+        : (conversation[index]?.id ?? `m:${String(index)}`),
+  });
+
+  // Streaming: keep the bottom row in view while the assistant types. We use
+  // the virtualizer's scrollToIndex (not raw scrollTop) so the windowed list
+  // measures + renders the target row before we land on it.
   useEffect(() => {
-    const node = scrollRef.current;
-    if (node !== null) {
-      node.scrollTop = node.scrollHeight;
-    }
-  }, [conversation.length, pending, streamingText]);
+    if (totalRows === 0) return;
+    virtualizer.scrollToIndex(totalRows - 1, { align: "end" });
+    // We intentionally depend on length + streaming text + pending so every
+    // delta nudges us back to the bottom even mid-stream.
+  }, [virtualizer, totalRows, pending, streamingText]);
 
   return (
-    <div ref={scrollRef} style={conversationScrollStyle} data-testid="assistant-conversation">
-      <div style={{ maxWidth: 800, margin: "0 auto" }}>
-        {conversation.map((message) => (
-          <ChatMessage key={message.id} message={message} onNavigate={onNavigate} />
-        ))}
-        <div style={disclaimerRowStyle}>
-          <span style={disclaimerStyle}>
-            <Icons.Sparkles /> Helix AI may produce inaccurate information. Verify
-            important details.
-          </span>
-        </div>
+    <div
+      ref={scrollRef}
+      style={conversationScrollStyle}
+      data-testid="assistant-conversation"
+    >
+      <div
+        style={{
+          position: "relative",
+          maxWidth: 800,
+          margin: "0 auto",
+          height: virtualizer.getTotalSize(),
+          width: "100%",
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtual) => {
+          const isFooter = virtual.index === conversation.length;
+          const message = isFooter ? null : conversation[virtual.index];
+          if (!isFooter && message === undefined) return null;
+          return (
+            <div
+              key={virtual.key}
+              ref={virtualizer.measureElement}
+              data-index={virtual.index}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${String(virtual.start)}px)`,
+              }}
+            >
+              {isFooter ? (
+                <div style={disclaimerRowStyle}>
+                  <span style={disclaimerStyle}>
+                    <Icons.Sparkles /> Helix AI may produce inaccurate information.
+                    Verify important details.
+                  </span>
+                </div>
+              ) : (
+                <ChatMessage
+                  message={message as AssistantChatMessage}
+                  onNavigate={onNavigate}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

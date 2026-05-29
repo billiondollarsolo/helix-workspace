@@ -1,10 +1,12 @@
-import type { JsonObject } from "@helix/sdk";
+import type { JsonObject, MeteringClient, MeteringEvent, TraceContext } from "@helix/sdk";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
 import {
+  ActorQuotaExceededError,
   createBetterAuthPlatformModule,
   createBetterAuthSessionActorResolver,
   PostgresBetterAuthActorStore,
+  PostgresBetterAuthSessionIssuer,
   PostgresBetterAuthUserLinkStore,
   type BetterAuthSessionVerifier,
 } from "./better-auth.js";
@@ -12,6 +14,12 @@ import {
 interface RecordedQuery {
   readonly text: string;
   readonly values: readonly unknown[];
+}
+
+interface RecordedMeteringEvent {
+  readonly orgId: string;
+  readonly event: MeteringEvent;
+  readonly trace?: TraceContext;
 }
 
 describe("PostgresBetterAuthActorStore", () => {
@@ -75,6 +83,12 @@ describe("PostgresBetterAuthActorStore", () => {
     const recording = createRecordingSql([
       [
         {
+          actors_limit: 2,
+          active_user_count: 1,
+        },
+      ],
+      [
+        {
           id: "actor-1",
           org_id: "org-1",
           type: "user",
@@ -94,17 +108,81 @@ describe("PostgresBetterAuthActorStore", () => {
     });
 
     expect(actor.id).toBe("actor-1");
-    expect(recording.calls[0]?.text).toContain("insert into actors");
-    expect(recording.calls[0]?.text).toContain(
+    expect(recording.calls[0]?.text).toContain("from orgs o");
+    expect(recording.calls[0]?.text).toContain("left join plans p on p.id = o.plan_id");
+    expect(recording.calls[0]?.text).toContain("o.quotas ? 'actors_limit'");
+    expect(recording.calls[0]?.text).toContain("p.quotas_default ? 'actors_limit'");
+    expect(recording.calls[0]?.text).toContain("a.disabled_at is null");
+    expect(recording.calls[0]?.values).toEqual(["org-1", "org-1"]);
+    expect(recording.calls[1]?.text).toContain("insert into actors");
+    expect(recording.calls[1]?.text).toContain(
       "returning id, org_id, type, email, display_name, scopes, metadata",
     );
-    expect(recording.calls[0]?.values).toEqual([
+    expect(recording.calls[1]?.values).toEqual([
       "org-1",
       "user",
       "person@example.com",
       "Person",
       metadata,
     ]);
+  });
+
+  it("blocks new user actors when the tenant actors_limit is exhausted", async () => {
+    const metadata = betterAuthMetadata("auth-user-1");
+    const recording = createRecordingSql([
+      [
+        {
+          actors_limit: 1,
+          active_user_count: "1",
+        },
+      ],
+    ]);
+    const store = new PostgresBetterAuthActorStore(recording.sql);
+
+    await expect(
+      store.createUserActor({
+        orgId: "org-1",
+        email: "person@example.com",
+        displayName: "Person",
+        metadata,
+      }),
+    ).rejects.toThrow(ActorQuotaExceededError);
+
+    expect(recording.calls).toHaveLength(1);
+    expect(recording.calls[0]?.text).not.toContain("insert into actors");
+  });
+
+  it("treats JSON null actors_limit as unlimited", async () => {
+    const metadata = betterAuthMetadata("auth-user-1");
+    const recording = createRecordingSql([
+      [
+        {
+          actors_limit: null,
+          active_user_count: 100,
+        },
+      ],
+      [
+        {
+          id: "actor-1",
+          org_id: "org-1",
+          type: "user",
+          email: "person@example.com",
+          display_name: "Person",
+          metadata,
+        },
+      ],
+    ]);
+    const store = new PostgresBetterAuthActorStore(recording.sql);
+
+    await expect(
+      store.createUserActor({
+        orgId: "org-1",
+        email: "person@example.com",
+        displayName: "Person",
+        metadata,
+      }),
+    ).resolves.toMatchObject({ id: "actor-1" });
+    expect(recording.calls[1]?.text).toContain("insert into actors");
   });
 
   it("links BetterAuth metadata onto existing active user actors", async () => {
@@ -154,6 +232,44 @@ describe("PostgresBetterAuthActorStore", () => {
     ]);
   });
 
+  it("issues BetterAuth-compatible database sessions with a signed helix cookie", async () => {
+    const recording = createRecordingSql([[]]);
+    const issuer = new PostgresBetterAuthSessionIssuer(recording.sql, {
+      secret: "helix_local_better_auth_secret_change_me_32_chars",
+      baseUrl: "https://app.helix.example",
+      expiresInSeconds: 3600,
+    });
+    const now = new Date("2026-05-24T12:00:00.000Z");
+
+    const issued = await issuer.issueSession({
+      userId: "auth-user-1",
+      requestHeaders: {
+        "x-forwarded-for": "203.0.113.10, 10.0.0.1",
+        "user-agent": "vitest",
+      },
+      now,
+    });
+
+    expect(recording.calls[0]?.text).toContain('insert into "session"');
+    expect(recording.calls[0]?.values).toEqual([
+      expect.stringMatching(/^session-/u),
+      "auth-user-1",
+      issued.token,
+      issued.expiresAt,
+      "203.0.113.10",
+      "vitest",
+      now,
+      now,
+    ]);
+    expect(issued.cookieName).toBe("helix_session");
+    expect(issued.expiresAt.toISOString()).toBe("2026-05-24T13:00:00.000Z");
+    expect(issued.setCookieHeader).toContain(`helix_session=${issued.token}.`);
+    expect(issued.setCookieHeader).toContain("HttpOnly");
+    expect(issued.setCookieHeader).toContain("SameSite=Lax");
+    expect(issued.setCookieHeader).toContain("Max-Age=3600");
+    expect(issued.setCookieHeader).toContain("Secure");
+  });
+
   it("resolves a BetterAuth session user into a linked platform actor", async () => {
     const actorStore = new InMemoryBetterAuthActorStore();
     const links: string[] = [];
@@ -189,6 +305,62 @@ describe("PostgresBetterAuthActorStore", () => {
     });
     expect(links).toEqual(["auth-user-1:11111111-1111-4111-8111-111111111111"]);
   });
+
+  it("uses a request tenant resolver when creating session actors", async () => {
+    const actorStore = new InMemoryBetterAuthActorStore();
+    const module = createBetterAuthPlatformModule({
+      actorStore,
+      defaultOrgId: "22222222-2222-4222-8222-222222222222",
+    });
+    const verifier: BetterAuthSessionVerifier = {
+      async getSessionUser() {
+        return {
+          id: "auth-user-tenant",
+          email: "tenant@example.com",
+          name: "Tenant User",
+        };
+      },
+    };
+
+    const actor = await createBetterAuthSessionActorResolver(module, verifier, {
+      resolveOrgId: () => "33333333-3333-4333-8333-333333333333",
+    })({ headers: { host: "acme.helix.app" } });
+
+    expect(actor?.orgId).toBe("33333333-3333-4333-8333-333333333333");
+  });
+
+  it("emits seat metering only when a new actor is created", async () => {
+    const metering: RecordedMeteringEvent[] = [];
+    const actorStore = new InMemoryBetterAuthActorStore();
+    const module = createBetterAuthPlatformModule({
+      actorStore,
+      defaultOrgId: "22222222-2222-4222-8222-222222222222",
+      metering: createRecordingMeteringClient(metering),
+    });
+
+    await module.resolveUserActor({
+      id: "auth-user-created",
+      email: "created@example.com",
+      name: "Created User",
+    });
+
+    expect(metering).toEqual([
+      {
+        orgId: "22222222-2222-4222-8222-222222222222",
+        event: {
+          type: "seats.delta",
+          quantity: 1,
+          metadata: {
+            source: "better_auth",
+            reason: "user_created",
+            actorId: "11111111-1111-4111-8111-111111111111",
+          },
+        },
+      },
+    ]);
+    expect(JSON.stringify(metering)).not.toContain("created@example.com");
+    expect(JSON.stringify(metering)).not.toContain("Created User");
+  });
 });
 
 function betterAuthMetadata(userId: string): JsonObject {
@@ -214,6 +386,27 @@ function createRecordingSql(responses: readonly (readonly unknown[])[]): {
     json: (value: unknown) => value,
   }) as unknown as postgres.Sql;
   return { sql, calls };
+}
+
+function createRecordingMeteringClient(events: RecordedMeteringEvent[]): MeteringClient {
+  return {
+    async emit(orgId, event, trace) {
+      events.push({
+        orgId,
+        event,
+        ...(trace === undefined ? {} : { trace }),
+      });
+    },
+    async emitBatch(inputs) {
+      for (const input of inputs) {
+        events.push({
+          orgId: input.orgId,
+          event: input.event,
+          ...(input.trace === undefined ? {} : { trace: input.trace }),
+        });
+      }
+    },
+  };
 }
 
 class InMemoryBetterAuthActorStore {

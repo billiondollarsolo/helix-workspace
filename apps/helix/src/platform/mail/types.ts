@@ -329,6 +329,15 @@ export interface MailSearchRecord {
   readonly sentAt: string;
   readonly updatedAt?: string | undefined;
   readonly metadata?: JsonObject | undefined;
+  /**
+   * RAG owner — the actor whose mailbox owns this message copy. For outbound
+   * mail this is the sender; for inbound, the recipient mailbox owner.
+   * Indexed embeddings are scoped to this actor (visibility="private"); other
+   * users in the org cannot retrieve this mail via RAG. Null only for system
+   * mail (announcements, status notifications) which then index as
+   * visibility="org".
+   */
+  readonly ownerActorId: string | null;
 }
 
 export interface MailSearchProjectionStore {

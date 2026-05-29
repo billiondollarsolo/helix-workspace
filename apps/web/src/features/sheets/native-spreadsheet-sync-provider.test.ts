@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { storeAccessToken } from "@/lib/auth";
 import type { SheetsApiTabWithCells } from "./api";
 import {
@@ -29,6 +29,10 @@ describe("native spreadsheet sync provider", () => {
     });
     window.history.replaceState(null, "", "/sheets/sheet-1");
     MockWebSocket.instances = [];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("normalizes Sheets sync URLs and preserves fallback realtime auth", () => {
@@ -74,6 +78,52 @@ describe("native spreadsheet sync provider", () => {
     ]);
   });
 
+  it("can disconnect during React cleanup without reporting offline to an unmounting component", () => {
+    const statuses: string[] = [];
+    const provider = new NativeSpreadsheetSyncProvider({
+      sheetId,
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      onStatusChange: (status) => statuses.push(status),
+    });
+
+    provider.connect();
+    const socket = MockWebSocket.instances.at(-1);
+    socket?.open();
+
+    provider.disconnect({ notify: false });
+
+    expect(provider.getStatus()).toBe("offline");
+    expect(socket?.closed).toBe(true);
+    expect(statuses).toEqual(["connecting", "connected"]);
+  });
+
+  it("reconnects after an unexpected socket close", () => {
+    vi.useFakeTimers();
+    const statuses: string[] = [];
+    const provider = new NativeSpreadsheetSyncProvider({
+      sheetId,
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      reconnectDelayMs: 25,
+      onStatusChange: (status) => statuses.push(status),
+    });
+
+    provider.connect();
+    const firstSocket = MockWebSocket.instances.at(-1);
+    firstSocket?.open();
+    firstSocket?.close();
+
+    expect(provider.getStatus()).toBe("offline");
+    expect(statuses).toEqual(["connecting", "connected", "offline"]);
+
+    vi.advanceTimersByTime(25);
+
+    const secondSocket = MockWebSocket.instances.at(-1);
+    expect(secondSocket).not.toBe(firstSocket);
+    expect(statuses).toEqual(["connecting", "connected", "offline", "connecting"]);
+    secondSocket?.open();
+    expect(statuses).toEqual(["connecting", "connected", "offline", "connecting", "connected"]);
+  });
+
   it("sends structural operations with the current server revision", () => {
     const provider = new NativeSpreadsheetSyncProvider({
       sheetId,
@@ -108,6 +158,31 @@ describe("native spreadsheet sync provider", () => {
         ],
       },
     });
+  });
+
+  it("returns false and goes offline when realtime send fails", () => {
+    const statuses: string[] = [];
+    const errors: unknown[] = [];
+    const provider = new NativeSpreadsheetSyncProvider({
+      sheetId,
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      operationId: () => "op-fail",
+      onStatusChange: (status) => statuses.push(status),
+      onError: (error) => errors.push(error),
+    });
+
+    provider.connect();
+    const socket = MockWebSocket.instances.at(-1);
+    socket?.open();
+    if (socket !== undefined) {
+      socket.throwOnSend = true;
+    }
+
+    expect(provider.sendCellEdits(tabId, [{ row: 0, col: 1, value: "fallback" }])).toBe(false);
+    expect(provider.getStatus()).toBe("offline");
+    expect(socket?.closed).toBe(true);
+    expect(statuses).toEqual(["connecting", "connected", "offline"]);
+    expect(errors[0]).toBeInstanceOf(Error);
   });
 
   it("applies accepted operation frames to callers and advances revision", () => {
@@ -246,6 +321,7 @@ class MockWebSocket {
   readyState = 0;
   readonly sent: unknown[] = [];
   closed = false;
+  throwOnSend = false;
   private readonly listeners = new Map<string, Set<(event: Event) => void>>();
 
   constructor(readonly url: string) {
@@ -253,6 +329,9 @@ class MockWebSocket {
   }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+    if (this.throwOnSend) {
+      throw new Error("socket send failed");
+    }
     if (typeof data === "string") {
       this.sent.push(JSON.parse(data));
     }

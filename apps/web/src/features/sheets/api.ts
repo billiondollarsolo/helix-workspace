@@ -149,6 +149,19 @@ export interface SheetsExportResult {
   readonly metadata: Record<string, unknown>;
 }
 
+export interface SheetsVersion {
+  readonly id: string;
+  readonly orgId?: string;
+  readonly sheetId: string;
+  readonly versionNumber: number;
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly sha256: string;
+  readonly metadata: Record<string, unknown>;
+  readonly createdByActorId: string | null;
+  readonly createdAt: string;
+}
+
 /** A single cell mutation in a `sheets.cells.update` batch. */
 export interface SheetsCellEdit {
   readonly row: number;
@@ -212,6 +225,28 @@ export async function createSheet(
     {
       title: input.title,
       ...(input.tabNames === undefined ? {} : { tabNames: input.tabNames }),
+      metadata: input.metadata ?? {},
+    },
+    fetchImpl,
+  );
+}
+
+/** Copy a native spreadsheet without losing tabs, cells, or formatting. */
+export async function copySheet(
+  input: {
+    readonly sheetId: string;
+    readonly title?: string;
+    readonly folderId?: string | null;
+    readonly metadata?: Record<string, unknown>;
+  },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsApiSheetWithTabs> {
+  return callSheetsTool<SheetsApiSheetWithTabs>(
+    "sheets.copy",
+    {
+      sheetId: input.sheetId,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
       metadata: input.metadata ?? {},
     },
     fetchImpl,
@@ -329,6 +364,37 @@ export async function exportSheet(
       sheetId: input.sheetId,
       format: input.format,
       ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
+    },
+    fetchImpl,
+  );
+}
+
+/** List saved snapshot versions for a native spreadsheet. */
+export async function listSheetVersions(
+  input: { readonly sheetId: string; readonly limit?: number },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<readonly SheetsVersion[]> {
+  const output = await callSheetsTool<{ readonly versions?: readonly SheetsVersion[] }>(
+    "sheets.version.list",
+    {
+      sheetId: input.sheetId,
+      limit: input.limit ?? 25,
+    },
+    fetchImpl,
+  );
+  return output.versions ?? [];
+}
+
+/** Restore a native spreadsheet from a saved snapshot version. */
+export async function restoreSheetVersion(
+  input: { readonly sheetId: string; readonly versionId: string },
+  fetchImpl: SheetsApiFetch = authenticatedFetch,
+): Promise<SheetsApiSheetWithTabs> {
+  return callSheetsTool<SheetsApiSheetWithTabs>(
+    "sheets.version.restore",
+    {
+      sheetId: input.sheetId,
+      versionId: input.versionId,
     },
     fetchImpl,
   );

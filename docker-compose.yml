@@ -174,44 +174,6 @@ services:
       - rustfs-data:/data
     restart: unless-stopped
 
-  # OnlyOffice Document Server — provides native DOCX/XLSX/PPTX editing in
-  # an iframe with real-time co-authoring. Speaks an iframe + JWT contract
-  # documented at api.onlyoffice.com. Helix integrates by:
-  #   1. /api/onlyoffice/config/:objectId returns a signed iframe config
-  #   2. DS fetches the file via /api/onlyoffice/file/:token (JWT-validated)
-  #   3. DS POSTs save events to /api/onlyoffice/callback/:token
-  # Helix is the system of record; DS never reaches into Helix's DB.
-  # Image is the official AGPL build from github.com/ONLYOFFICE/DocumentServer.
-  onlyoffice:
-    image: onlyoffice/documentserver:latest
-    environment:
-      # Always require JWT — denies anonymous/unauth'd iframe configs.
-      JWT_ENABLED: "true"
-      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-helix_onlyoffice_dev_secret_change_me}
-      JWT_HEADER: Authorization
-      # Lets us pass the JWT in the request body too, which simplifies the
-      # callback flow where DS POSTs JSON to Helix and we co-locate the
-      # signing token in the same envelope.
-      JWT_IN_BODY: "true"
-      # Console flood prevention — DS is chatty at info level.
-      WOPI_ENABLED: "false"
-    ports:
-      - "${ONLYOFFICE_PORT:-28430}:80"
-    volumes:
-      - onlyoffice-data:/var/www/onlyoffice/Data
-      - onlyoffice-log:/var/log/onlyoffice
-      - onlyoffice-lib:/var/lib/onlyoffice
-    restart: unless-stopped
-    # DS takes ~30s on first boot to bring up its bundled
-    # PostgreSQL/Redis/RabbitMQ. Healthcheck guards against the
-    # api-server connecting before DS is ready to sign requests.
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:80/healthcheck"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-
   cerbos:
     image: ghcr.io/cerbos/cerbos:latest
     command: ["server", "--config=/config/.cerbos.yaml"]
@@ -582,9 +544,6 @@ volumes:
   nats-data:
   meili-data:
   rustfs-data:
-  onlyoffice-data:
-  onlyoffice-log:
-  onlyoffice-lib:
   caddy-data:
   caddy-config:
   prometheus-data:

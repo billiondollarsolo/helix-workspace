@@ -30,6 +30,7 @@ interface OAuthClientRow {
   readonly actor_id: string;
   readonly org_id: string;
   readonly scopes: readonly string[];
+  readonly redirect_uris: readonly string[] | null;
   readonly expires_at: Date | null;
   readonly revoked_at: Date | null;
 }
@@ -62,6 +63,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         c.actor_id,
         a.org_id,
         c.scopes,
+        c.redirect_uris,
         c.expires_at,
         c.revoked_at
       from agent_credentials c
@@ -82,6 +84,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         c.actor_id,
         a.org_id,
         c.scopes,
+        c.redirect_uris,
         c.expires_at,
         c.revoked_at
       from agent_credentials c
@@ -101,6 +104,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
 
   async createClient(input: OAuthClientInsertInput): Promise<OAuthClientRecord> {
     const scopes = uniqueScopes(input.scopes);
+    const redirectUris = uniqueScopes(input.redirectUris ?? []);
     const insertedRows = await this.sql`
       with selected_actor as (
         select id, org_id
@@ -115,6 +119,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
           client_id,
           secret_hash,
           scopes,
+          redirect_uris,
           expires_at
         )
         select
@@ -123,9 +128,10 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
           ${input.clientId},
           ${input.clientSecretHash},
           ${this.sql.array(scopes)},
+          ${this.sql.array(redirectUris)},
           ${input.expiresAt ?? null}
         from selected_actor
-        returning client_id, secret_hash, actor_id, scopes, expires_at, revoked_at
+        returning client_id, secret_hash, actor_id, scopes, redirect_uris, expires_at, revoked_at
       )
       select
         inserted.client_id,
@@ -133,6 +139,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         inserted.actor_id,
         selected_actor.org_id,
         inserted.scopes,
+        inserted.redirect_uris,
         inserted.expires_at,
         inserted.revoked_at
       from inserted
@@ -154,7 +161,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         where client_id = ${clientId}
           and credential_type = 'oauth_client'
           and revoked_at is null
-        returning client_id, secret_hash, actor_id, scopes, expires_at, revoked_at
+        returning client_id, secret_hash, actor_id, scopes, redirect_uris, expires_at, revoked_at
       )
       select
         updated.client_id,
@@ -162,6 +169,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         updated.actor_id,
         actors.org_id,
         updated.scopes,
+        updated.redirect_uris,
         updated.expires_at,
         updated.revoked_at
       from updated
@@ -184,7 +192,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         where client_id = ${clientId}
           and credential_type = 'oauth_client'
           and revoked_at is null
-        returning client_id, secret_hash, actor_id, scopes, expires_at, revoked_at
+        returning client_id, secret_hash, actor_id, scopes, redirect_uris, expires_at, revoked_at
       )
       select
         updated.client_id,
@@ -192,6 +200,39 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         updated.actor_id,
         actors.org_id,
         updated.scopes,
+        updated.redirect_uris,
+        updated.expires_at,
+        updated.revoked_at
+      from updated
+      join actors on actors.id = updated.actor_id
+    `;
+    const rows = updatedRows as unknown as readonly OAuthClientRow[];
+    return rowToClient(rows[0]);
+  }
+
+  async setRedirectUris(
+    clientId: string,
+    redirectUris: readonly string[],
+    updatedAt: Date,
+  ): Promise<OAuthClientRecord | null> {
+    void updatedAt;
+    const allowlist = uniqueScopes(redirectUris);
+    const updatedRows = await this.sql`
+      with updated as (
+        update agent_credentials
+        set redirect_uris = ${this.sql.array(allowlist)}
+        where client_id = ${clientId}
+          and credential_type = 'oauth_client'
+          and revoked_at is null
+        returning client_id, secret_hash, actor_id, scopes, redirect_uris, expires_at, revoked_at
+      )
+      select
+        updated.client_id,
+        updated.secret_hash,
+        updated.actor_id,
+        actors.org_id,
+        updated.scopes,
+        updated.redirect_uris,
         updated.expires_at,
         updated.revoked_at
       from updated
@@ -314,6 +355,14 @@ export class PostgresOAuthStore implements OAuthClientStore, AccessTokenStore {
     updatedAt: Date,
   ): Promise<OAuthClientRecord | null> {
     return this.#clientStore.rotateClientSecret(clientId, clientSecretHash, updatedAt);
+  }
+
+  setRedirectUris(
+    clientId: string,
+    redirectUris: readonly string[],
+    updatedAt: Date,
+  ): Promise<OAuthClientRecord | null> {
+    return this.#clientStore.setRedirectUris(clientId, redirectUris, updatedAt);
   }
 
   saveToken(token: AccessTokenRecord): Promise<void> {
@@ -591,6 +640,10 @@ function rowToClient(row: OAuthClientRow | undefined): OAuthClientRecord | null 
     actorId: row.actor_id,
     orgId: row.org_id,
     scopes: [...row.scopes],
+    redirectUris:
+      row.redirect_uris === null || row.redirect_uris === undefined
+        ? []
+        : [...row.redirect_uris],
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
   };

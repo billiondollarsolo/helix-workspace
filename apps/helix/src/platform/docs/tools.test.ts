@@ -8,7 +8,11 @@ import type {
 } from "@helix/sdk-types";
 import { createToolRegistry } from "../tool-registry.js";
 import { InMemoryTenantHourlyQuotaLimiter } from "../limits/index.js";
-import type { CreateDocsDocumentInput, NativeDocumentLayoutSettings } from "./store.js";
+import type {
+  CopyDocsDocumentInput,
+  CreateDocsDocumentInput,
+  NativeDocumentLayoutSettings,
+} from "./store.js";
 import { HELIX_NATIVE_DOCUMENT_ENGINE } from "./native-state.js";
 import { createDocsToolDefinitions, registerDocsTools } from "./tools.js";
 import type {
@@ -78,6 +82,46 @@ describe("docs tools", () => {
     expect(result.ok).toBe(true);
     expect(store.created[0]).not.toHaveProperty("editorEngine");
     expect(store.created[0]).not.toHaveProperty("formatVersion");
+  });
+
+  it("copies Docs documents through docs.copy without rebuilding content", async () => {
+    const store = new FakeDocsStore();
+    const registry = createToolRegistry();
+    registerDocsTools(registry, { store });
+    const folderId = "44444444-4444-4444-8444-444444444444";
+
+    const result = await registry.invoke(
+      "docs.copy",
+      {
+        docId,
+        title: "Native doc (Copy)",
+        folderId,
+        metadata: { createdFrom: "test.copy" },
+      },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["docs.write"] } },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(store.copies).toEqual([
+      {
+        orgId,
+        actorId,
+        documentId: docId,
+        title: "Native doc (Copy)",
+        folderId,
+        metadata: { createdFrom: "test.copy" },
+      },
+    ]);
+    expect(result.ok ? result.output : undefined).toMatchObject({
+      id: "55555555-5555-4555-8555-555555555555",
+      title: "Native doc (Copy)",
+      ydocState: Buffer.from("copied-native-state", "utf8").toString("base64"),
+      ydocStateVector: Buffer.from("copied-native-vector", "utf8").toString("base64"),
+      metadata: {
+        createdFrom: "test.copy",
+        copiedFromDocumentId: docId,
+      },
+    });
   });
 
   it("updates native document layout settings through docs.update-layout", async () => {
@@ -150,6 +194,51 @@ describe("docs tools", () => {
     });
   });
 
+  it("saves native document state as a versioned update and compacted snapshot", async () => {
+    const store = new FakeDocsStore();
+    const registry = createToolRegistry();
+    registerDocsTools(registry, { store });
+
+    const stateBase64 = Buffer.from("native-state", "utf8").toString("base64");
+    const stateVectorBase64 = Buffer.from("native-vector", "utf8").toString("base64");
+    const result = await registry.invoke(
+      "docs.save-native-state",
+      {
+        docId,
+        stateBase64,
+        stateVectorBase64,
+        metadata: { source: "web.native-document-editor.drop-image" },
+      },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["docs.write"] } },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(store.appendedUpdates).toEqual([
+      {
+        orgId,
+        actorId,
+        documentId: docId,
+        update: Buffer.from("native-state", "utf8"),
+        metadata: {
+          source: "web.native-document-editor.drop-image",
+          stateBase64,
+        },
+      },
+    ]);
+    expect(store.compactions).toEqual([
+      {
+        orgId,
+        documentId: docId,
+        state: Buffer.from("native-state", "utf8"),
+        stateVector: Buffer.from("native-vector", "utf8"),
+      },
+    ]);
+    expect(result.ok ? result.output : undefined).toMatchObject({
+      id: docId,
+      updateSeq: 3,
+    });
+  });
+
   it("migrates legacy Docs documents into the native editor engine", async () => {
     const store = new FakeDocsStore();
     const registry = createToolRegistry();
@@ -218,6 +307,43 @@ describe("docs tools", () => {
       title: "Launch Plan",
       editorEngine: HELIX_NATIVE_DOCUMENT_ENGINE,
       formatVersion: 1,
+    });
+  });
+
+  it("preserves DOCX-family source extensions during import", async () => {
+    const store = new FakeDocsStore();
+    const registry = createToolRegistry();
+    registerDocsTools(registry, {
+      store,
+      docxToMarkdown: async () => ({
+        markdown: "# Imported macro document",
+        messages: [],
+      }),
+    });
+
+    const result = await registry.invoke(
+      "docs.import-docx",
+      {
+        filename: "Macro Template.dotm",
+        contentBase64: Buffer.from("dotm bytes", "utf8").toString("base64"),
+        metadata: {
+          importedFromFormat: "dotm",
+          importedFromFormatLabel: "DOTM (Macro-enabled Word template)",
+        },
+      },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["docs.write"] } },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(store.created[0]).toMatchObject({
+      title: "Macro Template",
+      metadata: {
+        importedFrom: "dotm",
+        importedFromFormat: "dotm",
+        importedFromFormatLabel: "DOTM (Macro-enabled Word template)",
+        filename: "Macro Template.dotm",
+        sourceFilename: "Macro Template.dotm",
+      },
     });
   });
 
@@ -717,6 +843,7 @@ describe("docs tools", () => {
 
 class FakeDocsStore {
   readonly created: CreateDocsDocumentInput[] = [];
+  readonly copies: CopyDocsDocumentInput[] = [];
   readonly exports: Array<{
     readonly orgId: string;
     readonly actorId: string;
@@ -769,6 +896,19 @@ class FakeDocsStore {
     readonly documentId: string;
     readonly layoutSettings: NativeDocumentLayoutSettings;
   }> = [];
+  readonly appendedUpdates: Array<{
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly update: Buffer;
+    readonly metadata: JsonObject;
+  }> = [];
+  readonly compactions: Array<{
+    readonly orgId: string;
+    readonly documentId: string;
+    readonly state: Buffer;
+    readonly stateVector?: Buffer | null | undefined;
+  }> = [];
   readonly versionLists: Array<{
     readonly orgId: string;
     readonly actorId: string;
@@ -809,6 +949,31 @@ class FakeDocsStore {
       editorEngine: input.editorEngine ?? "legacy-yjs",
       formatVersion: input.formatVersion ?? 1,
       metadata: input.metadata ?? {},
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  async copy(input: CopyDocsDocumentInput): Promise<DocsDocumentRecord | null> {
+    this.copies.push(input);
+    return {
+      id: "55555555-5555-4555-8555-555555555555",
+      orgId: input.orgId,
+      title: input.title ?? "Native doc (Copy)",
+      threadId: null,
+      ownerActorId: input.actorId,
+      createdByActorId: input.actorId,
+      ydocState: Buffer.from("copied-native-state", "utf8"),
+      ydocStateVector: Buffer.from("copied-native-vector", "utf8"),
+      updateSeq: 0,
+      editorEngine: HELIX_NATIVE_DOCUMENT_ENGINE,
+      formatVersion: 1,
+      metadata: {
+        createdFrom: "docs.copy",
+        copiedFromDocumentId: input.documentId,
+        ...(input.metadata ?? {}),
+      },
       deletedAt: null,
       createdAt: now,
       updatedAt: now,
@@ -887,6 +1052,58 @@ class FakeDocsStore {
       editorEngine: HELIX_NATIVE_DOCUMENT_ENGINE,
       formatVersion: 1,
       metadata: { nativeDocumentLayout: input.layoutSettings as unknown as JsonObject },
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  async appendUpdate(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly documentId: string;
+    readonly update: Buffer;
+    readonly metadata?: JsonObject | undefined;
+  }): Promise<DocsUpdateRecord> {
+    this.appendedUpdates.push({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      documentId: input.documentId,
+      update: input.update,
+      metadata: input.metadata ?? {},
+    });
+    return {
+      id: "66666666-6666-4666-8666-666666666666",
+      orgId: input.orgId,
+      documentId: input.documentId,
+      actorId: input.actorId,
+      seq: 3,
+      update: input.update,
+      metadata: input.metadata ?? {},
+      createdAt: now,
+    };
+  }
+
+  async compactDocument(input: {
+    readonly orgId: string;
+    readonly documentId: string;
+    readonly state: Buffer;
+    readonly stateVector?: Buffer | null | undefined;
+  }): Promise<DocsDocumentRecord | null> {
+    this.compactions.push(input);
+    return {
+      id: input.documentId,
+      orgId: input.orgId,
+      title: "Native doc",
+      threadId: null,
+      ownerActorId: actorId,
+      createdByActorId: actorId,
+      ydocState: input.state,
+      ydocStateVector: input.stateVector ?? null,
+      updateSeq: 3,
+      editorEngine: HELIX_NATIVE_DOCUMENT_ENGINE,
+      formatVersion: 1,
+      metadata: {},
       deletedAt: null,
       createdAt: now,
       updatedAt: now,

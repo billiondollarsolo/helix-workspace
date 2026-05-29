@@ -97,18 +97,7 @@ export const commandActions: Record<string, readonly string[]> = {
   ],
   webhook: ["outbound", "inbound", "delivery"],
   search: ["--query", "--type", "--limit", "--json"],
-  admin: [
-    "app-passwords",
-    "agent-credentials",
-    "credentials",
-    "users",
-    "audit",
-    "audit-log",
-    "storage",
-    "storage-migrations",
-    "tenant-exports",
-    "tenant-imports",
-  ],
+  admin: ["app-passwords", "agent-credentials", "credentials", "users", "audit", "audit-log"],
   backup: ["create"],
   restore: ["--from", "--encrypted"],
   reindex: ["--all"],
@@ -129,17 +118,6 @@ const jsonScopes = ["install", "plugin"] as const;
 
 const searchFlags = ["--query", "--type", "--limit", "--json"] as const;
 const securityTierValues = ["personal", "business", "enterprise", "sovereign"] as const;
-const storageMigrationTargetValues = ["byo", "helix-default"] as const;
-const storageMigrationStatusValues = [
-  "queued",
-  "running",
-  "succeeded",
-  "succeeded_with_errors",
-  "failed",
-  "dry_run",
-] as const;
-const tenantExportJobStatusValues = ["queued", "running", "succeeded", "failed"] as const;
-const tenantImportJobStatusValues = ["succeeded", "failed", "blocked"] as const;
 
 const mailActionFlags: Record<string, readonly string[]> = {
   send: ["--to", "--cc", "--bcc", "--from", "--subject", "--body", "--html", "--json"],
@@ -175,7 +153,15 @@ const mailActionFlags: Record<string, readonly string[]> = {
   ],
   "filter-delete": ["--id", "--json"],
   "vacation-get": ["--json"],
-  "vacation-set": ["--enabled", "--disabled", "--subject", "--body", "--start", "--end", "--json"],
+  "vacation-set": [
+    "--enabled",
+    "--disabled",
+    "--subject",
+    "--body",
+    "--start",
+    "--end",
+    "--json",
+  ],
 };
 
 const chatActionFlags: Record<string, readonly string[]> = {
@@ -305,7 +291,12 @@ const meetActionFlags: Record<string, readonly string[]> = {
   end: ["--room-id", "--json"],
 };
 
-const assistantClassificationValues = ["public", "standard", "confidential", "restricted"] as const;
+const assistantClassificationValues = [
+  "public",
+  "standard",
+  "confidential",
+  "restricted",
+] as const;
 
 const assistantActionFlags: Record<string, readonly string[]> = {
   chat: ["--json"],
@@ -391,10 +382,6 @@ const adminFamilyActions: Record<string, readonly string[]> = {
   users: ["list"],
   audit: ["list"],
   "audit-log": ["list"],
-  storage: ["test"],
-  "storage-migrations": ["list", "request", "get", "status", "cutover"],
-  "tenant-exports": ["queue", "list", "get", "status", "download"],
-  "tenant-imports": ["dry-run", "execute", "list", "get", "status"],
 };
 
 const adminActionFlags: Record<string, readonly string[]> = {
@@ -410,48 +397,6 @@ const adminActionFlags: Record<string, readonly string[]> = {
   "users:list": ["--query", "--type", "--include-disabled", "--limit", "--cursor"],
   "audit:list": ["--actor-id", "--object-id", "--object-type", "--verb", "--limit", "--cursor"],
   "audit-log:list": ["--actor-id", "--object-id", "--object-type", "--verb", "--limit", "--cursor"],
-  "storage:test": [],
-  "storage-migrations:list": ["--target", "--status", "--limit", "--cursor"],
-  "storage-migrations:request": [
-    "--target",
-    "--dry-run",
-    "--live",
-    "--confirm",
-    "--source-storage",
-    "--target-storage",
-  ],
-  "storage-migrations:get": [],
-  "storage-migrations:status": [],
-  "storage-migrations:cutover": ["--confirm"],
-  "tenant-exports:queue": [
-    "--include-object-bytes",
-    "--metadata-only",
-    "--presigned-url-expires-seconds",
-  ],
-  "tenant-exports:list": ["--status", "--limit", "--cursor"],
-  "tenant-exports:get": [],
-  "tenant-exports:status": [],
-  "tenant-exports:download": ["--output", "--force"],
-  "tenant-imports:dry-run": [
-    "--row-id-conflicts",
-    "--principal-references",
-    "--resource-references",
-    "--verified-state",
-    "--primary-domain",
-    "--remaps",
-  ],
-  "tenant-imports:execute": [
-    "--confirm",
-    "--row-id-conflicts",
-    "--principal-references",
-    "--resource-references",
-    "--verified-state",
-    "--primary-domain",
-    "--remaps",
-  ],
-  "tenant-imports:list": ["--status", "--limit", "--cursor"],
-  "tenant-imports:get": [],
-  "tenant-imports:status": [],
 };
 
 const dynamicToolIdsScript = String.raw`command helix tool list --source openapi 2>/dev/null | node -e 'let input = ""; process.stdin.on("data", (chunk) => input += chunk); process.stdin.on("end", () => { try { const parsed = JSON.parse(input); for (const tool of Array.isArray(parsed.tools) ? parsed.tools : []) { if (tool && typeof tool.id === "string") console.log(tool.id); } } catch {} });'`;
@@ -489,9 +434,7 @@ function generateBashCompletion(): string {
     `    --direction) COMPREPLY=( $(compgen -W "${wordList(["outbound", "inbound"])}" -- "$cur") ); return ;;`,
     `    --classification) COMPREPLY=( $(compgen -W "${wordList(assistantClassificationValues)}" -- "$cur") ); return ;;`,
     `    --response) COMPREPLY=( $(compgen -W "${wordList(["accepted", "declined", "tentative"])}" -- "$cur") ); return ;;`,
-    `    --status) [[ $scope == meet ]] && COMPREPLY=( $(compgen -W "${wordList(["active", "ended"])}" -- "$cur") ) || [[ $scope == admin && $action == tenant-exports ]] && COMPREPLY=( $(compgen -W "${wordList(tenantExportJobStatusValues)}" -- "$cur") ) || [[ $scope == admin && $action == tenant-imports ]] && COMPREPLY=( $(compgen -W "${wordList(tenantImportJobStatusValues)}" -- "$cur") ) || [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationStatusValues)}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["pending", "in_progress", "delivered", "failed", "abandoned"])}" -- "$cur") ); return ;;`,
-    `    --target) [[ $scope == admin ]] && COMPREPLY=( $(compgen -W "${wordList(storageMigrationTargetValues)}" -- "$cur") ); return ;;`,
-    `    --confirm) [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == request ]] && COMPREPLY=( $(compgen -W "LIVE" -- "$cur") ) || [[ $scope == admin && $action == storage-migrations && \${COMP_WORDS[3]} == cutover ]] && COMPREPLY=( $(compgen -W "CUTOVER" -- "$cur") ) || [[ $scope == admin && $action == tenant-imports && \${COMP_WORDS[3]} == execute ]] && COMPREPLY=( $(compgen -W "EXECUTE_INTERNAL_TENANT_IMPORT" -- "$cur") ); return ;;`,
+    `    --status) [[ $scope == meet ]] && COMPREPLY=( $(compgen -W "${wordList(["active", "ended"])}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["pending", "in_progress", "delivered", "failed", "abandoned"])}" -- "$cur") ); return ;;`,
     "    --client-id|--client-secret|--scope|--json|--from) return ;;",
     "  esac",
     "",
@@ -622,7 +565,7 @@ function generateZshCompletion(): string {
     "",
     "_helix() {",
     "  local -a top source_values transport_values search_type_values admin_user_type_values tier_values auth_flags json_flag",
-    "  local -a direction_values webhook_status_values meet_status_values classification_values storage_migration_target_values storage_migration_status_values tenant_export_status_values",
+    "  local -a direction_values webhook_status_values meet_status_values classification_values",
     `  top=(${zshWords(topLevelCommands)})`,
     "  source_values=(api openapi mcp)",
     "  transport_values=(rest mcp)",
@@ -632,10 +575,6 @@ function generateZshCompletion(): string {
     "  direction_values=(outbound inbound)",
     "  webhook_status_values=(pending in_progress delivered failed abandoned)",
     "  meet_status_values=(active ended)",
-    `  storage_migration_target_values=(${storageMigrationTargetValues.join(" ")})`,
-    `  storage_migration_status_values=(${storageMigrationStatusValues.join(" ")})`,
-    `  tenant_export_status_values=(${tenantExportJobStatusValues.join(" ")})`,
-    `  tenant_import_status_values=(${tenantImportJobStatusValues.join(" ")})`,
     `  classification_values=(${assistantClassificationValues.join(" ")})`,
     "  auth_flags=(--client-id --client-secret --scope)",
     "  json_flag=(--json)",
@@ -718,8 +657,6 @@ function generateZshCompletion(): string {
     "        esac",
     "      elif [[ ${words[CURRENT-1]} == --direction ]]; then",
     "        compadd -- $direction_values",
-    "      elif [[ ${words[CURRENT-1]} == --status && ${words[3]} == tenant-exports ]]; then",
-    "        compadd -- $tenant_export_status_values",
     "      elif [[ ${words[CURRENT-1]} == --status ]]; then",
     "        compadd -- $webhook_status_values",
     "      else",
@@ -740,20 +677,6 @@ function generateZshCompletion(): string {
     "        esac",
     "      elif [[ ${words[CURRENT-1]} == --type ]]; then",
     "        compadd -- $admin_user_type_values",
-    "      elif [[ ${words[CURRENT-1]} == --target ]]; then",
-    "        compadd -- $storage_migration_target_values",
-    "      elif [[ ${words[CURRENT-1]} == --status && ${words[3]} == tenant-exports ]]; then",
-    "        compadd -- $tenant_export_status_values",
-    "      elif [[ ${words[CURRENT-1]} == --status && ${words[3]} == tenant-imports ]]; then",
-    "        compadd -- $tenant_import_status_values",
-    "      elif [[ ${words[CURRENT-1]} == --status ]]; then",
-    "        compadd -- $storage_migration_status_values",
-    "      elif [[ ${words[CURRENT-1]} == --confirm && ${words[3]} == storage-migrations && ${words[4]} == request ]]; then",
-    "        compadd -- LIVE",
-    "      elif [[ ${words[CURRENT-1]} == --confirm && ${words[3]} == storage-migrations && ${words[4]} == cutover ]]; then",
-    "        compadd -- CUTOVER",
-    "      elif [[ ${words[CURRENT-1]} == --confirm && ${words[3]} == tenant-imports && ${words[4]} == execute ]]; then",
-    "        compadd -- EXECUTE_INTERNAL_TENANT_IMPORT",
     "      else",
     zshAdminFlagCases(),
     "      fi",
@@ -992,7 +915,7 @@ function fishAdminFlagCompletions(): string[] {
   return Object.entries(adminActionFlags).flatMap(([key, flags]) => {
     const [family, action] = splitActionKey(key, "admin");
     return flags.map((flag) => {
-      const values = adminFlagValues(flag, family);
+      const values = adminFlagValues(flag);
       return `complete -c helix -n "__fish_seen_subcommand_from admin; and __fish_seen_subcommand_from ${family}; and __fish_seen_subcommand_from ${action}" -l ${flag.slice(2)} -x${values}`;
     });
   });
@@ -1002,7 +925,9 @@ function fishAssistantFlagCompletions(): string[] {
   return Object.entries(assistantActionFlags).flatMap(([action, flags]) =>
     flags.map((flag) => {
       const values =
-        flag === "--classification" ? ` -a "${wordList(assistantClassificationValues)}"` : "";
+        flag === "--classification"
+          ? ` -a "${wordList(assistantClassificationValues)}"`
+          : "";
       return `complete -c helix -n "__fish_seen_subcommand_from assistant; and __fish_seen_subcommand_from ${action}" -l ${flag.slice(2)} -x${values}`;
     }),
   );
@@ -1030,24 +955,9 @@ function webhookFlagValues(flag: string): string {
   return "";
 }
 
-function adminFlagValues(flag: string, family?: string): string {
+function adminFlagValues(flag: string): string {
   if (flag === "--type") {
     return ' -a "user agent service_account system"';
-  }
-  if (flag === "--target") {
-    return ' -a "byo helix-default"';
-  }
-  if (flag === "--status") {
-    if (family === "tenant-exports") {
-      return ' -a "queued running succeeded failed"';
-    }
-    if (family === "tenant-imports") {
-      return ' -a "succeeded failed blocked"';
-    }
-    return ' -a "queued running succeeded succeeded_with_errors failed dry_run"';
-  }
-  if (flag === "--confirm") {
-    return ' -a "LIVE CUTOVER EXECUTE_INTERNAL_TENANT_IMPORT"';
   }
   return "";
 }

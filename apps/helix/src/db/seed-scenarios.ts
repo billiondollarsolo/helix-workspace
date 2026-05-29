@@ -82,7 +82,7 @@ const MAIL_THREADS: readonly MailThreadSpec[] = [
     read: false,
     messages: [
       { fromEmail: "morgan@helix.local", bodyAgoHours: -36, body: "Team — pulling together the Q4 priority list for the leadership review on Friday. Please drop your top three asks for the quarter into the planning doc by Wednesday EOD." },
-      { fromEmail: "sasha@helix.local", bodyAgoHours: -28, body: "Engineering's three: 1) finish the OnlyOffice integration, 2) ship the new search index, 3) cut the legacy Yjs editor. Doc updated." },
+      { fromEmail: "sasha@helix.local", bodyAgoHours: -28, body: "Engineering's three: 1) ship native helix-docs DOCX import parity, 2) ship the new search index, 3) cut the legacy Yjs editor. Doc updated." },
       { fromEmail: "priya@helix.local", bodyAgoHours: -22, body: "From design: refresh the file-row treatment, ship the new empty-state illustrations, finalize the doc preview chrome. Ready to walk through Friday." },
       { fromEmail: "morgan@helix.local", bodyAgoHours: -6, body: "Great — those line up with what I'm hearing from accounts. I'll consolidate and we'll review at 10am Friday." },
     ],
@@ -150,7 +150,7 @@ const MAIL_THREADS: readonly MailThreadSpec[] = [
     participants: ["user@helix.local", "morgan@helix.local", "priya@helix.local"],
     category: "primary",
     messages: [
-      { fromEmail: "user@helix.local", bodyAgoHours: -30, body: "Acme demo is Thursday at 11am. Goal: show off real-time co-edit on the new OnlyOffice integration. I'll send a rehearsal script tomorrow." },
+      { fromEmail: "user@helix.local", bodyAgoHours: -30, body: "Acme demo is Thursday at 11am. Goal: show off real-time co-edit on the native helix-docs editor. I'll send a rehearsal script tomorrow." },
       { fromEmail: "morgan@helix.local", bodyAgoHours: -25, body: "Lean into the comment threading — they've been asking for that across three calls now." },
       { fromEmail: "priya@helix.local", bodyAgoHours: -23, body: "I'll have the demo dataset cleaned up by EOD Wednesday." },
     ],
@@ -313,7 +313,7 @@ const CALENDAR_EVENTS: readonly CalendarEventSpec[] = [
   { title: "Q4 roadmap review",       organizer: "morgan@helix.local", attendees: ["morgan@helix.local","admin@helix.local","sasha@helix.local","priya@helix.local","erica@helix.local"], startsAgoHours: 42,  durationMinutes: 90, location: "Conf Room A / Zoom",     description: "Leadership review of Q4 priorities — see roadmap doc." },
   { title: "1:1 Avery / Morgan",      organizer: "admin@helix.local",  attendees: ["admin@helix.local","morgan@helix.local"], startsAgoHours: 26, durationMinutes: 30 },
   { title: "Design review — preview chrome", organizer: "priya@helix.local",  attendees: ["priya@helix.local","admin@helix.local","leo@helix.local","morgan@helix.local"], startsAgoHours: 52,  durationMinutes: 45, location: "Zoom", description: "v3 preview chrome walkthrough; comment-anchor proposal." },
-  { title: "Customer demo — Acme",    organizer: "user@helix.local",   attendees: ["user@helix.local","morgan@helix.local","priya@helix.local"], startsAgoHours: 72,  durationMinutes: 45, location: "Zoom", description: "Live demo of the OnlyOffice integration and real-time co-edit." },
+  { title: "Customer demo — Acme",    organizer: "user@helix.local",   attendees: ["user@helix.local","morgan@helix.local","priya@helix.local"], startsAgoHours: 72,  durationMinutes: 45, location: "Zoom", description: "Live demo of native helix-docs and real-time co-edit." },
   { title: "All-hands",               organizer: "morgan@helix.local", attendees: ["morgan@helix.local","admin@helix.local","user@helix.local","sasha@helix.local","priya@helix.local","leo@helix.local","nadia@helix.local","maya@helix.local","erica@helix.local"], startsAgoHours: 168, durationMinutes: 60, location: "Town Hall / Zoom", description: "Monthly all-hands. Roadmap update, Q3 NPS results, security advisory." },
   { title: "Engineering retro",       organizer: "sasha@helix.local",  attendees: ["sasha@helix.local","leo@helix.local","priya@helix.local","admin@helix.local"], startsAgoHours: 200, durationMinutes: 60, location: "Conf Room B", description: "Sprint retro. What went well, what didn't, what to try." },
   { title: "Security review — webhook rotation", organizer: "nadia@helix.local", attendees: ["nadia@helix.local","sasha@helix.local","admin@helix.local"], startsAgoHours: 96,  durationMinutes: 30, description: "Rotate Slack webhook secrets per the security advisory." },
@@ -430,7 +430,7 @@ const CHAT_ROOMS: readonly ChatRoomSpec[] = [
     messages: [
       { fromEmail: "sasha@helix.local", ago: 90, body: "On-call hand-off: I'm off the rotation Friday EOD, Leo picks up. Anything pending will be in the runbook." },
       { fromEmail: "leo@helix.local",   ago: 88, body: "Got it. The flaky migration test should be deflaked by EOD today, will note in the runbook." },
-      { fromEmail: "priya@helix.local", ago: 60, body: "Anyone seen weird OnlyOffice JWT errors locally? Found it — was an old maxParamLength setting in fastify." },
+      { fromEmail: "priya@helix.local", ago: 60, body: "Anyone seen weird tool-route 404s locally? Found it — was an old maxParamLength setting in fastify." },
       { fromEmail: "leo@helix.local",   ago: 58, body: "Yeah saw that yesterday. Bumped to 2048. Should be fixed on main." },
       { fromEmail: "sasha@helix.local", ago: 30, body: "PR review queue is getting long — please prioritize the search-index cut + the new permission projection." },
       { fromEmail: "admin@helix.local", ago: 12, body: "Reviewed both. Search-index ✅, permission projection has one comment thread I left." },

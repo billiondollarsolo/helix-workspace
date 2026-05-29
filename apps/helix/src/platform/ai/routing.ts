@@ -212,7 +212,10 @@ export class AIRouter implements AICapability {
     ctx: Partial<AICallContext>,
     span: Span,
   ): AsyncGenerator<ChatChunk> {
-    const classification = request.classification ?? ctx.classification ?? "standard";
+    // SECURITY: classification must be server-derived. The client-supplied
+    // request.classification is now ignored (was a trust-boundary leak — A1
+    // in the AI review). Default to the most restrictive band ("internal").
+    const classification: AIClassification = ctx.classification ?? "standard";
     const actor = ctx.actor ?? this.#systemActor;
     const attempts = await this.#selectProviderAttempts(request, classification);
     const context: AICallContext = {
@@ -230,10 +233,20 @@ export class AIRouter implements AICapability {
     for (const attempt of attempts) {
       const started = process.hrtime.bigint();
       const modelForMetrics = request.model ?? attempt.model ?? "unknown";
+      // Tracks reservation lifecycle so the cost guard always sees a paired
+      // `record(...)` even if the client disconnects mid-stream or the provider
+      // throws after `reserve(...)` succeeds. Without this, abandoned streams
+      // permanently consume the actor's daily budget.
+      let reservationFinalized = false;
+      let reservationProviderId = attempt.provider.id;
+      let resolvedModel = request.model ?? attempt.model ?? "unknown";
+      let estimatedCostCents = 0;
+      let partialUsage: ChatResponse["usage"];
       try {
         const model = request.model ?? attempt.model ?? (await firstModel(attempt.provider));
+        resolvedModel = model;
         assertClassificationAllowed(attempt.provider, classification, this.#policy);
-        const estimatedCostCents = await estimateRequestCost(attempt.provider, request, model);
+        estimatedCostCents = await estimateRequestCost(attempt.provider, request, model);
         await this.#costGuard?.reserve({
           actor,
           feature: request.feature,
@@ -244,6 +257,7 @@ export class AIRouter implements AICapability {
 
         const streamRequest: ChatRequest = { ...request, model, classification };
         const provider = attempt.provider;
+        reservationProviderId = provider.id;
         if (provider.chatStream === undefined) {
           // Provider cannot stream natively: emit the non-streaming response
           // as a single terminal chunk so callers still get a uniform stream.
@@ -266,16 +280,15 @@ export class AIRouter implements AICapability {
             started,
             span,
           });
+          reservationFinalized = true;
           return;
         }
 
         let message = "";
-        let usage: ChatResponse["usage"];
-        let resolvedModel = model;
         for await (const chunk of provider.chatStream(streamRequest, context)) {
           message += chunk.delta;
           if (chunk.usage !== undefined) {
-            usage = chunk.usage;
+            partialUsage = chunk.usage;
           }
           if (chunk.metadata !== undefined) {
             const metadataModel = chunk.metadata.model;
@@ -294,11 +307,12 @@ export class AIRouter implements AICapability {
           providerId: provider.id,
           model: resolvedModel,
           message,
-          usage,
+          usage: partialUsage,
           estimatedCostCents,
           started,
           span,
         });
+        reservationFinalized = true;
         return;
       } catch (error) {
         this.#metrics?.recordLLMChat({
@@ -320,6 +334,21 @@ export class AIRouter implements AICapability {
           "exception.type": errorName(error),
           "exception.message": error instanceof Error ? error.message : String(error),
         });
+      } finally {
+        // Release the reservation if the stream was abandoned (client
+        // disconnect, generator `return()`, or thrown error after reserve).
+        // Recording the partial usage we observed prevents the actor's daily
+        // cost budget from drifting upward over time when streams are aborted.
+        if (!reservationFinalized) {
+          await this.#releaseReservation({
+            actor,
+            feature: request.feature,
+            providerId: reservationProviderId,
+            model: resolvedModel,
+            partialUsage,
+            estimatedCostCents,
+          });
+        }
       }
     }
 
@@ -328,6 +357,33 @@ export class AIRouter implements AICapability {
       : new AIProviderUnavailableError(
           `No AI provider is configured for feature ${request.feature}.`,
         );
+  }
+
+  async #releaseReservation(input: {
+    readonly actor: Actor;
+    readonly feature: string;
+    readonly providerId: string;
+    readonly model: string;
+    readonly partialUsage: ChatResponse["usage"];
+    readonly estimatedCostCents: number;
+  }): Promise<void> {
+    if (this.#costGuard === undefined) {
+      return;
+    }
+    // Bill the actual partial usage if the provider reported any, otherwise
+    // bill zero so the reservation is closed without double-charging.
+    const costCents = input.partialUsage?.costCents ?? 0;
+    try {
+      await this.#costGuard.record({
+        actor: input.actor,
+        feature: input.feature,
+        providerId: input.providerId,
+        model: input.model,
+        costCents,
+      });
+    } catch {
+      // Swallow release errors so they cannot mask the original abort/throw.
+    }
   }
 
   async *#emitNonStreamingFallback(
@@ -433,7 +489,7 @@ export class AIRouter implements AICapability {
     ctx: Partial<AICallContext>,
     span: Span,
   ): Promise<ChatResponse> {
-    const classification = request.classification ?? ctx.classification ?? "standard";
+    const classification: AIClassification = ctx.classification ?? "standard"; // SECURITY: server-derived only (A1)
     const actor = ctx.actor ?? this.#systemActor;
     const attempts = await this.#selectProviderAttempts(request, classification);
     const context: AICallContext = {
@@ -574,7 +630,7 @@ export class AIRouter implements AICapability {
     ctx: Partial<AICallContext>,
     span: Span,
   ): Promise<ImageGenerationResponse> {
-    const classification = request.classification ?? ctx.classification ?? "standard";
+    const classification: AIClassification = ctx.classification ?? "standard"; // SECURITY: server-derived only (A1)
     const actor = ctx.actor ?? this.#systemActor;
     const attempts = await this.#selectImageProviderAttempts(request, classification);
     const context: AICallContext = {

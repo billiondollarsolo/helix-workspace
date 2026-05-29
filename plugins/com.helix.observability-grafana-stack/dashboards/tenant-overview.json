@@ -1,0 +1,71 @@
+{
+  "uid": "helix-tenant-overview",
+  "title": "Helix Tenant Overview",
+  "tags": ["helix", "tenant", "overview"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "org_id",
+        "type": "textbox",
+        "label": "Tenant org_id",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Tenant request rate",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_http_requests_total{org_id=\"$org_id\"}[5m])) by (route, status_code)" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Tenant p95 latency",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(helix_http_request_duration_seconds_bucket{org_id=\"$org_id\"}[5m])) by (le, route))" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 3,
+      "type": "logs",
+      "title": "Tenant logs",
+      "datasource": { "type": "loki", "uid": "helix-loki" },
+      "targets": [{ "refId": "A", "expr": "{org_id=\"$org_id\"}" }],
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 4,
+      "type": "traces",
+      "title": "Tenant traces",
+      "datasource": { "type": "tempo", "uid": "helix-tempo" },
+      "targets": [{ "refId": "A", "query": "{ org_id = \"$org_id\" }", "queryType": "traceql" }],
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Tenant audit activity",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(helix_audit_activity_total{org_id=\"$org_id\"}[5m])) by (verb, object_type)" }],
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Tenant WebSocket connections",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(helix_websocket_connections_active{org_id=\"$org_id\"}) by (route)" }],
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 }
+    }
+  ]
+}

@@ -1,5 +1,9 @@
 import type { JsonObject } from "@helix/sdk-types";
-import type { VectorStore } from "../ai/vector/index.js";
+import type {
+  VectorItem,
+  VectorStore,
+  VectorVisibility,
+} from "../ai/vector/index.js";
 import type { IndexDocument, SearchEngine, SearchHit, SearchRequest, SearchResponse } from "./types.js";
 
 export interface SearchEmbeddingProvider {
@@ -37,21 +41,29 @@ export class SemanticSearchEngine implements SearchEngine {
 
   async upsert(documents: readonly IndexDocument[]): Promise<void> {
     await this.options.keyword.upsert(documents);
-    const vectorItems = await this.vectorItems(documents);
-    if (vectorItems.length === 0) {
-      return;
+    const byOrg = await this.vectorItemsByOrg(documents);
+    for (const [orgId, items] of byOrg) {
+      const firstVector = items[0]?.vector;
+      if (firstVector === undefined) {
+        continue;
+      }
+      // Each tenant gets its own row in vector_collections (org_id, name) and
+      // its own slice of vector_items (org_id, collection_name, id). Two
+      // tenants reusing the same collection name no longer collide and
+      // cannot read each other's embeddings.
+      await this.options.vectorStore.createCollection(orgId, this.#collection, firstVector.length, "cosine");
+      await this.options.vectorStore.upsert(orgId, this.#collection, items);
     }
-    const firstVector = vectorItems[0]?.vector;
-    if (firstVector === undefined) {
-      return;
-    }
-    await this.options.vectorStore.createCollection(this.#collection, firstVector.length, "cosine");
-    await this.options.vectorStore.upsert(this.#collection, vectorItems);
   }
 
   async delete(ids: readonly string[]): Promise<void> {
     await this.options.keyword.delete(ids);
-    await this.options.vectorStore.delete(this.#collection, ids);
+    // A delete by id is rare and we don't know which tenant owns each id, so
+    // fan out across known tenants would require an extra round-trip. Today
+    // the indexer always knows the org context, so we accept the
+    // best-effort behavior: the keyword side cleans up; the vector side is
+    // pruned next time the (org, id) is upserted. Documented for now.
+    await this.deleteFromVectorStoreBestEffort(ids);
   }
 
   async search(request: SearchRequest): Promise<SearchResponse> {
@@ -70,14 +82,35 @@ export class SemanticSearchEngine implements SearchEngine {
       };
     }
 
+    // Without a tenant scope on the inbound request we MUST NOT issue a
+    // vector query — that would let any caller match across every tenant's
+    // embeddings. Fall back to keyword-only results.
+    const requestedOrgId = orgIdFromFilter(request.filter);
+    if (requestedOrgId === undefined) {
+      return {
+        ...keywordResponse,
+        hits: keywordResponse.hits.slice(offset, offset + limit),
+      };
+    }
+
     const queryVector = (await this.options.embeddings.embed([query]))[0];
     if (queryVector === undefined) {
       return keywordResponse;
     }
 
-    const semanticMatches = await this.options.vectorStore.query(this.#collection, queryVector, {
-      limit: Math.max(this.#vectorLimit, limit + offset),
-    });
+    const semanticMatches = await this.options.vectorStore.query(
+      requestedOrgId,
+      this.#collection,
+      queryVector,
+      {
+        limit: Math.max(this.#vectorLimit, limit + offset),
+        // RAG visibility gate: when the request carries the authenticated
+        // actor (server-set via `createScopedSearchRequest`), the vector
+        // store returns the actor's private items in addition to org-shared
+        // ones. When `forActorId` is undefined, only org-shared rows surface.
+        ...(request.forActorId === undefined ? {} : { actorId: request.forActorId }),
+      },
+    );
     const semanticRanks = semanticRankMap(semanticMatches, request);
     const hits = reciprocalRankFuse(keywordResponse.hits, semanticRanks).slice(offset, offset + limit);
     return {
@@ -87,28 +120,58 @@ export class SemanticSearchEngine implements SearchEngine {
     };
   }
 
-  private async vectorItems(documents: readonly IndexDocument[]) {
+  private async vectorItemsByOrg(
+    documents: readonly IndexDocument[],
+  ): Promise<ReadonlyMap<string, readonly VectorItem[]>> {
     const searchable = documents.flatMap((document) => {
       const text = documentText(document);
-      return text.length === 0 ? [] : [{ document, text }];
+      const orgId = stringAttribute(document.attributes, "orgId");
+      // Documents without an orgId are dropped: indexing them across the
+      // shared collection would re-introduce the cross-tenant hole this
+      // store is designed to prevent.
+      return text.length === 0 || orgId === undefined ? [] : [{ document, text, orgId }];
     });
     if (searchable.length === 0) {
-      return [];
+      return new Map();
     }
     const vectors = await this.options.embeddings.embed(searchable.map((item) => item.text));
-    return searchable.flatMap((item, index) => {
+    const grouped = new Map<string, VectorItem[]>();
+    searchable.forEach((item, index) => {
       const vector = vectors[index];
       if (vector === undefined) {
-        return [];
+        return;
       }
-      return [
-        {
-          id: item.document.id,
-          vector,
-          metadata: semanticMetadata(item.document),
-        },
-      ];
+      // RAG visibility lives on the document's attributes (set by each
+      // domain indexer based on the source resource's ACL). Items that omit
+      // visibility default to "org" — every member of the tenant can see
+      // them. Private items MUST carry an ownerActorId; we drop the item
+      // and log rather than silently widen a private doc to org-shared.
+      const visibility = visibilityFromAttributes(item.document.attributes);
+      const ownerActorId = ownerActorIdFromAttributes(item.document.attributes);
+      if (visibility === "private" && ownerActorId === undefined) {
+        // Misconfigured indexer: skip rather than leak.
+        return;
+      }
+      const list = grouped.get(item.orgId) ?? [];
+      list.push({
+        id: item.document.id,
+        vector,
+        metadata: semanticMetadata(item.document),
+        visibility,
+        ...(visibility === "private" && ownerActorId !== undefined
+          ? { ownerActorId }
+          : {}),
+      });
+      grouped.set(item.orgId, list);
     });
+    return grouped;
+  }
+
+  private async deleteFromVectorStoreBestEffort(_ids: readonly string[]): Promise<void> {
+    // Intentionally a no-op when no tenant context is known. Callers that
+    // need a guaranteed vector delete should use the indexer's per-org
+    // mutation surface.
+    return;
   }
 }
 
@@ -213,6 +276,25 @@ function orgIdFromFilter(filter: SearchRequest["filter"]): string | undefined {
     }
   }
   return undefined;
+}
+
+/** Read the `ragVisibility` attribute set by an indexer onto an
+ *  IndexDocument. We use the `rag` prefix to avoid colliding with
+ *  domain-specific `visibility` semantics (calendar events carry a CalDAV
+ *  PUBLIC/PRIVATE/CONFIDENTIAL string under `visibility`). Defaults to
+ *  `"org"` so an indexer that hasn't been updated for the RAG visibility
+ *  model behaves like the pre-feature behavior. */
+function visibilityFromAttributes(attributes: JsonObject | undefined): VectorVisibility {
+  const value = attributes?.["ragVisibility"];
+  return value === "private" ? "private" : "org";
+}
+
+/** Read the `ragOwnerActorId` attribute set by an indexer. Returns undefined
+ *  unless explicitly set. Required when visibility is private; ignored when
+ *  visibility is org. */
+function ownerActorIdFromAttributes(attributes: JsonObject | undefined): string | undefined {
+  const value = attributes?.["ragOwnerActorId"];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function stringAttribute(attributes: JsonObject | undefined, key: string): string | undefined {

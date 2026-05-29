@@ -5,6 +5,7 @@
    the two representations and diff edits for `sheets.cells.update`. */
 
 import type { SheetsApiCell, SheetsApiSheet, SheetsCellEdit } from "./api";
+import type { DriveApiPreview } from "@/features/drive/api";
 import type { SheetFile, SheetGrid } from "./seed";
 
 /** Minimum dense grid shape so a fresh tab still renders a usable surface. */
@@ -105,7 +106,19 @@ export function gridToCellEdits(grid: SheetGrid | EditableGrid): SheetsCellEdit[
 export interface SheetListRow extends SheetFile {
   /** `"backend"` rows are live and editable; `"seed"` rows are offline-only. */
   readonly source: "backend" | "seed";
-  /** Native Helix sheets open in-app; raw XLS/XLSX/CSV uploads still use OnlyOffice. */
+  readonly mimeType?: string | undefined;
+  /** Uppercase source format shown beside filenames, e.g. XLSX or ODS. */
+  readonly formatLabel?: string;
+  readonly preview?: DriveApiPreview | undefined;
+  /** True when the signed-in user owns the spreadsheet. */
+  readonly mine?: boolean;
+  readonly starred?: boolean;
+  /** Non-null when the Drive object is in trash. */
+  readonly deletedAt?: string | null;
+  /** Native Helix sheets open in-app. Raw XLS/XLSX/CSV uploads also open
+   *  natively — the universal editor router imports them into a fresh
+   *  helix-sheet on first open. The `"office"` mode is a vestigial enum
+   *  value kept so seed rows that still carry it parse without errors. */
   readonly openMode?: "native" | "office";
 }
 
@@ -118,6 +131,10 @@ export function listRowFromApi(sheet: SheetsApiSheet): SheetListRow {
     modified: formatModified(sheet.updatedAt),
     shared: sharedCount(sheet.metadata),
     source: "backend",
+    formatLabel: "SHEET",
+    mine: true,
+    starred: false,
+    deletedAt: sheet.deletedAt,
   };
 }
 

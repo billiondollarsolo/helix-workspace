@@ -17,6 +17,14 @@ export interface SearchRequest {
   readonly offset?: number;
   readonly filter?: string | readonly string[];
   readonly attributesToRetrieve?: readonly string[];
+  /**
+   * The actor performing the search. Server-set from the authenticated
+   * session — never accepted from a client. When set, the semantic-search
+   * backend extends vector retrieval to include the actor's own
+   * `visibility = "private"` items in addition to all `visibility = "org"`
+   * items. When unset, only org-shared items are returned.
+   */
+  readonly forActorId?: string;
 }
 
 export interface SearchHit extends IndexDocument {

@@ -55,7 +55,17 @@ const shapedBulletsContent: SlideContent = {
       width: 36,
       height: 16,
       text: "Q3 emphasis",
+      linkUrl: "https://example.test/q3-emphasis",
       tone: "dark",
+      fontFamily: "serif",
+      fontSize: 24,
+      bold: true,
+      italic: true,
+      underline: true,
+      strikethrough: true,
+      textAlign: "right",
+      textColor: "#111827",
+      highlightColor: "#fef3c7",
       animation: {
         type: "fly",
         motionPath: "right",
@@ -421,6 +431,187 @@ describe("InMemorySlidesStore slides", () => {
     await expect(store.listOperations({ orgId, actorId, deckId: deck.id })).resolves.toEqual([]);
   });
 
+  it("rejects concurrent update-slide ops with stale expectedRevision so the first writer's edits survive", async () => {
+    // Two clients edit the same slide concurrently. Both observe revision 1
+    // and send an `update-slide` based on that revision. The first wins; the
+    // second is rejected with `slide-conflict` so the first writer's content
+    // is preserved. Before this safety net the second write silently
+    // overwrote the first (last-write-wins per the slide-content JSON blob).
+    const store = new InMemorySlidesStore();
+    const deck = await store.createDeck({ orgId, actorId, title: "Concurrency" });
+    const slide = await store.createSlide({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      content: titleContent,
+    });
+    expect(slide.revision).toBe(1);
+
+    const writerA = await store.applyOperation({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      operationId: "op-a",
+      baseRevision: 0,
+      operation: {
+        kind: "update-slide",
+        slideId: slide.id,
+        content: { layout: "title", title: "Writer A wins" },
+        expectedRevision: 1,
+      },
+    });
+    expect(writerA.status).toBe("applied");
+
+    const writerB = await store.applyOperation({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      operationId: "op-b",
+      baseRevision: 0,
+      operation: {
+        kind: "update-slide",
+        slideId: slide.id,
+        content: { layout: "title", title: "Writer B (would overwrite)" },
+        expectedRevision: 1,
+      },
+    });
+    expect(writerB).toMatchObject({
+      status: "slide-conflict",
+      operationId: "op-b",
+      slideId: slide.id,
+      currentSlideRevision: 2,
+    });
+    if (writerB.status === "slide-conflict") {
+      const conflictSlide = writerB.snapshot.slides.find((entry) => entry.id === slide.id);
+      expect(conflictSlide?.content).toEqual({ layout: "title", title: "Writer A wins" });
+    }
+
+    // Server state still reflects writer A — writer B's update was rejected.
+    const snapshot = await store.getDeckForActor({ orgId, actorId, deckId: deck.id });
+    expect(snapshot?.slides[0]?.content).toEqual({ layout: "title", title: "Writer A wins" });
+    expect(snapshot?.slides[0]?.revision).toBe(2);
+  });
+
+  it("accepts an update-slide op after rebasing on the current slide revision", async () => {
+    const store = new InMemorySlidesStore();
+    const deck = await store.createDeck({ orgId, actorId, title: "Rebase" });
+    const slide = await store.createSlide({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      content: titleContent,
+    });
+
+    await store.applyOperation({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      operationId: "op-first",
+      baseRevision: 0,
+      operation: {
+        kind: "update-slide",
+        slideId: slide.id,
+        content: { layout: "title", title: "First" },
+        expectedRevision: 1,
+      },
+    });
+
+    // Writer B refetches, observes revision 2, retries with rebased content.
+    const retry = await store.applyOperation({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      operationId: "op-second",
+      baseRevision: 1,
+      operation: {
+        kind: "update-slide",
+        slideId: slide.id,
+        content: { layout: "title", title: "Second after rebase" },
+        expectedRevision: 2,
+      },
+    });
+    expect(retry.status).toBe("applied");
+
+    const snapshot = await store.getDeckForActor({ orgId, actorId, deckId: deck.id });
+    expect(snapshot?.slides[0]?.content).toEqual({ layout: "title", title: "Second after rebase" });
+    expect(snapshot?.slides[0]?.revision).toBe(3);
+  });
+
+  it("treats update-slide without expectedRevision as a legacy unsafe write (for back-compat)", async () => {
+    // Older clients that don't send expectedRevision fall through to the
+    // legacy last-write-wins path. The new safety net only activates when
+    // the client opts in by passing expectedRevision. This keeps existing
+    // tools (PPTX import, AI generation) working while the UI ships CAS.
+    const store = new InMemorySlidesStore();
+    const deck = await store.createDeck({ orgId, actorId, title: "Legacy" });
+    const slide = await store.createSlide({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      content: titleContent,
+    });
+
+    const result = await store.applyOperation({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      operationId: "op-legacy",
+      baseRevision: 0,
+      operation: {
+        kind: "update-slide",
+        slideId: slide.id,
+        content: { layout: "title", title: "Legacy unsafe" },
+      },
+    });
+    expect(result.status).toBe("applied");
+  });
+
+  it("rejects delete-slide ops with stale expectedRevision", async () => {
+    const store = new InMemorySlidesStore();
+    const deck = await store.createDeck({ orgId, actorId, title: "Delete CAS" });
+    const slide = await store.createSlide({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      content: titleContent,
+    });
+
+    // Writer A updates first, bumping revision to 2.
+    await store.applyOperation({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      operationId: "op-update",
+      baseRevision: 0,
+      operation: {
+        kind: "update-slide",
+        slideId: slide.id,
+        content: { layout: "title", title: "Edited" },
+        expectedRevision: 1,
+      },
+    });
+
+    // Writer B tries to delete based on stale revision 1.
+    const stale = await store.applyOperation({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      operationId: "op-delete-stale",
+      baseRevision: 1,
+      operation: {
+        kind: "delete-slide",
+        slideId: slide.id,
+        expectedRevision: 1,
+      },
+    });
+    expect(stale.status).toBe("slide-conflict");
+
+    // Slide still exists with the updated content.
+    const snapshot = await store.getDeckForActor({ orgId, actorId, deckId: deck.id });
+    expect(snapshot?.slides).toHaveLength(1);
+    expect(snapshot?.slides[0]?.content).toEqual({ layout: "title", title: "Edited" });
+  });
+
   it("denies slide mutations on decks the actor cannot access", async () => {
     const store = new InMemorySlidesStore();
     const deck = await store.createDeck({ orgId, actorId, title: "Deck" });
@@ -566,74 +757,6 @@ describe("PostgresSlidesStore tenant storage snapshots", () => {
     );
     expect(recording.calls.some((call) => call.text.includes("insert into objects"))).toBe(false);
   });
-
-  it("restores presentation state from a tenant-stored snapshot version", async () => {
-    const recording = createRecordingSlidesSql();
-    const storage = new RecordingStorageClient();
-    const store = new PostgresSlidesStore(recording.sql, {
-      storageResolver: storageResolverFor(storage),
-    });
-
-    const deck = await store.createDeck({ orgId, actorId, title: "Storage Deck" });
-    const slide = await store.createSlide({
-      orgId,
-      actorId,
-      deckId: deck.id,
-      content: shapedBulletsContent,
-      speakerNotes: "Review metrics",
-    });
-    const versionTwoSnapshot = storage.puts[3];
-    await store.updateDeck({
-      orgId,
-      actorId,
-      deckId: deck.id,
-      title: "Updated Storage Deck",
-    });
-
-    const restored = await store.restoreSnapshotVersion({
-      orgId,
-      actorId,
-      deckId: deck.id,
-      versionNumber: 2,
-    });
-
-    expect(restored?.deck).toMatchObject({ id: deck.id, title: "Storage Deck", slideCount: 1 });
-    expect(restored?.slides).toEqual([
-      expect.objectContaining({
-        id: slide.id,
-        position: 0,
-        layout: "bullets",
-        content: shapedBulletsContent,
-        speakerNotes: "Review metrics",
-      }),
-    ]);
-    expect(storage.puts).toHaveLength(8);
-    expect(new TextDecoder().decode(storage.puts[6]?.body)).toBe(
-      new TextDecoder().decode(versionTwoSnapshot?.body),
-    );
-    expect(storage.puts[7]?.key).toBe(`slides/${orgId}/${deck.id}/versions/4`);
-    const deckUpdate = recording.calls
-      .filter(
-        (call) => call.text.includes("update slide_decks") && call.text.includes("returning *"),
-      )
-      .at(-1);
-    expect(deckUpdate?.values).toContain("Storage Deck");
-    expect(recording.calls.some((call) => call.text.includes("delete from slides"))).toBe(true);
-    const restoreVersionInsert = recording.calls
-      .filter((call) => call.text.includes("insert into drive_versions"))
-      .at(-1);
-    expect(restoreVersionInsert?.values).toContain(4);
-    expect(restoreVersionInsert?.values).toContain(storage.puts[7]?.key);
-    expect(restoreVersionInsert?.values).toContain(
-      sha256Hex(storage.puts[7]?.body ?? new Uint8Array()),
-    );
-    const restoreActivity = recording.calls.find(
-      (call) =>
-        call.text.includes("insert into activity") &&
-        call.values.includes("slides.version.restored"),
-    );
-    expect(restoreActivity?.values).toContain(deck.id);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -676,59 +799,23 @@ function createRecordingSlidesSql(): {
     layout: string;
     content: Record<string, unknown>;
     speaker_notes: string;
+    revision: number;
     created_at: Date;
     updated_at: Date;
   }> = [];
   let versionCount = 0;
-  const driveVersions: Array<{
-    id: string;
-    org_id: string;
-    object_id: string;
-    version_number: number;
-    storage_key: string;
-    mime_type: string;
-    byte_size: number;
-    sha256: string | null;
-    metadata: Record<string, unknown>;
-    created_by_actor_id: string | null;
-    created_at: Date;
-  }> = [];
   const tx = Object.assign(
     (strings: TemplateStringsArray, ...values: unknown[]) => {
       const text = strings.join("?");
       calls.push({ text, values });
       if (text.includes("insert into slide_decks")) {
-        Object.assign(deckRow, { title: String(values[1]) });
-        return Promise.resolve([deckRow]);
-      }
-      if (text.includes("update slide_decks") && text.includes("returning *")) {
-        Object.assign(deckRow, {
-          title: String(values[0]),
-          metadata: values[1] as Record<string, unknown>,
-          updated_at: now,
-        });
-        return Promise.resolve([deckRow]);
+        return Promise.resolve([{ ...deckRow, title: String(values[1]) }]);
       }
       if (text.includes("from slide_decks")) {
         return Promise.resolve([deckRow]);
       }
       if (text.includes("count(*)::int as slide_count")) {
         return Promise.resolve([{ slide_count: slides.length }]);
-      }
-      if (text.includes("insert into slides (id")) {
-        const slide = {
-          id: String(values[0]),
-          org_id: orgId,
-          deck_id: String(values[2]),
-          position: Number(values[3]),
-          layout: String(values[4]),
-          content: values[5] as Record<string, unknown>,
-          speaker_notes: String(values[6]),
-          created_at: now,
-          updated_at: now,
-        };
-        slides.push(slide);
-        return Promise.resolve([]);
       }
       if (text.includes("insert into slides")) {
         const slide = {
@@ -739,44 +826,18 @@ function createRecordingSlidesSql(): {
           layout: String(values[3]),
           content: values[4] as Record<string, unknown>,
           speaker_notes: String(values[5]),
+          revision: 1,
           created_at: now,
           updated_at: now,
         };
         slides.splice(0, slides.length, slide);
         return Promise.resolve([slide]);
       }
-      if (text.includes("delete from slides")) {
-        slides.splice(0, slides.length);
-        return Promise.resolve([]);
-      }
       if (text.includes("max(version_number)")) {
         return Promise.resolve([{ version_number: versionCount + 1 }]);
       }
-      if (text.includes("from drive_versions")) {
-        return Promise.resolve(
-          driveVersions.filter(
-            (version) =>
-              version.org_id === values[0] &&
-              version.object_id === values[1] &&
-              version.version_number === values[2],
-          ),
-        );
-      }
       if (text.includes("insert into drive_versions")) {
         versionCount += 1;
-        driveVersions.push({
-          id: `version-${String(versionCount)}`,
-          org_id: String(values[0]),
-          object_id: String(values[1]),
-          version_number: Number(values[2]),
-          storage_key: String(values[3]),
-          mime_type: "application/vnd.helix.presentation+json",
-          byte_size: Number(values[4]),
-          sha256: values[5] as string | null,
-          metadata: values[6] as Record<string, unknown>,
-          created_by_actor_id: String(values[7]),
-          created_at: now,
-        });
         return Promise.resolve([]);
       }
       if (text.includes("from slides")) {
@@ -816,12 +877,8 @@ class RecordingStorageClient implements TenantStorageClient {
     this.puts.push(object);
   }
 
-  async get(key: string): Promise<{
-    readonly key: string;
-    readonly body: Uint8Array;
-    readonly contentType?: string;
-  } | null> {
-    return this.puts.find((object) => object.key === key) ?? null;
+  async get(): Promise<null> {
+    return null;
   }
 
   async delete(): Promise<void> {}
@@ -907,6 +964,12 @@ describe(
       expect(obj?.metadata["name"]).toBe("Q3 Keynote");
       expect(obj?.metadata["deckId"]).toBe(deck.id);
       expect(obj?.metadata["folderId"]).toBeNull();
+      expect(obj?.metadata["preview"]).toMatchObject({
+        kind: "text",
+        status: "available",
+        mimeType: "application/vnd.helix.presentation",
+        text: "Q3 Keynote",
+      });
     });
 
     it("stores folderId in objects metadata when provided", async () => {

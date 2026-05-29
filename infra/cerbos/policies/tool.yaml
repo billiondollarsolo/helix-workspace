@@ -2,6 +2,8 @@ apiVersion: api.cerbos.dev/v1
 resourcePolicy:
   resource: tool
   version: default
+  importDerivedRoles:
+    - helix_platform_roles
   schemas:
     principalSchema:
       ref: cerbos:///platform/principal.json
@@ -10,11 +12,305 @@ resourcePolicy:
   rules:
     - actions: ["*"]
       effect: EFFECT_ALLOW
-      roles: ["system", "admin"]
+      roles: ["system"]
 
     - actions: ["*"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id
+
+    - actions: ["platform.read"]
       effect: EFFECT_ALLOW
       roles: ["user", "agent", "service_account"]
       condition:
         match:
-          expr: P.attr.scopes.exists(scope, scope == R.attr.permission)
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "platform.read" && P.attr.scopes.exists(scope, scope == "platform.read")
+
+    - actions: ["tools:read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "tools:read" && P.attr.scopes.exists(scope, scope == "tools:read")
+
+    - actions: ["tools:write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "tools:write" && P.attr.scopes.exists(scope, scope == "tools:write")
+
+    - actions: ["profile.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "profile.read" && P.attr.scopes.exists(scope, scope == "profile.read")
+
+    - actions: ["profile.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "profile.write" && P.attr.scopes.exists(scope, scope == "profile.write")
+
+    - actions: ["mail.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "mail.read" && P.attr.scopes.exists(scope, scope == "mail.read")
+
+    - actions: ["mail.read:shared"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "mail.read:shared" && P.attr.scopes.exists(scope, scope == "mail.read:shared")
+
+    - actions: ["mail.send"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "mail.send" && P.attr.scopes.exists(scope, scope == "mail.send")
+
+    - actions: ["mail.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "mail.write" && P.attr.scopes.exists(scope, scope == "mail.write")
+
+    - actions: ["mail.delete"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "mail.delete" && P.attr.scopes.exists(scope, scope == "mail.delete")
+
+    - actions: ["drive.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "drive.read" && P.attr.scopes.exists(scope, scope == "drive.read")
+
+    - actions: ["drive.read:shared"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "drive.read:shared" && P.attr.scopes.exists(scope, scope == "drive.read:shared")
+
+    - actions: ["drive.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "drive.write" && P.attr.scopes.exists(scope, scope == "drive.write")
+
+    - actions: ["drive.write:shared"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "drive.write:shared" && P.attr.scopes.exists(scope, scope == "drive.write:shared")
+
+    - actions: ["drive.delete"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "drive.delete" && P.attr.scopes.exists(scope, scope == "drive.delete")
+
+    - actions: ["chat.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "chat.read" && P.attr.scopes.exists(scope, scope == "chat.read")
+
+    - actions: ["chat.post"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "chat.post" && P.attr.scopes.exists(scope, scope == "chat.post")
+
+    - actions: ["chat.create"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "chat.create" && P.attr.scopes.exists(scope, scope == "chat.create")
+
+    - actions: ["calendar.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "calendar.read" && P.attr.scopes.exists(scope, scope == "calendar.read")
+
+    - actions: ["calendar.read:freebusy"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "calendar.read:freebusy" && P.attr.scopes.exists(scope, scope == "calendar.read:freebusy")
+
+    - actions: ["calendar.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "calendar.write" && P.attr.scopes.exists(scope, scope == "calendar.write")
+
+    - actions: ["calendar.write:respond"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "calendar.write:respond" && P.attr.scopes.exists(scope, scope == "calendar.write:respond")
+
+    - actions: ["docs.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "docs.read" && P.attr.scopes.exists(scope, scope == "docs.read")
+
+    - actions: ["docs.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "docs.write" && P.attr.scopes.exists(scope, scope == "docs.write")
+
+    - actions: ["docs.comment"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "docs.comment" && P.attr.scopes.exists(scope, scope == "docs.comment")
+
+    - actions: ["sheets.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "sheets.read" && P.attr.scopes.exists(scope, scope == "sheets.read")
+
+    - actions: ["sheets.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "sheets.write" && P.attr.scopes.exists(scope, scope == "sheets.write")
+
+    - actions: ["slides.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "slides.read" && P.attr.scopes.exists(scope, scope == "slides.read")
+
+    - actions: ["slides.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "slides.write" && P.attr.scopes.exists(scope, scope == "slides.write")
+
+    - actions: ["meet.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "meet.read" && P.attr.scopes.exists(scope, scope == "meet.read")
+
+    - actions: ["meet.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "meet.write" && P.attr.scopes.exists(scope, scope == "meet.write")
+
+    - actions: ["assistant.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "assistant.read" && P.attr.scopes.exists(scope, scope == "assistant.read")
+
+    - actions: ["assistant.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "assistant.write" && P.attr.scopes.exists(scope, scope == "assistant.write")
+
+    - actions: ["assistant.memory"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "assistant.memory" && P.attr.scopes.exists(scope, scope == "assistant.memory")
+
+    - actions: ["admin.users"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.users" && P.attr.scopes.exists(scope, scope == "admin.users")
+
+    - actions: ["admin.config"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.config" && P.attr.scopes.exists(scope, scope == "admin.config")
+
+    - actions: ["admin.config.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.config.read" && P.attr.scopes.exists(scope, scope == "admin.config.read")
+
+    - actions: ["admin.config.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.config.write" && P.attr.scopes.exists(scope, scope == "admin.config.write")
+
+    - actions: ["admin.audit"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.audit" && P.attr.scopes.exists(scope, scope == "admin.audit")
+
+    - actions: ["admin.plugins"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.plugins" && P.attr.scopes.exists(scope, scope == "admin.plugins")
+
+    - actions: ["admin.webhooks"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.webhooks" && P.attr.scopes.exists(scope, scope == "admin.webhooks")
+
+    - actions: ["admin.agents"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.agents" && P.attr.scopes.exists(scope, scope == "admin.agents")

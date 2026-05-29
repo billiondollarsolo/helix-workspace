@@ -57,7 +57,7 @@ export const CORE_APPS: readonly CoreAppDefinition[] = [
   {
     id: "editors",
     name: "Editors",
-    description: "Native Docs, Sheets, Slides, and PDF editor suite.",
+    description: "Alpha native Docs, Sheets, Slides, and PDF editor suite.",
   },
 ];
 

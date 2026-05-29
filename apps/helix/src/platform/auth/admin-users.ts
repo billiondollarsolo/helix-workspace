@@ -159,9 +159,7 @@ export async function registerPeopleDirectoryRoutes(
     const actor = await options.actorFromRequest(request);
     const parsed = peopleDirectoryQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      return reply
-        .code(400)
-        .send({ error: "Invalid people directory query.", issues: parsed.error.issues });
+      return reply.code(400).send({ error: "Invalid people directory query.", issues: parsed.error.issues });
     }
 
     const users = await options.store.listUsers({

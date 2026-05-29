@@ -106,6 +106,7 @@ describe("slides tool definitions", () => {
     expect([...byId.keys()].sort()).toEqual(
       [
         "slides.deck.create",
+        "slides.deck.copy",
         "slides.deck.delete",
         "slides.export",
         "slides.import-pptx",
@@ -116,15 +117,20 @@ describe("slides tool definitions", () => {
         "slides.slide.delete",
         "slides.slide.reorder",
         "slides.slide.update",
+        "slides.version.list",
+        "slides.version.restore",
       ].sort(),
     );
     expect(byId.get("slides.deck.list")?.permission).toBe("slides.read");
     expect(byId.get("slides.deck.get")?.permission).toBe("slides.read");
+    expect(byId.get("slides.version.list")?.permission).toBe("slides.read");
+    expect(byId.get("slides.version.restore")?.permission).toBe("slides.write");
     expect(byId.get("slides.export")?.permission).toBe("slides.read");
     expect(byId.get("slides.export")?.sideEffects).toBe("read");
     expect(byId.get("slides.import-pptx")?.permission).toBe("slides.write");
     expect(byId.get("slides.import-pptx")?.sideEffects).toBe("write");
     expect(byId.get("slides.deck.create")?.permission).toBe("slides.write");
+    expect(byId.get("slides.deck.copy")?.sideEffects).toBe("write");
     expect(byId.get("slides.deck.delete")?.sideEffects).toBe("destructive");
     expect(byId.get("slides.slide.delete")?.sideEffects).toBe("destructive");
   });
@@ -135,6 +141,48 @@ describe("slides tool definitions", () => {
 });
 
 describe("slides tools end-to-end", () => {
+  it("copies a deck with slide content and metadata", async () => {
+    const registry = createToolRegistry();
+    registerSlides(registry, { store: new InMemorySlidesStore() });
+
+    const deck = output(
+      await registry.invoke("slides.deck.create", { title: "Launch deck" }, invokeContext),
+    );
+    const deckId = deck.id as string;
+    const slide = output(
+      await registry.invoke(
+        "slides.slide.create",
+        {
+          deckId,
+          content: { layout: "title", title: "Hello", bg: "accent", shapes: [] },
+          speakerNotes: "Presenter note",
+        },
+        invokeContext,
+      ),
+    );
+
+    const copied = output(
+      await registry.invoke(
+        "slides.deck.copy",
+        { deckId, title: "Launch deck (Copy)", metadata: { createdFrom: "test.copy" } },
+        invokeContext,
+      ),
+    );
+
+    expect(copied.deck).toMatchObject({
+      title: "Launch deck (Copy)",
+      metadata: { createdFrom: "test.copy", copiedFromDeckId: deckId },
+    });
+    expect(copied.slides).toEqual([
+      expect.objectContaining({
+        deckId: (copied.deck as { readonly id: string }).id,
+        content: expect.objectContaining({ title: "Hello" }),
+        speakerNotes: "Presenter note",
+      }),
+    ]);
+    expect((copied.slides as readonly { readonly id: string }[])[0]?.id).not.toBe(slide.id);
+  });
+
   it("creates a deck, adds typed-layout slides, gets, and lists", async () => {
     const registry = createToolRegistry();
     registerSlides(registry, { store: new InMemorySlidesStore() });
@@ -469,6 +517,42 @@ describe("slides tools end-to-end", () => {
     expect((fetched.deck as ToolOutput).metadata).toMatchObject({
       originalFormat: "pptx",
       import: { slideCount: 2 },
+    });
+  });
+
+  it("preserves PPTX-family source extensions during import", async () => {
+    const registry = createToolRegistry();
+    registerSlides(registry, { store: new InMemorySlidesStore() });
+    const pptm = await pptxFixture({
+      slides: [["Macro deck", "Revenue bridge"]],
+    });
+
+    const imported = output(
+      await registry.invoke(
+        "slides.import-pptx",
+        {
+          filename: "Macro deck.pptm",
+          folderId: null,
+          contentBase64: pptm.toString("base64"),
+          metadata: { importedFromFormat: "pptm" },
+        },
+        invokeContext,
+      ),
+    );
+
+    expect(imported.title).toBe("Macro deck");
+    expect(imported.import).toMatchObject({
+      sourceFormat: "pptm",
+      slideCount: 1,
+      fidelity: "first-pass-text",
+    });
+
+    const deckId = imported.id as string;
+    const fetched = output(await registry.invoke("slides.deck.get", { deckId }, invokeContext));
+    expect((fetched.deck as ToolOutput).metadata).toMatchObject({
+      importedFromFormat: "pptm",
+      originalFormat: "pptm",
+      import: { sourceFormat: "pptm", slideCount: 1 },
     });
   });
 

@@ -1,10 +1,12 @@
-import type { Actor } from "@helix/sdk-types";
+import type { Actor, EventBus, MeteringClient } from "@helix/sdk-types";
 import type { McpResource, McpResourceContent, McpResourceProvider } from "./mcp.js";
 import type { CalendarEventRecord } from "../platform/calendar/types.js";
 import type { ChatMessageRecord, ChatRoomRecord } from "../platform/chat/types.js";
 import type { DriveEntryRecord, DriveSearchHit } from "../platform/drive/types.js";
 import type { DriveFileReadInput, DriveFileReadResult } from "../platform/drive/store.js";
 import type { DocsDocumentRecord, DocsExportDocument } from "../platform/docs/types.js";
+import type { TenantHourlyQuotaExceeded, TenantHourlyQuotaLimiter } from "../platform/limits/index.js";
+import { emitTenantQuotaExceededEvent } from "../platform/limits/index.js";
 import type { MailSearchHit, MailThreadDetail, MailThreadMessage } from "../platform/mail/types.js";
 
 export interface StoreBackedMcpResourceProviderOptions {
@@ -76,6 +78,17 @@ export interface StoreBackedMcpResourceProviderOptions {
       readonly docId: string;
     }): Promise<DocsExportDocument | null>;
   };
+  readonly docsExportJobLimiter?: TenantHourlyQuotaLimiter | undefined;
+  readonly docsExportJobLimit?: (input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly docId: string;
+    readonly surface: "mcp.resources.read";
+  }) => number | null | undefined | Promise<number | null | undefined>;
+  readonly quotaEvents?: Pick<EventBus, "publish"> | undefined;
+  readonly onQuotaEventError?: ((error: unknown) => void) | undefined;
+  readonly metering?: MeteringClient | undefined;
+  readonly onMeteringError?: ((error: unknown) => void) | undefined;
   readonly limit?: number;
 }
 
@@ -170,18 +183,35 @@ export function createStoreBackedMcpResourceProvider(
         if (options.docs === undefined || !canRead(actor, "docs.read")) {
           return null;
         }
+        await consumeDocsExportJobQuota({
+          limiter: options.docsExportJobLimiter,
+          limit: options.docsExportJobLimit,
+          events: options.quotaEvents,
+          onEventError: options.onQuotaEventError,
+          orgId: actor.orgId,
+          actorId: actor.id,
+          docId: parsed.id,
+        });
         const document = await options.docs.getDocsExportDocument({
           orgId: actor.orgId,
           actorId: actor.id,
           docId: parsed.id,
         });
-        return document === null
-          ? null
-          : {
-              uri,
-              mimeType: "text/markdown",
-              text: docsDocumentToMarkdown(document),
-            };
+        if (document === null) {
+          return null;
+        }
+        const text = docsDocumentToMarkdown(document);
+        emitMcpDocsExportMetering({
+          metering: options.metering,
+          onMeteringError: options.onMeteringError,
+          orgId: actor.orgId,
+          byteSize: utf8ByteSize(text),
+        });
+        return {
+          uri,
+          mimeType: "text/markdown",
+          text,
+        };
       }
       if (parsed.kind === "chat") {
         if (options.chat === undefined || !canRead(actor, "chat.read")) {
@@ -224,6 +254,27 @@ export function createStoreBackedMcpResourceProvider(
           };
     },
   };
+}
+
+function emitMcpDocsExportMetering(input: {
+  readonly metering?: MeteringClient | undefined;
+  readonly onMeteringError?: ((error: unknown) => void) | undefined;
+  readonly orgId: string;
+  readonly byteSize: number;
+}): void {
+  void input.metering
+    ?.emit(input.orgId, {
+      type: "export.completed",
+      quantity: 1,
+      metadata: {
+        surface: "mcp.resources.read",
+        format: "markdown",
+        byte_size: input.byteSize,
+      },
+    })
+    .catch((error: unknown) => {
+      input.onMeteringError?.(error);
+    });
 }
 
 type ParsedStoreResourceUri =
@@ -271,6 +322,72 @@ function canRead(
   scope: "chat.read" | "calendar.read" | "mail.read" | "drive.read" | "docs.read",
 ): boolean {
   return actor.type === "system" || (actor.scopes ?? []).includes(scope);
+}
+
+async function consumeDocsExportJobQuota(input: {
+  readonly limiter?: TenantHourlyQuotaLimiter | undefined;
+  readonly limit?: StoreBackedMcpResourceProviderOptions["docsExportJobLimit"];
+  readonly events?: Pick<EventBus, "publish"> | undefined;
+  readonly onEventError?: ((error: unknown) => void) | undefined;
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly docId: string;
+}): Promise<void> {
+  if (input.limiter === undefined || input.limit === undefined) {
+    return;
+  }
+  const limit = await input.limit({
+    orgId: input.orgId,
+    actorId: input.actorId,
+    docId: input.docId,
+    surface: "mcp.resources.read",
+  });
+  const decision = await input.limiter.consume({
+    orgId: input.orgId,
+    quota: "export_jobs_per_hour",
+    limit: limit ?? null,
+  });
+  if (!decision.allowed) {
+    emitTenantQuotaExceededEvent({
+      events: input.events,
+      onError: input.onEventError,
+      subject: "quota.export_jobs.exceeded",
+      orgId: input.orgId,
+      surface: "mcp.resources.read",
+      decision,
+      metadata: {
+        format: "markdown",
+      },
+    });
+    throw new McpDocsExportQuotaExceededError(decision);
+  }
+}
+
+class McpDocsExportQuotaExceededError extends Error {
+  readonly statusCode = 429;
+  readonly retryAfterSeconds: number;
+  readonly quotaLimit: {
+    readonly quota: string;
+    readonly limit: number;
+    readonly used: number;
+    readonly remaining: 0;
+    readonly retryAfterSeconds: number;
+    readonly resetsAt: string;
+  };
+
+  constructor(decision: TenantHourlyQuotaExceeded) {
+    super("Tenant export job quota exceeded.");
+    this.name = "McpDocsExportQuotaExceededError";
+    this.retryAfterSeconds = decision.retryAfterSeconds;
+    this.quotaLimit = {
+      quota: decision.quota,
+      limit: decision.limit,
+      used: decision.used,
+      remaining: decision.remaining,
+      retryAfterSeconds: decision.retryAfterSeconds,
+      resetsAt: decision.resetsAt,
+    };
+  }
 }
 
 function chatRoomToResource(room: ChatRoomRecord): McpResource {
@@ -474,4 +591,8 @@ function docsDocumentToMarkdown(document: DocsExportDocument): string {
 
 function formatTimestamp(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function utf8ByteSize(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }

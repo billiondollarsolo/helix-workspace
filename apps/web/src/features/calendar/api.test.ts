@@ -275,7 +275,7 @@ describe("calendar route search", () => {
       view: undefined,
       q: "backend",
     });
-    expect(calendarEventsInputFromRouteSearch(defaultSearch)).toEqual({
+    expect(calendarEventsInputFromRouteSearch({ date: "2026-05-21", view: "week" })).toEqual({
       startsAt: "2026-05-18T00:00:00.000Z",
       endsAt: "2026-05-24T23:59:59.999Z",
       limit: 100,

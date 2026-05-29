@@ -342,7 +342,15 @@ describe("mail tools", () => {
   it("registers mail tools and invokes filter, label, send, and search operations", async () => {
     const store = new InMemoryMailStore();
     const registry = createToolRegistry();
-    registerMailTools(registry, { store, defaultFromDomain: "example.com", undoWindowMs: 30_000 });
+    // mail.inbound.accept is service-only (CRITICAL-4): tests inject a real
+    // authenticator implementation that returns deterministic verification
+    // *results*, but the auth step itself is never skipped.
+    registerMailTools(registry, {
+      store,
+      defaultFromDomain: "example.com",
+      undoWindowMs: 30_000,
+      inboundAuthenticator: new NoneAuthenticator(),
+    });
 
     expect(
       registry
@@ -383,6 +391,17 @@ describe("mail tools", () => {
       scopes: ["mail.read", "mail.write", "mail.send", "mail.external"],
     };
 
+    // CRITICAL-4: mail.inbound.accept is gated by the service-only `mail.system`
+    // scope AND requires actor.type === "service_account" | "system". The SMTP
+    // receiver / bridge presents this token, not a user actor.
+    const smtpReceiverActor = {
+      id: "00000000-0000-4000-8000-0000000000aa",
+      orgId,
+      type: "service_account" as const,
+      displayName: "SMTP receiver",
+      scopes: ["mail.system"],
+    };
+
     store.actors.set("alice@example.com", actorId);
 
     const inboundResult = await registry.invoke(
@@ -395,7 +414,7 @@ describe("mail tools", () => {
         bodyText: "Inbound tool marker",
         receivedAt: "2026-05-20T12:00:00.000Z",
       },
-      { actor },
+      { actor: smtpReceiverActor },
     );
     expect(inboundResult).toMatchObject({
       ok: true,
@@ -652,6 +671,189 @@ describe("mail tools", () => {
     expect(repliedDenied).toMatchObject({ ok: false, statusCode: 403 });
   });
 
+  // REVIEW.md CRITICAL-4: mail.inbound.accept used to be `mail.write` + a
+  // hard-coded `trustedBridge` authentication summary that faked SPF/DKIM/
+  // DMARC as `none`. Any user with `mail.write` could inject "trusted" mail
+  // from any sender into any actor's inbox. The three tests below pin the
+  // hardened contract:
+  //   1. user-space scopes (mail.write/send/external) cannot invoke the tool;
+  //   2. a service-account actor with `mail.system` is accepted;
+  //   3. a DKIM/DMARC fail verdict is persisted on the stored message so
+  //      downstream spam routing / UI can refuse to trust the From header.
+  it("rejects mail.inbound.accept callers without the service-only mail.system scope (CRITICAL-4)", async () => {
+    const store = new InMemoryMailStore();
+    const registry = createToolRegistry();
+    registerMailTools(registry, {
+      store,
+      defaultFromDomain: "example.com",
+      inboundAuthenticator: new NoneAuthenticator(),
+    });
+
+    const userActor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      displayName: "Alice",
+      email: "alice@example.com",
+      // Every user-space mail scope — none of which should be sufficient.
+      scopes: ["mail.read", "mail.write", "mail.send", "mail.external", "mail.delete"],
+    };
+
+    const denied = await registry.invoke(
+      "mail.inbound.accept",
+      {
+        from: { address: "attacker@example.test" },
+        to: ["alice@example.com"],
+        subject: "Spoofed",
+        bodyText: "I am not from where the From header says.",
+      },
+      { actor: userActor },
+    );
+    expect(denied).toMatchObject({ ok: false, statusCode: 403 });
+    // The registry rejects any actor that lacks the `mail.system` scope — the
+    // error message is the generic "Actor cannot invoke tool" envelope, which
+    // is what we care about: the call is blocked, nothing got written.
+    expect(denied.ok).toBe(false);
+    expect(store.messages).toEqual([]);
+  });
+
+  it("accepts mail.inbound.accept from a service-account actor holding mail.system (CRITICAL-4)", async () => {
+    const store = new InMemoryMailStore();
+    const registry = createToolRegistry();
+    registerMailTools(registry, {
+      store,
+      defaultFromDomain: "example.com",
+      inboundAuthenticator: new PassingAuthenticator(),
+    });
+    store.actors.set("alice@example.com", actorId);
+
+    const serviceActor = {
+      id: "00000000-0000-4000-8000-0000000000aa",
+      orgId,
+      type: "service_account" as const,
+      displayName: "SMTP receiver",
+      scopes: ["mail.system"],
+    };
+
+    const result = await registry.invoke(
+      "mail.inbound.accept",
+      {
+        from: { address: "sender@example.net" },
+        to: ["alice@example.com"],
+        subject: "Hello",
+        bodyText: "Body",
+        receivedAt: "2026-05-20T12:00:00.000Z",
+      },
+      { actor: serviceActor },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      output: {
+        ok: true,
+        auth: { spf: "pass", dkim: "pass", dmarc: "pass" },
+      },
+    });
+    expect(store.messages[0]).toMatchObject({
+      actorId,
+      subject: "Hello",
+      metadata: {
+        auth: { spf: "pass", dkim: "pass", dmarc: "pass" },
+      },
+    });
+  });
+
+  it("rejects mail.inbound.accept from a non-service actor even with mail.system scope", async () => {
+    const store = new InMemoryMailStore();
+    const registry = createToolRegistry();
+    registerMailTools(registry, {
+      store,
+      defaultFromDomain: "example.com",
+      inboundAuthenticator: new NoneAuthenticator(),
+    });
+
+    // A user actor that has *somehow* been granted mail.system (e.g. a
+    // misconfigured app-password issuance bypassing the surface allowlist)
+    // must still be rejected — defence-in-depth on actor.type.
+    const userActorWithSystem = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      displayName: "Mallory",
+      scopes: ["mail.system"],
+    };
+
+    await expect(
+      registry.invoke(
+        "mail.inbound.accept",
+        {
+          from: { address: "anyone@example.test" },
+          to: ["alice@example.com"],
+          subject: "Spoofed",
+          bodyText: "Body",
+        },
+        { actor: userActorWithSystem },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("service-account") as string,
+    });
+    expect(store.messages).toEqual([]);
+  });
+
+  it("persists DKIM/DMARC-fail verification verdicts on stored inbound mail (CRITICAL-4)", async () => {
+    const store = new InMemoryMailStore();
+    const registry = createToolRegistry();
+    registerMailTools(registry, {
+      store,
+      defaultFromDomain: "example.com",
+      inboundAuthenticator: new DkimFailAuthenticator(),
+    });
+    store.actors.set("alice@example.com", actorId);
+
+    const serviceActor = {
+      id: "00000000-0000-4000-8000-0000000000aa",
+      orgId,
+      type: "service_account" as const,
+      displayName: "SMTP receiver",
+      scopes: ["mail.system"],
+    };
+
+    const result = await registry.invoke(
+      "mail.inbound.accept",
+      {
+        from: { address: "spoof@example.test", name: "Spoof" },
+        to: ["alice@example.com"],
+        subject: "Forged",
+        bodyText: "DKIM signature did not verify.",
+      },
+      { actor: serviceActor },
+    );
+    // The message is still accepted — but the failure verdict is recorded so
+    // downstream spam/quarantine and the UI can refuse to display the message
+    // as authenticated.
+    expect(result).toMatchObject({
+      ok: true,
+      output: {
+        ok: true,
+        auth: { spf: "pass", dkim: "fail", dmarc: "fail" },
+      },
+    });
+    expect(store.messages[0]).toMatchObject({
+      subject: "Forged",
+      metadata: {
+        direction: "inbound",
+        auth: {
+          spf: "pass",
+          dkim: "fail",
+          dmarc: "fail",
+          evidence: {
+            dmarc: { result: "fail", policy: "reject" },
+          },
+        },
+      },
+    });
+  });
+
   it("registers mail.threads.list / mail.folders.list / mail.labels.list as read-safe tools", () => {
     const registry = createToolRegistry();
     registerMailTools(registry, { store: new InMemoryMailStore() });
@@ -848,6 +1050,48 @@ class PassingAuthenticator implements MailAuthenticator {
         spf: { domain: "example.net" },
         dkim: { signatures: [{ signingDomain: "example.net", selector: "s1" }] },
         dmarc: { policy: "reject" },
+      },
+    };
+  }
+}
+
+// All-`none` authenticator for tests that don't care about the SPF/DKIM/DMARC
+// verdict but DO require the verification step to run. Distinct from the
+// removed `trustedInboundAuthenticator` (which carried a `trustedBridge: true`
+// flag implying the caller had already done auth — never true).
+class NoneAuthenticator implements MailAuthenticator {
+  async authenticate() {
+    return {
+      spf: "none",
+      dkim: "none",
+      dmarc: "none",
+      arc: "none",
+      evidence: { source: "test:NoneAuthenticator" },
+    };
+  }
+}
+
+class DkimFailAuthenticator implements MailAuthenticator {
+  async authenticate() {
+    return {
+      spf: "pass",
+      dkim: "fail",
+      dmarc: "fail",
+      arc: "none",
+      evidence: {
+        spf: { result: "pass", domain: "example.test" },
+        dkim: {
+          result: "fail",
+          signatures: [
+            {
+              result: "fail",
+              signingDomain: "example.test",
+              selector: "s1",
+              comment: "signature did not verify",
+            },
+          ],
+        },
+        dmarc: { result: "fail", policy: "reject", domain: "example.test" },
       },
     };
   }

@@ -731,6 +731,7 @@ class InMemoryMailPlatformStore
       direction,
       sentAt: (input.receivedAt ?? now).toISOString(),
       metadata: input.metadata ?? {},
+      ownerActorId: input.actorId ?? null,
     };
     this.#messages.set(id, message);
     return { threadId, messageId: id, attachmentObjectIds: [] };

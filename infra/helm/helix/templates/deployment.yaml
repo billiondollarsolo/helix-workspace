@@ -13,10 +13,12 @@ spec:
   selector:
     matchLabels:
       {{- include "helix.selectorLabels" . | nindent 6 }}
+      helix.io/role: default
   template:
     metadata:
       labels:
         {{- include "helix.selectorLabels" . | nindent 8 }}
+        helix.io/role: default
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
@@ -33,6 +33,10 @@ describe("native document Yjs provider", () => {
     });
     window.history.replaceState(null, "", "/docs/doc-1");
     MockWebSocket.instances = [];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("normalizes Yjs sync URLs and preserves fallback realtime auth", () => {
@@ -101,6 +105,86 @@ describe("native document Yjs provider", () => {
     expect(provider.getStatus()).toBe("offline");
     expect(socket?.closed).toBe(true);
   });
+
+  it("goes offline when sending a Yjs update fails", () => {
+    const statuses: string[] = [];
+    const errors: unknown[] = [];
+    const clientDoc = new Y.Doc();
+    const provider = new NativeDocumentYjsProvider({
+      url: "/sync/docs/doc-1?protocol=yjs",
+      doc: clientDoc,
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      onStatusChange: (status) => statuses.push(status),
+      onError: (error) => errors.push(error),
+    });
+
+    provider.connect();
+    const socket = MockWebSocket.instances.at(-1);
+    socket?.open();
+    if (socket !== undefined) {
+      socket.throwOnSend = true;
+    }
+
+    clientDoc.getText("default").insert(0, "fallback");
+
+    expect(provider.getStatus()).toBe("offline");
+    expect(socket?.closed).toBe(true);
+    expect(statuses).toEqual(["connecting", "connected", "offline"]);
+    expect(errors[0]).toBeInstanceOf(Error);
+  });
+
+  it("can disconnect during React cleanup without reporting offline to an unmounting component", () => {
+    const statuses: string[] = [];
+    const provider = new NativeDocumentYjsProvider({
+      url: "/sync/docs/doc-1?protocol=yjs",
+      doc: new Y.Doc(),
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      onStatusChange: (status) => statuses.push(status),
+    });
+
+    provider.connect();
+    const socket = MockWebSocket.instances.at(-1);
+    socket?.open();
+
+    provider.disconnect({ notify: false });
+
+    expect(provider.getStatus()).toBe("offline");
+    expect(socket?.closed).toBe(true);
+    expect(statuses).toEqual(["connecting", "connected"]);
+  });
+
+  it("reconnects after an unexpected close without duplicating document listeners", () => {
+    vi.useFakeTimers();
+    const statuses: string[] = [];
+    const clientDoc = new Y.Doc();
+    const provider = new NativeDocumentYjsProvider({
+      url: "/sync/docs/doc-1?protocol=yjs",
+      doc: clientDoc,
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      reconnectDelayMs: 25,
+      onStatusChange: (status) => statuses.push(status),
+    });
+
+    provider.connect();
+    const firstSocket = MockWebSocket.instances.at(-1);
+    firstSocket?.open();
+    firstSocket?.close();
+
+    expect(provider.getStatus()).toBe("offline");
+    expect(statuses).toEqual(["connecting", "connected", "offline"]);
+
+    vi.advanceTimersByTime(25);
+
+    const secondSocket = MockWebSocket.instances.at(-1);
+    expect(secondSocket).not.toBe(firstSocket);
+    expect(statuses).toEqual(["connecting", "connected", "offline", "connecting"]);
+    secondSocket?.open();
+    expect(statuses).toEqual(["connecting", "connected", "offline", "connecting", "connected"]);
+
+    const sentBeforeUpdate = secondSocket?.sent.length ?? 0;
+    clientDoc.getText("default").insert(0, "reconnected");
+    expect(secondSocket?.sent).toHaveLength(sentBeforeUpdate + 1);
+  });
 });
 
 class MockWebSocket {
@@ -109,6 +193,7 @@ class MockWebSocket {
   readyState = 0;
   readonly sent: Uint8Array[] = [];
   closed = false;
+  throwOnSend = false;
   private readonly listeners = new Map<string, Set<(event: Event) => void>>();
 
   constructor(readonly url: string) {
@@ -116,6 +201,9 @@ class MockWebSocket {
   }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+    if (this.throwOnSend) {
+      throw new Error("socket send failed");
+    }
     if (data instanceof Uint8Array) {
       this.sent.push(data);
     }

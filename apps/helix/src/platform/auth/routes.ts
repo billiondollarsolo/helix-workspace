@@ -1,12 +1,17 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { Actor } from "@helix/sdk-types";
+import type { Actor, JsonObject } from "@helix/sdk-types";
 import { z } from "zod";
-import { InMemoryOAuthClientStore, OAuthError, OAuthTokenService } from "./oauth.js";
+import {
+  InMemoryOAuthClientStore,
+  OAuthError,
+  OAuthTokenService,
+  type OAuthClientRecord,
+  type OAuthClientStore,
+} from "./oauth.js";
 import {
   AuthorizationCodeService,
   InMemoryAuthorizationCodeStore,
   isValidCodeChallenge,
-  isValidCodeChallengeMethod,
   type CodeChallengeMethod,
 } from "./authorization-code.js";
 
@@ -57,6 +62,26 @@ export interface OAuthAuthorizeActorResolver {
   resolve(request: FastifyRequest): Promise<Actor | null>;
 }
 
+/**
+ * Hook for emitting audit records when an authorization request is rejected
+ * (CRITICAL-3). Implementations should be best-effort — a failure here MUST
+ * NOT propagate, since the security decision has already been made.
+ */
+export interface OAuthAuthorizeAuditSink {
+  recordRejection(input: {
+    readonly orgId: string | null;
+    readonly actorId: string | null;
+    readonly clientId: string;
+    readonly redirectUri: string;
+    readonly reason:
+      | "redirect_uri_mismatch"
+      | "pkce_plain"
+      | "unknown_client"
+      | "client_revoked";
+    readonly metadata?: JsonObject;
+  }): Promise<void>;
+}
+
 export interface OAuthRoutesOptions {
   readonly tokenService?: OAuthTokenService;
   /**
@@ -67,6 +92,21 @@ export interface OAuthRoutesOptions {
   readonly authorizationCodeService?: AuthorizationCodeService;
   /** Resolves the logged-in user that approves a consent request. */
   readonly actorResolver?: OAuthAuthorizeActorResolver;
+  /**
+   * OAuth client store used to resolve the requested client during the
+   * authorize flow (CRITICAL-3). The endpoint reads the client's registered
+   * `redirectUris` allowlist and requires an exact-string match with the
+   * incoming `redirect_uri`. When omitted, the routes fall back to the same
+   * store the {@link tokenService} uses, so callers wiring a real Postgres
+   * store typically need not set this explicitly.
+   */
+  readonly clientStore?: OAuthClientStore;
+  /**
+   * Optional audit sink that receives a record every time `/oauth/authorize`
+   * rejects a request (CRITICAL-3). Wired to the platform audit log in the
+   * production server.
+   */
+  readonly authorizeAuditSink?: OAuthAuthorizeAuditSink;
   /**
    * Optional override for where the consent UI lives. When set,
    * `GET /oauth/authorize` redirects the browser to this path with the
@@ -93,6 +133,12 @@ export async function registerOAuthRoutes(
       tokenStore: defaultStore,
       authorizationCodeService,
     });
+  // CRITICAL-3: the authorize endpoint must resolve the client to look up its
+  // registered redirect-URI allowlist. Callers using the built-in defaults get
+  // the same in-memory store; production callers wire {@link OAuthRoutesOptions.clientStore}
+  // to the Postgres store.
+  const clientStore: OAuthClientStore = options.clientStore ?? defaultStore;
+  const authorizeAuditSink = options.authorizeAuditSink;
 
   app.post("/oauth/token", async (request, reply) => {
     const parsedBody = tokenRequestBodySchema.safeParse(request.body);
@@ -127,7 +173,31 @@ export async function registerOAuthRoutes(
     }
     const validation = validateAuthorizeParams(parsedQuery.data);
     if (validation instanceof OAuthError) {
+      // CRITICAL-3: capture PKCE downgrade attempts before we even resolve
+      // the actor. `client_id` and `redirect_uri` came from the query and
+      // have not been validated as belonging to a real client, but they are
+      // still useful forensic context.
+      if (validation.message.includes("S256")) {
+        await safeAuditRejection(authorizeAuditSink, {
+          orgId: null,
+          actorId: null,
+          clientId: parsedQuery.data.client_id,
+          redirectUri: parsedQuery.data.redirect_uri,
+          reason: "pkce_plain",
+          metadata: { method: parsedQuery.data.code_challenge_method ?? null },
+        });
+      }
       return sendOAuthError(reply, validation);
+    }
+
+    const clientGuard = await checkAuthorizeClient({
+      clientStore,
+      validation,
+      auditSink: authorizeAuditSink,
+      actorId: null,
+    });
+    if (clientGuard !== null) {
+      return sendAuthorizeRejection(reply, clientGuard);
     }
 
     const actor = await resolveAuthorizeActor(request, reply, options);
@@ -154,12 +224,32 @@ export async function registerOAuthRoutes(
     }
     const validation = validateAuthorizeParams(parsedBody.data);
     if (validation instanceof OAuthError) {
+      if (validation.message.includes("S256")) {
+        await safeAuditRejection(authorizeAuditSink, {
+          orgId: null,
+          actorId: null,
+          clientId: parsedBody.data.client_id,
+          redirectUri: parsedBody.data.redirect_uri,
+          reason: "pkce_plain",
+          metadata: { method: parsedBody.data.code_challenge_method ?? null },
+        });
+      }
       return sendOAuthError(reply, validation);
     }
 
     const actor = await resolveAuthorizeActor(request, reply, options);
     if (actor === null) {
       return reply;
+    }
+
+    const clientGuard = await checkAuthorizeClient({
+      clientStore,
+      validation,
+      auditSink: authorizeAuditSink,
+      actorId: actor.id,
+    });
+    if (clientGuard !== null) {
+      return sendAuthorizeRejection(reply, clientGuard);
     }
 
     if (parsedBody.data.decision === "deny") {
@@ -362,9 +452,16 @@ function validateAuthorizeParams(input: {
   if (!isValidCodeChallenge(input.code_challenge)) {
     return new OAuthError("invalid_request", "code_challenge must be 43-128 unreserved characters.", 400);
   }
+  // CRITICAL-3 (REVIEW.md): only S256 is acceptable. Accepting `plain` is a
+  // PKCE downgrade and lets an attacker who steals the authorization code
+  // immediately redeem it. Default to `S256` when omitted (per OAuth 2.1).
   const method = input.code_challenge_method ?? "S256";
-  if (!isValidCodeChallengeMethod(method)) {
-    return new OAuthError("invalid_request", "code_challenge_method must be S256 or plain.", 400);
+  if (method !== "S256") {
+    return new OAuthError(
+      "invalid_request",
+      "code_challenge_method must be S256 (PKCE 'plain' is not allowed).",
+      400,
+    );
   }
   let scopes: readonly string[] = [];
   if (input.scope !== undefined && input.scope.trim().length > 0) {
@@ -474,6 +571,142 @@ function escapeHtml(value: string): string {
     .replace(/>/gu, "&gt;")
     .replace(/"/gu, "&quot;")
     .replace(/'/gu, "&#39;");
+}
+
+interface AuthorizeRejection {
+  readonly statusCode: number;
+  readonly title: string;
+  readonly detail: string;
+  readonly reason: "redirect_uri_mismatch" | "unknown_client" | "client_revoked";
+}
+
+/**
+ * Validate the supplied `redirect_uri` against the OAuth client's registered
+ * allowlist (CRITICAL-3, REVIEW.md). On mismatch the request MUST be refused
+ * with a fixed-URL HTML error page — never with a redirect to the attacker-
+ * supplied URI. An audit record is emitted for each rejection.
+ *
+ * Returns `null` on success, or a {@link AuthorizeRejection} payload the
+ * caller renders directly to the browser.
+ */
+async function checkAuthorizeClient(input: {
+  readonly clientStore: OAuthClientStore;
+  readonly validation: ValidatedAuthorizeParams;
+  readonly auditSink: OAuthAuthorizeAuditSink | undefined;
+  readonly actorId: string | null;
+}): Promise<AuthorizeRejection | null> {
+  const { clientStore, validation, auditSink, actorId } = input;
+  const client = await clientStore.findClient(validation.clientId);
+  if (client === null) {
+    await safeAuditRejection(auditSink, {
+      orgId: null,
+      actorId,
+      clientId: validation.clientId,
+      redirectUri: validation.redirectUri,
+      reason: "unknown_client",
+    });
+    return {
+      statusCode: 400,
+      title: "Unknown OAuth client",
+      detail: "The client_id supplied in this authorization request is not registered.",
+      reason: "unknown_client",
+    };
+  }
+  if (client.revokedAt !== null) {
+    await safeAuditRejection(auditSink, {
+      orgId: client.orgId,
+      actorId,
+      clientId: client.clientId,
+      redirectUri: validation.redirectUri,
+      reason: "client_revoked",
+    });
+    return {
+      statusCode: 400,
+      title: "OAuth client has been revoked",
+      detail: "This OAuth client has been revoked and can no longer request new authorizations.",
+      reason: "client_revoked",
+    };
+  }
+  if (!matchesRegisteredRedirectUri(client, validation.redirectUri)) {
+    await safeAuditRejection(auditSink, {
+      orgId: client.orgId,
+      actorId,
+      clientId: client.clientId,
+      redirectUri: validation.redirectUri,
+      reason: "redirect_uri_mismatch",
+      metadata: {
+        registeredCount: client.redirectUris.length,
+      },
+    });
+    return {
+      statusCode: 400,
+      title: "Invalid redirect_uri",
+      detail:
+        "The redirect_uri supplied in this authorization request does not match any redirect URI registered for this OAuth client. Ask the application owner to register the URI in the Helix admin console.",
+      reason: "redirect_uri_mismatch",
+    };
+  }
+  return null;
+}
+
+/**
+ * Exact-string match check against the client's registered redirect-URI
+ * allowlist. No prefix matching, no wildcards, no query/fragment tolerance.
+ * An empty allowlist denies authorization by default.
+ */
+function matchesRegisteredRedirectUri(
+  client: OAuthClientRecord,
+  redirectUri: string,
+): boolean {
+  return client.redirectUris.some((registered) => registered === redirectUri);
+}
+
+function sendAuthorizeRejection(
+  reply: FastifyReply,
+  rejection: AuthorizeRejection,
+): FastifyReply {
+  // CRITICAL-3: render an HTML page served from this origin. We never redirect
+  // to the unverified redirect_uri because that is exactly the open-redirect
+  // primitive an attacker is trying to obtain.
+  return reply
+    .code(rejection.statusCode)
+    .header("content-type", "text/html; charset=utf-8")
+    .header("cache-control", "no-store")
+    .header("pragma", "no-cache")
+    .send(renderAuthorizeRejectionPage(rejection));
+}
+
+function renderAuthorizeRejectionPage(rejection: AuthorizeRejection): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(rejection.title)} — Helix</title>
+</head>
+<body>
+  <main>
+    <h1>${escapeHtml(rejection.title)}</h1>
+    <p>${escapeHtml(rejection.detail)}</p>
+    <p>Helix declined to redirect because the destination is not on the registered allowlist for this application.</p>
+  </main>
+</body>
+</html>`;
+}
+
+async function safeAuditRejection(
+  sink: OAuthAuthorizeAuditSink | undefined,
+  input: Parameters<OAuthAuthorizeAuditSink["recordRejection"]>[0],
+): Promise<void> {
+  if (sink === undefined) {
+    return;
+  }
+  try {
+    await sink.recordRejection(input);
+  } catch {
+    // Audit-log writes are best-effort. The security decision has already
+    // been made; do not let a logging failure surface to the attacker.
+  }
 }
 
 function isAbsoluteHttpUri(value: string): boolean {

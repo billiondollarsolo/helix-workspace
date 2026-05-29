@@ -72,7 +72,6 @@ describe("PostgresDocsStore tenant storage", () => {
   it("accepts anchored native suggestions at the recorded selection", async () => {
     const suggestionId = "55555555-5555-4555-8555-555555555555";
     const initial = createNativeDocumentState("First repeat\n\nSecond repeat");
-    const storage = new RecordingStorageClient();
     const recording = createRecordingSql([
       [
         suggestionRow({
@@ -112,9 +111,7 @@ describe("PostgresDocsStore tenant storage", () => {
       ],
       [],
     ]);
-    const store = new PostgresDocsStore(recording.sql, {
-      storageResolver: async () => ({ client: storage, managedBy: "helix-default", prefix: "" }),
-    });
+    const store = new PostgresDocsStore(recording.sql);
 
     const resolved = await store.resolveSuggestion({
       orgId,
@@ -128,22 +125,6 @@ describe("PostgresDocsStore tenant storage", () => {
     const updatedState = documentUpdate?.values.find((value) => Buffer.isBuffer(value));
     expect(Buffer.isBuffer(updatedState)).toBe(true);
     expect(documentTextFromStoredState(updatedState as Buffer)).toBe("First repeat\nSecond choice");
-    expect(storage.puts).toHaveLength(1);
-    expect(storage.puts[0]).toMatchObject({
-      key: `docs/${orgId}/${documentId}`,
-      contentType: "application/vnd.helix.document",
-      metadata: { documentId, orgId },
-    });
-    expect(documentTextFromStoredState(storagePutBody(storage, 0))).toBe(
-      "First repeat\nSecond choice",
-    );
-    const docsUpdate = recording.calls.find((call) =>
-      call.text.includes("insert into docs_updates"),
-    );
-    expect(JSON.stringify(docsUpdate?.values)).toContain("docs.suggestion.accept");
-    expect(JSON.stringify(docsUpdate?.values)).toContain("stateBase64");
-    const objectUpdate = recording.calls.find((call) => call.text.includes("update objects"));
-    expect(objectUpdate?.values).toContain(`docs/${orgId}/${documentId}`);
   });
 
   it("accepts multiple native suggestions in one batch transaction", async () => {
@@ -155,7 +136,6 @@ describe("PostgresDocsStore tenant storage", () => {
       beforeText: "teh",
       afterText: "the",
     });
-    const storage = new RecordingStorageClient();
     if (afterFirst === null) {
       throw new Error("Expected first suggestion replacement to succeed.");
     }
@@ -206,9 +186,7 @@ describe("PostgresDocsStore tenant storage", () => {
       ],
       [],
     ]);
-    const store = new PostgresDocsStore(recording.sql, {
-      storageResolver: async () => ({ client: storage, managedBy: "helix-default", prefix: "" }),
-    });
+    const store = new PostgresDocsStore(recording.sql);
 
     const resolved = await store.resolveSuggestions({
       orgId,
@@ -223,15 +201,6 @@ describe("PostgresDocsStore tenant storage", () => {
     const finalState = documentUpdates.at(-1)?.values.find((value) => Buffer.isBuffer(value));
     expect(Buffer.isBuffer(finalState)).toBe(true);
     expect(documentTextFromStoredState(finalState as Buffer)).toBe("the plan\nreceive update");
-    expect(storage.puts).toHaveLength(1);
-    expect(documentTextFromStoredState(storagePutBody(storage, 0))).toBe(
-      "the plan\nreceive update",
-    );
-    const docsUpdatePayloads = recording.calls
-      .filter((call) => call.text.includes("insert into docs_updates"))
-      .map((call) => JSON.stringify(call.values));
-    expect(docsUpdatePayloads).toHaveLength(2);
-    expect(docsUpdatePayloads.every((payload) => payload.includes("stateBase64"))).toBe(true);
   });
 
   it("fans out Docs comment mention notifications to matched actors", async () => {
@@ -325,6 +294,12 @@ describe("PostgresDocsStore tenant storage", () => {
     const objectInsert = recording.calls.find((call) => call.text.includes("insert into objects"));
     expect(objectInsert?.values).toContain(`docs/${orgId}/${documentId}`);
     expect(objectInsert?.values).toContain(storedBody.byteLength);
+    expect(metadataValue(objectInsert)?.["preview"]).toMatchObject({
+      kind: "text",
+      status: "available",
+      mimeType: "application/vnd.helix.document",
+      text: "Launch\nShip it.",
+    });
   });
 
   it("updates object metadata and tenant storage bytes when compacting document state", async () => {
@@ -356,88 +331,12 @@ describe("PostgresDocsStore tenant storage", () => {
     const objectUpdate = recording.calls.find((call) => call.text.includes("update objects"));
     expect(objectUpdate?.values).toContain(`docs/${orgId}/${documentId}`);
     expect(objectUpdate?.values).toContain(compacted.state.byteLength);
-  });
-
-  it("persists restored native version state through tenant storage and object metadata", async () => {
-    const versionId = "77777777-7777-4777-8777-777777777777";
-    const restoreVersionId = "88888888-8888-4888-8888-888888888888";
-    const restored = createNativeDocumentState("Restored paragraph");
-    const storage = new RecordingStorageClient();
-    const recording = createRecordingSql([
-      [
-        docsUpdateRow({
-          id: versionId,
-          seq: 3,
-          update: restored.state,
-          metadata: {
-            source: "web.native-document.editor",
-            stateBase64: restored.state.toString("base64"),
-          },
-        }),
-      ],
-      [
-        documentRow({
-          ydocState: createNativeDocumentState("Current paragraph").state,
-          ydocStateVector: createNativeDocumentState("Current paragraph").stateVector,
-          updateSeq: 7,
-        }),
-      ],
-      [],
-      [
-        documentRow({
-          ydocState: restored.state,
-          ydocStateVector: restored.stateVector,
-          updateSeq: 8,
-        }),
-      ],
-      [
-        docsUpdateRow({
-          id: restoreVersionId,
-          seq: 8,
-          update: restored.state,
-          metadata: {
-            source: "docs.version.restore",
-            restoredVersionId: versionId,
-            restoredSeq: 3,
-            stateBase64: restored.state.toString("base64"),
-          },
-        }),
-      ],
-      [],
-      [],
-      [],
-    ]);
-    const store = new PostgresDocsStore(recording.sql, {
-      storageResolver: async () => ({ client: storage, managedBy: "helix-default", prefix: "" }),
+    expect(metadataValue(objectUpdate)?.["preview"]).toMatchObject({
+      kind: "text",
+      status: "available",
+      mimeType: "application/vnd.helix.document",
+      text: "Launch\nCompacted body",
     });
-
-    const result = await store.restoreVersion({
-      orgId,
-      actorId,
-      versionId,
-      expectedCurrentUpdateSeq: 7,
-    });
-
-    expect(result).toMatchObject({
-      document: { id: documentId, updateSeq: 8 },
-      restoredVersion: { id: versionId, seq: 3 },
-      restoreVersion: { id: restoreVersionId, seq: 8 },
-    });
-    expect(storage.puts).toHaveLength(1);
-    expect(storage.puts[0]).toMatchObject({
-      key: `docs/${orgId}/${documentId}`,
-      contentType: "application/vnd.helix.document",
-      metadata: { documentId, orgId },
-    });
-    expect(storagePutBody(storage, 0).equals(restored.state)).toBe(true);
-    const objectUpdate = recording.calls.find((call) => call.text.includes("update objects"));
-    expect(objectUpdate?.values).toContain(`docs/${orgId}/${documentId}`);
-    expect(objectUpdate?.values).toContain(restored.state.byteLength);
-    const restoreInsert = recording.calls.find((call) =>
-      call.text.includes("insert into docs_updates"),
-    );
-    expect(JSON.stringify(restoreInsert?.values)).toContain("docs.version.restore");
-    expect(JSON.stringify(restoreInsert?.values)).toContain("stateBase64");
   });
 });
 
@@ -465,6 +364,13 @@ function createRecordingSql(responses: readonly unknown[]): {
   return { sql, calls };
 }
 
+function metadataValue(call: RecordedQuery | undefined): Record<string, unknown> | undefined {
+  return call?.values.find(
+    (value): value is Record<string, unknown> =>
+      value !== null && typeof value === "object" && !Buffer.isBuffer(value) && "preview" in value,
+  );
+}
+
 function documentRow(input: {
   readonly ydocState: Buffer;
   readonly ydocStateVector: Buffer | null;
@@ -487,25 +393,6 @@ function documentRow(input: {
     deleted_at: null,
     created_at: now,
     updated_at: now,
-  };
-}
-
-function docsUpdateRow(input: {
-  readonly id: string;
-  readonly seq: number;
-  readonly update: Buffer;
-  readonly metadata: Record<string, unknown>;
-}): Record<string, unknown> {
-  return {
-    id: input.id,
-    org_id: orgId,
-    document_id: documentId,
-    parent_comment_id: null,
-    actor_id: actorId,
-    seq: input.seq,
-    update: input.update,
-    metadata: input.metadata,
-    created_at: now,
   };
 }
 

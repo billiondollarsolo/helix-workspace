@@ -33,7 +33,7 @@ export interface ImportedPptxDeck {
   readonly title: string;
   readonly slides: readonly ImportedPptxSlide[];
   readonly metadata: {
-    readonly sourceFormat: "pptx";
+    readonly sourceFormat: string;
     readonly slideCount: number;
     readonly fidelity: "first-pass-text";
   };
@@ -82,7 +82,7 @@ export async function importPptxDeck(input: {
     title,
     slides,
     metadata: {
-      sourceFormat: "pptx",
+      sourceFormat: presentationSourceFormat(input.filename),
       slideCount: slides.length,
       fidelity: "first-pass-text",
     },
@@ -166,5 +166,19 @@ function pptxPathNumber(path: string): number {
 }
 
 function titleFromPptxFilename(filename: string): string {
-  return filename.replace(/\.pptx$/iu, "").trim() || "Imported presentation";
+  return filename.replace(/\.(pptx|pptm|potx|potm|ppsx)$/iu, "").trim() || "Imported presentation";
+}
+
+function presentationSourceFormat(filename: string): string {
+  const extension = /\.([^.\\/]+)$/u.exec(filename.trim())?.[1]?.toLowerCase();
+  switch (extension) {
+    case "pptx":
+    case "pptm":
+    case "potx":
+    case "potm":
+    case "ppsx":
+      return extension;
+    default:
+      return "pptx";
+  }
 }

@@ -9,11 +9,25 @@ principals:
       org_id: org-1
       type: user
 
+  admin_other_org:
+    id: admin-2
+    roles: ["admin"]
+    attr:
+      org_id: org-2
+      type: user
+
   auditor:
     id: auditor-1
     roles: ["auditor"]
     attr:
       org_id: org-1
+      type: user
+
+  auditor_other_org:
+    id: auditor-2
+    roles: ["auditor"]
+    attr:
+      org_id: org-2
       type: user
 
   owner:
@@ -23,6 +37,13 @@ principals:
       org_id: org-1
       type: user
 
+  owner_other_org:
+    id: actor-owner
+    roles: ["user"]
+    attr:
+      org_id: org-2
+      type: user
+
   participant:
     id: actor-participant
     roles: ["user"]
@@ -30,11 +51,25 @@ principals:
       org_id: org-1
       type: user
 
+  participant_other_org:
+    id: actor-participant
+    roles: ["user"]
+    attr:
+      org_id: org-2
+      type: user
+
   shared:
     id: actor-shared
     roles: ["user"]
     attr:
       org_id: org-1
+      type: user
+
+  shared_other_org:
+    id: actor-shared
+    roles: ["user"]
+    attr:
+      org_id: org-2
       type: user
 
   org_member:
@@ -56,6 +91,14 @@ principals:
     roles: ["agent"]
     attr:
       org_id: org-1
+      type: agent
+      scopes: ["mail.read"]
+
+  scoped_agent_other_org:
+    id: agent-scoped-other
+    roles: ["agent"]
+    attr:
+      org_id: org-2
       type: agent
       scopes: ["mail.read"]
 
@@ -141,7 +184,19 @@ resources:
 tests:
   - name: Object access is owner participant shared org-visible
     input:
-      principals: ["admin", "owner", "participant", "shared", "org_member", "outsider"]
+      principals:
+        [
+          "admin",
+          "admin_other_org",
+          "owner",
+          "owner_other_org",
+          "participant",
+          "participant_other_org",
+          "shared",
+          "shared_other_org",
+          "org_member",
+          "outsider",
+        ]
       resources: ["object_private", "object_org"]
       actions: ["create", "read", "comment", "update", "delete", "share"]
     expected:
@@ -154,6 +209,15 @@ tests:
           update: EFFECT_ALLOW
           delete: EFFECT_ALLOW
           share: EFFECT_ALLOW
+      - principal: admin_other_org
+        resources: ["object_private", "object_org"]
+        actions:
+          create: EFFECT_DENY
+          read: EFFECT_DENY
+          comment: EFFECT_DENY
+          update: EFFECT_DENY
+          delete: EFFECT_DENY
+          share: EFFECT_DENY
       - principal: owner
         resources: ["object_private", "object_org"]
         actions:
@@ -163,6 +227,15 @@ tests:
           update: EFFECT_ALLOW
           delete: EFFECT_ALLOW
           share: EFFECT_ALLOW
+      - principal: owner_other_org
+        resources: ["object_private", "object_org"]
+        actions:
+          create: EFFECT_DENY
+          read: EFFECT_DENY
+          comment: EFFECT_DENY
+          update: EFFECT_DENY
+          delete: EFFECT_DENY
+          share: EFFECT_DENY
       - principal: participant
         resource: object_private
         actions:
@@ -175,6 +248,12 @@ tests:
           create: EFFECT_ALLOW
           read: EFFECT_ALLOW
           comment: EFFECT_ALLOW
+      - principal: participant_other_org
+        resources: ["object_private", "object_org"]
+        actions:
+          create: EFFECT_DENY
+          read: EFFECT_DENY
+          comment: EFFECT_DENY
       - principal: shared
         resource: object_private
         actions:
@@ -187,6 +266,12 @@ tests:
           create: EFFECT_ALLOW
           read: EFFECT_ALLOW
           comment: EFFECT_ALLOW
+      - principal: shared_other_org
+        resources: ["object_private", "object_org"]
+        actions:
+          create: EFFECT_DENY
+          read: EFFECT_DENY
+          comment: EFFECT_DENY
       - principal: org_member
         resource: object_org
         actions:
@@ -200,7 +285,16 @@ tests:
 
   - name: Thread calendar and event collaborators can use expected actions
     input:
-      principals: ["owner", "participant", "shared", "outsider"]
+      principals:
+        [
+          "owner",
+          "owner_other_org",
+          "participant",
+          "participant_other_org",
+          "shared",
+          "shared_other_org",
+          "outsider",
+        ]
       resources: ["thread_private", "calendar_private", "event_private"]
       actions: ["read", "reply", "create_event", "rsvp", "delete"]
     expected:
@@ -212,6 +306,14 @@ tests:
           create_event: EFFECT_ALLOW
           rsvp: EFFECT_ALLOW
           delete: EFFECT_ALLOW
+      - principal: owner_other_org
+        resources: ["thread_private", "calendar_private", "event_private"]
+        actions:
+          read: EFFECT_DENY
+          reply: EFFECT_DENY
+          create_event: EFFECT_DENY
+          rsvp: EFFECT_DENY
+          delete: EFFECT_DENY
       - principal: participant
         resource: thread_private
         actions:
@@ -227,6 +329,13 @@ tests:
         actions:
           read: EFFECT_ALLOW
           rsvp: EFFECT_ALLOW
+      - principal: participant_other_org
+        resources: ["thread_private", "calendar_private", "event_private"]
+        actions:
+          read: EFFECT_DENY
+          reply: EFFECT_DENY
+          create_event: EFFECT_DENY
+          rsvp: EFFECT_DENY
       - principal: shared
         resources: ["thread_private", "calendar_private", "event_private"]
         actions:
@@ -235,10 +344,15 @@ tests:
         resource: event_private
         actions:
           rsvp: EFFECT_ALLOW
+      - principal: shared_other_org
+        resources: ["thread_private", "calendar_private", "event_private"]
+        actions:
+          read: EFFECT_DENY
+          rsvp: EFFECT_DENY
 
   - name: Admin resource is restricted to admins and auditors
     input:
-      principals: ["admin", "auditor", "owner", "outsider"]
+      principals: ["admin", "admin_other_org", "auditor", "auditor_other_org", "owner", "outsider"]
       resources: ["admin_console"]
       actions: ["read", "update", "delete"]
     expected:
@@ -248,14 +362,26 @@ tests:
           read: EFFECT_ALLOW
           update: EFFECT_ALLOW
           delete: EFFECT_ALLOW
+      - principal: admin_other_org
+        resource: admin_console
+        actions:
+          read: EFFECT_DENY
+          update: EFFECT_DENY
+          delete: EFFECT_DENY
       - principal: auditor
         resource: admin_console
         actions:
           read: EFFECT_ALLOW
+      - principal: auditor_other_org
+        resource: admin_console
+        actions:
+          read: EFFECT_DENY
+          update: EFFECT_DENY
+          delete: EFFECT_DENY
 
   - name: Tool resources require matching actor scopes
     input:
-      principals: ["admin", "scoped_agent", "outsider"]
+      principals: ["admin", "admin_other_org", "scoped_agent", "scoped_agent_other_org", "outsider"]
       resources: ["mail_read_tool", "mail_send_tool"]
       actions: ["mail.read", "mail.send"]
     expected:
@@ -264,6 +390,11 @@ tests:
         actions:
           "mail.read": EFFECT_ALLOW
           "mail.send": EFFECT_ALLOW
+      - principal: admin_other_org
+        resources: ["mail_read_tool", "mail_send_tool"]
+        actions:
+          "mail.read": EFFECT_DENY
+          "mail.send": EFFECT_DENY
       - principal: scoped_agent
         resource: mail_read_tool
         actions:
@@ -271,6 +402,11 @@ tests:
       - principal: scoped_agent
         resource: mail_send_tool
         actions:
+          "mail.send": EFFECT_DENY
+      - principal: scoped_agent_other_org
+        resources: ["mail_read_tool", "mail_send_tool"]
+        actions:
+          "mail.read": EFFECT_DENY
           "mail.send": EFFECT_DENY
       - principal: outsider
         resources: ["mail_read_tool", "mail_send_tool"]

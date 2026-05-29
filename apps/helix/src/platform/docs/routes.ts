@@ -374,12 +374,20 @@ function handleYjsDocsSocket(
     const awarenessClients = room.awarenessClients.get(socket);
     room.awarenessClients.delete(socket);
     if (awarenessClients !== undefined && awarenessClients.size > 0) {
-      const clientIds = [...awarenessClients].filter((clientId) =>
-        room.awareness.meta.has(clientId),
-      );
-      if (clientIds.length > 0) {
-        awarenessProtocol.removeAwarenessStates(room.awareness, clientIds, socket);
-        const update = awarenessProtocol.encodeAwarenessUpdate(room.awareness, clientIds);
+      // Encode BEFORE removing: y-protocols' encoder reads awareness.meta for
+      // each clientID's clock, and removeAwarenessStates wipes those entries.
+      // Encoding after the remove crashed with "Cannot read properties of
+      // undefined (reading 'clock')" on disconnect.
+      const ids = [...awarenessClients];
+      let update: Uint8Array | null = null;
+      try {
+        update = awarenessProtocol.encodeAwarenessUpdate(room.awareness, ids);
+      } catch {
+        // Best-effort: if meta was already partially cleaned (e.g. by another
+        // close handler interleaving), just skip the broadcast.
+      }
+      awarenessProtocol.removeAwarenessStates(room.awareness, ids, socket);
+      if (update !== null) {
         broadcastYjsAwareness(room, update, socket);
       }
     }

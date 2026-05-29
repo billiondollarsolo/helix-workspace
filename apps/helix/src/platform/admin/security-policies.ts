@@ -60,6 +60,13 @@ export interface SecurityPolicyRecord {
   readonly updatedAt: string;
 }
 
+export type SsoTestLoginStatus = "configuration_required" | "runtime_pending";
+
+export interface SsoTestLoginResult {
+  readonly status: SsoTestLoginStatus;
+  readonly message: string;
+}
+
 // --------------------------------------------------------------------------
 // Per-type settings schemas
 // --------------------------------------------------------------------------
@@ -76,10 +83,18 @@ const mfaSettings = z
 
 const ssoSettings = z
   .object({
-    provider: z.enum(["okta", "azure_ad", "google", "generic_saml", "none"]).default("none"),
+    provider: z
+      .enum(["okta", "azure_ad", "google", "generic_oidc", "generic_saml", "none"])
+      .default("none"),
     metadataUrl: z.string().trim().url().max(2000).nullable().default(null),
     jitProvisioning: z.boolean().default(false),
     mappedDomains: z.array(z.string().trim().min(1).max(253)).max(50).default([]),
+    localLoginEnabled: z.literal(true).default(true),
+    setupStatus: z.enum(["none", "draft"]).default("none"),
+    testLoginStatus: z
+      .enum(["not_tested", "configuration_required", "runtime_pending"])
+      .default("not_tested"),
+    setupSource: z.enum(["admin", "signup"]).default("admin"),
   })
   .strict();
 
@@ -114,7 +129,10 @@ const dlpSettings = z
 const deviceTrustSettings = z
   .object({
     requireManagedDevice: z.boolean().default(false),
-    protectedApps: z.array(z.enum(["drive", "mail", "docs", "calendar"])).max(4).default([]),
+    protectedApps: z
+      .array(z.enum(["drive", "mail", "docs", "calendar"]))
+      .max(4)
+      .default([]),
     allowUnenrolledGraceDays: z.number().int().min(0).max(30).default(0),
   })
   .strict();
@@ -132,7 +150,9 @@ const settingsSchemaByType: Record<SecurityPolicyType, z.ZodTypeAny> = {
 export function parsePolicySettings(
   policyType: SecurityPolicyType,
   value: unknown,
-): { readonly ok: true; readonly settings: Record<string, unknown> } | { readonly ok: false; readonly issues: unknown } {
+):
+  | { readonly ok: true; readonly settings: Record<string, unknown> }
+  | { readonly ok: false; readonly issues: unknown } {
   const schema = settingsSchemaByType[policyType];
   const parsed = schema.safeParse(value ?? {});
   if (!parsed.success) {
@@ -238,6 +258,54 @@ export async function registerAdminSecurityPoliciesRoutes(
     return { policy };
   });
 
+  app.post("/api/admin/security-policies/sso/test-login", async (request, reply) => {
+    const actor = await actorFromRequest(request);
+    if (!canWriteAdminConsole(actor)) {
+      return sendForbidden(reply, adminConsoleWriteScope);
+    }
+
+    const current = (await store.get(actor.orgId, "sso")) ?? {
+      ...defaultPolicy("sso"),
+      id: "",
+      orgId: actor.orgId,
+      updatedBy: null,
+      createdAt: "",
+      updatedAt: "",
+    };
+    const parsedSettings = parsePolicySettings("sso", current.settings);
+    if (!parsedSettings.ok) {
+      return reply
+        .code(400)
+        .send(invalidRequest("Invalid SSO policy settings.", parsedSettings.issues));
+    }
+    const testLogin = testSsoPolicyLogin(parsedSettings.settings);
+    const policy = await store.upsert({
+      orgId: actor.orgId,
+      policyType: "sso",
+      enabled: current.enabled,
+      enforcement: current.enforcement,
+      settings: {
+        ...parsedSettings.settings,
+        testLoginStatus: testLogin.status,
+      },
+      updatedBy: actor.id,
+    });
+
+    await auditAdminAction(auditSink, {
+      orgId: actor.orgId,
+      actorId: actor.id,
+      verb: "admin.security_policy.sso_test_login.checked",
+      objectType: "admin_security_policy",
+      objectId: policy.id,
+      metadata: {
+        policyType: "sso",
+        testLoginStatus: testLogin.status,
+      },
+    });
+
+    return { testLogin };
+  });
+
   app.put("/api/admin/security-policies/:policyType", async (request, reply) => {
     const actor = await actorFromRequest(request);
     if (!canWriteAdminConsole(actor)) {
@@ -255,15 +323,14 @@ export async function registerAdminSecurityPoliciesRoutes(
     }
 
     const policyType = params.data.policyType;
-    const current =
-      (await store.get(actor.orgId, policyType)) ?? {
-        ...defaultPolicy(policyType),
-        id: "",
-        orgId: actor.orgId,
-        updatedBy: null,
-        createdAt: "",
-        updatedAt: "",
-      };
+    const current = (await store.get(actor.orgId, policyType)) ?? {
+      ...defaultPolicy(policyType),
+      id: "",
+      orgId: actor.orgId,
+      updatedBy: null,
+      createdAt: "",
+      updatedAt: "",
+    };
 
     const settingsInput = body.data.settings ?? current.settings;
     const parsedSettings = parsePolicySettings(policyType, settingsInput);
@@ -297,6 +364,27 @@ export async function registerAdminSecurityPoliciesRoutes(
     });
     return { policy };
   });
+}
+
+export function testSsoPolicyLogin(settings: Record<string, unknown>): SsoTestLoginResult {
+  const provider = typeof settings.provider === "string" ? settings.provider : "none";
+  const metadataUrl = typeof settings.metadataUrl === "string" ? settings.metadataUrl.trim() : "";
+  if (provider === "none") {
+    return {
+      status: "configuration_required",
+      message: "Choose an SSO provider before testing login.",
+    };
+  }
+  if (["okta", "generic_oidc", "generic_saml"].includes(provider) && metadataUrl.length === 0) {
+    return {
+      status: "configuration_required",
+      message: "Provider metadata is required before SSO can be tested.",
+    };
+  }
+  return {
+    status: "runtime_pending",
+    message: "Configuration saved. SAML/OIDC runtime is not connected yet.",
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -382,20 +470,32 @@ export class PostgresSecurityPoliciesStore implements SecurityPoliciesStore {
 }
 
 function mapPolicyRow(row: SecurityPolicyRow): SecurityPolicyRecord {
+  const settings = normalizedPolicySettingsForRead(row.policy_type, row.settings);
   return {
     id: row.id,
     orgId: row.org_id,
     policyType: row.policy_type,
     enabled: row.enabled,
     enforcement: row.enforcement,
-    settings:
-      typeof row.settings === "object" && row.settings !== null && !Array.isArray(row.settings)
-        ? (row.settings as Record<string, unknown>)
-        : {},
+    settings,
     updatedBy: row.updated_by,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
+}
+
+function normalizedPolicySettingsForRead(
+  policyType: SecurityPolicyType,
+  value: unknown,
+): Record<string, unknown> {
+  const raw =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  if (policyType !== "sso" || raw.localLoginEnabled !== false) {
+    return raw;
+  }
+  return { ...raw, localLoginEnabled: true };
 }
 
 // --------------------------------------------------------------------------
@@ -459,7 +559,8 @@ export class InMemorySecurityPoliciesStore implements SecurityPoliciesStore {
       enforcement: input.enforcement,
       settings: input.settings,
       updatedBy: input.updatedBy,
-      createdAt: existing?.createdAt !== undefined && existing.createdAt !== "" ? existing.createdAt : now,
+      createdAt:
+        existing?.createdAt !== undefined && existing.createdAt !== "" ? existing.createdAt : now,
       updatedAt: now,
     };
     this.#records.set(key, record);

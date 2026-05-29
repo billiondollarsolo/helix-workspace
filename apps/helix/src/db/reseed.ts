@@ -15,7 +15,7 @@
  *   • All actor ids, file ids, folder ids, etc. are crypto.randomUUID()
  *   • Logins (admin@/user@/maya@/…) point at fresh random actor ids
  *   • Files have varied roles — viewer/commenter/editor/owner mix —
- *     so the OnlyOffice editor surfaces different modes per file
+ *     so the native helix editors surface different modes per file
  *   • No stub objects: every drive entry resolves to real bytes that
  *     open / render in the UI */
 
@@ -159,8 +159,6 @@ async function wipe(sql: postgres.Sql): Promise<void> {
     "app_passwords",
     "agent_credentials",
     "access_tokens",
-    "oauth_access_tokens",
-    "oauth_authorization_codes",
     "outbox",
     "outbound_webhooks_log",
     "search_index",

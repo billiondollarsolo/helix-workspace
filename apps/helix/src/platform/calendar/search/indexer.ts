@@ -81,6 +81,16 @@ export function calendarRecordToIndexDocument(record: CalendarSearchRecord): Ind
       classification: record.classification,
       icsUid: record.icsUid,
       metadata: record.metadata,
+      // RAG visibility — derived from the event's CalDAV visibility:
+      //   "public"       → org-shared (whole tenant can retrieve)
+      //   "default"      → org-shared (calendar default — open by convention)
+      //   "private"      → only organizer
+      //   "confidential" → only organizer
+      ...(record.visibility === "public" ||
+      record.visibility === "default" ||
+      record.organizer?.id === undefined
+        ? { ragVisibility: "org" }
+        : { ragVisibility: "private", ragOwnerActorId: record.organizer.id }),
     }),
     updatedAt: timestampString(record.updatedAt ?? record.startsAt) ?? "",
   };

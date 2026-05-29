@@ -1,8 +1,10 @@
+import { assertNoPendingStartupMigrations } from "./db/startup-migration-check.js";
 import { createHelixServer } from "./server.js";
 import { initTelemetry } from "./telemetry.js";
 
 initTelemetry();
 
+await assertNoPendingStartupMigrations();
 const server = await createHelixServer();
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 const host = process.env.HOST ?? "0.0.0.0";

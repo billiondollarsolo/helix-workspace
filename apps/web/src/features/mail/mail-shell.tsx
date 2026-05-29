@@ -2207,10 +2207,10 @@ export function MailShell() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [query, setQuery] = useState(urlSearch.q ?? "");
 
-  // Whenever the local state changes, push it into the URL. Empty/default
-  // values are stripped to keep URLs clean. Replace=false so the back
-  // button traverses each drill-down. The URL is the SOURCE OF TRUTH for
-  // links and history; component state mirrors it.
+  // Two-way bind to the URL. Local state pushes new history entries when the
+  // user navigates; popstate (browser back/forward) flips urlSearch which we
+  // pull back into local state below. Without the reverse sync, hitting back
+  // changed the URL but left the React tree on the still-selected thread.
   useEffect(() => {
     void navigate({
       to: "/mail",
@@ -2224,6 +2224,24 @@ export function MailShell() {
       replace: false,
     });
   }, [folder, tab, selected, query, activeLabel]);
+
+  // Reverse sync: when the URL changes externally (browser back/forward,
+  // deep-link navigation), pull the new search params back into local state.
+  // Guard against echo loops — only update when the URL value differs from
+  // what local state would emit.
+  useEffect(() => {
+    const urlFolder = (urlSearch.folder as MailFolderKey | undefined) ?? "inbox";
+    const urlTab = urlSearch.tab ?? "primary";
+    const urlThread = urlSearch.thread ?? null;
+    const urlQuery = urlSearch.q ?? "";
+    const urlLabel = urlSearch.label ?? null;
+    if (urlFolder !== folder) setFolder(urlFolder);
+    if (urlTab !== tab) setTab(urlTab);
+    if (urlThread !== selected) setSelected(urlThread);
+    if (urlQuery !== query) setQuery(urlQuery);
+    if (urlLabel !== activeLabel) setActiveLabel(urlLabel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlSearch.folder, urlSearch.tab, urlSearch.thread, urlSearch.q, urlSearch.label]);
   const [offset, setOffset] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
   // Checked (bulk-select) thread IDs

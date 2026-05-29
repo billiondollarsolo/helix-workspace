@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
+import type {
+  Actor,
+  MeteringClient,
+  MeteringEmitInput,
+  MeteringEvent,
+  TraceContext,
+} from "@helix/sdk-types";
 import { createStoreBackedMcpResourceProvider } from "./mcp-resources.js";
 import { handleMcpJsonRpcRequest } from "./mcp.js";
 import { systemActor } from "./actor.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
 import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
+import { InMemoryTenantHourlyQuotaLimiter } from "../platform/limits/index.js";
 import type { CalendarEventRecord } from "../platform/calendar/types.js";
 import type { ChatMessageRecord, ChatRoomRecord } from "../platform/chat/types.js";
 import type { DriveEntryRecord, DriveSearchHit } from "../platform/drive/types.js";
@@ -185,6 +192,105 @@ describe("createStoreBackedMcpResourceProvider", () => {
       readonly contents: readonly { readonly text: string }[];
     };
     expect(result.contents[0]?.text).toContain("Launch mail");
+  });
+
+  it("enforces export_jobs_per_hour for Docs MCP resource reads", async () => {
+    const docs = new FakeDocsStore();
+    const events = new RecordingEventBus();
+    const metering = new RecordingMeteringClient();
+    const resources = createStoreBackedMcpResourceProvider({
+      docs,
+      docsExportJobLimiter: new InMemoryTenantHourlyQuotaLimiter(),
+      docsExportJobLimit: () => 1,
+      quotaEvents: events,
+      metering,
+    });
+
+    await expect(resources.read(agentActor, "helix://docs/document/doc-1")).resolves.toMatchObject({
+      uri: "helix://docs/document/doc-1",
+      mimeType: "text/markdown",
+    });
+    await expect(resources.read(agentActor, "helix://docs/document/doc-1")).rejects.toMatchObject({
+      statusCode: 429,
+      message: "Tenant export job quota exceeded.",
+      quotaLimit: {
+        quota: "export_jobs_per_hour",
+        limit: 1,
+        used: 1,
+        remaining: 0,
+      },
+    });
+    expect(docs.reads).toHaveLength(1);
+    expect(metering.records).toHaveLength(1);
+    expect(events.records).toHaveLength(1);
+    expect(events.records[0]).toMatchObject({
+      subject: "quota.export_jobs.exceeded",
+      payload: {
+        orgId: "org-mcp",
+        quota: "export_jobs_per_hour",
+        surface: "mcp.resources.read",
+        limit: 1,
+        used: 1,
+        remaining: 0,
+        metadata: {
+          format: "markdown",
+        },
+      },
+    });
+    const payload = asRecord(events.records[0]?.payload);
+    expect(typeof payload.retryAfterSeconds).toBe("number");
+    expect(typeof payload.resetsAt).toBe("string");
+  });
+
+  it("emits privacy-safe export metering after Docs MCP resource reads", async () => {
+    const docs = new FakeDocsStore();
+    const metering = new RecordingMeteringClient();
+    const resources = createStoreBackedMcpResourceProvider({ docs, metering });
+
+    const content = await resources.read(agentActor, "helix://docs/document/doc-1");
+
+    expect(content).toMatchObject({
+      uri: "helix://docs/document/doc-1",
+      mimeType: "text/markdown",
+    });
+    expect(metering.records).toEqual([
+      {
+        orgId: "org-mcp",
+        event: {
+          type: "export.completed",
+          quantity: 1,
+          metadata: {
+            surface: "mcp.resources.read",
+            format: "markdown",
+            byte_size: new TextEncoder().encode(content?.text ?? "").byteLength,
+          },
+        },
+        trace: undefined,
+      },
+    ]);
+    const serializedMetering = JSON.stringify(metering.records);
+    expect(serializedMetering).not.toContain("doc-1");
+    expect(serializedMetering).not.toContain("agent-mcp");
+    expect(serializedMetering).not.toContain("helix://docs/document/doc-1");
+    expect(serializedMetering).not.toContain("Launch plan");
+    expect(serializedMetering).not.toContain("The launch plan.");
+    expect(serializedMetering).not.toContain("Needs timeline.");
+    expect(serializedMetering).not.toContain("comment-1");
+  });
+
+  it("does not consume the Docs export quota for non-Docs MCP resource reads", async () => {
+    const mail = new FakeMailStore();
+    const resources = createStoreBackedMcpResourceProvider({
+      mail,
+      docsExportJobLimiter: new InMemoryTenantHourlyQuotaLimiter(),
+      docsExportJobLimit: () => 0,
+    });
+
+    await expect(resources.read(agentActor, "helix://mail/thread/thread-1")).resolves.toMatchObject({
+      uri: "helix://mail/thread/thread-1",
+      mimeType: "text/markdown",
+    });
+    expect(mail.threadReads).toHaveLength(1);
   });
 
   it("denies unreadable chat and calendar resources before calling stores", async () => {
@@ -440,14 +546,11 @@ class FakeDriveStore {
       {
         objectId: "file-text",
         name: "Launch notes.txt",
-        ownerActorId: "actor-1",
-        app: null,
         mimeType: "text/plain",
         byteSize: 16,
         sha256: null,
         folderId: null,
         preview: "Launch text file",
-        metadata: {},
         updatedAt: new Date("2026-05-20T12:30:00.000Z"),
       },
     ];
@@ -504,6 +607,39 @@ class FakeDocsStore {
         }
       : null;
   }
+}
+
+class RecordingEventBus {
+  readonly records: { readonly subject: string; readonly payload: unknown }[] = [];
+
+  async publish(subject: string, payload: unknown): Promise<void> {
+    this.records.push({ subject, payload });
+  }
+}
+
+class RecordingMeteringClient implements MeteringClient {
+  readonly records: Array<{
+    readonly orgId: string;
+    readonly event: MeteringEvent;
+    readonly trace: TraceContext | undefined;
+  }> = [];
+
+  async emit(orgId: string, event: MeteringEvent, trace?: TraceContext): Promise<void> {
+    this.records.push({ orgId, event, trace });
+  }
+
+  async emitBatch(inputs: readonly MeteringEmitInput[]): Promise<void> {
+    for (const input of inputs) {
+      await this.emit(input.orgId, input.event, input.trace);
+    }
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Expected quota event payload to be an object.");
+  }
+  return value as Record<string, unknown>;
 }
 
 function driveEntry(id: string, name: string, mimeType: string): DriveEntryRecord {

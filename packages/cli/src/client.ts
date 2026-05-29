@@ -37,7 +37,7 @@ export interface HelixRequest {
   readonly init: {
     readonly method: "GET" | "POST" | "PATCH";
     readonly headers: Record<string, string>;
-    readonly body?: string | Uint8Array;
+    readonly body?: string;
   };
 }
 
@@ -86,105 +86,6 @@ export function buildHelixRequest(
       return createRequest(env, "GET", withQuery("/api/admin/users", command));
     case "admin-audit-list":
       return createRequest(env, "GET", withQuery("/api/admin/audit-log", command));
-    case "admin-storage-test":
-      return createRequest(env, "POST", "/api/admin/tenant-config/byo-storage/test", {});
-    case "admin-storage-migration-list":
-      return createRequest(
-        env,
-        "GET",
-        withQuery("/api/admin/tenant-config/byo-storage/migrations", command),
-      );
-    case "admin-storage-migration-request":
-      return createRequest(env, "POST", "/api/admin/tenant-config/byo-storage/migrations", {
-        target: command.target,
-        dryRun: command.dryRun,
-        ...(command.sourceStorage === undefined ? {} : { sourceStorage: command.sourceStorage }),
-        ...(command.targetStorage === undefined ? {} : { targetStorage: command.targetStorage }),
-      });
-    case "admin-storage-migration-get":
-      return createRequest(
-        env,
-        "GET",
-        `/api/admin/tenant-config/byo-storage/migrations/${encodeURIComponent(command.migrationId)}`,
-      );
-    case "admin-storage-migration-cutover":
-      return createRequest(
-        env,
-        "POST",
-        `/api/admin/tenant-config/byo-storage/migrations/${encodeURIComponent(command.migrationId)}/cutover`,
-        { confirm: "CUTOVER" },
-      );
-    case "tenant-export-queue":
-      return createRequest(
-        env,
-        "POST",
-        `/api/admin/tenants/${encodeURIComponent(command.slug)}/export/jobs`,
-        {
-          includeObjectBytes: command.includeObjectBytes,
-          ...(command.presignedUrlExpiresSeconds === undefined
-            ? {}
-            : { presignedUrlExpiresSeconds: command.presignedUrlExpiresSeconds }),
-        },
-      );
-    case "tenant-export-list":
-      return createRequest(
-        env,
-        "GET",
-        withQuery(`/api/admin/tenants/${encodeURIComponent(command.slug)}/export/jobs`, {
-          status: command.status,
-          limit: command.limit,
-          cursor: command.cursor,
-        }),
-      );
-    case "tenant-export-status":
-      return createRequest(
-        env,
-        "GET",
-        `/api/admin/tenants/${encodeURIComponent(command.slug)}/export/jobs/${encodeURIComponent(command.jobId)}`,
-      );
-    case "tenant-import-dry-run":
-      if (!(input instanceof Uint8Array)) {
-        throw new Error("Tenant import dry-run request requires archive bytes.");
-      }
-      return createBinaryRequest(
-        env,
-        withQuery(`/api/admin/tenants/${encodeURIComponent(command.slug)}/import/dry-run`, {
-          ...(command.conflictPolicy === undefined ? {} : command.conflictPolicy),
-          ...(command.remaps === undefined ? {} : { remaps: base64UrlJson(command.remaps) }),
-        }),
-        input,
-        "application/x-tar",
-      );
-    case "tenant-import-execute":
-      if (!(input instanceof Uint8Array)) {
-        throw new Error("Tenant import execute request requires archive bytes.");
-      }
-      return createBinaryRequest(
-        env,
-        withQuery(`/api/admin/tenants/${encodeURIComponent(command.slug)}/import/execute`, {
-          confirm: command.confirm,
-          ...(command.conflictPolicy === undefined ? {} : command.conflictPolicy),
-          ...(command.remaps === undefined ? {} : { remaps: base64UrlJson(command.remaps) }),
-        }),
-        input,
-        "application/x-tar",
-      );
-    case "tenant-import-list":
-      return createRequest(
-        env,
-        "GET",
-        withQuery(`/api/admin/tenants/${encodeURIComponent(command.slug)}/import/jobs`, {
-          status: command.status,
-          limit: command.limit,
-          cursor: command.cursor,
-        }),
-      );
-    case "tenant-import-status":
-      return createRequest(
-        env,
-        "GET",
-        `/api/admin/tenants/${encodeURIComponent(command.slug)}/import/jobs/${encodeURIComponent(command.jobId)}`,
-      );
     case "backup-create":
       return createRequest(env, "POST", "/api/admin/backups", {});
     case "restore-from":
@@ -221,7 +122,6 @@ export function buildHelixRequest(
     case "help":
     case "completion":
     case "logout":
-    case "tenant-export-download":
     case "tool-describe":
     case "mcp-resource-list":
     case "mcp-resource-read":
@@ -348,25 +248,6 @@ function createRawJsonRequest(env: HelixCliEnv, path: string, body: string): Hel
   };
 }
 
-function createBinaryRequest(
-  env: HelixCliEnv,
-  path: string,
-  body: Uint8Array,
-  contentType: string,
-): HelixRequest {
-  return {
-    url: new URL(path, baseUrl(env).href).href,
-    init: {
-      method: "POST",
-      headers: {
-        ...commonHeaders(env),
-        "content-type": contentType,
-      },
-      body,
-    },
-  };
-}
-
 let traceRequestSequence = 0;
 const traceRunNonce = randomBytes(8).toString("hex");
 
@@ -454,10 +335,6 @@ function queryStringValue(value: unknown): string {
     return String(value);
   }
   throw new Error("Query parameters must be primitive values.");
-}
-
-function base64UrlJson(value: unknown): string {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

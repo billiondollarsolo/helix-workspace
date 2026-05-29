@@ -8,6 +8,37 @@ on:
   workflow_dispatch:
 
 jobs:
+  platform-mode-matrix:
+    name: test:${{ matrix.helix_mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        helix_mode:
+          - single-tenant
+          - multi-tenant-saas
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run platform mode test suite
+        run: pnpm test:${{ matrix.helix_mode }}
+
   repo-boundaries:
     runs-on: ubuntu-latest
     timeout-minutes: 10

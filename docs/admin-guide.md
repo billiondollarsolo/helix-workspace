@@ -170,6 +170,11 @@ For local UI/API testing with deterministic seeded data, run
 `pnpm --filter @helix/app db:prepare:demo -- --require-storage --require-search`
 with `DATABASE_URL`, `RUSTFS_ENDPOINT`, and Meilisearch env set before starting
 the app server.
+Storage-less dev mode is metadata/editor-only. It can boot the app, but Drive
+byte finalization, MCP byte reads, WebDAV byte round-trips, and Meet recording
+uploads require resolved object storage. For BYO-storage hardening or
+`--drive-docs-calendar-smoke`, start with `RUSTFS_ENDPOINT` or configure tenant
+BYO storage plus its secret reader; missing storage is expected to fail closed.
 For a complete backend-only local stack, `pnpm quality:live-demo-data -- --execute`
 starts Postgres, Meilisearch, and RustFS on the contiguous high-port block
 `39532`-`39535`, then runs that same prepare/verify path. The Quality Gates CI
@@ -382,6 +387,36 @@ SMTP/provider target and controlled recipient mailbox. Do not claim
 deliverability from Mailpit, static validation, or mocked k6 runs; record the
 SMTP/provider blocker, owner, next command, and required recipient/provider
 setup until real mailbox proof is attached.
+
+## Signup SLO Paging
+
+The local observability stack uses
+`infra/observability/alertmanager/alertmanager.yml` for Docker smoke evidence.
+Production deployments should use
+`infra/observability/alertmanager/alertmanager.production.yml`, which keeps the
+local signup SLO webhook receiver and fans the same
+`service="signup", slo="signup_activation"` alerts out to
+`helix-signup-slo-paging`.
+
+Mount the external paging webhook URL from your secret manager at:
+
+```text
+/etc/alertmanager/secrets/signup-slo-paging-webhook-url
+```
+
+The file should contain the PagerDuty/Opsgenie/BetterStack-compatible webhook
+bridge URL for the signup activation SLO escalation. Do not commit the URL or
+API token. Static proof that the route and secret-file contract are present:
+
+```sh
+pnpm quality:alertmanager-signup-routing -- --static
+```
+
+Local route delivery proof remains:
+
+```sh
+pnpm quality:alertmanager-signup-routing
+```
 
 ## Release Hold Criteria
 

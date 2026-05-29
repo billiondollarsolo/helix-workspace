@@ -28,7 +28,12 @@ const room = {
     { actorId: SELF_ACTOR, role: "owner", displayName: "Maya Chen", email: "maya@example.com" },
     { actorId: PEER_ACTOR, role: "member", displayName: "Daniel Cho", email: "daniel@example.com" },
   ],
-  settings: { threadId: ROOM_ID, name: "Platform Engineering", topic: "Release coordination", isPrivate: false },
+  settings: {
+    threadId: ROOM_ID,
+    name: "Platform Engineering",
+    topic: "Release coordination",
+    isPrivate: false,
+  },
   createdAt: "2026-05-20T11:00:00.000Z",
   updatedAt: "2026-05-20T12:00:00.000Z",
 };
@@ -64,12 +69,7 @@ const message = {
 function makeFetch(overrides: Partial<Record<string, unknown>> = {}) {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     void init;
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url;
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url.endsWith("/chat.room.list")) {
       return Promise.resolve(
         Response.json(overrides["chat.room.list"] ?? { rooms: [room, dmRoom] }),
@@ -149,11 +149,17 @@ const overlayApi = {
   openSettings: vi.fn(),
 };
 
+const navigateMock = vi.fn();
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => navigateMock,
+  useRouter: () => ({ navigate: navigateMock }),
+  useSearch: () => ({}),
+}));
+
 // `authenticatedFetch` is mocked per-test via `fetchMock`.
 let fetchMock = makeFetch();
 vi.mock("@/lib/auth", () => ({
-  authenticatedFetch: (input: RequestInfo | URL, init?: RequestInit) =>
-    fetchMock(input, init),
+  authenticatedFetch: (input: RequestInfo | URL, init?: RequestInit) => fetchMock(input, init),
   addAccessTokenSearchParam: (url: string) => url,
   sessionQueryKeys: { current: ["auth", "session"] },
   sessionUserQueryOptions: () => ({
@@ -171,6 +177,7 @@ describe("ChatShell", () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
+    navigateMock.mockClear();
     FakeWebSocket.instances = [];
     fetchMock = makeFetch();
     container = document.createElement("div");
@@ -277,9 +284,7 @@ describe("ChatShell", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector(".chat-messages")?.textContent).toContain(
-      "Canary is healthy.",
-    );
+    expect(container.querySelector(".chat-messages")?.textContent).toContain("Canary is healthy.");
   });
 
   it("shows a typing indicator from a realtime typing event", async () => {
@@ -335,17 +340,16 @@ describe("ChatShell", () => {
     await flush();
 
     const textarea = container.querySelector(".chat-composer-input") as HTMLTextAreaElement;
-    const descriptor = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      "value",
-    ) as { set?: (this: HTMLTextAreaElement, v: string) => void };
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value") as {
+      set?: (this: HTMLTextAreaElement, v: string) => void;
+    };
     act(() => {
       descriptor.set?.call(textarea, "Looks good");
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    const sendButton = Array.from(container.querySelectorAll(".chat-composer button")).find(
-      (b) => b.textContent?.includes("Send"),
+    const sendButton = Array.from(container.querySelectorAll(".chat-composer button")).find((b) =>
+      b.textContent?.includes("Send"),
     ) as HTMLButtonElement;
     expect(sendButton.disabled).toBe(false);
     act(() => {
@@ -362,9 +366,7 @@ describe("ChatShell", () => {
     await flush();
 
     expect(container.querySelector(".chat-thread-panel")).toBeNull();
-    const replyButton = container.querySelector(
-      '[aria-label="Reply in thread"]',
-    ) as HTMLElement;
+    const replyButton = container.querySelector('[aria-label="Reply in thread"]') as HTMLElement;
     act(() => {
       replyButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -392,9 +394,7 @@ describe("ChatShell", () => {
   });
 
   it("shows an offline notice when the room list request fails", async () => {
-    fetchMock = vi.fn(() =>
-      Promise.resolve(Response.json({ error: "offline" }, { status: 503 })),
-    );
+    fetchMock = vi.fn(() => Promise.resolve(Response.json({ error: "offline" }, { status: 503 })));
     await renderShell(FakeWebSocket as unknown as typeof WebSocket);
     await flush();
 
@@ -409,8 +409,6 @@ describe("ChatShell", () => {
     await renderShell(FakeWebSocket as unknown as typeof WebSocket);
     await flush();
 
-    expect(container.querySelector(".chat-messages")?.textContent).toContain(
-      "No messages yet",
-    );
+    expect(container.querySelector(".chat-messages")?.textContent).toContain("No messages yet");
   });
 });

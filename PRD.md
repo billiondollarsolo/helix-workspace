@@ -78,7 +78,7 @@ Helix is a self-hostable, open-source productivity platform that replaces Gmail,
 - **G4.** A user can create and edit rich-text documents collaboratively with live cursors.
 - **G5.** A user can schedule events, invite attendees (internal + external email), and join video calls via Jitsi.
 - **G6.** A single global search returns mail, chat messages, files, docs, and events in unified results, with optional semantic ranking when an embedding provider is configured.
-- **G7.** Admin can install/uninstall plugins (including swapping storage backends, auth providers, vector stores, video backends) without rebuilding the app.
+- **G7.** Admin can install/uninstall plugins (including swapping storage backends, federated auth providers, vector stores, video backends) without rebuilding the app; external identity providers federate into the Helix session model, and local email/password remains available for owner/admin recovery.
 - **G8.** Admin can set a security tier (Personal/Business/Enterprise/Sovereign) and override individual controls; the deployment topology adapts automatically.
 - **G9.** Admin can configure one or more AI providers; a conversational "Helix Assistant" lets users invoke platform capabilities via natural language, with tool-call confirmation gates on destructive actions.
 - **G10.** Agents (non-human actors) can be created by users or admins; agents get scoped OAuth 2.1 credentials; their actions are audit-distinguished from human actions.
@@ -1095,6 +1095,7 @@ interface StorageProvider {
 
 interface AuthProvider {
   id: string;                         // 'better-auth', 'zitadel', 'keycloak'
+  mode: 'local' | 'federated';         // federated providers bridge into Helix sessions
   signIn(credentials): Promise<Session>;
   verifySession(token): Promise<Actor | null>;
   refreshSession(refresh): Promise<Session>;
@@ -2589,7 +2590,7 @@ Changes from Tier 2:
 | At-rest (objects) | **SSE-KMS** with customer-managed keys |
 | Backup encryption | **KMS-backed** envelope encryption |
 | Secrets | **HashiCorp Vault mandatory**, 90-day rotation |
-| Auth | MFA required org-wide; passkeys preferred; SAML/OIDC SSO via plugin |
+| Auth | MFA required org-wide; passkeys preferred; SAML/OIDC SSO via plugin, additive to local owner/admin recovery login |
 | Audit log | Shipped to **immutable S3 + SIEM** (syslog/CEF); hash chain verified daily |
 | Observability | OTel + Grafana stack + correlation IDs in audit |
 | AI providers | **Local providers preferred**; cloud requires BAA/DPA; per-feature opt-in |
@@ -2637,7 +2638,7 @@ Tier upgrades are guarded by readiness checks (e.g., Personal → Business requi
 
 | Threat | Tier 1 mitigation | Tier 2+ adds | Tier 3+ adds | Tier 4 adds |
 |---|---|---|---|---|
-| Credential stuffing | Rate limit + TOTP | Passkey, MFA req admins | MFA all + SSO | CAC/PIV |
+| Credential stuffing | Rate limit + TOTP | Passkey, MFA req admins | MFA all + additive SSO for member access; local owner/admin recovery retained | CAC/PIV |
 | Inbound mail spoof | SPF/DKIM/DMARC | + classification | + content scanning | + AV in restricted mode |
 | Outbound abuse | Per-user quotas | + content scoring | + admin review of new senders | + dual control |
 | Stored XSS in mail | DOMPurify + iframe sandbox | + CSP strict | + nonces per render | (same) |

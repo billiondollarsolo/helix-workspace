@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Actor, AuditRecord, RequestContext, ToolDefinition } from "@helix/sdk-types";
 import { tierDefaults } from "./config/tier.js";
-import { createToolRegistry } from "./tool-registry.js";
+import { createToolRegistry, featureFlagForTool } from "./tool-registry.js";
 import { InMemoryConfirmationGate } from "./tools/registry.js";
 import {
   InMemoryAgentRateCostLimiter,
@@ -73,7 +73,12 @@ describe("RuntimeToolRegistry", () => {
       }),
     );
 
-    const baseActor: Actor = { id: "agent-1", orgId: "org-1", type: "agent", scopes: ["mail.send"] };
+    const baseActor: Actor = {
+      id: "agent-1",
+      orgId: "org-1",
+      type: "agent",
+      scopes: ["mail.send"],
+    };
 
     // Internal recipient: base scope is sufficient.
     await expect(
@@ -106,6 +111,60 @@ describe("RuntimeToolRegistry", () => {
         { actor: { id: "system", orgId: "org-1", type: "system" } },
       ),
     ).resolves.toMatchObject({ ok: true });
+  });
+
+  it("live-reads tenant feature flags as tool kill switches", async () => {
+    const evaluations: unknown[] = [];
+    let enabled = false;
+    const registry = createToolRegistry({
+      featureFlags: {
+        get: <T>() => enabled as T,
+        async getAsync<T>(key: string, defaultValue: T, context?: unknown) {
+          evaluations.push({ key, defaultValue, context });
+          return enabled as T;
+        },
+      },
+    });
+    registry.register(
+      tool({
+        id: "mail.send",
+        permission: "platform.read",
+        sideEffects: "external_communication",
+        handler: async () => ({ sent: true }),
+      }),
+    );
+
+    await expect(registry.listVisible(actor)).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "mail.send" })]),
+    );
+    const blocked = await registry.invoke("mail.send", {}, { actor });
+    expect(blocked).toMatchObject({
+      ok: false,
+      statusCode: 403,
+      error: "Tool mail.send is disabled by tenant feature flag: mail_outbound",
+    });
+    expect(evaluations).toEqual(
+      expect.arrayContaining([
+        {
+          key: "mail_outbound",
+          defaultValue: true,
+          context: {
+            orgId: actor.orgId,
+            actorId: actor.id,
+            attributes: { toolId: "mail.send" },
+          },
+        },
+      ]),
+    );
+
+    enabled = true;
+    await expect(registry.listVisible(actor)).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "mail.send" })]),
+    );
+    await expect(registry.invoke("mail.send", {}, { actor })).resolves.toMatchObject({
+      ok: true,
+      output: { sent: true },
+    });
   });
 
   it("queues confirmation for enforced destructive calls and executes after approval", async () => {
@@ -418,10 +477,14 @@ describe("RuntimeToolRegistry", () => {
       }),
     );
 
-    const pending = await registry.invoke("limited.confirmed-cost", {}, {
-      actor,
-      enforceConfirmation: true,
-    });
+    const pending = await registry.invoke(
+      "limited.confirmed-cost",
+      {},
+      {
+        actor,
+        enforceConfirmation: true,
+      },
+    );
     if (!pending.ok || pending.status !== "pending_confirmation") {
       throw new Error("Expected pending confirmation.");
     }
@@ -667,11 +730,7 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
       registry.invoke("limited.override", {}, { actor, credentialPolicy }),
     ).resolves.toMatchObject({ ok: true });
 
-    const blocked = await registry.invoke(
-      "limited.override",
-      {},
-      { actor, credentialPolicy },
-    );
+    const blocked = await registry.invoke("limited.override", {}, { actor, credentialPolicy });
     expect(blocked.ok).toBe(false);
     if (!blocked.ok) {
       expect(blocked.statusCode).toBe(429);
@@ -707,6 +766,19 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
     await expect(
       registry.invoke("relaxed.override", {}, { actor, credentialPolicy }),
     ).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe("featureFlagForTool", () => {
+  it("maps core-app tools to tenant kill-switch flags", () => {
+    expect(featureFlagForTool({ id: "mail.send" })).toBe("mail_outbound");
+    expect(featureFlagForTool({ id: "mail.reply" })).toBe("mail_outbound");
+    expect(featureFlagForTool({ id: "drive.share" })).toBe("b2b_sharing");
+    expect(featureFlagForTool({ id: "drive.access.remove" })).toBe("b2b_sharing");
+    expect(featureFlagForTool({ id: "docs.create" })).toBe("editors_native_document");
+    expect(featureFlagForTool({ id: "sheets.create" })).toBe("editors_native_spreadsheet");
+    expect(featureFlagForTool({ id: "slides.deck.create" })).toBe("editors_native_presentation");
+    expect(featureFlagForTool({ id: "platform.ping" })).toBeUndefined();
   });
 });
 

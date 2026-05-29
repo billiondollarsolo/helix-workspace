@@ -4,10 +4,21 @@ import type postgres from "postgres";
 
 export interface MigrationSource {
   readonly namespace: string;
-  readonly directory: string;
+  readonly directory?: string;
+  readonly migrations?: readonly InlineSqlMigration[];
+}
+
+export interface InlineSqlMigration {
+  readonly name: string;
+  readonly sql: string | readonly string[];
 }
 
 export interface AppliedMigration {
+  readonly namespace: string;
+  readonly name: string;
+}
+
+export interface PendingMigration {
   readonly namespace: string;
   readonly name: string;
 }
@@ -28,9 +39,9 @@ export async function runMigrations(
   try {
     await ensureMigrationTable(sql);
     for (const source of sources) {
-      const files = await listSqlMigrations(source.directory);
-      for (const file of files) {
-        const name = basename(file);
+      const migrations = await listMigrations(source);
+      for (const migration of migrations) {
+        const name = migration.name;
         const existing = await sql<{ exists: boolean }[]>`
           select exists(
             select 1 from schema_migrations where namespace = ${source.namespace} and name = ${name}
@@ -42,9 +53,13 @@ export async function runMigrations(
           continue;
         }
 
-        const statement = await readFile(file, "utf8");
+        const statement = migration.sql;
         await sql.begin(async (tx) => {
-          await tx.unsafe(statement);
+          const statements: readonly string[] =
+            typeof statement === "string" ? [statement] : statement;
+          for (const sqlStatement of statements) {
+            await tx.unsafe(sqlStatement);
+          }
           await tx`
             insert into schema_migrations (namespace, name)
             values (${source.namespace}, ${name})
@@ -60,7 +75,34 @@ export async function runMigrations(
   return { applied, skipped };
 }
 
+export async function listPendingMigrations(
+  sql: postgres.Sql,
+  sources: readonly MigrationSource[],
+): Promise<readonly PendingMigration[]> {
+  await ensureMigrationTable(sql);
+  const pending: PendingMigration[] = [];
+  for (const source of sources) {
+    const migrations = await listMigrations(source);
+    const appliedRows = await sql<{ readonly name: string }[]>`
+      select name from schema_migrations where namespace = ${source.namespace}
+    `;
+    const applied = new Set(appliedRows.map((row) => row.name));
+    for (const migration of migrations) {
+      if (!applied.has(migration.name)) {
+        pending.push({ namespace: source.namespace, name: migration.name });
+      }
+    }
+  }
+  return pending;
+}
+
 async function ensureMigrationTable(sql: postgres.Sql): Promise<void> {
+  const existing = await sql<{ readonly exists: boolean }[]>`
+    select to_regclass('public.schema_migrations') is not null as exists
+  `;
+  if (existing[0]?.exists === true) {
+    return;
+  }
   await sql`
     create table if not exists schema_migrations (
       namespace text not null,
@@ -77,6 +119,21 @@ async function listSqlMigrations(directory: string): Promise<string[]> {
     .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
     .map((entry) => join(directory, entry.name))
     .sort((left, right) => left.localeCompare(right));
+}
+
+async function listMigrations(source: MigrationSource): Promise<readonly InlineSqlMigration[]> {
+  const fileMigrations =
+    source.directory === undefined
+      ? []
+      : await Promise.all(
+          (await listSqlMigrations(source.directory)).map(async (file) => ({
+            name: basename(file),
+            sql: await readFile(file, "utf8"),
+          })),
+        );
+  return [...fileMigrations, ...(source.migrations ?? [])].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
 }
 
 const migrationLockKey = 0x48454c49;

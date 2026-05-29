@@ -466,6 +466,10 @@ class FakeDocsStore implements DocsStore {
     return documentRecord();
   }
 
+  async copy(): Promise<DocsDocumentRecord | null> {
+    return documentRecord();
+  }
+
   async updateTitle(): Promise<DocsDocumentRecord | null> {
     return documentRecord();
   }

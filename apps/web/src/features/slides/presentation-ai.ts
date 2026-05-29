@@ -65,11 +65,7 @@ export function generatePresentationDeck(prompt: string): GeneratedPresentationD
           title: "Tradeoffs",
           left: `The opportunity is strongest when ${lowercaseFirst(primary)} stays connected to execution.`,
           rightKind: "list",
-          rightContent: [
-            `Invest in ${primary}`,
-            `Reduce risk in ${secondary}`,
-            `Track ${tertiary}`,
-          ],
+          rightContent: [`Invest in ${primary}`, `Reduce risk in ${secondary}`, `Track ${tertiary}`],
         },
         speakerNotes: "Make the tradeoff explicit before asking for alignment.",
       },

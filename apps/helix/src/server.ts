@@ -1,15 +1,23 @@
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage } from "node:http";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import websocket from "@fastify/websocket";
 import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import type { convertToHtml as mammothConvertToHtml } from "mammoth";
+import type { Browser } from "playwright";
 import { Redis } from "ioredis";
 import { fromNodeHeaders } from "better-auth/node";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import { z } from "zod";
+import { createMeteringClient } from "@helix/sdk";
 import {
   actorFromRequestWithAccessTokenAndSession,
   resolveCredentialAuthenticatedActor,
@@ -17,11 +25,7 @@ import {
   type SessionActorResolver,
 } from "./api/actor.js";
 import { buildAsyncApiDocument } from "./api/asyncapi.js";
-import {
-  formatSseEvent,
-  handleMcpJsonRpcRequest,
-  handleMcpStreamingRequest,
-} from "./api/mcp.js";
+import { formatSseEvent, handleMcpJsonRpcRequest, handleMcpStreamingRequest } from "./api/mcp.js";
 import { createStoreBackedMcpResourceProvider } from "./api/mcp-resources.js";
 import { createPlatformMetrics, installHttpMetrics } from "./api/metrics.js";
 import { buildOpenApiDocument, openApiDocumentToYaml } from "./api/openapi.js";
@@ -56,10 +60,8 @@ import {
 import { AuthorizationCodeService } from "./platform/auth/authorization-code.js";
 import { registerOAuthRoutes } from "./platform/auth/routes.js";
 import { registerTenantSamlRoutes } from "./platform/auth/saml-routes.js";
-import {
-  PostgresScimUserStore,
-  registerTenantScimRoutes,
-} from "./platform/auth/scim-routes.js";
+import { registerTenantScimRoutes } from "./platform/auth/scim-routes.js";
+import { PostgresTenantScimCredentialStore } from "./platform/auth/scim-credentials.js";
 import { PostgresTenantIdpConfigStore } from "./platform/auth/tenant-idp-configs.js";
 import {
   appPasswordScopeCatalog,
@@ -80,6 +82,7 @@ import {
   createBetterAuthRuntime,
   createBetterAuthSessionActorResolver,
   PostgresBetterAuthActorStore,
+  PostgresBetterAuthSessionIssuer,
   PostgresBetterAuthUserLinkStore,
   type BetterAuthInstance,
 } from "./platform/auth/better-auth.js";
@@ -146,18 +149,18 @@ import {
   registerDocsIndexer,
   registerDocsRoutes,
   registerDocsTools,
-  type DocsDocumentRecord,
 } from "./platform/docs/index.js";
-import { createNativeDocumentState } from "./platform/docs/native-state.js";
-import { createEditorsRuntimeHost, registerEditorsCoreApp } from "./platform/editors/index.js";
 import {
+  createLocalOfficePreviewConverter,
   createLibreOfficePreviewClient,
+  type DrivePreview,
   PostgresDriveStore,
   readInlineBodyFallback,
   registerDriveEnrichments,
   registerDriveIndexer,
   registerDriveRoutes,
   registerDriveTools,
+  sendBytesWithRangeSupport,
 } from "./platform/drive/index.js";
 import { InMemoryEventBus } from "./platform/events/in-memory-event-bus.js";
 import { NatsEventBus } from "./platform/events/nats-event-bus.js";
@@ -216,6 +219,12 @@ import {
   registerNotificationTools,
 } from "./platform/notifications/index.js";
 import {
+  MeteringIngestWorker,
+  MeteringRollupWorker,
+  PostgresMeteringEventStore,
+  PostgresMeteringRollupStore,
+} from "./platform/metering/index.js";
+import {
   PostgresSheetsStore,
   registerSheets,
   registerSheetsRoutes,
@@ -225,31 +234,51 @@ import {
   registerSlides,
   registerSlidesRoutes,
 } from "./platform/slides/index.js";
-import {
-  PostgresGroupsStore,
-  registerAdminGroupsRoutes,
-} from "./platform/admin/groups.js";
+import { PostgresGroupsStore, registerAdminGroupsRoutes } from "./platform/admin/groups.js";
 import {
   PostgresSecurityPoliciesStore,
   registerAdminSecurityPoliciesRoutes,
 } from "./platform/admin/security-policies.js";
+import { registerTenantConfigAdminRoutes } from "./platform/admin/tenant-config.js";
 import {
   PostgresOAuthAppsStore,
   registerAdminOAuthAppsRoutes,
 } from "./platform/admin/oauth-apps.js";
-import { registerTenantConfigAdminRoutes } from "./platform/admin/tenant-config.js";
+import { PostgresBillingStore, registerAdminBillingRoutes } from "./platform/admin/billing.js";
+import { PostgresDomainsStore, registerAdminDomainsRoutes } from "./platform/admin/domains.js";
+import { signupEventSchemas } from "./platform/signup/event-schemas.js";
+import { registerSignupRoutesForMode } from "./platform/signup/routes.js";
 import {
-  PostgresBillingStore,
-  registerAdminBillingRoutes,
-} from "./platform/admin/billing.js";
+  SignupOnboardingInviteEmailWorker,
+  SignupVerificationEmailWorker,
+} from "./platform/signup/email-delivery.js";
 import {
-  PostgresDomainsStore,
-  registerAdminDomainsRoutes,
-} from "./platform/admin/domains.js";
+  InMemorySignupAbuseProtector,
+  RedisSignupAbuseProtector,
+  ioredisSignupRateLimitClient,
+  parseBlockedSignupEmailDomains,
+} from "./platform/signup/abuse.js";
+import {
+  ConfiguredCountrySignupRiskReviewer,
+  parseSignupManualReviewCountries,
+} from "./platform/signup/risk-review.js";
+import {
+  PostgresSignupEmailVerificationTokenStore,
+  PostgresSignupOwnerEmailLookup,
+  PostgresSignupVerifiedIdentityStore,
+} from "./platform/signup/verification.js";
+import {
+  DefaultSignupPasswordScreener,
+  HaveIBeenPwnedPasswordChecker,
+} from "./platform/signup/password-screening.js";
+import { GoogleRecaptchaVerifier } from "./platform/signup/recaptcha.js";
+import { PostgresSignupOnboardingStore } from "./platform/signup/onboarding.js";
+import { PostgresSignupOnboardingInviteTokenStore } from "./platform/signup/invites.js";
 import { OutboxWorker } from "./platform/outbox/outbox.js";
 import { PostgresOutboxStore } from "./platform/outbox/postgres-store.js";
 import { registerPluginAdminRoutes } from "./platform/plugins/admin-routes.js";
 import { PostgresPluginLifecycleStore, registerPluginTools } from "./platform/plugins/tools.js";
+import { TenantConfigFeatureFlagProvider } from "./platform/feature-flags/provider.js";
 import {
   createMeilisearchHttpClient,
   MeilisearchSearchEngine,
@@ -273,22 +302,41 @@ import {
 } from "./platform/config/loader.js";
 import { tierDefaults } from "./platform/config/tier.js";
 import { evaluateTierReadiness } from "./platform/config/tier-readiness.js";
-import { CoreAppRegistrationPlan } from "./platform/apps/core-apps.js";
-import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
+import { isSaas } from "./platform/mode/index.js";
+import { CoreAppRegistrationPlan, resolveCoreAppStatuses } from "./platform/apps/core-apps.js";
 import {
-  createPostgresTenantExportManifestPlanner,
-  createTenantImportSelfFetchDownloader,
-  loadTenantImportTargetStateFromPostgres,
-  PostgresTenantImportAuditContinuityStore,
-  PostgresTenantExportJobStore,
-  PostgresTenantImportJobStore,
-  PostgresTenantImportRowApplyStore,
+  installTenantContextHook,
   PostgresOrgStore,
   PostgresPlanStore,
-  registerTenantImportRoutes,
-  registerTenantExportRoutes,
-  TenantExportMaterializationWorker,
+  TenantActorMismatchError,
+  TenantResolutionError,
+  PostgresTenantRoleProvisioner,
+  PostgresTenantProvisioningStore,
+  PostgresTenantOwnerActorStore,
+  PostgresTenantStorageNamespaceStore,
+  PostgresTenantBootstrapSeedStore,
+  TenantProvisioningWorker,
+  TenantHardDeleteWorker,
+  buildEffectiveTenantConfig,
+  createPostgresTenantExportManifestPlanner,
+  initialOwnerActorStepName,
+  objectStorePrefixStepName,
+  registerTenantLifecycleRoutes,
+  tenantBootstrapSeedStepName,
+  type TenantContext,
+  type DefaultOrgInput,
+  type OrgRecord,
+  type OrgStore,
+  type TenantProvisioningRecord,
+  type TenantProvisioningStep,
+  assertActorMatchesRequestTenant,
+  ensureDefaultOrgForMode,
+  resolveDefaultOrgInput,
+  resolveTenantContext,
 } from "./platform/tenancy/index.js";
+import { registerEditorsCoreApp } from "./platform/editors/index.js";
+import { createEditorsRuntimeHost } from "./platform/editors/core-app.js";
+import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
 import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
 import {
   evaluateAdminMfa,
@@ -297,8 +345,14 @@ import {
 } from "./platform/auth/mfa.js";
 import {
   InMemoryAgentRateCostLimiter,
+  InMemoryTenantHourlyQuotaLimiter,
+  InMemoryTenantApiRpsLimiter,
   RedisAgentRateCostLimiter,
+  RedisTenantHourlyQuotaLimiter,
+  RedisTenantApiRpsLimiter,
   type AgentLimitBudget,
+  type TenantHourlyQuotaLimiter,
+  type TenantApiRpsLimiter,
 } from "./platform/limits/index.js";
 import {
   CerbosToolAccessPolicy,
@@ -306,17 +360,16 @@ import {
   ScopeToolAccessPolicy,
 } from "./platform/permissions/tool-access.js";
 import {
+  ByoStorageHealthWorker,
+  PostgresTenantStorageMigrationJobStore,
+  TenantStorageMigrationWorker,
   createDefaultTenantStorageResolver,
   createS3CompatibleStorage,
   createTenantStorageMigrationPairResolver,
-  createTenantStorageMigrationWriteCoordinator,
   createTenantStorageResolver,
-  ByoStorageHealthWorker,
-  PostgresTenantStorageMigrationJobStore,
   resolveTenantStorageSnapshot,
-  TenantStorageMigrationWorker,
 } from "./platform/storage/index.js";
-import { createVaultTenantStorageSecretStoreFromEnv } from "./platform/secrets/index.js";
+import { createVaultTenantStorageSecretReaderFromEnv } from "./platform/secrets/index.js";
 import {
   createToolRegistry,
   type RuntimeToolRegistry,
@@ -340,12 +393,22 @@ import type {
   AiProviderConfig,
   ChatRequest,
   ChatResponse,
-  EditorsDocumentLayoutSettings,
+  EventBus,
+  HelixConfig,
   JsonObject,
   LLMProviderCapability,
   ModelInfo,
+  MeteringClient,
   SecurityTier,
 } from "@helix/sdk-types";
+
+const execFileAsync = promisify(execFile);
+const EDITORS_NATIVE_FEATURE_FLAGS = new Set([
+  "editors_native_document",
+  "editors_native_spreadsheet",
+  "editors_native_presentation",
+  "editors_native_pdf",
+]);
 
 const toolParamsSchema = z.object({
   toolId: z.string().min(1),
@@ -394,10 +457,18 @@ async function resolveRequestActor(
           credentialResolution.message,
         );
       }
-      return credentialResolution.actor;
+      const actor = credentialResolution.actor;
+      assertActorMatchesRequestTenant(request, actor);
+      return actor;
     }
   }
-  return actorFromRequestWithAccessTokenAndSession(request, tokenStore, sessionResolver);
+  const actor = await actorFromRequestWithAccessTokenAndSession(
+    request,
+    tokenStore,
+    sessionResolver,
+  );
+  assertActorMatchesRequestTenant(request, actor);
+  return actor;
 }
 
 export interface ToolRestRoutesOptions {
@@ -423,6 +494,81 @@ export interface ToolRestRoutesOptions {
 function traceIdForRequest(request: FastifyRequest): string {
   const context = createRequestContext(request);
   return context.traceId ?? context.requestId;
+}
+
+export interface TenantApiRpsLimitHookOptions {
+  readonly limiter: TenantApiRpsLimiter;
+  readonly events?: Pick<EventBus, "publish"> | undefined;
+  readonly onQuotaEventError?: ((error: unknown) => void) | undefined;
+}
+
+export function installTenantApiRpsLimitHook(
+  app: FastifyInstance,
+  options: TenantApiRpsLimitHookOptions,
+): void {
+  app.addHook("preHandler", async (request, reply) => {
+    const tenant = (request as unknown as { readonly tenant?: TenantContext | null }).tenant;
+    if (tenant === null || tenant === undefined) {
+      return;
+    }
+    const effectiveConfig = tenant.effectiveConfig;
+
+    const decision = await options.limiter.consume({
+      orgId: tenant.orgId,
+      limit: effectiveConfig.quotas.api_rps_limit,
+    });
+    if (decision.allowed) {
+      reply.header(
+        "x-helix-quota-api-rps-limit",
+        decision.limit === null ? "unlimited" : String(decision.limit),
+      );
+      reply.header(
+        "x-helix-quota-api-rps-remaining",
+        decision.remaining === null ? "unlimited" : String(decision.remaining),
+      );
+      if (decision.resetsAt !== null) {
+        reply.header("x-helix-quota-api-rps-reset", decision.resetsAt);
+      }
+      return;
+    }
+
+    reply.header("retry-after", String(decision.retryAfterSeconds));
+    reply.header("x-helix-quota-api-rps-limit", String(decision.limit));
+    reply.header("x-helix-quota-api-rps-remaining", "0");
+    reply.header("x-helix-quota-api-rps-reset", decision.resetsAt);
+    void options.events
+      ?.publish("quota.api_rps.exceeded", {
+        orgId: tenant.orgId,
+        quota: "api_rps_limit",
+        surface: "http.request",
+        limit: decision.limit,
+        used: decision.used,
+        remaining: decision.remaining,
+        retryAfterSeconds: decision.retryAfterSeconds,
+        resetsAt: decision.resetsAt,
+        method: request.method,
+        path: request.url.split("?")[0] ?? request.url,
+      })
+      .catch((error: unknown) => {
+        options.onQuotaEventError?.(error);
+      });
+    return reply.code(429).send(
+      buildErrorEnvelope({
+        statusCode: 429,
+        code: "quota.api_rps.exceeded",
+        message: "Tenant API request rate limit exceeded.",
+        traceId: traceIdForRequest(request),
+        details: {
+          quota: "api_rps_limit",
+          limit: decision.limit,
+          used: decision.used,
+          remaining: decision.remaining,
+          retryAfterSeconds: decision.retryAfterSeconds,
+          resetsAt: decision.resetsAt,
+        },
+      }),
+    );
+  });
 }
 
 /** Extracts the `Idempotency-Key` header value if present. */
@@ -495,8 +641,7 @@ export function registerToolRestRoutes(
             buildErrorEnvelope({
               statusCode: 409,
               code: "idempotency_key_reused",
-              message:
-                "Idempotency-Key was already used with a different request payload.",
+              message: "Idempotency-Key was already used with a different request payload.",
               traceId,
             }),
           );
@@ -508,9 +653,7 @@ export function registerToolRestRoutes(
             return sendToolInvokeError(reply, replayed, traceId);
           }
           if (replayed.status === "pending_confirmation") {
-            return reply
-              .code(202)
-              .send({ status: replayed.status, pending: replayed.pending });
+            return reply.code(202).send({ status: replayed.status, pending: replayed.pending });
           }
           return reply.code(outcome.record.statusCode).send(replayed.output);
         }
@@ -751,6 +894,34 @@ export function formatAssistantSseEvent(event: AssistantSseFrame): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
+export interface DefaultOrgBootLogger {
+  info(input: JsonObject, message: string): void;
+}
+
+export async function verifyDefaultOrgAtBoot(input: {
+  readonly config: Pick<HelixConfig, "mode">;
+  readonly orgs: Pick<OrgStore, "getOrCreateDefaultOrg">;
+  readonly defaultOrg: DefaultOrgInput;
+  readonly logger: DefaultOrgBootLogger;
+}): Promise<OrgRecord | null> {
+  const bootDefaultOrg = await ensureDefaultOrgForMode({
+    config: input.config,
+    orgs: input.orgs,
+    defaultOrg: input.defaultOrg,
+  });
+  if (bootDefaultOrg !== null) {
+    input.logger.info(
+      {
+        orgId: bootDefaultOrg.id,
+        slug: bootDefaultOrg.slug,
+        region: bootDefaultOrg.region,
+      },
+      "Verified single-tenant default org at boot",
+    );
+  }
+  return bootDefaultOrg;
+}
+
 export async function createHelixServer(): Promise<FastifyInstance> {
   const app = fastify({
     logger: {
@@ -769,12 +940,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     // `HELIX_BODY_LIMIT_BYTES` for production hosts that need different
     // ingress sizing.
     bodyLimit: Number.parseInt(process.env.HELIX_BODY_LIMIT_BYTES ?? "134217728", 10),
-    // The OnlyOffice integration carries a signed JWT in the URL path
-    // (`/api/onlyoffice/file/<token>`). JWTs routinely run 300-500 chars
-    // and the Fastify default `maxParamLength` is 100 — anything longer
-    // silently 404s instead of reaching the handler. 2 KB is the URL
-    // segment ceiling most reverse proxies tolerate, well above any JWT
-    // we'd realistically issue.
+    // Tool routes carry signed pending-action ids and other long path
+    // segments; Fastify's default `maxParamLength` of 100 silently 404s
+    // anything longer. 2 KB matches the URL-segment ceiling most reverse
+    // proxies tolerate without rejecting the request outright.
     maxParamLength: 2048,
   });
 
@@ -801,11 +970,40 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         }),
       );
     }
+    if (error instanceof TenantResolutionError) {
+      const traceId = traceIdForRequest(request);
+      return reply.code(error.statusCode).send(
+        buildErrorEnvelope({
+          statusCode: error.statusCode,
+          code: error.code,
+          message: error.message,
+          traceId,
+        }),
+      );
+    }
+    if (error instanceof TenantActorMismatchError) {
+      const traceId = traceIdForRequest(request);
+      return reply.code(error.statusCode).send(
+        buildErrorEnvelope({
+          statusCode: error.statusCode,
+          code: error.code,
+          message: error.message,
+          traceId,
+        }),
+      );
+    }
     throw error;
   });
   // P1-10: process-local idempotency store for mutating tool calls.
   const idempotencyStore: IdempotencyStore = new InMemoryIdempotencyStore();
   const sql = createSqlClient();
+  const redis = process.env.REDIS_URL === undefined ? undefined : new Redis(process.env.REDIS_URL);
+  const tenantApiRpsLimiter: TenantApiRpsLimiter =
+    redis === undefined ? new InMemoryTenantApiRpsLimiter() : new RedisTenantApiRpsLimiter(redis);
+  const tenantHourlyQuotaLimiter: TenantHourlyQuotaLimiter =
+    redis === undefined
+      ? new InMemoryTenantHourlyQuotaLimiter()
+      : new RedisTenantHourlyQuotaLimiter(redis);
   const oauthStore = new PostgresOAuthStore(sql);
   // PRD §9.2: expanded agent credential model. The credential store resolves
   // `api_key` / `mtls_cert` credentials together with their per-credential
@@ -820,10 +1018,262 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const betterAuthConfig = getBetterAuthRuntimeConfig(process.env);
   const betterAuthRuntime =
     betterAuthConfig === undefined ? undefined : createBetterAuthRuntime(betterAuthConfig);
+  const betterAuthSessionIssuer =
+    betterAuthConfig === undefined
+      ? undefined
+      : new PostgresBetterAuthSessionIssuer(sql, {
+          secret: betterAuthConfig.secret,
+          baseUrl: betterAuthConfig.baseUrl,
+        });
+  const tenantRoleProvisioner = envFlag("HELIX_TENANT_POSTGRES_ROLES_ENABLED", false)
+    ? new PostgresTenantRoleProvisioner(sql, {
+        appRole: process.env.HELIX_POSTGRES_APP_ROLE ?? "helix_app_role",
+      })
+    : undefined;
+  const orgStore = new PostgresOrgStore(sql, {
+    ...(tenantRoleProvisioner === undefined ? {} : { tenantRoleProvisioner }),
+  });
+  const tenantProvisioningStore = new PostgresTenantProvisioningStore(sql);
+  const tenantOwnerActorStore = new PostgresTenantOwnerActorStore(sql);
+  const tenantStorageNamespaceStore = new PostgresTenantStorageNamespaceStore(sql);
+  const tenantBootstrapSeedStore = new PostgresTenantBootstrapSeedStore(sql);
+  const tenantIdpConfigStore = new PostgresTenantIdpConfigStore(sql);
+  const tenantScimCredentialStore = new PostgresTenantScimCredentialStore(sql);
+  const signupEmailVerificationTokenStore = new PostgresSignupEmailVerificationTokenStore(sql);
+  const signupVerifiedIdentityStore = new PostgresSignupVerifiedIdentityStore(sql);
+  const signupOwnerEmailLookup = new PostgresSignupOwnerEmailLookup(sql);
+  const signupOnboardingStore = new PostgresSignupOnboardingStore(sql);
+  const signupOnboardingInviteTokenStore = new PostgresSignupOnboardingInviteTokenStore(sql);
+  const signupPasswordScreener = new DefaultSignupPasswordScreener({
+    pwnedPasswords: envFlag("HELIX_SIGNUP_HIBP_PASSWORD_CHECK_ENABLED", true)
+      ? new HaveIBeenPwnedPasswordChecker({
+          userAgent: process.env.HELIX_SIGNUP_HIBP_USER_AGENT ?? "helix-signup-password-screening",
+        })
+      : undefined,
+  });
+  const signupAbuseOptions = {
+    maxSignupsPerWindow: positiveIntegerEnv(process.env.HELIX_SIGNUP_RATE_LIMIT_PER_HOUR, 5),
+    windowMs: 60 * 60 * 1000,
+    blockedEmailDomains: parseBlockedSignupEmailDomains(
+      process.env.HELIX_SIGNUP_BLOCKED_EMAIL_DOMAINS,
+    ),
+  };
+  const signupAbuseProtector =
+    redis === undefined
+      ? new InMemorySignupAbuseProtector(signupAbuseOptions)
+      : new RedisSignupAbuseProtector(ioredisSignupRateLimitClient(redis), signupAbuseOptions);
+  const signupRiskReviewer = new ConfiguredCountrySignupRiskReviewer({
+    manualReviewCountries: parseSignupManualReviewCountries(
+      process.env.HELIX_SIGNUP_MANUAL_REVIEW_COUNTRIES,
+    ),
+  });
+  const signupRecaptchaVerifier =
+    process.env.HELIX_SIGNUP_RECAPTCHA_SECRET === undefined ||
+    process.env.HELIX_SIGNUP_RECAPTCHA_SECRET.trim().length === 0
+      ? undefined
+      : new GoogleRecaptchaVerifier({
+          secret: process.env.HELIX_SIGNUP_RECAPTCHA_SECRET,
+          minScore: numberEnv(process.env.HELIX_SIGNUP_RECAPTCHA_MIN_SCORE, 0.5),
+          expectedAction: process.env.HELIX_SIGNUP_RECAPTCHA_ACTION ?? "signup",
+        });
+  const tenantProvisioningSteps: TenantProvisioningStep[] = [
+    ...(tenantRoleProvisioner === undefined
+      ? []
+      : [
+          {
+            name: "postgres_role_provisioned",
+            run: async (record: TenantProvisioningRecord) => {
+              await tenantRoleProvisioner.ensureRoleForOrg(record.orgId);
+            },
+          },
+        ]),
+    {
+      name: objectStorePrefixStepName,
+      run: async (record) => {
+        await tenantStorageNamespaceStore.ensureDefaultObjectStorePrefix({ orgId: record.orgId });
+      },
+    },
+    {
+      name: initialOwnerActorStepName,
+      run: async (record) => {
+        await tenantOwnerActorStore.ensureInitialOwnerActor({
+          orgId: record.orgId,
+          email: record.requestedOwnerEmail,
+          metadata: { source: "tenant-provisioning" },
+        });
+      },
+    },
+    {
+      name: tenantBootstrapSeedStepName,
+      run: async (record) => {
+        await tenantBootstrapSeedStore.ensureTenantBootstrapSeed({
+          orgId: record.orgId,
+          ownerEmail: record.requestedOwnerEmail,
+        });
+      },
+    },
+  ];
+  const tenantProvisioningWorker = envFlag("HELIX_TENANT_PROVISIONING_WORKER_ENABLED", false)
+    ? new TenantProvisioningWorker({
+        store: tenantProvisioningStore,
+        steps: tenantProvisioningSteps,
+        batchSize: Number.parseInt(process.env.TENANT_PROVISIONING_BATCH_SIZE ?? "10", 10),
+        intervalMs: Number.parseInt(process.env.TENANT_PROVISIONING_INTERVAL_MS ?? "5000", 10),
+        onResult: (result) => {
+          if (result.claimed > 0) {
+            app.log.info(result, "Tenant provisioning worker run completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Tenant provisioning worker error");
+        },
+      })
+    : undefined;
+  const planStore = new PostgresPlanStore(sql);
+  const defaultOrg = resolveDefaultOrgInput(process.env);
+  const appPasswordStore = new PostgresAppPasswordStore(sql);
+  const adminUsersStore = new PostgresAdminUsersStore(sql);
+  const auditStore = new PostgresAuditStore(sql, {
+    onAppend: (record) => {
+      metrics.recordAuditActivity({ verb: record.verb, objectType: record.objectType });
+    },
+  });
+  const tenantHardDeleteWorker = envFlag("HELIX_TENANT_HARD_DELETE_WORKER_ENABLED", false)
+    ? new TenantHardDeleteWorker({
+        store: orgStore,
+        steps: [],
+        gracePeriodDays: Number.parseInt(process.env.TENANT_HARD_DELETE_RETENTION_DAYS ?? "30", 10),
+        batchSize: Number.parseInt(process.env.TENANT_HARD_DELETE_BATCH_SIZE ?? "10", 10),
+        intervalMs: Number.parseInt(process.env.TENANT_HARD_DELETE_INTERVAL_MS ?? "86400000", 10),
+        onHardDeleted: async ({ previous, updated }) => {
+          await auditStore.append({
+            orgId: updated.id,
+            actorId: "system",
+            verb: "tenant.lifecycle.hard_deleted",
+            objectType: "tenant",
+            objectId: updated.id,
+            metadata: {
+              slug: updated.slug,
+              previousStatus: previous.status,
+              nextStatus: updated.status,
+              softDeletedAt: previous.softDeletedAt?.toISOString() ?? null,
+              hardDeletedAt: updated.hardDeletedAt?.toISOString() ?? null,
+            },
+          });
+        },
+        onResult: (result) => {
+          if (result.checked > 0) {
+            app.log.info(result, "Tenant hard-delete worker run completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Tenant hard-delete worker error");
+        },
+      })
+    : undefined;
+  const webhookStore = new PostgresWebhookStore(sql);
+  const chatStore = new PostgresChatStore(sql);
+  const calendarStore = new PostgresCalendarStore(sql);
+  const cardDavContactStore = new PostgresCardDavContactStore(sql);
+  const assistantStore = new PostgresAssistantStore(sql);
+  const outboxStore = new PostgresOutboxStore(sql);
+  const pluginLifecycleStore = new PostgresPluginLifecycleStore(sql);
+  const eventBus =
+    process.env.NATS_URL === undefined
+      ? new InMemoryEventBus({
+          onError: (error) => {
+            app.log.error({ error }, "In-memory event bus subscriber error");
+          },
+        })
+      : await NatsEventBus.connect({ servers: process.env.NATS_URL }, { subjectPrefix: "helix" });
+  const meteringEventStore = new PostgresMeteringEventStore(sql);
+  const meteringRollupStore = new PostgresMeteringRollupStore(sql);
+  const meteringClient = createMeteringClient(eventBus);
+  const meetStore = new PostgresMeetStore(sql, {
+    metering: meteringClient,
+    onMeteringError: (error: unknown) => {
+      app.log.error({ error }, "Meet recording storage metering emission failed");
+    },
+  });
   const betterAuthPlatform = createBetterAuthPlatformModule({
     actorStore: new PostgresBetterAuthActorStore(sql),
     userLinkStore: new PostgresBetterAuthUserLinkStore(sql),
-    defaultOrgId: process.env.HELIX_DEFAULT_ORG_ID ?? "00000000-0000-0000-0000-000000000000",
+    defaultOrgId: defaultOrg.id,
+    metering: meteringClient,
+    onMeteringError: (error: unknown) => {
+      app.log.error({ error }, "BetterAuth seat metering emission failed");
+    },
+  });
+  const meteringIngestWorker = envFlag("HELIX_METERING_INGEST_WORKER_ENABLED", true)
+    ? new MeteringIngestWorker({
+        events: eventBus,
+        store: meteringEventStore,
+        onError: (error) => {
+          app.log.error({ error }, "Metering ingest worker error");
+        },
+      })
+    : undefined;
+  const meteringRollupWorker = envFlag("HELIX_METERING_ROLLUP_WORKER_ENABLED", true)
+    ? new MeteringRollupWorker({
+        store: meteringRollupStore,
+        intervalMs: Number.parseInt(
+          process.env.HELIX_METERING_ROLLUP_INTERVAL_MS ??
+            process.env.METERING_ROLLUP_INTERVAL_MS ??
+            "86400000",
+          10,
+        ),
+        periodBatchSize: Number.parseInt(
+          process.env.HELIX_METERING_ROLLUP_PERIOD_BATCH_SIZE ??
+            process.env.METERING_ROLLUP_PERIOD_BATCH_SIZE ??
+            "250",
+          10,
+        ),
+        onResult: (result) => {
+          if (result.eventCount > 0) {
+            app.log.info(result, "Metering rollup worker run completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Metering rollup worker error");
+        },
+      })
+    : undefined;
+  const platformConfigStore = new PostgresPlatformConfigStore(sql);
+  const platformConfig = new PlatformConfigAdminService(platformConfigStore, process.env, eventBus);
+  // P2-4: the same config source list backs both the initial load and the
+  // runtime hot-reload, so a NATS-published change re-merges env + Postgres
+  // overrides identically.
+  const configSources = [
+    new EnvConfigSource(process.env),
+    new PostgresOverrideConfigSource(platformConfigStore),
+  ];
+  // `runtimeConfig` is a mutable holder: the hot-reload subscription swaps in a
+  // freshly merged config so runtime readers (observability, readiness probes)
+  // see config changes without a restart.
+  let runtimeConfig = await loadHelixConfig(configSources);
+  await verifyDefaultOrgAtBoot({
+    config: runtimeConfig,
+    orgs: orgStore,
+    defaultOrg,
+    logger: app.log,
+  });
+  const resolveTenantForRequest = (request: Pick<FastifyRequest, "headers" | "url" | "method">) =>
+    resolveTenantContext({
+      config: runtimeConfig,
+      orgs: orgStore,
+      plans: planStore,
+      request,
+      defaultOrg,
+    });
+  installTenantContextHook(app, {
+    resolveTenantContext: (request) => resolveTenantForRequest(request),
+  });
+  installTenantApiRpsLimitHook(app, {
+    limiter: tenantApiRpsLimiter,
+    events: eventBus,
+    onQuotaEventError: (error: unknown) => {
+      app.log.error({ error }, "Tenant API RPS quota event emission failed");
+    },
   });
   const sessionActorResolver: SessionActorResolver | undefined =
     betterAuthRuntime === undefined
@@ -832,6 +1282,16 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           resolve: createBetterAuthSessionActorResolver(
             betterAuthPlatform,
             betterAuthRuntime.sessionVerifier,
+            {
+              resolveOrgId: async (request) =>
+                (
+                  await resolveTenantForRequest({
+                    headers: request.headers,
+                    method: request.method ?? "GET",
+                    url: request.url ?? "/",
+                  })
+                ).orgId,
+            },
           ),
         };
   // PRD §9.2: resolve the request actor, trying API-key / mTLS credential
@@ -853,64 +1313,17 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           credentialResolution.message,
         );
       }
+      assertActorMatchesRequestTenant(request, credentialResolution.actor);
       return credentialResolution.actor;
     }
-    return actorFromRequestWithAccessTokenAndSession(request, oauthStore, sessionActorResolver);
+    const actor = await actorFromRequestWithAccessTokenAndSession(
+      request,
+      oauthStore,
+      sessionActorResolver,
+    );
+    assertActorMatchesRequestTenant(request, actor);
+    return actor;
   };
-  const appPasswordStore = new PostgresAppPasswordStore(sql);
-  const adminUsersStore = new PostgresAdminUsersStore(sql);
-  const scimUserStore = new PostgresScimUserStore(sql);
-  const groupsStore = new PostgresGroupsStore(sql);
-  const orgStore = new PostgresOrgStore(sql);
-  const planStore = new PostgresPlanStore(sql);
-  const tenantIdpConfigStore = new PostgresTenantIdpConfigStore(sql);
-  const auditStore = new PostgresAuditStore(sql, {
-    onAppend: (record) => {
-      metrics.recordAuditActivity({ verb: record.verb, objectType: record.objectType });
-    },
-  });
-  const webhookStore = new PostgresWebhookStore(sql);
-  const chatStore = new PostgresChatStore(sql);
-  const docsPdfRenderTimeoutMs = Number.parseInt(
-    process.env.HELIX_DOCS_PDF_RENDER_TIMEOUT_MS ?? "15000",
-    10,
-  );
-  const docsPdfRenderer =
-    process.env.HELIX_DOCS_PDF_RENDERER === "deterministic"
-      ? undefined
-      : createHeadlessChromiumPdfRenderer({
-          ...(process.env.HELIX_CHROMIUM_PATH === undefined
-            ? {}
-            : { executablePath: process.env.HELIX_CHROMIUM_PATH }),
-          timeoutMs: Number.isFinite(docsPdfRenderTimeoutMs) ? docsPdfRenderTimeoutMs : 15_000,
-        });
-  const calendarStore = new PostgresCalendarStore(sql);
-  const cardDavContactStore = new PostgresCardDavContactStore(sql);
-  const meetStore = new PostgresMeetStore(sql);
-  const assistantStore = new PostgresAssistantStore(sql);
-  const outboxStore = new PostgresOutboxStore(sql);
-  const pluginLifecycleStore = new PostgresPluginLifecycleStore(sql);
-  const eventBus =
-    process.env.NATS_URL === undefined
-      ? new InMemoryEventBus({
-          onError: (error) => {
-            app.log.error({ error }, "In-memory event bus subscriber error");
-          },
-        })
-      : await NatsEventBus.connect({ servers: process.env.NATS_URL }, { subjectPrefix: "helix" });
-  const platformConfigStore = new PostgresPlatformConfigStore(sql);
-  const platformConfig = new PlatformConfigAdminService(platformConfigStore, process.env, eventBus);
-  // P2-4: the same config source list backs both the initial load and the
-  // runtime hot-reload, so a NATS-published change re-merges env + Postgres
-  // overrides identically.
-  const configSources = [
-    new EnvConfigSource(process.env),
-    new PostgresOverrideConfigSource(platformConfigStore),
-  ];
-  // `runtimeConfig` is a mutable holder: the hot-reload subscription swaps in a
-  // freshly merged config so runtime readers (observability, readiness probes)
-  // see config changes without a restart.
-  let runtimeConfig = await loadHelixConfig(configSources);
 
   // Confirmed Helix architecture model: core apps (mail, chat, drive, docs,
   // calendar, meet, assistant) are toggleable platform modules — not plugins.
@@ -936,7 +1349,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     },
     "Resolved core-app registration plan",
   );
-
   const aiProvenance = new PostgresAIProvenanceStore(sql);
   // P0-6: durable, replica-shared resource classification tags. The Postgres
   // store replaces the restart-volatile in-memory store; derivation applies
@@ -990,7 +1402,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // P0-7: durable AI cost limiting. Backed by Redis when available so budgets
   // survive restarts and are shared across replicas; the in-memory limiter
   // remains the single-process fallback.
-  const redis = process.env.REDIS_URL === undefined ? undefined : new Redis(process.env.REDIS_URL);
   const aiCostLimiter: AICostLimiter =
     redis === undefined
       ? new InMemoryAICostLimiter()
@@ -1000,8 +1411,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const aiCostLimitStore: AICostLimitStore = new PostgresAICostLimitStore(sql);
   const assistantAi = createAssistantAIRouter(aiProvenance, {
     costLimiter: aiCostLimiter,
+    metering: meteringClient,
     metrics,
     securityTier,
+    onMeteringError: (error: unknown) => {
+      app.log.error({ error }, "AI token metering emission failed");
+    },
     // P0-7: emit the 80%-budget warning notification that was previously
     // computed and discarded.
     onCostWarning: (event) => {
@@ -1025,11 +1440,21 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     },
     ...(runtimeConfig.ai === undefined ? {} : { aiConfig: runtimeConfig.ai }),
   });
+  const rustfsEndpoint =
+    process.env.RUSTFS_ENDPOINT ??
+    (process.env.RUSTFS_API_PORT === undefined
+      ? undefined
+      : `http://localhost:${process.env.RUSTFS_API_PORT}`);
+  if (rustfsEndpoint === undefined) {
+    app.log.warn(
+      "RUSTFS_ENDPOINT (and RUSTFS_API_PORT) unset; tenant storage writes (docs/sheets/slides/drive) will fail. Set RUSTFS_ENDPOINT=http://localhost:28437 or run docker-compose up rustfs.",
+    );
+  }
   const driveStorage =
-    process.env.RUSTFS_ENDPOINT === undefined
+    rustfsEndpoint === undefined
       ? undefined
       : createS3CompatibleStorage({
-          endpoint: process.env.RUSTFS_ENDPOINT,
+          endpoint: rustfsEndpoint,
           region: process.env.RUSTFS_REGION ?? "us-east-1",
           bucket: process.env.RUSTFS_BUCKET ?? "helix-objects",
           credentials: {
@@ -1045,34 +1470,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
               }),
           forcePathStyle: true,
         });
-  const tenantStorageSecretStore = createVaultTenantStorageSecretStoreFromEnv(process.env);
-  const tenantStorageMigrationJobStore = new PostgresTenantStorageMigrationJobStore(sql);
-  const tenantExportJobStore = new PostgresTenantExportJobStore(sql);
-  const tenantImportJobStore = new PostgresTenantImportJobStore(sql);
-  const tenantImportRowApplyStore = new PostgresTenantImportRowApplyStore(sql);
-  const tenantImportAuditContinuityStore = new PostgresTenantImportAuditContinuityStore(sql);
+  const tenantStorageSecretReader = createVaultTenantStorageSecretReaderFromEnv(process.env);
   const driveStorageResolver = createTenantStorageResolver({
     defaultClient: driveStorage,
     loadByoConfig: async (orgId: string) => (await orgStore.findById(orgId))?.byoConfig,
-    ...(tenantStorageSecretStore === undefined ? {} : { secretReader: tenantStorageSecretStore }),
-    migrationWriteCoordinator: createTenantStorageMigrationWriteCoordinator({
-      store: tenantStorageMigrationJobStore,
-      snapshotStorageResolver: ({ orgId, state }) =>
-        resolveTenantStorageSnapshot({
-          orgId,
-          state,
-          defaultClient: driveStorage,
-          ...(tenantStorageSecretStore === undefined
-            ? {}
-            : { secretReader: tenantStorageSecretStore }),
-        }),
-    }),
+    metrics,
+    secretReader: tenantStorageSecretReader,
   });
   const helixDefaultStorageResolver = createDefaultTenantStorageResolver(driveStorage);
-  const tenantExportManifestPlanner = createPostgresTenantExportManifestPlanner(sql);
-  const docsStore = new PostgresDocsStore(sql, {
-    storageResolver: driveStorageResolver,
-  });
+  const tenantStorageMigrationJobStore = new PostgresTenantStorageMigrationJobStore(sql);
   const tenantStorageMigrationWorker = envFlag(
     "HELIX_TENANT_STORAGE_MIGRATION_WORKER_ENABLED",
     false,
@@ -1088,18 +1494,17 @@ export async function createHelixServer(): Promise<FastifyInstance> {
               orgId,
               state,
               defaultClient: driveStorage,
-              ...(tenantStorageSecretStore === undefined
-                ? {}
-                : { secretReader: tenantStorageSecretStore }),
+              secretReader: tenantStorageSecretReader,
             }),
         }),
-        intervalMs: envPositiveInt("HELIX_TENANT_STORAGE_MIGRATION_INTERVAL_MS", 15_000),
-        batchSize: envPositiveInt("HELIX_TENANT_STORAGE_MIGRATION_BATCH_SIZE", 2),
-        stalledAfterMs: envPositiveInt(
-          "HELIX_TENANT_STORAGE_MIGRATION_STALLED_AFTER_MS",
-          30 * 60_000,
+        intervalMs: Number.parseInt(
+          process.env.HELIX_TENANT_STORAGE_MIGRATION_INTERVAL_MS ?? "15000",
+          10,
         ),
-        metrics,
+        batchSize: Number.parseInt(
+          process.env.HELIX_TENANT_STORAGE_MIGRATION_BATCH_SIZE ?? "2",
+          10,
+        ),
         onResult: (result) => {
           if (result.claimed > 0) {
             app.log.info(result, "Tenant storage migration worker completed");
@@ -1110,54 +1515,68 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
       })
     : undefined;
-  const tenantExportWorker = envFlag("HELIX_TENANT_EXPORT_WORKER_ENABLED", false)
-    ? new TenantExportMaterializationWorker({
-        store: tenantExportJobStore,
-        orgs: orgStore,
-        exportPlanner: tenantExportManifestPlanner,
-        storageResolver: driveStorageResolver,
-        intervalMs: envPositiveInt("HELIX_TENANT_EXPORT_INTERVAL_MS", 15_000),
-        batchSize: envPositiveInt("HELIX_TENANT_EXPORT_BATCH_SIZE", 2),
-        stalledAfterMs: envPositiveInt("HELIX_TENANT_EXPORT_STALLED_AFTER_MS", 30 * 60_000),
-        metrics,
-        onResult: (result) => {
-          if (result.claimed > 0) {
-            app.log.info(result, "Tenant export worker completed");
-          }
-        },
-        onError: (error) => {
-          app.log.error({ error }, "Tenant export worker error");
-        },
-      })
-    : undefined;
   const byoStorageHealthWorker = envFlag("HELIX_BYO_STORAGE_HEALTH_WORKER_ENABLED", true)
     ? new ByoStorageHealthWorker({
         store: orgStore,
         storageResolver: driveStorageResolver,
-        intervalMs: envPositiveInt("HELIX_BYO_STORAGE_HEALTH_INTERVAL_MS", 60 * 60_000),
-        batchSize: envPositiveInt("HELIX_BYO_STORAGE_HEALTH_BATCH_SIZE", 100),
+        intervalMs: Number.parseInt(
+          process.env.HELIX_BYO_STORAGE_HEALTH_REFRESH_INTERVAL_MS ?? "3600000",
+          10,
+        ),
+        batchSize: Number.parseInt(
+          process.env.HELIX_BYO_STORAGE_HEALTH_REFRESH_BATCH_SIZE ?? "100",
+          10,
+        ),
         onResult: (result) => {
           if (result.checkedCount > 0) {
-            app.log.info(result, "BYO storage health worker completed");
+            app.log.info(result, "BYO storage health refresh completed");
           }
         },
         onError: (error) => {
-          app.log.error({ error }, "BYO storage health worker error");
+          app.log.error({ error }, "BYO storage health refresh error");
         },
       })
     : undefined;
+  const docsStore = new PostgresDocsStore(sql, {
+    storageResolver: driveStorageResolver,
+  });
+  const docsPdfRenderer =
+    process.env.HELIX_DOCS_PDF_RENDERER === "deterministic"
+      ? undefined
+      : createHeadlessChromiumPdfRenderer({
+          ...(process.env.HELIX_CHROMIUM_PATH === undefined
+            ? {}
+            : { executablePath: process.env.HELIX_CHROMIUM_PATH }),
+          timeoutMs: Number(process.env.HELIX_DOCS_PDF_RENDER_TIMEOUT_MS ?? 15_000),
+        });
   const mailStore = new PostgresMailStore(sql, {
     storageResolver: driveStorageResolver,
   });
   const officePreviewConverter =
     process.env.HELIX_DRIVE_OFFICE_PREVIEW_URL === undefined
-      ? undefined
+      ? envFlag("HELIX_DRIVE_LOCAL_OFFICE_PREVIEW", process.env.NODE_ENV !== "production")
+        ? createLocalOfficePreviewConverter({
+            ...(process.env.HELIX_CHROMIUM_PATH === undefined
+              ? {}
+              : { executablePath: process.env.HELIX_CHROMIUM_PATH }),
+            timeoutMs: Number(process.env.HELIX_DRIVE_OFFICE_PREVIEW_TIMEOUT_MS ?? 15_000),
+          })
+        : undefined
       : createLibreOfficePreviewClient({
           endpoint: process.env.HELIX_DRIVE_OFFICE_PREVIEW_URL,
+          timeoutMs: Number(process.env.HELIX_DRIVE_OFFICE_PREVIEW_TIMEOUT_MS ?? 10_000),
         });
   const driveStore = new PostgresDriveStore(sql, driveStorage, {
     ...(officePreviewConverter === undefined ? {} : { officePreviewConverter }),
     storageResolver: driveStorageResolver,
+    metering: meteringClient,
+    events: eventBus,
+    onMeteringError: (error: unknown) => {
+      app.log.error({ error }, "Drive storage metering emission failed");
+    },
+    onQuotaEventError: (error: unknown) => {
+      app.log.error({ error }, "Drive storage quota event emission failed");
+    },
   });
   const searchEngine = await createSearchEngine();
   const semanticEmbeddingProvider = createSemanticSearchEmbeddingProvider(runtimeConfig.ai);
@@ -1281,6 +1700,38 @@ export async function createHelixServer(): Promise<FastifyInstance> {
             app.log.error({ error }, "Outbound mail dispatch error");
           },
         });
+  const signupVerificationEmailWorker =
+    outboundMailTransport === undefined
+      ? undefined
+      : new SignupVerificationEmailWorker({
+          events: eventBus,
+          transport: outboundMailTransport,
+          from: {
+            address:
+              process.env.HELIX_SIGNUP_EMAIL_FROM ??
+              `no-reply@${process.env.MAIL_FROM_DOMAIN ?? "localhost"}`,
+            name: process.env.HELIX_SIGNUP_EMAIL_FROM_NAME ?? "Helix",
+          },
+          onError: (error) => {
+            app.log.error({ error }, "Signup verification email delivery error");
+          },
+        });
+  const signupOnboardingInviteEmailWorker =
+    outboundMailTransport === undefined
+      ? undefined
+      : new SignupOnboardingInviteEmailWorker({
+          events: eventBus,
+          transport: outboundMailTransport,
+          from: {
+            address:
+              process.env.HELIX_SIGNUP_EMAIL_FROM ??
+              `no-reply@${process.env.MAIL_FROM_DOMAIN ?? "localhost"}`,
+            name: process.env.HELIX_SIGNUP_EMAIL_FROM_NAME ?? "Helix",
+          },
+          onError: (error) => {
+            app.log.error({ error }, "Signup onboarding invite email delivery error");
+          },
+        });
   const smtpMailReceiverConfig = mailAppRegistered
     ? getSmtpMailReceiverConfig(process.env)
     : undefined;
@@ -1295,12 +1746,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           orgId: smtpMailReceiverConfig.orgId,
           logger: app.log,
           scanners: {
-            ...(spamdScannerConfig
-              ? { spam: new SpamdScanner(spamdScannerConfig) }
-              : {}),
-            ...(clamavScannerConfig
-              ? { antivirus: new ClamavScanner(clamavScannerConfig) }
-              : {}),
+            ...(spamdScannerConfig ? { spam: new SpamdScanner(spamdScannerConfig) } : {}),
+            ...(clamavScannerConfig ? { antivirus: new ClamavScanner(clamavScannerConfig) } : {}),
           },
         });
   const outboundWebhookWorker = new OutboundWebhookWorker({
@@ -1349,7 +1796,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const auditShippingWorkers = auditDestinationConfigs.map((config) => {
     const shipper = createAuditDestinationShipper(config, {
       sql,
-      tenantStorageResolver: driveStorageResolver,
+      metering: meteringClient,
+      onMeteringError: (error: unknown) => {
+        app.log.error(
+          { error, destination: config.destination },
+          "Audit storage metering emission failed",
+        );
+      },
     });
     return {
       name: `audit-shipping-${config.destination}`,
@@ -1375,15 +1828,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
         onError: (error) => {
           metrics.recordAuditShippingFailure({ destination: config.destination });
-          app.log.error(
-            { error, destination: config.destination },
-            "Audit shipping worker error",
-          );
+          app.log.error({ error, destination: config.destination }, "Audit shipping worker error");
         },
       }),
     };
   });
   const eventSchemas = createEventSchemaRegistry([
+    ...signupEventSchemas,
     {
       id: "platform.pending_action.created",
       subject: "platform.pending_action.created",
@@ -1403,6 +1854,42 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       description: "An actor has crossed 80% of a daily AI cost budget.",
       direction: "publish",
       tags: ["AI"],
+      payloadSchema: {
+        type: "object",
+        additionalProperties: true,
+      },
+    },
+    {
+      id: "quota.storage.exceeded",
+      subject: "quota.storage.exceeded",
+      title: "Storage quota exceeded",
+      description: "A tenant storage quota denied object storage work before execution.",
+      direction: "publish",
+      tags: ["Quotas"],
+      payloadSchema: {
+        type: "object",
+        additionalProperties: true,
+      },
+    },
+    {
+      id: "quota.export_jobs.exceeded",
+      subject: "quota.export_jobs.exceeded",
+      title: "Export jobs quota exceeded",
+      description: "A tenant export job quota denied work before execution.",
+      direction: "publish",
+      tags: ["Quotas"],
+      payloadSchema: {
+        type: "object",
+        additionalProperties: true,
+      },
+    },
+    {
+      id: "quota.api_rps.exceeded",
+      subject: "quota.api_rps.exceeded",
+      title: "API RPS quota exceeded",
+      description: "A tenant API request-rate quota denied an HTTP request.",
+      direction: "publish",
+      tags: ["Quotas"],
       payloadSchema: {
         type: "object",
         additionalProperties: true,
@@ -1443,17 +1930,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // actions to `expired` once their per-tier timeout elapses.
   const pendingActionExpiryWorker = new PendingActionExpiryWorker({
     store: pendingActionStore,
-    intervalMs: Number.parseInt(
-      process.env.PENDING_ACTION_EXPIRY_INTERVAL_MS ?? "60000",
-      10,
-    ),
+    intervalMs: Number.parseInt(process.env.PENDING_ACTION_EXPIRY_INTERVAL_MS ?? "60000", 10),
     batchSize: Number.parseInt(process.env.PENDING_ACTION_EXPIRY_BATCH_SIZE ?? "500", 10),
     onResult: (result) => {
       if (result.expiredCount > 0) {
-        app.log.info(
-          { expiredCount: result.expiredCount },
-          "Expired stale pending tool actions",
-        );
+        app.log.info({ expiredCount: result.expiredCount }, "Expired stale pending tool actions");
       }
     },
     onError: (error) => {
@@ -1476,6 +1957,35 @@ export async function createHelixServer(): Promise<FastifyInstance> {
             policyId: "cerbos",
           },
         );
+  const featureFlags = new TenantConfigFeatureFlagProvider({
+    environment: process.env.NODE_ENV ?? "production",
+    loadTenantConfig: async ({ orgId }) => {
+      const org = await orgStore.findById(orgId);
+      if (org === null) {
+        return null;
+      }
+      return buildEffectiveTenantConfig({
+        org,
+        plan: await planStore.findById(org.planId),
+      });
+    },
+  });
+  const runtimeFeatureFlags = {
+    get: featureFlags.get.bind(featureFlags),
+    async getAsync<T>(
+      key: string,
+      defaultValue: T,
+      context?: Parameters<typeof featureFlags.getAsync<T>>[2],
+    ): Promise<T> {
+      if (EDITORS_NATIVE_FEATURE_FLAGS.has(key)) {
+        const status = await platformConfig.getStatus();
+        if (status.config.modules?.editors?.enabled === false) {
+          return false as T;
+        }
+      }
+      return featureFlags.getAsync(key, defaultValue, context);
+    },
+  };
   const tools = createToolRegistry({
     accessPolicy: toolAccessPolicy,
     confirmationGate,
@@ -1487,18 +1997,16 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       ? {}
       : { agentLimitBudget: agentLimitBudgetOverride }),
     metrics,
+    featureFlags: runtimeFeatureFlags,
   });
   // P0-6 / PRD §8.4: auto-classify newly created resources. The feature tool
   // create / send / upload handlers call this classifier so mail messages,
   // chat messages, documents, and Drive files are classified and persisted as
   // soon as they are created. The hook is best-effort and never fails the
   // underlying tool call.
-  const resourceClassifier = createResourceClassifier(
-    resourceClassificationService,
-    (error) => {
-      app.log.error({ error }, "Resource auto-classification failed");
-    },
-  );
+  const resourceClassifier = createResourceClassifier(resourceClassificationService, (error) => {
+    app.log.error({ error }, "Resource auto-classification failed");
+  });
   registerWebhookTools(tools, { store: webhookStore });
   // Core-app agent tools are contributed per app, conditionally on enablement
   // + role: a disabled app contributes no tools to the registry, so it is
@@ -1519,22 +2027,36 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (coreApps.shouldRegister("docs")) {
     registerDocsTools(tools, {
       store: docsStore,
-      ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
+      ai: assistantAi,
       ...(docsPdfRenderer === undefined ? {} : { pdfRenderer: docsPdfRenderer }),
       onPdfRendererError: (error: unknown) => {
         app.log.warn({ error }, "Docs PDF Chromium renderer failed; using deterministic fallback");
+      },
+      ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
+      exportJobLimiter: tenantHourlyQuotaLimiter,
+      exportJobLimit: async (input) => {
+        const org = await orgStore.findById(input.orgId);
+        if (org === null) {
+          return null;
+        }
+        const plan = await planStore.findById(org.planId);
+        return buildEffectiveTenantConfig({ org, plan }).quotas.export_jobs_per_hour;
+      },
+      quotaEvents: eventBus,
+      onQuotaEventError: (error: unknown) => {
+        app.log.error({ error }, "Docs export quota event emission failed");
+      },
+      metering: meteringClient,
+      onMeteringError: (error: unknown) => {
+        app.log.error({ error }, "Docs export metering emission failed");
       },
     });
   }
   // Wave-1 backend domains. Sheets and Slides stores are instantiated here so
   // they can be shared with the drive.create tool (unified "New" entry-point)
   // and their own domain tool registrations below.
-  const sheetsStore = new PostgresSheetsStore(sql, {
-    storageResolver: driveStorageResolver,
-  });
-  const slidesStore = new PostgresSlidesStore(sql, {
-    storageResolver: driveStorageResolver,
-  });
+  const sheetsStore = new PostgresSheetsStore(sql, { storageResolver: driveStorageResolver });
+  const slidesStore = new PostgresSlidesStore(sql, { storageResolver: driveStorageResolver });
   if (coreApps.shouldRegister("drive")) {
     registerDriveTools(tools, {
       store: driveStore,
@@ -1567,47 +2089,43 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         return result;
       },
       resolveShareActorRefs: async ({ orgId, refs }) => {
-        const normalizedRefs = [...new Set(refs.map((ref) => ref.trim()).filter(Boolean))];
+        const normalizedRefs = [
+          ...new Set(refs.map((ref) => ref.trim().toLowerCase()).filter((ref) => ref.length > 0)),
+        ];
         if (normalizedRefs.length === 0) {
           return { actorIds: [], unresolvedRefs: [] };
         }
-        const loweredRefs = normalizedRefs.map((ref) => ref.toLowerCase());
         const rows = (await sql`
           select id, display_name, email
           from actors
           where org_id = ${orgId}
             and disabled_at is null
             and (
-              id::text in ${sql(normalizedRefs)}
-              or lower(email) in ${sql(loweredRefs)}
-              or lower(display_name) in ${sql(loweredRefs)}
+              lower(email) in ${sql(normalizedRefs)}
+              or lower(display_name) in ${sql(normalizedRefs)}
             )
         `) as unknown as readonly {
           readonly id: string;
           readonly display_name: string | null;
           readonly email: string | null;
         }[];
-        const resolved = new Map<string, string>();
-        for (const row of rows) {
-          resolved.set(row.id.toLowerCase(), row.id);
-          if (row.email !== null) {
-            resolved.set(row.email.toLowerCase(), row.id);
-          }
-          if (row.display_name !== null) {
-            resolved.set(row.display_name.toLowerCase(), row.id);
-          }
-        }
         const actorIds = new Set<string>();
-        const unresolvedRefs: string[] = [];
-        for (const ref of normalizedRefs) {
-          const id = resolved.get(ref.toLowerCase());
-          if (id === undefined) {
-            unresolvedRefs.push(ref);
-          } else {
-            actorIds.add(id);
+        const matchedRefs = new Set<string>();
+        for (const row of rows) {
+          actorIds.add(row.id);
+          const email = row.email?.trim().toLowerCase();
+          const displayName = row.display_name?.trim().toLowerCase();
+          if (email !== undefined && normalizedRefs.includes(email)) {
+            matchedRefs.add(email);
+          }
+          if (displayName !== undefined && normalizedRefs.includes(displayName)) {
+            matchedRefs.add(displayName);
           }
         }
-        return { actorIds: [...actorIds], unresolvedRefs };
+        return {
+          actorIds: [...actorIds],
+          unresolvedRefs: normalizedRefs.filter((ref) => !matchedRefs.has(ref)),
+        };
       },
     });
   }
@@ -1686,6 +2204,67 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     },
     lifecycleStore: pluginLifecycleStore,
   });
+  const leaderGatedWorkers: { readonly name: string; readonly worker: SupervisedWorker }[] = [];
+  if (coreApps.shouldRegister("editors")) {
+    const editorsRuntime = createEditorsRuntimeHost({
+      logger: app.log,
+      env: process.env,
+      app,
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      tools,
+      workers: {
+        register: (name, worker) => {
+          leaderGatedWorkers.push({ name, worker });
+        },
+      },
+      documents: {
+        async getSession(input) {
+          const document = await docsStore.getDocumentForActor({
+            orgId: input.orgId,
+            actorId: input.actor.id,
+            documentId: input.documentId,
+          });
+          if (document === null) {
+            return null;
+          }
+          return {
+            id: document.id,
+            orgId: document.orgId,
+            title: document.title,
+            ownerActorId: document.ownerActorId,
+            editorEngine: document.editorEngine,
+            formatVersion: document.formatVersion,
+            updateSeq: document.updateSeq,
+            stateBase64: document.ydocState?.toString("base64") ?? null,
+            stateVectorBase64: document.ydocStateVector?.toString("base64") ?? null,
+            layoutSettings: nativeDocumentLayoutSettingsFromMetadata(document.metadata),
+            updatedAt: document.updatedAt.toISOString(),
+          };
+        },
+      },
+      metrics,
+      events: eventBus,
+    });
+    const result = await registerEditorsCoreApp({
+      config: runtimeConfig,
+      env: process.env,
+      logger: app.log,
+      host: editorsRuntime.host,
+    });
+    if (result.status === "registered") {
+      app.log.info(
+        {
+          routes: editorsRuntime.registrations.routes.length,
+          tools: editorsRuntime.registrations.tools.length,
+          workers: editorsRuntime.registrations.workers.length,
+          previewRenderers: editorsRuntime.registrations.previewRenderers.length,
+          aiSlots: editorsRuntime.registrations.aiSlots.length,
+          collabGateways: editorsRuntime.registrations.collabGateways.length,
+        },
+        "Editors runtime host registrations applied",
+      );
+    }
+  }
   registerAgentCredentialTools(tools, {
     clientStore: oauthStore,
     clientManager: new OAuthClientManager({ clientStore: oauthStore }),
@@ -1770,26 +2349,33 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     // The consent screen needs a logged-in end user; the BetterAuth session
     // resolver supplies that actor. When sessions are disabled the
     // Authorization Code endpoints stay disabled.
-    ...(sessionActorResolver === undefined
-      ? {}
-      : { actorResolver: sessionActorResolver }),
+    ...(sessionActorResolver === undefined ? {} : { actorResolver: sessionActorResolver }),
   });
-  const publicBaseUrl =
-    process.env.BETTER_AUTH_URL ??
-    process.env.HELIX_PUBLIC_URL ??
-    process.env.PUBLIC_BASE_URL ??
-    "http://localhost:3000";
   await registerTenantSamlRoutes(app, {
     orgs: orgStore,
     idpConfigs: tenantIdpConfigStore,
-    publicBaseUrl,
+    publicBaseUrl:
+      process.env.BETTER_AUTH_URL ??
+      process.env.HELIX_PUBLIC_URL ??
+      process.env.PUBLIC_BASE_URL ??
+      "http://localhost:3000",
   });
   await registerTenantScimRoutes(app, {
     orgs: orgStore,
-    users: scimUserStore,
-    groups: groupsStore,
-    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    credentials: tenantScimCredentialStore,
+    auditSink: auditStore,
     documentationUri: process.env.HELIX_SCIM_DOCS_URL ?? "https://docs.helix.example/scim",
+  });
+  await registerAdminIdentityRoutes(app, {
+    idpConfigs: tenantIdpConfigStore,
+    orgs: orgStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    auditSink: auditStore,
+    publicBaseUrl:
+      process.env.BETTER_AUTH_URL ??
+      process.env.HELIX_PUBLIC_URL ??
+      process.env.PUBLIC_BASE_URL ??
+      "http://localhost:3000",
   });
   await registerPlatformConfigAdminRoutes(app, {
     service: platformConfig,
@@ -1852,18 +2438,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     store: adminUsersStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
-  await registerAdminIdentityRoutes(app, {
-    idpConfigs: tenantIdpConfigStore,
-    orgs: orgStore,
-    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    auditSink: auditStore,
-    publicBaseUrl,
-  });
   // Wave-1 admin console: Groups & OUs, security policies, OAuth apps,
   // billing, and domain/DNS management. Each route group writes through the
   // immutable audit store so admin-console changes are tamper-evidently logged.
   await registerAdminGroupsRoutes(app, {
-    store: groupsStore,
+    store: new PostgresGroupsStore(sql),
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
   });
@@ -1877,7 +2456,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
     storageResolver: driveStorageResolver,
-    storageCredentialWriter: tenantStorageSecretStore,
     storageMigrationJobs: tenantStorageMigrationJobStore,
     plans: planStore,
     featureFlagEvents: eventBus,
@@ -1885,38 +2463,63 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       app.log.error({ error }, "Tenant feature flag change event emission failed");
     },
   });
-  await registerTenantExportRoutes(app, {
+  await registerTenantLifecycleRoutes(app, {
     orgs: orgStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    exportPlanner: tenantExportManifestPlanner,
-    exportJobs: tenantExportJobStore,
-    storageResolver: driveStorageResolver,
+    exportPlanner: createPostgresTenantExportManifestPlanner(sql),
     auditSink: auditStore,
-  });
-  await registerTenantImportRoutes(app, {
-    orgs: orgStore,
-    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    importJobs: tenantImportJobStore,
-    targetStateLoader: (org) =>
-      loadTenantImportTargetStateFromPostgres({
-        sql,
-        targetOrgId: org.id,
-      }),
-    rowApplyStore: tenantImportRowApplyStore,
-    storageResolver: driveStorageResolver,
-    auditContinuityStore: tenantImportAuditContinuityStore,
-    selfFetchDownloader: createTenantImportSelfFetchDownloader(),
-    auditSink: auditStore,
+    exportJobLimiter: tenantHourlyQuotaLimiter,
+    exportJobLimit: async ({ org }) => {
+      const plan = await planStore.findById(org.planId);
+      return buildEffectiveTenantConfig({ org, plan }).quotas.export_jobs_per_hour;
+    },
+    events: eventBus,
+    onEventError: (error) => {
+      app.log.error({ error }, "Tenant export quota event emission failed");
+    },
+    metering: meteringClient,
+    onMeteringError: (error: unknown) => {
+      app.log.error({ error }, "Tenant export metering emission failed");
+    },
   });
   await registerAdminOAuthAppsRoutes(app, {
     store: new PostgresOAuthAppsStore(sql),
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
   });
-  await registerAdminBillingRoutes(app, {
-    store: new PostgresBillingStore(sql),
+  await registerSignupRoutesForMode(app, {
+    config: runtimeConfig,
+    orgs: orgStore,
+    provisioning: tenantProvisioningStore,
+    verificationTokens: signupEmailVerificationTokenStore,
+    identities: signupVerifiedIdentityStore,
+    ...(betterAuthSessionIssuer === undefined ? {} : { sessionIssuer: betterAuthSessionIssuer }),
+    outbox: outboxStore,
+    abuse: signupAbuseProtector,
+    ownerEmails: signupOwnerEmailLookup,
+    passwordScreener: signupPasswordScreener,
+    ...(signupRecaptchaVerifier === undefined ? {} : { recaptcha: signupRecaptchaVerifier }),
+    riskReviewer: signupRiskReviewer,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    onboarding: signupOnboardingStore,
+    onboardingInvites: signupOnboardingInviteTokenStore,
+    metering: meteringClient,
+    metrics,
+    onMeteringError: (error: unknown) => {
+      app.log.error({ error }, "Signup seat metering emission failed");
+    },
+    publicBaseUrl:
+      process.env.BETTER_AUTH_URL ??
+      process.env.HELIX_PUBLIC_URL ??
+      process.env.PUBLIC_BASE_URL ??
+      "http://localhost:3000",
   });
+  if (isSaas(runtimeConfig)) {
+    await registerAdminBillingRoutes(app, {
+      store: new PostgresBillingStore(sql),
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    });
+  }
   await registerAdminDomainsRoutes(app, {
     store: new PostgresDomainsStore(sql),
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
@@ -1984,55 +2587,37 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ? await registerDocsRoutes(app, {
         store: docsStore,
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-        concurrentEditorLimit: ({ request }) => collabConcurrentEditorLimit(request),
+        concurrentEditorLimit: (input) =>
+          input.request.effectiveConfig?.quotas.collab_concurrent_editors_per_doc ?? null,
         metrics,
+        metering: meteringClient,
+        onMeteringError: (error: unknown) => {
+          app.log.error({ error }, "Docs collab session metering emission failed");
+        },
         onError: (error) => {
           app.log.error({ error }, "Docs websocket error");
         },
       })
     : undefined;
   if (coreApps.shouldRegister("editors")) {
-    const editorsHost = createEditorsRuntimeHost({
-      logger: app.log,
-      app,
+    await registerSheetsRoutes(app, {
+      store: sheetsStore,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-      tools,
-      documents: {
-        getSession: async ({ actor, orgId, documentId }) => {
-          const document = await docsStore.getDocumentForActor({
-            orgId,
-            actorId: actor.id,
-            documentId,
-          });
-          return document === null ? null : nativeDocumentSession(document);
-        },
+      events: eventBus,
+      metrics,
+      onError: (error) => {
+        app.log.error({ error }, "Sheets websocket error");
       },
     });
-    await registerEditorsCoreApp({
-      config: runtimeConfig,
-      logger: app.log,
-      host: editorsHost.host,
+    await registerSlidesRoutes(app, {
+      store: slidesStore,
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      metrics,
+      onError: (error) => {
+        app.log.error({ error }, "Slides websocket error");
+      },
     });
   }
-  await registerSheetsRoutes(app, {
-    store: sheetsStore,
-    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    concurrentEditorLimit: ({ request }) => collabConcurrentEditorLimit(request),
-    events: eventBus,
-    metrics,
-    onError: (error) => {
-      app.log.error({ error }, "Sheets websocket error");
-    },
-  });
-  await registerSlidesRoutes(app, {
-    store: slidesStore,
-    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    concurrentEditorLimit: ({ request }) => collabConcurrentEditorLimit(request),
-    metrics,
-    onError: (error) => {
-      app.log.error({ error }, "Slides websocket error");
-    },
-  });
   if (coreApps.shouldRegister("calendar")) {
     await registerCalendarRoutes(app, {
       store: calendarStore,
@@ -2049,22 +2634,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       store: driveStore,
       appPasswords: appPasswordStore,
     });
-
-    // OnlyOffice DocumentServer integration. Skipped when
-    // HELIX_ONLYOFFICE_ENABLED=false so devs who don't want the ~1 GB
-    // DS container running can opt out via env without touching code.
-    if (process.env.HELIX_ONLYOFFICE_ENABLED !== "false") {
-      const { registerOnlyOfficeRoutes } = await import("./platform/onlyoffice/index.js");
-      await registerOnlyOfficeRoutes(app, {
-        store: driveStore,
-        sql,
-        jwtSecret:
-          process.env.ONLYOFFICE_JWT_SECRET ?? "helix_onlyoffice_dev_secret_change_me",
-        helixInternalUrl:
-          process.env.HELIX_ONLYOFFICE_HELIX_URL ?? "http://host.docker.internal:3000",
-        resolveActor: actorFromAuthenticatedRequest,
-      });
-    }
 
     // Session-cookie-authenticated content stream for the Web UI. The /dav/*
     // routes registered above require app-password Basic Auth (the WebDAV
@@ -2087,35 +2656,37 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           return reply.code(404).send({ error: "File not found." });
         }
         const inline = (request.query as { download?: string }).download !== "1";
-        const filename = file.entry.name ?? request.params.objectId;
+        const filename = file.entry.name;
         // HTTP headers are ISO-8859-1; filenames carry em-dashes / non-ASCII
         // characters routinely. Send a 7-bit-safe `filename=` plus the
         // RFC 5987 `filename*=UTF-8''` form so browsers see the real name.
         const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
         const utf8Encoded = encodeURIComponent(filename);
-        const disposition =
-          `${inline ? "inline" : "attachment"}; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+        const disposition = `${inline ? "inline" : "attachment"}; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
 
         // Primary: blob streamed from the storage layer (RustFS in prod).
         if (file.content !== null) {
-          return reply
-            .header("content-disposition", disposition)
-            .header("content-length", String(file.content.byteLength))
-            .type(file.entry.mimeType ?? "application/octet-stream")
-            .send(Buffer.from(file.content));
+          return sendBytesWithRangeSupport({
+            reply,
+            request,
+            bytes: Buffer.from(file.content),
+            mimeType: file.entry.mimeType ?? "application/octet-stream",
+            disposition,
+          });
         }
 
         // Dev/seed fallback only. Production data must have a backing blob in
         // tenant-resolved storage; arbitrary inlineBody metadata is ignored.
-        const meta = (file.entry.metadata ?? {}) as Record<string, unknown>;
+        const meta = file.entry.metadata as Record<string, unknown>;
         const inlineFallback = readInlineBodyFallback(meta);
         if (inlineFallback !== null) {
-          const bytes = inlineFallback.body;
-          return reply
-            .header("content-disposition", disposition)
-            .header("content-length", String(bytes.byteLength))
-            .type(inlineFallback.mime ?? file.entry.mimeType ?? "application/octet-stream")
-            .send(bytes);
+          return sendBytesWithRangeSupport({
+            reply,
+            request,
+            bytes: Buffer.from(inlineFallback.body),
+            mimeType: inlineFallback.mime ?? file.entry.mimeType ?? "application/octet-stream",
+            disposition,
+          });
         }
 
         return reply.code(404).send({ error: "File content unavailable." });
@@ -2125,11 +2696,17 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     /* /api/drive/objects/:id/preview
      *
      * Returns a browser-renderable preview of the file:
-     *  - PDF / images / txt / csv / md → forwards to the raw content endpoint
-     *    inline; the browser renders these natively.
+     *  - PDF / browser-safe raster images / txt / csv / md → forwards to the
+     *    raw content endpoint inline; the browser renders these natively.
+     *  - SVG → rasterized to PNG so list thumbnails never embed active SVG.
+     *  - AVIF / BMP / HEIC / HEIF / TIFF / PSD / JPEG 2000 / JPEG XL /
+     *    unknown image/* → converted
+     *    to a bounded PNG thumbnail instead of passing unsafe or unsupported
+     *    image bytes through to the browser.
      *  - DOCX → converted to HTML on the fly via mammoth.
      *  - XLSX → rendered as a stack of HTML tables (one per sheet).
-     *  - PPTX / unknown → wrapped in a small "preview not yet rendered"
+     *  - PPTX / OOXML presentation → rendered as first-pass slide cards.
+     *  - unknown → wrapped in a small "preview not yet rendered"
      *    HTML shell with a Download link.
      *
      * The UI's "Open" action points here so clicking a file actually opens
@@ -2150,23 +2727,54 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         if (file === null) {
           return reply.code(404).send({ error: "File not found." });
         }
-        const meta = (file.entry.metadata ?? {}) as Record<string, unknown>;
+        if (isAvailablePdfPreview(file.entry.preview) && file.previewContent != null) {
+          return sendBytesWithRangeSupport({
+            reply,
+            request,
+            bytes: Buffer.from(file.previewContent),
+            mimeType: "application/pdf",
+            disposition: `inline; filename="${previewPdfAsciiFilename(file.entry.name)}"; filename*=UTF-8''${encodeURIComponent(previewPdfFilename(file.entry.name))}`,
+          });
+        }
+        const meta = file.entry.metadata as Record<string, unknown>;
         const inlineFallback = readInlineBodyFallback(meta);
         const bytes =
-          file.content !== null
-            ? Buffer.from(file.content)
-            : (inlineFallback?.body ?? null);
+          file.content !== null ? Buffer.from(file.content) : (inlineFallback?.body ?? null);
         if (bytes === null) {
           return reply.code(404).send({ error: "File content unavailable." });
         }
         const mime = file.entry.mimeType ?? inlineFallback?.mime ?? "";
-        const filename = file.entry.name ?? request.params.objectId;
+        const filename = file.entry.name;
         const rawUrl = `/api/drive/objects/${request.params.objectId}/content`;
+
+        // SVG is browser-renderable, but Drive/list thumbnails should never
+        // embed raw active SVG bytes. Rasterize to PNG before the generic
+        // image/* pass-through branch.
+        if (isSvgPreviewFormat(mime, filename)) {
+          const png = await rasterizeSvgPreviewToPng(bytes);
+          if (png !== null) {
+            return sendPngPreview(reply, filename.replace(/\.svg$/iu, ".png"), png);
+          }
+        }
+
+        if (isGeneratedRasterImagePreviewFormat(mime, filename)) {
+          const png = await rasterizeImagePreviewToPng(bytes, mime, filename);
+          if (png !== null) {
+            return sendPngPreview(reply, imagePreviewFilename(filename), png);
+          }
+          return reply.type("text/html; charset=utf-8").send(
+            wrapPreview(
+              filename,
+              `<div class="placeholder"><p>This image preview could not be rendered safely.</p><p><a class="dl" href="${rawUrl}?download=1">Download to open in a native app</a></p></div>`,
+              [],
+            ),
+          );
+        }
 
         // Browser-native formats: serve as-is, inline.
         if (
           mime.startsWith("application/pdf") ||
-          mime.startsWith("image/") ||
+          isBrowserSafeRasterImagePreviewFormat(mime, filename) ||
           mime.startsWith("video/") ||
           mime.startsWith("audio/") ||
           mime.startsWith("text/plain") ||
@@ -2175,7 +2783,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           mime.startsWith("text/html")
         ) {
           return reply
-            .header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(filename)}`)
+            .header(
+              "content-disposition",
+              `inline; filename*=UTF-8''${encodeURIComponent(filename)}`,
+            )
             .header("content-length", String(bytes.byteLength))
             .type(mime || "application/octet-stream")
             .send(bytes);
@@ -2183,46 +2794,75 @@ export async function createHelixServer(): Promise<FastifyInstance> {
 
         // DOCX → HTML via mammoth.
         if (mime.includes("wordprocessingml") || filename.toLowerCase().endsWith(".docx")) {
-          const mammothModule: unknown = await import("mammoth");
-          const mammoth = (mammothModule as { default?: { convertToHtml: typeof import("mammoth").convertToHtml } }).default ?? mammothModule;
-          const { value: html, messages } = await (mammoth as typeof import("mammoth")).convertToHtml({ buffer: bytes });
-          return reply
-            .type("text/html; charset=utf-8")
-            .send(wrapPreview(filename, html, messages.map((m) => m.message)));
+          const mammothModule = (await import("mammoth")) as unknown as {
+            readonly default?: { readonly convertToHtml: typeof mammothConvertToHtml };
+            readonly convertToHtml: typeof mammothConvertToHtml;
+          };
+          const mammoth = mammothModule.default ?? mammothModule;
+          const { value: html, messages } = await mammoth.convertToHtml({ buffer: bytes });
+          return reply.type("text/html; charset=utf-8").send(
+            wrapPreview(
+              filename,
+              html,
+              messages.map((m) => m.message),
+            ),
+          );
         }
 
-        // XLSX → HTML tables via exceljs.
-        if (mime.includes("spreadsheetml") || filename.toLowerCase().endsWith(".xlsx")) {
-          const ExcelJS = (await import("exceljs")).default;
-          const wb = new ExcelJS.Workbook();
-          // exceljs's types want a strict ArrayBuffer; our Buffer is backed
-          // by one, so a narrow .buffer slice works at runtime.
-          await wb.xlsx.load(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
-          const tables: string[] = [];
-          wb.eachSheet((sheet) => {
-            const rows: string[] = [];
-            sheet.eachRow((row) => {
-              const cells: string[] = [];
-              row.eachCell({ includeEmpty: true }, (cell) => {
-                const v = cell.value;
-                const text =
-                  v === null || v === undefined
-                    ? ""
-                    : typeof v === "object"
-                      ? JSON.stringify(v)
-                      : String(v);
-                cells.push(`<td>${escapeHtml(text)}</td>`);
-              });
-              rows.push(`<tr>${cells.join("")}</tr>`);
-            });
-            tables.push(`<h2>${escapeHtml(sheet.name)}</h2><table>${rows.join("")}</table>`);
+        // Spreadsheet family → HTML tables via SheetJS.
+        if (isSpreadsheetPreviewFormat(mime, filename)) {
+          const XLSX = await import("xlsx");
+          const wb = XLSX.read(bytes, {
+            type: "buffer",
+            cellDates: true,
+            cellFormula: true,
+            cellNF: true,
+            sheetStubs: true,
           });
+          const tables: string[] = [];
+          for (const sheetName of wb.SheetNames) {
+            const sheet = wb.Sheets[sheetName];
+            const rows: string[] = [];
+            const range = typeof sheet?.["!ref"] === "string" ? sheet["!ref"] : undefined;
+            if (sheet !== undefined && range !== undefined) {
+              const decoded = XLSX.utils.decode_range(range);
+              for (let rowIndex = decoded.s.r; rowIndex <= decoded.e.r; rowIndex += 1) {
+                const cells: string[] = [];
+                for (let colIndex = decoded.s.c; colIndex <= decoded.e.c; colIndex += 1) {
+                  const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+                  const cell = sheet[address] as SheetJsPreviewCell | undefined;
+                  cells.push(`<td>${escapeHtml(sheetJsPreviewCellText(cell))}</td>`);
+                }
+                rows.push(`<tr>${cells.join("")}</tr>`);
+              }
+            }
+            tables.push(`<h2>${escapeHtml(sheetName)}</h2><table>${rows.join("")}</table>`);
+          }
           return reply
             .type("text/html; charset=utf-8")
             .send(wrapPreview(filename, tables.join("\n"), []));
         }
 
-        // Unsupported (PPTX, ZIP, binary blobs): show a friendly placeholder
+        // PPTX / OOXML presentation family → first-pass text slide cards.
+        if (isPresentationPreviewFormat(mime, filename)) {
+          try {
+            const { importPptxDeck } = await import("./platform/slides/import-pptx.js");
+            const deck = await importPptxDeck({ filename, content: bytes });
+            return await reply
+              .type("text/html; charset=utf-8")
+              .send(wrapPreview(filename, renderPptxPreviewSlides(deck.slides), []));
+          } catch (error) {
+            return reply.type("text/html; charset=utf-8").send(
+              wrapPreview(
+                filename,
+                `<div class="placeholder"><p>This presentation preview could not be rendered.</p><p>${escapeHtml(error instanceof Error ? error.message : "Unknown preview error.")}</p><p><a class="dl" href="${rawUrl}?download=1">Download to open in a native app</a></p></div>`,
+                [],
+              ),
+            );
+          }
+        }
+
+        // Unsupported (legacy PPT/ODS/ZIP/binary blobs): show a friendly placeholder
         // with a Download link so the user can open it in a native app.
         return reply
           .type("text/html; charset=utf-8")
@@ -2264,13 +2904,60 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // Every supervisor uses its own PostgresAdvisoryLockClient: session-level
   // advisory locks are connection-bound, so each long-lived lease needs its
   // own pinned (reserved) connection.
-  const leaderGatedWorkers: { readonly name: string; readonly worker: SupervisedWorker }[] = [];
   if (searchEventIndexer !== undefined) {
     leaderGatedWorkers.push({ name: "search-event-indexer", worker: searchEventIndexer });
   }
   leaderGatedWorkers.push({ name: "ai-enrichment-worker", worker: enrichmentWorker });
   if (outboundMailWorker !== undefined) {
     leaderGatedWorkers.push({ name: "outbound-mail-worker", worker: outboundMailWorker });
+  }
+  if (signupVerificationEmailWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "signup-verification-email-worker",
+      worker: signupVerificationEmailWorker,
+    });
+  }
+  if (signupOnboardingInviteEmailWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "signup-onboarding-invite-email-worker",
+      worker: signupOnboardingInviteEmailWorker,
+    });
+  }
+  if (tenantProvisioningWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "tenant-provisioning-worker",
+      worker: tenantProvisioningWorker,
+    });
+  }
+  if (tenantHardDeleteWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "tenant-hard-delete-worker",
+      worker: tenantHardDeleteWorker,
+    });
+  }
+  if (meteringIngestWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "metering-ingest-worker",
+      worker: meteringIngestWorker,
+    });
+  }
+  if (meteringRollupWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "metering-rollup-nightly",
+      worker: meteringRollupWorker,
+    });
+  }
+  if (byoStorageHealthWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "byo-storage-health-refresh-worker",
+      worker: byoStorageHealthWorker,
+    });
+  }
+  if (tenantStorageMigrationWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "tenant-storage-migration-worker",
+      worker: tenantStorageMigrationWorker,
+    });
   }
   if (smtpMailReceiver !== undefined && smtpMailReceiverConfig !== undefined) {
     const receiver = smtpMailReceiver;
@@ -2291,25 +2978,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   for (const { name, worker } of auditShippingWorkers) {
     leaderGatedWorkers.push({ name, worker });
   }
-  if (tenantStorageMigrationWorker !== undefined) {
-    leaderGatedWorkers.push({
-      name: "tenant-storage-migration-worker",
-      worker: tenantStorageMigrationWorker,
-    });
-  }
-  if (tenantExportWorker !== undefined) {
-    leaderGatedWorkers.push({
-      name: "tenant-export-worker",
-      worker: tenantExportWorker,
-    });
-  }
-  if (byoStorageHealthWorker !== undefined) {
-    leaderGatedWorkers.push({
-      name: "byo-storage-health-worker",
-      worker: byoStorageHealthWorker,
-    });
-  }
-  leaderGatedWorkers.push({ name: "pending-action-expiry-worker", worker: pendingActionExpiryWorker });
+  leaderGatedWorkers.push({
+    name: "pending-action-expiry-worker",
+    worker: pendingActionExpiryWorker,
+  });
 
   const workerRetryIntervalMs = Number.parseInt(
     process.env.LEADER_ELECTION_RETRY_INTERVAL_MS ?? "15000",
@@ -2391,10 +3063,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     reload: () => loadHelixConfig(configSources),
     onReload: (config) => {
       runtimeConfig = config;
-      app.log.info(
-        { tier: config.security.tier },
-        "Applied hot-reloaded platform configuration",
-      );
+      app.log.info({ tier: config.security.tier }, "Applied hot-reloaded platform configuration");
     },
   });
 
@@ -2447,13 +3116,19 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // toggle enablement via `/api/admin/core-apps`.
   app.get("/api/core-apps", async (request) => {
     await actorFromAuthenticatedRequest(request);
+    const status = await platformConfig.getStatus();
+    const modules = status.config.modules;
+    const currentCoreApps = resolveCoreAppStatuses({
+      ...(modules === undefined ? {} : { modules }),
+      role: coreApps.role,
+    });
     return {
       role: coreApps.role,
-      apps: coreApps.statuses().map((status) => ({
-        id: status.id,
-        name: status.name,
-        enabled: status.enabled,
-        registered: status.registered,
+      apps: currentCoreApps.statuses.map((appStatus) => ({
+        id: appStatus.id,
+        name: appStatus.name,
+        enabled: appStatus.enabled,
+        registered: coreApps.status(appStatus.id).registered,
       })),
     };
   });
@@ -2540,13 +3215,23 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   });
   app.get("/asyncapi.json", async () => buildAsyncApiDocument({}, eventSchemas.list()));
 
-  const mcpResourceProvider = () =>
+  const mcpResourceProvider = (request: FastifyRequest) =>
     createStoreBackedMcpResourceProvider({
       chat: chatStore,
       calendar: calendarStore,
       mail: mailStore,
       drive: driveStore,
       docs: docsStore,
+      docsExportJobLimiter: tenantHourlyQuotaLimiter,
+      docsExportJobLimit: () => request.effectiveConfig?.quotas.export_jobs_per_hour ?? null,
+      quotaEvents: eventBus,
+      onQuotaEventError: (error: unknown) => {
+        app.log.error({ error }, "MCP Docs export quota event emission failed");
+      },
+      metering: meteringClient,
+      onMeteringError: (error: unknown) => {
+        app.log.error({ error }, "MCP Docs export metering emission failed");
+      },
     });
 
   app.post("/mcp", async (request, reply) => {
@@ -2565,7 +3250,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         tools,
         actor,
         body: request.body,
-        resources: mcpResourceProvider(),
+        resources: mcpResourceProvider(request),
       })) {
         reply.raw.write(formatSseEvent(event));
       }
@@ -2576,11 +3261,89 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       tools,
       actor,
       body: request.body,
-      resources: mcpResourceProvider(),
+      resources: mcpResourceProvider(request),
     });
   });
 
   return app;
+}
+
+function nativeDocumentLayoutSettingsFromMetadata(metadata: JsonObject):
+  | {
+      readonly layoutMode: "page" | "pageless";
+      readonly columnCount: 1 | 2;
+      readonly sections?: readonly {
+        readonly id: string;
+        readonly title?: string | undefined;
+        readonly layoutMode?: "page" | "pageless" | undefined;
+        readonly columnCount?: 1 | 2 | undefined;
+        readonly pageSize?: "letter" | "a4" | undefined;
+        readonly orientation?: "portrait" | "landscape" | undefined;
+      }[];
+    }
+  | undefined {
+  const layout = metadata.nativeDocumentLayout;
+  if (typeof layout !== "object" || layout === null || Array.isArray(layout)) {
+    return undefined;
+  }
+  const record = layout as Record<string, unknown>;
+  const sections = nativeDocumentLayoutSectionsFromMetadata(record.sections);
+  return {
+    layoutMode: record.layoutMode === "pageless" ? "pageless" : "page",
+    columnCount: record.columnCount === 2 ? 2 : 1,
+    ...(sections.length === 0 ? {} : { sections }),
+  };
+}
+
+function nativeDocumentLayoutSectionsFromMetadata(value: unknown): readonly {
+  readonly id: string;
+  readonly title?: string | undefined;
+  readonly layoutMode?: "page" | "pageless" | undefined;
+  readonly columnCount?: 1 | 2 | undefined;
+  readonly pageSize?: "letter" | "a4" | undefined;
+  readonly orientation?: "portrait" | "landscape" | undefined;
+}[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const sections: {
+    readonly id: string;
+    readonly title?: string | undefined;
+    readonly layoutMode?: "page" | "pageless" | undefined;
+    readonly columnCount?: 1 | 2 | undefined;
+    readonly pageSize?: "letter" | "a4" | undefined;
+    readonly orientation?: "portrait" | "landscape" | undefined;
+  }[] = [];
+  for (const item of value.slice(0, 24)) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    if (!/^[A-Za-z0-9_-]{1,120}$/u.test(id) || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    const title = typeof record.title === "string" ? record.title.trim().slice(0, 120) : "";
+    sections.push({
+      id,
+      ...(title.length === 0 ? {} : { title }),
+      ...(record.layoutMode === "page" || record.layoutMode === "pageless"
+        ? { layoutMode: record.layoutMode }
+        : {}),
+      ...(record.columnCount === 1 || record.columnCount === 2
+        ? { columnCount: record.columnCount }
+        : {}),
+      ...(record.pageSize === "letter" || record.pageSize === "a4"
+        ? { pageSize: record.pageSize }
+        : {}),
+      ...(record.orientation === "portrait" || record.orientation === "landscape"
+        ? { orientation: record.orientation }
+        : {}),
+    });
+  }
+  return sections;
 }
 
 /** True when the client accepts an SSE stream for the MCP transport. */
@@ -2708,58 +3471,6 @@ function assignLimitOverride(
   override[key] = parsed;
 }
 
-function collabConcurrentEditorLimit(request: FastifyRequest): number | null | undefined {
-  return request.effectiveConfig?.quotas.collab_concurrent_editors_per_doc;
-}
-
-function nativeDocumentSession(document: DocsDocumentRecord) {
-  const state = nativeDocumentStateForSession(document);
-  return {
-    id: document.id,
-    orgId: document.orgId,
-    title: document.title,
-    editorEngine: "helix-native-document",
-    formatVersion: 1,
-    updateSeq: document.updateSeq,
-    stateBase64: state.state.toString("base64"),
-    stateVectorBase64: state.stateVector.toString("base64"),
-    layoutSettings: nativeDocumentLayoutSettings(document),
-    updatedAt: document.updatedAt.toISOString(),
-  };
-}
-
-function nativeDocumentStateForSession(document: DocsDocumentRecord): {
-  readonly state: Buffer;
-  readonly stateVector: Buffer;
-} {
-  if (document.ydocState !== null && document.ydocStateVector !== null) {
-    return {
-      state: document.ydocState,
-      stateVector: document.ydocStateVector,
-    };
-  }
-  const plainText =
-    typeof document.metadata.plainText === "string"
-      ? document.metadata.plainText
-      : document.ydocState?.toString("utf8") ?? "";
-  return createNativeDocumentState(plainText);
-}
-
-function nativeDocumentLayoutSettings(document: DocsDocumentRecord): EditorsDocumentLayoutSettings {
-  const layout = document.metadata.nativeDocumentLayout;
-  if (
-    isJsonObjectValue(layout) &&
-    (layout.layoutMode === "page" || layout.layoutMode === "pageless") &&
-    (layout.columnCount === 1 || layout.columnCount === 2)
-  ) {
-    return {
-      layoutMode: layout.layoutMode,
-      columnCount: layout.columnCount,
-    };
-  }
-  return { layoutMode: "page", columnCount: 1 };
-}
-
 async function invokeTool(
   tools: RuntimeToolRegistry,
   tokenStore: AccessTokenStore,
@@ -2771,22 +3482,13 @@ async function invokeTool(
 ) {
   const result = await tools.invoke(toolId, input, {
     request: createRequestContext(request),
-    actor: await resolveRequestActor(
-      request,
-      tokenStore,
-      sessionResolver,
-      credentialStore,
-    ),
+    actor: await resolveRequestActor(request, tokenStore, sessionResolver, credentialStore),
     enforceConfirmation: true,
   });
   return result;
 }
 
-function sendToolInvokeError(
-  reply: FastifyReply,
-  result: ToolInvokeErrorResult,
-  traceId: string,
-) {
+function sendToolInvokeError(reply: FastifyReply, result: ToolInvokeErrorResult, traceId: string) {
   if (result.retryAfterSeconds !== undefined) {
     reply.header("retry-after", String(result.retryAfterSeconds));
   }
@@ -2798,6 +3500,8 @@ function createAssistantAIRouter(
   provenance: PostgresAIProvenanceStore,
   options: {
     readonly costLimiter: AICostLimiter;
+    readonly metering?: MeteringClient;
+    readonly onMeteringError?: (error: unknown) => void;
     readonly metrics: PlatformMetrics;
     readonly securityTier: SecurityTier;
     readonly onCostWarning?: (event: AICostWarningEvent) => void;
@@ -2823,6 +3527,14 @@ function createAssistantAIRouter(
     }),
     metrics: options.metrics,
     provenance,
+    ...(options.metering === undefined
+      ? {}
+      : {
+          metering: options.metering,
+          ...(options.onMeteringError === undefined
+            ? {}
+            : { onMeteringError: options.onMeteringError }),
+        }),
     policy: {
       tier: options.securityTier,
       localAiOnly: tierDefaults[options.securityTier].localAiOnly,
@@ -3133,17 +3845,6 @@ function envFlag(name: string, defaultValue: boolean): boolean {
   return envValueFlag(value, defaultValue);
 }
 
-function envPositiveInt(name: string, defaultValue: number): number {
-  const value = process.env[name];
-  if (value === undefined || value.trim().length === 0) {
-    return defaultValue;
-  }
-  const parsed = Number.parseInt(value, 10);
-  return Number.isSafeInteger(parsed) && parsed > 0 && String(parsed) === value.trim()
-    ? parsed
-    : defaultValue;
-}
-
 function envValueFlag(value: string, defaultValue: boolean): boolean {
   if (value.length === 0) {
     return defaultValue;
@@ -3151,15 +3852,28 @@ function envValueFlag(value: string, defaultValue: boolean): boolean {
   return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
 
+function positiveIntegerEnv(value: string | undefined, defaultValue: number): number {
+  if (value === undefined || value.trim().length === 0) {
+    return defaultValue;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+function numberEnv(value: string | undefined, defaultValue: number): number {
+  if (value === undefined || value.trim().length === 0) {
+    return defaultValue;
+  }
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
 /**
  * Resolves the per-tier confirmation timeout (PRD §9.9). The default window is
  * 10 minutes; higher-assurance tiers expire stale approvals faster so they do
  * not linger. `CONFIRMATION_TIMEOUT_MS` overrides the resolved value.
  */
-function resolveConfirmationTimeoutMs(
-  tier: SecurityTier,
-  env: NodeJS.ProcessEnv,
-): number {
+function resolveConfirmationTimeoutMs(tier: SecurityTier, env: NodeJS.ProcessEnv): number {
   const override = env.CONFIRMATION_TIMEOUT_MS;
   if (override !== undefined && override.trim().length > 0) {
     const parsed = Number.parseInt(override, 10);
@@ -3737,6 +4451,12 @@ const PREVIEW_CSS = `
   .doc h2 { font-size: 20px; margin-top: 32px; }
   .doc h3 { font-size: 16px; margin-top: 24px; }
   .doc p { margin: 0 0 12px; }
+  .slide-preview { display: grid; gap: 16px; }
+  .slide-card { aspect-ratio: 16 / 9; border: 1px solid #dadce0; border-radius: 8px; padding: 24px; background: linear-gradient(135deg, #fff, #f8fafc); overflow: hidden; }
+  .slide-card h2 { margin: 0 0 12px; font-size: 22px; line-height: 1.15; }
+  .slide-card ul { margin: 0; padding-left: 18px; font-size: 14px; }
+  .slide-card li { margin: 0 0 6px; }
+  .slide-meta { margin-bottom: 8px; color: #6b7280; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 12px 0 24px; }
   th, td { border: 1px solid #dadce0; padding: 4px 8px; vertical-align: top; text-align: left; }
   th { background: #f1f3f4; font-weight: 600; }
@@ -3779,4 +4499,399 @@ function wrapPreview(filename: string, body: string, warnings: readonly string[]
   <main><div class="doc">${body}</div>${warningList}</main>
 </body>
 </html>`;
+}
+
+interface SheetJsPreviewCell {
+  readonly t?: string;
+  readonly v?: unknown;
+  readonly f?: string;
+  readonly w?: string;
+}
+
+function isSpreadsheetPreviewFormat(mime: string, filename: string): boolean {
+  const normalizedMime = mime.toLowerCase();
+  const normalizedName = filename.toLowerCase();
+  return (
+    normalizedMime.includes("spreadsheetml") ||
+    normalizedMime === "application/vnd.ms-excel" ||
+    normalizedMime === "application/vnd.oasis.opendocument.spreadsheet" ||
+    /\.(xlsx|xlsm|xltx|xltm|xls|xlsb|ods)$/iu.test(normalizedName)
+  );
+}
+
+function isPresentationPreviewFormat(mime: string, filename: string): boolean {
+  const normalizedMime = mime.toLowerCase();
+  const normalizedName = filename.toLowerCase();
+  return (
+    normalizedMime.includes("presentationml") ||
+    /\.(pptx|pptm|ppsx|ppsm|potx|potm)$/iu.test(normalizedName)
+  );
+}
+
+function isSvgPreviewFormat(mime: string, filename: string): boolean {
+  return mime.toLowerCase() === "image/svg+xml" || filename.toLowerCase().endsWith(".svg");
+}
+
+function isAvailablePdfPreview(
+  preview: DrivePreview | undefined,
+): boolean {
+  return preview?.kind === "pdf" && preview.status === "available";
+}
+
+function previewPdfFilename(filename: string): string {
+  return filename.replace(/\.[^.]+$/u, "") + ".pdf";
+}
+
+function previewPdfAsciiFilename(filename: string): string {
+  return previewPdfFilename(filename).replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
+}
+
+const maxSvgPreviewBytes = 2_000_000;
+const maxRasterPreviewBytes = 25_000_000;
+let svgRasterizerBrowserPromise: Promise<Browser> | null = null;
+let avifDecoderInitPromise: Promise<void> | null = null;
+
+interface AvifDecodeModule {
+  readonly default: (data: ArrayBuffer) => Promise<DecodedAvifPreview>;
+  readonly init: (module?: object) => Promise<void> | void;
+}
+
+interface DecodedAvifPreview {
+  readonly data: Uint8Array | Uint8ClampedArray;
+  readonly width: number;
+  readonly height: number;
+}
+
+interface WasmCompiler {
+  readonly compile: (bytes: Uint8Array | ArrayBuffer) => Promise<object>;
+}
+
+function sendPngPreview(reply: FastifyReply, filename: string, png: Buffer): FastifyReply {
+  return reply
+    .header(
+      "content-disposition",
+      `inline; filename*=UTF-8''${encodeURIComponent(imagePreviewFilename(filename))}`,
+    )
+    .header("content-length", String(png.byteLength))
+    .type("image/png")
+    .send(png);
+}
+
+function imagePreviewFilename(filename: string): string {
+  return filename.replace(/\.[^.]+$/u, "") + ".png";
+}
+
+function isBrowserSafeRasterImagePreviewFormat(mime: string, filename: string): boolean {
+  const normalizedMime = mime.toLowerCase();
+  const normalizedName = filename.toLowerCase();
+  return (
+    normalizedMime === "image/png" ||
+    normalizedMime === "image/jpeg" ||
+    normalizedMime === "image/gif" ||
+    normalizedMime === "image/webp" ||
+    /\.(png|jpe?g|gif|webp)$/iu.test(normalizedName)
+  );
+}
+
+function isGeneratedRasterImagePreviewFormat(mime: string, filename: string): boolean {
+  const normalizedMime = mime.toLowerCase();
+  const normalizedName = filename.toLowerCase();
+  if (normalizedMime.startsWith("image/") && !isBrowserSafeRasterImagePreviewFormat(mime, filename)) {
+    return true;
+  }
+  return /\.(avif|bmp|dib|heic|heif|tif|tiff|psd|jp2|j2k|jpf|jpx|jpm|jxl)$/iu.test(
+    normalizedName,
+  );
+}
+
+async function rasterizeImagePreviewToPng(
+  imageBytes: Buffer,
+  mime: string,
+  filename: string,
+): Promise<Buffer | null> {
+  if (imageBytes.byteLength === 0 || imageBytes.byteLength > maxRasterPreviewBytes) {
+    return null;
+  }
+  if (isAvifPreviewFormat(mime, filename)) {
+    const avifPreview = await rasterizeAvifPreviewToPng(imageBytes);
+    if (avifPreview !== null) {
+      return avifPreview;
+    }
+  }
+  const sharpPreview = await rasterizeImagePreviewWithSharp(imageBytes);
+  if (sharpPreview !== null) {
+    return sharpPreview;
+  }
+  const browserPreview = await rasterizeBrowserImagePreviewToPng(imageBytes, mime);
+  if (browserPreview !== null) {
+    return browserPreview;
+  }
+  return rasterizeImagePreviewWithSips(imageBytes, filename);
+}
+
+function isAvifPreviewFormat(mime: string, filename: string): boolean {
+  return mime.toLowerCase() === "image/avif" || filename.toLowerCase().endsWith(".avif");
+}
+
+async function rasterizeAvifPreviewToPng(imageBytes: Buffer): Promise<Buffer | null> {
+  try {
+    const [avifModule, sharp] = await Promise.all([
+      import("@jsquash/avif/decode.js").then(async (module): Promise<AvifDecodeModule> => {
+        const typedModule = module as unknown as AvifDecodeModule;
+        await initAvifDecoder(typedModule.init);
+        return typedModule;
+      }),
+      import("sharp").then((module) => module.default),
+    ]);
+    const input = imageBytes.buffer.slice(
+      imageBytes.byteOffset,
+      imageBytes.byteOffset + imageBytes.byteLength,
+    ) as ArrayBuffer;
+    const decoded = await avifModule.default(input);
+    return await sharp(
+      Buffer.from(decoded.data.buffer, decoded.data.byteOffset, decoded.data.byteLength),
+      {
+        raw: { width: decoded.width, height: decoded.height, channels: 4 },
+        failOn: "none",
+        limitInputPixels: 50_000_000,
+      },
+    )
+      .resize({
+        width: 512,
+        height: 512,
+        fit: "inside",
+        withoutEnlargement: true,
+        background: { r: 255, g: 255, b: 255, alpha: 1 },
+      })
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .png()
+      .toBuffer();
+  } catch {
+    return null;
+  }
+}
+
+async function initAvifDecoder(
+  init: (module?: object) => Promise<void> | void,
+): Promise<void> {
+  avifDecoderInitPromise ??= (async () => {
+    const wasmPath = fileURLToPath(import.meta.resolve("@jsquash/avif/codec/dec/avif_dec.wasm"));
+    const wasmRuntime = (globalThis as typeof globalThis & { readonly WebAssembly: WasmCompiler })
+      .WebAssembly;
+    const module = await wasmRuntime.compile(await readFile(wasmPath));
+    await init(module);
+  })().catch((error: unknown) => {
+    avifDecoderInitPromise = null;
+    throw error;
+  });
+  await avifDecoderInitPromise;
+}
+
+async function rasterizeImagePreviewWithSharp(imageBytes: Buffer): Promise<Buffer | null> {
+  try {
+    const sharp = (await import("sharp")).default;
+    return await normalizePngPreview(
+      await sharp(imageBytes, {
+        animated: false,
+        failOn: "none",
+        limitInputPixels: 50_000_000,
+      })
+        .png()
+        .toBuffer(),
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function normalizePngPreview(imageBytes: Buffer): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  return sharp(imageBytes, {
+      animated: false,
+      failOn: "none",
+      limitInputPixels: 50_000_000,
+    })
+      .rotate()
+      .resize({
+        width: 512,
+        height: 512,
+        fit: "inside",
+        withoutEnlargement: true,
+        background: { r: 255, g: 255, b: 255, alpha: 1 },
+      })
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .png()
+      .toBuffer();
+}
+
+async function rasterizeBrowserImagePreviewToPng(
+  imageBytes: Buffer,
+  mime: string,
+): Promise<Buffer | null> {
+  let browser: Browser;
+  try {
+    browser = await svgRasterizerBrowser();
+  } catch {
+    return null;
+  }
+
+  const page = await browser.newPage({
+    viewport: { width: 512, height: 512 },
+    deviceScaleFactor: 1,
+  });
+  try {
+    const source = `data:${mime || "image/*"};base64,${imageBytes.toString("base64")}`;
+    await page.setContent(
+      `<!doctype html><html><head><style>
+        html, body { width: 512px; height: 512px; margin: 0; background: #fff; }
+        body { display: grid; place-items: center; overflow: hidden; }
+        img { max-width: 512px; max-height: 512px; width: auto; height: auto; display: block; }
+      </style></head><body><img id="preview" alt="" src="${source}"></body></html>`,
+      { waitUntil: "load" },
+    );
+    await page.waitForFunction("document.getElementById('preview')?.naturalWidth > 0", null, {
+      timeout: 3_000,
+    });
+    return await page.locator("#preview").screenshot({ type: "png" });
+  } catch {
+    return null;
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+}
+
+async function rasterizeImagePreviewWithSips(
+  imageBytes: Buffer,
+  filename: string,
+): Promise<Buffer | null> {
+  const directory = await mkdtemp(join(tmpdir(), "helix-image-preview-"));
+  try {
+    const sourcePath = join(directory, `source${previewSourceExtension(filename)}`);
+    const outputPath = join(directory, "preview.png");
+    await writeFile(sourcePath, imageBytes);
+    await execFileAsync("sips", ["-s", "format", "png", sourcePath, "--out", outputPath], {
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return await normalizePngPreview(await readFile(outputPath));
+  } catch {
+    return null;
+  } finally {
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function previewSourceExtension(filename: string): string {
+  const match = /\.[a-z0-9]{1,12}$/iu.exec(filename);
+  return match?.[0] ?? ".image";
+}
+
+async function rasterizeSvgPreviewToPng(svgBytes: Buffer): Promise<Buffer | null> {
+  if (svgBytes.byteLength === 0 || svgBytes.byteLength > maxSvgPreviewBytes) {
+    return null;
+  }
+  let browser: Browser;
+  try {
+    browser = await svgRasterizerBrowser();
+  } catch {
+    return null;
+  }
+
+  const page = await browser.newPage({
+    viewport: { width: 512, height: 512 },
+    deviceScaleFactor: 1,
+  });
+  try {
+    const source = `data:image/svg+xml;base64,${svgBytes.toString("base64")}`;
+    await page.setContent(
+      `<!doctype html><html><head><style>
+        html, body { width: 512px; height: 512px; margin: 0; background: #fff; }
+        body { display: grid; place-items: center; overflow: hidden; }
+        img { max-width: 512px; max-height: 512px; width: auto; height: auto; display: block; }
+      </style></head><body><img id="preview" alt="" src="${source}"></body></html>`,
+      { waitUntil: "load" },
+    );
+    await page.waitForFunction("document.getElementById('preview')?.complete === true");
+    return await page.locator("#preview").screenshot({ type: "png" });
+  } catch {
+    return null;
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+}
+
+async function svgRasterizerBrowser(): Promise<Browser> {
+  svgRasterizerBrowserPromise ??= import("playwright")
+    .then(({ chromium }) =>
+      chromium.launch({
+        headless: true,
+        args: ["--disable-web-security", "--no-sandbox"],
+      }),
+    )
+    .catch((error: unknown) => {
+      svgRasterizerBrowserPromise = null;
+      throw error;
+    });
+  return svgRasterizerBrowserPromise;
+}
+
+function renderPptxPreviewSlides(
+  slides: readonly { readonly content: SlidePreviewContent }[],
+): string {
+  const cards = slides
+    .slice(0, 12)
+    .map((slide, index) => {
+      const body = slidePreviewBody(slide.content);
+      return `<section class="slide-card"><div class="slide-meta">Slide ${String(index + 1)}</div><h2>${escapeHtml(slide.content.title)}</h2>${body}</section>`;
+    })
+    .join("");
+  return `<div class="slide-preview">${cards}</div>`;
+}
+
+interface SlidePreviewContent {
+  readonly layout: string;
+  readonly title: string;
+  readonly items?: readonly string[];
+  readonly subtitle?: string;
+  readonly note?: string;
+}
+
+function slidePreviewBody(content: SlidePreviewContent): string {
+  const items = content.items ?? [];
+  if (items.length > 0) {
+    return `<ul>${items.slice(0, 12).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+  }
+  const subtitle = typeof content.subtitle === "string" ? content.subtitle.trim() : "";
+  if (subtitle.length > 0) {
+    return `<p>${escapeHtml(subtitle)}</p>`;
+  }
+  const note = typeof content.note === "string" ? content.note.trim() : "";
+  if (note.length > 0) {
+    return `<p>${escapeHtml(note)}</p>`;
+  }
+  return "";
+}
+
+function sheetJsPreviewCellText(cell: SheetJsPreviewCell | undefined): string {
+  if (cell === undefined) {
+    return "";
+  }
+  if (typeof cell.f === "string" && cell.f.length > 0) {
+    return `=${cell.f}`;
+  }
+  if (cell.v instanceof Date) {
+    return cell.v.toISOString();
+  }
+  if (
+    typeof cell.v === "string" ||
+    typeof cell.v === "number" ||
+    typeof cell.v === "boolean" ||
+    typeof cell.v === "bigint"
+  ) {
+    return String(cell.v);
+  }
+  if (cell.t === "e" && typeof cell.w === "string") {
+    return cell.w;
+  }
+  return "";
 }

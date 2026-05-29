@@ -27,6 +27,12 @@ export type SlideShapeKind = "text" | "rectangle" | "connector" | "image" | "med
 /** Visual treatment for first-pass freeform shapes. */
 export type SlideShapeTone = "accent" | "light" | "dark";
 
+/** Text face persisted for freeform slide text. */
+export type SlideShapeFontFamily = "inter" | "serif" | "mono" | "system";
+
+/** Paragraph alignment persisted for freeform slide text. */
+export type SlideShapeTextAlign = "left" | "center" | "right" | "justify";
+
 /** Connector line direction inside the shape's percentage bounding box. */
 export type SlideConnectorDirection = "up" | "down";
 
@@ -80,7 +86,17 @@ export interface SlideShape {
   readonly width: number;
   readonly height: number;
   readonly text?: string;
+  readonly linkUrl?: string;
   readonly tone?: SlideShapeTone;
+  readonly fontFamily?: SlideShapeFontFamily;
+  readonly fontSize?: number;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly strikethrough?: boolean;
+  readonly textAlign?: SlideShapeTextAlign;
+  readonly textColor?: string;
+  readonly highlightColor?: string;
   readonly connectorDirection?: SlideConnectorDirection;
   readonly connectorArrow?: SlideConnectorArrow;
   readonly imageUrl?: string;
@@ -185,7 +201,14 @@ export interface SlideDeckSummaryRecord extends SlideDeckRecord {
   readonly slideCount: number;
 }
 
-/** A single ordered slide within a deck. */
+/** A single ordered slide within a deck.
+ *
+ * `revision` is a per-slide compare-and-swap counter. Clients pass the
+ * revision they observed locally in `update-slide` / `delete-slide` sync
+ * operations; if the server's row has advanced, the operation is rejected
+ * with `slide-conflict` so the client can re-fetch before retrying. This is
+ * the interim safety net while per-shape OT is built (see
+ * `docs/reviews/follow-up.md`). */
 export interface SlideRecord {
   readonly id: string;
   readonly orgId: string;
@@ -194,6 +217,7 @@ export interface SlideRecord {
   readonly layout: SlideLayout;
   readonly content: SlideContent;
   readonly speakerNotes: string;
+  readonly revision: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

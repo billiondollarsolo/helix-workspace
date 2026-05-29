@@ -56,8 +56,11 @@ describe("vector store runtime config", () => {
     );
 
     expect(store?.id).toBe("qdrant");
-    await store?.createCollection("docs", 768, "cosine");
-    expect(calls[0]?.input.toString()).toBe("http://qdrant.local/collections/docs");
+    const orgId = "00000000-0000-4000-8000-0000000000a1";
+    await store?.createCollection(orgId, "docs", 768, "cosine");
+    expect(calls[0]?.input.toString()).toBe(
+      `http://qdrant.local/collections/${encodeURIComponent(`org_${orgId}__docs`)}`,
+    );
     expect(calls[0]?.init?.headers).toMatchObject({
       authorization: "Bearer qdrant-secret",
     });

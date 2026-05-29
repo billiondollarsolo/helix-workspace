@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AuditRecord, JsonObject, JsonValue, StorageClient } from "@helix/sdk";
+import type { AuditRecord, JsonObject, JsonValue, MeteringClient, StorageClient } from "@helix/sdk";
 import { canonicalJson } from "./hash.js";
 
 export type ImmutableAuditObjectLockMode = "COMPLIANCE" | "GOVERNANCE";
@@ -31,6 +31,8 @@ export interface ImmutableAuditActivityRecord extends AuditRecord {
 
 export interface ImmutableS3AuditShipperOptions {
   readonly store: ImmutableAuditObjectStore | StorageClient;
+  readonly metering?: MeteringClient;
+  readonly onMeteringError?: (error: unknown) => void;
   readonly prefix?: string;
   readonly batchSize?: number;
   readonly maxBatchBytes?: number;
@@ -52,6 +54,8 @@ export interface ImmutableAuditShipResult {
 
 interface NormalizedOptions {
   readonly store: ImmutableAuditObjectStore;
+  readonly metering?: MeteringClient;
+  readonly onMeteringError?: (error: unknown) => void;
   readonly prefix: string;
   readonly batchSize: number;
   readonly maxBatchBytes: number;
@@ -205,6 +209,12 @@ async function writeImmutableAuditBatch(
     },
     objectLock,
   });
+  emitImmutableAuditStorageDelta({
+    metering: options.metering,
+    onMeteringError: options.onMeteringError,
+    orgId: commonOrgId(records),
+    byteDelta: recordsBody.byteLength + manifestBody.byteLength,
+  });
 
   return {
     batchId,
@@ -234,6 +244,8 @@ function normalizeOptions(options: ImmutableS3AuditShipperOptions): NormalizedOp
 
   return {
     store: isImmutableAuditObjectStore(options.store) ? options.store : createStorageClientImmutableAuditStore(options.store),
+    ...(options.metering === undefined ? {} : { metering: options.metering }),
+    ...(options.onMeteringError === undefined ? {} : { onMeteringError: options.onMeteringError }),
     prefix: trimSlashes(options.prefix ?? defaultPrefix),
     batchSize,
     maxBatchBytes,
@@ -242,6 +254,30 @@ function normalizeOptions(options: ImmutableS3AuditShipperOptions): NormalizedOp
     now: options.now ?? (() => new Date()),
     batchId: options.batchId ?? randomUUID,
   };
+}
+
+function emitImmutableAuditStorageDelta(input: {
+  readonly metering?: MeteringClient | undefined;
+  readonly onMeteringError?: ((error: unknown) => void) | undefined;
+  readonly orgId: string | undefined;
+  readonly byteDelta: number;
+}): void {
+  if (input.orgId === undefined || input.byteDelta === 0) {
+    return;
+  }
+
+  void input.metering
+    ?.emit(input.orgId, {
+      type: "storage.delta",
+      quantity: input.byteDelta,
+      metadata: {
+        bucket: "audit_immutable_s3",
+        byte_delta: input.byteDelta,
+      },
+    })
+    .catch((error: unknown) => {
+      input.onMeteringError?.(error);
+    });
 }
 
 function isImmutableAuditObjectStore(store: ImmutableAuditObjectStore | StorageClient): store is ImmutableAuditObjectStore {
@@ -351,6 +387,14 @@ function commonOrgSegment(records: readonly ImmutableAuditActivityRecord[]): str
   }
 
   return records.every((record) => record.orgId === firstOrgId) ? safeSegment(firstOrgId) : "multi-org";
+}
+
+function commonOrgId(records: readonly ImmutableAuditActivityRecord[]): string | undefined {
+  const firstOrgId = records[0]?.orgId;
+  if (firstOrgId === undefined) {
+    return undefined;
+  }
+  return records.every((record) => record.orgId === firstOrgId) ? firstOrgId : undefined;
 }
 
 function datePrefix(date: Date): string {

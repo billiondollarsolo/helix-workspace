@@ -75,6 +75,13 @@ export function docsRecordToIndexDocument(record: DocsSearchRecord): IndexDocume
       classification: record.classification,
       createdAt: timestampString(record.createdAt),
       metadata: record.metadata,
+      // RAG visibility — docs are owner-private by default. Collaborators
+      // can read the doc through the docs surface but cannot retrieve it via
+      // RAG (avoids leaking content to actors who lost access). Extending
+      // RAG to ACL-aware retrieval is a tracked follow-up.
+      ...(record.owner?.id !== undefined
+        ? { ragVisibility: "private", ragOwnerActorId: record.owner.id }
+        : { ragVisibility: "org" }),
     }),
     updatedAt: timestampString(record.updatedAt ?? record.createdAt),
   };

@@ -17,11 +17,8 @@ export const Route = createFileRoute("/login")({
 });
 
 const DEMO_ACCOUNTS = [
-  {
-    label: "Local Admin",
-    email: "local-admin@helix.local",
-    password: "helix-local-dev-password",
-  },
+  { label: "Admin", email: "admin@helix.local", password: "helix-admin-password" },
+  { label: "Member", email: "user@helix.local", password: "helix-user-password" },
 ] as const;
 
 function LoginRoute() {
@@ -93,9 +90,7 @@ export function LocalLoginPanel({
               autoComplete="username"
               placeholder="you@helix.local"
               value={email}
-              onChange={(event) => {
-                setEmail(event.target.value);
-              }}
+              onChange={(event) => setEmail(event.target.value)}
               required
             />
           </label>
@@ -107,9 +102,7 @@ export function LocalLoginPanel({
               autoComplete="current-password"
               placeholder="••••••••"
               value={password}
-              onChange={(event) => {
-                setPassword(event.target.value);
-              }}
+              onChange={(event) => setPassword(event.target.value)}
               required
             />
           </label>

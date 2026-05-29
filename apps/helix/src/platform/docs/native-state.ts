@@ -2,7 +2,6 @@ import * as Y from "yjs";
 
 export const HELIX_NATIVE_DOCUMENT_ENGINE = "helix-native-document" as const;
 export const LEGACY_YJS_DOCUMENT_ENGINE = "legacy-yjs" as const;
-export const ONLYOFFICE_OOXML_DOCUMENT_ENGINE = "onlyoffice-ooxml" as const;
 export const DOCS_NATIVE_YJS_FRAGMENT = "default" as const;
 
 export function createNativeDocumentState(markdown = ""): {

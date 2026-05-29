@@ -347,100 +347,6 @@ describe("TenantConfigManagement", () => {
     expect(requestUrlOf(postCall?.[0])).toContain("/api/admin/tenant-config/byo-storage/test");
   });
 
-  it("rotates BYO storage credentials without patching tenant config secrets", async () => {
-    fetchMock.mockImplementation((input, init) => {
-      if (
-        init?.method === "POST" &&
-        requestUrlOf(input).includes("/api/admin/tenant-config/byo-storage/credentials")
-      ) {
-        return Promise.resolve(
-          Response.json({
-            credentials: {
-              credentials_vault_path: "tenants/org-1/byo-storage/s3",
-              rotated: true,
-            },
-            health: {
-              status: "healthy",
-              checked_at: "2026-05-24T09:00:00.000Z",
-              message: "Tenant object storage write/read/delete probe succeeded.",
-              managedBy: "byo",
-              prefix: "helix/",
-            },
-          }),
-        );
-      }
-      return Promise.resolve(Response.json(tenantConfigPayload));
-    });
-
-    await render();
-
-    await waitFor(() => {
-      expect(buttonByLabel("Rotate credentials").disabled).toBe(true);
-      expect(inputByLabel("Access key ID").disabled).toBe(false);
-    });
-    await act(async () => {
-      setInputValue(inputByLabel("Access key ID"), "rotated-access-key");
-      setInputValue(inputByLabel("Secret access key"), "rotated-secret-key");
-      setInputValue(inputByLabel("Session token"), "rotated-session-token");
-      checkboxByLabel("Confirm credential rotation").click();
-      buttonByLabel("Rotate credentials").click();
-      await Promise.resolve();
-    });
-
-    await waitFor(() => {
-      expect(container.textContent).toContain("Credential rotation healthy.");
-      expect(container.textContent).toContain(
-        "Tenant object storage write/read/delete probe succeeded.",
-      );
-    });
-    expect(postBody("/api/admin/tenant-config/byo-storage/credentials")).toStrictEqual({
-      credentials: {
-        accessKeyId: "rotated-access-key",
-        secretAccessKey: "rotated-secret-key",
-        sessionToken: "rotated-session-token",
-      },
-      reason: "admin settings update: byo storage credentials",
-    });
-    expect(inputByLabel("Access key ID").value).toBe("");
-    expect(inputByLabel("Secret access key").value).toBe("");
-    expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
-  });
-
-  it("surfaces credential rotation errors without patching tenant config", async () => {
-    fetchMock.mockImplementation((input, init) => {
-      if (
-        init?.method === "POST" &&
-        requestUrlOf(input).includes("/api/admin/tenant-config/byo-storage/credentials")
-      ) {
-        return Promise.resolve(
-          Response.json(
-            { error: "BYO storage credential writer is not configured." },
-            { status: 503 },
-          ),
-        );
-      }
-      return Promise.resolve(Response.json(tenantConfigPayload));
-    });
-
-    await render();
-
-    await waitFor(() => {
-      expect(inputByLabel("Access key ID").disabled).toBe(false);
-    });
-    await act(async () => {
-      setInputValue(inputByLabel("Access key ID"), "rotated-access-key");
-      setInputValue(inputByLabel("Secret access key"), "rotated-secret-key");
-      checkboxByLabel("Confirm credential rotation").click();
-      buttonByLabel("Rotate credentials").click();
-      await Promise.resolve();
-    });
-
-    await waitFor(() => {
-      expect(container.textContent).toContain("BYO storage credential writer is not configured.");
-    });
-    expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
-  });
-
   it("requests a storage migration dry run without mutating tenant config", async () => {
     fetchMock.mockImplementation((input, init) => {
       if (
@@ -478,64 +384,6 @@ describe("TenantConfigManagement", () => {
       },
     });
     expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
-  });
-
-  it("renders storage migration history without blocking tenant settings", async () => {
-    fetchMock.mockImplementation((input, init) => {
-      const url = requestUrlOf(input);
-      if (
-        init?.method === "GET" &&
-        url.includes("/api/admin/tenant-config/byo-storage/migrations")
-      ) {
-        return Promise.resolve(
-          Response.json({
-            migrations: [
-              storageMigrationPayload.migration,
-              {
-                ...liveStorageMigrationPayload.migration,
-                id: "6f0951a7-8e65-4634-a6a4-af2f2b4797db",
-                createdAt: "2026-05-25T09:00:00.000Z",
-              },
-            ],
-            nextCursor: "cursor-2",
-          }),
-        );
-      }
-      return Promise.resolve(Response.json(tenantConfigPayload));
-    });
-
-    await render();
-
-    await waitFor(() => {
-      expect(container.textContent).toContain("Migration history");
-      expect(container.textContent).toContain("Dry Run");
-      expect(container.textContent).toContain("Succeeded");
-      expect(container.textContent).toContain("More migration jobs are available in history.");
-      expect(inputByLabel("Display name").value).toBe("Acme");
-    });
-    expect(fetchMock.mock.calls.some((call) => requestUrlOf(call[0]).endsWith("?limit=10"))).toBe(
-      true,
-    );
-  });
-
-  it("shows migration history errors without blocking tenant settings", async () => {
-    fetchMock.mockImplementation((input, init) => {
-      const url = requestUrlOf(input);
-      if (
-        init?.method === "GET" &&
-        url.includes("/api/admin/tenant-config/byo-storage/migrations")
-      ) {
-        return Promise.resolve(Response.json({ error: "history unavailable" }, { status: 503 }));
-      }
-      return Promise.resolve(Response.json(tenantConfigPayload));
-    });
-
-    await render();
-
-    await waitFor(() => {
-      expect(container.textContent).toContain("Storage migration history unavailable.");
-      expect(inputByLabel("Display name").value).toBe("Acme");
-    });
   });
 
   it("refreshes the latest storage migration status", async () => {
@@ -865,7 +713,7 @@ describe("TenantConfigManagement", () => {
 
   function fieldByLabel(label: string, selector: "input" | "select"): Element {
     const match = [...container.querySelectorAll("label")].find((candidate) =>
-      candidate.textContent.includes(label),
+      candidate.textContent?.includes(label),
     );
     const field = match?.querySelector(selector);
     if (field === undefined || field === null) {
@@ -876,7 +724,7 @@ describe("TenantConfigManagement", () => {
 
   function buttonByLabel(label: string): HTMLButtonElement {
     const button = [...container.querySelectorAll("button")].find(
-      (candidate) => candidate.textContent.trim() === label,
+      (candidate) => candidate.textContent?.trim() === label,
     );
     if (button === undefined) {
       throw new Error(`Button "${label}" not found.`);

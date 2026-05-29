@@ -80,6 +80,7 @@ const USER_SCOPES = [
   "drive.write",
   "docs.read",
   "docs.write",
+  "docs.comment",
   "calendar.read",
   "calendar.write",
   "chat.read",
@@ -93,6 +94,8 @@ const USER_SCOPES = [
   "sheets.write",
   "slides.read",
   "slides.write",
+  "notifications.read",
+  "notifications.write",
   "search.read",
 ] as const;
 

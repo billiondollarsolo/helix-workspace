@@ -22,6 +22,7 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Avatar } from "@/components/ui/avatar";
@@ -639,25 +640,133 @@ function ChatMessageList({
   }
 
   return (
-    <div className="chat-messages" role="log" aria-label="Messages">
-      <div className="chat-day-divider">
-        <span className="chat-day-rule" />
-        <span className="chat-day-label">Today</span>
-        <span className="chat-day-rule" />
+    <VirtualizedChatMessages
+      messages={messages}
+      threadId={threadId}
+      onOpenThread={onOpenThread}
+      onReact={onReact}
+      onEdit={onEdit}
+      onDelete={onDelete}
+    />
+  );
+}
+
+interface VirtualizedChatMessagesProps {
+  readonly messages: readonly ChatMessageView[];
+  readonly threadId: string | null;
+  readonly onOpenThread: (messageId: string) => void;
+  readonly onReact: ChatMessageListProps["onReact"];
+  readonly onEdit: ChatMessageListProps["onEdit"];
+  readonly onDelete: ChatMessageListProps["onDelete"];
+}
+
+/**
+ * Windowed render of a chat channel's message log via `@tanstack/react-virtual`.
+ *
+ * Channels routinely hold thousands of messages. The non-virtualized
+ * implementation pushed a DOM node per row, which stalls the renderer well
+ * before the first scroll. `useVirtualizer` keeps only the visible slice
+ * mounted (~20 rows on a 1080p monitor) and uses `measureElement` for
+ * variable-height rows.
+ *
+ * On every message-list change the bottom row is scrolled into view so live
+ * messages appear at the bottom, matching Slack/Discord behaviour. Users who
+ * have scrolled up are still pinned to "follow" until they manually scroll
+ * back; this is the simplest correct behaviour and is what we ship for now —
+ * a "jump to latest" affordance is a worthwhile follow-up.
+ */
+function VirtualizedChatMessages({
+  messages,
+  threadId,
+  onOpenThread,
+  onReact,
+  onEdit,
+  onDelete,
+}: VirtualizedChatMessagesProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // count = 1 header ("Today") + N messages
+  const rowCount = messages.length + 1;
+
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => (index === 0 ? 36 : 96),
+    overscan: 6,
+    getItemKey: (index) =>
+      index === 0 ? "day-today" : (messages[index - 1]?.id ?? `m:${String(index)}`),
+  });
+
+  useEffect(() => {
+    if (rowCount === 0) return;
+    virtualizer.scrollToIndex(rowCount - 1, { align: "end" });
+  }, [virtualizer, rowCount, messages]);
+
+  return (
+    <div
+      ref={scrollRef}
+      className="chat-messages"
+      role="log"
+      aria-label="Messages"
+    >
+      <div
+        style={{
+          position: "relative",
+          height: virtualizer.getTotalSize(),
+          width: "100%",
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtual) => {
+          if (virtual.index === 0) {
+            return (
+              <div
+                key={virtual.key}
+                ref={virtualizer.measureElement}
+                data-index={virtual.index}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${String(virtual.start)}px)`,
+                }}
+              >
+                <div className="chat-day-divider">
+                  <span className="chat-day-rule" />
+                  <span className="chat-day-label">Today</span>
+                  <span className="chat-day-rule" />
+                </div>
+              </div>
+            );
+          }
+          const message = messages[virtual.index - 1];
+          if (message === undefined) return null;
+          return (
+            <div
+              key={virtual.key}
+              ref={virtualizer.measureElement}
+              data-index={virtual.index}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${String(virtual.start)}px)`,
+              }}
+            >
+              <ChatMessageRow
+                message={message}
+                isActiveThread={threadId === message.id}
+                onOpenThread={() => {
+                  onOpenThread(message.id);
+                }}
+                onReact={onReact}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            </div>
+          );
+        })}
       </div>
-      {messages.map((message) => (
-        <ChatMessageRow
-          key={message.id}
-          message={message}
-          isActiveThread={threadId === message.id}
-          onOpenThread={() => {
-            onOpenThread(message.id);
-          }}
-          onReact={onReact}
-          onEdit={onEdit}
-          onDelete={onDelete}
-        />
-      ))}
     </div>
   );
 }

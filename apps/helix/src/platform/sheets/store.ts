@@ -44,6 +44,15 @@ export interface CreateSheetInput {
   readonly tabNames?: readonly string[] | undefined;
 }
 
+export interface CopySheetInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly sheetId: string;
+  readonly title?: string | undefined;
+  readonly folderId?: string | null | undefined;
+  readonly metadata?: JsonObject | undefined;
+}
+
 export interface ListSheetsInput {
   readonly orgId: string;
   readonly actorId: string;
@@ -191,6 +200,31 @@ export interface CompactSheetOperationsResult {
   readonly deletedCount: number;
 }
 
+export interface SheetVersionRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly sheetId: string;
+  readonly versionNumber: number;
+  readonly storageKey: string;
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly sha256: string;
+  readonly metadata: JsonObject;
+  readonly createdByActorId: string | null;
+  readonly createdAt: Date;
+}
+
+export interface ListSheetVersionsInput extends SheetRef {
+  readonly limit: number;
+}
+
+export interface RestoreSheetVersionInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly sheetId: string;
+  readonly versionId: string;
+}
+
 export type SheetCellOperation =
   | {
       readonly kind: "set-cell";
@@ -236,9 +270,10 @@ export interface SheetSnapshotStorageClient {
     readonly body: Uint8Array;
     readonly contentType?: string;
   }): Promise<void>;
-  get(key: string): Promise<{
-    readonly body: AsyncIterable<Uint8Array> | Uint8Array;
-    readonly contentType?: string;
+  get?(key: string): Promise<{
+    readonly key: string;
+    readonly body: Uint8Array | AsyncIterable<Uint8Array>;
+    readonly contentType?: string | undefined;
   } | null>;
 }
 
@@ -286,10 +321,6 @@ export type ApplySheetOperationResult =
       readonly compactedThroughRevision: number;
     };
 
-export interface RestoreSheetSnapshotVersionInput extends SheetRef {
-  readonly versionNumber: number;
-}
-
 /**
  * Persistence contract for the Sheets domain. Implemented by both
  * {@link PostgresSheetsStore} and {@link InMemorySheetsStore} so tools can be
@@ -297,6 +328,7 @@ export interface RestoreSheetSnapshotVersionInput extends SheetRef {
  */
 export interface SheetsStore {
   createSheet(input: CreateSheetInput): Promise<SheetWithTabs>;
+  copySheet(input: CopySheetInput): Promise<SheetWithTabs | null>;
   listSheets(input: ListSheetsInput): Promise<SheetsPage>;
   getSheet(input: SheetRef): Promise<SheetWithTabs | null>;
   updateSheet(input: UpdateSheetInput): Promise<SheetWithTabs | null>;
@@ -319,7 +351,8 @@ export interface SheetsStore {
   appendOperation(input: AppendSheetOperationInput): Promise<SheetOperationLogRecord>;
   applyOperation(input: ApplySheetOperationInput): Promise<ApplySheetOperationResult>;
   compactOperations(input: CompactSheetOperationsInput): Promise<CompactSheetOperationsResult>;
-  restoreSnapshotVersion(input: RestoreSheetSnapshotVersionInput): Promise<SheetWithTabs | null>;
+  listVersions(input: ListSheetVersionsInput): Promise<readonly SheetVersionRecord[]>;
+  restoreVersion(input: RestoreSheetVersionInput): Promise<SheetWithTabs | null>;
 }
 
 const MAX_TITLE = 255;
@@ -1353,6 +1386,67 @@ export class InMemorySheetsStore implements SheetsStore {
     return { ...sheet, tabs };
   }
 
+  async copySheet(input: CopySheetInput): Promise<SheetWithTabs | null> {
+    const source = this.#requireVisible(input);
+    if (source === null) {
+      return null;
+    }
+    const now = new Date();
+    const title = assertTitle(input.title ?? `${source.title} (Copy)`);
+    const sourceTabs = this.#tabsForSheet(source.id);
+    const tabIdMap = new Map<string, string>();
+    const sheet: SheetRecord = {
+      id: randomUUID(),
+      orgId: input.orgId,
+      ownerActorId: input.actorId,
+      createdByActorId: input.actorId,
+      title,
+      metadata: {},
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#sheets.set(sheet.id, sheet);
+    const copiedTabs: SheetTabRecord[] = [];
+    for (const tab of sourceTabs) {
+      const nextTab: SheetTabRecord = {
+        ...tab,
+        id: randomUUID(),
+        sheetId: sheet.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      tabIdMap.set(tab.id, nextTab.id);
+      this.#tabs.set(nextTab.id, nextTab);
+      copiedTabs.push(nextTab);
+    }
+    for (const cell of [...this.#cells.values()]) {
+      const nextTabId = tabIdMap.get(cell.sheetTabId);
+      if (nextTabId === undefined) {
+        continue;
+      }
+      const nextCell: SheetCellRecord = {
+        ...cell,
+        id: randomUUID(),
+        sheetTabId: nextTabId,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.#cells.set(cellKey(nextCell.sheetTabId, nextCell.row, nextCell.col), nextCell);
+    }
+    const metadata = {
+      ...replaceStringsInJsonObject(source.metadata, (value) => tabIdMap.get(value) ?? value),
+      createdFrom: "sheets.copy",
+      copiedFromSheetId: source.id,
+      ...(input.metadata ?? {}),
+      app: "sheets",
+      folderId: input.folderId ?? jsonStringOrNull(source.metadata.folderId),
+    };
+    const copiedSheet = { ...sheet, metadata };
+    this.#sheets.set(copiedSheet.id, copiedSheet);
+    return { ...copiedSheet, tabs: copiedTabs };
+  }
+
   async listSheets(input: ListSheetsInput): Promise<SheetsPage> {
     const query = input.query?.trim().toLowerCase();
     const visible = [...this.#sheets.values()]
@@ -1811,10 +1905,11 @@ export class InMemorySheetsStore implements SheetsStore {
     };
   }
 
-  async restoreSnapshotVersion(
-    input: RestoreSheetSnapshotVersionInput,
-  ): Promise<SheetWithTabs | null> {
-    void input;
+  async listVersions(_input: ListSheetVersionsInput): Promise<readonly SheetVersionRecord[]> {
+    return [];
+  }
+
+  async restoreVersion(_input: RestoreSheetVersionInput): Promise<SheetWithTabs | null> {
     return null;
   }
 
@@ -3248,14 +3343,15 @@ interface SheetOperationLogRow {
   readonly created_at: Date;
 }
 
-interface DriveVersionRow {
+interface SheetVersionRow {
+  readonly id: string;
   readonly org_id: string;
   readonly object_id: string;
   readonly version_number: number;
   readonly storage_key: string;
   readonly mime_type: string;
   readonly byte_size: number;
-  readonly sha256: string | null;
+  readonly sha256: string;
   readonly metadata: JsonObject;
   readonly created_by_actor_id: string | null;
   readonly created_at: Date;
@@ -3317,7 +3413,17 @@ export class PostgresSheetsStore implements SheetsStore {
           ${sheet.id}, ${input.orgId}, ${input.actorId}, 'file',
           ${storageKey},
           'application/vnd.helix.spreadsheet', ${storedSnapshot.byteSize}, ${storedSnapshot.sha256},
-          ${tx.json(toSqlJson({ ...(input.metadata ?? {}), app: "sheets", sheetId: sheet.id, name: title, title, folderId: input.folderId ?? null }))}
+          ${tx.json(
+            toSqlJson({
+              ...(input.metadata ?? {}),
+              app: "sheets",
+              sheetId: sheet.id,
+              name: title,
+              title,
+              folderId: input.folderId ?? null,
+              preview: nativeSheetPreviewMetadata(sheet, tabs, []),
+            }),
+          )}
         )
         on conflict (id) do update set
           byte_size = excluded.byte_size,
@@ -3348,6 +3454,171 @@ export class PostgresSheetsStore implements SheetsStore {
         verb: "sheets.sheet.created",
         objectId: sheet.id,
         payload: { title, tabCount: tabs.length },
+      });
+      return { ...sheet, tabs };
+    });
+  }
+
+  async copySheet(input: CopySheetInput): Promise<SheetWithTabs | null> {
+    return this.sql.begin(async (tx) => {
+      const source = await selectVisibleSheet(tx, input);
+      if (source === null) {
+        return null;
+      }
+      const sourceTabs = await selectTabs(tx, input.orgId, source.id);
+      const sourceCells = await selectCellsForSheet(tx, input.orgId, source.id);
+      const sourceObjectRows = (await tx`
+        select metadata
+        from objects
+        where id = ${input.sheetId}
+          and org_id = ${input.orgId}
+          and metadata->>'app' = 'sheets'
+        limit 1
+      `) as unknown as readonly { readonly metadata: JsonObject }[];
+      const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata?.folderId);
+      const folderId = input.folderId === undefined ? sourceFolderId : input.folderId;
+      const title = assertTitle(input.title ?? `${source.title} (Copy)`);
+      const sheetRows = (await tx`
+        insert into sheets (org_id, owner_actor_id, created_by_actor_id, title, metadata)
+        values (
+          ${input.orgId}, ${input.actorId}, ${input.actorId}, ${title},
+          ${tx.json(toSqlJson({}))}
+        )
+        returning *
+      `) as unknown as readonly SheetRow[];
+      const insertedSheet = mapSheet(sheetRows[0]);
+      const tabIdMap = new Map<string, string>();
+      const tabs: SheetTabRecord[] = [];
+      const now = new Date();
+      for (const tab of sourceTabs) {
+        const tabRows = (await tx`
+          insert into sheet_tabs (org_id, sheet_id, name, position, metadata, created_at, updated_at)
+          values (
+            ${input.orgId},
+            ${insertedSheet.id},
+            ${tab.name},
+            ${tab.position},
+            ${tx.json(toSqlJson(tab.metadata))},
+            ${now},
+            ${now}
+          )
+          returning *
+        `) as unknown as readonly SheetTabRow[];
+        const copiedTab = mapTab(tabRows[0]);
+        tabIdMap.set(tab.id, copiedTab.id);
+        tabs.push(copiedTab);
+      }
+      const metadata = {
+        ...replaceStringsInJsonObject(source.metadata, (value) => tabIdMap.get(value) ?? value),
+        createdFrom: "sheets.copy",
+        copiedFromSheetId: source.id,
+        ...(input.metadata ?? {}),
+      };
+      const sheetRowsAfterMetadata = (await tx`
+        update sheets
+        set metadata = ${tx.json(toSqlJson(metadata))}
+        where id = ${insertedSheet.id} and org_id = ${input.orgId}
+        returning *
+      `) as unknown as readonly SheetRow[];
+      const sheet = mapSheet(sheetRowsAfterMetadata[0]);
+      const cells: SheetCellRecord[] = [];
+      for (const cell of sourceCells) {
+        const nextTabId = tabIdMap.get(cell.sheetTabId);
+        if (nextTabId === undefined) {
+          continue;
+        }
+        const cellRows = (await tx`
+          insert into sheet_cells (
+            org_id, sheet_tab_id, row, col, value, formula, calc_value, dependencies, formula_error, format, created_at, updated_at
+          )
+          values (
+            ${input.orgId},
+            ${nextTabId},
+            ${cell.row},
+            ${cell.col},
+            ${cell.value},
+            ${cell.formula},
+            ${cell.calcValue},
+            ${tx.json(toSqlJson(cell.dependencies))},
+            ${cell.formulaError},
+            ${tx.json(toSqlJson(cell.format))},
+            ${now},
+            ${now}
+          )
+          returning *
+        `) as unknown as readonly SheetCellRow[];
+        cells.push(mapCell(cellRows[0]));
+      }
+      const storageKey = `sheets/${input.orgId}/${sheet.id}`;
+      const storedSnapshot = await writeSheetStorageSnapshot({
+        resolver: this.options.storageResolver,
+        orgId: input.orgId,
+        key: storageKey,
+        sheet,
+        tabs,
+        cells,
+      });
+      const versionSnapshot = await writeSheetStorageSnapshot({
+        resolver: this.options.storageResolver,
+        orgId: input.orgId,
+        key: sheetSnapshotVersionStorageKey(input.orgId, sheet.id, 1),
+        sheet,
+        tabs,
+        cells,
+      });
+      await tx`
+        insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
+        values (
+          ${sheet.id}, ${input.orgId}, ${input.actorId}, 'file',
+          ${storageKey},
+          'application/vnd.helix.spreadsheet', ${storedSnapshot.byteSize}, ${storedSnapshot.sha256},
+          ${tx.json(
+            toSqlJson({
+              ...metadata,
+              app: "sheets",
+              sheetId: sheet.id,
+              name: title,
+              title,
+              folderId: folderId ?? null,
+              preview: nativeSheetPreviewMetadata(sheet, tabs, cells),
+            }),
+          )}
+        )
+        on conflict (id) do update set
+          byte_size = excluded.byte_size,
+          sha256 = excluded.sha256,
+          metadata = excluded.metadata,
+          updated_at = now()
+      `;
+      await insertSheetSnapshotVersion(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        sheetId: sheet.id,
+        versionNumber: 1,
+        storageKey: sheetSnapshotVersionStorageKey(input.orgId, sheet.id, 1),
+        byteSize: versionSnapshot.byteSize,
+        sha256: versionSnapshot.sha256,
+        metadata: {
+          app: "sheets",
+          title,
+          tabCount: tabs.length,
+          cellCount: cells.length,
+          copiedFromSheetId: source.id,
+        },
+      });
+      await grantObjectAccess(tx, {
+        orgId: input.orgId,
+        objectId: sheet.id,
+        actorId: input.actorId,
+        role: "owner",
+        grantedByActorId: input.actorId,
+      });
+      await appendSheetsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "sheets.sheet.copied",
+        objectId: sheet.id,
+        payload: { title, copiedFromSheetId: source.id, tabCount: tabs.length },
       });
       return { ...sheet, tabs };
     });
@@ -4214,9 +4485,24 @@ export class PostgresSheetsStore implements SheetsStore {
     });
   }
 
-  async restoreSnapshotVersion(
-    input: RestoreSheetSnapshotVersionInput,
-  ): Promise<SheetWithTabs | null> {
+  async listVersions(input: ListSheetVersionsInput): Promise<readonly SheetVersionRecord[]> {
+    const sheet = await selectVisibleSheet(this.sql, input);
+    if (sheet === null) {
+      return [];
+    }
+    const rows = (await this.sql`
+      select *
+      from drive_versions
+      where org_id = ${input.orgId}
+        and object_id = ${input.sheetId}
+        and mime_type = 'application/vnd.helix.spreadsheet+json'
+      order by version_number desc
+      limit ${input.limit}
+    `) as unknown as readonly SheetVersionRow[];
+    return rows.map(mapSheetVersion);
+  }
+
+  async restoreVersion(input: RestoreSheetVersionInput): Promise<SheetWithTabs | null> {
     return this.sql.begin(async (tx) => {
       const sheet = await selectVisibleSheetForUpdate(tx, input);
       if (sheet === null) {
@@ -4225,92 +4511,54 @@ export class PostgresSheetsStore implements SheetsStore {
       const versionRows = (await tx`
         select *
         from drive_versions
-        where org_id = ${input.orgId}
+        where id = ${input.versionId}
+          and org_id = ${input.orgId}
           and object_id = ${input.sheetId}
-          and version_number = ${input.versionNumber}
           and mime_type = 'application/vnd.helix.spreadsheet+json'
         limit 1
-      `) as unknown as readonly DriveVersionRow[];
-      const version = versionRows[0];
-      if (version === undefined) {
+      `) as unknown as readonly SheetVersionRow[];
+      if (versionRows[0] === undefined) {
         return null;
       }
-      const storage = await this.options.storageResolver?.({ orgId: input.orgId });
-      if (storage === undefined) {
-        throw new SheetsValidationError(
-          "Tenant storage resolver is required to restore a spreadsheet snapshot.",
-        );
-      }
-      const object = await storage.client.get(version.storage_key);
-      if (object === null) {
-        throw new SheetsValidationError("Spreadsheet snapshot version bytes are unavailable.");
-      }
-      const body = await storageObjectBodyBytes(object.body);
-      if (version.sha256 !== null && sha256Hex(body) !== version.sha256) {
-        throw new SheetsValidationError("Spreadsheet snapshot version checksum mismatch.");
-      }
-      const snapshot = parseSheetStorageSnapshot(body, {
+      const version = mapSheetVersion(versionRows[0]);
+      const snapshot = await readSheetSnapshotVersion(this.options.storageResolver, {
         orgId: input.orgId,
+        storageKey: version.storageKey,
         sheetId: input.sheetId,
       });
-      const sheetRows = (await tx`
+      const now = new Date();
+      await tx`
         update sheets
         set title = ${snapshot.sheet.title},
             metadata = ${tx.json(toSqlJson(snapshot.sheet.metadata))},
-            updated_at = now()
+            updated_at = ${now}
         where id = ${input.sheetId}
           and org_id = ${input.orgId}
-          and deleted_at is null
-        returning *
-      `) as unknown as readonly SheetRow[];
-      const restoredSheet = mapSheet(sheetRows[0]);
-      const snapshotTabIds = snapshot.tabs.map((tab) => tab.id);
-      if (snapshotTabIds.length === 0) {
-        await tx`
-          update sheet_tabs
-          set deleted_at = now(), updated_at = now()
-          where org_id = ${input.orgId} and sheet_id = ${input.sheetId} and deleted_at is null
-        `;
-      } else {
-        await tx`
-          update sheet_tabs
-          set deleted_at = now(), updated_at = now()
-          where org_id = ${input.orgId}
-            and sheet_id = ${input.sheetId}
-            and deleted_at is null
-            and id != all(${tx.array([...snapshotTabIds])})
-        `;
-      }
+      `;
       await tx`
-        delete from sheet_cells
+        delete from sheet_tabs
         where org_id = ${input.orgId}
-          and sheet_tab_id in (
-            select id from sheet_tabs where org_id = ${input.orgId} and sheet_id = ${input.sheetId}
-          )
+          and sheet_id = ${input.sheetId}
       `;
       for (const tab of snapshot.tabs) {
         await tx`
-          insert into sheet_tabs (id, org_id, sheet_id, name, position, metadata)
+          insert into sheet_tabs (id, org_id, sheet_id, name, position, metadata, created_at, updated_at)
           values (
             ${tab.id},
             ${input.orgId},
             ${input.sheetId},
             ${tab.name},
             ${tab.position},
-            ${tx.json(toSqlJson(tab.metadata))}
+            ${tx.json(toSqlJson(tab.metadata))},
+            ${now},
+            ${now}
           )
-          on conflict (id) do update set
-            name = excluded.name,
-            position = excluded.position,
-            metadata = excluded.metadata,
-            deleted_at = null,
-            updated_at = now()
         `;
       }
       for (const cell of snapshot.cells) {
         await tx`
           insert into sheet_cells (
-            org_id, sheet_tab_id, row, col, value, formula, calc_value, dependencies, formula_error, format
+            org_id, sheet_tab_id, row, col, value, formula, calc_value, dependencies, formula_error, format, created_at, updated_at
           )
           values (
             ${input.orgId},
@@ -4320,18 +4568,12 @@ export class PostgresSheetsStore implements SheetsStore {
             ${cell.value},
             ${cell.formula},
             ${cell.calcValue},
-            ${tx.array([...cell.dependencies])},
+            ${tx.json(toSqlJson(cell.dependencies))},
             ${cell.formulaError},
-            ${tx.json(toSqlJson(cell.format))}
+            ${tx.json(toSqlJson(cell.format))},
+            ${now},
+            ${now}
           )
-          on conflict (sheet_tab_id, row, col) do update set
-            value = excluded.value,
-            formula = excluded.formula,
-            calc_value = excluded.calc_value,
-            dependencies = excluded.dependencies,
-            formula_error = excluded.formula_error,
-            format = excluded.format,
-            updated_at = now()
         `;
       }
       await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.sheetId);
@@ -4341,13 +4583,15 @@ export class PostgresSheetsStore implements SheetsStore {
         verb: "sheets.version.restored",
         objectId: input.sheetId,
         payload: {
-          restoredVersionNumber: input.versionNumber,
-          restoredStorageKey: version.storage_key,
-          tabCount: snapshot.tabs.length,
-          cellCount: snapshot.cells.length,
+          restoredVersionId: version.id,
+          restoredVersionNumber: version.versionNumber,
         },
       });
-      return { ...restoredSheet, tabs: await selectTabs(tx, input.orgId, input.sheetId) };
+      const restored = await selectVisibleSheet(tx, input);
+      if (restored === null) {
+        return null;
+      }
+      return { ...restored, tabs: await selectTabs(tx, input.orgId, input.sheetId) };
     });
   }
 
@@ -4405,7 +4649,13 @@ export class PostgresSheetsStore implements SheetsStore {
       set byte_size = ${storedSnapshot.byteSize},
           sha256 = ${storedSnapshot.sha256},
           metadata = objects.metadata || ${sql.json(
-            toSqlJson({ app: "sheets", sheetId, name: sheet.title, title: sheet.title }),
+            toSqlJson({
+              app: "sheets",
+              sheetId,
+              name: sheet.title,
+              title: sheet.title,
+              preview: nativeSheetPreviewMetadata(sheet, tabs, cells),
+            }),
           )},
           updated_at = now()
       where id = ${sheetId} and org_id = ${orgId}
@@ -4946,162 +5196,6 @@ async function writeSheetStorageSnapshot(input: {
   return { byteSize: body.byteLength, sha256: sha256Hex(body) };
 }
 
-interface SheetStorageSnapshot {
-  readonly sheet: {
-    readonly id: string;
-    readonly orgId: string;
-    readonly title: string;
-    readonly metadata: JsonObject;
-  };
-  readonly tabs: readonly {
-    readonly id: string;
-    readonly name: string;
-    readonly position: number;
-    readonly metadata: JsonObject;
-  }[];
-  readonly cells: readonly {
-    readonly tabId: string;
-    readonly row: number;
-    readonly col: number;
-    readonly value: string;
-    readonly formula: string | null;
-    readonly calcValue: string | null;
-    readonly dependencies: readonly string[];
-    readonly formulaError: string | null;
-    readonly format: JsonObject;
-  }[];
-}
-
-function parseSheetStorageSnapshot(
-  body: Uint8Array,
-  expected: { readonly orgId: string; readonly sheetId: string },
-): SheetStorageSnapshot {
-  const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
-  if (!isObjectRecord(parsed) || parsed["app"] !== "sheets" || parsed["version"] !== 1) {
-    throw new SheetsValidationError("Spreadsheet snapshot version has an unsupported format.");
-  }
-  const sheet = parsed["sheet"];
-  if (!isObjectRecord(sheet)) {
-    throw new SheetsValidationError("Spreadsheet snapshot version is missing sheet metadata.");
-  }
-  const sheetId = requiredString(sheet["id"], "snapshot sheet id");
-  const orgId = requiredString(sheet["orgId"], "snapshot org id");
-  if (sheetId !== expected.sheetId || orgId !== expected.orgId) {
-    throw new SheetsValidationError("Spreadsheet snapshot version belongs to a different sheet.");
-  }
-  const tabs = requiredArray(parsed["tabs"], "snapshot tabs").map((tab) =>
-    parseSheetSnapshotTab(tab),
-  );
-  const tabIds = new Set(tabs.map((tab) => tab.id));
-  const cells = requiredArray(parsed["cells"], "snapshot cells").map((cell) =>
-    parseSheetSnapshotCell(cell, tabIds),
-  );
-  return {
-    sheet: {
-      id: sheetId,
-      orgId,
-      title: assertTitle(requiredString(sheet["title"], "snapshot sheet title")),
-      metadata: jsonObjectValue(sheet["metadata"], "snapshot sheet metadata"),
-    },
-    tabs,
-    cells,
-  };
-}
-
-function parseSheetSnapshotTab(value: unknown): SheetStorageSnapshot["tabs"][number] {
-  if (!isObjectRecord(value)) {
-    throw new SheetsValidationError("Spreadsheet snapshot tab must be an object.");
-  }
-  return {
-    id: requiredString(value["id"], "snapshot tab id"),
-    name: assertTabName(requiredString(value["name"], "snapshot tab name")),
-    position: nonNegativeInteger(value["position"], "snapshot tab position"),
-    metadata: jsonObjectValue(value["metadata"], "snapshot tab metadata"),
-  };
-}
-
-function parseSheetSnapshotCell(
-  value: unknown,
-  tabIds: ReadonlySet<string>,
-): SheetStorageSnapshot["cells"][number] {
-  if (!isObjectRecord(value)) {
-    throw new SheetsValidationError("Spreadsheet snapshot cell must be an object.");
-  }
-  const tabId = requiredString(value["tabId"], "snapshot cell tab id");
-  if (!tabIds.has(tabId)) {
-    throw new SheetsValidationError("Spreadsheet snapshot cell references an unknown tab.");
-  }
-  const dependenciesValue = value["dependencies"];
-  const dependencies = Array.isArray(dependenciesValue)
-    ? dependenciesValue.map((dependency) => requiredString(dependency, "snapshot cell dependency"))
-    : [];
-  return {
-    tabId,
-    row: nonNegativeInteger(value["row"], "snapshot cell row"),
-    col: nonNegativeInteger(value["col"], "snapshot cell col"),
-    value: requiredString(value["value"], "snapshot cell value"),
-    formula: nullableString(value["formula"], "snapshot cell formula"),
-    calcValue: nullableString(value["calcValue"], "snapshot cell calculated value"),
-    dependencies,
-    formulaError: nullableString(value["formulaError"], "snapshot cell formula error"),
-    format: jsonObjectValue(value["format"], "snapshot cell format"),
-  };
-}
-
-async function storageObjectBodyBytes(
-  body: AsyncIterable<Uint8Array> | Uint8Array,
-): Promise<Uint8Array> {
-  if (Symbol.asyncIterator in body) {
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of body) {
-      chunks.push(chunk);
-    }
-    return Buffer.concat(chunks);
-  }
-  return body;
-}
-
-function requiredString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new SheetsValidationError(`Invalid ${label}.`);
-  }
-  return value;
-}
-
-function nullableString(value: unknown, label: string): string | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value !== "string") {
-    throw new SheetsValidationError(`Invalid ${label}.`);
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new SheetsValidationError(`Invalid ${label}.`);
-  }
-  return value;
-}
-
-function requiredArray(value: unknown, label: string): readonly unknown[] {
-  if (!Array.isArray(value)) {
-    throw new SheetsValidationError(`Invalid ${label}.`);
-  }
-  return value;
-}
-
-function jsonObjectValue(value: unknown, label: string): JsonObject {
-  if (value === undefined) {
-    return {};
-  }
-  if (!isObjectRecord(value)) {
-    throw new SheetsValidationError(`Invalid ${label}.`);
-  }
-  return value as JsonObject;
-}
-
 function mapSheet(row: SheetRow | undefined): SheetRecord {
   if (row === undefined) {
     throw new Error("Expected sheet row.");
@@ -5154,6 +5248,25 @@ function mapCell(row: SheetCellRow | undefined): SheetCellRecord {
     format: row.format,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapSheetVersion(row: SheetVersionRow | undefined): SheetVersionRecord {
+  if (row === undefined) {
+    throw new Error("Expected sheet version row.");
+  }
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    sheetId: row.object_id,
+    versionNumber: row.version_number,
+    storageKey: row.storage_key,
+    mimeType: row.mime_type,
+    byteSize: row.byte_size,
+    sha256: row.sha256,
+    metadata: row.metadata,
+    createdByActorId: row.created_by_actor_id,
+    createdAt: row.created_at,
   };
 }
 
@@ -5256,10 +5369,244 @@ function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
+function jsonStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function replaceStringsInJsonObject(
+  value: JsonObject,
+  replace: (value: string) => string,
+): JsonObject {
+  return replaceStringsInJson(value, replace) as JsonObject;
+}
+
+function replaceStringsInJson(value: unknown, replace: (value: string) => string): unknown {
+  if (typeof value === "string") {
+    return replace(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceStringsInJson(item, replace));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, replaceStringsInJson(item, replace)]),
+    );
+  }
+  return value;
+}
+
 function encodeSnapshot(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
 }
 
+interface SheetSnapshotV1 {
+  readonly app: "sheets";
+  readonly version: 1;
+  readonly sheet: {
+    readonly id: string;
+    readonly title: string;
+    readonly metadata: JsonObject;
+  };
+  readonly tabs: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly position: number;
+    readonly metadata: JsonObject;
+  }[];
+  readonly cells: readonly {
+    readonly tabId: string;
+    readonly row: number;
+    readonly col: number;
+    readonly value: string;
+    readonly formula: string | null;
+    readonly calcValue: string | null;
+    readonly dependencies: readonly string[];
+    readonly formulaError: string | null;
+    readonly format: JsonObject;
+  }[];
+}
+
+async function readSheetSnapshotVersion(
+  resolver: SheetSnapshotStorageResolver | undefined,
+  input: { readonly orgId: string; readonly storageKey: string; readonly sheetId: string },
+): Promise<SheetSnapshotV1> {
+  const storage = await resolver?.({ orgId: input.orgId });
+  if (storage?.client.get === undefined) {
+    throw new Error("Sheet version restore requires readable tenant storage.");
+  }
+  const object = await storage.client.get(input.storageKey);
+  if (object === null) {
+    throw new Error(`Sheet version snapshot not found: ${input.storageKey}`);
+  }
+  const snapshot = parseSheetSnapshot(
+    new TextDecoder().decode(await storageObjectBody(object.body)),
+  );
+  if (snapshot.sheet.id !== input.sheetId) {
+    throw new Error("Sheet version snapshot does not belong to the requested spreadsheet.");
+  }
+  return snapshot;
+}
+
+function parseSheetSnapshot(body: string): SheetSnapshotV1 {
+  const parsed: unknown = JSON.parse(body);
+  if (!isRecord(parsed) || parsed["app"] !== "sheets" || parsed["version"] !== 1) {
+    throw new Error("Invalid sheet version snapshot.");
+  }
+  const sheet = parsed["sheet"];
+  const tabs = parsed["tabs"];
+  const cells = parsed["cells"];
+  if (!isRecord(sheet) || !Array.isArray(tabs) || !Array.isArray(cells)) {
+    throw new Error("Invalid sheet version snapshot.");
+  }
+  const parsedTabs = tabs.map(parseSnapshotTab);
+  const tabIds = new Set(parsedTabs.map((tab) => tab.id));
+  const parsedCells = cells.map((cell) => parseSnapshotCell(cell, tabIds));
+  return {
+    app: "sheets",
+    version: 1,
+    sheet: {
+      id: readSnapshotString(sheet["id"], "sheet.id"),
+      title: assertTitle(readSnapshotString(sheet["title"], "sheet.title")),
+      metadata: readSnapshotObject(sheet["metadata"]),
+    },
+    tabs: parsedTabs,
+    cells: parsedCells,
+  };
+}
+
+function parseSnapshotTab(value: unknown): SheetSnapshotV1["tabs"][number] {
+  if (!isRecord(value)) {
+    throw new Error("Invalid sheet tab in version snapshot.");
+  }
+  return {
+    id: readSnapshotString(value["id"], "tab.id"),
+    name: assertTabName(readSnapshotString(value["name"], "tab.name")),
+    position: readSnapshotInteger(value["position"], "tab.position"),
+    metadata: readSnapshotObject(value["metadata"]),
+  };
+}
+
+function parseSnapshotCell(
+  value: unknown,
+  tabIds: ReadonlySet<string>,
+): SheetSnapshotV1["cells"][number] {
+  if (!isRecord(value)) {
+    throw new Error("Invalid sheet cell in version snapshot.");
+  }
+  const tabId = readSnapshotString(value["tabId"], "cell.tabId");
+  if (!tabIds.has(tabId)) {
+    throw new Error("Sheet version snapshot cell references an unknown tab.");
+  }
+  const dependencies = value["dependencies"];
+  return {
+    tabId,
+    row: readSnapshotInteger(value["row"], "cell.row"),
+    col: readSnapshotInteger(value["col"], "cell.col"),
+    value: readSnapshotString(value["value"], "cell.value"),
+    formula: readSnapshotNullableString(value["formula"], "cell.formula"),
+    calcValue: readSnapshotNullableString(value["calcValue"], "cell.calcValue"),
+    dependencies: Array.isArray(dependencies)
+      ? dependencies.map((entry) => readSnapshotString(entry, "cell.dependencies"))
+      : [],
+    formulaError: readSnapshotNullableString(value["formulaError"], "cell.formulaError"),
+    format: readSnapshotObject(value["format"]),
+  };
+}
+
+function readSnapshotString(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid sheet version snapshot field: ${field}.`);
+  }
+  return value;
+}
+
+function readSnapshotNullableString(value: unknown, field: string): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return readSnapshotString(value, field);
+}
+
+function readSnapshotInteger(value: unknown, field: string): number {
+  if (!Number.isInteger(value) || (value as number) < 0) {
+    throw new Error(`Invalid sheet version snapshot field: ${field}.`);
+  }
+  return value as number;
+}
+
+function readSnapshotObject(value: unknown): JsonObject {
+  return isRecord(value) ? (JSON.parse(JSON.stringify(value)) as JsonObject) : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function storageObjectBody(
+  body: Uint8Array | AsyncIterable<Uint8Array>,
+): Promise<Uint8Array> {
+  if (body instanceof Uint8Array) {
+    return body;
+  }
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  for await (const chunk of body) {
+    chunks.push(chunk);
+    byteLength += chunk.byteLength;
+  }
+  const result = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
 function sha256Hex(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function nativeSheetPreviewMetadata(
+  sheet: SheetRecord,
+  tabs: readonly SheetTabRecord[],
+  cells: readonly SheetCellRecord[],
+): JsonObject {
+  return {
+    kind: "text",
+    status: "available",
+    mimeType: "application/vnd.helix.spreadsheet",
+    text: nativeSheetPreviewText(sheet, tabs, cells),
+  };
+}
+
+function nativeSheetPreviewText(
+  sheet: SheetRecord,
+  tabs: readonly SheetTabRecord[],
+  cells: readonly SheetCellRecord[],
+): string {
+  const firstTab = [...tabs].sort((left, right) => left.position - right.position)[0];
+  if (firstTab === undefined) {
+    return sheet.title;
+  }
+  const tabCells = cells
+    .filter((cell) => cell.sheetTabId === firstTab.id)
+    .sort((left, right) => left.row - right.row || left.col - right.col);
+  if (tabCells.length === 0) {
+    return `${sheet.title}\n${firstTab.name}`.slice(0, 2000);
+  }
+  const maxRow = Math.min(8, Math.max(...tabCells.map((cell) => cell.row)));
+  const maxCol = Math.min(5, Math.max(...tabCells.map((cell) => cell.col)));
+  const grid = Array.from({ length: maxRow + 1 }, () =>
+    Array.from({ length: maxCol + 1 }, () => ""),
+  );
+  for (const cell of tabCells) {
+    if (cell.row <= maxRow && cell.col <= maxCol) {
+      const row = grid[cell.row];
+      if (row !== undefined) {
+        row[cell.col] = (cell.calcValue ?? cell.value).replace(/\s+/gu, " ").trim();
+      }
+    }
+  }
+  return grid.map((row) => row.join("\t").trimEnd()).join("\n").slice(0, 2000);
 }

@@ -17,6 +17,14 @@ export interface OAuthClientRecord {
   readonly actorId: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
+  /**
+   * Per-client redirect-URI allowlist (CRITICAL-3, REVIEW.md). The
+   * `/oauth/authorize` endpoint MUST require an exact-string match against
+   * one of these entries; an empty list denies authorization by default
+   * until an admin registers a redirect URI for the client. No prefix
+   * matching, no wildcards.
+   */
+  readonly redirectUris: readonly string[];
   readonly expiresAt: Date | null;
   readonly revokedAt: Date | null;
 }
@@ -25,6 +33,12 @@ export interface OAuthClientCreateInput {
   readonly actorId: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
+  /**
+   * Per-client redirect-URI allowlist (CRITICAL-3). When omitted, the client
+   * is created with no registered redirect URIs and `/oauth/authorize` will
+   * refuse to issue codes for it until an admin adds at least one.
+   */
+  readonly redirectUris?: readonly string[];
   readonly expiresAt?: Date | null;
 }
 
@@ -52,6 +66,16 @@ export interface OAuthClientStore {
   rotateClientSecret(
     clientId: string,
     clientSecretHash: string,
+    updatedAt: Date,
+  ): Promise<OAuthClientRecord | null>;
+  /**
+   * Replace a client's registered redirect URIs with the supplied allowlist
+   * (CRITICAL-3). The implementation MUST persist the exact strings; no
+   * normalization, glob, or prefix expansion is permitted.
+   */
+  setRedirectUris?(
+    clientId: string,
+    redirectUris: readonly string[],
     updatedAt: Date,
   ): Promise<OAuthClientRecord | null>;
 }
@@ -405,6 +429,22 @@ export class OAuthClientManager {
     return { client, clientSecret };
   }
 
+  /**
+   * Replace a client's registered redirect-URI allowlist (CRITICAL-3).
+   * Returns `null` when the client does not exist or the underlying store does
+   * not support redirect-URI management.
+   */
+  async setRedirectUris(
+    clientId: string,
+    redirectUris: readonly string[],
+  ): Promise<OAuthClientRecord | null> {
+    const store = this.options.clientStore;
+    if (store.setRedirectUris === undefined) {
+      return null;
+    }
+    return store.setRedirectUris(clientId, redirectUris, new Date());
+  }
+
   async revokeClient(clientId: string, revokedAt = new Date()): Promise<OAuthClientRecord | null> {
     return this.options.clientStore.revokeClient(clientId, revokedAt);
   }
@@ -452,6 +492,7 @@ export class InMemoryOAuthClientStore implements OAuthClientStore, AccessTokenSt
       actorId: input.actorId,
       orgId: input.orgId,
       scopes: [...new Set(input.scopes)],
+      redirectUris: [...new Set(input.redirectUris ?? [])],
       expiresAt: input.expiresAt ?? null,
       revokedAt: null,
     };
@@ -480,6 +521,22 @@ export class InMemoryOAuthClientStore implements OAuthClientStore, AccessTokenSt
     const rotated = { ...client, clientSecretHash };
     this.#clients.set(clientId, rotated);
     return rotated;
+  }
+
+  async setRedirectUris(
+    clientId: string,
+    redirectUris: readonly string[],
+  ): Promise<OAuthClientRecord | null> {
+    const client = this.#clients.get(clientId);
+    if (client === undefined) {
+      return null;
+    }
+    const updated: OAuthClientRecord = {
+      ...client,
+      redirectUris: [...new Set(redirectUris)],
+    };
+    this.#clients.set(clientId, updated);
+    return updated;
   }
 
   readonly #revokedTokens = new Set<string>();

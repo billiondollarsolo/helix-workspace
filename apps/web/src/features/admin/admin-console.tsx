@@ -14,10 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import { SurfaceFrame } from "@/components/shell";
-import {
-  adminUsersQueryOptions,
-  type AdminUser,
-} from "@/features/admin/admin-users";
+import { adminUsersQueryOptions, type AdminUser } from "@/features/admin/admin-users";
 import { MailAdminSection } from "@/features/admin/mail-admin";
 import { AdminServicesOverview } from "@/features/admin/admin-services";
 import { AppPasswordsManagement } from "@/features/admin/app-passwords-management";
@@ -48,8 +45,10 @@ import {
   securityPoliciesQueryOptions,
   securityPolicyGroup,
   securityPolicyLabels,
+  testSsoLogin,
   updateSecurityPolicy,
   type PolicyEnforcement,
+  type SsoTestLoginResponse,
   type SecurityPolicy,
   type SecurityPolicyType,
 } from "@/features/admin/security-policies-api";
@@ -69,6 +68,10 @@ import {
   formatBytes,
   formatMoney,
   invoicesQueryOptions,
+  usageRollupsQueryOptions,
+  type MeteringRollupMetricKey,
+  type UsageRollup,
+  type UsageSummaryMetric,
 } from "@/features/admin/billing-api";
 import {
   createDomain,
@@ -117,8 +120,7 @@ function StateBanner({
         borderRadius: 6,
         fontSize: "var(--text-meta)",
         marginBottom: 12,
-        background:
-          kind === "error" ? "var(--danger-soft, var(--surface-2))" : "var(--surface-2)",
+        background: kind === "error" ? "var(--danger-soft, var(--surface-2))" : "var(--surface-2)",
         color: kind === "error" ? "var(--danger)" : "var(--text-2)",
         border: "1px solid var(--border)",
       }}
@@ -204,9 +206,7 @@ function AdminSidebar({ section, onSection }: AdminSidebarProps) {
 /* ------------------------------------------------------------------ */
 
 function PageScroll({ children }: { children: ReactNode }) {
-  return (
-    <div style={{ padding: 24, overflowY: "auto", flex: 1 }}>{children}</div>
-  );
+  return <div style={{ padding: 24, overflowY: "auto", flex: 1 }}>{children}</div>;
 }
 
 function PageHeading({
@@ -226,15 +226,11 @@ function PageHeading({
         <h1 style={{ fontSize: "var(--text-h2)", fontWeight: 600, margin: 0 }}>{title}</h1>
         {meta}
         {actions ? (
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            {actions}
-          </div>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>{actions}</div>
         ) : null}
       </div>
       {subtitle ? (
-        <div
-          style={{ fontSize: "var(--text-body-sm)", color: "var(--text-3)", marginTop: 4 }}
-        >
+        <div style={{ fontSize: "var(--text-body-sm)", color: "var(--text-3)", marginTop: 4 }}>
           {subtitle}
         </div>
       ) : null}
@@ -268,14 +264,20 @@ function AdminOverview() {
           lineHeight: 1.6,
         }}
       >
-        <div style={{ fontSize: "var(--text-body)", fontWeight: 600, color: "var(--text-2)", marginBottom: 6 }}>
+        <div
+          style={{
+            fontSize: "var(--text-body)",
+            fontWeight: 600,
+            color: "var(--text-2)",
+            marginBottom: 6,
+          }}
+        >
           Telemetry not yet wired
         </div>
         <div>
-          Sign-in activity, recent admin events, and security recommendations
-          will appear here once the workspace-overview telemetry endpoints are
-          implemented. Use the sidebar to manage users, groups, security
-          policies, services, and other live admin surfaces.
+          Sign-in activity, recent admin events, and security recommendations will appear here once
+          the workspace-overview telemetry endpoints are implemented. Use the sidebar to manage
+          users, groups, security policies, services, and other live admin surfaces.
         </div>
       </div>
     </PageScroll>
@@ -307,12 +309,7 @@ function projectAdminUser(user: AdminUser): DirectoryUser {
 }
 
 function StatusChip({ status }: { status: UserStatus }) {
-  const variant =
-    status === "active"
-      ? "success"
-      : status === "invited"
-        ? "warning"
-        : "danger";
+  const variant = status === "active" ? "success" : status === "invited" ? "warning" : "danger";
   return (
     <span className={`chip ${variant}`}>
       <span className="chip-dot" />
@@ -366,9 +363,7 @@ function AdminUsers() {
   const allSelected = filtered.length > 0 && selected.size === filtered.length;
 
   const toggleAll = () => {
-    setSelected(
-      allSelected ? new Set() : new Set(filtered.map((user) => user.email)),
-    );
+    setSelected(allSelected ? new Set() : new Set(filtered.map((user) => user.email)));
   };
 
   const toggleOne = (email: string) => {
@@ -398,9 +393,7 @@ function AdminUsers() {
       <PageHeading
         title="Users"
         meta={
-          <span
-            style={{ marginLeft: 8, fontSize: "var(--text-meta)", color: "var(--text-3)" }}
-          >
+          <span style={{ marginLeft: 8, fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
             {filtered.length} user{filtered.length === 1 ? "" : "s"}
           </span>
         }
@@ -436,9 +429,7 @@ function AdminUsers() {
         <select
           aria-label="Filter by role"
           value={roleFilter}
-          onChange={(event) =>
-            setRoleFilter(event.target.value as RoleFilter)
-          }
+          onChange={(event) => setRoleFilter(event.target.value as RoleFilter)}
           style={selectStyle}
         >
           <option value="all">All roles</option>
@@ -461,9 +452,7 @@ function AdminUsers() {
         <select
           aria-label="Filter by status"
           value={statusFilter}
-          onChange={(event) =>
-            setStatusFilter(event.target.value as StatusFilter)
-          }
+          onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
           style={selectStyle}
         >
           <option value="all">All statuses</option>
@@ -591,14 +580,8 @@ function AdminUsers() {
                     </span>
                   )}
                 </span>
-                <span style={{ color: "var(--text-2)" }}>
-                  {user.lastActive}
-                </span>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  aria-label={`Actions for ${user.name}`}
-                >
+                <span style={{ color: "var(--text-2)" }}>{user.lastActive}</span>
+                <button type="button" className="icon-btn" aria-label={`Actions for ${user.name}`}>
                   <Icons.MoreV />
                 </button>
               </div>
@@ -819,11 +802,7 @@ function AdminGroups() {
         title="Groups & Organizational Units"
         actions={
           <>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => setShowGroupForm((open) => !open)}
-            >
+            <button type="button" className="btn" onClick={() => setShowGroupForm((open) => !open)}>
               <Icons.Plus /> New group
             </button>
             <button
@@ -901,11 +880,7 @@ function AdminGroups() {
             placeholder="leads"
             style={{ ...INPUT_STYLE, flex: 1 }}
           />
-          <button
-            type="submit"
-            className="btn primary"
-            disabled={createGroupMutation.isPending}
-          >
+          <button type="submit" className="btn primary" disabled={createGroupMutation.isPending}>
             {createGroupMutation.isPending ? "Creating…" : "Create group"}
           </button>
         </form>
@@ -927,8 +902,7 @@ function AdminGroups() {
                 height: 38,
                 alignItems: "center",
                 fontSize: "var(--text-meta)",
-                borderBottom:
-                  index < rows.length - 1 ? "1px solid var(--border)" : "none",
+                borderBottom: index < rows.length - 1 ? "1px solid var(--border)" : "none",
               }}
             >
               <div className="row gap-2" style={{ paddingLeft: row.indent * 20 }}>
@@ -946,9 +920,7 @@ function AdminGroups() {
                     className="btn sm"
                     aria-label={`Manage ${row.name}`}
                     onClick={() =>
-                      setManagedGroupId((current) =>
-                        current === row.id ? null : row.id,
-                      )
+                      setManagedGroupId((current) => (current === row.id ? null : row.id))
                     }
                   >
                     Manage
@@ -1009,7 +981,9 @@ function policySettingsSummary(policy: SecurityPolicy): string {
     }
     case "sso": {
       const provider = get("provider");
-      return typeof provider === "string" ? `Provider: ${provider}` : "";
+      const providerSummary = typeof provider === "string" ? `Provider: ${provider}` : "";
+      const localSummary = "Local email/password: enabled";
+      return [providerSummary, localSummary].filter(Boolean).join(" · ");
     }
     case "session": {
       const days = get("inactivityTimeoutDays");
@@ -1038,10 +1012,7 @@ interface PolicyEditFormProps {
   readonly policy: SecurityPolicy;
   readonly pending: boolean;
   readonly onCancel: () => void;
-  readonly onSubmit: (input: {
-    enabled: boolean;
-    enforcement: PolicyEnforcement;
-  }) => void;
+  readonly onSubmit: (input: { enabled: boolean; enforcement: PolicyEnforcement }) => void;
 }
 
 function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormProps) {
@@ -1056,10 +1027,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
         onSubmit({ enabled, enforcement });
       }}
     >
-      <label
-        className="row gap-2"
-        style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}
-      >
+      <label className="row gap-2" style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
         <input
           type="checkbox"
           aria-label={`Enable ${securityPolicyLabels[policy.policyType]}`}
@@ -1074,9 +1042,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
         <select
           aria-label={`Enforcement for ${securityPolicyLabels[policy.policyType]}`}
           value={enforcement}
-          onChange={(event) =>
-            setEnforcement(event.target.value as PolicyEnforcement)
-          }
+          onChange={(event) => setEnforcement(event.target.value as PolicyEnforcement)}
           style={{ ...INPUT_STYLE, width: "100%", marginTop: 4 }}
         >
           <option value="disabled">Disabled</option>
@@ -1084,6 +1050,22 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
           <option value="required">Required</option>
         </select>
       </label>
+      {policy.policyType === "sso" ? (
+        <label
+          className="row gap-2"
+          style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}
+        >
+          <input
+            type="checkbox"
+            aria-label="Local email/password login enabled"
+            checked
+            disabled
+            readOnly
+            style={{ accentColor: "var(--accent)" }}
+          />
+          Local email/password login remains enabled
+        </label>
+      ) : null}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button type="button" className="btn sm" onClick={onCancel}>
           Cancel
@@ -1100,6 +1082,7 @@ function AdminSecurity() {
   const queryClient = useQueryClient();
   const policiesQuery = useQuery(securityPoliciesQueryOptions());
   const [editing, setEditing] = useState<SecurityPolicyType | null>(null);
+  const [ssoTestResult, setSsoTestResult] = useState<SsoTestLoginResponse | null>(null);
 
   const updateMutation = useMutation({
     mutationFn: (input: {
@@ -1115,6 +1098,20 @@ function AdminSecurity() {
     onError: () => undefined,
     onSuccess: () => {
       setEditing(null);
+      void queryClient.invalidateQueries({
+        queryKey: securityPoliciesQueryKeys.list(),
+      });
+    },
+  });
+
+  const ssoTestMutation = useMutation({
+    mutationFn: () => testSsoLogin(),
+    onMutate: () => {
+      setSsoTestResult(null);
+    },
+    onError: () => undefined,
+    onSuccess: (result) => {
+      setSsoTestResult(result);
       void queryClient.invalidateQueries({
         queryKey: securityPoliciesQueryKeys.list(),
       });
@@ -1145,13 +1142,19 @@ function AdminSecurity() {
         <StateBanner kind="loading">Loading security policies…</StateBanner>
       ) : null}
       {policiesQuery.isError ? (
-        <StateBanner kind="error">
-          Security policies unavailable — try again later.
-        </StateBanner>
+        <StateBanner kind="error">Security policies unavailable — try again later.</StateBanner>
       ) : null}
       {updateMutation.isError ? (
         <StateBanner kind="error">{updateMutation.error.message}</StateBanner>
       ) : null}
+      {ssoTestMutation.isError ? (
+        <StateBanner kind="error">{ssoTestMutation.error.message}</StateBanner>
+      ) : null}
+      {ssoTestResult === null ? null : (
+        <StateBanner kind={ssoTestResult.status === "runtime_pending" ? "info" : "error"}>
+          {ssoTestResult.message}
+        </StateBanner>
+      )}
 
       {policiesQuery.isError ? null : (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
@@ -1160,6 +1163,7 @@ function AdminSecurity() {
               <div className="section-label" style={{ padding: "0 0 8px" }}>
                 {label}
               </div>
+              {label === "Authentication" ? <LocalLoginSecurityCard /> : null}
               {grouped[label].map((policy) => {
                 const level = policyLevel(policy);
                 const isEditing = editing === policy.policyType;
@@ -1188,9 +1192,7 @@ function AdminSecurity() {
                           <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>
                             {securityPolicyLabels[policy.policyType]}
                           </span>
-                          <span
-                            className={`chip ${level.on ? "success" : "warning"}`}
-                          >
+                          <span className={`chip ${level.on ? "success" : "warning"}`}>
                             <span className="chip-dot" />
                             {level.text}
                           </span>
@@ -1214,6 +1216,17 @@ function AdminSecurity() {
                       >
                         {isEditing ? "Close" : "Edit"}
                       </button>
+                      {policy.policyType === "sso" ? (
+                        <button
+                          type="button"
+                          className="btn sm"
+                          aria-label="Test SSO login"
+                          disabled={ssoTestMutation.isPending}
+                          onClick={() => ssoTestMutation.mutate()}
+                        >
+                          {ssoTestMutation.isPending ? "Testing…" : "Test login"}
+                        </button>
+                      ) : null}
                     </div>
                     {isEditing ? (
                       <PolicyEditForm
@@ -1236,6 +1249,49 @@ function AdminSecurity() {
         </div>
       )}
     </PageScroll>
+  );
+}
+
+function LocalLoginSecurityCard() {
+  return (
+    <div className="panel" style={{ padding: 16, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 4,
+            }}
+          >
+            <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>
+              Local email/password login
+            </span>
+            <span className="chip success">
+              <span className="chip-dot" />
+              Enabled
+            </span>
+          </div>
+          <div
+            className="row gap-2"
+            style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}
+          >
+            <Icons.Lock /> Owner/admin recovery path; SSO is additive.
+          </div>
+        </div>
+        <button
+          className="btn sm"
+          type="button"
+          aria-label="Open local login"
+          onClick={() => {
+            window.location.assign("/login");
+          }}
+        >
+          Open
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1337,9 +1393,7 @@ function AdminApps() {
         <select
           aria-label="Filter by status"
           value={statusFilter}
-          onChange={(event) =>
-            setStatusFilter(event.target.value as "all" | OAuthAppStatus)
-          }
+          onChange={(event) => setStatusFilter(event.target.value as "all" | OAuthAppStatus)}
           style={INPUT_STYLE}
         >
           <option value="all">All statuses</option>
@@ -1351,9 +1405,7 @@ function AdminApps() {
         <select
           aria-label="Filter by risk"
           value={riskFilter}
-          onChange={(event) =>
-            setRiskFilter(event.target.value as "all" | OAuthAppRisk)
-          }
+          onChange={(event) => setRiskFilter(event.target.value as "all" | OAuthAppRisk)}
           style={INPUT_STYLE}
         >
           <option value="all">All risk levels</option>
@@ -1363,9 +1415,7 @@ function AdminApps() {
         </select>
       </div>
 
-      {appsQuery.isPending ? (
-        <StateBanner kind="loading">Loading OAuth apps…</StateBanner>
-      ) : null}
+      {appsQuery.isPending ? <StateBanner kind="loading">Loading OAuth apps…</StateBanner> : null}
       {appsQuery.isError ? (
         <StateBanner kind="error">OAuth apps unavailable — try again later.</StateBanner>
       ) : null}
@@ -1411,8 +1461,7 @@ function AdminApps() {
                 height: 40,
                 alignItems: "center",
                 fontSize: "var(--text-meta)",
-                borderBottom:
-                  index < rows.length - 1 ? "1px solid var(--border)" : "none",
+                borderBottom: index < rows.length - 1 ? "1px solid var(--border)" : "none",
               }}
             >
               <div className="row gap-2">
@@ -1507,6 +1556,22 @@ const METER_LABEL: Record<"licenses" | "storage" | "ai_credits", string> = {
   ai_credits: "AI credits",
 };
 
+const USAGE_METRIC_LABELS: Record<MeteringRollupMetricKey, string> = {
+  ai_tokens: "AI tokens",
+  storage_delta_bytes: "Storage delta",
+  exports_count: "Exports",
+  api_calls_billable: "Billable API calls",
+  ai_images_generated: "Generated images",
+  seats_delta: "Seat changes",
+  seats_max: "Max seats",
+  collab_session_seconds: "Collab session seconds",
+  storage_avg_bytes: "Average storage",
+};
+
+const USAGE_FILTER_METRICS = Object.entries(USAGE_METRIC_LABELS) as ReadonlyArray<
+  readonly [MeteringRollupMetricKey, string]
+>;
+
 function formatDateLabel(value: string | null): string {
   if (value === null) {
     return "—";
@@ -1518,12 +1583,39 @@ function formatDateLabel(value: string | null): string {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(date);
 }
 
+function buildPlanChangeMailto(planName: string, orgId: string): string {
+  const subject = `Plan change request for ${orgId}`;
+  const body = [
+    "Please help us change this workspace plan.",
+    "",
+    `Current plan: ${planName}`,
+    `Org ID: ${orgId}`,
+  ].join("\n");
+  return `mailto:sales@helix.example?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 function AdminBilling() {
+  const [usageFilters, setUsageFilters] = useState<{
+    readonly from: string;
+    readonly to: string;
+    readonly metricKey: MeteringRollupMetricKey | "";
+  }>({ from: "", to: "", metricKey: "" });
+  const usageQueryInput = useMemo(
+    () => ({
+      ...(usageFilters.from.trim().length === 0 ? {} : { from: usageFilters.from }),
+      ...(usageFilters.to.trim().length === 0 ? {} : { to: usageFilters.to }),
+      ...(usageFilters.metricKey === "" ? {} : { metricKey: usageFilters.metricKey }),
+    }),
+    [usageFilters],
+  );
   const accountQuery = useQuery(billingAccountQueryOptions());
   const invoicesQuery = useQuery(invoicesQueryOptions());
+  const usageQuery = useQuery(usageRollupsQueryOptions(usageQueryInput));
 
   const view = accountQuery.data;
   const invoices = invoicesQuery.data?.invoices ?? [];
+  const usageRollups = usageQuery.data?.rollups ?? [];
+  const usageSummary = usageQuery.data?.summary;
 
   return (
     <PageScroll>
@@ -1533,9 +1625,7 @@ function AdminBilling() {
         <StateBanner kind="loading">Loading billing account…</StateBanner>
       ) : null}
       {accountQuery.isError ? (
-        <StateBanner kind="error">
-          Billing account unavailable — try again later.
-        </StateBanner>
+        <StateBanner kind="error">Billing account unavailable — try again later.</StateBanner>
       ) : null}
 
       {view ? (
@@ -1547,7 +1637,9 @@ function AdminBilling() {
             <div style={{ fontSize: "var(--text-h1)", fontWeight: 700, letterSpacing: "-0.02em" }}>
               {view.account.planName}
             </div>
-            <div style={{ fontSize: "var(--text-body-sm)", color: "var(--text-2)", marginBottom: 16 }}>
+            <div
+              style={{ fontSize: "var(--text-body-sm)", color: "var(--text-2)", marginBottom: 16 }}
+            >
               {`${formatMoney(view.account.pricePerSeatCents, view.account.currency)} per user / month · billed ${view.account.billingCycle}`}
             </div>
             <div
@@ -1589,6 +1681,32 @@ function AdminBilling() {
                 );
               })}
             </div>
+            <div
+              style={{
+                borderTop: "1px solid var(--border)",
+                marginTop: 16,
+                paddingTop: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>
+                  Need more capacity?
+                </div>
+                <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", marginTop: 2 }}>
+                  Request a plan change from the Helix billing team.
+                </div>
+              </div>
+              <a
+                className="btn primary"
+                href={buildPlanChangeMailto(view.account.planName, view.account.orgId)}
+                style={{ marginLeft: "auto", textDecoration: "none" }}
+              >
+                <Icons.Plus /> Upgrade plan
+              </a>
+            </div>
           </div>
 
           <div className="panel" style={{ padding: 20 }}>
@@ -1599,11 +1717,7 @@ function AdminBilling() {
             <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginBottom: 16 }}>
               {formatDateLabel(view.account.nextInvoiceAt)}
             </div>
-            <button
-              type="button"
-              className="btn"
-              style={{ width: "100%", marginBottom: 8 }}
-            >
+            <button type="button" className="btn" style={{ width: "100%", marginBottom: 8 }}>
               <Icons.Credit /> Update payment method
             </button>
             <button type="button" className="btn" style={{ width: "100%" }}>
@@ -1614,13 +1728,117 @@ function AdminBilling() {
       ) : null}
 
       <div className="panel" style={{ padding: 16, marginTop: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>
+            Billing-period usage
+          </span>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginLeft: "auto",
+              flexWrap: "wrap",
+            }}
+          >
+            <select
+              aria-label="Usage metric filter"
+              value={usageFilters.metricKey}
+              onChange={(event) => {
+                const value = event.currentTarget.value as MeteringRollupMetricKey | "";
+                setUsageFilters((current) => ({ ...current, metricKey: value }));
+              }}
+              style={{ ...INPUT_STYLE, minWidth: 170 }}
+            >
+              <option value="">All metrics</option>
+              {USAGE_FILTER_METRICS.map(([metricKey, label]) => (
+                <option key={metricKey} value={metricKey}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="Usage from date"
+              type="date"
+              value={usageFilters.from}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setUsageFilters((current) => ({ ...current, from: value }));
+              }}
+              style={{ ...INPUT_STYLE, width: 132 }}
+            />
+            <input
+              aria-label="Usage to date"
+              type="date"
+              value={usageFilters.to}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setUsageFilters((current) => ({ ...current, to: value }));
+              }}
+              style={{ ...INPUT_STYLE, width: 132 }}
+            />
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => setUsageFilters({ from: "", to: "", metricKey: "" })}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+        {usageQuery.isError ? (
+          <StateBanner kind="error">Usage rollups unavailable — try again later.</StateBanner>
+        ) : usageQuery.isPending ? (
+          <EmptyRow>Loading usage rollups…</EmptyRow>
+        ) : usageRollups.length === 0 ? (
+          <EmptyRow>No metered usage rollups yet.</EmptyRow>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {usageSummary === undefined || usageSummary.metrics.length === 0 ? null : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                  gap: 12,
+                }}
+              >
+                {usageSummary.metrics.slice(0, 8).map((metric) => (
+                  <UsageSummaryCard key={metric.metricKey} metric={metric} />
+                ))}
+              </div>
+            )}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                gap: 12,
+              }}
+            >
+              {usageRollups.slice(0, 8).map((rollup) => (
+                <UsageRollupCard
+                  key={`${rollup.periodStart}:${rollup.metricKey}`}
+                  rollup={rollup}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="panel" style={{ padding: 16, marginTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
           <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>Recent invoices</span>
         </div>
         {invoicesQuery.isError ? (
-          <StateBanner kind="error">
-            Invoices unavailable — try again later.
-          </StateBanner>
+          <StateBanner kind="error">Invoices unavailable — try again later.</StateBanner>
         ) : invoicesQuery.isPending ? (
           <EmptyRow>Loading invoices…</EmptyRow>
         ) : invoices.length === 0 ? (
@@ -1639,23 +1857,15 @@ function AdminBilling() {
               }}
             >
               <span className="mono">{invoice.invoiceNumber}</span>
-              <span style={{ color: "var(--text-2)" }}>
-                {formatDateLabel(invoice.issuedAt)}
-              </span>
+              <span style={{ color: "var(--text-2)" }}>{formatDateLabel(invoice.issuedAt)}</span>
               <span>{formatMoney(invoice.amountCents, invoice.currency)}</span>
               <span>
-                <span
-                  className={`chip ${invoice.status === "paid" ? "success" : "warning"}`}
-                >
+                <span className={`chip ${invoice.status === "paid" ? "success" : "warning"}`}>
                   <span className="chip-dot" />
                   {invoice.status}
                 </span>
               </span>
-              <button
-                type="button"
-                className="btn sm"
-                style={{ justifySelf: "flex-end" }}
-              >
+              <button type="button" className="btn sm" style={{ justifySelf: "flex-end" }}>
                 PDF
               </button>
             </div>
@@ -1666,10 +1876,94 @@ function AdminBilling() {
   );
 }
 
+function UsageSummaryCard({ metric }: { readonly metric: UsageSummaryMetric }) {
+  return (
+    <article
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: 12,
+        minWidth: 0,
+        background: "var(--surface-2)",
+      }}
+    >
+      <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+        {USAGE_METRIC_LABELS[metric.metricKey] ?? metric.metricKey}
+      </div>
+      <div style={{ fontWeight: 700, marginTop: 4 }}>{formatUsageMetricQuantity(metric)}</div>
+      <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginTop: 4 }}>
+        {metric.aggregation} over {metric.sampleCount} day{metric.sampleCount === 1 ? "" : "s"}
+      </div>
+    </article>
+  );
+}
+
+function UsageRollupCard({ rollup }: { readonly rollup: UsageRollup }) {
+  return (
+    <article
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: 12,
+        minWidth: 0,
+      }}
+    >
+      <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+        {USAGE_METRIC_LABELS[rollup.metricKey] ?? rollup.metricKey}
+      </div>
+      <div style={{ fontWeight: 700, marginTop: 4 }}>{formatUsageQuantity(rollup)}</div>
+      <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginTop: 4 }}>
+        {formatUsagePeriod(rollup.periodStart)}
+      </div>
+    </article>
+  );
+}
+
+function formatUsageQuantity(rollup: UsageRollup): string {
+  if (rollup.metricKey === "storage_delta_bytes") {
+    const sign = rollup.quantity > 0 ? "+" : rollup.quantity < 0 ? "-" : "";
+    return `${sign}${formatUsageBytes(Math.abs(rollup.quantity))}`;
+  }
+  if (rollup.metricKey === "storage_avg_bytes") {
+    return formatUsageBytes(rollup.quantity);
+  }
+  return new Intl.NumberFormat("en-US").format(rollup.quantity);
+}
+
+function formatUsageMetricQuantity(metric: UsageSummaryMetric): string {
+  if (metric.metricKey === "storage_delta_bytes") {
+    const sign = metric.quantity > 0 ? "+" : metric.quantity < 0 ? "-" : "";
+    return `${sign}${formatUsageBytes(Math.abs(metric.quantity))}`;
+  }
+  if (metric.metricKey === "storage_avg_bytes") {
+    return formatUsageBytes(metric.quantity);
+  }
+  return new Intl.NumberFormat("en-US").format(metric.quantity);
+}
+
+function formatUsageBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"] as const;
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1000 && unitIndex < units.length - 1) {
+    value /= 1000;
+    unitIndex += 1;
+  }
+  const formatted = value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1);
+  return `${formatted} ${units[unitIndex]}`;
+}
+
+function formatUsagePeriod(value: string): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
+}
+
 /* ------------------------------------------------------------------ */
 /* Audit log                                                          */
 /* ------------------------------------------------------------------ */
-
 
 /* ------------------------------------------------------------------ */
 /* Domain                                                             */
@@ -1890,9 +2184,7 @@ function AdminDomain() {
     <PageScroll>
       <PageHeading title="Domain" subtitle="Domains and DNS records for the workspace" />
 
-      {domainsQuery.isPending ? (
-        <StateBanner kind="loading">Loading domains…</StateBanner>
-      ) : null}
+      {domainsQuery.isPending ? <StateBanner kind="loading">Loading domains…</StateBanner> : null}
       {domainsQuery.isError ? (
         <StateBanner kind="error">Domains unavailable — try again later.</StateBanner>
       ) : null}
@@ -1934,9 +2226,7 @@ function AdminDomain() {
           {domains.length === 0 ? (
             <div className="panel">
               <EmptyRow>
-                {domainsQuery.isPending
-                  ? "Loading domains…"
-                  : "No domains registered yet."}
+                {domainsQuery.isPending ? "Loading domains…" : "No domains registered yet."}
               </EmptyRow>
             </div>
           ) : (
@@ -1963,9 +2253,7 @@ function AdminDomain() {
                       {entry.domain.isPrimary ? "Primary domain" : "Secondary domain"}
                     </div>
                   </div>
-                  <span
-                    className={`chip ${verificationVariant(entry.domain.verificationStatus)}`}
-                  >
+                  <span className={`chip ${verificationVariant(entry.domain.verificationStatus)}`}>
                     <span className="chip-dot" />
                     {entry.domain.verificationStatus}
                   </span>

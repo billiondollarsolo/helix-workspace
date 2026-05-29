@@ -31,7 +31,7 @@ interface UnreadCountResponse {
 export const notificationsQueryKey = ["notifications"] as const;
 export const unreadCountQueryKey = [...notificationsQueryKey, "unread-count"] as const;
 
-export function notificationsListQuery(unreadOnly = false) {
+export function notificationsListQueryOptions(unreadOnly = false) {
   return queryOptions({
     queryKey: [...notificationsQueryKey, "list", { unreadOnly }],
     queryFn: () =>
@@ -43,7 +43,7 @@ export function notificationsListQuery(unreadOnly = false) {
   });
 }
 
-export function unreadCountQuery() {
+export function unreadCountQueryOptions() {
   return queryOptions({
     queryKey: unreadCountQueryKey,
     queryFn: () => callTool<UnreadCountResponse>("notifications.unread-count", {}),
@@ -59,6 +59,8 @@ export function useMarkRead() {
   return useMutation({
     mutationFn: (ids: readonly string[]) =>
       callTool<{ updated: number }>("notifications.mark-read", { ids }),
+    onMutate: () => undefined,
+    onError: () => undefined,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: notificationsQueryKey });
     },
@@ -69,6 +71,8 @@ export function useMarkAllRead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => callTool<{ updated: number }>("notifications.mark-all-read", {}),
+    onMutate: () => undefined,
+    onError: () => undefined,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: notificationsQueryKey });
     },

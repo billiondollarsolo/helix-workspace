@@ -8,6 +8,8 @@ import { addAccessTokenSearchParam } from "@/lib/auth";
 const yjsMessageSync = 0;
 const yjsMessageAwareness = 1;
 const socketOpen = 1;
+const defaultReconnectDelayMs = 1_000;
+const defaultMaxReconnectAttempts = 5;
 
 export type NativeDocumentProviderStatus = "offline" | "connecting" | "connected";
 
@@ -18,6 +20,13 @@ export interface NativeDocumentYjsProviderInput {
   readonly WebSocketCtor?: typeof WebSocket | undefined;
   readonly onStatusChange?: ((status: NativeDocumentProviderStatus) => void) | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
+  readonly reconnect?: boolean | undefined;
+  readonly reconnectDelayMs?: number | undefined;
+  readonly maxReconnectAttempts?: number | undefined;
+}
+
+export interface NativeDocumentYjsProviderDisconnectOptions {
+  readonly notify?: boolean | undefined;
 }
 
 export class NativeDocumentYjsProvider {
@@ -28,8 +37,14 @@ export class NativeDocumentYjsProvider {
   private readonly ownsAwareness: boolean;
   private readonly onStatusChange: ((status: NativeDocumentProviderStatus) => void) | undefined;
   private readonly onError: ((error: unknown) => void) | undefined;
+  private readonly reconnect: boolean;
+  private readonly reconnectDelayMs: number;
+  private readonly maxReconnectAttempts: number;
   private socket: WebSocket | null = null;
   private status: NativeDocumentProviderStatus = "offline";
+  private listening = false;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(input: NativeDocumentYjsProviderInput) {
     this.url = input.url;
@@ -39,9 +54,13 @@ export class NativeDocumentYjsProvider {
     this.awareness = input.awareness ?? new awarenessProtocol.Awareness(input.doc);
     this.onStatusChange = input.onStatusChange;
     this.onError = input.onError;
+    this.reconnect = input.reconnect ?? true;
+    this.reconnectDelayMs = input.reconnectDelayMs ?? defaultReconnectDelayMs;
+    this.maxReconnectAttempts = input.maxReconnectAttempts ?? defaultMaxReconnectAttempts;
   }
 
   connect(): void {
+    this.clearReconnectTimer();
     if (this.socket !== null || this.WebSocketCtor === undefined) {
       this.setStatus("offline");
       return;
@@ -54,19 +73,22 @@ export class NativeDocumentYjsProvider {
     socket.addEventListener("message", this.handleMessage);
     socket.addEventListener("close", this.handleClose);
     socket.addEventListener("error", this.handleError);
-    this.doc.on("update", this.handleDocumentUpdate);
-    this.awareness.on("update", this.handleAwarenessUpdate);
+    this.attachLocalListeners();
   }
 
-  disconnect(): void {
+  disconnect(options: NativeDocumentYjsProviderDisconnectOptions = {}): void {
+    const notify = options.notify ?? true;
+    this.clearReconnectTimer();
+    this.reconnectAttempts = 0;
     const socket = this.socket;
-    this.doc.off("update", this.handleDocumentUpdate);
-    this.awareness.off("update", this.handleAwarenessUpdate);
+    this.detachLocalListeners();
     if (this.ownsAwareness) {
       this.awareness.destroy();
     }
     if (socket === null) {
-      this.setStatus("offline");
+      if (notify) {
+        this.setStatus("offline");
+      }
       return;
     }
     this.socket = null;
@@ -75,7 +97,11 @@ export class NativeDocumentYjsProvider {
     socket.removeEventListener("close", this.handleClose);
     socket.removeEventListener("error", this.handleError);
     socket.close(1000, "native document editor closed");
-    this.setStatus("offline");
+    if (notify) {
+      this.setStatus("offline");
+    } else {
+      this.status = "offline";
+    }
   }
 
   getStatus(): NativeDocumentProviderStatus {
@@ -83,6 +109,7 @@ export class NativeDocumentYjsProvider {
   }
 
   private readonly handleOpen = (): void => {
+    this.reconnectAttempts = 0;
     this.setStatus("connected");
     this.sendFrame(
       encodeSyncFrame((encoder) => {
@@ -118,17 +145,26 @@ export class NativeDocumentYjsProvider {
       }
       throw new Error(`Unknown native document Yjs message type: ${String(messageType)}`);
     } catch (error) {
-      this.onError?.(error);
+      this.handleRealtimeFailure(error);
     }
   };
 
   private readonly handleClose = (): void => {
-    this.socket = null;
+    const socket = this.socket;
+    if (socket !== null) {
+      socket.removeEventListener("open", this.handleOpen);
+      socket.removeEventListener("message", this.handleMessage);
+      socket.removeEventListener("close", this.handleClose);
+      socket.removeEventListener("error", this.handleError);
+      this.socket = null;
+    }
+    this.detachLocalListeners();
     this.setStatus("offline");
+    this.scheduleReconnect();
   };
 
   private readonly handleError = (event: Event): void => {
-    this.onError?.(event);
+    this.handleRealtimeFailure(event);
   };
 
   private readonly handleDocumentUpdate = (update: Uint8Array, origin: unknown): void => {
@@ -169,8 +205,77 @@ export class NativeDocumentYjsProvider {
 
   private sendFrame(frame: Uint8Array): void {
     if (this.socket?.readyState === socketOpen) {
-      this.socket.send(frame);
+      try {
+        this.socket.send(frame);
+      } catch (error) {
+        this.handleRealtimeFailure(error);
+      }
     }
+  }
+
+  private handleRealtimeFailure(error: unknown): void {
+    this.onError?.(error);
+    const socket = this.socket;
+    if (socket === null) {
+      this.setStatus("offline");
+      return;
+    }
+    this.socket = null;
+    socket.removeEventListener("open", this.handleOpen);
+    socket.removeEventListener("message", this.handleMessage);
+    socket.removeEventListener("close", this.handleClose);
+    socket.removeEventListener("error", this.handleError);
+    this.detachLocalListeners();
+    try {
+      socket.close(1011, "native document sync failed");
+    } catch {
+      // Ignore close failures; the provider is already offline.
+    }
+    this.setStatus("offline");
+    this.scheduleReconnect();
+  }
+
+  private attachLocalListeners(): void {
+    if (this.listening) {
+      return;
+    }
+    this.doc.on("update", this.handleDocumentUpdate);
+    this.awareness.on("update", this.handleAwarenessUpdate);
+    this.listening = true;
+  }
+
+  private detachLocalListeners(): void {
+    if (!this.listening) {
+      return;
+    }
+    this.doc.off("update", this.handleDocumentUpdate);
+    this.awareness.off("update", this.handleAwarenessUpdate);
+    this.listening = false;
+  }
+
+  private scheduleReconnect(): void {
+    if (
+      !this.reconnect ||
+      this.WebSocketCtor === undefined ||
+      this.socket !== null ||
+      this.reconnectTimer !== null ||
+      this.reconnectAttempts >= this.maxReconnectAttempts
+    ) {
+      return;
+    }
+    this.reconnectAttempts += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, this.reconnectDelayMs);
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer === null) {
+      return;
+    }
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 
   private setStatus(status: NativeDocumentProviderStatus): void {

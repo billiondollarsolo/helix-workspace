@@ -26,8 +26,42 @@ pnpm infra:helm:validate
 
 The script runs `helm lint` and `helm template` for the base, business, enterprise, and sovereign
 profiles, then verifies the rendered HPA, PDB, NetworkPolicy, CloudNativePG, Vault, SIEM,
-FIPS/STIG, and air-gap contracts. If `kubeconform` is installed it also validates rendered
-manifests against Kubernetes schemas.
+FIPS/STIG, air-gap, and opt-in PrometheusRule contracts. If `kubeconform` is installed it
+also validates rendered manifests against Kubernetes schemas.
+
+## Signup SLO Alerts
+
+The chart can render Prometheus Operator alert rules for the signup activation SLO. These
+alerts mirror the bundled local Prometheus rules for:
+
+- `HelixSignupActivationP95High`
+- `HelixSignupActivationSloMissRateHigh`
+- `HelixSignupActivationSamplesMissing`
+
+The rules are disabled by default because clusters without Prometheus Operator CRDs reject
+`monitoring.coreos.com/v1` resources. Enable them when the operator is installed:
+
+```yaml
+monitoring:
+  prometheusRule:
+    enabled: true
+    namespace: monitoring
+    labels:
+      prometheus: platform
+    runbookUrl: https://runbooks.example.com/helix/signup-activation-slo
+```
+
+The default `runbookUrl` points at
+`docs/specs/05-operations/runbooks/signup-activation-slo-breach.md`. Override it with the URL your
+Alertmanager/PagerDuty integration exposes to on-call engineers.
+
+Alertmanager routing is outside this app chart. For production signup paging,
+use `infra/observability/alertmanager/alertmanager.production.yml` or an
+equivalent AlertmanagerConfig that sends
+`service="signup", slo="signup_activation"` alerts to the local evidence
+webhook and to the `helix-signup-slo-paging` receiver. Mount the external
+paging webhook URL as a secret file at
+`/etc/alertmanager/secrets/signup-slo-paging-webhook-url`.
 
 ## WebSocket Autoscaling (PRD 16.1)
 
@@ -68,49 +102,6 @@ The Deployment also carries `prometheus.io/scrape`, `prometheus.io/path`, and
 `autoscaling.websocketConnections.enabled=false` to fall back to CPU/memory-only
 autoscaling.
 
-## Tenant Storage Migration Alerts
-
-The chart can render opt-in Prometheus Operator alerts for tenant object-store
-migrations. The rules page on stalled jobs and failed or completed-with-errors
-jobs using the low-cardinality migration metrics exposed by the app.
-
-```yaml
-monitoring:
-  tenantStorageMigrationPrometheusRule:
-    enabled: true
-    runbookUrl: https://runbooks.example.com/helix/tenant-storage-migration
-```
-
-The default runbook target is
-`docs/specs/05-operations/runbooks/tenant-storage-migration.md`.
-
-Alertmanager routing is intentionally outside this chart because production
-receiver secrets and escalation integrations are operator-owned. The local
-observability stack includes
-`infra/observability/alertmanager/alertmanager.production.yml` as a starting
-point: route `service="storage",
-operation="tenant_storage_migration"` to the storage migration webhook and a
-paging receiver loaded from
-`/etc/alertmanager/secrets/tenant-storage-migration-paging-webhook-url`.
-
-## Tenant Export Alerts
-
-The chart can also render opt-in Prometheus Operator alerts for durable tenant
-export materialization jobs. These rules page on stalled worker jobs and failed
-exports using low-cardinality export metrics; they deliberately avoid tenant,
-actor, job, filename, and storage-key labels.
-
-```yaml
-monitoring:
-  tenantExportPrometheusRule:
-    enabled: true
-    runbookUrl: https://runbooks.example.com/helix/tenant-export
-```
-
-The default runbook target is
-`docs/specs/05-operations/runbooks/tenant-export-too-large.md`. Alertmanager
-routes should match `service="tenancy", operation="tenant_export"` when enabled.
-
 ## Role-based Deployments (core-app scaling)
 
 Core apps (mail, chat, drive, docs, calendar, meet, assistant) are toggleable
@@ -132,13 +123,19 @@ roleDeployments:
     nodeSelector: { workload: realtime }
   - name: mailer
     apps: "mail" # explicit subset -> sets HELIX_APPS (overrides role)
+  - name: editors-export
+    apps: "editors-export-worker"
+  - name: editors-ocr
+    apps: "editors-ocr-worker"
 ```
 
 Each entry renders an additional `Deployment` (and an `HPA` when
 `autoscaling.enabled`) reusing the same image, configmap, and external secrets;
 only `HELIX_ROLE` / `HELIX_APPS` differ. The server boots only that role's
 modules. Leaving `roleDeployments` empty (the default) keeps the single
-all-in-one Deployment. `docker-compose` always runs one all-in-one service.
+all-in-one Deployment. The primary Service and PDB select only pods labeled
+`helix.io/role: default`, so worker-only role pods do not receive main API
+traffic. `docker-compose` always runs one all-in-one service.
 
 ## Publishing the Chart (Release Pipeline)
 

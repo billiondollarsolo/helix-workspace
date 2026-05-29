@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  copySheet,
   createSheetComment,
   createSheet,
   createSheetTab,
@@ -15,8 +16,10 @@ import {
   importXlsxSheet,
   isBackendSheetsId,
   listSheetComments,
+  listSheetVersions,
   listSheets,
   reopenSheetComment,
+  restoreSheetVersion,
   resolveSheetComment,
   sortSheetRange,
   updateSheet,
@@ -91,6 +94,27 @@ describe("sheets API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ title: "New", tabNames: ["Tab A"], metadata: {} }),
+    });
+  });
+
+  it("copies a spreadsheet through sheets.copy", async () => {
+    const fetchImpl = jsonFetch({ id: sheetId, title: "New (Copy)", tabs: [] });
+    await copySheet(
+      {
+        sheetId,
+        title: "New (Copy)",
+        metadata: { createdFrom: "test.copy" },
+      },
+      fetchImpl,
+    );
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/sheets.copy", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sheetId,
+        title: "New (Copy)",
+        metadata: { createdFrom: "test.copy" },
+      }),
     });
   });
 
@@ -269,6 +293,42 @@ describe("sheets API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sheetId, format: "xlsx", tabId }),
+    });
+  });
+
+  it("lists and restores spreadsheet versions through sheets.version tools", async () => {
+    const versionId = "44444444-4444-4444-8444-444444444444";
+    const listFetch = jsonFetch({
+      versions: [
+        {
+          id: versionId,
+          sheetId,
+          versionNumber: 2,
+          mimeType: "application/vnd.helix.spreadsheet+json",
+          byteSize: 512,
+          sha256: "abc123",
+          metadata: { title: "Forecast", tabCount: 1, cellCount: 8 },
+          createdByActorId: "actor-1",
+          createdAt: "2026-05-28T12:00:00.000Z",
+        },
+      ],
+    });
+    await expect(listSheetVersions({ sheetId, limit: 5 }, listFetch)).resolves.toHaveLength(1);
+    expect(listFetch).toHaveBeenCalledWith("/api/tools/sheets.version.list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sheetId, limit: 5 }),
+    });
+
+    const restoreFetch = jsonFetch({ id: sheetId, title: "Forecast", tabs: [] });
+    await expect(restoreSheetVersion({ sheetId, versionId }, restoreFetch)).resolves.toMatchObject({
+      id: sheetId,
+      title: "Forecast",
+    });
+    expect(restoreFetch).toHaveBeenCalledWith("/api/tools/sheets.version.restore", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sheetId, versionId }),
     });
   });
 

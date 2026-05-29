@@ -5,33 +5,28 @@ describe("assertLocalDemoVerified", () => {
   it("accepts a complete local demo snapshot", () => {
     expect(() => {
       assertLocalDemoVerified({
+        orgCount: 1,
         actorCount: 1,
+        hasDocsCommentScope: true,
         betterAuthUserCount: 1,
         betterAuthCredentialCount: 1,
         oauthCredentialCount: 1,
         mailHitCount: 1,
         mailThreadMessageCount: 1,
         docsCount: 1,
-        sheetsCount: 1,
-        slideDeckCount: 1,
-        meetMeetingCount: 1,
         rootDriveEntryCount: 2,
         projectDriveEntryCount: 1,
-        calendarEventCount: 3,
+        calendarEventCount: 2,
         chatRoomCount: 1,
         chatMessageHitCount: 1,
         hasRenovateMail: true,
         hasAmazonMailWithAttachment: true,
         hasQuarterlyPlanningDoc: true,
-        hasLaunchMetricsSheet: true,
-        hasMvpReadoutDeck: true,
-        hasMvpWalkthroughMeet: true,
         hasAiServicesDriveFile: true,
         hasProjectsDriveFolder: true,
         hasTrainingCourseDriveFile: true,
         hasOrderMatchCalendarEvent: true,
         hasProductPlanningCalendarEvent: true,
-        hasMvpWalkthroughCalendarEvent: true,
         hasLaunchChatRoom: true,
         hasMailDensityChatMessage: true,
         betterAuthPasswordVerified: true,
@@ -56,16 +51,15 @@ describe("assertLocalDemoVerified", () => {
   it("reports all missing seeded surfaces", () => {
     const verify = () => {
       assertLocalDemoVerified({
+        orgCount: 0,
         actorCount: 0,
+        hasDocsCommentScope: false,
         betterAuthUserCount: 0,
         betterAuthCredentialCount: 0,
         oauthCredentialCount: 0,
         mailHitCount: 0,
         mailThreadMessageCount: 0,
         docsCount: 0,
-        sheetsCount: 0,
-        slideDeckCount: 0,
-        meetMeetingCount: 0,
         rootDriveEntryCount: 0,
         projectDriveEntryCount: 0,
         calendarEventCount: 0,
@@ -74,15 +68,11 @@ describe("assertLocalDemoVerified", () => {
         hasRenovateMail: false,
         hasAmazonMailWithAttachment: false,
         hasQuarterlyPlanningDoc: false,
-        hasLaunchMetricsSheet: false,
-        hasMvpReadoutDeck: false,
-        hasMvpWalkthroughMeet: false,
         hasAiServicesDriveFile: false,
         hasProjectsDriveFolder: false,
         hasTrainingCourseDriveFile: false,
         hasOrderMatchCalendarEvent: false,
         hasProductPlanningCalendarEvent: false,
-        hasMvpWalkthroughCalendarEvent: false,
         hasLaunchChatRoom: false,
         hasMailDensityChatMessage: false,
         betterAuthPasswordVerified: false,
@@ -103,15 +93,13 @@ describe("assertLocalDemoVerified", () => {
       });
     };
     expect(verify).toThrow("Local demo verification failed");
+    expect(verify).toThrow("local demo org expected >= 1, got 0");
+    expect(verify).toThrow("Docs comment/suggestion scope was not found");
     expect(verify).toThrow(
-      "actor expected >= 1, got 0; Better Auth user linkage expected >= 1, got 0; Better Auth credential expected >= 1, got 0; OAuth credential expected >= 1, got 0; mail search hits expected >= 1, got 0; mail thread messages expected >= 1, got 0; docs list results expected >= 1, got 0; sheets list results expected >= 1, got 0; slides list results expected >= 1, got 0; Meet meeting results expected >= 1, got 0; root Drive entries expected >= 2, got 0; project Drive entries expected >= 1, got 0; calendar events expected >= 2, got 0; chat rooms expected >= 1, got 0; chat message hits expected >= 1, got 0",
+      "local demo org expected >= 1, got 0; actor expected >= 1, got 0; Docs comment/suggestion scope was not found; Better Auth user linkage expected >= 1, got 0; Better Auth credential expected >= 1, got 0; OAuth credential expected >= 1, got 0; mail search hits expected >= 1, got 0; mail thread messages expected >= 1, got 0; docs list results expected >= 1, got 0; root Drive entries expected >= 2, got 0; project Drive entries expected >= 1, got 0; calendar events expected >= 2, got 0; chat rooms expected >= 1, got 0; chat message hits expected >= 1, got 0",
     );
     expect(verify).toThrow("Renovate mail was not found");
-    expect(verify).toThrow("Launch Metrics Tracker sheet was not found");
-    expect(verify).toThrow("MVP Readiness Readout deck was not found");
-    expect(verify).toThrow("MVP surface walkthrough Meet room was not found");
     expect(verify).toThrow("Product planning review calendar event was not found");
-    expect(verify).toThrow("MVP surface walkthrough calendar event was not found");
     expect(verify).toThrow("Helix launch chat room was not found");
     expect(verify).toThrow("Mail density chat message was not found");
     expect(verify).toThrow("Better Auth email/password login was not found");
@@ -131,33 +119,28 @@ describe("assertLocalDemoVerified", () => {
   it("does not require storage content when no storage provider is configured", () => {
     expect(() => {
       assertLocalDemoVerified({
+        orgCount: 1,
         actorCount: 1,
+        hasDocsCommentScope: true,
         betterAuthUserCount: 1,
         betterAuthCredentialCount: 1,
         oauthCredentialCount: 1,
         mailHitCount: 1,
         mailThreadMessageCount: 1,
         docsCount: 1,
-        sheetsCount: 1,
-        slideDeckCount: 1,
-        meetMeetingCount: 1,
         rootDriveEntryCount: 2,
         projectDriveEntryCount: 1,
-        calendarEventCount: 3,
+        calendarEventCount: 2,
         chatRoomCount: 1,
         chatMessageHitCount: 1,
         hasRenovateMail: true,
         hasAmazonMailWithAttachment: true,
         hasQuarterlyPlanningDoc: true,
-        hasLaunchMetricsSheet: true,
-        hasMvpReadoutDeck: true,
-        hasMvpWalkthroughMeet: true,
         hasAiServicesDriveFile: true,
         hasProjectsDriveFolder: true,
         hasTrainingCourseDriveFile: true,
         hasOrderMatchCalendarEvent: true,
         hasProductPlanningCalendarEvent: true,
-        hasMvpWalkthroughCalendarEvent: true,
         hasLaunchChatRoom: true,
         hasMailDensityChatMessage: true,
         betterAuthPasswordVerified: true,

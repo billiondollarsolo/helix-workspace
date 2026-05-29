@@ -21,11 +21,6 @@ interface SlidesSocket {
 export interface RegisterSlidesRoutesOptions {
   readonly store: SlidesStore;
   readonly actorFromRequest: (request: FastifyRequest) => Actor | Promise<Actor>;
-  readonly concurrentEditorLimit?: (input: {
-    readonly request: FastifyRequest;
-    readonly actor: Actor;
-    readonly deck: SlideDeckSummaryRecord;
-  }) => number | null | undefined | Promise<number | null | undefined>;
   readonly metrics?: WebsocketConnectionMetrics | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
 }
@@ -84,6 +79,8 @@ const operationSchema = z.union([
       slideId: z.string().uuid(),
       content: slideContentSchema.optional(),
       speakerNotes: z.string().max(20_000).optional(),
+      /** Per-slide CAS token; see SlideRecord.revision. */
+      expectedRevision: z.number().int().nonnegative().max(2_000_000_000).optional(),
     })
     .refine((value) => value.content !== undefined || value.speakerNotes !== undefined, {
       message: "Provide slide content or speaker notes.",
@@ -91,6 +88,7 @@ const operationSchema = z.union([
   z.object({
     kind: z.literal("delete-slide"),
     slideId: z.string().uuid(),
+    expectedRevision: z.number().int().nonnegative().max(2_000_000_000).optional(),
   }),
   z.object({
     kind: z.literal("reorder-slides"),
@@ -113,8 +111,6 @@ const operationInboundSchema = z.object({
 });
 
 const inboundSchema = z.discriminatedUnion("type", [operationInboundSchema, awarenessSchema]);
-const SLIDES_QUOTA_CLOSE_CODE = 1008;
-const SLIDES_QUOTA_CLOSE_REASON = "Concurrent editor quota exceeded";
 
 export async function registerSlidesRoutes(
   app: FastifyInstance,
@@ -160,29 +156,13 @@ export async function handleSlidesSocket(
     return;
   }
 
-  const concurrentEditorLimit = await options.concurrentEditorLimit?.({
-    request,
-    actor,
-    deck: deckDetail.deck,
-  });
-  if (
-    concurrentEditorLimit !== null &&
-    concurrentEditorLimit !== undefined &&
-    (state.rooms.get(slidesRoomKey(actor.orgId, parsedParams.deckId))?.sockets.size ?? 0) >=
-      concurrentEditorLimit
-  ) {
-    socket.close(SLIDES_QUOTA_CLOSE_CODE, SLIDES_QUOTA_CLOSE_REASON);
-    return;
-  }
-
   const recentOperations = await options.store.listOperations({
     orgId: actor.orgId,
     actorId: actor.id,
     deckId: parsedParams.deckId,
   });
   const durableRevision = recentOperations.at(-1)?.revision ?? 0;
-  const roomKey = slidesRoomKey(actor.orgId, parsedParams.deckId);
-  const room = state.rooms.get(roomKey) ?? {
+  const room = state.rooms.get(parsedParams.deckId) ?? {
     deckId: parsedParams.deckId,
     sockets: new Set<SlidesSocket>(),
     awareness: new Map<SlidesSocket, SlidesAwarenessState>(),
@@ -190,7 +170,7 @@ export async function handleSlidesSocket(
   };
   room.latestRevision = Math.max(room.latestRevision, durableRevision);
   room.sockets.add(socket);
-  state.rooms.set(roomKey, room);
+  state.rooms.set(parsedParams.deckId, room);
 
   socket.send(
     JSON.stringify({
@@ -234,7 +214,7 @@ export async function handleSlidesSocket(
       });
     }
     if (room.sockets.size === 0) {
-      state.rooms.delete(roomKey);
+      state.rooms.delete(parsedParams.deckId);
     }
   });
 
@@ -302,6 +282,29 @@ async function handleSlidesMessage(input: {
     return;
   }
 
+  if (result.status === "slide-conflict") {
+    // Per-slide CAS failed: another writer mutated this slide first. We
+    // deliver the authoritative snapshot back to the sender so it can rebase
+    // its pending edit on fresh content (and surface the conflict to the
+    // user) without overwriting the other writer's work. This is the
+    // interim safety net documented in docs/reviews/follow-up.md until
+    // full per-shape OT lands.
+    input.socket.send(
+      JSON.stringify({
+        type: "slide-conflict",
+        protocol: SLIDES_WS_PROTOCOL,
+        deckId: input.room.deckId,
+        operationId: message.operationId,
+        revision: result.revision,
+        slideId: result.slideId,
+        currentSlideRevision: result.currentSlideRevision,
+        deck: serializeDeck(result.snapshot.deck),
+        slides: result.snapshot.slides.map(serializeSlide),
+      }),
+    );
+    return;
+  }
+
   input.room.latestRevision = Math.max(input.room.latestRevision, result.revision);
   const frame = JSON.stringify({
     type: "operation",
@@ -360,13 +363,10 @@ function serializeSlide(slide: SlideRecord): JsonObject {
     layout: slide.layout,
     content: toJsonObject(slide.content),
     speakerNotes: slide.speakerNotes,
+    revision: slide.revision,
     createdAt: slide.createdAt.toISOString(),
     updatedAt: slide.updatedAt.toISOString(),
   };
-}
-
-function slidesRoomKey(orgId: string, deckId: string): string {
-  return `${orgId}:${deckId}`;
 }
 
 function toJsonObject(value: unknown): JsonObject {

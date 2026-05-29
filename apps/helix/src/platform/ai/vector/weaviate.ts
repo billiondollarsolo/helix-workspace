@@ -13,6 +13,7 @@ import {
 } from "./http.js";
 import {
   assertVectorMetric,
+  scopedCollectionName,
   validateCollectionName,
   validateDimension,
   validateLimit,
@@ -20,6 +21,7 @@ import {
   type VectorItem,
   type VectorMatch,
   type VectorMetric,
+  type VectorOrgScope,
   type VectorQueryOpts,
   type VectorStore,
 } from "./types.js";
@@ -32,9 +34,14 @@ export class WeaviateVectorStore implements VectorStore {
     this.#config = normalizeHttpConfig(config);
   }
 
-  async createCollection(name: string, dim: number, metric: VectorMetric): Promise<void> {
+  async createCollection(
+    orgId: VectorOrgScope,
+    name: string,
+    dim: number,
+    metric: VectorMetric,
+  ): Promise<void> {
     await requestJson(this.id, this.#config, "POST", "/v1/schema", {
-      class: className(name),
+      class: className(orgId, name),
       vectorizer: "none",
       vectorIndexConfig: { distance: weaviateDistance(assertVectorMetric(metric)), dimensions: validateDimension(dim) },
       properties: [
@@ -44,11 +51,11 @@ export class WeaviateVectorStore implements VectorStore {
     });
   }
 
-  async upsert(collection: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
     if (items.length === 0) {
       return;
     }
-    const klass = className(collection);
+    const klass = className(orgId, collection);
     await requestJson(this.id, this.#config, "POST", "/v1/batch/objects", {
       objects: items.map((item) => ({
         class: klass,
@@ -59,8 +66,13 @@ export class WeaviateVectorStore implements VectorStore {
     });
   }
 
-  async query(collection: string, vector: readonly number[], opts: VectorQueryOpts = {}): Promise<readonly VectorMatch[]> {
-    const klass = className(collection);
+  async query(
+    orgId: VectorOrgScope,
+    collection: string,
+    vector: readonly number[],
+    opts: VectorQueryOpts = {},
+  ): Promise<readonly VectorMatch[]> {
+    const klass = className(orgId, collection);
     const response = await requestJson(this.id, this.#config, "POST", "/v1/graphql", {
       query: weaviateGraphql(klass, validateLimit(opts.limit), opts.includeVectors === true, opts.filter !== undefined),
       variables: {
@@ -71,18 +83,18 @@ export class WeaviateVectorStore implements VectorStore {
     return weaviateMatches(response, klass);
   }
 
-  async delete(collection: string, ids: readonly string[]): Promise<void> {
+  async delete(orgId: VectorOrgScope, collection: string, ids: readonly string[]): Promise<void> {
     if (ids.length === 0) {
       return;
     }
-    const klass = className(collection);
+    const klass = className(orgId, collection);
     await Promise.all(ids.map((id) => requestJson(this.id, this.#config, "DELETE", `/v1/objects/${encodeURIComponent(klass)}/${encodeURIComponent(id)}`)));
   }
 }
 
-function className(name: string): string {
-  const collection = validateCollectionName(name);
-  const normalized = collection.replace(/[^A-Za-z0-9_]/g, "_");
+function className(orgId: string | null, name: string): string {
+  const scoped = scopedCollectionName(orgId, name);
+  const normalized = scoped.replace(/[^A-Za-z0-9_]/g, "_");
   return normalized.length === 0 ? "HelixVector" : `Helix_${normalized}`;
 }
 

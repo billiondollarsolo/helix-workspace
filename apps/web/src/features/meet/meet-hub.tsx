@@ -25,6 +25,7 @@ import {
   type RecentMeeting,
   type ScheduledMeeting,
 } from "./meet-seed";
+import { RecordingDrawer } from "./recording-drawer";
 
 export interface MeetHubProps {
   /** Current search query from the surface frame; filters both panels. */
@@ -42,6 +43,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
   const [linkRoom, setLinkRoom] = useState<{ readonly code: string; readonly subject: string } | null>(
     null,
   );
+  const [recordingsFor, setRecordingsFor] = useState<MeetMeetingRecord | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const meetingsQuery = useQuery(meetMeetingsQueryOptions());
@@ -478,7 +480,16 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                   </span>
                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
                     {meeting.recorded ? (
-                      <button className="btn sm" type="button">
+                      <button
+                        className="btn sm"
+                        type="button"
+                        onClick={() => {
+                          const backend = meeting.roomId
+                            ? meetingByRow.get(meeting.roomId)
+                            : undefined;
+                          if (backend !== undefined) setRecordingsFor(backend);
+                        }}
+                      >
                         <Icons.Video /> Recording
                       </button>
                     ) : null}
@@ -502,6 +513,15 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
           }}
           onSubmit={(input) => {
             scheduleMutation.mutate(input);
+          }}
+        />
+      ) : null}
+
+      {recordingsFor !== null ? (
+        <RecordingDrawer
+          meeting={recordingsFor}
+          onClose={() => {
+            setRecordingsFor(null);
           }}
         />
       ) : null}

@@ -70,6 +70,7 @@ export function TopBar({
         <div className="search">
           <Icons.Search />
           <input
+            name={`${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-search`}
             value={searchValue ?? ""}
             onChange={(event) => onSearchChange(event.target.value)}
             placeholder={searchPlaceholder}

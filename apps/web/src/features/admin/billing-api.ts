@@ -1,14 +1,18 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
+import { meteringRollupMetricKeys, type MeteringRollupMetricKey } from "@helix/sdk-types";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+
+export type { MeteringRollupMetricKey } from "@helix/sdk-types";
 
 /**
  * Admin Console — Billing client (read-only).
  *
  * Talks to `/api/admin/billing` — there is NO payment-gateway integration; the
- * plan, usage counts, and invoices are maintained by ops tooling. Two routes:
+ * plan, usage counts, invoices, and metering rollups are maintained by ops tooling. Three routes:
  *  - `/account`  — plan + derived usage meters
  *  - `/invoices` — paginated invoice history
+ *  - `/usage`    — daily metering rollups
  *
  * Backend responses are validated at the trust boundary with Zod.
  */
@@ -77,9 +81,59 @@ const invoicesResponseSchema = z.object({
 
 export type InvoicesResponse = z.infer<typeof invoicesResponseSchema>;
 
+const usageRollupSchema = z.object({
+  orgId: z.string(),
+  periodStart: z.string(),
+  periodEnd: z.string(),
+  metricKey: z.enum(meteringRollupMetricKeys),
+  quantity: z.number(),
+  computedAt: z.string(),
+});
+
+export type UsageRollup = z.infer<typeof usageRollupSchema>;
+
+const usageSummaryMetricSchema = z.object({
+  metricKey: z.enum(meteringRollupMetricKeys),
+  quantity: z.number(),
+  aggregation: z.enum(["sum", "average", "max"]),
+  sampleCount: z.number(),
+});
+
+export type UsageSummaryMetric = z.infer<typeof usageSummaryMetricSchema>;
+
+const usageSummarySchema = z.object({
+  periodStart: z.string().nullable(),
+  periodEnd: z.string().nullable(),
+  metrics: z.array(usageSummaryMetricSchema),
+});
+
+export type UsageSummary = z.infer<typeof usageSummarySchema>;
+
+const usageRollupsResponseSchema = z.object({
+  rollups: z.array(usageRollupSchema),
+  summary: usageSummarySchema.optional(),
+});
+
+export interface UsageRollupsResponse {
+  readonly rollups: readonly UsageRollup[];
+  readonly summary: UsageSummary;
+}
+
+const defaultUsageSummary: UsageSummary = {
+  periodStart: null,
+  periodEnd: null,
+  metrics: [],
+};
+
 export interface InvoicesQueryInput {
   readonly cursor?: string;
   readonly limit?: number;
+}
+
+export interface UsageRollupsQueryInput {
+  readonly from?: string;
+  readonly to?: string;
+  readonly metricKey?: MeteringRollupMetricKey;
 }
 
 export const defaultInvoicesInput = { limit: 25 } as const satisfies InvoicesQueryInput;
@@ -91,7 +145,15 @@ export const defaultInvoicesInput = { limit: 25 } as const satisfies InvoicesQue
 export const billingQueryKeys = {
   account: () => ["admin", "billing", "account"] as const,
   invoices: (input: InvoicesQueryInput = defaultInvoicesInput) =>
-    ["admin", "billing", "invoices", input.limit ?? defaultInvoicesInput.limit, input.cursor ?? ""] as const,
+    [
+      "admin",
+      "billing",
+      "invoices",
+      input.limit ?? defaultInvoicesInput.limit,
+      input.cursor ?? "",
+    ] as const,
+  usage: (input: UsageRollupsQueryInput = {}) =>
+    ["admin", "billing", "usage", input.from ?? "", input.to ?? "", input.metricKey ?? ""] as const,
 };
 
 export function billingAccountQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
@@ -110,6 +172,18 @@ export function invoicesQueryOptions(
   return queryOptions({
     queryKey: billingQueryKeys.invoices(input),
     queryFn: () => fetchInvoices(input, fetchImpl),
+    retry: false,
+    throwOnError: false,
+  });
+}
+
+export function usageRollupsQueryOptions(
+  input: UsageRollupsQueryInput = {},
+  fetchImpl: AuthFetch = authenticatedFetch,
+) {
+  return queryOptions({
+    queryKey: billingQueryKeys.usage(input),
+    queryFn: () => fetchUsageRollups(input, fetchImpl),
     retry: false,
     throwOnError: false,
   });
@@ -139,6 +213,34 @@ export async function fetchInvoices(
     method: "GET",
   });
   return parseResponse(response, "load invoices", invoicesResponseSchema);
+}
+
+export async function fetchUsageRollups(
+  input: UsageRollupsQueryInput = {},
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<UsageRollupsResponse> {
+  const params = new URLSearchParams();
+  if (input.from !== undefined && input.from.trim().length > 0) {
+    params.set("from", input.from.trim());
+  }
+  if (input.to !== undefined && input.to.trim().length > 0) {
+    params.set("to", input.to.trim());
+  }
+  if (input.metricKey !== undefined && input.metricKey.trim().length > 0) {
+    params.set("metricKey", input.metricKey.trim());
+  }
+  const query = params.toString();
+  const response = await fetchImpl(
+    `/api/admin/billing/usage${query.length === 0 ? "" : `?${query}`}`,
+    {
+      method: "GET",
+    },
+  );
+  const parsed = await parseResponse(response, "load usage rollups", usageRollupsResponseSchema);
+  return {
+    rollups: parsed.rollups,
+    summary: parsed.summary ?? defaultUsageSummary,
+  };
 }
 
 // ---------------------------------------------------------------------------

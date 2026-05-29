@@ -136,16 +136,8 @@ describe("admin users routes", () => {
 describe("people directory routes", () => {
   it("returns active org users for authenticated non-admin actors", async () => {
     const store = new FakeAdminUsersStore([
-      {
-        ...userRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"),
-        displayName: "Mina Park",
-        email: "mina@example.com",
-      },
-      {
-        ...userRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"),
-        displayName: "",
-        email: "fallback@example.com",
-      },
+      { ...userRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"), displayName: "Mina Park", email: "mina@example.com" },
+      { ...userRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"), displayName: "", email: "fallback@example.com" },
     ]);
     const app = fastify();
     await registerPeopleDirectoryRoutes(app, { store, actorFromRequest });

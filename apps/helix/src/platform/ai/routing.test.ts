@@ -64,7 +64,9 @@ describe("AIRouter", () => {
     });
 
     await expect(
-      router.chat({ ...request(), classification: "restricted" }, { actor }),
+      // Post-A1 security fix: classification must come through ctx, not the
+      // client-supplied request payload.
+      router.chat(request(), { actor, classification: "restricted" }),
     ).rejects.toThrow("No AI provider is configured");
   });
 
@@ -454,7 +456,10 @@ describe("AIRouter", () => {
     });
 
     await expect(
-      router.generateImage({ feature: "slides.generate-image", prompt: "draw a chart" }, { actor }),
+      router.generateImage(
+        { feature: "slides.generate-image", prompt: "draw a chart" },
+        { actor },
+      ),
     ).resolves.toMatchObject({ providerId: "image", model: "image-model" });
 
     expect(calls).toEqual(["primary", "image:image-model"]);
@@ -552,9 +557,8 @@ describe("AIRouter", () => {
         {
           feature: "slides.generate-image",
           prompt: "draw",
-          classification: "restricted",
         },
-        { actor },
+        { actor, classification: "restricted" },
       ),
     ).rejects.toBeInstanceOf(AIClassificationBlockedError);
   });
@@ -715,10 +719,10 @@ describe("AIRouter streaming", () => {
     });
 
     await expect(async () => {
-      for await (const _chunk of router.chatStream(
-        { ...request(), classification: "restricted" },
-        { actor },
-      )) {
+      for await (const _chunk of router.chatStream(request(), {
+        actor,
+        classification: "restricted",
+      })) {
         void _chunk;
       }
     }).rejects.toThrow("No AI provider is configured");

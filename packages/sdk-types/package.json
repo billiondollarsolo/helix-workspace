@@ -11,10 +11,20 @@
     "./editors": {
       "types": "./dist/editors.d.ts",
       "default": "./dist/editors.js"
+    },
+    "./metering": {
+      "types": "./dist/metering.d.ts",
+      "default": "./dist/metering.js"
+    },
+    "./tenant-config": {
+      "types": "./dist/tenant-config.d.ts",
+      "default": "./dist/tenant-config.js"
     }
   },
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "lint": "eslint src --max-warnings=0",

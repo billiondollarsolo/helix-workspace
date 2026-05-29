@@ -43,6 +43,18 @@ function requestBody(call: FetchCall): unknown {
   return JSON.parse(call.init.body) as unknown;
 }
 
+const ORG_A = "00000000-0000-4000-8000-0000000000a1";
+const ORG_B = "00000000-0000-4000-8000-0000000000b1";
+// The external HTTP adapters tenant-scope by namespacing the collection name
+// (see scopedCollectionName in types.ts). The on-the-wire path for org A's
+// `docs` becomes `org_<orgA>__docs`. Two tenants reusing `docs` get two
+// distinct external collections.
+const QDRANT_DOCS_ORG_A = `org_${ORG_A}__docs`;
+const CHROMA_DOCS_ORG_A = `org_${ORG_A}__docs`;
+const MILVUS_DOCS_ORG_A = `org_${ORG_A}__docs`;
+// Weaviate class names cannot contain `-`; the adapter normalizes them to `_`.
+const WEAVIATE_DOCS_ORG_A = `Helix_org_${ORG_A.replace(/-/g, "_")}__docs`;
+
 describe("HTTP vector adapters", () => {
   it("maps Qdrant collection, point, search, and delete requests", async () => {
     const stub = createFetchStub((call) => {
@@ -55,20 +67,34 @@ describe("HTTP vector adapters", () => {
     });
     const store = new QdrantVectorStore({ baseUrl: "http://qdrant.local", apiKey: "secret", fetch: stub.fetch });
 
-    await store.createCollection("docs", 2, "cosine");
-    await store.upsert("docs", [{ id: "doc-1", vector: [0.1, 0.2], metadata: { type: "doc" } }]);
-    const matches = await store.query("docs", [0.1, 0.2], { limit: 3, filter: { type: "doc" }, includeVectors: true });
-    await store.delete("docs", ["doc-1"]);
+    await store.createCollection(ORG_A, "docs", 2, "cosine");
+    await store.upsert(ORG_A, "docs", [{ id: "doc-1", vector: [0.1, 0.2], metadata: { type: "doc" } }]);
+    const matches = await store.query(ORG_A, "docs", [0.1, 0.2], { limit: 3, filter: { type: "doc" }, includeVectors: true });
+    await store.delete(ORG_A, "docs", ["doc-1"]);
 
     expect(stub.calls.map((call) => [call.init.method, call.url.pathname + call.url.search])).toEqual([
-      ["PUT", "/collections/docs"],
-      ["PUT", "/collections/docs/points?wait=true"],
-      ["POST", "/collections/docs/points/search"],
-      ["POST", "/collections/docs/points/delete?wait=true"],
+      ["PUT", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}`],
+      ["PUT", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}/points?wait=true`],
+      ["POST", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}/points/search`],
+      ["POST", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}/points/delete?wait=true`],
     ]);
     expect(requestBody(stub.calls[0] ?? failCall())).toEqual({ vectors: { size: 2, distance: "Cosine" } });
     expect(requestBody(stub.calls[2] ?? failCall())).toMatchObject({ limit: 3, with_payload: true, with_vector: true });
     expect(matches).toEqual([{ id: "doc-1", score: 0.82, metadata: { type: "doc" }, vector: [0.1, 0.2] }]);
+  });
+
+  it("isolates tenants by namespacing Qdrant collection names", async () => {
+    const stub = createFetchStub(() => jsonResponse({ result: true }));
+    const store = new QdrantVectorStore({ baseUrl: "http://qdrant.local", fetch: stub.fetch });
+
+    await store.createCollection(ORG_A, "docs", 2, "cosine");
+    await store.createCollection(ORG_B, "docs", 2, "cosine");
+
+    const paths = stub.calls.map((call) => call.url.pathname);
+    expect(paths).toHaveLength(2);
+    expect(paths[0]).not.toBe(paths[1]);
+    expect(paths[0]).toContain(ORG_A);
+    expect(paths[1]).toContain(ORG_B);
   });
 
   it("maps Milvus REST requests and responses", async () => {
@@ -80,10 +106,10 @@ describe("HTTP vector adapters", () => {
     });
     const store = new MilvusVectorStore({ baseUrl: "http://milvus.local", fetch: stub.fetch });
 
-    await store.createCollection("docs", 2, "dot");
-    await store.upsert("docs", [{ id: "doc-1", vector: [1, 2], metadata: { type: "doc" } }]);
-    const matches = await store.query("docs", [1, 2], { includeVectors: true });
-    await store.delete("docs", ["doc-1"]);
+    await store.createCollection(ORG_A, "docs", 2, "dot");
+    await store.upsert(ORG_A, "docs", [{ id: "doc-1", vector: [1, 2], metadata: { type: "doc" } }]);
+    const matches = await store.query(ORG_A, "docs", [1, 2], { includeVectors: true });
+    await store.delete(ORG_A, "docs", ["doc-1"]);
 
     expect(stub.calls.map((call) => call.url.pathname)).toEqual([
       "/v2/vectordb/collections/create",
@@ -91,7 +117,7 @@ describe("HTTP vector adapters", () => {
       "/v2/vectordb/entities/search",
       "/v2/vectordb/entities/delete",
     ]);
-    expect(requestBody(stub.calls[0] ?? failCall())).toMatchObject({ collectionName: "docs", dimension: 2, metricType: "IP" });
+    expect(requestBody(stub.calls[0] ?? failCall())).toMatchObject({ collectionName: MILVUS_DOCS_ORG_A, dimension: 2, metricType: "IP" });
     expect(matches).toEqual([{ id: "doc-1", score: 0.7, metadata: { type: "doc" }, vector: [1, 2] }]);
   });
 
@@ -109,16 +135,16 @@ describe("HTTP vector adapters", () => {
     });
     const store = new ChromaVectorStore({ baseUrl: "http://chroma.local", fetch: stub.fetch });
 
-    await store.createCollection("docs", 2, "l2");
-    await store.upsert("docs", [{ id: "doc-1", vector: [1, 2], metadata: { type: "doc" } }]);
-    const matches = await store.query("docs", [1, 2], { includeVectors: true });
-    await store.delete("docs", ["doc-1"]);
+    await store.createCollection(ORG_A, "docs", 2, "l2");
+    await store.upsert(ORG_A, "docs", [{ id: "doc-1", vector: [1, 2], metadata: { type: "doc" } }]);
+    const matches = await store.query(ORG_A, "docs", [1, 2], { includeVectors: true });
+    await store.delete(ORG_A, "docs", ["doc-1"]);
 
     expect(stub.calls.map((call) => call.url.pathname)).toEqual([
       "/api/v1/collections",
-      "/api/v1/collections/docs/upsert",
-      "/api/v1/collections/docs/query",
-      "/api/v1/collections/docs/delete",
+      `/api/v1/collections/${encodeURIComponent(CHROMA_DOCS_ORG_A)}/upsert`,
+      `/api/v1/collections/${encodeURIComponent(CHROMA_DOCS_ORG_A)}/query`,
+      `/api/v1/collections/${encodeURIComponent(CHROMA_DOCS_ORG_A)}/delete`,
     ]);
     expect(requestBody(stub.calls[2] ?? failCall())).toMatchObject({ n_results: 10, include: ["metadatas", "distances", "embeddings"] });
     expect(matches).toEqual([{ id: "doc-1", score: 0.8, metadata: { type: "doc" }, vector: [1, 2] }]);
@@ -130,7 +156,7 @@ describe("HTTP vector adapters", () => {
         return jsonResponse({
           data: {
             Get: {
-              Helix_docs: [{ helixId: "doc-1", metadata: { type: "doc" }, vector: [1, 2], _additional: { score: 0.9 } }],
+              [WEAVIATE_DOCS_ORG_A]: [{ helixId: "doc-1", metadata: { type: "doc" }, vector: [1, 2], _additional: { score: 0.9 } }],
             },
           },
         });
@@ -139,18 +165,18 @@ describe("HTTP vector adapters", () => {
     });
     const store = new WeaviateVectorStore({ baseUrl: "http://weaviate.local", fetch: stub.fetch });
 
-    await store.createCollection("docs", 2, "cosine");
-    await store.upsert("docs", [{ id: "doc-1", vector: [1, 2], metadata: { type: "doc" } }]);
-    const matches = await store.query("docs", [1, 2], { filter: { type: "doc" }, includeVectors: true });
-    await store.delete("docs", ["doc-1"]);
+    await store.createCollection(ORG_A, "docs", 2, "cosine");
+    await store.upsert(ORG_A, "docs", [{ id: "doc-1", vector: [1, 2], metadata: { type: "doc" } }]);
+    const matches = await store.query(ORG_A, "docs", [1, 2], { filter: { type: "doc" }, includeVectors: true });
+    await store.delete(ORG_A, "docs", ["doc-1"]);
 
     expect(stub.calls.map((call) => [call.init.method, call.url.pathname])).toEqual([
       ["POST", "/v1/schema"],
       ["POST", "/v1/batch/objects"],
       ["POST", "/v1/graphql"],
-      ["DELETE", "/v1/objects/Helix_docs/doc-1"],
+      ["DELETE", `/v1/objects/${WEAVIATE_DOCS_ORG_A}/doc-1`],
     ]);
-    expect(requestBody(stub.calls[0] ?? failCall())).toMatchObject({ class: "Helix_docs", vectorizer: "none" });
+    expect(requestBody(stub.calls[0] ?? failCall())).toMatchObject({ class: WEAVIATE_DOCS_ORG_A, vectorizer: "none" });
     expect(matches).toEqual([{ id: "doc-1", score: 0.9, metadata: { type: "doc" }, vector: [1, 2] }]);
   });
 });

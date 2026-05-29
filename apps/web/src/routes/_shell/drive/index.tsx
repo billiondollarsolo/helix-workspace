@@ -22,17 +22,17 @@ export const Route = createFileRoute("/_shell/drive/")({
   validateSearch: (search) => driveSearchSchema.parse(search),
   loaderDeps: ({ search }) => ({
     folder: search.folder ?? null,
-    scope: search.scope ?? "my",
     q: search.q?.trim() ?? "",
+    scope: search.scope ?? "my",
   }),
   loader: async ({ context, deps }) => {
     await context.queryClient
       .ensureQueryData(
         driveItemsQueryOptions({
           folderId: deps.folder,
-          scope: deps.scope,
-          query: deps.q,
           limit: deps.q.length > 0 ? 50 : 100,
+          query: deps.q,
+          scope: deps.scope,
         }),
       )
       .catch(() => undefined);
@@ -40,25 +40,30 @@ export const Route = createFileRoute("/_shell/drive/")({
 });
 
 function DriveRoute() {
-  const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
-  const query = search.q?.trim() ?? "";
+  const search = Route.useSearch();
+  const searchValue = search.q ?? "";
+
+  const onSearchChange = (value: string) => {
+    const q = value.trim();
+    void navigate({
+      to: "/drive",
+      search: (prev) => ({
+        ...(prev as Record<string, unknown>),
+        file: undefined,
+        q: q.length > 0 ? value : undefined,
+      }),
+      replace: true,
+    });
+  };
 
   return (
     <SurfaceFrame
       title="Drive"
       icon={<Icons.Drive />}
       searchPlaceholder="Search Drive"
-      searchValue={query}
-      onSearchChange={(nextQuery) => {
-        void navigate({
-          search: (previous) => ({
-            ...previous,
-            q: nextQuery.trim().length === 0 ? undefined : nextQuery,
-            file: undefined,
-          }),
-        });
-      }}
+      searchValue={searchValue}
+      onSearchChange={onSearchChange}
     >
       <DriveShell />
     </SurfaceFrame>

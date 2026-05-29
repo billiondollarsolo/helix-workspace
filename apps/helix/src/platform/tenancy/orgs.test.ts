@@ -130,6 +130,86 @@ describe("PostgresOrgStore", () => {
     expect(org).toMatchObject({ slug: "acme", status: "active" });
   });
 
+  it("applies tenant lifecycle actions with bounded status transitions", async () => {
+    const suspendedAt = new Date("2026-05-24T00:00:00.000Z");
+    const softDeletedAt = new Date("2026-05-25T00:00:00.000Z");
+    const recording = createRecordingSql([
+      [orgRow({ slug: "acme", status: "suspended", suspendedAt })],
+      [orgRow({ slug: "acme", status: "active" })],
+      [orgRow({ slug: "acme", status: "soft_deleted", softDeletedAt })],
+      [orgRow({ slug: "acme", status: "active" })],
+      [],
+    ]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    await expect(
+      store.applyTenantLifecycleAction({ slug: "acme", action: "suspend" }),
+    ).resolves.toMatchObject({ slug: "acme", status: "suspended", suspendedAt });
+    await expect(
+      store.applyTenantLifecycleAction({ slug: "acme", action: "unsuspend" }),
+    ).resolves.toMatchObject({ slug: "acme", status: "active", suspendedAt: null });
+    await expect(
+      store.applyTenantLifecycleAction({ slug: "acme", action: "soft-delete" }),
+    ).resolves.toMatchObject({ slug: "acme", status: "soft_deleted", softDeletedAt });
+    await expect(
+      store.applyTenantLifecycleAction({ slug: "acme", action: "restore" }),
+    ).resolves.toMatchObject({ slug: "acme", status: "active", softDeletedAt: null });
+    await expect(
+      store.applyTenantLifecycleAction({ slug: "acme", action: "suspend" }),
+    ).resolves.toBeNull();
+
+    expect(recording.calls[0]?.text).toContain("and status = 'active'");
+    expect(recording.calls[1]?.text).toContain("and status = 'suspended'");
+    expect(recording.calls[2]?.text).toContain("and status in ('active', 'suspended')");
+    expect(recording.calls[3]?.text).toContain("and status = 'soft_deleted'");
+    expect(recording.calls[3]?.text).toContain("hard_deleted_at is null");
+    expect(recording.calls.map((call) => call.values)).toEqual([
+      ["acme"],
+      ["acme"],
+      ["acme"],
+      ["acme"],
+      ["acme"],
+    ]);
+  });
+
+  it("lists due soft-deleted tenants and marks hard-delete tombstones", async () => {
+    const softDeletedAt = new Date("2026-04-01T00:00:00.000Z");
+    const hardDeletedAt = new Date("2026-05-24T00:00:00.000Z");
+    const recording = createRecordingSql([
+      [
+        orgRow({ id: "org-a", slug: "acme", status: "soft_deleted", softDeletedAt }),
+        orgRow({ id: "org-b", slug: "beta", status: "soft_deleted", softDeletedAt }),
+      ],
+      [orgRow({ id: "org-a", slug: "acme", status: "hard_deleted", hardDeletedAt })],
+      [],
+    ]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    await expect(
+      store.listSoftDeletedTenantsDueForHardDelete({
+        before: new Date("2026-04-24T00:00:00.000Z"),
+        limit: 2,
+      }),
+    ).resolves.toEqual([
+      orgRecord({ id: "org-a", slug: "acme", status: "soft_deleted", softDeletedAt }),
+      orgRecord({ id: "org-b", slug: "beta", status: "soft_deleted", softDeletedAt }),
+    ]);
+    await expect(store.markTenantHardDeleted({ orgId: "org-a" })).resolves.toMatchObject({
+      id: "org-a",
+      status: "hard_deleted",
+      hardDeletedAt,
+    });
+    await expect(store.markTenantHardDeleted({ orgId: "org-missing" })).resolves.toBeNull();
+
+    expect(recording.calls[0]?.text).toContain("soft_deleted_at <= ?");
+    expect(recording.calls[0]?.text).toContain("hard_deleted_at is null");
+    expect(recording.calls[0]?.text).toContain("limit ?");
+    expect(recording.calls[0]?.values).toEqual([new Date("2026-04-24T00:00:00.000Z"), 2]);
+    expect(recording.calls[1]?.text).toContain("status = 'hard_deleted'");
+    expect(recording.calls[1]?.text).toContain("and status = 'soft_deleted'");
+    expect(recording.calls[1]?.text).toContain("hard_deleted_at is null");
+  });
+
   it("updates tenant config sections with audit trigger context", async () => {
     const recording = createRecordingSql([
       [],
@@ -164,61 +244,6 @@ describe("PostgresOrgStore", () => {
     expect(recording.calls[1]?.text).toContain("feature_flags = case");
     expect(recording.calls[1]?.text).toContain("quotas = case");
     expect(recording.calls[1]?.values).toContain("11111111-1111-4111-8111-111111111111");
-  });
-
-  it("updates tenant config only when the current storage snapshot still matches", async () => {
-    const recording = createRecordingSql([
-      [],
-      [
-        orgRow({
-          byoConfig: {
-            storage: {
-              kind: "byo",
-              provider: "aws-s3",
-              bucket: "next-bucket",
-              credentials_vault_path: "tenants/acme/byo-storage/next",
-            },
-          },
-          featureFlags: { byo_storage: true },
-        }),
-      ],
-    ]);
-    const store = new PostgresOrgStore(recording.sql);
-    const expectedCurrentStorage = {
-      kind: "helix-default",
-      prefix: "tenants/11111111-1111-4111-8111-111111111111/",
-    };
-
-    const org = await store.cutoverTenantStorageConfig({
-      orgId: "11111111-1111-4111-8111-111111111111",
-      storageConfig: {
-        kind: "byo",
-        provider: "aws-s3",
-        bucket: "next-bucket",
-        credentials_vault_path: "tenants/acme/byo-storage/next",
-      },
-      enableByoStorage: true,
-      expectedCurrentStorage,
-      changedByActorId: "22222222-2222-4222-8222-222222222222",
-      reason: "tenant storage migration cutover: job-1",
-    });
-
-    expect(org).toMatchObject({
-      byoConfig: {
-        storage: {
-          kind: "byo",
-          bucket: "next-bucket",
-        },
-      },
-      featureFlags: { byo_storage: true },
-    });
-    expect(recording.calls[0]?.text).toContain("helix.tenant_config_changed_by");
-    expect(recording.calls[0]?.text).toContain("helix.tenant_config_reason");
-    expect(recording.calls[1]?.text).toContain("jsonb_set");
-    expect(recording.calls[1]?.text).toContain("'{storage}'");
-    expect(recording.calls[1]?.text).toContain("'{byo_storage}'");
-    expect(recording.calls[1]?.text).toContain("byo_config->'storage' is not distinct from");
-    expect(recording.calls[1]?.values).toContain(expectedCurrentStorage);
   });
 
   it("lists BYO storage orgs and persists bounded health", async () => {
@@ -299,7 +324,10 @@ function orgRecord(overrides: Partial<OrgRecord>): OrgRecord {
 }
 
 function sqlReturningOrg(overrides: Partial<OrgRecord> = {}): postgres.Sql {
-  const tag = () => Promise.resolve([orgRow(overrides)]);
+  const tag = () =>
+    Promise.resolve([
+      orgRow(overrides),
+    ]);
   const sql = Object.assign(tag, {
     json: (value: unknown) => value,
     array: (value: unknown) => value,

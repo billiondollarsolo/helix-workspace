@@ -14,7 +14,7 @@ export const EDITORS_ROLE_IDS = [
 
 export type EditorsRoleId = (typeof EDITORS_ROLE_IDS)[number];
 
-export const EDITORS_OOXML_FIDELITY_MODES = ["native", "onlyoffice-compat", "legacy"] as const;
+export const EDITORS_OOXML_FIDELITY_MODES = ["native", "legacy"] as const;
 
 export type EditorsOoxmlFidelityMode = (typeof EDITORS_OOXML_FIDELITY_MODES)[number];
 
@@ -91,6 +91,7 @@ export interface EditorsDocumentSession {
   readonly id: string;
   readonly orgId: string;
   readonly title: string;
+  readonly ownerActorId: string | null;
   readonly editorEngine: string;
   readonly formatVersion: number;
   readonly updateSeq: number;

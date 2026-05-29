@@ -630,6 +630,7 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
       sha256: input.sha256 ?? null,
       status: "pending_upload",
       uploadUrl: null,
+      uploadHeaders: {},
       metadata: input.metadata ?? {},
       createdAt: now,
       updatedAt: now,

@@ -1,8 +1,10 @@
 import { queryOptions } from "@tanstack/react-query";
 import { getSessionUser } from "@/lib/auth";
 import { listCalendarEvents } from "@/features/calendar/api";
-import { listDrive } from "@/features/drive/api";
-import { formatLabelFromEntry } from "@/features/drive/drive-data";
+import { listDrive, searchDrive, type DriveApiEntry } from "@/features/drive/api";
+import { formatLabelFromEntry, previewFromEntry } from "@/features/drive/drive-data";
+import { driveEntryBelongsToSurface } from "@/features/drive/format-surface";
+import { entryFromSearchHit } from "@/features/drive/queries";
 import { listPeopleDirectory } from "@/features/people/api";
 import {
   exportDocsDocument,
@@ -34,6 +36,7 @@ export interface DocsSmartChipPickerOption {
 export interface DocsSmartChipPickerData {
   readonly people: readonly DocsSmartChipPickerOption[];
   readonly documents: readonly DocsSmartChipPickerOption[];
+  readonly files: readonly DocsSmartChipPickerOption[];
   readonly events: readonly DocsSmartChipPickerOption[];
 }
 
@@ -130,9 +133,14 @@ export function docsSmartChipPickerQueryOptions() {
   return queryOptions({
     queryKey: docsQueryKeys.smartChipPicker(),
     queryFn: async (): Promise<DocsSmartChipPickerData> => {
-      const [peopleResult, documentsResult, eventsResult] = await Promise.allSettled([
+      const [peopleResult, documentsResult, filesResult, eventsResult] = await Promise.allSettled([
         listPeopleDirectory({ limit: 25 }),
         listDocsDocuments({ limit: 25 }),
+        listDrive({
+          folderId: null,
+          acrossFolders: true,
+          limit: 25,
+        }),
         listCalendarEvents({ limit: 25 }),
       ]);
       return {
@@ -149,6 +157,15 @@ export function docsSmartChipPickerQueryOptions() {
                 id: document.id,
                 label: document.title.trim() || "Untitled document",
               }))
+            : [],
+        files:
+          filesResult.status === "fulfilled"
+            ? filesResult.value
+                .filter((entry) => entry.deletedAt === null && entry.type === "file")
+                .map((entry) => ({
+                  id: entry.id,
+                  label: entry.name.trim() || "Untitled file",
+                }))
             : [],
         events:
           eventsResult.status === "fulfilled"
@@ -198,48 +215,90 @@ export function isBackendDocsDocumentId(value: string | undefined): value is str
  * The Docs list is sourced from Drive entries so native Helix documents and
  * uploaded word-processor files appear in one place.
  *
- * Native Helix docs open through `/docs/:documentId`; OOXML files still open
- * through `/edit/:objectId` via OnlyOffice from the Drive surface.
+ * Native Helix docs open through `/docs/:documentId`. Foreign-format files
+ * (DOCX, RTF, ODT, etc.) are imported into a fresh native helix-doc on first
+ * open via the universal editor router, then routed to `/docs/:documentId`.
  */
-export function docsListFromDriveQueryOptions(input: { readonly limit?: number } = {}) {
+export function docsListFromDriveQueryOptions(
+  input: { readonly limit?: number; readonly query?: string } = {},
+) {
+  const query = input.query?.trim() ?? "";
+  const limit = input.limit ?? 100;
+  const searchLimit = Math.min(limit, 100);
   return queryOptions({
-    queryKey: ["docs", "list-from-drive", input.limit ?? 100] as const,
+    queryKey: ["docs", "list-from-drive", "app-docs", query, limit] as const,
     queryFn: async (): Promise<readonly DocSummary[]> => {
-      const entries = await listDrive({
-        folderId: null,
-        acrossFolders: true,
-        limit: input.limit ?? 100,
-      });
+      const entries =
+        query.length > 0
+          ? (await searchDrive({ query, folderId: null, limit: searchLimit })).map(
+              entryFromSearchHit,
+            )
+          : await listDrive({
+              folderId: null,
+              includeTrashed: true,
+              acrossFolders: true,
+              app: "docs",
+              limit,
+            });
       return entries
-        .filter(
-          (entry) => entry.type === "file" && entry.deletedAt === null && isDocumentLike(entry),
-        )
-        .map(
-          (entry): DocSummary => ({
+        .filter((entry) => entry.type === "file" && isDocumentLike(entry))
+        .map((entry): DocSummary => {
+          const preview = previewFromEntry(entry);
+          const owner = ownerLabelFromEntry(entry);
+          return {
             id: entry.id,
-            title:
-              (entry.metadata?.title as string | undefined)?.trim() ||
-              entry.name.replace(/\.(docx?|rtf|odt|helixdoc)$/iu, "").trim() ||
-              "Untitled document",
-            owner: (entry.metadata?.ownerName as string | undefined) ?? "You",
+            title: titleForDocumentEntry(entry),
+            owner,
             modified: formatModified(entry.updatedAt),
             shared: (entry.metadata?.sharedCount as number | undefined) ?? 1,
             folder: (entry.metadata?.folder as string | undefined) ?? "Product",
             starred: entry.metadata?.starred === true,
-            mine: true,
+            mine: mineFromEntry(entry, owner),
+            deletedAt: entry.deletedAt,
             source: "backend",
+            ...(entry.mimeType === undefined ? {} : { mimeType: entry.mimeType }),
             formatLabel: formatLabelFromEntry(entry),
+            ...(preview === undefined ? {} : { preview }),
             ...(typeof entry.metadata?.editorEngine === "string"
               ? { editorEngine: entry.metadata.editorEngine }
               : {}),
             ...(typeof entry.metadata?.formatVersion === "number"
               ? { formatVersion: entry.metadata.formatVersion }
               : {}),
-          }),
-        );
+            openMode: hasDocumentExtension(entry.name) ? "office" : "native",
+          };
+        });
     },
     throwOnError: false,
   });
+}
+
+function ownerLabelFromEntry(entry: DriveApiEntry): string {
+  const metadataOwner =
+    typeof entry.metadata?.ownerName === "string" ? entry.metadata.ownerName : "";
+  return entry.ownerDisplayName?.trim() || metadataOwner.trim() || "You";
+}
+
+function mineFromEntry(entry: DriveApiEntry, owner: string): boolean {
+  if (typeof entry.metadata?.mine === "boolean") {
+    return entry.metadata.mine;
+  }
+  return owner.trim().toLowerCase() === "you";
+}
+
+function titleForDocumentEntry(entry: DriveApiEntry): string {
+  const metadataTitle = (entry.metadata?.title as string | undefined)?.trim();
+  if (hasDocumentExtension(entry.name)) {
+    return entry.name.trim() || metadataTitle || "Untitled document";
+  }
+  if (entry.app === "docs") {
+    return metadataTitle || entry.name.replace(/\.(helixdoc)$/iu, "").trim() || "Untitled document";
+  }
+  return entry.name.trim() || metadataTitle || "Untitled document";
+}
+
+function hasDocumentExtension(name: string): boolean {
+  return driveEntryBelongsToSurface({ app: null, name: name.trim(), mimeType: undefined }, "docs");
 }
 
 /** True when a drive entry should appear in the Docs list — DOCX, DOC,
@@ -249,22 +308,5 @@ function isDocumentLike(entry: {
   readonly mimeType?: string;
   readonly name: string;
 }): boolean {
-  if (entry.app === "docs") return true;
-  const mime = entry.mimeType ?? "";
-  if (
-    mime.includes("wordprocessingml") ||
-    mime === "application/msword" ||
-    mime.includes("opendocument.text") ||
-    mime === "application/rtf"
-  ) {
-    return true;
-  }
-  const name = entry.name.toLowerCase();
-  return (
-    name.endsWith(".docx") ||
-    name.endsWith(".doc") ||
-    name.endsWith(".rtf") ||
-    name.endsWith(".odt") ||
-    name.endsWith(".helixdoc")
-  );
+  return driveEntryBelongsToSurface(entry, "docs");
 }

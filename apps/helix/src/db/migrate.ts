@@ -1,18 +1,12 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createSqlClient } from "./client.js";
+import { createSqlClient, resolveMigrationDatabaseUrl } from "./client.js";
+import { resolvePlatformMigrationSources } from "./migration-sources.js";
 import { runMigrations } from "./migration-runner.js";
 
-const currentDir = dirname(fileURLToPath(import.meta.url));
-const sql = createSqlClient();
+const sql = createSqlClient(resolveMigrationDatabaseUrl());
 
 try {
-  const result = await runMigrations(sql, [
-    {
-      namespace: "platform",
-      directory: join(currentDir, "migrations"),
-    },
-  ]);
+  const sources = await resolvePlatformMigrationSources();
+  const result = await runMigrations(sql, sources);
   console.log(
     `Applied ${String(result.applied.length)} migrations, skipped ${String(result.skipped.length)} migrations.`,
   );

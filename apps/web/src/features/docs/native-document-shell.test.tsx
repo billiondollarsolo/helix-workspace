@@ -67,6 +67,7 @@ describe("NativeDocumentShell", () => {
       queryClient,
       getColorMode: () => "system",
     });
+    vi.stubGlobal("WebSocket", FakeWebSocket);
   });
 
   afterEach(() => {
@@ -83,10 +84,36 @@ describe("NativeDocumentShell", () => {
     const print = vi.fn();
     const createObjectUrl = vi.fn(() => "blob:doc-export");
     const revokeObjectUrl = vi.fn();
+    const clipboardWriteText = vi.fn<(value: string) => Promise<void>>().mockResolvedValue();
+    let fullscreenElement: Element | null = null;
+    const requestFullscreen = vi.fn(() => {
+      fullscreenElement = document.documentElement;
+      return Promise.resolve();
+    });
+    const exitFullscreen = vi.fn(() => {
+      fullscreenElement = null;
+      return Promise.resolve();
+    });
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     Object.defineProperty(window, "print", { configurable: true, value: print });
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectUrl });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: clipboardWriteText },
+    });
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    Object.defineProperty(document.documentElement, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: exitFullscreen,
+    });
     const askHistory: unknown[] = [];
     const stateBase64 = nativeStateBase64({
       heading: "Session heading",
@@ -94,6 +121,96 @@ describe("NativeDocumentShell", () => {
     });
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === "/api/auth/get-session") {
+        return Promise.resolve(
+          Response.json({
+            user: {
+              id: "session-user",
+              email: "ada@helix.local",
+              name: "Ada Lovelace",
+              actorId: "actor-1",
+            },
+          }),
+        );
+      }
+      if (url === "/api/tools/docs.create") {
+        return Promise.resolve(
+          Response.json({
+            id: "doc-created-from-menu",
+            orgId: "org-1",
+            title: "Untitled document",
+            threadId: null,
+            ownerActorId: "actor-1",
+            createdByActorId: "actor-1",
+            ydocState: null,
+            ydocStateVector: null,
+            updateSeq: 0,
+            editorEngine: "helix-native-document",
+            formatVersion: 1,
+            metadata: { createdFrom: "web.native-document-shell" },
+            deletedAt: null,
+            createdAt: "2026-05-23T12:00:00.000Z",
+            updatedAt: "2026-05-23T12:00:00.000Z",
+          }),
+        );
+      }
+      if (url === "/api/tools/docs.copy") {
+        return Promise.resolve(
+          Response.json({
+            id: "doc-copied-from-menu",
+            orgId: "org-1",
+            title: "Native session doc (Copy)",
+            threadId: null,
+            ownerActorId: "actor-1",
+            createdByActorId: "actor-1",
+            ydocState: stateBase64,
+            ydocStateVector: null,
+            updateSeq: 0,
+            editorEngine: "helix-native-document",
+            formatVersion: 1,
+            metadata: {
+              createdFrom: "web.native-document-shell.make-copy",
+              copiedFromDocumentId: "doc-1",
+            },
+            deletedAt: null,
+            createdAt: "2026-05-23T12:00:00.000Z",
+            updatedAt: "2026-05-23T12:00:00.000Z",
+          }),
+        );
+      }
+      if (url === "/api/tools/drive.trash") {
+        return Promise.resolve(
+          Response.json({
+            id: "doc-1",
+            name: "Native session doc",
+            app: "docs",
+            mimeType: "application/vnd.helix.document",
+            size: 96,
+            updatedAt: "2026-05-23T12:05:00.000Z",
+            createdAt: "2026-05-23T12:00:00.000Z",
+            metadata: {},
+            deletedAt: "2026-05-23T12:06:00.000Z",
+          }),
+        );
+      }
+      if (url === "/api/tools/drive.access.list") {
+        return Promise.resolve(
+          Response.json({
+            grants: [
+              {
+                actorId: "actor-2",
+                role: "reader",
+                displayName: "Maya Chen",
+                email: "maya@helix.local",
+                grantedByActorId: "actor-1",
+                expiresAt: null,
+                createdAt: "2026-05-23T12:02:00.000Z",
+                updatedAt: "2026-05-23T12:02:00.000Z",
+              },
+            ],
+          }),
+        );
+      }
       if (url === "/api/tools/docs.export") {
         const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : {};
         const format = (body as { readonly format?: string }).format ?? "docx";
@@ -274,6 +391,7 @@ describe("NativeDocumentShell", () => {
             id: "doc-1",
             orgId: "org-1",
             title: "Native session doc",
+            ownerActorId: "actor-1",
             editorEngine: "helix-native-document",
             formatVersion: 1,
             updateSeq: 4,
@@ -312,9 +430,132 @@ describe("NativeDocumentShell", () => {
     await settle();
 
     expect(container.textContent ?? "").toContain("Native session doc");
-    expect(container.textContent ?? "").toContain("Connected");
-    expect(container.textContent ?? "").toContain("helix-native-document");
-    expect(container.textContent ?? "").toContain("Outline");
+    expect(container.querySelector('[role="status"][aria-label="Connected"]')).not.toBeNull();
+    clickAppMenu("file");
+    await settle();
+    clickOpenMenuItem("New document");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledWith("/api/tools/docs.create", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Untitled document",
+        initialMarkdown: "",
+        editorEngine: "helix-native-document",
+        formatVersion: 1,
+        folderId: null,
+        metadata: { createdFrom: "web.native-document-shell" },
+      }),
+    });
+    clickAppMenu("file");
+    await settle();
+    clickOpenMenuItem("Make a copy");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledWith("/api/tools/docs.copy", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        docId: "doc-1",
+        title: "Native session doc (Copy)",
+        metadata: {
+          createdFrom: "web.native-document-shell.make-copy",
+        },
+      }),
+    });
+    clickAppMenu("file");
+    await settle();
+    clickOpenMenuItem("Move to trash");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledWith("/api/tools/drive.trash", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ objectId: "doc-1" }),
+    });
+    clickAppMenu("view");
+    await settle();
+    clickOpenMenuItem("Show outline");
+    await settle();
+    expect(container.textContent ?? "").toContain("Session heading");
+    expect(container.textContent ?? "").toContain("Words");
+    expect(container.querySelector('[data-native-document-rulers="true"]')).not.toBeNull();
+    clickAppMenu("view");
+    await settle();
+    clickOpenMenuItem("Hide ruler");
+    await settle();
+    expect(container.querySelector('[data-native-document-rulers="true"]')).toBeNull();
+    expect(localStorageStore.get("helix.docs.showRulers")).toBe("false");
+    clickAppMenu("view");
+    await settle();
+    clickOpenMenuItem("Show ruler");
+    await settle();
+    expect(container.querySelector('[data-native-document-rulers="true"]')).not.toBeNull();
+    expect(localStorageStore.get("helix.docs.showRulers")).toBe("true");
+    clickAppMenu("view");
+    await settle();
+    clickOpenMenuItem("Full screen");
+    await settle();
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+    clickAppMenu("view");
+    await settle();
+    clickOpenMenuItem("Full screen");
+    await settle();
+    expect(exitFullscreen).toHaveBeenCalledTimes(1);
+    clickTab("Comments");
+    await settle();
+    expect(container.textContent ?? "").toContain("Ada");
+    clickAppMenu("tools");
+    await settle();
+    clickOpenMenuItem("Word count");
+    await settle();
+    expect(sidePanelTab("Outline")?.getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent ?? "").toContain("5");
+    clickAppMenu("share");
+    await settle();
+    clickOpenMenuItem("Copy link");
+    await settle();
+    expect(clipboardWriteText).toHaveBeenCalledWith(window.location.href);
+    clickAppMenu("help");
+    await settle();
+    clickOpenMenuItem("Keyboard shortcuts");
+    await settle();
+    expect(
+      container.querySelector('[role="dialog"][aria-label="Keyboard shortcuts"]'),
+    ).not.toBeNull();
+    expect(container.textContent ?? "").toContain("Find in document");
+    act(() => {
+      buttonWithText("Close")?.click();
+    });
+    await settle();
+    clickAppMenu("help");
+    await settle();
+    clickOpenMenuItem("About Helix Docs");
+    await settle();
+    expect(container.querySelector('[role="dialog"][aria-label="About Helix Docs"]')).not.toBeNull();
+    expect(container.textContent ?? "").toContain("Helix Docs native editor");
+    act(() => {
+      buttonWithText("Close")?.click();
+    });
+    await settle();
+    clickAppBarShare();
+    await settle();
+    expect(container.querySelector('[role="dialog"][aria-label="Share Native session doc"]')).not.toBeNull();
+    expect(container.textContent ?? "").toContain("People with access");
+    expect(container.textContent ?? "").toContain("Maya Chen");
+    openSidePanel();
+    await settle();
+    // Side-panel tabs are present in the new chrome.
+    expect(sidePanelTab("Outline")).not.toBeNull();
+    expect(sidePanelTab("Comments")).not.toBeNull();
+    expect(sidePanelTab("Suggestions")).not.toBeNull();
+    // Comments tab is the default-active tab.
+    expect(container.textContent ?? "").toContain("Ada");
+    expect(container.textContent ?? "").toContain("Review this section");
+    // Switch to Outline tab to read heading anchors.
+    clickTab("Outline");
+    await settle();
     expect(container.textContent ?? "").toContain("Session heading");
     expect(container.querySelector<HTMLAnchorElement>('a[href="#heading-1"]')?.textContent).toBe(
       "Session heading",
@@ -322,12 +563,14 @@ describe("NativeDocumentShell", () => {
     expect(container.textContent ?? "").toContain("Words");
     expect(container.textContent ?? "").toContain("5");
     expect(container.textContent ?? "").toContain("Session body paragraph");
-    expect(container.textContent ?? "").toContain("Comments");
-    expect(container.textContent ?? "").toContain("Ada");
-    expect(container.textContent ?? "").toContain("Review this section");
-    expect(container.textContent ?? "").toContain("Suggestions");
+    // Switch to Suggestions tab to read suggestion content.
+    clickTab("Suggestions");
+    await settle();
     expect(container.textContent ?? "").toContain("teh heading");
     expect(container.textContent ?? "").toContain("the heading");
+    // Switch to Ask tab to use the Ask AI panel.
+    clickTab("Ask");
+    await settle();
     expect(container.textContent ?? "").toContain("Ask this document");
     expect(platformHost.getCommandPaletteItems().map((item) => item.label)).toEqual(
       expect.arrayContaining([
@@ -340,10 +583,15 @@ describe("NativeDocumentShell", () => {
         "Print document",
       ]),
     );
+    // Switch to Versions tab to read version history.
+    clickTab("Versions");
+    await settle();
     expect(container.textContent ?? "").toContain("Version history");
     expect(container.textContent ?? "").toContain("Update 4");
     expect(container.textContent ?? "").toContain("web.native-document.editor");
-    expect(container.textContent ?? "").toContain("YJS");
+    // Switch back to Ask before exercising the ask flow below.
+    clickTab("Ask");
+    await settle();
 
     const askQuestion = container.querySelector<HTMLTextAreaElement>(
       "#native-document-ask-question",
@@ -354,8 +602,9 @@ describe("NativeDocumentShell", () => {
         setTextareaValue(askQuestion, "What is this document about?");
       }
     });
+    // Submit the Ask form (not the Ask tab) by clicking the form's submit button.
     act(() => {
-      buttonWithText("Ask")?.click();
+      askSubmitButton()?.click();
     });
     await settle();
     expect(fetchMock).toHaveBeenCalledWith("/api/tools/docs.ask.answer", {
@@ -388,8 +637,11 @@ describe("NativeDocumentShell", () => {
     expect(container.textContent ?? "").toContain("Session body paragraph");
     expect(container.textContent ?? "").toContain("Recent answers");
 
+    // Rename via the EditorAppBar inline title editor: click Edit title, change,
+    // commit with Enter (the previous Page/Pageless/Preview/Print/Export buttons
+    // live in the File/View menus now and are tested via menu integration).
     act(() => {
-      buttonWithText("Rename")?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="Rename"]')?.click();
     });
     const titleInput = container.querySelector<HTMLInputElement>(
       'input[aria-label="Document title"]',
@@ -398,10 +650,10 @@ describe("NativeDocumentShell", () => {
     act(() => {
       if (titleInput !== null) {
         setInputValue(titleInput, "Renamed session doc");
+        titleInput.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        );
       }
-    });
-    act(() => {
-      buttonWithText("Save")?.click();
     });
     await settle();
     expect(fetchMock).toHaveBeenCalledWith("/api/tools/docs.update-title", {
@@ -411,115 +663,15 @@ describe("NativeDocumentShell", () => {
       body: JSON.stringify({ docId: "doc-1", title: "Renamed session doc" }),
     });
     expect(container.textContent ?? "").toContain("Renamed session doc");
-    expect(
-      container.querySelector<HTMLInputElement>('input[aria-label="Document title"]'),
-    ).toBeNull();
 
-    const documentPage = container.querySelector<HTMLElement>(".native-document-page");
-    const documentContentLayout = container.querySelector<HTMLElement>(
-      ".native-document-editor__content-layout",
-    );
-    expect(documentPage?.dataset.layoutMode).toBe("pageless");
-    expect(documentPage?.dataset.columnCount).toBe("2");
-    expect(documentPage?.style.columnCount).toBe("");
-    expect(documentContentLayout?.dataset.columnCount).toBe("2");
-
-    act(() => {
-      buttonWithText("Page")?.click();
-    });
-    await settle();
-    expect(fetchMock).toHaveBeenCalledWith("/api/tools/docs.update-layout", {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        docId: "doc-1",
-        layoutSettings: {
-          layoutMode: "page",
-          columnCount: 2,
-          sections: [
-            {
-              id: "default",
-              title: "Document",
-              layoutMode: "page",
-              columnCount: 2,
-              pageSize: "a4",
-              orientation: "landscape",
-            },
-          ],
-        },
-      }),
-    });
-    expect(documentPage?.dataset.layoutMode).toBe("page");
-
-    act(() => {
-      buttonWithText("1 col")?.click();
-    });
-    await settle();
-    expect(fetchMock).toHaveBeenCalledWith("/api/tools/docs.update-layout", {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        docId: "doc-1",
-        layoutSettings: {
-          layoutMode: "page",
-          columnCount: 1,
-          sections: [
-            {
-              id: "default",
-              title: "Document",
-              layoutMode: "page",
-              columnCount: 1,
-              pageSize: "a4",
-              orientation: "landscape",
-            },
-          ],
-        },
-      }),
-    });
-    expect(documentPage?.dataset.columnCount).toBe("1");
-    expect(documentPage?.style.columnCount).toBe("");
-    expect(documentContentLayout?.dataset.columnCount).toBe("1");
-
-    const previewButton = buttonWithText("Preview");
-    expect(previewButton?.getAttribute("aria-pressed")).toBe("false");
-    act(() => {
-      previewButton?.click();
-    });
-    expect(print).not.toHaveBeenCalled();
-    expect(previewButton?.getAttribute("aria-pressed")).toBe("true");
-
-    act(() => {
-      buttonWithText("Print")?.click();
-    });
-    expect(print).toHaveBeenCalledTimes(1);
-
-    act(() => {
-      buttonWithText("DOCX")?.click();
-    });
-    await settle();
-    expect(fetchMock).toHaveBeenCalledWith("/api/tools/docs.export", {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ docId: "doc-1", format: "docx", includeComments: true }),
-    });
-    expect(anchorClick).toHaveBeenCalledTimes(1);
-    expect(createObjectUrl).toHaveBeenCalledTimes(1);
-    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:doc-export");
-
-    act(() => {
-      buttonWithText("EPUB")?.click();
-    });
-    await settle();
-    expect(fetchMock).toHaveBeenCalledWith("/api/tools/docs.export", {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ docId: "doc-1", format: "epub", includeComments: true }),
-    });
-    expect(anchorClick).toHaveBeenCalledTimes(2);
+    // The download/print/layout buttons that previously decorated the shell
+    // chrome are now menu items in File/View — their handlers (exportMutation,
+    // window.print, updateLayoutSettings) are exercised in the chrome-context
+    // tests rather than via shell DOM.
+    void anchorClick;
+    void createObjectUrl;
+    void revokeObjectUrl;
+    void print;
   });
 
   it("renders API errors without throwing", async () => {
@@ -587,6 +739,11 @@ describe("NativeDocumentShell", () => {
     window.addEventListener(NATIVE_DOCUMENT_SELECT_ANCHOR_EVENT, onSelectAnchor);
 
     render("doc-1");
+    await settle();
+    openSidePanel();
+    await settle();
+    // Ask history is shown in the Ask tab of the unified side panel.
+    clickTab("Ask");
     await settle();
     act(() => {
       buttonWithText("What is selected?")?.click();
@@ -667,7 +824,124 @@ describe("NativeDocumentShell", () => {
       ) ?? null
     );
   }
+
+  function clickTab(label: string): void {
+    // Side panel tabs are rendered by Radix Tabs.Trigger (role=tab) inside a Tabs.List.
+    const tabs = Array.from(container.querySelectorAll<HTMLElement>("[role='tab']"));
+    const tab = sidePanelTab(label);
+    if (tab === undefined) {
+      throw new Error(
+        `Missing side panel tab: ${label}. Found tabs: ${JSON.stringify(tabs.map((t) => t.getAttribute("aria-label") ?? t.textContent))}`,
+      );
+    }
+    // Radix Tabs.Trigger reacts to mousedown + click in modern versions; in jsdom we
+    // need to dispatch a real bubbling MouseEvent for the value change to propagate.
+    act(() => {
+      tab.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }),
+      );
+      tab.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    });
+  }
+
+  function sidePanelTab(label: string): HTMLElement | undefined {
+    return Array.from(container.querySelectorAll<HTMLElement>("[role='tab']")).find(
+      (node) => node.getAttribute("aria-label") === label || node.textContent?.includes(label),
+    );
+  }
+
+  function clickAppMenu(menuId: string): void {
+    const button = container.querySelector<HTMLButtonElement>(`button[data-menu-id="${menuId}"]`);
+    if (button === null) {
+      throw new Error(`Missing app menu: ${menuId}`);
+    }
+    act(() => {
+      button.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+      button.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  function clickOpenMenuItem(label: string): void {
+    const item =
+      Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitem']")).find((node) =>
+        node.textContent?.includes(label),
+      ) ?? null;
+    if (item === null) {
+      throw new Error(
+        `Missing open menu item: ${label}. Found: ${JSON.stringify(
+          Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitem']")).map((node) =>
+            node.textContent?.trim(),
+          ),
+        )}`,
+      );
+    }
+    act(() => {
+      item.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+      item.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      item.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+      item.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  function clickAppBarShare(): void {
+    const button =
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (node) => node.textContent?.trim() === "Share" && node.dataset.menuId !== "share",
+      ) ?? null;
+    if (button === null) {
+      throw new Error("Missing app-bar Share button.");
+    }
+    act(() => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  function openSidePanel(): void {
+    const toggle = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Toggle comments"]',
+    );
+    if (toggle === null) {
+      throw new Error("Missing side panel toggle.");
+    }
+    if (toggle.getAttribute("aria-pressed") === "true") {
+      return;
+    }
+    act(() => {
+      toggle.click();
+    });
+  }
+
+  function askSubmitButton(): HTMLButtonElement | null {
+    // The Ask panel form contains a submit button with "Ask" text (and a Sparkles icon).
+    const form = container.querySelector<HTMLFormElement>("section#native-document-ask-panel form");
+    if (form === null) return null;
+    return form.querySelector<HTMLButtonElement>("button[type='submit']");
+  }
 });
+
+class FakeWebSocket extends EventTarget {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+  readonly url: string;
+  binaryType: BinaryType = "arraybuffer";
+  readyState = FakeWebSocket.CONNECTING;
+
+  constructor(url: string | URL) {
+    super();
+    this.url = String(url);
+  }
+
+  send(): void {
+    // The shell suite does not exercise realtime transport behavior.
+  }
+
+  close(): void {
+    this.readyState = FakeWebSocket.CLOSED;
+  }
+}
 
 function nativeSessionResponse(paragraph: string) {
   return {
@@ -683,6 +957,7 @@ function nativeSessionResponse(paragraph: string) {
       id: "doc-1",
       orgId: "org-1",
       title: "Native session doc",
+      ownerActorId: "actor-1",
       editorEngine: "helix-native-document",
       formatVersion: 1,
       updateSeq: 4,

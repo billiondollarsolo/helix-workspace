@@ -7,6 +7,7 @@ import {
   defaultPolicy,
   parsePolicySettings,
   registerAdminSecurityPoliciesRoutes,
+  testSsoPolicyLogin,
 } from "./security-policies.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -51,6 +52,41 @@ describe("security policy settings validation", () => {
     const bad = parsePolicySettings("mfa", { allowedMethods: ["fingerprint"] });
     expect(bad.ok).toBe(false);
   });
+
+  it("accepts SSO draft settings without allowing local login to be disabled", () => {
+    const ok = parsePolicySettings("sso", {
+      provider: "generic_oidc",
+      metadataUrl: "https://idp.example.com/.well-known/openid-configuration",
+      jitProvisioning: true,
+      mappedDomains: ["example.com"],
+      localLoginEnabled: true,
+      setupStatus: "draft",
+      testLoginStatus: "runtime_pending",
+      setupSource: "signup",
+    });
+    expect(ok.ok).toBe(true);
+
+    const bad = parsePolicySettings("sso", {
+      provider: "not-a-provider",
+      localLoginEnabled: false,
+    });
+    expect(bad.ok).toBe(false);
+  });
+
+  it("reports SSO test-login status without starting an SSO flow", () => {
+    expect(testSsoPolicyLogin({ provider: "none" })).toMatchObject({
+      status: "configuration_required",
+    });
+    expect(testSsoPolicyLogin({ provider: "generic_saml" })).toMatchObject({
+      status: "configuration_required",
+    });
+    expect(
+      testSsoPolicyLogin({
+        provider: "generic_saml",
+        metadataUrl: "https://idp.example.com/saml/metadata",
+      }),
+    ).toMatchObject({ status: "runtime_pending" });
+  });
 });
 
 describe("admin security policies routes", () => {
@@ -62,7 +98,7 @@ describe("admin security policies routes", () => {
       headers: headers("admin.console.read"),
     });
     expect(response.statusCode).toBe(200);
-    const policies = (field(response, "policies") as { policyType: string }[]);
+    const policies = field(response, "policies") as { policyType: string }[];
     expect(policies.map((policy) => policy.policyType).sort()).toEqual(
       [...SECURITY_POLICY_TYPES].sort(),
     );
@@ -81,7 +117,7 @@ describe("admin security policies routes", () => {
       },
     });
     expect(updated.statusCode).toBe(200);
-    const updatedPolicy = (field(updated, "policy") as { enabled: boolean; enforcement: string });
+    const updatedPolicy = field(updated, "policy") as { enabled: boolean; enforcement: string };
     expect(updatedPolicy.enabled).toBe(true);
     expect(updatedPolicy.enforcement).toBe("required");
 
@@ -90,7 +126,10 @@ describe("admin security policies routes", () => {
       url: "/api/admin/security-policies/mfa",
       headers: headers("admin.console.read"),
     });
-    expect((field(reread, "policy") as { settings: { rememberDeviceDays: number } }).settings.rememberDeviceDays).toBe(30);
+    expect(
+      (field(reread, "policy") as { settings: { rememberDeviceDays: number } }).settings
+        .rememberDeviceDays,
+    ).toBe(30);
   });
 
   it("rejects invalid policy settings with a 400 envelope", async () => {
@@ -126,6 +165,66 @@ describe("admin security policies routes", () => {
     });
     expect(response.statusCode).toBe(403);
     expect(body(response).requiredScope).toBe("admin.console.write");
+  });
+
+  it("tests SSO login readiness with write scope and updates only test status", async () => {
+    const { app } = await buildApp();
+    const updated = await app.inject({
+      method: "PUT",
+      url: "/api/admin/security-policies/sso",
+      headers: headers("admin.console.write"),
+      payload: {
+        enabled: false,
+        enforcement: "optional",
+        settings: {
+          provider: "generic_oidc",
+          metadataUrl: "https://idp.example.com/.well-known/openid-configuration",
+          jitProvisioning: true,
+          mappedDomains: ["example.com"],
+          localLoginEnabled: true,
+          setupStatus: "draft",
+          testLoginStatus: "not_tested",
+          setupSource: "signup",
+        },
+      },
+    });
+    expect(updated.statusCode).toBe(200);
+
+    const tested = await app.inject({
+      method: "POST",
+      url: "/api/admin/security-policies/sso/test-login",
+      headers: headers("admin.console.write"),
+      payload: {},
+    });
+
+    expect(tested.statusCode).toBe(200);
+    expect(body(tested)).toEqual({
+      testLogin: {
+        status: "runtime_pending",
+        message: "Configuration saved. SAML/OIDC runtime is not connected yet.",
+      },
+    });
+
+    const reread = await app.inject({
+      method: "GET",
+      url: "/api/admin/security-policies/sso",
+      headers: headers("admin.console.read"),
+    });
+    expect(
+      (field(reread, "policy") as { settings: { testLoginStatus: string } }).settings
+        .testLoginStatus,
+    ).toBe("runtime_pending");
+  });
+
+  it("requires write scope for SSO test-login checks", async () => {
+    const { app } = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/security-policies/sso/test-login",
+      headers: headers("admin.console.read"),
+      payload: {},
+    });
+    expect(response.statusCode).toBe(403);
   });
 
   it("requires a read scope to list policies", async () => {

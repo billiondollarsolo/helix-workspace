@@ -29,10 +29,7 @@ describe("seedLocalDemo", () => {
       mailThreads: 4,
       driveEntries: 3,
       docs: 2,
-      sheets: 1,
-      slides: 1,
-      meetRooms: 1,
-      calendarEvents: 3,
+      calendarEvents: 2,
       chatRooms: 1,
       chatMessages: 3,
       storageObjects: 5,
@@ -51,18 +48,16 @@ describe("seedLocalDemo", () => {
     expect(recording.beginCalls).toBe(1);
 
     const sqlText = recording.calls.map((call) => call.text).join("\n");
+    expect(sqlText).toContain("insert into orgs");
+    expect(recording.calls.some((call) => call.values.includes(DEFAULT_LOCAL_OAUTH_ORG_ID))).toBe(
+      true,
+    );
     expect(sqlText).toContain('insert into "user"');
     expect(sqlText).toContain("insert into account");
     expect(sqlText).toContain("credential");
     expect(sqlText).toContain("insert into messages");
     expect(sqlText).toContain("insert into drive_folders");
     expect(sqlText).toContain("insert into docs_documents");
-    expect(sqlText).toContain("insert into sheets");
-    expect(sqlText).toContain("insert into sheet_tabs");
-    expect(sqlText).toContain("insert into sheet_cells");
-    expect(sqlText).toContain("insert into slide_decks");
-    expect(sqlText).toContain("insert into slides");
-    expect(sqlText).toContain("insert into meet_rooms");
     expect(sqlText).toContain("insert into cal_events");
     expect(sqlText).toContain("insert into chat_room_settings");
     expect(sqlText).toContain("insert into chat_read_receipts");
@@ -70,28 +65,12 @@ describe("seedLocalDemo", () => {
     expect(sqlText).toContain("insert into permissions");
     expect(recording.jsonValues).toContainEqual({ source: LOCAL_DEMO_SOURCE });
     expect(recording.arrays.some((value) => value.includes("mail.read"))).toBe(true);
-    expect(recording.arrays.some((value) => value.includes("notifications.read"))).toBe(true);
-    expect(recording.arrays.some((value) => value.includes("admin.console.read"))).toBe(true);
-    expect(sqlText).toContain("Launch Metrics Tracker");
-    expect(sqlText).toContain("MVP Readiness Readout");
-    expect(sqlText).toContain("mvp-surface-walkthrough");
-    expect(
-      recording.calls.some(
-        (call) => call.text.includes("insert into meet_rooms") && call.text.includes("'active'"),
-      ),
-    ).toBe(true);
-    expect(sqlText).toContain("subject ilike 'k6 %'");
-    expect(recording.calls.some((call) => call.values.includes("MVP surface walkthrough"))).toBe(
-      true,
+    const localAdminActorInsert = recording.calls.find(
+      (call) =>
+        call.text.includes("insert into actors") &&
+        call.values.includes(DEFAULT_LOCAL_OAUTH_ACTOR_ID),
     );
-    expect(sqlText).toContain("delete from actors");
-    expect(sqlText).toContain("metadata -> 'betterAuth' ->> 'userId'");
-    expect(recording.jsonValues).toContainEqual({
-      betterAuth: {
-        userId: `demo-${DEFAULT_LOCAL_OAUTH_ACTOR_ID}`,
-        emailVerified: true,
-      },
-    });
+    expect(localAdminActorInsert?.values).toContainEqual(expect.arrayContaining(["docs.comment"]));
     expect(storage.ensureBucketCalls).toBe(1);
     expect(storage.puts.map((put) => put.key)).toEqual([
       "demo/00000000-0000-4000-8000-000000000100/00000000-0000-4000-8000-000000000302/AI Services and Keys",

@@ -78,7 +78,7 @@ EOF
 BASE_URL=${HELIX_BASE_URL:-http://127.0.0.1:28431}
 CLIENT_ID=${HELIX_SMOKE_CLIENT_ID:-}
 CLIENT_SECRET=${HELIX_SMOKE_CLIENT_SECRET:-}
-SCOPE=${HELIX_SMOKE_SCOPE:-platform.read mail.read mail.write mail.send docs.read docs.write docs.comment drive.read drive.write calendar.read calendar.write calendar.write:respond calendar.read:freebusy chat.read chat.write meet.read meet.write assistant.write assistant.memory admin.users admin.audit admin.agents admin.plugins admin.webhooks admin.config.write admin.console.read admin.console.write}
+SCOPE=${HELIX_SMOKE_SCOPE:-platform.read mail.read mail.write mail.send docs.read docs.write docs.comment drive.read drive.write calendar.read calendar.write calendar.write:respond calendar.read:freebusy chat.read chat.write meet.read meet.write assistant.write assistant.memory admin.users admin.audit admin.agents admin.plugins admin.webhooks admin.config.write}
 MUTATE=false
 TIER=${HELIX_SMOKE_TIER:-personal}
 BACKUP_RESTORE=${HELIX_SMOKE_BACKUP_RESTORE:-false}

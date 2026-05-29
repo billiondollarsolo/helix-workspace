@@ -567,6 +567,7 @@ function emptyExportSlide(deck: SlideDeckSummaryRecord): SlideRecord {
     layout: "title",
     content: { layout: "title", title: deck.title, subtitle: "No slides yet", bg: "neutral" },
     speakerNotes: "",
+    revision: 1,
     createdAt: now,
     updatedAt: now,
   };

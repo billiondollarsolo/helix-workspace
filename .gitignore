@@ -20,6 +20,11 @@ test-results
 playwright-report
 .playwright
 **/reports/a11y/
+.tmp/
+.codex-artifacts/
+.claude/
+Helix Workspace - Google Workspace Replacement-handoff.zip
+New
 
 # Environment / secrets (keep example files)
 .env
@@ -31,6 +36,15 @@ playwright-report
 data
 *.log
 *.pid
+
+# Test corpus (downloaded public-domain files; scripts/manifest are tracked)
+/test-corpus/apache-tika/
+/test-corpus/commonmark/
+/test-corpus/libreoffice/
+/test-corpus/picsum/
+/test-corpus/generated/
+/test-corpus/.cache/
+/test-corpus/_state.json
 
 # OS / editor
 .DS_Store

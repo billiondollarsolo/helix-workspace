@@ -7,9 +7,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SheetsShell } from "./sheets-shell";
 
+const navigateMock = vi.fn();
+
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({
-    navigate: vi.fn(),
+    navigate: navigateMock,
   }),
 }));
 
@@ -43,6 +45,8 @@ let queryClient: QueryClient;
 let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
 let toolCalls: Array<{ readonly url: string; readonly body: unknown }>;
 let importShouldFail: boolean;
+let digestSpy: { mockRestore: () => void };
+let driveEntries: readonly unknown[];
 
 describe("SheetsShell", () => {
   beforeEach(() => {
@@ -54,85 +58,78 @@ describe("SheetsShell", () => {
     });
     toolCalls = [];
     importShouldFail = false;
+    driveEntries = [];
+    navigateMock.mockClear();
+    digestSpy = vi.spyOn(crypto.subtle, "digest").mockResolvedValue(new ArrayBuffer(32));
     fetchMock = vi.fn<typeof fetch>((input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
       toolCalls.push({ url, body });
-      if (url === "/api/tools/sheets.import-csv") {
+      if (url === "/api/tools/drive.upload") {
         if (importShouldFail) {
           return Promise.resolve(
-            Response.json({ error: { message: "CSV import is limited" } }, { status: 400 }),
+            Response.json({ error: { message: "Drive upload failed" } }, { status: 503 }),
           );
         }
+        const name = (body as { name?: string }).name ?? "Upload.csv";
+        const objectId = `upload-${name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/gu, "-")
+          .replace(/^-|-$/gu, "")}`;
         return Promise.resolve(
           Response.json({
-            id: "11111111-1111-4111-8111-111111111111",
-            title: "Renewals",
-            tabs: [
-              {
-                id: "22222222-2222-4222-8222-222222222222",
-                sheetId: "11111111-1111-4111-8111-111111111111",
-                name: "Renewals",
-                position: 0,
-              },
-            ],
-            import: {
-              format: "csv",
-              filename: "Renewals.csv",
-              rowCount: 2,
-              columnCount: 2,
-              populatedCellCount: 4,
-            },
+            objectId,
+            orgId: "org-1",
+            ownerActorId: "actor-1",
+            name,
+            folderId: null,
+            storageKey: `drive/${name}`,
+            mimeType: (body as { mimeType?: string }).mimeType ?? "application/octet-stream",
+            byteSize: (body as { byteSize?: number }).byteSize ?? 0,
+            sha256: "0".repeat(64),
+            status: "prepared",
+            uploadUrl: null,
+            uploadHeaders: {},
+            metadata: {},
+            createdAt: "2026-05-20T12:00:00.000Z",
+            updatedAt: "2026-05-20T12:00:00.000Z",
           }),
         );
       }
-      if (url === "/api/tools/sheets.import-xlsx") {
+      if (url === "/api/tools/drive.finalize") {
         return Promise.resolve(
           Response.json({
-            id: "33333333-3333-4333-8333-333333333333",
-            title: "Forecast",
-            tabs: [],
-            import: {
-              format: "xlsx",
-              filename: "Forecast.xlsx",
-              sheetCount: 1,
-              rowCount: 2,
-              columnCount: 2,
-              populatedCellCount: 4,
-            },
+            id: "version-1",
+            orgId: "org-1",
+            objectId: (body as { objectId?: string }).objectId,
+            versionNumber: 1,
+            storageKey: (body as { storageKey?: string }).storageKey,
+            mimeType: (body as { mimeType?: string }).mimeType,
+            byteSize: (body as { byteSize?: number }).byteSize,
+            sha256: "0".repeat(64),
+            metadata: {},
+            createdByActorId: "actor-1",
+            createdAt: "2026-05-20T12:00:00.000Z",
           }),
         );
       }
-      if (url === "/api/tools/sheets.import-ods") {
-        return Promise.resolve(
-          Response.json({
-            id: "55555555-5555-4555-8555-555555555555",
-            title: "Forecast",
-            tabs: [],
-            import: {
-              format: "ods",
-              filename: "Forecast.ods",
-              sheetCount: 1,
-              rowCount: 2,
-              columnCount: 2,
-              populatedCellCount: 4,
-            },
-          }),
-        );
+      if (url === "/api/tools/drive.list") {
+        return Promise.resolve(Response.json({ entries: driveEntries }));
       }
-      if (url === "/api/tools/sheets.import-tsv") {
+      if (url === "/api/tools/drive.trash") {
+        return Promise.resolve(Response.json({ id: (body as { objectId?: string }).objectId }));
+      }
+      if (url === "/api/tools/drive.restore") {
+        return Promise.resolve(Response.json({ id: (body as { objectId?: string }).objectId }));
+      }
+      if (url === "/api/tools/drive.delete") {
+        return Promise.resolve(Response.json({ ok: true }));
+      }
+      if (url === "/api/tools/drive.star.set") {
         return Promise.resolve(
           Response.json({
-            id: "44444444-4444-4444-8444-444444444444",
-            title: "Pipeline",
-            tabs: [],
-            import: {
-              format: "tsv",
-              filename: "Pipeline.tsv",
-              rowCount: 2,
-              columnCount: 2,
-              populatedCellCount: 4,
-            },
+            id: (body as { objectId?: string }).objectId,
+            metadata: { starred: (body as { starred?: boolean }).starred },
           }),
         );
       }
@@ -147,28 +144,30 @@ describe("SheetsShell", () => {
     });
     container.remove();
     queryClient.clear();
+    digestSpy.mockRestore();
     vi.unstubAllGlobals();
   });
 
-  it("imports CSV files into native spreadsheets and opens the created sheet", async () => {
+  it("uploads CSV files as raw Drive objects and opens the copy/preview flow", async () => {
     render();
     await settle();
 
     dispatchCsvFile("Renewals.csv", "Customer,ARR\nAcme,1200");
     await settle();
 
-    expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-csv")?.body).toEqual({
-      filename: "Renewals.csv",
-      title: "Renewals",
-      csvText: "Customer,ARR\nAcme,1200",
-      metadata: { source: "web.sheets-shell.import-csv" },
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.upload")?.body).toMatchObject({
+      name: "Renewals.csv",
+      mimeType: "text/csv",
+      byteSize: 22,
     });
-    expect(container.querySelector('[aria-label="Native spreadsheet editor"]')?.textContent).toBe(
-      "11111111-1111-4111-8111-111111111111",
-    );
+    expect(toolCalls.some((call) => call.url.includes("sheets.import"))).toBe(false);
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/open/$objectId",
+      params: { objectId: "upload-renewals-csv" },
+    });
   });
 
-  it("surfaces CSV import failures without opening the editor", async () => {
+  it("surfaces CSV upload failures without opening the editor", async () => {
     importShouldFail = true;
     render();
     await settle();
@@ -176,62 +175,188 @@ describe("SheetsShell", () => {
     dispatchCsvFile("Too large.csv", "A,B\n1,2");
     await settle();
 
-    expect(container.textContent).toContain("Could not import spreadsheet: CSV import is limited");
+    expect(container.textContent).toContain("Could not import spreadsheet: Drive upload failed");
     expect(container.querySelector('[aria-label="Native spreadsheet editor"]')).toBeNull();
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 
-  it("imports XLSX files into native spreadsheets and opens the created sheet", async () => {
+  it("uploads Excel-family files as raw Drive objects and opens the copy/preview flow", async () => {
     render();
     await settle();
 
-    dispatchXlsxFile("Forecast.xlsx", [1, 2, 3]);
+    dispatchExcelWorkbookFile(
+      "Forecast.xlsb",
+      [1, 2, 3],
+      "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+    );
     await settle();
 
-    expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-xlsx")?.body).toEqual({
-      filename: "Forecast.xlsx",
-      title: "Forecast",
-      contentBase64: "AQID",
-      metadata: { source: "web.sheets-shell.import-xlsx" },
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.upload")?.body).toMatchObject({
+      name: "Forecast.xlsb",
+      mimeType: "application/vnd.ms-excel.sheet.binary.macroenabled.12",
+      byteSize: 3,
     });
-    expect(container.querySelector('[aria-label="Native spreadsheet editor"]')?.textContent).toBe(
-      "33333333-3333-4333-8333-333333333333",
-    );
+    expect(toolCalls.some((call) => call.url.includes("sheets.import"))).toBe(false);
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/open/$objectId",
+      params: { objectId: "upload-forecast-xlsb" },
+    });
   });
 
-  it("imports ODS files into native spreadsheets and opens the created sheet", async () => {
+  it("uploads ODS files as raw Drive objects and opens the copy/preview flow", async () => {
     render();
     await settle();
 
     dispatchOdsFile("Forecast.ods", [4, 5, 6]);
     await settle();
 
-    expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-ods")?.body).toEqual({
-      filename: "Forecast.ods",
-      title: "Forecast",
-      contentBase64: "BAUG",
-      metadata: { source: "web.sheets-shell.import-ods" },
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.upload")?.body).toMatchObject({
+      name: "Forecast.ods",
+      mimeType: "application/vnd.oasis.opendocument.spreadsheet",
+      byteSize: 3,
     });
-    expect(container.querySelector('[aria-label="Native spreadsheet editor"]')?.textContent).toBe(
-      "55555555-5555-4555-8555-555555555555",
-    );
+    expect(toolCalls.some((call) => call.url.includes("sheets.import"))).toBe(false);
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/open/$objectId",
+      params: { objectId: "upload-forecast-ods" },
+    });
   });
 
-  it("imports TSV files into native spreadsheets and opens the created sheet", async () => {
+  it("uploads TSV files as raw Drive objects and opens the copy/preview flow", async () => {
     render();
     await settle();
 
     dispatchTsvFile("Pipeline.tsv", "Customer\tStage\nAcme\tCommit");
     await settle();
 
-    expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-tsv")?.body).toEqual({
-      filename: "Pipeline.tsv",
-      title: "Pipeline",
-      tsvText: "Customer\tStage\nAcme\tCommit",
-      metadata: { source: "web.sheets-shell.import-tsv" },
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.upload")?.body).toMatchObject({
+      name: "Pipeline.tsv",
+      mimeType: "text/tab-separated-values",
+      byteSize: 26,
     });
-    expect(container.querySelector('[aria-label="Native spreadsheet editor"]')?.textContent).toBe(
-      "44444444-4444-4444-8444-444444444444",
+    expect(toolCalls.some((call) => call.url.includes("sheets.import"))).toBe(false);
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/open/$objectId",
+      params: { objectId: "upload-pipeline-tsv" },
+    });
+  });
+
+  it("uses normal empty states for shared, starred, and trash folders", async () => {
+    render();
+    await settle();
+
+    await clickButton("Shared with me");
+    expect(container.textContent).toContain("No shared spreadsheets yet.");
+    expect(container.textContent).not.toContain("Coming soon");
+
+    await clickButton("Starred");
+    expect(container.textContent).toContain("No starred spreadsheets yet.");
+    expect(container.textContent).not.toContain("Coming soon");
+
+    await clickButton("Trash");
+    expect(container.textContent).toContain("Trash is empty.");
+    expect(container.textContent).not.toContain("Coming soon");
+  });
+
+  it("loads more spreadsheet rows through Drive when the first page is full", async () => {
+    driveEntries = Array.from({ length: 101 }, (_, index) =>
+      spreadsheetDriveEntry({
+        id: `66666666-6666-4666-8666-${String(index).padStart(12, "0")}`,
+        name: `Spreadsheet ${String(index).padStart(3, "0")}.xlsx`,
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
     );
+
+    render();
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.list")?.body).toMatchObject({
+      app: "sheets",
+      limit: 101,
+    });
+    await clickButton("Show more spreadsheets");
+    await settle();
+
+    expect(
+      toolCalls.filter((call) => call.url === "/api/tools/drive.list").at(-1)?.body,
+    ).toMatchObject({ app: "sheets", limit: 201 });
+  });
+
+  it("moves spreadsheet list rows to trash through Drive", async () => {
+    const objectId = "11111111-1111-4111-8111-111111111111";
+    driveEntries = [
+      spreadsheetDriveEntry({
+        id: objectId,
+        name: "Quarter forecast.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    ];
+    render();
+    await settle();
+
+    await clickButton("List view");
+    await clickButton("More actions for Quarter forecast.xlsx");
+    await clickButton("Move to trash");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.trash")?.body).toEqual({
+      objectId,
+    });
+    expect(toolCalls.some((call) => call.url.includes("sheets.delete"))).toBe(false);
+  });
+
+  it("stars spreadsheet list rows through Drive", async () => {
+    const objectId = "11111111-1111-4111-8111-111111111111";
+    driveEntries = [
+      spreadsheetDriveEntry({
+        id: objectId,
+        name: "Quarter forecast.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    ];
+    render();
+    await settle();
+
+    await clickButton("List view");
+    await clickButton("More actions for Quarter forecast.xlsx");
+    await clickMenuItem("Star");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.star.set")?.body).toEqual({
+      objectId,
+      starred: true,
+    });
+  });
+
+  it("restores and permanently deletes trashed spreadsheets through Drive", async () => {
+    const objectId = "22222222-2222-4222-8222-222222222222";
+    driveEntries = [
+      spreadsheetDriveEntry({
+        id: objectId,
+        name: "Deleted budget.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        deletedAt: "2026-05-22T12:00:00.000Z",
+      }),
+    ];
+    render();
+    await settle();
+
+    await clickButton("Trash");
+    await clickButton("List view");
+    await clickButton("More actions for Deleted budget.xlsx");
+    await clickButton("Restore");
+    await settle();
+    await clickButton("More actions for Deleted budget.xlsx");
+    await clickButton("Delete forever");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.restore")?.body).toEqual({
+      objectId,
+      folderId: null,
+    });
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.delete")?.body).toEqual({
+      objectId,
+    });
   });
 });
 
@@ -243,6 +368,56 @@ function render() {
       </QueryClientProvider>,
     );
   });
+}
+
+async function clickButton(label: string): Promise<void> {
+  const target = [...container.querySelectorAll<HTMLElement>("button,[role='button']")].find(
+    (control) =>
+      control.textContent?.includes(label) === true ||
+      control.getAttribute("aria-label")?.includes(label) === true,
+  );
+  if (target === undefined) {
+    throw new Error(`Missing button: ${label}`);
+  }
+  await act(async () => {
+    target.click();
+    await Promise.resolve();
+  });
+}
+
+async function clickMenuItem(label: string): Promise<void> {
+  const target = [...container.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find(
+    (button) => button.textContent?.trim().includes(label) === true,
+  );
+  if (target === undefined) {
+    throw new Error(`Missing menu item: ${label}`);
+  }
+  await act(async () => {
+    target.click();
+    await Promise.resolve();
+  });
+}
+
+function spreadsheetDriveEntry(input: {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly deletedAt?: string | null;
+}) {
+  return {
+    id: input.id,
+    type: "file",
+    name: input.name,
+    folderId: null,
+    ownerActorId: "actor-1",
+    ownerDisplayName: "You",
+    app: null,
+    mimeType: input.mimeType,
+    metadata: {},
+    deletedAt: input.deletedAt ?? null,
+    createdAt: "2026-05-20T12:00:00.000Z",
+    updatedAt: "2026-05-20T12:00:00.000Z",
+  };
 }
 
 async function settle() {
@@ -259,70 +434,33 @@ function dispatchCsvFile(filename: string, csvText: string) {
   const input = container.querySelector<HTMLInputElement>('input[aria-label="Import spreadsheet"]');
   expect(input).not.toBeNull();
   const file = new File([csvText], filename, { type: "text/csv" });
-  Object.defineProperty(file, "text", {
-    configurable: true,
-    value: () => Promise.resolve(csvText),
-  });
-  Object.defineProperty(input, "files", {
-    configurable: true,
-    get: () => [file],
-  });
-
-  act(() => {
-    input?.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  dispatchImportFile(input, file);
 }
 
 function dispatchTsvFile(filename: string, tsvText: string) {
   const input = container.querySelector<HTMLInputElement>('input[aria-label="Import spreadsheet"]');
   expect(input).not.toBeNull();
   const file = new File([tsvText], filename, { type: "text/tab-separated-values" });
-  Object.defineProperty(file, "text", {
-    configurable: true,
-    value: () => Promise.resolve(tsvText),
-  });
-  Object.defineProperty(input, "files", {
-    configurable: true,
-    get: () => [file],
-  });
-
-  act(() => {
-    input?.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  dispatchImportFile(input, file);
 }
 
-function dispatchXlsxFile(filename: string, bytes: readonly number[]) {
+function dispatchExcelWorkbookFile(filename: string, bytes: readonly number[], mimeType: string) {
   const input = container.querySelector<HTMLInputElement>('input[aria-label="Import spreadsheet"]');
   expect(input).not.toBeNull();
-  const fileBytes = Uint8Array.from(bytes);
-  const file = new File([fileBytes], filename, {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
-  Object.defineProperty(file, "arrayBuffer", {
-    configurable: true,
-    value: () => Promise.resolve(Uint8Array.from(bytes).buffer),
-  });
-  Object.defineProperty(input, "files", {
-    configurable: true,
-    get: () => [file],
-  });
-
-  act(() => {
-    input?.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  const file = new File([Uint8Array.from(bytes)], filename, { type: mimeType });
+  dispatchImportFile(input, file);
 }
 
 function dispatchOdsFile(filename: string, bytes: readonly number[]) {
   const input = container.querySelector<HTMLInputElement>('input[aria-label="Import spreadsheet"]');
   expect(input).not.toBeNull();
-  const fileBytes = Uint8Array.from(bytes);
-  const file = new File([fileBytes], filename, {
+  const file = new File([Uint8Array.from(bytes)], filename, {
     type: "application/vnd.oasis.opendocument.spreadsheet",
   });
-  Object.defineProperty(file, "arrayBuffer", {
-    configurable: true,
-    value: () => Promise.resolve(Uint8Array.from(bytes).buffer),
-  });
+  dispatchImportFile(input, file);
+}
+
+function dispatchImportFile(input: HTMLInputElement | null, file: File) {
   Object.defineProperty(input, "files", {
     configurable: true,
     get: () => [file],

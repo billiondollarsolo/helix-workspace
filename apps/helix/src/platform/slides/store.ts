@@ -20,6 +20,15 @@ export interface CreateSlideDeckInput {
   readonly folderId?: string | null | undefined;
 }
 
+export interface CopySlideDeckInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly deckId: string;
+  readonly title?: string | undefined;
+  readonly folderId?: string | null | undefined;
+  readonly metadata?: JsonObject | undefined;
+}
+
 export interface UpdateSlideDeckInput {
   readonly orgId: string;
   readonly actorId: string;
@@ -73,13 +82,6 @@ export interface ReorderSlidesInput {
   readonly slideIds: readonly string[];
 }
 
-export interface RestoreSlideDeckSnapshotVersionInput {
-  readonly orgId: string;
-  readonly actorId: string;
-  readonly deckId: string;
-  readonly versionNumber: number;
-}
-
 export interface SlideOperationLogRecord {
   readonly id: string;
   readonly orgId: string;
@@ -90,6 +92,34 @@ export interface SlideOperationLogRecord {
   readonly baseRevision: number;
   readonly operation: JsonObject;
   readonly createdAt: Date;
+}
+
+export interface SlideDeckVersionRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly deckId: string;
+  readonly versionNumber: number;
+  readonly storageKey: string;
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly sha256: string;
+  readonly metadata: JsonObject;
+  readonly createdByActorId: string | null;
+  readonly createdAt: Date;
+}
+
+export interface ListSlideDeckVersionsInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly deckId: string;
+  readonly limit: number;
+}
+
+export interface RestoreSlideDeckVersionInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly deckId: string;
+  readonly versionId: string;
 }
 
 export interface AppendSlideOperationInput {
@@ -118,10 +148,20 @@ export type SlideSyncOperation =
       readonly slideId: string;
       readonly content?: SlideContent | undefined;
       readonly speakerNotes?: string | undefined;
+      /**
+       * Optional per-slide CAS token. When provided, the server rejects the
+       * operation with `slide-conflict` if the slide's current revision is
+       * higher (i.e. another writer mutated the slide first). Older clients
+       * that omit this field still succeed but will silently last-write-win;
+       * the frontend ships it on every edit.
+       */
+      readonly expectedRevision?: number | undefined;
     }
   | {
       readonly kind: "delete-slide";
       readonly slideId: string;
+      /** See `update-slide.expectedRevision`. */
+      readonly expectedRevision?: number | undefined;
     }
   | {
       readonly kind: "reorder-slides";
@@ -157,10 +197,25 @@ export type ApplySlideOperationResult =
       readonly status: "ahead";
       readonly operationId: string;
       readonly revision: number;
+    }
+  | {
+      readonly status: "slide-conflict";
+      readonly operationId: string;
+      readonly revision: number;
+      readonly slideId: string;
+      readonly currentSlideRevision: number;
+      readonly snapshot: {
+        readonly deck: SlideDeckSummaryRecord;
+        readonly slides: readonly SlideRecord[];
+      };
     };
 
 export interface SlidesStore {
   createDeck(input: CreateSlideDeckInput): Promise<SlideDeckSummaryRecord>;
+  copyDeck(input: CopySlideDeckInput): Promise<{
+    readonly deck: SlideDeckSummaryRecord;
+    readonly slides: readonly SlideRecord[];
+  } | null>;
   listDecksForActor(input: ListSlideDecksInput): Promise<ListSlideDecksResult>;
   getDeckForActor(input: {
     readonly orgId: string;
@@ -188,10 +243,25 @@ export interface SlidesStore {
   }): Promise<readonly SlideOperationLogRecord[]>;
   appendOperation(input: AppendSlideOperationInput): Promise<SlideOperationLogRecord>;
   applyOperation(input: ApplySlideOperationInput): Promise<ApplySlideOperationResult>;
-  restoreSnapshotVersion(input: RestoreSlideDeckSnapshotVersionInput): Promise<{
+  listVersions(input: ListSlideDeckVersionsInput): Promise<readonly SlideDeckVersionRecord[]>;
+  restoreVersion(input: RestoreSlideDeckVersionInput): Promise<{
     readonly deck: SlideDeckSummaryRecord;
     readonly slides: readonly SlideRecord[];
   } | null>;
+}
+
+interface SlideDeckVersionRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly object_id: string;
+  readonly version_number: number;
+  readonly storage_key: string;
+  readonly mime_type: string;
+  readonly byte_size: number;
+  readonly sha256: string;
+  readonly metadata: JsonObject;
+  readonly created_by_actor_id: string | null;
+  readonly created_at: Date;
 }
 
 interface SlideDeckRow {
@@ -218,6 +288,7 @@ interface SlideRow {
   readonly layout: string;
   readonly content: JsonObject;
   readonly speaker_notes: string;
+  readonly revision: number;
   readonly created_at: Date;
   readonly updated_at: Date;
 }
@@ -231,20 +302,6 @@ interface SlideOperationLogRow {
   readonly revision: number;
   readonly base_revision: number;
   readonly operation: JsonObject;
-  readonly created_at: Date;
-}
-
-interface DriveVersionRow {
-  readonly id: string;
-  readonly org_id: string;
-  readonly object_id: string;
-  readonly version_number: number;
-  readonly storage_key: string;
-  readonly mime_type: string;
-  readonly byte_size: number;
-  readonly sha256: string | null;
-  readonly metadata: JsonObject;
-  readonly created_by_actor_id: string | null;
   readonly created_at: Date;
 }
 
@@ -295,7 +352,17 @@ export class PostgresSlidesStore implements SlidesStore {
           ${deck.id}, ${input.orgId}, ${input.actorId}, 'file',
           ${storageKey},
           'application/vnd.helix.presentation', ${storedSnapshot.byteSize}, ${storedSnapshot.sha256},
-          ${tx.json(toSqlJson({ ...(input.metadata ?? {}), app: "slides", deckId: deck.id, name: input.title.trim(), title: input.title.trim(), folderId: input.folderId ?? null }))}
+          ${tx.json(
+            toSqlJson({
+              ...(input.metadata ?? {}),
+              app: "slides",
+              deckId: deck.id,
+              name: input.title.trim(),
+              title: input.title.trim(),
+              folderId: input.folderId ?? null,
+              preview: nativeSlidesPreviewMetadata(deck, []),
+            }),
+          )}
         )
         on conflict (id) do update set
           byte_size = excluded.byte_size,
@@ -328,6 +395,139 @@ export class PostgresSlidesStore implements SlidesStore {
         payload: { title: input.title },
       });
       return { ...deck, slideCount: 0 };
+    });
+  }
+
+  async copyDeck(input: CopySlideDeckInput): Promise<{
+    readonly deck: SlideDeckSummaryRecord;
+    readonly slides: readonly SlideRecord[];
+  } | null> {
+    return this.sql.begin(async (tx) => {
+      const source = await selectDeckForActor(tx, input.orgId, input.actorId, input.deckId);
+      if (source === null) {
+        return null;
+      }
+      const sourceSlides = await selectSlidesForDeck(tx, input.orgId, input.deckId);
+      const sourceObjectRows = (await tx`
+        select metadata
+        from objects
+        where id = ${input.deckId}
+          and org_id = ${input.orgId}
+          and metadata->>'app' = 'slides'
+        limit 1
+      `) as unknown as readonly { readonly metadata: JsonObject }[];
+      const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata?.folderId);
+      const folderId = input.folderId === undefined ? sourceFolderId : input.folderId;
+      const title = input.title?.trim() || `${source.title} (Copy)`;
+      const metadata = {
+        ...source.metadata,
+        createdFrom: "slides.deck.copy",
+        copiedFromDeckId: source.id,
+        ...(input.metadata ?? {}),
+      };
+      const rows = (await tx`
+        insert into slide_decks (org_id, title, owner_actor_id, created_by_actor_id, metadata)
+        values (
+          ${input.orgId},
+          ${title},
+          ${input.actorId},
+          ${input.actorId},
+          ${tx.json(toSqlJson(metadata))}
+        )
+        returning *
+      `) as unknown as readonly SlideDeckRow[];
+      const deck = mapDeck(rows[0]);
+      const slides: SlideRecord[] = [];
+      const now = new Date();
+      for (const slide of sourceSlides) {
+        const slideRows = (await tx`
+          insert into slides (
+            org_id, deck_id, position, layout, content, speaker_notes, revision, created_at, updated_at
+          )
+          values (
+            ${input.orgId},
+            ${deck.id},
+            ${slide.position},
+            ${slide.layout},
+            ${tx.json(toSqlJson(slide.content))},
+            ${slide.speakerNotes},
+            1,
+            ${now},
+            ${now}
+          )
+          returning *
+        `) as unknown as readonly SlideRow[];
+        slides.push(mapSlide(slideRows[0]));
+      }
+      const storageKey = `slides/${input.orgId}/${deck.id}`;
+      const storedSnapshot = await writeSlideDeckStorageSnapshot({
+        resolver: this.options.storageResolver,
+        orgId: input.orgId,
+        key: storageKey,
+        deck,
+        slides,
+      });
+      const versionSnapshot = await writeSlideDeckStorageSnapshot({
+        resolver: this.options.storageResolver,
+        orgId: input.orgId,
+        key: slideDeckSnapshotVersionStorageKey(input.orgId, deck.id, 1),
+        deck,
+        slides,
+      });
+      await tx`
+        insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
+        values (
+          ${deck.id}, ${input.orgId}, ${input.actorId}, 'file',
+          ${storageKey},
+          'application/vnd.helix.presentation', ${storedSnapshot.byteSize}, ${storedSnapshot.sha256},
+          ${tx.json(
+            toSqlJson({
+              ...metadata,
+              app: "slides",
+              deckId: deck.id,
+              name: title,
+              title,
+              folderId: folderId ?? null,
+              preview: nativeSlidesPreviewMetadata(deck, slides),
+            }),
+          )}
+        )
+        on conflict (id) do update set
+          byte_size = excluded.byte_size,
+          sha256 = excluded.sha256,
+          metadata = excluded.metadata,
+          updated_at = now()
+      `;
+      await insertSlideDeckSnapshotVersion(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        deckId: deck.id,
+        versionNumber: 1,
+        storageKey: slideDeckSnapshotVersionStorageKey(input.orgId, deck.id, 1),
+        byteSize: versionSnapshot.byteSize,
+        sha256: versionSnapshot.sha256,
+        metadata: {
+          app: "slides",
+          title,
+          slideCount: slides.length,
+          copiedFromDeckId: source.id,
+        },
+      });
+      await grantObjectAccess(tx, {
+        orgId: input.orgId,
+        objectId: deck.id,
+        actorId: input.actorId,
+        role: "owner",
+        grantedByActorId: input.actorId,
+      });
+      await appendSlidesActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "slides.deck.copied",
+        deckId: deck.id,
+        payload: { title, copiedFromDeckId: source.id, slideCount: slides.length },
+      });
+      return { deck: { ...deck, slideCount: slides.length }, slides };
     });
   }
 
@@ -520,6 +720,7 @@ export class PostgresSlidesStore implements SlidesStore {
           layout = ${nextContent.layout},
           content = ${tx.json(toSqlJson(nextContent))},
           speaker_notes = ${nextNotes},
+          revision = revision + 1,
           updated_at = now()
         where id = ${input.slideId}
           and org_id = ${input.orgId}
@@ -701,6 +902,41 @@ export class PostgresSlidesStore implements SlidesStore {
         return { status: "ahead", operationId: input.operationId, revision: latestRevision };
       }
 
+      // Per-slide CAS for shape-grained ops. The deck-level baseRevision is
+      // too coarse: two clients editing different shapes on the same slide
+      // can both pass the same `baseRevision` and the second write silently
+      // overwrites the first. The slide's own `revision` is bumped on every
+      // write, so a stale `expectedRevision` here means another writer beat
+      // us. Reject and let the client re-fetch + retry on the fresh snapshot.
+      if (
+        (input.operation.kind === "update-slide" || input.operation.kind === "delete-slide") &&
+        input.operation.expectedRevision !== undefined
+      ) {
+        const slideRows = (await tx`
+          select revision
+          from slides
+          where id = ${input.operation.slideId}
+            and org_id = ${input.orgId}
+          limit 1
+        `) as unknown as readonly { readonly revision: number }[];
+        const currentSlideRevision = slideRows[0]?.revision ?? 0;
+        if (currentSlideRevision !== input.operation.expectedRevision) {
+          const deck = await selectDeckForActor(tx, input.orgId, input.actorId, input.deckId);
+          if (deck === null) {
+            throw new Error(`Unknown or inaccessible presentation: ${input.deckId}`);
+          }
+          const slides = await selectSlidesForDeck(tx, input.orgId, input.deckId);
+          return {
+            status: "slide-conflict",
+            operationId: input.operationId,
+            revision: latestRevision,
+            slideId: input.operation.slideId,
+            currentSlideRevision,
+            snapshot: { deck: { ...deck, slideCount: slides.length }, slides },
+          };
+        }
+      }
+
       await this.#applySyncOperation(tx, input);
       const deck = await selectDeckForActor(tx, input.orgId, input.actorId, input.deckId);
       if (deck === null) {
@@ -732,7 +968,26 @@ export class PostgresSlidesStore implements SlidesStore {
     });
   }
 
-  async restoreSnapshotVersion(input: RestoreSlideDeckSnapshotVersionInput): Promise<{
+  async listVersions(
+    input: ListSlideDeckVersionsInput,
+  ): Promise<readonly SlideDeckVersionRecord[]> {
+    const deck = await selectDeckForActor(this.sql, input.orgId, input.actorId, input.deckId);
+    if (deck === null) {
+      return [];
+    }
+    const rows = (await this.sql`
+      select *
+      from drive_versions
+      where org_id = ${input.orgId}
+        and object_id = ${input.deckId}
+        and mime_type = 'application/vnd.helix.presentation+json'
+      order by version_number desc
+      limit ${input.limit}
+    `) as unknown as readonly SlideDeckVersionRow[];
+    return rows.map(mapSlideDeckVersion);
+  }
+
+  async restoreVersion(input: RestoreSlideDeckVersionInput): Promise<{
     readonly deck: SlideDeckSummaryRecord;
     readonly slides: readonly SlideRecord[];
   } | null> {
@@ -741,43 +996,30 @@ export class PostgresSlidesStore implements SlidesStore {
       const versionRows = (await tx`
         select *
         from drive_versions
-        where org_id = ${input.orgId}
+        where id = ${input.versionId}
+          and org_id = ${input.orgId}
           and object_id = ${input.deckId}
-          and version_number = ${input.versionNumber}
           and mime_type = 'application/vnd.helix.presentation+json'
         limit 1
-      `) as unknown as readonly DriveVersionRow[];
-      const version = versionRows[0];
-      if (version === undefined) {
+      `) as unknown as readonly SlideDeckVersionRow[];
+      if (versionRows[0] === undefined) {
         return null;
       }
-      const storage = await this.options.storageResolver?.({ orgId: input.orgId });
-      if (storage === undefined) {
-        throw new Error("Tenant storage resolver is required to restore a presentation snapshot.");
-      }
-      const object = await storage.client.get(version.storage_key);
-      if (object === null) {
-        throw new Error("Presentation snapshot version bytes are unavailable.");
-      }
-      const body = await storageObjectBodyBytes(object.body);
-      if (version.sha256 !== null && sha256Hex(body) !== version.sha256) {
-        throw new Error("Presentation snapshot version checksum mismatch.");
-      }
-      const snapshot = parseSlideDeckStorageSnapshot(body, {
+      const version = mapSlideDeckVersion(versionRows[0]);
+      const snapshot = await readSlideDeckSnapshotVersion(this.options.storageResolver, {
         orgId: input.orgId,
+        storageKey: version.storageKey,
         deckId: input.deckId,
       });
-      const deckRows = (await tx`
+      const now = new Date();
+      await tx`
         update slide_decks
         set title = ${snapshot.deck.title},
             metadata = ${tx.json(toSqlJson(snapshot.deck.metadata))},
-            updated_at = now()
+            updated_at = ${now}
         where id = ${input.deckId}
           and org_id = ${input.orgId}
-          and deleted_at is null
-        returning *
-      `) as unknown as readonly SlideDeckRow[];
-      const restoredDeck = mapDeck(deckRows[0]);
+      `;
       await tx`
         delete from slides
         where org_id = ${input.orgId}
@@ -785,7 +1027,9 @@ export class PostgresSlidesStore implements SlidesStore {
       `;
       for (const slide of snapshot.slides) {
         await tx`
-          insert into slides (id, org_id, deck_id, position, layout, content, speaker_notes)
+          insert into slides (
+            id, org_id, deck_id, position, layout, content, speaker_notes, revision, created_at, updated_at
+          )
           values (
             ${slide.id},
             ${input.orgId},
@@ -793,7 +1037,10 @@ export class PostgresSlidesStore implements SlidesStore {
             ${slide.position},
             ${slide.layout},
             ${tx.json(toSqlJson(slide.content))},
-            ${slide.speakerNotes}
+            ${slide.speakerNotes},
+            1,
+            ${now},
+            ${now}
           )
         `;
       }
@@ -804,13 +1051,16 @@ export class PostgresSlidesStore implements SlidesStore {
         verb: "slides.version.restored",
         deckId: input.deckId,
         payload: {
-          restoredVersionNumber: input.versionNumber,
-          restoredStorageKey: version.storage_key,
-          slideCount: snapshot.slides.length,
+          restoredVersionId: version.id,
+          restoredVersionNumber: version.versionNumber,
         },
       });
+      const deck = await selectDeckForActor(tx, input.orgId, input.actorId, input.deckId);
+      if (deck === null) {
+        return null;
+      }
       const slides = await selectSlidesForDeck(tx, input.orgId, input.deckId);
-      return { deck: { ...restoredDeck, slideCount: slides.length }, slides };
+      return { deck: { ...deck, slideCount: slides.length }, slides };
     });
   }
 
@@ -909,6 +1159,7 @@ export class PostgresSlidesStore implements SlidesStore {
             layout = ${nextContent.layout},
             content = ${tx.json(toSqlJson(nextContent))},
             speaker_notes = ${nextNotes},
+            revision = revision + 1,
             updated_at = now()
           where id = ${input.operation.slideId}
             and org_id = ${input.orgId}
@@ -1035,7 +1286,13 @@ export class PostgresSlidesStore implements SlidesStore {
       set byte_size = ${storedSnapshot.byteSize},
           sha256 = ${storedSnapshot.sha256},
           metadata = objects.metadata || ${sql.json(
-            toSqlJson({ app: "slides", deckId, name: deck.title, title: deck.title }),
+            toSqlJson({
+              app: "slides",
+              deckId,
+              name: deck.title,
+              title: deck.title,
+              preview: nativeSlidesPreviewMetadata(deck, slides),
+            }),
           )},
           updated_at = now()
       where id = ${deckId} and org_id = ${orgId}
@@ -1287,133 +1544,6 @@ async function writeSlideDeckStorageSnapshot(input: {
   return { byteSize: body.byteLength, sha256: sha256Hex(body) };
 }
 
-interface SlideDeckStorageSnapshot {
-  readonly deck: {
-    readonly id: string;
-    readonly orgId: string;
-    readonly title: string;
-    readonly metadata: JsonObject;
-  };
-  readonly slides: readonly {
-    readonly id: string;
-    readonly position: number;
-    readonly layout: SlideLayout;
-    readonly content: SlideContent;
-    readonly speakerNotes: string;
-  }[];
-}
-
-function parseSlideDeckStorageSnapshot(
-  body: Uint8Array,
-  expected: { readonly orgId: string; readonly deckId: string },
-): SlideDeckStorageSnapshot {
-  const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
-  if (!isObjectRecord(parsed) || parsed["app"] !== "slides" || parsed["version"] !== 1) {
-    throw new Error("Presentation snapshot version has an unsupported format.");
-  }
-  const deck = parsed["deck"];
-  if (!isObjectRecord(deck)) {
-    throw new Error("Presentation snapshot version is missing deck metadata.");
-  }
-  const deckId = requiredString(deck["id"], "snapshot deck id");
-  const orgId = requiredString(deck["orgId"], "snapshot org id");
-  if (deckId !== expected.deckId || orgId !== expected.orgId) {
-    throw new Error("Presentation snapshot version belongs to a different deck.");
-  }
-  const slides = requiredArray(parsed["slides"], "snapshot slides").map(parseSlideSnapshotSlide);
-  const slideIds = new Set(slides.map((slide) => slide.id));
-  if (slideIds.size !== slides.length) {
-    throw new Error("Presentation snapshot slide ids must be unique.");
-  }
-  const positions = new Set(slides.map((slide) => slide.position));
-  if (positions.size !== slides.length || slides.some((slide) => slide.position >= slides.length)) {
-    throw new Error("Presentation snapshot slide positions must be contiguous.");
-  }
-  return {
-    deck: {
-      id: deckId,
-      orgId,
-      title: stringValue(deck["title"], "snapshot deck title"),
-      metadata: jsonObjectValue(deck["metadata"], "snapshot deck metadata"),
-    },
-    slides,
-  };
-}
-
-function parseSlideSnapshotSlide(value: unknown): SlideDeckStorageSnapshot["slides"][number] {
-  if (!isObjectRecord(value)) {
-    throw new Error("Presentation snapshot slide must be an object.");
-  }
-  const content = parseSlideContent(jsonObjectValue(value["content"], "snapshot slide content"));
-  const layout = normalizeLayout(requiredString(value["layout"], "snapshot slide layout"));
-  if (layout !== content.layout) {
-    throw new Error("Presentation snapshot slide layout does not match its content.");
-  }
-  return {
-    id: requiredString(value["id"], "snapshot slide id"),
-    position: nonNegativeInteger(value["position"], "snapshot slide position"),
-    layout,
-    content,
-    speakerNotes: stringValue(value["speakerNotes"], "snapshot slide speaker notes"),
-  };
-}
-
-async function storageObjectBodyBytes(
-  body: AsyncIterable<Uint8Array> | Uint8Array,
-): Promise<Uint8Array> {
-  if (Symbol.asyncIterator in body) {
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of body) {
-      chunks.push(chunk);
-    }
-    return Buffer.concat(chunks);
-  }
-  return body;
-}
-
-function requiredString(value: unknown, label: string): string {
-  const string = stringValue(value, label);
-  if (string.length === 0) {
-    throw new Error(`Invalid ${label}.`);
-  }
-  return string;
-}
-
-function stringValue(value: unknown, label: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`Invalid ${label}.`);
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`Invalid ${label}.`);
-  }
-  return value;
-}
-
-function requiredArray(value: unknown, label: string): readonly unknown[] {
-  if (!Array.isArray(value)) {
-    throw new Error(`Invalid ${label}.`);
-  }
-  return value;
-}
-
-function jsonObjectValue(value: unknown, label: string): JsonObject {
-  if (value === undefined) {
-    return {};
-  }
-  if (!isObjectRecord(value)) {
-    throw new Error(`Invalid ${label}.`);
-  }
-  return value as JsonObject;
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function mapDeck(row: SlideDeckRow | undefined): SlideDeckRecord {
   if (row === undefined) {
     throw new Error("Expected slide deck row.");
@@ -1447,8 +1577,30 @@ function mapSlide(row: SlideRow | undefined): SlideRecord {
     layout: normalizeLayout(row.layout),
     content: parseSlideContent(row.content),
     speakerNotes: row.speaker_notes,
+    // Older deployments may not yet have run migration 0060; coerce undefined
+    // to 1 so existing rows remain editable until the column lands.
+    revision: typeof row.revision === "number" ? row.revision : 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapSlideDeckVersion(row: SlideDeckVersionRow | undefined): SlideDeckVersionRecord {
+  if (row === undefined) {
+    throw new Error("Expected slide deck version row.");
+  }
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    deckId: row.object_id,
+    versionNumber: row.version_number,
+    storageKey: row.storage_key,
+    mimeType: row.mime_type,
+    byteSize: row.byte_size,
+    sha256: row.sha256,
+    metadata: row.metadata,
+    createdByActorId: row.created_by_actor_id,
+    createdAt: row.created_at,
   };
 }
 
@@ -1487,6 +1639,10 @@ function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
+function jsonStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 function toJsonObject(value: unknown): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
@@ -1495,8 +1651,199 @@ function encodeSnapshot(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
 }
 
+interface SlideDeckSnapshotV1 {
+  readonly app: "slides";
+  readonly version: 1;
+  readonly deck: {
+    readonly id: string;
+    readonly title: string;
+    readonly metadata: JsonObject;
+  };
+  readonly slides: readonly {
+    readonly id: string;
+    readonly position: number;
+    readonly layout: SlideLayout;
+    readonly content: SlideContent;
+    readonly speakerNotes: string;
+  }[];
+}
+
+async function readSlideDeckSnapshotVersion(
+  resolver: TenantStorageResolver | undefined,
+  input: { readonly orgId: string; readonly storageKey: string; readonly deckId: string },
+): Promise<SlideDeckSnapshotV1> {
+  const storage = await resolver?.({ orgId: input.orgId });
+  if (storage === undefined) {
+    throw new Error("Slide version restore requires readable tenant storage.");
+  }
+  const object = await storage.client.get(input.storageKey);
+  if (object === null) {
+    throw new Error(`Slide version snapshot not found: ${input.storageKey}`);
+  }
+  const snapshot = parseSlideDeckSnapshot(
+    new TextDecoder().decode(await storageObjectBody(object.body)),
+  );
+  if (snapshot.deck.id !== input.deckId) {
+    throw new Error("Slide version snapshot does not belong to the requested presentation.");
+  }
+  return snapshot;
+}
+
+function parseSlideDeckSnapshot(body: string): SlideDeckSnapshotV1 {
+  const parsed: unknown = JSON.parse(body);
+  if (!isRecord(parsed) || parsed["app"] !== "slides" || parsed["version"] !== 1) {
+    throw new Error("Invalid slide deck version snapshot.");
+  }
+  const deck = parsed["deck"];
+  const slides = parsed["slides"];
+  if (!isRecord(deck) || !Array.isArray(slides)) {
+    throw new Error("Invalid slide deck version snapshot.");
+  }
+  return {
+    app: "slides",
+    version: 1,
+    deck: {
+      id: readSnapshotString(deck["id"], "deck.id"),
+      title: readSnapshotString(deck["title"], "deck.title"),
+      metadata: readSnapshotObject(deck["metadata"]),
+    },
+    slides: slides.map(parseSnapshotSlide),
+  };
+}
+
+function parseSnapshotSlide(value: unknown): SlideDeckSnapshotV1["slides"][number] {
+  if (!isRecord(value)) {
+    throw new Error("Invalid slide in version snapshot.");
+  }
+  const content = parseSlideContent(readSnapshotObject(value["content"]));
+  return {
+    id: readSnapshotString(value["id"], "slide.id"),
+    position: readSnapshotInteger(value["position"], "slide.position"),
+    layout: content.layout,
+    content,
+    speakerNotes: readSnapshotString(value["speakerNotes"], "slide.speakerNotes"),
+  };
+}
+
+function readSnapshotString(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid slide version snapshot field: ${field}.`);
+  }
+  return value;
+}
+
+function readSnapshotInteger(value: unknown, field: string): number {
+  if (!Number.isInteger(value) || (value as number) < 0) {
+    throw new Error(`Invalid slide version snapshot field: ${field}.`);
+  }
+  return value as number;
+}
+
+function readSnapshotObject(value: unknown): JsonObject {
+  return isRecord(value) ? (JSON.parse(JSON.stringify(value)) as JsonObject) : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function storageObjectBody(
+  body: Uint8Array | AsyncIterable<Uint8Array>,
+): Promise<Uint8Array> {
+  if (body instanceof Uint8Array) {
+    return body;
+  }
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  for await (const chunk of body) {
+    chunks.push(chunk);
+    byteLength += chunk.byteLength;
+  }
+  const result = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
 function sha256Hex(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function nativeSlidesPreviewMetadata(
+  deck: SlideDeckRecord,
+  slides: readonly SlideRecord[],
+): JsonObject {
+  return {
+    kind: "text",
+    status: "available",
+    mimeType: "application/vnd.helix.presentation",
+    text: nativeSlidesPreviewText(deck, slides),
+  };
+}
+
+function nativeSlidesPreviewText(deck: SlideDeckRecord, slides: readonly SlideRecord[]): string {
+  const firstSlide = [...slides].sort((left, right) => left.position - right.position)[0];
+  if (firstSlide === undefined) {
+    return deck.title;
+  }
+  return previewLines([deck.title, ...slideContentPreviewLines(firstSlide.content)])
+    .join("\n")
+    .slice(0, 2000);
+}
+
+function slideContentPreviewLines(content: SlideContent): readonly string[] {
+  switch (content.layout) {
+    case "title":
+      return [content.title, content.eyebrow ?? "", content.subtitle ?? "", ...shapePreviewLines(content)];
+    case "agenda":
+    case "bullets":
+      return [content.title, ...content.items, ...shapePreviewLines(content)];
+    case "stats":
+      return [
+        content.title,
+        content.subtitle ?? "",
+        ...content.stats.flatMap((stat) => [stat.value, stat.label, stat.note]),
+        ...shapePreviewLines(content),
+      ];
+    case "split":
+      return [
+        content.title,
+        content.left,
+        ...(Array.isArray(content.rightContent) ? content.rightContent : [content.rightContent]),
+        content.quoteWho ?? "",
+        ...shapePreviewLines(content),
+      ];
+    case "image":
+      return [content.title, content.note, ...shapePreviewLines(content)];
+  }
+}
+
+function shapePreviewLines(content: SlideContent): readonly string[] {
+  return (
+    content.shapes
+      ?.flatMap((shape) => [shape.text ?? "", shape.imageAlt ?? "", shape.mediaTitle ?? ""])
+      .filter((line) => line.trim().length > 0) ?? []
+  );
+}
+
+function previewLines(lines: readonly string[]): readonly string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of lines) {
+    const normalized = line.replace(/\s+/gu, " ").trim();
+    if (normalized.length === 0 || seen.has(normalized.toLowerCase())) {
+      continue;
+    }
+    seen.add(normalized.toLowerCase());
+    out.push(normalized);
+    if (out.length >= 12) {
+      break;
+    }
+  }
+  return out;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1536,6 +1883,49 @@ export class InMemorySlidesStore implements SlidesStore {
     };
     this.decks.set(deck.id, { deck });
     return { ...deck, slideCount: 0 };
+  }
+
+  async copyDeck(input: CopySlideDeckInput): Promise<{
+    readonly deck: SlideDeckSummaryRecord;
+    readonly slides: readonly SlideRecord[];
+  } | null> {
+    const source = this.accessibleDeck(input.orgId, input.actorId, input.deckId);
+    if (source === null) {
+      return null;
+    }
+    const now = new Date();
+    const deck: SlideDeckRecord = {
+      id: randomUUID(),
+      orgId: input.orgId,
+      title: input.title?.trim() || `${source.title} (Copy)`,
+      ownerActorId: input.actorId,
+      createdByActorId: input.actorId,
+      metadata: {
+        ...source.metadata,
+        createdFrom: "slides.deck.copy",
+        copiedFromDeckId: source.id,
+        ...(input.metadata ?? {}),
+        app: "slides",
+        folderId: input.folderId ?? jsonStringOrNull(source.metadata.folderId),
+      },
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.decks.set(deck.id, { deck });
+    const copiedSlides = this.slidesOf(source.id).map((slide) => {
+      const copied: SlideRecord = {
+        ...slide,
+        id: randomUUID(),
+        deckId: deck.id,
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.slides.set(copied.id, copied);
+      return copied;
+    });
+    return { deck: { ...deck, slideCount: copiedSlides.length }, slides: copiedSlides };
   }
 
   async listDecksForActor(input: ListSlideDecksInput): Promise<ListSlideDecksResult> {
@@ -1625,6 +2015,7 @@ export class InMemorySlidesStore implements SlidesStore {
       layout: input.content.layout,
       content: input.content,
       speakerNotes: input.speakerNotes ?? "",
+      revision: 1,
       createdAt: now,
       updatedAt: now,
     };
@@ -1644,6 +2035,7 @@ export class InMemorySlidesStore implements SlidesStore {
       layout: nextContent.layout,
       content: nextContent,
       speakerNotes: input.speakerNotes ?? slide.speakerNotes,
+      revision: slide.revision + 1,
       updatedAt: new Date(),
     };
     this.slides.set(updated.id, updated);
@@ -1743,6 +2135,31 @@ export class InMemorySlidesStore implements SlidesStore {
     if (input.baseRevision > latestRevision) {
       return { status: "ahead", operationId: input.operationId, revision: latestRevision };
     }
+    if (
+      (input.operation.kind === "update-slide" || input.operation.kind === "delete-slide") &&
+      input.operation.expectedRevision !== undefined
+    ) {
+      const slide = this.slides.get(input.operation.slideId);
+      const currentSlideRevision = slide?.revision ?? 0;
+      if (currentSlideRevision !== input.operation.expectedRevision) {
+        const snapshot = await this.getDeckForActor({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          deckId: input.deckId,
+        });
+        if (snapshot === null) {
+          throw new Error(`Unknown or inaccessible presentation: ${input.deckId}`);
+        }
+        return {
+          status: "slide-conflict",
+          operationId: input.operationId,
+          revision: latestRevision,
+          slideId: input.operation.slideId,
+          currentSlideRevision,
+          snapshot,
+        };
+      }
+    }
     await this.applySyncOperation(input);
     const record = await this.appendOperation({
       orgId: input.orgId,
@@ -1769,11 +2186,16 @@ export class InMemorySlidesStore implements SlidesStore {
     };
   }
 
-  async restoreSnapshotVersion(input: RestoreSlideDeckSnapshotVersionInput): Promise<{
+  async listVersions(
+    _input: ListSlideDeckVersionsInput,
+  ): Promise<readonly SlideDeckVersionRecord[]> {
+    return [];
+  }
+
+  async restoreVersion(_input: RestoreSlideDeckVersionInput): Promise<{
     readonly deck: SlideDeckSummaryRecord;
     readonly slides: readonly SlideRecord[];
   } | null> {
-    void input;
     return null;
   }
 

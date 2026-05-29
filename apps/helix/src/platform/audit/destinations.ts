@@ -1,8 +1,10 @@
 import type postgres from "postgres";
-import type { StorageClient } from "@helix/sdk";
-import { shipImmutableAuditBatch, type ImmutableAuditObjectLockMode } from "./immutable-s3.js";
+import type { MeteringClient, StorageClient } from "@helix/sdk";
+import {
+  shipImmutableAuditBatch,
+  type ImmutableAuditObjectLockMode,
+} from "./immutable-s3.js";
 import type { AuditBatchShipper } from "./shipping-worker.js";
-import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import { PostgresWormAuditShipper } from "./immutable-postgres.js";
 import {
   SiemAuditShipper,
@@ -61,7 +63,10 @@ import type { SiemAuditFormat } from "./siem-format.js";
  * ```
  */
 
-export type AuditDestinationKind = "immutable-s3" | "siem-syslog" | "audit-immutable-postgres";
+export type AuditDestinationKind =
+  | "immutable-s3"
+  | "siem-syslog"
+  | "audit-immutable-postgres";
 
 export interface ImmutableS3AuditDestinationConfig {
   readonly destination: "immutable-s3";
@@ -101,8 +106,8 @@ export type AuditDestinationConfig =
 export interface AuditDestinationDependencies {
   /** Required for the `audit-immutable-postgres` destination. */
   readonly sql?: postgres.Sql;
-  /** Routes tenant-scoped immutable audit objects through BYO/default tenant storage. */
-  readonly tenantStorageResolver?: TenantStorageResolver;
+  readonly metering?: MeteringClient;
+  readonly onMeteringError?: (error: unknown) => void;
 }
 
 /**
@@ -117,15 +122,28 @@ export function createAuditDestinationShipper(
 ): AuditBatchShipper {
   switch (config.destination) {
     case "immutable-s3":
-      if (dependencies.tenantStorageResolver !== undefined) {
-        return createTenantResolvedImmutableS3AuditShipper(
-          config,
-          dependencies.tenantStorageResolver,
-        );
-      }
       return {
         ship: (records) =>
-          shipImmutableAuditBatch(immutableS3Options(config, config.storage), records),
+          shipImmutableAuditBatch(
+            {
+              store: config.storage,
+              ...(dependencies.metering === undefined
+                ? {}
+                : { metering: dependencies.metering }),
+              ...(dependencies.onMeteringError === undefined
+                ? {}
+                : { onMeteringError: dependencies.onMeteringError }),
+              ...(config.prefix === undefined ? {} : { prefix: config.prefix }),
+              ...(config.batchSize === undefined ? {} : { batchSize: config.batchSize }),
+              ...(config.objectLockMode === undefined
+                ? {}
+                : { objectLockMode: config.objectLockMode }),
+              ...(config.retentionDays === undefined
+                ? {}
+                : { retentionDays: config.retentionDays }),
+            },
+            records,
+          ),
       };
     case "siem-syslog":
       return new SiemAuditShipper({
@@ -153,43 +171,6 @@ export function createAuditDestinationShipper(
       );
     }
   }
-}
-
-function createTenantResolvedImmutableS3AuditShipper(
-  config: ImmutableS3AuditDestinationConfig,
-  storageResolver: TenantStorageResolver,
-): AuditBatchShipper {
-  return {
-    async ship(records) {
-      const orgId = commonOrgId(records);
-      const resolved = await storageResolver({ orgId });
-      if (resolved === undefined) {
-        throw new TypeError(`No tenant storage is configured for audit org ${orgId}`);
-      }
-      return shipImmutableAuditBatch(immutableS3Options(config, resolved.client), records);
-    },
-  };
-}
-
-function immutableS3Options(config: ImmutableS3AuditDestinationConfig, storage: StorageClient) {
-  return {
-    store: storage,
-    ...(config.prefix === undefined ? {} : { prefix: config.prefix }),
-    ...(config.batchSize === undefined ? {} : { batchSize: config.batchSize }),
-    ...(config.objectLockMode === undefined ? {} : { objectLockMode: config.objectLockMode }),
-    ...(config.retentionDays === undefined ? {} : { retentionDays: config.retentionDays }),
-  };
-}
-
-function commonOrgId(records: readonly { readonly orgId: string }[]): string {
-  const orgId = records[0]?.orgId;
-  if (orgId === undefined || orgId.length === 0) {
-    throw new TypeError("immutable-s3 audit shipping requires at least one org-scoped record");
-  }
-  if (!records.every((record) => record.orgId === orgId)) {
-    throw new TypeError("immutable-s3 audit shipping requires records from a single org");
-  }
-  return orgId;
 }
 
 /** All audit destinations that can be selected for the `AuditShippingWorker`. */

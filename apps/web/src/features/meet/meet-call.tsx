@@ -1,19 +1,25 @@
 /* MeetCall — the in-call view. Dark theme regardless of the user's theme
-   (`#0a0a0b` background). Top bar with title / REC pill / meeting code /
-   elapsed timer; a Jitsi embed (the real room, when a token was minted) or a
-   seed speaker stage as offline fallback; a 76px control bar; and an optional
-   320px in-call chat panel.
+   (`#0a0a0b` background). Top bar with title / live REC pill / meeting code /
+   elapsed timer; a Jitsi External API embed (the real room, when a token was
+   minted) or a placeholder when offline; a 76px control bar with controls
+   wired through the External API; and an optional 320px in-call chat panel.
 
    The view is wired to a real backend room carried in via `session`: the
    subject/code come from `meet.create-room`/`meet.meetings.list`, the embed
-   loads the `meet.mint-token` join URL, and Leave ends the room through
-   `meet.end-room`. */
+   loads through JitsiMeetExternalAPI from the configured Jitsi domain, and
+   Leave ends the room through `meet.end-room`. */
 
-import { useRef, useState, type CSSProperties } from "react";
+import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
+import { sessionUserQueryOptions } from "@/lib/auth";
 import { endMeetRoom } from "./api";
 import { meetCallElapsedQueryOptions, meetQueryKeys } from "./queries";
+import {
+  useJitsiCall,
+  type JitsiCallOptions,
+  type JitsiChatMessage,
+} from "./jitsi-external-api";
 import type { MeetCallSession } from "./meet-shell";
 
 const DARK_BORDER = "#27272d";
@@ -33,34 +39,49 @@ export function formatElapsed(totalSeconds: number): string {
 }
 
 export interface MeetCallProps {
-  /** The live (or offline-fallback) call session for this in-call view. */
   readonly session: MeetCallSession;
-  /** Called when the user has left the call (after `meet.end-room`). */
   readonly onLeave: () => void;
 }
 
 export function MeetCall({ session, onLeave }: MeetCallProps) {
   const queryClient = useQueryClient();
-  const [micOn, setMicOn] = useState(true);
-  const [camOn, setCamOn] = useState(true);
-  const [screenSharing, setScreenSharing] = useState(false);
-  const [handRaised, setHandRaised] = useState(false);
+  const sessionQuery = useQuery(sessionUserQueryOptions());
   const [chatOpen, setChatOpen] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
+  const [participantsOpen, setParticipantsOpen] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
 
-  /* The call's wall-clock start. A 1s-refetch query re-renders the timer
-     without a native interval (kept off the Pacer-banned timer APIs). */
   const callStartRef = useRef(session.startedAtMs);
   const elapsedQuery = useQuery(meetCallElapsedQueryOptions(callStartRef.current));
   const elapsed = elapsedQuery.data ?? 0;
 
-  /* A real room + minted token → embed Jitsi unless this is the local demo domain. */
-  const hasLiveRoom = session.roomId.length > 0;
-  const embedUrl = session.joinUrl;
-  const useLocalPreview = isLocalJitsiUrl(embedUrl);
+  const hasLiveRoom = session.roomId.length > 0 && session.token !== null;
+  const jitsiHostRef = useRef<HTMLDivElement | null>(null);
 
-  /* Leave → end the backend room (only when we own a real room), then exit. */
+  // Build the External API options only once we have a token; pass null
+  // otherwise so the hook keeps the call torn down.
+  const jitsiOptions = useMemo<JitsiCallOptions | null>(() => {
+    if (!hasLiveRoom || session.token === null) return null;
+    const displayName =
+      sessionQuery.data?.name ?? sessionQuery.data?.email ?? "Helix user";
+    return {
+      domain: session.jitsiDomain,
+      roomName: session.roomName,
+      jwt: session.token,
+      userInfo: {
+        displayName,
+        email: sessionQuery.data?.email ?? null,
+      },
+    };
+  }, [
+    hasLiveRoom,
+    session.token,
+    session.jitsiDomain,
+    session.roomName,
+    sessionQuery.data?.name,
+    sessionQuery.data?.email,
+  ]);
+
+  // Leave → end the backend room (only when we own a real room), then exit.
   const leaveMutation = useMutation({
     mutationFn: async () => {
       if (hasLiveRoom) {
@@ -76,6 +97,18 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
     },
     onError: (error: unknown) => {
       setLeaveError(error instanceof Error ? error.message : "Could not end the meeting.");
+    },
+  });
+
+  const { state: call, commands } = useJitsiCall({
+    options: jitsiOptions,
+    hostRef: jitsiHostRef,
+    onLeft: () => {
+      // Jitsi hangup or readyToClose → run the same backend cleanup as the
+      // Leave button so we don't leave a zombie room behind.
+      if (!leaveMutation.isPending) {
+        leaveMutation.mutate();
+      }
     },
   });
 
@@ -105,17 +138,19 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           <Icons.Video />
           <span style={{ fontWeight: 600 }}>{session.subject}</span>
         </div>
-        <span
-          className="chip"
-          style={{
-            background: "rgba(220,38,38,0.15)",
-            color: "#f87171",
-            borderColor: "transparent",
-          }}
-        >
-          <span className="chip-dot" />
-          REC
-        </span>
+        {call.recordingActive ? (
+          <span
+            className="chip"
+            style={{
+              background: "rgba(220,38,38,0.15)",
+              color: "#f87171",
+              borderColor: "transparent",
+            }}
+          >
+            <span className="chip-dot" />
+            REC
+          </span>
+        ) : null}
         <span style={{ fontSize: "var(--text-meta)", color: "#a1a1aa" }}>
           helix.meet/{session.code}
         </span>
@@ -139,7 +174,8 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        {/* Main stage — live Jitsi embed, or the offline-fallback seed stage. */}
+        {/* Main stage — Jitsi External API mounts its iframe inside the host
+            ref. We always render the host so the ref stays attached. */}
         <div
           style={{
             flex: 1,
@@ -150,108 +186,81 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             minWidth: 0,
           }}
         >
-          {embedUrl !== null && !useLocalPreview ? (
-            <iframe
-              title={`Meeting: ${session.subject}`}
-              src={embedUrl}
-              allow="camera; microphone; fullscreen; display-capture; autoplay"
-              style={{
-                flex: 1,
-                width: "100%",
-                border: "none",
-                borderRadius: 8,
-                background: "#000",
-                minHeight: 0,
-              }}
-            />
-          ) : useLocalPreview ? (
-            <LocalMeetingPreview session={session} />
-          ) : (
+          <div
+            style={{
+              flex: 1,
+              position: "relative",
+              borderRadius: 8,
+              overflow: "hidden",
+              background: "#000",
+              minHeight: 0,
+            }}
+          >
             <div
-              role="status"
-              style={{
-                flex: 1,
-                display: "grid",
-                placeItems: "center",
-                background: DARK_PANEL,
-                borderRadius: 8,
-                color: "#a1a1aa",
-                fontSize: "var(--text-body-sm)",
-              }}
-            >
-              Waiting for the meeting room to connect…
-            </div>
-          )}
+              ref={jitsiHostRef}
+              style={{ position: "absolute", inset: 0 }}
+              aria-label={`Jitsi meeting: ${session.subject}`}
+            />
+            {jitsiOptions === null ? (
+              <Overlay message="Waiting for the meeting room to connect…" />
+            ) : call.loadError !== null ? (
+              <Overlay
+                message={`Couldn't load Jitsi: ${call.loadError}`}
+                tone="error"
+              />
+            ) : !call.isReady ? (
+              <Overlay message="Loading meeting room…" />
+            ) : !call.isJoined ? (
+              <Overlay message="Joining…" />
+            ) : null}
+          </div>
         </div>
+
+        {/* Participant rail */}
+        {participantsOpen ? (
+          <SidePanel
+            title={`In this call (${String(call.participants.length + (call.isJoined ? 1 : 0))})`}
+            onClose={() => {
+              setParticipantsOpen(false);
+            }}
+            icon={<Icons.Users />}
+          >
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+              {call.isJoined ? (
+                <ParticipantRow
+                  name={`${sessionQuery.data?.name ?? "You"} (you)`}
+                  badge={call.audioMuted ? "muted" : null}
+                />
+              ) : null}
+              {call.participants.map((p) => (
+                <ParticipantRow key={p.id} name={p.displayName} />
+              ))}
+              {call.participants.length === 0 && call.isJoined ? (
+                <li
+                  style={{
+                    padding: "12px 16px",
+                    color: "#71717a",
+                    fontSize: "var(--text-meta)",
+                  }}
+                >
+                  No one else has joined yet.
+                </li>
+              ) : null}
+            </ul>
+          </SidePanel>
+        ) : null}
 
         {/* In-call chat panel */}
         {chatOpen ? (
-          <div
-            style={{
-              width: 320,
-              borderLeft: `1px solid ${DARK_BORDER}`,
-              display: "flex",
-              flexDirection: "column",
-              background: DARK_PANEL,
+          <ChatPanel
+            messages={call.chatMessages}
+            onClose={() => {
+              setChatOpen(false);
             }}
-            aria-label="In-call messages"
-          >
-            <div
-              style={{
-                padding: "12px 16px",
-                borderBottom: `1px solid ${DARK_BORDER}`,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
-              <Icons.Chat />
-              <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>
-                In-call messages
-              </span>
-              <button
-                className="icon-btn"
-                style={{ marginLeft: "auto" }}
-                type="button"
-                aria-label="Close in-call messages"
-                onClick={() => {
-                  setChatOpen(false);
-                }}
-              >
-                <Icons.X />
-              </button>
-            </div>
-            <div
-              style={{
-                flex: 1,
-                overflowY: "auto",
-                padding: 12,
-                display: "grid",
-                placeItems: "center",
-                color: "#71717a",
-                fontSize: "var(--text-meta)",
-              }}
-            >
-              In-call messages aren&rsquo;t available yet.
-            </div>
-            <div style={{ padding: 10, borderTop: `1px solid ${DARK_BORDER}` }}>
-              <input
-                aria-label="Message everyone in the call"
-                placeholder="Message everyone in the call"
-                style={{
-                  width: "100%",
-                  height: 30,
-                  padding: "0 10px",
-                  borderRadius: 6,
-                  border: `1px solid ${DARK_BORDER}`,
-                  background: DARK_BG,
-                  color: "#ededee",
-                  outline: "none",
-                  fontSize: "var(--text-meta)",
-                }}
-              />
-            </div>
-          </div>
+            onSend={(text) => {
+              commands.sendChatMessage(text);
+            }}
+          />
         ) : null}
       </div>
 
@@ -270,58 +279,61 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
         }}
       >
         <CallControl
-          label={micOn ? "Mute microphone" : "Unmute microphone"}
-          danger={!micOn}
-          onClick={() => {
-            setMicOn((value) => !value);
-          }}
+          label={call.audioMuted ? "Unmute microphone" : "Mute microphone"}
+          danger={call.audioMuted}
+          disabled={!call.isJoined}
+          onClick={commands.toggleAudio}
         >
-          {micOn ? <Icons.Mic /> : <Icons.MicOff />}
+          {call.audioMuted ? <Icons.MicOff /> : <Icons.Mic />}
         </CallControl>
         <CallControl
-          label={camOn ? "Turn off camera" : "Turn on camera"}
-          danger={!camOn}
-          onClick={() => {
-            setCamOn((value) => !value);
-          }}
+          label={call.videoMuted ? "Turn on camera" : "Turn off camera"}
+          danger={call.videoMuted}
+          disabled={!call.isJoined}
+          onClick={commands.toggleVideo}
         >
-          {camOn ? <Icons.Video /> : <Icons.CamOff />}
+          {call.videoMuted ? <Icons.CamOff /> : <Icons.Video />}
         </CallControl>
         <CallControl
-          label={screenSharing ? "Stop sharing screen" : "Share screen"}
-          active={screenSharing}
-          onClick={() => {
-            setScreenSharing((value) => !value);
-          }}
+          label={call.screenSharing ? "Stop sharing screen" : "Share screen"}
+          active={call.screenSharing}
+          disabled={!call.isJoined}
+          onClick={commands.toggleShareScreen}
         >
           <Icons.Screen />
         </CallControl>
         <CallControl
-          label={handRaised ? "Lower hand" : "Raise hand"}
-          active={handRaised}
-          onClick={() => {
-            setHandRaised((value) => !value);
-          }}
+          label={call.handRaised ? "Lower hand" : "Raise hand"}
+          active={call.handRaised}
+          disabled={!call.isJoined}
+          onClick={commands.toggleRaiseHand}
         >
           <Icons.Hand />
         </CallControl>
         <CallControl
+          label={call.recordingActive ? "Stop recording" : "Start recording"}
+          danger={call.recordingActive}
+          disabled={!call.isJoined}
+          onClick={() => {
+            if (call.recordingActive) commands.stopRecording();
+            else commands.startRecording();
+          }}
+        >
+          <RecordIcon />
+        </CallControl>
+        <CallControl
           label={chatOpen ? "Hide in-call messages" : "Show in-call messages"}
           active={chatOpen}
+          badge={call.unreadChatCount > 0 ? call.unreadChatCount : null}
           onClick={() => {
-            setChatOpen((value) => !value);
+            setChatOpen((value) => {
+              const next = !value;
+              if (next) commands.markChatRead();
+              return next;
+            });
           }}
         >
           <Icons.Chat />
-        </CallControl>
-        <CallControl
-          label={aiOpen ? "Hide meeting AI" : "Meeting AI"}
-          active={aiOpen}
-          onClick={() => {
-            setAiOpen((value) => !value);
-          }}
-        >
-          <Icons.Sparkles />
         </CallControl>
 
         <div style={{ width: 1, height: 28, background: DARK_BORDER, margin: "0 4px" }} />
@@ -331,6 +343,9 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           disabled={leaveMutation.isPending}
           onClick={() => {
             setLeaveError(null);
+            commands.hangup();
+            // hangup fires videoConferenceLeft which triggers backend cleanup
+            // via onLeft; this is a belt-and-suspenders direct call too.
             leaveMutation.mutate();
           }}
           style={{
@@ -377,9 +392,14 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           <button
             className="btn sm"
             type="button"
-            aria-label="Participants"
+            aria-label={
+              participantsOpen ? "Hide participants" : "Show participants"
+            }
+            onClick={() => {
+              setParticipantsOpen((v) => !v);
+            }}
             style={{
-              background: "transparent",
+              background: participantsOpen ? "var(--accent)" : "transparent",
               borderColor: DARK_BORDER,
               color: "#ededee",
             }}
@@ -392,141 +412,261 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
   );
 }
 
-function isLocalJitsiUrl(value: string | null): boolean {
-  if (value === null) {
-    return false;
-  }
-  try {
-    return new URL(value).hostname === "meet.localhost";
-  } catch {
-    return false;
-  }
-}
-
-function LocalMeetingPreview({ session }: { readonly session: MeetCallSession }) {
+function Overlay({
+  message,
+  tone = "info",
+}: {
+  readonly message: string;
+  readonly tone?: "info" | "error";
+}) {
   return (
     <div
-      aria-label={`Local meeting preview: ${session.subject}`}
+      role="status"
       style={{
-        flex: 1,
+        position: "absolute",
+        inset: 0,
         display: "grid",
-        gridTemplateColumns: "minmax(0, 2fr) minmax(180px, 1fr)",
-        gap: 12,
-        minHeight: 0,
+        placeItems: "center",
+        background: tone === "error" ? "rgba(127,29,29,0.4)" : "rgba(0,0,0,0.65)",
+        color: tone === "error" ? "#fecaca" : "#a1a1aa",
+        fontSize: "var(--text-body-sm)",
+        pointerEvents: "none",
       }}
     >
-      <div
-        style={{
-          minHeight: 0,
-          borderRadius: 8,
-          background: "linear-gradient(145deg, #1d2433, #111827 60%, #09090b)",
-          border: `1px solid ${DARK_BORDER}`,
-          display: "grid",
-          placeItems: "center",
-          position: "relative",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            width: 124,
-            height: 124,
-            borderRadius: "50%",
-            display: "grid",
-            placeItems: "center",
-            background: "rgba(255,255,255,0.12)",
-            color: "#fafafa",
-            fontSize: 34,
-            fontWeight: 700,
-          }}
-        >
-          LH
-        </div>
-        <div
-          style={{
-            position: "absolute",
-            left: 16,
-            bottom: 16,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 10px",
-            borderRadius: 999,
-            background: "rgba(0,0,0,0.45)",
-            fontSize: "var(--text-body-sm)",
-          }}
-        >
-          <Icons.Video />
-          <span>Local Helix Admin</span>
-        </div>
-      </div>
-      <div
-        style={{
-          minHeight: 0,
-          display: "grid",
-          gridTemplateRows: "1fr 1fr",
-          gap: 12,
-        }}
-      >
-        <PreviewParticipant name="Maya Sharma" initials="MS" />
-        <PreviewParticipant name="Erica Johnson" initials="EJ" muted />
-      </div>
+      {message}
     </div>
   );
 }
 
-function PreviewParticipant({
-  name,
-  initials,
-  muted = false,
+function SidePanel({
+  title,
+  icon,
+  children,
+  onClose,
+  ariaLabel,
 }: {
-  readonly name: string;
-  readonly initials: string;
-  readonly muted?: boolean;
+  readonly title: string;
+  readonly icon: React.ReactNode;
+  readonly children: React.ReactNode;
+  readonly onClose: () => void;
+  readonly ariaLabel?: string;
 }) {
   return (
     <div
+      aria-label={ariaLabel ?? title}
       style={{
-        borderRadius: 8,
-        border: `1px solid ${DARK_BORDER}`,
+        width: 320,
+        borderLeft: `1px solid ${DARK_BORDER}`,
+        display: "flex",
+        flexDirection: "column",
         background: DARK_PANEL,
-        display: "grid",
-        placeItems: "center",
-        position: "relative",
-        minHeight: 0,
       }}
     >
       <div
         style={{
-          width: 56,
-          height: 56,
-          borderRadius: "50%",
-          display: "grid",
-          placeItems: "center",
-          background: "#27272d",
-          color: "#ededee",
-          fontWeight: 700,
-        }}
-      >
-        {initials}
-      </div>
-      <div
-        style={{
-          position: "absolute",
-          left: 10,
-          bottom: 10,
-          right: 10,
+          padding: "12px 16px",
+          borderBottom: `1px solid ${DARK_BORDER}`,
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          color: "#d4d4d8",
-          fontSize: "var(--text-caption)",
+          gap: 8,
         }}
       >
-        {muted ? <Icons.MicOff /> : <Icons.Mic />}
-        <span>{name}</span>
+        {icon}
+        <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>{title}</span>
+        <button
+          className="icon-btn"
+          style={{ marginLeft: "auto" }}
+          type="button"
+          aria-label={`Close ${title}`}
+          onClick={onClose}
+        >
+          <Icons.X />
+        </button>
       </div>
+      <div style={{ flex: 1, overflowY: "auto" }}>{children}</div>
     </div>
+  );
+}
+
+function ParticipantRow({ name, badge }: { readonly name: string; readonly badge?: string | null }) {
+  return (
+    <li
+      style={{
+        padding: "10px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        borderBottom: `1px solid ${DARK_BORDER}`,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 999,
+          background: "#3f3f46",
+          display: "grid",
+          placeItems: "center",
+          color: "#ededee",
+          fontSize: 12,
+        }}
+      >
+        {initials(name)}
+      </span>
+      <span style={{ flex: 1, fontSize: "var(--text-body-sm)" }}>{name}</span>
+      {badge !== undefined && badge !== null ? (
+        <span
+          style={{
+            fontSize: "var(--text-caption)",
+            color: "#f87171",
+          }}
+        >
+          {badge}
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0 || parts[0] === undefined) return "?";
+  if (parts.length === 1) return (parts[0][0] ?? "?").toUpperCase();
+  const last = parts[parts.length - 1] ?? "";
+  return `${(parts[0][0] ?? "").toUpperCase()}${(last[0] ?? "").toUpperCase()}`;
+}
+
+function ChatPanel({
+  messages,
+  onSend,
+  onClose,
+}: {
+  readonly messages: readonly JitsiChatMessage[];
+  readonly onSend: (text: string) => void;
+  readonly onClose: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  return (
+    <SidePanel title="In-call messages" icon={<Icons.Chat />} onClose={onClose}>
+      <div
+        style={{
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        {messages.length === 0 ? (
+          <p
+            style={{
+              margin: 0,
+              color: "#71717a",
+              fontSize: "var(--text-meta)",
+              textAlign: "center",
+              padding: "24px 0",
+            }}
+          >
+            No messages yet. Say hi.
+          </p>
+        ) : (
+          messages.map((m) => (
+            <div
+              key={m.id}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                alignSelf: m.isLocal ? "flex-end" : "flex-start",
+                maxWidth: "85%",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "var(--text-caption)",
+                  color: "#71717a",
+                  textAlign: m.isLocal ? "right" : "left",
+                }}
+              >
+                {m.nick}
+              </span>
+              <span
+                style={{
+                  background: m.isLocal ? "var(--accent)" : "#27272d",
+                  color: "white",
+                  padding: "6px 10px",
+                  borderRadius: 10,
+                  fontSize: "var(--text-body-sm)",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {m.message}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+      <form
+        style={{
+          padding: 10,
+          borderTop: `1px solid ${DARK_BORDER}`,
+          display: "flex",
+          gap: 6,
+        }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (draft.trim().length === 0) return;
+          onSend(draft);
+          setDraft("");
+        }}
+      >
+        <input
+          aria-label="Message everyone in the call"
+          placeholder="Message everyone in the call"
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value);
+          }}
+          style={{
+            flex: 1,
+            height: 30,
+            padding: "0 10px",
+            borderRadius: 6,
+            border: `1px solid ${DARK_BORDER}`,
+            background: DARK_BG,
+            color: "#ededee",
+            outline: "none",
+            fontSize: "var(--text-meta)",
+          }}
+        />
+        <button
+          type="submit"
+          aria-label="Send message"
+          disabled={draft.trim().length === 0}
+          style={{
+            height: 30,
+            padding: "0 10px",
+            borderRadius: 6,
+            border: "none",
+            background: "var(--accent)",
+            color: "white",
+            cursor: "pointer",
+            opacity: draft.trim().length === 0 ? 0.5 : 1,
+          }}
+        >
+          Send
+        </button>
+      </form>
+    </SidePanel>
+  );
+}
+
+function RecordIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="5" fill="currentColor" />
+    </svg>
   );
 }
 
@@ -536,15 +676,20 @@ function CallControl({
   onClick,
   active = false,
   danger = false,
+  disabled = false,
+  badge,
 }: {
   readonly label: string;
   readonly children: React.ReactNode;
   readonly onClick: () => void;
   readonly active?: boolean;
   readonly danger?: boolean;
+  readonly disabled?: boolean;
+  readonly badge?: number | null;
 }) {
   const background = danger ? "#dc2626" : active ? "var(--accent)" : DARK_BORDER;
   const style: CSSProperties = {
+    position: "relative",
     width: 44,
     height: 44,
     borderRadius: 999,
@@ -553,11 +698,41 @@ function CallControl({
     display: "grid",
     placeItems: "center",
     border: "none",
-    cursor: "pointer",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.5 : 1,
   };
   return (
-    <button type="button" onClick={onClick} aria-label={label} aria-pressed={active} style={style}>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={active}
+      disabled={disabled}
+      style={style}
+    >
       {children}
+      {badge !== undefined && badge !== null && badge > 0 ? (
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: -2,
+            right: -2,
+            minWidth: 16,
+            height: 16,
+            padding: "0 4px",
+            borderRadius: 999,
+            background: "#dc2626",
+            color: "white",
+            fontSize: 10,
+            fontWeight: 600,
+            display: "grid",
+            placeItems: "center",
+          }}
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      ) : null}
     </button>
   );
 }

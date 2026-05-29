@@ -217,7 +217,9 @@ describe("AssistantSurface", () => {
     expect(listAssistantConversationsMock).toHaveBeenCalled();
     const text = container.textContent ?? "";
     expect(text).toContain("Pinned");
-    expect(text).toContain("Recent");
+    // The Recent section is now subdivided into ChatGPT-style date buckets.
+    // Our fixture lives ~6 days back, which lands in "Previous 7 Days".
+    expect(text).toContain("Previous 7 Days");
     expect(text).toContain("Draft Q3 board update narrative");
     expect(text).toContain("Summarize unread inbox");
   });
@@ -392,10 +394,12 @@ describe("AssistantSurface", () => {
       optionsButton?.click();
     });
     act(() => {
-      buttonByText("Delete")?.click();
+      // The menu entry was renamed to "Archive" to match the backend's
+      // soft-delete semantics (sets archived_at, retains history).
+      buttonByText("Archive")?.click();
     });
     const confirmButton = [...container.querySelectorAll("button")].find(
-      (button) => button.className.includes("danger") && button.textContent === "Delete",
+      (button) => button.className.includes("danger") && button.textContent === "Archive",
     );
     expect(confirmButton).toBeDefined();
     act(() => {

@@ -1,6 +1,7 @@
 export * from "./ai/index.js";
 export * from "./inline-body.js";
 export * from "./preview.js";
+export * from "./range-response.js";
 export * from "./routes.js";
 export * from "./search/index.js";
 export * from "./store.js";

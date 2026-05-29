@@ -7,6 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { MailShell } from "./mail-shell";
 
+const navigateMock = vi.fn();
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => navigateMock,
+  useRouter: () => ({ navigate: navigateMock }),
+  useSearch: () => ({}),
+}));
+
 vi.mock("@helix/sdk-web", () => ({
   SuggestionSlot: ({ emptyFallback }: { readonly emptyFallback?: React.ReactNode }) =>
     emptyFallback ?? null,
@@ -129,9 +136,11 @@ describe("MailShell", () => {
       return Promise.resolve(Response.json({ labels: LABELS }));
     }
     if (url.endsWith("/mail.threads.list")) {
-      const body = JSON.parse(
-        typeof init?.body === "string" ? init.body : "{}",
-      ) as { readonly folder?: string; readonly tab?: string; readonly query?: string };
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        readonly folder?: string;
+        readonly tab?: string;
+        readonly query?: string;
+      };
       if (body.folder === "drafts") {
         return Promise.resolve(Response.json({ threads: [], total: 0, limit: 50, offset: 0 }));
       }
@@ -154,6 +163,7 @@ describe("MailShell", () => {
   }
 
   beforeEach(() => {
+    navigateMock.mockClear();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -350,9 +360,7 @@ describe("MailShell", () => {
     await flush();
     clickAriaButton("Star");
     await flush();
-    const starCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "/api/tools/mail.star.set",
-    );
+    const starCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.star.set");
     expect(starCall).toBeDefined();
     const body = JSON.parse(
       typeof (starCall?.[1] as RequestInit).body === "string"
@@ -377,9 +385,7 @@ describe("MailShell", () => {
     await flush();
     clickAriaButton("Archive");
     await flush();
-    const archiveCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "/api/tools/mail.archive",
-    );
+    const archiveCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.archive");
     expect(archiveCall).toBeDefined();
     expect(container.textContent).toContain("1–1 of 1");
   });
@@ -415,9 +421,7 @@ describe("MailShell", () => {
     clickButtonText("Send");
     await flush();
 
-    const sendCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "/api/tools/mail.send",
-    );
+    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.send");
     expect(sendCall).toBeDefined();
     const rawBody = (sendCall?.[1] as RequestInit).body;
     const body = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as {
@@ -453,11 +457,7 @@ describe("MailShell", () => {
    * `document.createEvent("Event")` and annotate it manually.
    * We only stub the subset the Compose handler reads (`files`, `dropEffect`).
    */
-  function makeDragEvent(
-    type: string,
-    files: File[],
-    target: Element,
-  ): Event {
+  function makeDragEvent(type: string, files: File[], target: Element): Event {
     const dataTransfer = {
       files: Object.assign([...files], {
         item: (index: number) => files[index] ?? null,
@@ -580,9 +580,7 @@ describe("MailShell", () => {
     clickButtonText("Send");
     await flush();
 
-    const sendCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "/api/tools/mail.send",
-    );
+    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.send");
     expect(sendCall).toBeDefined();
     const rawBody = (sendCall?.[1] as RequestInit).body;
     const parsedBody = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as {
@@ -663,9 +661,7 @@ describe("MailShell", () => {
     await flush();
     clickAriaButton("Delete");
     await flush();
-    const deleteCalls = fetchMock.mock.calls.filter(
-      (call) => call[0] === "/api/tools/mail.delete",
-    );
+    const deleteCalls = fetchMock.mock.calls.filter((call) => call[0] === "/api/tools/mail.delete");
     expect(deleteCalls.length).toBeGreaterThanOrEqual(1);
     const body = JSON.parse(
       typeof (deleteCalls[0]?.[1] as RequestInit).body === "string"
@@ -681,9 +677,7 @@ describe("MailShell", () => {
     // The default threadRow has unread:true, so the button label is "Mark read"
     clickAriaButton("Mark read");
     await flush();
-    const readCalls = fetchMock.mock.calls.filter(
-      (call) => call[0] === "/api/tools/mail.read.set",
-    );
+    const readCalls = fetchMock.mock.calls.filter((call) => call[0] === "/api/tools/mail.read.set");
     expect(readCalls.length).toBeGreaterThanOrEqual(1);
     const body = JSON.parse(
       typeof (readCalls[0]?.[1] as RequestInit).body === "string"
@@ -699,9 +693,7 @@ describe("MailShell", () => {
     await flush();
     clickAriaButton("Snooze");
     await flush();
-    const snoozeCalls = fetchMock.mock.calls.filter(
-      (call) => call[0] === "/api/tools/mail.snooze",
-    );
+    const snoozeCalls = fetchMock.mock.calls.filter((call) => call[0] === "/api/tools/mail.snooze");
     expect(snoozeCalls.length).toBeGreaterThanOrEqual(1);
     const body = JSON.parse(
       typeof (snoozeCalls[0]?.[1] as RequestInit).body === "string"
@@ -784,11 +776,9 @@ describe("MailShell", () => {
       threadRow({ threadId: "t3", subject: "Thread C", unread: false }),
     ];
     fetchMock.mockImplementation((input, init) => {
-      const url = typeof input === "string" ? input : (input instanceof URL ? input.href : input.url);
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.endsWith("/mail.threads.list")) {
-        return Promise.resolve(
-          Response.json({ threads: rows, total: 3, limit: 50, offset: 0 }),
-        );
+        return Promise.resolve(Response.json({ threads: rows, total: 3, limit: 50, offset: 0 }));
       }
       return defaultFetch(input, init);
     });
@@ -816,9 +806,7 @@ describe("MailShell", () => {
       });
 
     // Only unread threads (t1 and t2) should have been marked read
-    const markedReadIds = readCalls
-      .filter((c) => c.unread === false)
-      .map((c) => c.threadId);
+    const markedReadIds = readCalls.filter((c) => c.unread === false).map((c) => c.threadId);
     expect(markedReadIds).toContain("t1");
     expect(markedReadIds).toContain("t2");
     // t3 is already read — should NOT have been called for it via mark-all
@@ -880,7 +868,7 @@ describe("MailShell", () => {
   it("'Filter messages like these' calls mail.filter.create with sender from first selected thread", async () => {
     // Use threads where the first one has a known sender
     fetchMock.mockImplementation((input, init) => {
-      const url = typeof input === "string" ? input : (input instanceof URL ? input.href : input.url);
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.endsWith("/mail.threads.list")) {
         return Promise.resolve(
           Response.json({
@@ -970,11 +958,9 @@ describe("MailShell", () => {
       threadRow({ threadId: "t3", subject: "Thread C", unread: true, starred: false }),
     ];
     fetchMock.mockImplementation((input, init) => {
-      const url = typeof input === "string" ? input : (input instanceof URL ? input.href : input.url);
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.endsWith("/mail.threads.list")) {
-        return Promise.resolve(
-          Response.json({ threads: rows, total: 3, limit: 50, offset: 0 }),
-        );
+        return Promise.resolve(Response.json({ threads: rows, total: 3, limit: 50, offset: 0 }));
       }
       return defaultFetch(input, init);
     });
@@ -1080,9 +1066,7 @@ describe("MailShell", () => {
     clickAriaButton("Delete selected");
     await flush();
 
-    const deleteCalls = fetchMock.mock.calls.filter(
-      (call) => call[0] === "/api/tools/mail.delete",
-    );
+    const deleteCalls = fetchMock.mock.calls.filter((call) => call[0] === "/api/tools/mail.delete");
     expect(deleteCalls).toHaveLength(3);
   });
 
@@ -1232,9 +1216,7 @@ describe("MailShell", () => {
 
     // Shift-click the third checkbox — should select rows 0, 1, and 2.
     act(() => {
-      rowCheckboxes[2]?.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, shiftKey: true }),
-      );
+      rowCheckboxes[2]?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
     });
     await flush();
 
@@ -1258,9 +1240,7 @@ describe("MailShell", () => {
 
     // Shift-click row 1 — extends range to rows 0 and 1.
     act(() => {
-      rowCheckboxes[1]?.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, shiftKey: true }),
-      );
+      rowCheckboxes[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
     });
     await flush();
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   answerDocsQuestion,
   clearDocsAskHistory,
+  copyDocsDocument,
   createDocsComment,
   createDocsDocument,
   createDocsSuggestion,
@@ -25,6 +26,7 @@ import {
   resolveDocsComment,
   resolveDocsSuggestion,
   resolveDocsSuggestions,
+  saveNativeDocumentState,
   updateDocsComment,
   restoreDocsVersion,
   updateDocsLayout,
@@ -152,6 +154,50 @@ describe("docs API", () => {
         formatVersion: 1,
         folderId: null,
         metadata: { createdFrom: "test" },
+      }),
+    });
+  });
+
+  it("copies Docs documents through docs.copy", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          id: "55555555-5555-4555-8555-555555555555",
+          title: "Native doc (Copy)",
+          threadId: "44444444-4444-4444-8444-444444444444",
+          ownerActorId: "11111111-1111-4111-8111-111111111111",
+          createdByActorId: "11111111-1111-4111-8111-111111111111",
+          ydocState: btoa("native-state"),
+          ydocStateVector: btoa("native-vector"),
+          updateSeq: 0,
+          editorEngine: "helix-native-document",
+          formatVersion: 1,
+          metadata: { copiedFromDocumentId: docId },
+          deletedAt: null,
+          createdAt: "2026-05-20T12:00:00.000Z",
+          updatedAt: "2026-05-20T12:00:00.000Z",
+        }),
+      ),
+    );
+
+    await expect(
+      copyDocsDocument(
+        {
+          docId,
+          title: "Native doc (Copy)",
+          metadata: { createdFrom: "test.copy" },
+        },
+        fetchImpl,
+      ),
+    ).resolves.toMatchObject({ title: "Native doc (Copy)" });
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/docs.copy", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        docId,
+        title: "Native doc (Copy)",
+        metadata: { createdFrom: "test.copy" },
       }),
     });
   });
@@ -413,6 +459,7 @@ describe("docs API", () => {
             id: docId,
             orgId: "org-1",
             title: "Native doc",
+            ownerActorId: "11111111-1111-4111-8111-111111111111",
             editorEngine: "helix-native-document",
             formatVersion: 1,
             updateSeq: 2,
@@ -451,6 +498,7 @@ describe("docs API", () => {
         document: {
           id: docId,
           title: "Native doc",
+          ownerActorId: "11111111-1111-4111-8111-111111111111",
           layoutSettings: {
             layoutMode: "pageless",
             columnCount: 2,
@@ -567,6 +615,43 @@ describe("docs API", () => {
             },
           ],
         },
+      }),
+    });
+  });
+
+  it("saves native document state through the docs.save-native-state tool", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          id: docId,
+          title: "Native doc",
+          ydocState: btoa("state"),
+          ydocStateVector: btoa("vector"),
+          updateSeq: 3,
+          metadata: {},
+          updatedAt: "2026-05-23T12:06:00.000Z",
+        }),
+      ),
+    );
+
+    await saveNativeDocumentState(
+      {
+        docId,
+        stateBase64: btoa("state"),
+        stateVectorBase64: btoa("vector"),
+        metadata: { source: "web.native-document-editor.drop-image" },
+      },
+      fetchImpl,
+    );
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/docs.save-native-state", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        docId,
+        stateBase64: btoa("state"),
+        stateVectorBase64: btoa("vector"),
+        metadata: { source: "web.native-document-editor.drop-image" },
       }),
     });
   });

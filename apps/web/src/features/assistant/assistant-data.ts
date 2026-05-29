@@ -11,6 +11,8 @@ export interface AssistantThread {
   readonly title: string;
   /** Relative time label, e.g. "10m ago". */
   readonly time: string;
+  /** Last-activity wall-clock for date-bucket grouping (0 when unknown). */
+  readonly updatedAtMs: number;
   readonly pinned?: boolean;
 }
 

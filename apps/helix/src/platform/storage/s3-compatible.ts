@@ -350,7 +350,8 @@ function serverSideEncryptionHeaders(config: NormalizedS3Config): Record<string,
         ...(config.serverSideEncryptionAwsKmsKeyId === undefined
           ? {}
           : {
-              "x-amz-server-side-encryption-aws-kms-key-id": config.serverSideEncryptionAwsKmsKeyId,
+              "x-amz-server-side-encryption-aws-kms-key-id":
+                config.serverSideEncryptionAwsKmsKeyId,
             }),
       };
 }

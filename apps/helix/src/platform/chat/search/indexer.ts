@@ -74,6 +74,15 @@ export function chatRecordToIndexDocument(record: ChatSearchRecord): IndexDocume
       createdAt: record.createdAt,
       editedAt: record.editedAt,
       metadata: record.metadata,
+      // RAG visibility — chat messages are indexed as private-to-author by
+      // default. This means a user's assistant can recall messages THEY
+      // wrote, but cannot retrieve other users' messages from rooms they're
+      // members of (even though chat-search itself respects membership ACLs).
+      // Lifting RAG to membership-aware visibility requires either
+      // per-member duplicate indexing or a result-time membership join — a
+      // tracked follow-up. Until then, this conservative model never leaks.
+      ragVisibility: "private",
+      ragOwnerActorId: record.author.id,
     }),
     updatedAt: record.updatedAt ?? record.editedAt ?? record.createdAt,
   };

@@ -44,12 +44,92 @@ describe("Postgres OAuth stores", () => {
       actorId: "actor-1",
       orgId: "org-1",
       scopes: ["tools:read"],
+      redirectUris: [],
       expiresAt,
       revokedAt: null,
     });
     expect(recording.calls[0]?.text).toContain("insert into agent_credentials");
     expect(recording.calls[0]?.text).toContain("where id =");
     expect(recording.calls[0]?.values).toContain("org-1");
+  });
+
+  it("persists the redirect_uris allowlist on createClient (CRITICAL-3)", async () => {
+    const expiresAt = new Date("2026-05-20T12:00:00.000Z");
+    const recording = createRecordingSql([
+      [
+        {
+          client_id: "client-1",
+          secret_hash: "scrypt$hash",
+          actor_id: "actor-1",
+          org_id: "org-1",
+          scopes: ["tools:read"],
+          redirect_uris: ["https://app.example.com/callback"],
+          expires_at: expiresAt,
+          revoked_at: null,
+        },
+      ],
+    ]);
+    const store = new PostgresOAuthClientStore(recording.sql);
+
+    const client = await store.createClient({
+      actorId: "actor-1",
+      orgId: "org-1",
+      clientId: "client-1",
+      clientSecretHash: "scrypt$hash",
+      scopes: ["tools:read"],
+      redirectUris: ["https://app.example.com/callback"],
+      expiresAt,
+    });
+
+    expect(client?.redirectUris).toEqual(["https://app.example.com/callback"]);
+    expect(recording.calls[0]?.text).toContain("redirect_uris");
+  });
+
+  it("hydrates redirect_uris on findClient (CRITICAL-3)", async () => {
+    const recording = createRecordingSql([
+      [
+        {
+          client_id: "client-1",
+          secret_hash: "scrypt$hash",
+          actor_id: "actor-1",
+          org_id: "org-1",
+          scopes: ["tools:read"],
+          redirect_uris: ["https://app.example.com/cb"],
+          expires_at: null,
+          revoked_at: null,
+        },
+      ],
+    ]);
+    const store = new PostgresOAuthClientStore(recording.sql);
+    const client = await store.findClient("client-1");
+    expect(client?.redirectUris).toEqual(["https://app.example.com/cb"]);
+    expect(recording.calls[0]?.text).toContain("c.redirect_uris");
+  });
+
+  it("replaces redirect_uris with setRedirectUris (CRITICAL-3)", async () => {
+    const recording = createRecordingSql([
+      [
+        {
+          client_id: "client-1",
+          secret_hash: "scrypt$hash",
+          actor_id: "actor-1",
+          org_id: "org-1",
+          scopes: ["tools:read"],
+          redirect_uris: ["https://app.example.com/v2"],
+          expires_at: null,
+          revoked_at: null,
+        },
+      ],
+    ]);
+    const store = new PostgresOAuthClientStore(recording.sql);
+    const client = await store.setRedirectUris(
+      "client-1",
+      ["https://app.example.com/v2"],
+      new Date(),
+    );
+    expect(client?.redirectUris).toEqual(["https://app.example.com/v2"]);
+    expect(recording.calls[0]?.text).toContain("update agent_credentials");
+    expect(recording.calls[0]?.text).toContain("set redirect_uris");
   });
 
   it("reads active and revoked OAuth clients through actors for org ownership", async () => {
@@ -111,6 +191,7 @@ describe("Postgres OAuth stores", () => {
         actorId: "actor-1",
         orgId: "org-1",
         scopes: ["mail.read"],
+        redirectUris: [],
         expiresAt: null,
         revokedAt,
       },

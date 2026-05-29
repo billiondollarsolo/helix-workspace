@@ -29,6 +29,22 @@ const slideTransitionSchema = z.object({
   durationMs: z.number().int().min(120).max(3_000).optional(),
 });
 
+const slideShapeLinkUrlSchema = z
+  .string()
+  .max(2_000)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:";
+    } catch {
+      return false;
+    }
+  }, "linkUrl must be an http, https, or mailto URL");
+
+const slideShapeColorSchema = z
+  .string()
+  .regex(/^#[0-9a-fA-F]{6}$/, "color must be a six-digit hex color");
+
 const slideShapeSchema = z
   .object({
     id: z.string().min(1).max(120),
@@ -38,7 +54,17 @@ const slideShapeSchema = z
     width: z.number().min(1).max(100),
     height: z.number().min(1).max(100),
     text: z.string().max(1_000).optional(),
+    linkUrl: slideShapeLinkUrlSchema.optional(),
     tone: z.enum(["accent", "light", "dark"]).optional(),
+    fontFamily: z.enum(["inter", "serif", "mono", "system"]).optional(),
+    fontSize: z.number().int().min(8).max(96).optional(),
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    underline: z.boolean().optional(),
+    strikethrough: z.boolean().optional(),
+    textAlign: z.enum(["left", "center", "right", "justify"]).optional(),
+    textColor: slideShapeColorSchema.optional(),
+    highlightColor: slideShapeColorSchema.optional(),
     connectorDirection: z.enum(["up", "down"]).optional(),
     connectorArrow: z.enum(["none", "start", "end", "both"]).optional(),
     imageUrl: z.string().max(2_000).optional(),

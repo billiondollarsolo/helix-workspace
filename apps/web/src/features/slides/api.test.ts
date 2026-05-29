@@ -1,16 +1,61 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  copySlidesDeck,
   createSlidesComment,
   deleteSlidesComment,
   exportSlidesDeck,
   importPptxDeck,
   listSlidesComments,
+  listSlidesVersions,
   reopenSlidesComment,
   resolveSlidesComment,
+  restoreSlidesVersion,
   updateSlidesComment,
 } from "./api";
 
 describe("Slides API", () => {
+  it("copies a native deck through slides.deck.copy", async () => {
+    const fetchImpl = vi.fn<typeof fetch>((input, init) => {
+      expect(input).toBe("/api/tools/slides.deck.copy");
+      expect(init).toEqual({
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deckId: "11111111-1111-4111-8111-111111111111",
+          title: "Board narrative (Copy)",
+          metadata: { createdFrom: "test.copy" },
+        }),
+      });
+      return Promise.resolve(
+        Response.json({
+          deck: {
+            id: "22222222-2222-4222-8222-222222222222",
+            title: "Board narrative (Copy)",
+            slideCount: 1,
+            ownerActorId: "actor-1",
+            createdByActorId: "actor-1",
+            metadata: { copiedFromDeckId: "11111111-1111-4111-8111-111111111111" },
+            deletedAt: null,
+            createdAt: "2026-05-20T12:00:00.000Z",
+            updatedAt: "2026-05-20T12:00:00.000Z",
+          },
+          slides: [],
+        }),
+      );
+    });
+
+    await expect(
+      copySlidesDeck(
+        {
+          deckId: "11111111-1111-4111-8111-111111111111",
+          title: "Board narrative (Copy)",
+          metadata: { createdFrom: "test.copy" },
+        },
+        fetchImpl,
+      ),
+    ).resolves.toMatchObject({ deck: { title: "Board narrative (Copy)" } });
+  });
+
   it("exports a native deck through slides.export", async () => {
     const fetchImpl = vi.fn<typeof fetch>((input, init) => {
       expect(input).toBe("/api/tools/slides.export");
@@ -124,6 +169,53 @@ describe("Slides API", () => {
       import: { sourceFormat: "pptx", slideCount: 2 },
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists and restores deck versions through slides.version tools", async () => {
+    const deckId = "11111111-1111-4111-8111-111111111111";
+    const versionId = "44444444-4444-4444-8444-444444444444";
+    const fetchImpl = vi.fn<typeof fetch>((input, init) => {
+      const body = parseRequestBody(init);
+      if (input === "/api/tools/slides.version.list") {
+        return Promise.resolve(
+          Response.json({
+            versions: [
+              {
+                id: versionId,
+                deckId,
+                versionNumber: 3,
+                mimeType: "application/vnd.helix.presentation+json",
+                byteSize: 768,
+                sha256: "abc123",
+                metadata: { title: "Board narrative", slideCount: 4 },
+                createdByActorId: "actor-1",
+                createdAt: "2026-05-28T12:00:00.000Z",
+              },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(
+        Response.json({
+          deck: { id: body.deckId, title: "Board narrative" },
+          slides: [],
+        }),
+      );
+    });
+
+    await expect(listSlidesVersions({ deckId, limit: 5 }, fetchImpl)).resolves.toHaveLength(1);
+    await expect(restoreSlidesVersion({ deckId, versionId }, fetchImpl)).resolves.toMatchObject({
+      deck: { id: deckId },
+      slides: [],
+    });
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      "/api/tools/slides.version.list",
+      "/api/tools/slides.version.restore",
+    ]);
+    expect(fetchImpl.mock.calls.map((call) => parseRequestBody(call[1]))).toEqual([
+      { deckId, limit: 5 },
+      { deckId, versionId },
+    ]);
   });
 
   it("uses the Drive comment lifecycle for native deck review comments", async () => {

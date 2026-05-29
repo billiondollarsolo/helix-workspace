@@ -43,10 +43,9 @@ type SeedSql = postgres.Sql | postgres.TransactionSql;
 /** Per-actor role on a Drive entry — mirrors Google Drive sharing model.
  *
  *  - `owner`    full control, can delete + reshare
- *  - `editor`   read + write (sets OnlyOffice mode="edit", edit:true)
- *  - `commenter` read + suggest, no direct edit (mode="edit", edit:false,
- *                comment:true, review:true)
- *  - `viewer`   read-only (mode="view") */
+ *  - `editor`   read + write
+ *  - `commenter` read + suggest, no direct edit
+ *  - `viewer`   read-only */
 type ShareRole = "owner" | "editor" | "commenter" | "viewer";
 
 interface ShareSpec {
@@ -396,8 +395,8 @@ async function createDocFromMarkdown(
   await grant(sql, ownerActor.orgId, ownerActor.id, "document", documentId, "owner", ownerActor.id);
   await grant(sql, ownerActor.orgId, ownerActor.id, "object", objectId, "owner", ownerActor.id);
   // Per-actor roles: viewer = read-only; commenter = read + suggest;
-  // editor = full read+write. The OnlyOffice config endpoint projects
-  // these into edit/comment/review permission bits + view/edit mode.
+  // editor = full read+write. Native helix editors project these into
+  // edit/comment/review permission bits + view/edit mode.
   for (const target of shareTargets) {
     await grant(sql, ownerActor.orgId, target.actorId, "thread", threadId, "member", ownerActor.id);
     await grant(sql, ownerActor.orgId, target.actorId, "document", documentId, target.role, ownerActor.id);

@@ -28,6 +28,14 @@ const adminStatus = {
       inRole: true,
       registered: false,
     },
+    {
+      id: "editors",
+      name: "Editors",
+      description: "Native editor suite.",
+      enabled: true,
+      inRole: true,
+      registered: true,
+    },
   ],
 };
 
@@ -93,6 +101,8 @@ describe("CoreAppsManagement", () => {
     expect(container.textContent).toContain("Core apps");
     expect(container.textContent).toContain("Enabled");
     expect(container.textContent).toContain("Disabled");
+    expect(container.textContent).toContain("Alpha");
+    expect(container.textContent).toContain("Disable to keep Drive storage");
     const requestUrl = requestUrlOf(fetchMock.mock.calls[0]?.[0]);
     expect(requestUrl).toContain("/api/admin/core-apps");
   });

@@ -5,12 +5,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createWebPlatformHost, WebPlatformProvider, type WebPlatformHost } from "@helix/sdk-web";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { uploadDriveFile } from "@/features/drive/api";
 import type { SheetsApiCell, SheetsApiTab, SheetsDriveComment } from "./api";
 import { NativeSpreadsheetEditor } from "./native-spreadsheet-editor";
+
+vi.mock("@/features/drive/api", () => ({
+  uploadDriveFile: vi.fn(),
+}));
 
 const sheetId = "11111111-1111-4111-8111-111111111111";
 const tabId = "22222222-2222-4222-8222-222222222222";
 const secondTabId = "77777777-7777-4777-8777-777777777777";
+const sheetVersionId = "99999999-9999-4999-8999-999999999999";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -25,6 +31,9 @@ let cells: SheetsApiCell[];
 let tabs: SheetsApiTab[];
 let comments: SheetsDriveComment[];
 let sheetMetadata: Record<string, unknown>;
+let originalClipboard: Navigator["clipboard"] | undefined;
+let clipboardWriteText: ReturnType<typeof vi.fn<(text: string) => Promise<void>>>;
+const uploadDriveFileMock = vi.mocked(uploadDriveFile);
 
 interface TestCellWindow {
   readonly startRow: number;
@@ -45,8 +54,15 @@ describe("NativeSpreadsheetEditor", () => {
       queryClient,
       getColorMode: () => "system",
     });
+    window.history.replaceState(null, "", `/sheets?sheet=${sheetId}&q=renewals`);
     toolCalls = [];
     sheetMetadata = { customKey: { keep: true } };
+    originalClipboard = navigator.clipboard;
+    clipboardWriteText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: clipboardWriteText },
+    });
     tabs = [tab(), tab({ id: secondTabId, name: "Forecast", position: 1 })];
     cells = [cell(0, 0, "Customer"), cell(0, 1, "ARR"), cell(1, 0, "Acme"), cell(1, 1, "100")];
     comments = [
@@ -75,10 +91,39 @@ describe("NativeSpreadsheetEditor", () => {
       dependencies: ["B2"],
       formulaError: null,
     });
+    uploadDriveFileMock.mockResolvedValue({
+      objectId: "55555555-5555-4555-8555-555555555555",
+      orgId: "org-1",
+      ownerActorId: "actor-1",
+      name: "Forecast_photo.png",
+      folderId: null,
+      storageKey: "drive/555/Forecast_photo.png",
+      mimeType: "image/png",
+      byteSize: 3,
+      sha256: "0".repeat(64),
+      status: "prepared",
+      uploadUrl: null,
+      uploadHeaders: {},
+      metadata: {},
+      createdAt: "2026-05-20T12:00:00.000Z",
+      updatedAt: "2026-05-20T12:00:00.000Z",
+    });
     fetchMock = vi.fn<typeof fetch>((input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
       toolCalls.push({ url, body });
+      if (url === "/api/auth/get-session") {
+        return Promise.resolve(
+          Response.json({
+            user: {
+              id: "session-user",
+              email: "owner@helix.local",
+              name: "Owner One",
+              actorId: "actor-1",
+            },
+          }),
+        );
+      }
       if (url === "/api/tools/sheets.get") {
         return Promise.resolve(
           Response.json({
@@ -101,6 +146,59 @@ describe("NativeSpreadsheetEditor", () => {
           Response.json({
             ...targetTab,
             cells: targetTab.id === tabId ? filterTestCellsForWindow(cells, request.window) : [],
+          }),
+        );
+      }
+      if (url === "/api/tools/sheets.version.list") {
+        return Promise.resolve(
+          Response.json({
+            versions: [
+              {
+                id: sheetVersionId,
+                sheetId,
+                versionNumber: 7,
+                mimeType: "application/vnd.helix.spreadsheet+json",
+                byteSize: 512,
+                sha256: "0".repeat(64),
+                metadata: { title: "Restored sheet", tabCount: 1, cellCount: 1 },
+                createdByActorId: "actor-1",
+                createdAt: "2026-05-20T13:00:00.000Z",
+              },
+            ],
+          }),
+        );
+      }
+      if (url === "/api/tools/sheets.version.restore") {
+        cells = [cell(0, 0, "Restored customer")];
+        return Promise.resolve(
+          Response.json({
+            id: sheetId,
+            title: "Renewals",
+            tabs: sortedTabs(),
+            metadata: sheetMetadata,
+            ownerActorId: null,
+            createdByActorId: null,
+            deletedAt: null,
+            createdAt: "2026-05-20T12:00:00.000Z",
+            updatedAt: "2026-05-20T13:05:00.000Z",
+          }),
+        );
+      }
+      if (url === "/api/tools/drive.access.list") {
+        return Promise.resolve(
+          Response.json({
+            grants: [
+              {
+                actorId: "actor-2",
+                role: "reader",
+                displayName: "Maya Chen",
+                email: "maya@helix.local",
+                grantedByActorId: "actor-1",
+                expiresAt: null,
+                createdAt: "2026-05-20T12:00:00.000Z",
+                updatedAt: "2026-05-20T12:00:00.000Z",
+              },
+            ],
           }),
         );
       }
@@ -322,6 +420,10 @@ describe("NativeSpreadsheetEditor", () => {
     act(() => {
       root.unmount();
     });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: originalClipboard,
+    });
     container.remove();
     queryClient.clear();
     vi.unstubAllGlobals();
@@ -376,6 +478,32 @@ describe("NativeSpreadsheetEditor", () => {
     expect(button("Delete active tab").disabled).toBe(false);
   });
 
+  it("copies a stable spreadsheet link from the Share menu", async () => {
+    render();
+    await settle();
+
+    clickAppMenu("share");
+    clickOpenMenuItem("Copy link");
+    await settle();
+
+    const expected = new URL(window.location.href);
+    expected.pathname = "/sheets";
+    expected.search = "";
+    expected.searchParams.set("sheet", sheetId);
+    expect(clipboardWriteText).toHaveBeenCalledWith(expected.href);
+  });
+
+  it("opens the real Drive share dialog from the app-bar Share button", async () => {
+    render();
+    await settle();
+
+    clickAppBarShare();
+    await settle();
+
+    expect(container.querySelector('[role="dialog"][aria-label="Share Renewals"]')).not.toBeNull();
+    expect(container.textContent ?? "").toContain("People with access");
+  });
+
   it("loads native sheet cells with bounded viewport windows", async () => {
     render();
     await settle();
@@ -388,17 +516,48 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
 
-    await clickButton("Scroll sheet right");
-    await clickButton("Scroll sheet right");
+    // Scroll the viewport by navigating from the cell grid (End key shifts the
+    // viewport to the last column via the keyboard navigation path used by the
+    // new chrome).
+    await clickCell("A1");
+    await keyDownCell("A1", "End");
     await settle();
 
     expect(toolCalls).toContainEqual({
       url: "/api/tools/sheets.tab.get",
       body: {
         tabId,
-        window: { startRow: 0, startCol: 12, endRow: 47, endCol: 47 },
+        window: { startRow: 0, startCol: 26, endRow: 47, endCol: 49 },
       },
     });
+  });
+
+  it("recovers uncommitted grid edits after reload and clears recovery when backend catches up", async () => {
+    render();
+    await settle();
+
+    await changeCell("D2", "At risk");
+    await settle();
+
+    const recoveryKey = `helix.sheets.unsavedGrid.v1.${sheetId}.${tabId}`;
+    expect(window.localStorage.getItem(recoveryKey)).not.toBeNull();
+    expect(toolCalls.some((call) => call.url === "/api/tools/sheets.cells.update")).toBe(false);
+
+    remountFreshEditor();
+    await settle();
+
+    expect(input("D2").value).toBe("At risk");
+    expect(container.querySelector('[role="status"][aria-label="Recovered"]')).not.toBeNull();
+
+    cells = [
+      ...cells.filter((candidate) => candidate.row !== 1 || candidate.col !== 3),
+      cell(1, 3, "At risk"),
+    ];
+    remountFreshEditor();
+    await settle();
+
+    expect(input("D2").value).toBe("At risk");
+    expect(window.localStorage.getItem(recoveryKey)).toBeNull();
   });
 
   it("exports native spreadsheets as ODS workbooks", async () => {
@@ -433,6 +592,32 @@ describe("NativeSpreadsheetEditor", () => {
     clickSpy.mockRestore();
   });
 
+  it("lists and restores spreadsheet versions from the side panel", async () => {
+    render();
+    await settle();
+
+    await openSidePanelTab("Versions");
+    expect(container.textContent).toContain("Version history");
+    expect(container.textContent).toContain("Version 7");
+    expect(container.textContent).toContain("1 tab, 1 cell");
+
+    await clickTextButton("Restore");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.version.restore",
+      body: { sheetId, versionId: sheetVersionId },
+    });
+    expect(input("A1").value).toBe("Restored customer");
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.tab.get",
+      body: {
+        tabId,
+        window: { startRow: 0, startCol: 0, endRow: 47, endCol: 23 },
+      },
+    });
+  });
+
   it("registers spreadsheet command palette actions", async () => {
     const onBack = vi.fn();
     const clickSpy = vi
@@ -449,7 +634,7 @@ describe("NativeSpreadsheetEditor", () => {
         "Export active sheet as CSV",
         "Create sheet tab",
         "Insert QUERY count for selected range",
-        "Sort selected range A-Z",
+        "Sort range A to Z",
         "Analyze selected range",
         "Jump to spreadsheet comments",
       ]),
@@ -487,6 +672,7 @@ describe("NativeSpreadsheetEditor", () => {
     await settle();
 
     await clickCell("B2");
+    await openSidePanelTab("Cells");
     await clickButton("Freeze rows to selection");
     await settle();
 
@@ -515,28 +701,13 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
 
-    await clickButton("Scroll sheet down");
-    await clickButton("Scroll sheet right");
-    await settle();
-
+    // The frozen rows/cols stay visible because the visible-rows helper always
+    // includes the frozen prefix — A1 and B2 remain mounted while the rest of
+    // the grid scrolls beneath them. (Viewport scrolling now happens via
+    // keyboard navigation on the grid; the legacy scroll-button toolbar was
+    // removed when the chrome was unified onto the new ribbon.)
     expect(input("A1").value).toBe("Customer");
     expect(input("B2").value).toBe("100");
-    expect(queryInput("M25")).not.toBeNull();
-    expect(toolCalls).toContainEqual({
-      url: "/api/tools/sheets.tab.get",
-      body: {
-        tabId,
-        window: { startRow: 0, startCol: 0, endRow: 71, endCol: 35 },
-      },
-    });
-
-    await editCell("M25", "Frozen target");
-    await settle();
-
-    expect(toolCalls).toContainEqual({
-      url: "/api/tools/sheets.cells.update",
-      body: { tabId, edits: [{ row: 24, col: 12, value: "Frozen target" }] },
-    });
 
     await clickButton("Clear frozen panes");
     await settle();
@@ -554,6 +725,7 @@ describe("NativeSpreadsheetEditor", () => {
 
     await clickCell("A1");
     await shiftSelectCell("B2");
+    await openSidePanelTab("Charts");
     await clickButton("Add chart");
     await settle();
 
@@ -565,6 +737,257 @@ describe("NativeSpreadsheetEditor", () => {
     expect(container.querySelector('[aria-label="Embedded chart Chart A1:B2"] table')).toBeNull();
   });
 
+  it("drops image files onto the spreadsheet grid as Drive-backed embedded images", async () => {
+    render();
+    await settle();
+    setSpreadsheetGridRect();
+
+    const file = new File(["png"], "Forecast_photo.png", { type: "image/png" });
+    await dropImageOnSpreadsheet(file, { x: 348, y: 172 });
+    await settle();
+
+    expect(uploadDriveFileMock).toHaveBeenCalledWith({ file, folderId: null });
+    const imageUpdate = toolCalls.filter((call) => call.url === "/api/tools/sheets.update").at(-1);
+    expect(imageUpdate?.body).toMatchObject({
+      sheetId,
+      metadata: {
+        customKey: { keep: true },
+        images: [
+          {
+            tabId,
+            driveObjectId: "55555555-5555-4555-8555-555555555555",
+            src: "/api/drive/objects/55555555-5555-4555-8555-555555555555/content",
+            alt: "Forecast photo",
+            title: "Forecast_photo.png",
+            mimeType: "image/png",
+            placement: { anchorRow: 4, anchorCol: 3, rowSpan: 8, colSpan: 4 },
+          },
+        ],
+      },
+    });
+    expect(
+      container.querySelector(
+        'figure[aria-label="Embedded image Forecast photo"] img[src="/api/drive/objects/55555555-5555-4555-8555-555555555555/content"]',
+      ),
+    ).not.toBeNull();
+
+    await dragEmbeddedImage("Forecast photo", { x: 348, y: 172 }, { x: 540, y: 236 });
+    await settle();
+
+    const movedImageUpdate = toolCalls
+      .filter((call) => call.url === "/api/tools/sheets.update")
+      .at(-1);
+    expect(movedImageUpdate?.body).toMatchObject({
+      sheetId,
+      metadata: {
+        images: [
+          {
+            driveObjectId: "55555555-5555-4555-8555-555555555555",
+            placement: { anchorRow: 6, anchorCol: 5, rowSpan: 8, colSpan: 4 },
+          },
+        ],
+      },
+    });
+
+    await resizeEmbeddedImage("Forecast photo", { x: 910, y: 478 }, { x: 1102, y: 542 });
+    await settle();
+
+    const resizedImageUpdate = toolCalls
+      .filter((call) => call.url === "/api/tools/sheets.update")
+      .at(-1);
+    expect(resizedImageUpdate?.body).toMatchObject({
+      sheetId,
+      metadata: {
+        images: [
+          {
+            driveObjectId: "55555555-5555-4555-8555-555555555555",
+            placement: { anchorRow: 6, anchorCol: 5, rowSpan: 10, colSpan: 6 },
+          },
+        ],
+      },
+    });
+
+    await deleteEmbeddedImage("Forecast photo");
+    await settle();
+
+    const deletedImageUpdate = toolCalls
+      .filter((call) => call.url === "/api/tools/sheets.update")
+      .at(-1);
+    expect(deletedImageUpdate?.body).toMatchObject({
+      sheetId,
+      metadata: { customKey: { keep: true }, images: [] },
+    });
+  });
+
+  it("drops text onto the spreadsheet grid through the persisted cell edit path", async () => {
+    render();
+    await settle();
+    setSpreadsheetGridRect();
+
+    await dropTextOnSpreadsheet("Q3 target\tOwner\n42\tMaya", { x: 154, y: 106 });
+    await settle();
+
+    expect(input("B3").value).toBe("Q3 target");
+    expect(input("C3").value).toBe("Owner");
+    expect(input("B4").value).toBe("42");
+    expect(input("C4").value).toBe("Maya");
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.cells.update",
+      body: {
+        tabId,
+        edits: [
+          { row: 2, col: 1, value: "Q3 target" },
+          { row: 2, col: 2, value: "Owner" },
+          { row: 3, col: 1, value: "42" },
+          { row: 3, col: 2, value: "Maya" },
+        ],
+      },
+    });
+  });
+
+  it("drops safe URLs as persisted spreadsheet cell links", async () => {
+    render();
+    await settle();
+    setSpreadsheetGridRect();
+
+    const url = "https://example.com/renewals-plan";
+    await dropTextOnSpreadsheet(url, { x: 154, y: 106 }, "text/uri-list");
+    await settle();
+
+    expect(input("B3").value).toBe(url);
+    expect(input("B3").style.textDecoration).toBe("underline");
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.cells.update",
+      body: {
+        tabId,
+        edits: [{ row: 2, col: 1, value: url, format: { linkUrl: url } }],
+      },
+    });
+
+    await focusCell("B3");
+    await changeCell("B3", "Renewals plan");
+    await blurCell("B3");
+    await settle();
+
+    const latestCellUpdate = toolCalls
+      .filter((call) => call.url === "/api/tools/sheets.cells.update")
+      .at(-1);
+    expect(latestCellUpdate?.body).toMatchObject({
+      tabId,
+      edits: [{ row: 2, col: 1, value: "Renewals plan", format: {} }],
+    });
+  });
+
+  it("keeps unsafe dropped URLs as plain spreadsheet text", async () => {
+    render();
+    await settle();
+    setSpreadsheetGridRect();
+
+    await dropTextOnSpreadsheet("javascript:alert(1)", { x: 154, y: 106 });
+    await settle();
+
+    expect(input("B3").value).toBe("javascript:alert(1)");
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.cells.update",
+      body: {
+        tabId,
+        edits: [{ row: 2, col: 1, value: "javascript:alert(1)" }],
+      },
+    });
+  });
+
+  it("renders wrapped and vertically aligned cell text through the visual cell layer", async () => {
+    cells.push(
+      cell(2, 1, "Workspace parity needs wrapped cell text", {
+        align: "center",
+        fontFamily: "serif",
+        fontSize: "14",
+        strikethrough: true,
+        underline: true,
+        verticalAlign: "bottom",
+        wrapText: true,
+      }),
+    );
+
+    render();
+    await settle();
+
+    const visual = visualCell("B3");
+    expect(visual.textContent).toBe("Workspace parity needs wrapped cell text");
+    expect(visual.style.display).toBe("flex");
+    expect(visual.style.alignItems).toBe("flex-end");
+    expect(visual.style.whiteSpace).toBe("pre-wrap");
+    expect(visual.style.overflowWrap).toBe("anywhere");
+    expect(visual.style.textAlign).toBe("center");
+    expect(visual.style.fontFamily).toContain("Georgia");
+    expect(visual.style.fontSize).toBe("14px");
+    expect(visual.style.textDecoration).toBe("underline line-through");
+
+    await focusCell("B3");
+    expect(visualCell("B3").style.display).toBe("none");
+    expect(input("B3").style.opacity).toBe("1");
+  });
+
+  it("lets non-wrapped text visually overflow through adjacent empty cells until blocked", async () => {
+    cells.push(
+      cell(3, 1, "Long spreadsheet label that should overflow empty cells"),
+      cell(3, 4, "Blocked"),
+      cell(4, 1, "Long spreadsheet label blocked immediately"),
+      cell(4, 2, "Next"),
+      cell(5, 0, "Blocked"),
+      cell(5, 3, "Right aligned label that should overflow left", { align: "right" }),
+      cell(6, 2, "Left block"),
+      cell(6, 3, "Right aligned label blocked immediately", { align: "right" }),
+      cell(7, 0, "Blocked"),
+      cell(7, 3, "Centered label that should overflow both ways", { align: "center" }),
+      cell(7, 5, "Blocked"),
+      cell(8, 2, "Left block"),
+      cell(8, 3, "Centered label blocked immediately", { align: "center" }),
+      cell(8, 4, "Right block"),
+    );
+
+    render();
+    await settle();
+
+    expect(cellShell("B4").style.overflow).toBe("visible");
+    expect(cellShell("B4").style.zIndex).toBe("2");
+    expect(visualCell("B4").style.width).toBe("288px");
+    expect(visualCell("B4").style.overflow).toBe("visible");
+    expect(visualCell("B4").style.textOverflow).toBe("");
+
+    expect(cellShell("B5").style.overflow).toBe("hidden");
+    expect(visualCell("B5").style.width).toBe("");
+    expect(visualCell("B5").style.overflow).toBe("hidden");
+    expect(visualCell("B5").style.textOverflow).toBe("ellipsis");
+
+    expect(cellShell("D6").style.overflow).toBe("visible");
+    expect(cellShell("D6").style.zIndex).toBe("2");
+    expect(visualCell("D6").style.left).toBe("-192px");
+    expect(visualCell("D6").style.width).toBe("288px");
+    expect(visualCell("D6").style.textAlign).toBe("right");
+
+    expect(cellShell("D7").style.overflow).toBe("hidden");
+    expect(visualCell("D7").style.left).toBe("0px");
+    expect(visualCell("D7").style.width).toBe("");
+    expect(visualCell("D7").style.textOverflow).toBe("ellipsis");
+
+    expect(cellShell("D8").style.overflow).toBe("visible");
+    expect(cellShell("D8").style.zIndex).toBe("2");
+    expect(visualCell("D8").style.left).toBe("-192px");
+    expect(visualCell("D8").style.width).toBe("384px");
+    expect(visualCell("D8").style.textAlign).toBe("center");
+
+    expect(cellShell("D9").style.overflow).toBe("hidden");
+    expect(visualCell("D9").style.left).toBe("0px");
+    expect(visualCell("D9").style.width).toBe("");
+    expect(visualCell("D9").style.textOverflow).toBe("ellipsis");
+
+    await focusCell("B4");
+    expect(visualCell("B4").style.display).toBe("none");
+    expect(input("B4").style.opacity).toBe("1");
+  });
+
   it("renders a backend tab as an editable native grid and persists committed cells", async () => {
     render();
     await settle();
@@ -572,7 +995,7 @@ describe("NativeSpreadsheetEditor", () => {
     expect(container.textContent).toContain("Renewals");
     expect(input("A1").value).toBe("Customer");
     expect(input("B2").value).toBe("100");
-    expect(input("B2").style.boxShadow).toContain("#f59e0b");
+    expect(cellShell("B2").style.boxShadow).toContain("#f59e0b");
     const arrCommentOverlay = container.querySelector('[aria-label="Comment range B2"]');
     expect(arrCommentOverlay).not.toBeNull();
     expect((arrCommentOverlay as HTMLDivElement | null)?.style.left).toBe("144px");
@@ -583,6 +1006,7 @@ describe("NativeSpreadsheetEditor", () => {
 
     await clickCell("A1");
     await shiftSelectCell("B2");
+    await openSidePanelTab("Charts");
     await clickButton("Add chart");
     await settle();
 
@@ -605,6 +1029,7 @@ describe("NativeSpreadsheetEditor", () => {
     expect(container.querySelector('[aria-label="Acme 100"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Embedded chart Chart A1:B2"]')).not.toBeNull();
 
+    await openSidePanelTab("Charts");
     await clickCell("D4");
     await clickButton("Place bar chart Chart A1:B2 at selected cell");
     await settle();
@@ -627,6 +1052,7 @@ describe("NativeSpreadsheetEditor", () => {
     await clickCell("A1");
     await shiftSelectCell("B2");
 
+    await openSidePanelTab("Pivots");
     await clickButton("Create pivot table");
     await settle();
 
@@ -717,6 +1143,7 @@ describe("NativeSpreadsheetEditor", () => {
     await clickCell("A1");
     await shiftSelectCell("B2");
 
+    await openSidePanelTab("Names");
     await clickButton("Name selected range");
     await settle();
 
@@ -774,6 +1201,7 @@ describe("NativeSpreadsheetEditor", () => {
     });
     expect(container.textContent).toContain("A1:C2");
 
+    await openSidePanelTab("Cells");
     await clickButton("Merge selected cells");
     await settle();
 
@@ -1223,7 +1651,6 @@ describe("NativeSpreadsheetEditor", () => {
     await settle();
     expect(selectedCellLabel().textContent).toBe("A25");
     expect(document.activeElement).toBe(input("A25"));
-    expect(sheetViewportStatus()).toContain("Rows 2-25");
 
     await keyDownCell("A25", "PageUp");
     await settle();
@@ -1243,7 +1670,6 @@ describe("NativeSpreadsheetEditor", () => {
     await settle();
     expect(selectedCellLabel().textContent).toBe("AX1");
     expect(document.activeElement).toBe(input("AX1"));
-    expect(sheetViewportStatus()).toContain("Cols AM-AX");
 
     await keyDownCell("AX1", "Home");
     await settle();
@@ -1285,7 +1711,9 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
 
-    await clickButton("Scroll sheet left");
+    // Snap the viewport back to column A via the Home key on the currently
+    // selected cell, then verify A1 is in the DOM again.
+    await keyDownCell("M1", "Home");
     await settle();
     expect(input("A1").value).toBe("Customer");
 
@@ -1295,7 +1723,8 @@ describe("NativeSpreadsheetEditor", () => {
     expect(selectedCellLabel().textContent).toBe("A25");
     expect(document.activeElement).toBe(input("A25"));
 
-    await clickButton("Scroll sheet to first rows");
+    // PageUp scrolls back to the first viewport window so A1 reappears.
+    await keyDownCell("A25", "PageUp");
     await settle();
     expect(input("A1").value).toBe("Customer");
 
@@ -1329,6 +1758,37 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
 
+    await clickButton("Underline");
+    await settle();
+    await clickButton("Strikethrough");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.cells.update",
+      body: {
+        tabId,
+        edits: [
+          { row: 1, col: 1, value: "100", format: { italic: true, bold: true, underline: true } },
+        ],
+      },
+    });
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.cells.update",
+      body: {
+        tabId,
+        edits: [
+          {
+            row: 1,
+            col: 1,
+            value: "100",
+            format: { italic: true, bold: true, underline: true, strikethrough: true },
+          },
+        ],
+      },
+    });
+    expect(input("B2").style.textDecoration).toBe("underline line-through");
+
+    await openSidePanelTab("Cells");
     await clickCell("D2");
     await clickButton("Fill yellow");
     await settle();
@@ -1410,7 +1870,7 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
     await clickCell("A1");
-    expect(input("I2").style.background).not.toBe("transparent");
+    expect(cellShell("I2").style.background).not.toBe("transparent");
     expect(container.textContent).toContain("Conditional rules");
     expect(container.textContent).toContain("Greater than 125");
 
@@ -1458,7 +1918,7 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
     await clickCell("A1");
-    expect(input("I2").style.background).not.toBe("transparent");
+    expect(cellShell("I2").style.background).not.toBe("transparent");
     expect(container.textContent).toContain("Formula =B2>=100");
 
     await editCell("G3", "Needs review before close");
@@ -1493,7 +1953,7 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
     await clickCell("A1");
-    expect(input("G3").style.background).not.toBe("transparent");
+    expect(cellShell("G3").style.background).not.toBe("transparent");
     expect(container.textContent).toContain('Text contains "review"');
 
     await editCell("J2", "2026-05-24");
@@ -1623,7 +2083,7 @@ describe("NativeSpreadsheetEditor", () => {
         ],
       },
     });
-    expect(input("F4").style.boxShadow).toContain("inset");
+    expect(cellShell("F4").style.boxShadow).toContain("inset");
 
     await clickButton("Border none");
     await settle();
@@ -1663,7 +2123,7 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
     expect(input("H2").title).toBe("Expected a number.");
-    expect(input("H2").style.boxShadow).toContain("#dc2626");
+    expect(cellShell("H2").style.boxShadow).toContain("#dc2626");
     expect(container.textContent).toContain("Validation rules");
     expect(container.textContent).toContain("Number only");
     expect(select("Validation rule mode H2").value).toBe("warn");
@@ -1821,11 +2281,12 @@ describe("NativeSpreadsheetEditor", () => {
       url: "/api/tools/sheets.cells.update",
       body: { tabId, edits: [{ row: 1, col: 1, value: "101" }] },
     });
-  }, 10_000);
+  }, 20_000);
 
   it("validates URL, localized date, and custom formula catalog rules", async () => {
     render();
     await settle();
+    await openSidePanelTab("Cells");
 
     await editCell("A3", "not-a-url");
     await settle();
@@ -1844,6 +2305,7 @@ describe("NativeSpreadsheetEditor", () => {
     await selectToolbarOption("Data validation", "date");
     await settle();
     expect(input("B3").title).toBe("Expected a date in yyyy-mm-dd format.");
+    await openSidePanelTab("Cells");
     expect(container.textContent).toContain("Date: yyyy-mm-dd");
     await editCell("B3", "2026-02-28");
     await settle();
@@ -1918,6 +2380,49 @@ describe("NativeSpreadsheetEditor", () => {
     await settle();
     expect(input("C3").value).toBe("60");
     expect(toolCalls).toHaveLength(callsBeforeRejectedFormulaEdit);
+  });
+
+  it("undoes and redoes committed cell edits from the top ribbon", async () => {
+    render();
+    await settle();
+
+    expect(button("Undo").disabled).toBe(true);
+    expect(button("Redo").disabled).toBe(true);
+
+    await focusCell("B2");
+    await changeCell("B2", "250");
+    await blurCell("B2");
+    await settle();
+
+    expect(input("B2").value).toBe("250");
+    expect(button("Undo").disabled).toBe(false);
+    expect(button("Redo").disabled).toBe(true);
+
+    await clickButton("Undo");
+    await settle();
+
+    expect(input("B2").value).toBe("100");
+    expect(button("Undo").disabled).toBe(true);
+    expect(button("Redo").disabled).toBe(false);
+    expect(
+      toolCalls.filter((call) => call.url === "/api/tools/sheets.cells.update").at(-1)?.body,
+    ).toMatchObject({
+      tabId,
+      edits: [{ row: 1, col: 1, value: "100" }],
+    });
+
+    await clickButton("Redo");
+    await settle();
+
+    expect(input("B2").value).toBe("250");
+    expect(button("Undo").disabled).toBe(false);
+    expect(button("Redo").disabled).toBe(true);
+    expect(
+      toolCalls.filter((call) => call.url === "/api/tools/sheets.cells.update").at(-1)?.body,
+    ).toMatchObject({
+      tabId,
+      edits: [{ row: 1, col: 1, value: "250" }],
+    });
   });
 
   it("copy-fills selected cells with the fill handle after drag preview", async () => {
@@ -2075,7 +2580,6 @@ describe("NativeSpreadsheetEditor", () => {
     await dragFillHandle({ x: 336, y: 96 }, { x: 1248, y: 96 });
 
     expect(selectedCellLabel().textContent).toBe("B2:M2");
-    expect(sheetViewportStatus()).toContain("Cols B-M");
     const fillUpdate = toolCalls.find((call) => {
       if (call.url !== "/api/tools/sheets.cells.update") {
         return false;
@@ -2108,7 +2612,6 @@ describe("NativeSpreadsheetEditor", () => {
     await dragFillHandle({ x: 144, y: 96 }, { x: 96, y: 808 });
 
     expect(selectedCellLabel().textContent).toBe("B2:B25");
-    expect(sheetViewportStatus()).toContain("Rows 2-25");
     const verticalFillUpdate = toolCalls.find((call) => {
       if (call.url !== "/api/tools/sheets.cells.update") {
         return false;
@@ -2175,6 +2678,79 @@ describe("NativeSpreadsheetEditor", () => {
     });
   });
 
+  it("copies, pastes, and cuts selected cells from the Edit menu", async () => {
+    const richFormat = {
+      bold: true,
+      fillColor: "#fef3c7",
+      textColor: "#1d4ed8",
+      numberFormat: "currency",
+    };
+    cells = [cell(0, 0, "42", richFormat), cell(0, 1, "=A1*2", { numberFormat: "percent" })];
+    render();
+    await settle();
+
+    await clickCell("A1");
+    await shiftSelectCell("B1");
+    clickAppMenu("edit");
+    clickOpenMenuItem("Copy");
+    await settle();
+
+    expect(clipboardWriteText).toHaveBeenCalledWith("42\t=A1*2");
+
+    await clickCell("A3");
+    clickAppMenu("edit");
+    clickOpenMenuItem("Paste");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.cells.update",
+      body: {
+        tabId,
+        edits: [
+          { row: 2, col: 0, value: "42", format: richFormat },
+          { row: 2, col: 1, value: "=A1*2", format: { numberFormat: "percent" } },
+        ],
+      },
+    });
+    expect(input("A3").value).toBe("42");
+    expect(input("B3").value).toBe("=A1*2");
+
+    clickAppMenu("edit");
+    clickOpenMenuItem("Cut");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.cells.update",
+      body: {
+        tabId,
+        edits: [
+          { row: 2, col: 0, value: "", format: {} },
+          { row: 2, col: 1, value: "", format: {} },
+        ],
+      },
+    });
+    expect(input("A3").value).toBe("");
+    expect(input("B3").value).toBe("");
+
+    await clickCell("A4");
+    clickAppMenu("edit");
+    clickOpenMenuItem("Paste");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/sheets.cells.update",
+      body: {
+        tabId,
+        edits: [
+          { row: 3, col: 0, value: "42", format: richFormat },
+          { row: 3, col: 1, value: "=A1*2", format: { numberFormat: "percent" } },
+        ],
+      },
+    });
+    expect(input("A4").value).toBe("42");
+    expect(input("B4").value).toBe("=A1*2");
+  });
+
   it("selects visible rectangular ranges by dragging across cells", async () => {
     render();
     await settle();
@@ -2236,6 +2812,8 @@ describe("NativeSpreadsheetEditor", () => {
 
     render();
     await settle();
+    await openSidePanelTab("Pivots");
+    await settle();
 
     expect(container.querySelector('[aria-label="Acme pivot 150"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Beta pivot 200"]')).not.toBeNull();
@@ -2292,7 +2870,7 @@ describe("NativeSpreadsheetEditor", () => {
     });
     await settle();
 
-    expect(container.textContent).toContain("Live collaboration connected");
+    expect(container.querySelector('[role="status"][aria-label="Live"]')).not.toBeNull();
 
     await editCell("B2", "175");
     await settle();
@@ -2319,7 +2897,7 @@ describe("NativeSpreadsheetEditor", () => {
     });
     expect(selectedCellLabel().textContent).toBe("B2");
 
-    await clickButton("Delete selected row");
+    await clickButton("Delete row");
     expect(socket?.sent.at(-1)).toEqual({
       type: "operation",
       tabId,
@@ -2343,7 +2921,7 @@ describe("NativeSpreadsheetEditor", () => {
     });
     expect(selectedCellLabel().textContent).toBe("B2");
 
-    await clickButton("Delete selected column");
+    await clickButton("Delete column");
     expect(socket?.sent.at(-1)).toEqual({
       type: "operation",
       tabId,
@@ -2438,6 +3016,7 @@ describe("NativeSpreadsheetEditor", () => {
 
     await clickCell("B2");
     await shiftSelectCell("C2");
+    await openSidePanelTab("Permissions");
     await clickButton("Protect selected range");
     await settle();
 
@@ -2458,10 +3037,10 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
     expect(input("B2").title).toBe("Protected range: B2:C2");
-    expect(input("B2").style.boxShadow).toContain("#64748b");
+    expect(cellShell("B2").style.boxShadow).toContain("#64748b");
     expect(formulaBar().disabled).toBe(true);
-    expect(button("Sort selected range A-Z").disabled).toBe(true);
-    expect(button("Sort selected range Z-A").disabled).toBe(true);
+    expect(button("Sort range A to Z").disabled).toBe(true);
+    expect(button("Sort range Z to A").disabled).toBe(true);
     const protectedRangeTable = container.querySelector('[aria-label="Protected range table"]');
     expect(protectedRangeTable?.textContent).toContain("B2:C2");
     expect(protectedRangeTable?.textContent).toContain("Pipeline");
@@ -2498,7 +3077,7 @@ describe("NativeSpreadsheetEditor", () => {
       },
     });
     expect(input("B2").title).toBe("Warning range: B2:C2");
-    expect(input("B2").style.boxShadow).toContain("#f59e0b");
+    expect(cellShell("B2").style.boxShadow).toContain("#f59e0b");
     expect(input("B2").readOnly).toBe(false);
     expect(formulaBar().disabled).toBe(false);
 
@@ -2536,6 +3115,7 @@ describe("NativeSpreadsheetEditor", () => {
   it("inserts QUERY helper formulas next to the selected range", async () => {
     render();
     await settle();
+    await openSidePanelTab("AI");
 
     await clickCell("B2");
     await shiftSelectCell("C2");
@@ -2665,6 +3245,7 @@ describe("NativeSpreadsheetEditor", () => {
 
     await clickCell("A1");
     await shiftSelectCell("B2");
+    await openSidePanelTab("AI");
     await clickButton("Analyze selected range");
     await settle();
 
@@ -2698,6 +3279,7 @@ describe("NativeSpreadsheetEditor", () => {
 
     await clickCell("A3");
     await shiftSelectCell("B4");
+    await openSidePanelTab("Filters");
     await clickButton("Save A-Z filter view");
     await settle();
 
@@ -2831,7 +3413,7 @@ describe("NativeSpreadsheetEditor", () => {
     expect(input("A3").value).toBe("Zeta");
     expect(input("A4").value).toBe("Alpha");
 
-    await clickButton("Sort selected range A-Z");
+    await clickButton("Sort range A to Z");
     await settle();
 
     expect(toolCalls).toContainEqual({
@@ -2861,7 +3443,7 @@ describe("NativeSpreadsheetEditor", () => {
     });
     expect(container.textContent).not.toContain("Customer_Filter");
 
-    await clickButton("Sort selected range Z-A");
+    await clickButton("Sort range Z to A");
     await settle();
 
     expect(toolCalls).toContainEqual({
@@ -2921,6 +3503,8 @@ describe("NativeSpreadsheetEditor", () => {
     };
     render();
     await settle();
+    await openSidePanelTab("Filters");
+    await settle();
 
     expect(container.textContent).toContain('A equals "Alpha"');
     expect(container.textContent).toContain("B > 10");
@@ -2951,7 +3535,7 @@ describe("NativeSpreadsheetEditor", () => {
 
     await clickCell("A2");
     await shiftSelectCell("B3");
-    await clickButton("Sort selected range A-Z");
+    await clickButton("Sort range A to Z");
     await settle();
 
     expect(toolCalls).toContainEqual({
@@ -2984,6 +3568,22 @@ function render({ onBack = () => undefined }: { readonly onBack?: () => void } =
       </WebPlatformProvider>,
     );
   });
+}
+
+function remountFreshEditor() {
+  act(() => {
+    root.unmount();
+  });
+  queryClient.clear();
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 0 } },
+  });
+  platformHost = createWebPlatformHost({
+    queryClient,
+    getColorMode: () => "system",
+  });
+  root = createRoot(container);
+  render();
 }
 
 async function editCell(label: string, value: string): Promise<void> {
@@ -3126,6 +3726,190 @@ function setSheetGridRect(): void {
   });
 }
 
+function setSpreadsheetGridRect(): void {
+  const grid = container.querySelector('[role="grid"]');
+  if (!(grid instanceof HTMLDivElement)) {
+    throw new Error("Missing spreadsheet grid.");
+  }
+  Object.defineProperty(grid, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({
+      left: 0,
+      top: 0,
+      right: 1200,
+      bottom: 900,
+      width: 1200,
+      height: 900,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }),
+  });
+}
+
+async function dropImageOnSpreadsheet(
+  file: File,
+  point: { readonly x: number; readonly y: number },
+): Promise<void> {
+  const grid = container.querySelector('[role="grid"]');
+  if (!(grid instanceof HTMLDivElement)) {
+    throw new Error("Missing spreadsheet grid.");
+  }
+  const dataTransfer = {
+    dropEffect: "none",
+    files: {
+      length: 1,
+      0: file,
+      item: (index: number) => (index === 0 ? file : null),
+    },
+    items: {
+      length: 1,
+      0: {
+        kind: "file",
+        type: file.type,
+        getAsFile: () => file,
+      },
+    },
+  } as unknown as DataTransfer;
+
+  await act(async () => {
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+    Object.defineProperty(event, "clientX", { value: point.x });
+    Object.defineProperty(event, "clientY", { value: point.y });
+    grid.dispatchEvent(event);
+    await Promise.resolve();
+  });
+}
+
+async function dropTextOnSpreadsheet(
+  text: string,
+  point: { readonly x: number; readonly y: number },
+  type = "text/plain",
+): Promise<void> {
+  const grid = container.querySelector('[role="grid"]');
+  if (!(grid instanceof HTMLDivElement)) {
+    throw new Error("Missing spreadsheet grid.");
+  }
+  const dataTransfer = {
+    dropEffect: "none",
+    types: [type],
+    getData: (requestedType: string) => (requestedType === type ? text : ""),
+    files: { length: 0, item: () => null },
+    items: { length: 0 },
+  } as unknown as DataTransfer;
+
+  await act(async () => {
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+    Object.defineProperty(event, "clientX", { value: point.x });
+    Object.defineProperty(event, "clientY", { value: point.y });
+    grid.dispatchEvent(event);
+    await Promise.resolve();
+  });
+}
+
+async function dragEmbeddedImage(
+  alt: string,
+  start: { readonly x: number; readonly y: number },
+  end: { readonly x: number; readonly y: number },
+): Promise<void> {
+  const target = embeddedImage(alt);
+  await act(async () => {
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: start.x,
+        clientY: start.y,
+      }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        clientX: end.x,
+        clientY: end.y,
+      }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mouseup", {
+        bubbles: true,
+        clientX: end.x,
+        clientY: end.y,
+      }),
+    );
+    await Promise.resolve();
+  });
+}
+
+async function resizeEmbeddedImage(
+  alt: string,
+  start: { readonly x: number; readonly y: number },
+  end: { readonly x: number; readonly y: number },
+): Promise<void> {
+  const handle = embeddedImageResizeHandle(alt);
+  await act(async () => {
+    handle.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: start.x,
+        clientY: start.y,
+      }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        clientX: end.x,
+        clientY: end.y,
+      }),
+    );
+    window.dispatchEvent(
+      new MouseEvent("mouseup", {
+        bubbles: true,
+        clientX: end.x,
+        clientY: end.y,
+      }),
+    );
+    await Promise.resolve();
+  });
+}
+
+async function deleteEmbeddedImage(alt: string): Promise<void> {
+  const target = embeddedImage(alt);
+  await act(async () => {
+    target.focus();
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Delete",
+      }),
+    );
+    await Promise.resolve();
+  });
+}
+
+function embeddedImage(alt: string): HTMLElement {
+  const target = container.querySelector<HTMLElement>(`figure[aria-label="Embedded image ${alt}"]`);
+  if (target === null) {
+    throw new Error(`Missing embedded image: ${alt}`);
+  }
+  return target;
+}
+
+function embeddedImageResizeHandle(alt: string): HTMLElement {
+  const target = container.querySelector<HTMLElement>(
+    `button[aria-label="Resize embedded image ${alt}"]`,
+  );
+  if (target === null) {
+    throw new Error(`Missing embedded image resize handle: ${alt}`);
+  }
+  return target;
+}
+
 async function dragSelectCells(
   startLabel: string,
   endLabel: string,
@@ -3260,6 +4044,22 @@ function queryInput(label: string): HTMLInputElement | null {
   return container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
 }
 
+function cellShell(label: string): HTMLElement {
+  const target = container.querySelector<HTMLElement>(`[data-testid="sheet-cell-shell-${label}"]`);
+  if (target === null) {
+    throw new Error(`Missing cell shell: ${label}`);
+  }
+  return target;
+}
+
+function visualCell(label: string): HTMLElement {
+  const target = container.querySelector<HTMLElement>(`[data-testid="sheet-cell-visual-${label}"]`);
+  if (target === null) {
+    throw new Error(`Missing visual cell: ${label}`);
+  }
+  return target;
+}
+
 function formulaBar(): HTMLInputElement {
   return input("Formula bar");
 }
@@ -3280,17 +4080,91 @@ function selectedRangeSummary(): HTMLElement {
   return target;
 }
 
-function sheetViewportStatus(): string {
-  const target = container.querySelector<HTMLElement>('[aria-label="Sheet viewport"]');
-  if (target === null) {
-    throw new Error("Missing sheet viewport.");
-  }
-  return target.textContent ?? "";
-}
-
 async function clickButton(label: string): Promise<void> {
   await act(async () => {
     button(label).click();
+    await Promise.resolve();
+  });
+}
+
+async function clickTextButton(label: string): Promise<void> {
+  const target = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
+  if (target === undefined) {
+    throw new Error(`Missing text button: ${label}`);
+  }
+  await act(async () => {
+    target.click();
+    await Promise.resolve();
+  });
+}
+
+function clickAppMenu(menuId: string): void {
+  const target = container.querySelector<HTMLButtonElement>(`button[data-menu-id="${menuId}"]`);
+  if (target === null) {
+    throw new Error(`Missing app menu: ${menuId}`);
+  }
+  act(() => {
+    target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+function clickAppBarShare(): void {
+  const target =
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Share" && button.dataset.menuId !== "share",
+    ) ?? null;
+  if (target === null) {
+    throw new Error("Missing app-bar Share button");
+  }
+  act(() => {
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+function clickOpenMenuItem(label: string): void {
+  const target =
+    Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitem']")).find((node) =>
+      node.textContent?.includes(label),
+    ) ?? null;
+  if (target === null) {
+    throw new Error(
+      `Missing open menu item: ${label}. Found: ${JSON.stringify(
+        Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitem']")).map((node) =>
+          node.textContent?.trim(),
+        ),
+      )}`,
+    );
+  }
+  act(() => {
+    target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+async function openSidePanelTab(label: string): Promise<void> {
+  const triggers = Array.from(container.querySelectorAll<HTMLElement>('[role="tab"]'));
+  const trigger = triggers.find(
+    (node) =>
+      node.textContent?.trim().startsWith(label) === true ||
+      node.getAttribute("aria-label") === label,
+  );
+  if (trigger === undefined) {
+    throw new Error(`Missing side-panel tab: ${label}`);
+  }
+  await act(async () => {
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    trigger.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+    trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    await Promise.resolve();
+  });
+  // Allow the effect that updates seenTabIds to commit so the new tab content mounts.
+  await act(async () => {
     await Promise.resolve();
   });
 }

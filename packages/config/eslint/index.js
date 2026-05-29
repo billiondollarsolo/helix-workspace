@@ -275,11 +275,7 @@ const queryRefreshDisciplineRule = {
         return node.property.name === "refetch";
       }
 
-      return (
-        node.computed &&
-        node.property.type === "Literal" &&
-        node.property.value === "refetch"
-      );
+      return node.computed && node.property.type === "Literal" && node.property.value === "refetch";
     }
 
     return {
@@ -289,6 +285,158 @@ const queryRefreshDisciplineRule = {
         }
 
         context.report({ node: node.callee, messageId: "queryRefreshDiscipline" });
+      },
+    };
+  },
+};
+
+const orgScopedDrizzleTableNames = new Set([
+  "actors",
+  "activity",
+  "agentCredentials",
+  "aiArtifacts",
+  "appPasswords",
+  "assistantConversations",
+  "assistantMemoryPreferences",
+  "assistantMessages",
+  "calAttendees",
+  "calCalendars",
+  "calEvents",
+  "chatPins",
+  "chatReactions",
+  "chatReadReceipts",
+  "chatRoomSettings",
+  "docsComments",
+  "docsDocuments",
+  "docsRevisions",
+  "docsStyles",
+  "docsSuggestions",
+  "docsThemes",
+  "docsUpdates",
+  "driveFolders",
+  "driveVersions",
+  "inboundWebhooks",
+  "mailAliases",
+  "mailDkimKeys",
+  "mailDmarcReportRecords",
+  "mailDmarcReports",
+  "mailFilters",
+  "mailInboundRoutingRules",
+  "mailOutboundMessages",
+  "mailOutboundProviders",
+  "mailSendingDomains",
+  "mailThreadState",
+  "mailVacation",
+  "mailVacationResponses",
+  "meetRooms",
+  "memoryItems",
+  "messageAttachments",
+  "messages",
+  "objects",
+  "oauthAccessTokens",
+  "outboundWebhooks",
+  "outbox",
+  "pendingActions",
+  "permissions",
+  "sheetCells",
+  "sheetTabs",
+  "sheets",
+  "slideDecks",
+  "slides",
+  "threads",
+  "vectorCollections",
+  "vectorItems",
+  "webhookDeliveries",
+]);
+
+const directDrizzleTenantQueryRule = {
+  meta: {
+    type: "problem",
+    docs: {
+      description: "Require tenantScoped() for direct Drizzle queries on org-scoped tables",
+    },
+    messages: {
+      directDrizzleTenantQuery:
+        "Use tenantScoped() instead of a direct Drizzle {{operation}} on org-scoped table {{table}}.",
+    },
+    schema: [],
+  },
+  create(context) {
+    function getMemberName(node) {
+      if (!node || node.type !== "MemberExpression") {
+        return undefined;
+      }
+
+      if (!node.computed && node.property.type === "Identifier") {
+        return node.property.name;
+      }
+
+      if (
+        node.computed &&
+        node.property.type === "Literal" &&
+        typeof node.property.value === "string"
+      ) {
+        return node.property.value;
+      }
+
+      return undefined;
+    }
+
+    function getOrgScopedTableName(node) {
+      return node?.type === "Identifier" && orgScopedDrizzleTableNames.has(node.name)
+        ? node.name
+        : undefined;
+    }
+
+    function isTenantScopedCall(node) {
+      return (
+        node?.type === "CallExpression" &&
+        node.callee.type === "Identifier" &&
+        node.callee.name === "tenantScoped"
+      );
+    }
+
+    function report(node, operation, table) {
+      context.report({
+        node,
+        messageId: "directDrizzleTenantQuery",
+        data: { operation, table },
+      });
+    }
+
+    return {
+      CallExpression(node) {
+        if (isTenantScopedCall(node)) {
+          return;
+        }
+
+        if (node.callee.type !== "MemberExpression") {
+          return;
+        }
+
+        const operation = getMemberName(node.callee);
+        if (!operation) {
+          return;
+        }
+
+        if (operation === "from") {
+          const [tableNode] = node.arguments;
+          const table = getOrgScopedTableName(tableNode);
+          if (table) {
+            report(node, operation, table);
+          }
+          return;
+        }
+
+        if (!["delete", "insert", "update"].includes(operation)) {
+          return;
+        }
+
+        const [tableNode] = node.arguments;
+        const table = getOrgScopedTableName(tableNode);
+        if (table) {
+          report(node, operation, table);
+        }
       },
     };
   },
@@ -406,6 +554,7 @@ const internalAnchorRule = {
 
 export const helixBrowserPlugin = {
   rules: {
+    "direct-drizzle-tenant-query": directDrizzleTenantQueryRule,
     "internal-link": internalAnchorRule,
     "mutation-discipline": mutationDisciplineRule,
     "no-native-popup": nativePopupRule,
@@ -417,6 +566,7 @@ export const helixBrowserPlugin = {
 };
 
 export const helixBrowserRules = {
+  "helix/direct-drizzle-tenant-query": "error",
   "helix/internal-link": "error",
   "helix/mutation-discipline": "error",
   "helix/no-native-popup": "error",

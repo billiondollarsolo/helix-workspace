@@ -6,21 +6,54 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useWebPlatformHost } from "@helix/sdk-web";
+import {
+  EditorAppBar,
+  EditorRibbon,
+  EditorSidePanel,
+  EditorWorkspace,
+  type SidePanelTab,
+} from "@helix/editors-ui";
+import {
+  Image as ImageIconLucide,
+  LayoutTemplate,
+  MessageSquare,
+  PlayCircle,
+  Settings2,
+  StickyNote,
+  History,
+} from "lucide-react";
 import { Icons } from "@/components/icons";
-import { uploadDriveFile, type DriveApiEntry } from "@/features/drive/api";
+import { DriveShareDialog } from "@/features/drive/drive-share-dialog";
+import {
+  OfficeVersionHistoryPanel,
+  type OfficeVersionRecord,
+} from "@/features/_open/ui/OfficeVersionHistoryPanel";
+import {
+  buildSlidesMenus,
+  buildSlidesRibbon,
+  type SlidesChromeContext,
+  type SlidesTransitionValue,
+} from "./native-presentation-chrome";
+import { SlideThumbnailRail } from "./slide-thumbnail-rail";
+import { trashDriveObject, uploadDriveFile, type DriveApiEntry } from "@/features/drive/api";
 import { driveQueryKeys } from "@/features/drive/queries";
 import type { PeopleDirectoryPerson } from "@/features/people/api";
 import {
   createSlidesComment,
+  copySlidesDeck,
+  createSlidesDeck,
   createSlidesSlide,
   deleteSlidesComment,
   deleteSlidesSlide,
   exportSlidesDeck,
+  restoreSlidesVersion,
   reopenSlidesComment,
   reorderSlidesSlides,
   resolveSlidesComment,
@@ -36,6 +69,7 @@ import {
 import {
   slidesCommentsQueryOptions,
   slidesDeckDetailQueryOptions,
+  slidesDeckVersionsQueryOptions,
   slidesDriveShapeAssetsQueryOptions,
   slidesMentionPeopleQueryOptions,
   slidesQueryKeys,
@@ -51,25 +85,51 @@ import {
   SLIDE_THEME_OPTIONS,
   type SlideContent,
   type SlideConnectorArrow,
-  type SlideConnectorDirection,
-  type SlideBackground,
   type SlideLayout,
-  type SlideImageFit,
-  type SlideImageMask,
   type SlideMediaType,
   type SlideShape,
   type SlideShapeAnimation,
   type SlideShapeAnimationEasing,
   type SlideShapeAnimationType,
+  type SlideShapeFontFamily,
   type SlideShapeKind,
   type SlideShapeMotionPath,
-  type SlideShapeTone,
+  type SlideShapeTextAlign,
   type SlideTheme,
   type SlideTransition,
   type SlideTransitionDirection,
 } from "./seed";
+import { FormatInspector, NotesInspector, SlideInspector } from "./inspectors/inspector-tabs";
+import type { SlideEditorController, SlideImageDropPlacement } from "./slide-editor-controller";
 
 type LiveCaptionStatus = "off" | "listening" | "unsupported" | "error";
+const SLIDES_DRAFT_RECOVERY_PREFIX = "helix.slides.unsavedDraft.v1";
+const SLIDES_VIEW_PREFERENCE_KEY = "helix.slides.view.v1";
+const SLIDES_SHAPE_CLIPBOARD_KEY = "helix.slides.shapeClipboard.v1";
+const SLIDES_MIN_ZOOM_PERCENT = 50;
+const SLIDES_MAX_ZOOM_PERCENT = 150;
+const SLIDES_ZOOM_STEP_PERCENT = 10;
+const SLIDES_FIT_ZOOM_PERCENT = 100;
+
+interface NativePresentationViewPreference {
+  readonly showGrid: boolean;
+  readonly showRulers: boolean;
+  readonly snapToGuides: boolean;
+  readonly zoomPercent: number;
+}
+
+interface StoredSlideShapeClipboard {
+  readonly shape: SlideShape;
+  readonly copiedAt: string;
+}
+
+const DEFAULT_NATIVE_PRESENTATION_VIEW_PREFERENCE = {
+  showGrid: false,
+  showRulers: false,
+  snapToGuides: true,
+  zoomPercent: SLIDES_FIT_ZOOM_PERCENT,
+} satisfies NativePresentationViewPreference;
+
 type PresentationCollaborator = Omit<
   NativePresentationAwarenessFrame,
   "type" | "protocol" | "deckId" | "status"
@@ -216,18 +276,7 @@ interface CaptionTranscriptLibraryEntry {
   readonly lines: readonly string[];
 }
 
-interface ShapeAnimationTimelineRow {
-  readonly key: string;
-  readonly shapeId: string;
-  readonly shapeLabel: string;
-  readonly phase: "entrance" | "exit";
-  readonly type: SlideShapeAnimationType;
-  readonly motionPath?: SlideShapeMotionPath | undefined;
-  readonly order: number;
-  readonly durationMs: number;
-  readonly easing: SlideShapeAnimationEasing;
-  readonly shapeIndex: number;
-}
+type ShapeAnimationTimelineRow = import("./slide-editor-controller").ShapeAnimationTimelineRow;
 
 interface DeckShapeAnimationTimelineRow extends ShapeAnimationTimelineRow {
   readonly slideId: string;
@@ -247,6 +296,7 @@ export interface NativePresentationEditorProps {
   readonly routeState?: NativePresentationEditorRouteState;
   readonly onRouteStateChange?: (state: NativePresentationEditorRouteState) => void;
   readonly onBack: () => void;
+  readonly onOpenDeck?: ((deckId: string) => void) | undefined;
 }
 
 export interface NativePresentationEditorRouteState {
@@ -271,6 +321,7 @@ export function NativePresentationEditor({
   routeState,
   onRouteStateChange,
   onBack,
+  onOpenDeck,
 }: NativePresentationEditorProps) {
   const queryClient = useQueryClient();
   const platformHost = useWebPlatformHost();
@@ -285,13 +336,21 @@ export function NativePresentationEditor({
     exportSvgSeries: () => undefined,
   });
   const deckQuery = useQuery(slidesDeckDetailQueryOptions(deckId));
+  const versionsQuery = useQuery(slidesDeckVersionsQueryOptions(deckId));
   const slides = deckQuery.data?.slides ?? [];
   const [activeSlideId, setActiveSlideId] = useState<string | null>(null);
   const [presenting, setPresenting] = useState(false);
   const [presentSlideIndex, setPresentSlideIndex] = useState(0);
   const [syncStatus, setSyncStatus] = useState<NativePresentationSyncStatus>("offline");
+  const [syncErrorMessage, setSyncErrorMessage] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<readonly PresentationCollaborator[]>([]);
   const [activeShapeId, setActiveShapeId] = useState<string | null>(null);
+  const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  const [sidePanelActiveTab, setSidePanelActiveTab] = useState<string>("comments");
+  const [viewPreference, setViewPreference] = useState<NativePresentationViewPreference>(
+    readNativePresentationViewPreference,
+  );
+  const userTouchedTabRef = useRef(false);
   const [shapeFocusRequest, setShapeFocusRequest] = useState<PresentationShapeFocusRequest | null>(
     null,
   );
@@ -303,6 +362,7 @@ export function NativePresentationEditor({
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editCommentDraft, setEditCommentDraft] = useState("");
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const commentRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const routeCommentIdRef = useRef<string | null>(routeCommentId);
   const suppressRouteEmitRef = useRef(false);
@@ -391,11 +451,25 @@ export function NativePresentationEditor({
     setPresentSlideIndex((current) => Math.min(current, Math.max(slides.length - 1, 0)));
   }, [slides.length]);
 
+  // Auto-activate the Format tab whenever a shape becomes selected, unless
+  // the user has manually picked a different tab during this session.
+  useEffect(() => {
+    if (activeShapeId !== null && !userTouchedTabRef.current) {
+      setSidePanelActiveTab("format");
+    }
+  }, [activeShapeId]);
+
   useEffect(() => {
     const provider = new NativePresentationSyncProvider({
       deckId,
-      onStatusChange: setSyncStatus,
+      onStatusChange: (status) => {
+        setSyncStatus(status);
+        if (status === "connected") {
+          setSyncErrorMessage(null);
+        }
+      },
       onSnapshot: (snapshot) => {
+        setSyncErrorMessage(null);
         queryClient.setQueryData(slidesQueryKeys.deckDetail(deckId), snapshot);
         setActiveSlideId((current) => {
           if (current !== null && snapshot.slides.some((slide) => slide.id === current)) {
@@ -432,12 +506,31 @@ export function NativePresentationEditor({
           );
         });
       },
+      onConflict: (frame) => {
+        // Per-slide CAS rejected our edit because another collaborator
+        // changed the same slide first. The provider has already swapped
+        // the local snapshot to the server's authoritative one (via
+        // onSnapshot above); we only need to keep React Query in sync.
+        // TODO(slides-ot): surface a toast so the user knows their last
+        // local change was discarded — paired with the full per-shape OT
+        // follow-up (see docs/reviews/follow-up.md).
+        queryClient.setQueryData(slidesQueryKeys.deckDetail(deckId), {
+          deck: frame.deck,
+          slides: frame.slides,
+        });
+      },
+      onError: (error) => {
+        setSyncErrorMessage(slidesSyncErrorMessage(error));
+      },
     });
     syncProviderRef.current = provider;
-    provider.connect();
+    const connectTimer = window.setTimeout(() => {
+      provider.connect();
+    }, 0);
     return () => {
+      window.clearTimeout(connectTimer);
       setCollaborators([]);
-      provider.disconnect();
+      provider.disconnect({ notify: false });
       if (syncProviderRef.current === provider) {
         syncProviderRef.current = null;
       }
@@ -780,6 +873,64 @@ export function NativePresentationEditor({
     onError: () => undefined,
   });
 
+  const createDeckMutation = useMutation({
+    mutationFn: () =>
+      createSlidesDeck({
+        title: "Untitled presentation",
+        metadata: { createdFrom: "web.native-presentation-editor" },
+      }),
+    onMutate: () => undefined,
+    onSuccess: async (deck) => {
+      await queryClient.invalidateQueries({ queryKey: slidesQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+      onOpenDeck?.(deck.id);
+    },
+    onError: () => undefined,
+  });
+
+  const copyDeckMutation = useMutation({
+    mutationFn: () => {
+      const title = deckQuery.data?.deck.title ?? "Presentation";
+      return copySlidesDeck({
+        deckId,
+        title: `${title} (Copy)`,
+        metadata: { createdFrom: "web.native-presentation-editor.make-copy" },
+      });
+    },
+    onMutate: () => undefined,
+    onSuccess: async (copied) => {
+      await queryClient.invalidateQueries({ queryKey: slidesQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+      onOpenDeck?.(copied.deck.id);
+    },
+    onError: () => undefined,
+  });
+
+  const trashDeckMutation = useMutation({
+    mutationFn: () => trashDriveObject(deckId),
+    onMutate: () => undefined,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: slidesQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+      onBack();
+    },
+    onError: () => undefined,
+  });
+
+  const restoreVersionMutation = useMutation({
+    mutationFn: (versionId: string) => restoreSlidesVersion({ deckId, versionId }),
+    onMutate: () => undefined,
+    onSuccess: async (restored) => {
+      setActiveSlideId(restored.slides[0]?.id ?? null);
+      setActiveShapeId(null);
+      setPresentSlideIndex(0);
+      await queryClient.invalidateQueries({ queryKey: slidesQueryKeys.deckDetail(deckId) });
+      await queryClient.invalidateQueries({ queryKey: slidesQueryKeys.deckVersions(deckId) });
+      await queryClient.invalidateQueries({ queryKey: slidesQueryKeys.all });
+    },
+    onError: () => undefined,
+  });
+
   const createCommentMutation = useMutation({
     mutationFn: (input: {
       readonly body: string;
@@ -838,7 +989,8 @@ export function NativePresentationEditor({
     updateMutation.isPending ||
     deleteMutation.isPending ||
     reorderMutation.isPending ||
-    themeMutation.isPending;
+    themeMutation.isPending ||
+    restoreVersionMutation.isPending;
   const collaboratorSummary =
     collaborators.length === 0
       ? null
@@ -941,9 +1093,11 @@ export function NativePresentationEditor({
   }
 
   function removeSlide(slideId: string) {
+    const slideRevision = slides.find((slide) => slide.id === slideId)?.revision;
     const operationId = syncProviderRef.current?.sendOperation({
       kind: "delete-slide",
       slideId,
+      ...(typeof slideRevision === "number" ? { expectedRevision: slideRevision } : {}),
     });
     if (operationId !== null && operationId !== undefined) {
       return;
@@ -1027,11 +1181,17 @@ export function NativePresentationEditor({
   }
 
   function saveSlide(slideId: string, content: SlideContent, speakerNotes: string) {
+    // Send the slide's last-observed `revision` as a per-slide CAS token so
+    // a concurrent edit to the same slide can't silently overwrite us. The
+    // server rejects with `slide-conflict` if another writer beat us, and
+    // the provider refreshes our local snapshot from the server's payload.
+    const slideRevision = slides.find((slide) => slide.id === slideId)?.revision;
     const operationId = syncProviderRef.current?.sendOperation({
       kind: "update-slide",
       slideId,
       content,
       speakerNotes,
+      ...(typeof slideRevision === "number" ? { expectedRevision: slideRevision } : {}),
     });
     if (operationId !== null && operationId !== undefined) {
       return;
@@ -1138,6 +1298,21 @@ export function NativePresentationEditor({
     platformHost,
   ]);
 
+  // Slide draft + selection state is owned here (above the early returns so
+  // hook order stays stable) and is consumed by both the canvas (`SlideEditor`)
+  // and the side-panel inspector tabs.
+  const slideEditor = useSlideEditorController(
+    activeSlide,
+    updateMutation.isPending,
+    (content, speakerNotes) => {
+      if (activeSlide !== null) {
+        saveSlide(activeSlide.id, content, speakerNotes);
+      }
+    },
+    onActiveShapeChange,
+    shapeFocusRequest?.slideId === activeSlide?.id ? (shapeFocusRequest?.shapeId ?? null) : null,
+  );
+
   if (deckQuery.isLoading) {
     return <EditorNotice icon={<Icons.Image />} text="Loading deck..." />;
   }
@@ -1146,280 +1321,461 @@ export function NativePresentationEditor({
     return <EditorNotice icon={<Icons.Globe />} text="Presentation unavailable." />;
   }
 
+  const chromeActiveShape = slideEditor.controller?.selectedShape ?? activeShape;
+  const updateViewPreference = (
+    updater: (current: NativePresentationViewPreference) => NativePresentationViewPreference,
+  ) => {
+    setViewPreference((current) => {
+      const next = normalizeNativePresentationViewPreference(updater(current));
+      writeNativePresentationViewPreference(next);
+      return next;
+    });
+  };
+
+  const chromeContext: SlidesChromeContext = {
+    deckTitle: deckQuery.data.deck.title,
+    deckTheme,
+    slideCount: slides.length,
+    activeSlideId: activeSlide?.id ?? null,
+    activeSlideLayout: slideEditor.controller?.draft.layout ?? activeSlide?.content.layout ?? null,
+    activeSlideTransition:
+      slideEditor.controller?.draft.transition ?? activeSlide?.content.transition,
+    activeShape: chromeActiveShape,
+    canUndo: slideEditor.controller?.canUndo ?? false,
+    canRedo: slideEditor.controller?.canRedo ?? false,
+    fontFamily: chromeActiveShape?.fontFamily ?? "inter",
+    fontSize: String(chromeActiveShape?.fontSize ?? 16),
+    bold: chromeActiveShape?.bold === true,
+    italic: chromeActiveShape?.italic === true,
+    underline: chromeActiveShape?.underline === true,
+    strikethrough: chromeActiveShape?.strikethrough === true,
+    textAlign: chromeActiveShape?.textAlign ?? "center",
+    textColor: chromeActiveShape?.textColor ?? "#111827",
+    highlightColor: chromeActiveShape?.highlightColor ?? "#ffffff",
+    showGrid: viewPreference.showGrid,
+    showRulers: viewPreference.showRulers,
+    snapToGuides: viewPreference.snapToGuides,
+    zoomPercent: viewPreference.zoomPercent,
+    canPasteShape: slideEditor.controller?.canPasteShape ?? false,
+    onUndo: () => {
+      slideEditor.controller?.undo();
+    },
+    onRedo: () => {
+      slideEditor.controller?.redo();
+    },
+    onCutShape: () => {
+      slideEditor.controller?.cutSelectedShape();
+    },
+    onCopyShape: () => {
+      slideEditor.controller?.copySelectedShape();
+    },
+    onPasteShape: () => {
+      slideEditor.controller?.pasteShape();
+    },
+    onAddSlide: createSlide,
+    onDuplicateSlide: () => {
+      if (activeSlide !== null) duplicateSlide(activeSlide);
+    },
+    onDeleteSlide: () => {
+      if (activeSlide !== null) removeSlide(activeSlide.id);
+    },
+    onNewDeck: () => createDeckMutation.mutate(),
+    onOpenDeck: onBack,
+    onMakeDeckCopy: () => copyDeckMutation.mutate(),
+    onMoveDeckToTrash: () => trashDeckMutation.mutate(),
+    onPresentDeck: startPresenting,
+    onExportPptx: () => exportDeck("pptx"),
+    onExportPdf: () => exportDeck("pdf"),
+    onExportSvgSeries: () => exportDeck("svg-series"),
+    onChangeTheme: updateTheme,
+    onChangeLayout: (next) => {
+      slideEditor.controller?.changeLayout(next);
+    },
+    onChangeTransition: (next) => {
+      const controller = slideEditor.controller;
+      if (controller === null) {
+        return;
+      }
+      controller.patchDraft({
+        transition: controller.transitionFromSelection(next),
+      });
+    },
+    onChangeShapeFontFamily: (next) => {
+      slideEditor.controller?.patchSelectedShape({ fontFamily: next as SlideShapeFontFamily });
+    },
+    onChangeShapeFontSize: (next) => {
+      const fontSize = Number.parseInt(next, 10);
+      if (Number.isFinite(fontSize)) {
+        slideEditor.controller?.patchSelectedShape({ fontSize });
+      }
+    },
+    onChangeShapeBold: (next) => {
+      slideEditor.controller?.patchSelectedShape({ bold: next });
+    },
+    onChangeShapeItalic: (next) => {
+      slideEditor.controller?.patchSelectedShape({ italic: next });
+    },
+    onChangeShapeUnderline: (next) => {
+      slideEditor.controller?.patchSelectedShape({ underline: next });
+    },
+    onChangeShapeStrikethrough: (next) => {
+      slideEditor.controller?.patchSelectedShape({ strikethrough: next });
+    },
+    onChangeShapeTextAlign: (next) => {
+      slideEditor.controller?.patchSelectedShape({ textAlign: next });
+    },
+    onChangeShapeTextColor: (next) => {
+      slideEditor.controller?.patchSelectedShape({ textColor: next });
+    },
+    onChangeShapeHighlightColor: (next) => {
+      slideEditor.controller?.patchSelectedShape({ highlightColor: next });
+    },
+    onToggleGrid: () =>
+      updateViewPreference((current) => ({ ...current, showGrid: !current.showGrid })),
+    onToggleRulers: () =>
+      updateViewPreference((current) => ({ ...current, showRulers: !current.showRulers })),
+    onToggleSnapToGuides: () =>
+      updateViewPreference((current) => ({
+        ...current,
+        snapToGuides: !current.snapToGuides,
+      })),
+    onZoomIn: () =>
+      updateViewPreference((current) => ({
+        ...current,
+        zoomPercent: current.zoomPercent + SLIDES_ZOOM_STEP_PERCENT,
+      })),
+    onZoomOut: () =>
+      updateViewPreference((current) => ({
+        ...current,
+        zoomPercent: current.zoomPercent - SLIDES_ZOOM_STEP_PERCENT,
+      })),
+    onZoomFit: () =>
+      updateViewPreference((current) => ({
+        ...current,
+        zoomPercent: SLIDES_FIT_ZOOM_PERCENT,
+      })),
+    onOpenVersionHistory: () => {
+      setSidePanelActiveTab("versions");
+      setSidePanelOpen(true);
+    },
+    onShareDeck: () => setShareDialogOpen(true),
+    onCopyDeckLink: () => {
+      void writeClipboardText(buildSlidesDeckLink(deckId)).catch(() => undefined);
+    },
+  };
+
+  const totalOpenComments = Array.from(openCommentCounts.values()).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+
+  const appBarStatus = isSaving
+    ? { kind: "saving" as const }
+    : syncErrorMessage !== null
+      ? { kind: "error" as const, label: "Save failed" }
+      : syncStatus === "connected"
+        ? { kind: "live" as const }
+        : { kind: "saved" as const };
+  const presence = collaborators.map((collaborator) => ({
+    id: collaborator.actorId,
+    name: collaborator.displayName,
+    color: collaboratorColor(collaborator),
+  }));
+
+  const deckMediaTable = (
+    <DeckMediaAssetTable
+      slides={slides}
+      activeSlideId={activeSlide?.id ?? null}
+      driveImageAssets={driveImageAssets}
+      driveMediaAssets={driveMediaAssets}
+      onOpenMediaAsset={openDeckMediaAsset}
+      onApplyDeckMediaAction={applyDeckMediaAction}
+      onUpdateMediaPlayback={updateDeckMediaAssetPlayback}
+      onReplaceMediaSource={replaceDeckMediaAssetSource}
+      onReplaceMediaPoster={replaceDeckMediaAssetPoster}
+      onReplaceBlockingSources={replaceBlockingDeckMediaSources}
+      onReplaceDuplicateSources={replaceDuplicateDeckMediaSources}
+    />
+  );
+  const deckAnimationTable = (
+    <DeckAnimationTimelineTable
+      slides={slides}
+      activeSlideId={activeSlide?.id ?? null}
+      onSelectSlide={setActiveSlideId}
+    />
+  );
+
+  const versionsTabContent = (
+    <OfficeVersionHistoryPanel
+      ariaLabel="Presentation version history"
+      versions={versionsQuery.data ?? []}
+      loading={versionsQuery.isLoading}
+      loadError={versionsQuery.isError}
+      restoreError={restoreVersionMutation.isError}
+      restoringVersionId={
+        restoreVersionMutation.isPending ? (restoreVersionMutation.variables ?? null) : null
+      }
+      emptyLabel="No saved presentation snapshots"
+      detailLabel={slidesVersionDetailLabel}
+      onRestore={(version) => restoreVersionMutation.mutate(version.id)}
+    />
+  );
+
+  const commentsTabContent = (
+    <SlidesCommentsRail
+      comments={commentThreads}
+      filter={commentStatusFilter}
+      loading={filteredCommentsQuery.isLoading || openCommentsQuery.isLoading}
+      selectedThreadId={selectedThreadId}
+      linkedCommentUnavailable={linkedCommentUnavailable}
+      target={commentTarget}
+      newCommentDraft={newCommentDraft}
+      replyDrafts={replyDrafts}
+      editingCommentId={editingCommentId}
+      editCommentDraft={editCommentDraft}
+      mentionOptions={mentionOptions}
+      slides={slides}
+      busy={
+        createCommentMutation.isPending ||
+        resolveCommentMutation.isPending ||
+        reopenCommentMutation.isPending ||
+        updateCommentMutation.isPending ||
+        deleteCommentMutation.isPending
+      }
+      onFilterChange={setCommentStatusFilter}
+      onNewCommentDraftChange={setNewCommentDraft}
+      onReplyDraftChange={(commentId, value) =>
+        setReplyDrafts((current) => ({ ...current, [commentId]: value }))
+      }
+      onEditDraftChange={setEditCommentDraft}
+      onSubmitNewComment={submitNewComment}
+      onSubmitReply={submitReply}
+      onStartEdit={startEditingComment}
+      onCancelEdit={() => {
+        setEditingCommentId(null);
+        setEditCommentDraft("");
+      }}
+      onSubmitEdit={submitCommentEdit}
+      onResolve={(comment) => resolveCommentMutation.mutate(comment.id)}
+      onReopen={(comment) => reopenCommentMutation.mutate(comment.id)}
+      onDelete={(comment) => deleteCommentMutation.mutate(comment.id)}
+      onOpenComment={openCommentAnchor}
+      onClearLinkedComment={clearLinkedComment}
+      onCopyCommentLink={copySlidesCommentLink}
+      onThreadElement={(commentId, element) => {
+        commentRefs.current[commentId] = element;
+      }}
+    />
+  );
+
+  const slideController = slideEditor.controller;
+
+  const sidePanelTabs: SidePanelTab[] = [
+    {
+      id: "comments",
+      label: "Comments",
+      icon: <MessageSquare className="size-4" aria-hidden="true" />,
+      badge: totalOpenComments > 0 ? totalOpenComments : undefined,
+      content: commentsTabContent,
+    },
+    {
+      id: "format",
+      label: "Format",
+      icon: <Settings2 className="size-4" aria-hidden="true" />,
+      content: <FormatInspector controller={slideController} />,
+    },
+    {
+      id: "slide",
+      label: "Slide",
+      icon: <LayoutTemplate className="size-4" aria-hidden="true" />,
+      content: <SlideInspector controller={slideController} />,
+    },
+    {
+      id: "animations",
+      label: "Animations",
+      icon: <PlayCircle className="size-4" aria-hidden="true" />,
+      content: deckAnimationTable,
+    },
+    {
+      id: "media",
+      label: "Media",
+      icon: <ImageIconLucide className="size-4" aria-hidden="true" />,
+      content: deckMediaTable,
+    },
+    {
+      id: "versions",
+      label: "Versions",
+      icon: <History className="size-4" aria-hidden="true" />,
+      content: versionsTabContent,
+    },
+    {
+      id: "notes",
+      label: "Notes",
+      icon: <StickyNote className="size-4" aria-hidden="true" />,
+      content: <NotesInspector controller={slideController} />,
+    },
+  ];
+
+  const exportBlockerNotice = deckExportBlocked ? (
+    <span style={EXPORT_GATE_STATUS_STYLE} role="status">
+      Resolve {String(deckExportReadiness.exportBlockers)} media export blocker
+      {deckExportReadiness.exportBlockers === 1 ? "" : "s"} before export.
+    </span>
+  ) : null;
+
+  const appBarActions = (
+    <>
+      {collaborators.length > 0 ? (
+        <div aria-label="Active collaborators" style={COLLABORATOR_ROW_STYLE}>
+          {collaborators.slice(0, 4).map((collaborator) => (
+            <span
+              key={collaborator.actorId}
+              title={collaboratorPresenceTitle(collaborator, slides)}
+              style={COLLABORATOR_BADGE_STYLE}
+            >
+              {initials(collaborator.displayName)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <label style={THEME_CONTROL_STYLE}>
+        <span style={LABEL_STYLE}>Theme</span>
+        <select
+          aria-label="Deck theme"
+          value={deckTheme}
+          disabled={themeMutation.isPending}
+          onChange={(event) => updateTheme(event.target.value as SlideTheme)}
+          style={HEADER_SELECT_STYLE}
+        >
+          {SLIDE_THEME_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        className="btn sm primary"
+        disabled={createMutation.isPending}
+        onClick={createSlide}
+      >
+        <Icons.Plus /> Add slide
+      </button>
+      <button
+        type="button"
+        className="btn sm"
+        disabled={slides.length === 0}
+        onClick={startPresenting}
+      >
+        Present
+      </button>
+      <button
+        type="button"
+        className="btn sm"
+        disabled={exportMutation.isPending || deckExportBlocked}
+        title={deckExportBlocked ? deckExportBlockedTitle(deckExportReadiness) : undefined}
+        onClick={() => exportDeck("pptx")}
+      >
+        <Icons.Download /> PPTX
+      </button>
+      <button
+        type="button"
+        className="btn sm"
+        disabled={exportMutation.isPending || deckExportBlocked}
+        title={deckExportBlocked ? deckExportBlockedTitle(deckExportReadiness) : undefined}
+        onClick={() => exportDeck("pdf")}
+      >
+        <Icons.Download /> PDF
+      </button>
+      <button
+        type="button"
+        className="btn sm"
+        disabled={exportMutation.isPending || deckExportBlocked}
+        title={deckExportBlocked ? deckExportBlockedTitle(deckExportReadiness) : undefined}
+        onClick={() => exportDeck("svg-series")}
+      >
+        <Icons.Download /> SVG ZIP
+      </button>
+      {exportBlockerNotice}
+    </>
+  );
+
   return (
     <div style={EDITOR_STYLE}>
       <style>{SLIDE_SHAPE_ANIMATION_KEYFRAMES}</style>
-      <div style={HEADER_STYLE}>
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={onBack}
-          aria-label="Back to slides list"
-        >
-          <Icons.ArrowLeft />
-        </button>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div className="truncate" style={TITLE_STYLE}>
-            {deckQuery.data.deck.title}
-          </div>
-          <div style={META_STYLE}>
-            {isSaving
-              ? "Saving..."
-              : syncStatus === "connected"
-                ? `Live collaboration connected${collaboratorSummary === null ? "" : ` · ${collaboratorSummary}`}`
-                : "All changes saved"}
-          </div>
+      <EditorAppBar
+        title={deckQuery.data.deck.title}
+        onBack={onBack}
+        status={appBarStatus}
+        presence={presence}
+        menus={buildSlidesMenus(chromeContext)}
+        sidePanelOpen={sidePanelOpen}
+        onSidePanelToggle={() => setSidePanelOpen((open) => !open)}
+        actions={appBarActions}
+        onShare={() => setShareDialogOpen(true)}
+      />
+      <EditorRibbon ariaLabel="Slides formatting toolbar">
+        {buildSlidesRibbon(chromeContext)}
+      </EditorRibbon>
+      {syncErrorMessage !== null ? (
+        <div role="alert" style={SYNC_ERROR_BANNER_STYLE}>
+          {syncErrorMessage}
         </div>
-        {collaborators.length > 0 ? (
-          <div aria-label="Active collaborators" style={COLLABORATOR_ROW_STYLE}>
-            {collaborators.slice(0, 4).map((collaborator) => {
-              return (
-                <span
-                  key={collaborator.actorId}
-                  title={collaboratorPresenceTitle(collaborator, slides)}
-                  style={COLLABORATOR_BADGE_STYLE}
-                >
-                  {initials(collaborator.displayName)}
-                </span>
-              );
-            })}
-          </div>
-        ) : null}
-        <label style={THEME_CONTROL_STYLE}>
-          <span style={LABEL_STYLE}>Theme</span>
-          <select
-            aria-label="Deck theme"
-            value={deckTheme}
-            disabled={themeMutation.isPending}
-            onChange={(event) => updateTheme(event.target.value as SlideTheme)}
-            style={HEADER_SELECT_STYLE}
-          >
-            {SLIDE_THEME_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          className="btn sm primary"
-          disabled={createMutation.isPending}
-          onClick={createSlide}
-        >
-          <Icons.Plus /> Add slide
-        </button>
-        <button
-          type="button"
-          className="btn sm"
-          disabled={slides.length === 0}
-          onClick={startPresenting}
-        >
-          Present
-        </button>
-        <button
-          type="button"
-          className="btn sm"
-          disabled={exportMutation.isPending || deckExportBlocked}
-          title={deckExportBlocked ? deckExportBlockedTitle(deckExportReadiness) : undefined}
-          onClick={() => exportDeck("pptx")}
-        >
-          <Icons.Download /> PPTX
-        </button>
-        <button
-          type="button"
-          className="btn sm"
-          disabled={exportMutation.isPending || deckExportBlocked}
-          title={deckExportBlocked ? deckExportBlockedTitle(deckExportReadiness) : undefined}
-          onClick={() => exportDeck("pdf")}
-        >
-          <Icons.Download /> PDF
-        </button>
-        <button
-          type="button"
-          className="btn sm"
-          disabled={exportMutation.isPending || deckExportBlocked}
-          title={deckExportBlocked ? deckExportBlockedTitle(deckExportReadiness) : undefined}
-          onClick={() => exportDeck("svg-series")}
-        >
-          <Icons.Download /> SVG ZIP
-        </button>
-        {deckExportBlocked ? (
-          <span style={EXPORT_GATE_STATUS_STYLE} role="status">
-            Resolve {String(deckExportReadiness.exportBlockers)} media export blocker
-            {deckExportReadiness.exportBlockers === 1 ? "" : "s"} before export.
-          </span>
-        ) : null}
-      </div>
-
-      <div style={BODY_STYLE}>
-        <aside style={THUMB_RAIL_STYLE} aria-label="Slides">
-          {slides.length === 0 ? (
-            <p style={EMPTY_STYLE}>No slides</p>
-          ) : (
-            slides.map((slide, index) => {
-              const openCommentCount = openCommentCounts.get(slide.id) ?? 0;
-              return (
-                <div
-                  key={slide.id}
-                  style={{
-                    ...THUMB_ROW_STYLE,
-                    borderColor: activeSlide?.id === slide.id ? "var(--accent)" : "var(--border)",
-                  }}
-                >
-                  <button
-                    type="button"
-                    aria-pressed={activeSlide?.id === slide.id}
-                    onClick={() => setActiveSlideId(slide.id)}
-                    style={THUMB_SELECT_STYLE}
-                  >
-                    <span style={THUMB_INDEX_STYLE}>{index + 1}</span>
-                    <span className="truncate" style={THUMB_TITLE_STYLE}>
-                      {slideTitle(slide.content)}
-                    </span>
-                    {openCommentCount > 0 ? (
-                      <span
-                        style={THUMB_COMMENT_BADGE_STYLE}
-                        aria-label={`${String(openCommentCount)} open comments for ${slideTitle(
-                          slide.content,
-                        )}`}
-                      >
-                        {openCommentCount}
-                      </span>
-                    ) : null}
-                  </button>
-                  <span style={THUMB_ACTIONS_STYLE}>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      aria-label={`Move ${slideTitle(slide.content)} up`}
-                      disabled={index === 0 || reorderMutation.isPending}
-                      onClick={() => moveSlide(slide.id, -1)}
-                      title="Move up"
-                    >
-                      <Icons.ChevronDown style={{ transform: "rotate(180deg)" }} />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      aria-label={`Move ${slideTitle(slide.content)} down`}
-                      disabled={index === slides.length - 1 || reorderMutation.isPending}
-                      onClick={() => moveSlide(slide.id, 1)}
-                      title="Move down"
-                    >
-                      <Icons.ChevronDown />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      aria-label={`Duplicate ${slideTitle(slide.content)}`}
-                      disabled={createMutation.isPending}
-                      onClick={() => duplicateSlide(slide)}
-                      title="Duplicate slide"
-                    >
-                      <Icons.Copy />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      aria-label={`Delete ${slideTitle(slide.content)}`}
-                      disabled={deleteMutation.isPending}
-                      onClick={() => removeSlide(slide.id)}
-                      title="Delete slide"
-                    >
-                      <Icons.Trash />
-                    </button>
-                  </span>
-                </div>
-              );
-            })
-          )}
-          <DeckMediaAssetTable
+      ) : null}
+      <EditorWorkspace
+        leftRail={
+          <SlideThumbnailRail
             slides={slides}
             activeSlideId={activeSlide?.id ?? null}
-            driveImageAssets={driveImageAssets}
-            driveMediaAssets={driveMediaAssets}
-            onOpenMediaAsset={openDeckMediaAsset}
-            onApplyDeckMediaAction={applyDeckMediaAction}
-            onUpdateMediaPlayback={updateDeckMediaAssetPlayback}
-            onReplaceMediaSource={replaceDeckMediaAssetSource}
-            onReplaceMediaPoster={replaceDeckMediaAssetPoster}
-            onReplaceBlockingSources={replaceBlockingDeckMediaSources}
-            onReplaceDuplicateSources={replaceDuplicateDeckMediaSources}
-          />
-          <DeckAnimationTimelineTable
-            slides={slides}
-            activeSlideId={activeSlide?.id ?? null}
+            openCommentCounts={openCommentCounts}
+            slideTitleOf={slideTitle}
+            reorderPending={reorderMutation.isPending}
+            createPending={createMutation.isPending}
+            deletePending={deleteMutation.isPending}
             onSelectSlide={setActiveSlideId}
+            onMoveSlide={moveSlide}
+            onDuplicateSlide={duplicateSlide}
+            onRemoveSlide={removeSlide}
+            footer={null}
           />
-        </aside>
-
+        }
+        sidePanel={
+          <EditorSidePanel
+            open={sidePanelOpen}
+            onOpenChange={setSidePanelOpen}
+            tabs={sidePanelTabs}
+            activeTabId={sidePanelActiveTab}
+            onActiveTabChange={(id: string) => {
+              userTouchedTabRef.current = true;
+              setSidePanelActiveTab(id);
+            }}
+          />
+        }
+      >
         <main style={CANVAS_COLUMN_STYLE}>
-          {activeSlide === null ? (
+          {activeSlide === null || slideController === null ? (
             <div style={EMPTY_CANVAS_STYLE}>
               <p style={EMPTY_STYLE}>Create a slide to start editing this deck.</p>
             </div>
           ) : (
-            <>
-              <SlideEditor
-                slide={activeSlide}
-                theme={deckTheme}
-                saving={updateMutation.isPending}
-                onSave={(content, speakerNotes) => saveSlide(activeSlide.id, content, speakerNotes)}
-                onSelectedShapeChange={onActiveShapeChange}
-                requestedSelectedShapeId={
-                  shapeFocusRequest?.slideId === activeSlide.id ? shapeFocusRequest.shapeId : null
-                }
-                remoteShapeSelections={activeRemoteShapeSelections}
-              />
-              <SlidesCommentsRail
-                comments={commentThreads}
-                filter={commentStatusFilter}
-                loading={filteredCommentsQuery.isLoading || openCommentsQuery.isLoading}
-                selectedThreadId={selectedThreadId}
-                linkedCommentUnavailable={linkedCommentUnavailable}
-                target={commentTarget}
-                newCommentDraft={newCommentDraft}
-                replyDrafts={replyDrafts}
-                editingCommentId={editingCommentId}
-                editCommentDraft={editCommentDraft}
-                mentionOptions={mentionOptions}
-                slides={slides}
-                busy={
-                  createCommentMutation.isPending ||
-                  resolveCommentMutation.isPending ||
-                  reopenCommentMutation.isPending ||
-                  updateCommentMutation.isPending ||
-                  deleteCommentMutation.isPending
-                }
-                onFilterChange={setCommentStatusFilter}
-                onNewCommentDraftChange={setNewCommentDraft}
-                onReplyDraftChange={(commentId, value) =>
-                  setReplyDrafts((current) => ({ ...current, [commentId]: value }))
-                }
-                onEditDraftChange={setEditCommentDraft}
-                onSubmitNewComment={submitNewComment}
-                onSubmitReply={submitReply}
-                onStartEdit={startEditingComment}
-                onCancelEdit={() => {
-                  setEditingCommentId(null);
-                  setEditCommentDraft("");
-                }}
-                onSubmitEdit={submitCommentEdit}
-                onResolve={(comment) => resolveCommentMutation.mutate(comment.id)}
-                onReopen={(comment) => reopenCommentMutation.mutate(comment.id)}
-                onDelete={(comment) => deleteCommentMutation.mutate(comment.id)}
-                onOpenComment={openCommentAnchor}
-                onClearLinkedComment={clearLinkedComment}
-                onCopyCommentLink={copySlidesCommentLink}
-                onThreadElement={(commentId, element) => {
-                  commentRefs.current[commentId] = element;
-                }}
-              />
-            </>
+            <SlideEditor
+              slide={activeSlide}
+              theme={deckTheme}
+              controller={slideController}
+              previewRef={slideEditor.previewRef}
+              transitionPreviewRun={slideEditor.transitionPreviewRun}
+              previewingTransition={slideEditor.previewingTransition}
+              onTransitionAnimationEnd={() => slideEditor.setPreviewingTransition(false)}
+              remoteShapeSelections={activeRemoteShapeSelections}
+              showGrid={viewPreference.showGrid}
+              showRulers={viewPreference.showRulers}
+              snapToGuides={viewPreference.snapToGuides}
+              zoomPercent={viewPreference.zoomPercent}
+            />
           )}
         </main>
-      </div>
+      </EditorWorkspace>
       {presenting ? (
         <PresentationMode
           deckTitle={deckQuery.data.deck.title}
@@ -1434,6 +1790,14 @@ export function NativePresentationEditor({
           onClose={() => setPresenting(false)}
         />
       ) : null}
+      <DriveShareDialog
+        objectId={deckId}
+        objectName={deckQuery.data.deck.title}
+        ownerActorId={deckQuery.data.deck.ownerActorId}
+        open={shareDialogOpen}
+        shareUrl={shareDialogOpen ? buildSlidesDeckLink(deckId) : undefined}
+        onOpenChange={setShareDialogOpen}
+      />
     </div>
   );
 }
@@ -1829,6 +2193,17 @@ function buildSlidesCommentLink(input: { readonly deckId: string; readonly comme
   return nextUrl.href;
 }
 
+function buildSlidesDeckLink(deckId: string) {
+  const nextUrl =
+    typeof window === "undefined"
+      ? new URL("http://localhost/slides")
+      : new URL(window.location.href);
+  nextUrl.pathname = "/slides";
+  nextUrl.search = "";
+  nextUrl.searchParams.set("deck", deckId);
+  return nextUrl.href;
+}
+
 async function writeClipboardText(text: string): Promise<void> {
   if (typeof navigator === "undefined" || navigator.clipboard === undefined) {
     return;
@@ -1843,6 +2218,18 @@ function base64ToArrayBuffer(value: string): ArrayBuffer {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes.buffer;
+}
+
+function slidesVersionDetailLabel(version: OfficeVersionRecord): string {
+  const slideCount = numberMetadata(version.metadata.slideCount);
+  if (slideCount !== null) {
+    return `${String(slideCount)} slide${slideCount === 1 ? "" : "s"}`;
+  }
+  return "Presentation snapshot";
+}
+
+function numberMetadata(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function PresentationMode({
@@ -2938,12 +3325,15 @@ function SlidePreview({
   remoteShapeSelections = [],
   onSelectShape,
   onChangeShape,
+  onDeleteShape,
   mediaControls = false,
   animateTransition = false,
   animateShapes = false,
   visibleBuildStep,
   onTransitionAnimationEnd,
   onMediaPlaybackEvent,
+  showGrid = false,
+  snapToGuides = false,
 }: {
   readonly slide: SlidesApiSlide;
   readonly theme: SlideTheme;
@@ -2952,6 +3342,7 @@ function SlidePreview({
   readonly remoteShapeSelections?: readonly PresentationRemoteShapeSelection[];
   readonly onSelectShape?: (shapeId: string) => void;
   readonly onChangeShape?: (shapeId: string, patch: Partial<SlideShape>) => void;
+  readonly onDeleteShape?: (shapeId: string) => void;
   readonly mediaControls?: boolean;
   readonly animateTransition?: boolean;
   readonly animateShapes?: boolean;
@@ -2962,6 +3353,8 @@ function SlidePreview({
     shape: SlideShape,
     event: PresentationMediaPlaybackEvent,
   ) => void;
+  readonly showGrid?: boolean;
+  readonly snapToGuides?: boolean;
 }) {
   const content = slide.content;
   const shapes = slideShapes(content);
@@ -2981,6 +3374,7 @@ function SlidePreview({
       aria-label="Slide preview"
       onAnimationEnd={onTransitionAnimationEnd}
     >
+      {showGrid ? <div aria-hidden="true" data-slides-grid="true" style={SLIDE_GRID_STYLE} /> : null}
       {content.layout === "title" ? (
         <div style={TITLE_LAYOUT_STYLE}>
           {content.eyebrow !== undefined ? (
@@ -3053,11 +3447,13 @@ function SlidePreview({
               selected={shape.id === selectedShapeId}
               onSelect={onSelectShape}
               onChangeShape={onChangeShape}
+              onDeleteShape={onDeleteShape}
               mediaControls={mediaControls}
               onMediaPlaybackEvent={onMediaPlaybackEvent}
               slideId={slide.id}
               animate={animateShapes}
               exiting={exiting}
+              snapToGuides={snapToGuides}
             />
           ))}
           {remoteShapeSelections.map((selection) => {
@@ -3105,17 +3501,20 @@ function SlideShapePreview({
   selected,
   onSelect,
   onChangeShape,
+  onDeleteShape,
   mediaControls,
   onMediaPlaybackEvent,
   slideId,
   animate,
   exiting,
+  snapToGuides,
 }: {
   readonly shape: SlideShape;
   readonly stackIndex: number;
   readonly selected: boolean;
   readonly onSelect?: (shapeId: string) => void;
   readonly onChangeShape?: (shapeId: string, patch: Partial<SlideShape>) => void;
+  readonly onDeleteShape?: (shapeId: string) => void;
   readonly mediaControls: boolean;
   readonly onMediaPlaybackEvent?: (
     slideId: string,
@@ -3125,6 +3524,7 @@ function SlideShapePreview({
   readonly slideId: string;
   readonly animate: boolean;
   readonly exiting: boolean;
+  readonly snapToGuides: boolean;
 }) {
   const label = shapeLabelText(shape);
   const markerNamespace = useId().replace(/:/gu, "");
@@ -3132,6 +3532,9 @@ function SlideShapePreview({
   const connector = connectorLineProps(shape);
   const dragRef = useRef<ShapeDragState | null>(null);
   const editable = onSelect !== undefined && onChangeShape !== undefined;
+  const linkUrl = normalizedSafeSlideLinkUrl(shape.linkUrl ?? "");
+  const linkedTextShape =
+    linkUrl !== undefined && (shape.kind === "text" || shape.kind === "rectangle");
 
   function beginShapeDrag(event: ReactMouseEvent<HTMLElement>, mode: ShapeDragMode) {
     const selectShape = onSelect;
@@ -3165,12 +3568,23 @@ function SlideShapePreview({
       }
       const deltaX = ((moveEvent.clientX - drag.startClientX) / drag.layerWidth) * 100;
       const deltaY = ((moveEvent.clientY - drag.startClientY) / drag.layerHeight) * 100;
-      const nextShape = nextShapeFromDrag(drag, {
-        x: clampShapeNumber(((moveEvent.clientX - layerRect.left) / drag.layerWidth) * 100, 0, 100),
-        y: clampShapeNumber(((moveEvent.clientY - layerRect.top) / drag.layerHeight) * 100, 0, 100),
-        deltaX,
-        deltaY,
-      });
+      const nextShape = maybeSnapShapeToGuides(
+        nextShapeFromDrag(drag, {
+          x: clampShapeNumber(
+            ((moveEvent.clientX - layerRect.left) / drag.layerWidth) * 100,
+            0,
+            100,
+          ),
+          y: clampShapeNumber(
+            ((moveEvent.clientY - layerRect.top) / drag.layerHeight) * 100,
+            0,
+            100,
+          ),
+          deltaX,
+          deltaY,
+        }),
+        snapToGuides && drag.mode === "move",
+      );
       applyShapeChange(shape.id, {
         x: nextShape.x,
         y: nextShape.y,
@@ -3191,6 +3605,40 @@ function SlideShapePreview({
     document.addEventListener("mouseup", handleMouseUp);
   }
 
+  function handleShapeKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    const selectShape = onSelect;
+    const changeShape = onChangeShape;
+    if (selectShape === undefined || changeShape === undefined) {
+      return;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      if (onDeleteShape === undefined) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      onDeleteShape(shape.id);
+      return;
+    }
+    const direction = shapeKeyboardDirection(event.key);
+    if (direction === null) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    selectShape(shape.id);
+    const step = event.altKey ? 0.25 : event.metaKey || event.ctrlKey ? 5 : 1;
+    const nextShape = event.shiftKey
+      ? keyboardResizedShape(shape, direction, step)
+      : keyboardMovedShape(shape, direction, step);
+    changeShape(shape.id, {
+      x: nextShape.x,
+      y: nextShape.y,
+      width: nextShape.width,
+      height: nextShape.height,
+    });
+  }
+
   return (
     <div
       style={{
@@ -3201,7 +3649,9 @@ function SlideShapePreview({
         ...shapeBoundsStyle(shape),
         ...shapeToneStyle(shape),
         ...shapeAnimationStyle(shape, animate, exiting),
-        ...(!editable && shape.kind !== "media" ? { pointerEvents: "none" as const } : {}),
+        ...(!editable && shape.kind !== "media" && !linkedTextShape
+          ? { pointerEvents: "none" as const }
+          : {}),
       }}
       aria-label={`${shapeKindLabel(shape.kind, true)} ${label}`.trim()}
       aria-pressed={editable ? selected : undefined}
@@ -3211,6 +3661,7 @@ function SlideShapePreview({
       role={editable ? "button" : undefined}
       tabIndex={editable ? 0 : undefined}
       onMouseDown={(event) => beginShapeDrag(event, "move")}
+      onKeyDown={handleShapeKeyDown}
       onClick={(event) => {
         if (!editable) {
           return;
@@ -3280,7 +3731,19 @@ function SlideShapePreview({
         />
       ) : null}
       {shape.kind === "text" || (shape.kind === "rectangle" && label.length > 0) ? (
-        <span style={SHAPE_TEXT_STYLE}>{label.length > 0 ? label : "Text"}</span>
+        !editable && linkedTextShape ? (
+          <a
+            href={linkUrl ?? ""}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={shapeLinkTextStyle(shape)}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {label.length > 0 ? label : linkUrl}
+          </a>
+        ) : (
+          <span style={shapeTextStyle(shape)}>{label.length > 0 ? label : "Text"}</span>
+        )
       ) : null}
       {editable ? (
         <>
@@ -3393,43 +3856,80 @@ function SlideMediaShape({
   );
 }
 
-function SlideEditor({
-  slide,
-  theme,
-  saving,
-  onSave,
-  onSelectedShapeChange,
-  requestedSelectedShapeId,
-  remoteShapeSelections = [],
-}: {
-  readonly slide: SlidesApiSlide;
-  readonly theme: SlideTheme;
-  readonly saving: boolean;
-  readonly onSave: (content: SlideContent, speakerNotes: string) => void;
-  readonly onSelectedShapeChange?: ((shapeId: string | null) => void) | undefined;
-  readonly requestedSelectedShapeId?: string | null | undefined;
-  readonly remoteShapeSelections?: readonly PresentationRemoteShapeSelection[] | undefined;
-}) {
+/**
+ * Hook that owns the editable draft for the active slide. The returned
+ * controller is consumed by both `SlideEditor` (the canvas) and the side-panel
+ * inspector tabs (`SlideInspector`, `FormatInspector`, `NotesInspector`).
+ *
+ * The hook is called unconditionally; when `slide` is `null` the controller
+ * is `null`. This keeps hooks-rules happy without an extra wrapper component.
+ */
+function useSlideEditorController(
+  slide: SlidesApiSlide | null,
+  saving: boolean,
+  onSave: (content: SlideContent, speakerNotes: string) => void,
+  onSelectedShapeChange?: (shapeId: string | null) => void,
+  requestedSelectedShapeId?: string | null,
+): {
+  readonly controller: SlideEditorController | null;
+  readonly previewRef: React.RefObject<HTMLDivElement | null>;
+  readonly transitionPreviewRun: number;
+  readonly previewingTransition: boolean;
+  readonly setPreviewingTransition: (value: boolean) => void;
+} {
   const previewRef = useRef<HTMLDivElement | null>(null);
   const mediaTrimPreviewCleanupRef = useRef<(() => void) | null>(null);
-  const [draft, setDraft] = useState(() => draftFromSlide(slide.content, slide.speakerNotes));
-  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(
-    () => draftFromSlide(slide.content, slide.speakerNotes).shapes[0]?.id ?? null,
+  const [draft, setDraft] = useState<SlideDraft>(() =>
+    slide === null
+      ? draftFromSlide(emptySlideContent("title"), "")
+      : recoveredDraftFromSlide(slide),
   );
+  const [draftSlideId, setDraftSlideId] = useState<string | null>(slide?.id ?? null);
+  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(() => {
+    if (slide === null) return null;
+    return recoveredDraftFromSlide(slide).shapes[0]?.id ?? null;
+  });
+  const [draftHistory, setDraftHistory] = useState<{
+    readonly past: readonly SlideDraft[];
+    readonly future: readonly SlideDraft[];
+  }>({ past: [], future: [] });
   const [layoutSuggestion, setLayoutSuggestion] = useState<SlideLayoutSuggestion | null>(null);
   const [mediaTrimPreviewStatus, setMediaTrimPreviewStatus] = useState("");
   const [transitionPreviewRun, setTransitionPreviewRun] = useState(0);
   const [previewingTransition, setPreviewingTransition] = useState(false);
+  const [shapeClipboard, setShapeClipboard] = useState<SlideShape | null>(() =>
+    readStoredSlideShapeClipboard(),
+  );
 
+  // Reset draft whenever the active slide changes (by id) -- but not when the
+  // server sends back the same slide with normalized content, otherwise we'd
+  // clobber in-flight edits.
   useEffect(() => {
-    const nextDraft = draftFromSlide(slide.content, slide.speakerNotes);
+    if (slide === null) return;
+    const nextDraft = recoveredDraftFromSlide(slide);
     setDraft(nextDraft);
+    setDraftHistory({ past: [], future: [] });
+    setDraftSlideId(slide.id);
     setSelectedShapeId(nextDraft.shapes[0]?.id ?? null);
     setLayoutSuggestion(null);
     setMediaTrimPreviewStatus("");
     setTransitionPreviewRun(0);
     setPreviewingTransition(false);
-  }, [slide]);
+    // Intentionally only depend on slide.id; resetting on content updates would
+    // clobber in-flight edits.
+  }, [slide?.id]);
+
+  useEffect(() => {
+    if (slide === null || draftSlideId !== slide.id) {
+      return;
+    }
+    const persistedDraft = draftFromSlide(slide.content, slide.speakerNotes);
+    if (slideDraftsEqual(draft, persistedDraft)) {
+      removeRecoveredSlideDraft(slide.id);
+      return;
+    }
+    writeRecoveredSlideDraft(slide, draft);
+  }, [draft, draftSlideId, slide]);
 
   useEffect(
     () => () => {
@@ -3439,7 +3939,6 @@ function SlideEditor({
   );
 
   const canEditItems = draft.layout === "agenda" || draft.layout === "bullets";
-  const nextContent = contentWithEditableFields(slide.content, draft);
   const selectedShape =
     draft.shapes.find((shape) => shape.id === selectedShapeId) ?? draft.shapes[0] ?? null;
   const selectedShapeIndex =
@@ -3460,8 +3959,9 @@ function SlideEditor({
   );
 
   useEffect(() => {
+    if (slide === null) return;
     onSelectedShapeChange?.(selectedShape?.id ?? null);
-  }, [onSelectedShapeChange, selectedShape?.id]);
+  }, [onSelectedShapeChange, selectedShape?.id, slide?.id]);
 
   useEffect(() => {
     if (
@@ -3485,7 +3985,7 @@ function SlideEditor({
     },
     onMutate: () => undefined,
     onSuccess: (result) => {
-      patchShape(result.shapeId, {
+      patchShapeWithoutHistory(result.shapeId, {
         imageUrl: `/api/drive/objects/${encodeURIComponent(result.objectId)}/content`,
         imageAlt: result.imageAlt,
       });
@@ -3505,7 +4005,7 @@ function SlideEditor({
     },
     onMutate: () => undefined,
     onSuccess: (result) => {
-      patchShape(result.shapeId, {
+      patchShapeWithoutHistory(result.shapeId, {
         mediaUrl: `/api/drive/objects/${encodeURIComponent(result.objectId)}/content`,
         mediaType: result.mediaType,
         mediaTitle: result.mediaTitle,
@@ -3515,12 +4015,31 @@ function SlideEditor({
     onError: () => undefined,
   });
 
-  function patchDraft(patch: Partial<SlideDraft>) {
+  function replaceDraftWithHistory(updater: (current: SlideDraft) => SlideDraft) {
     setLayoutSuggestion(null);
-    setDraft((current) => ({ ...current, ...patch }));
-    if (patch.transition !== undefined) {
-      setPreviewingTransition(false);
-    }
+    setDraft((current) => {
+      const next = updater(current);
+      if (slideDraftsEquivalentForHistory(current, next)) {
+        return current;
+      }
+      setDraftHistory((history) => ({
+        past: appendDraftHistory(history.past, current),
+        future: [],
+      }));
+      return next;
+    });
+  }
+
+  function replaceDraftWithoutHistory(updater: (current: SlideDraft) => SlideDraft) {
+    setDraft((current) => {
+      const next = updater(current);
+      return slideDraftsEquivalentForHistory(current, next) ? current : next;
+    });
+  }
+
+  function patchDraft(patch: Partial<SlideDraft>) {
+    replaceDraftWithHistory((current) => ({ ...current, ...patch }));
+    if (patch.transition !== undefined) setPreviewingTransition(false);
   }
 
   function previewTransition() {
@@ -3533,9 +4052,8 @@ function SlideEditor({
 
   function addShape(kind: SlideShapeKind) {
     const shape = createSlideShape(draft.shapes, kind);
-    setLayoutSuggestion(null);
     setSelectedShapeId(shape.id);
-    setDraft((current) => ({ ...current, shapes: [...current.shapes, shape] }));
+    replaceDraftWithHistory((current) => ({ ...current, shapes: [...current.shapes, shape] }));
   }
 
   function patchSelectedShape(patch: Partial<SlideShape>) {
@@ -3546,13 +4064,28 @@ function SlideEditor({
   }
 
   function patchShape(shapeId: string, patch: Partial<SlideShape>) {
-    setLayoutSuggestion(null);
-    setDraft((current) => ({
+    patchShapeWithHistory(shapeId, patch);
+  }
+
+  function patchShapeWithHistory(shapeId: string, patch: Partial<SlideShape>) {
+    replaceDraftWithHistory((current) => draftWithPatchedShape(current, shapeId, patch));
+  }
+
+  function patchShapeWithoutHistory(shapeId: string, patch: Partial<SlideShape>) {
+    replaceDraftWithoutHistory((current) => draftWithPatchedShape(current, shapeId, patch));
+  }
+
+  function draftWithPatchedShape(
+    current: SlideDraft,
+    shapeId: string,
+    patch: Partial<SlideShape>,
+  ): SlideDraft {
+    return {
       ...current,
       shapes: current.shapes.map((shape) =>
         shape.id === shapeId ? normalizeSlideShape({ ...shape, ...patch }) : shape,
       ),
-    }));
+    };
   }
 
   function uploadSelectedShapeImage(file: File | undefined) {
@@ -3565,6 +4098,65 @@ function SlideEditor({
       shapeId: selectedShape.id,
       imageAlt: currentAlt.length > 0 ? currentAlt : imageAltFromFilename(file.name),
     });
+  }
+
+  function insertDroppedImage(file: File, placement?: SlideImageDropPlacement) {
+    if (!isDroppedSlideImageFile(file)) {
+      return;
+    }
+    const shape = droppedImageShape(createSlideShape(draft.shapes, "image"), file, placement);
+    setSelectedShapeId(shape.id);
+    replaceDraftWithHistory((current) => ({ ...current, shapes: [...current.shapes, shape] }));
+    imageUploadMutation.mutate({
+      file,
+      shapeId: shape.id,
+      imageAlt: imageAltFromFilename(file.name),
+    });
+  }
+
+  function insertDroppedText(text: string, placement?: SlideImageDropPlacement, linkUrl?: string) {
+    const shapeText = normalizedDroppedSlideText(text);
+    if (shapeText.length === 0) {
+      return;
+    }
+    const shape = droppedTextShape(
+      createSlideShape(draft.shapes, "text"),
+      shapeText,
+      placement,
+      linkUrl,
+    );
+    setSelectedShapeId(shape.id);
+    replaceDraftWithHistory((current) => ({ ...current, shapes: [...current.shapes, shape] }));
+  }
+
+  function copySelectedShape() {
+    if (selectedShape === null) {
+      return;
+    }
+    const clipboardShape = normalizeSlideShape(selectedShape);
+    setShapeClipboard(clipboardShape);
+    writeStoredSlideShapeClipboard(clipboardShape);
+  }
+
+  function cutSelectedShape() {
+    if (selectedShape === null) {
+      return;
+    }
+    const clipboardShape = normalizeSlideShape(selectedShape);
+    setShapeClipboard(clipboardShape);
+    writeStoredSlideShapeClipboard(clipboardShape);
+    deleteShape(selectedShape.id);
+  }
+
+  function pasteShape() {
+    const clipboardShape = shapeClipboard ?? readStoredSlideShapeClipboard();
+    if (clipboardShape === null) {
+      return;
+    }
+    const shape = pastedSlideShape(clipboardShape, draft.shapes);
+    setShapeClipboard(clipboardShape);
+    setSelectedShapeId(shape.id);
+    replaceDraftWithHistory((current) => ({ ...current, shapes: [...current.shapes, shape] }));
   }
 
   function uploadSelectedShapeMedia(file: File | undefined) {
@@ -3627,11 +4219,13 @@ function SlideEditor({
     if (selectedShape === null) {
       return;
     }
-    const shapeId = selectedShape.id;
+    deleteShape(selectedShape.id);
+  }
+
+  function deleteShape(shapeId: string) {
     const nextSelectedId = draft.shapes.find((shape) => shape.id !== shapeId)?.id ?? null;
-    setLayoutSuggestion(null);
     setSelectedShapeId(nextSelectedId);
-    setDraft((current) => {
+    replaceDraftWithHistory((current) => {
       const nextShapes = current.shapes.filter((shape) => shape.id !== shapeId);
       return { ...current, shapes: nextShapes };
     });
@@ -3642,8 +4236,7 @@ function SlideEditor({
       return;
     }
     const shapeId = selectedShape.id;
-    setLayoutSuggestion(null);
-    setDraft((current) => {
+    replaceDraftWithHistory((current) => {
       const index = current.shapes.findIndex((shape) => shape.id === shapeId);
       const nextIndex = index + direction;
       if (index < 0 || nextIndex < 0 || nextIndex >= current.shapes.length) {
@@ -3662,8 +4255,7 @@ function SlideEditor({
   }
 
   function changeLayout(layout: SlideLayout) {
-    setLayoutSuggestion(null);
-    setDraft((current) => {
+    replaceDraftWithHistory((current) => {
       const next = draftFromSlide(emptySlideContent(layout), current.speakerNotes);
       return {
         ...next,
@@ -3681,26 +4273,52 @@ function SlideEditor({
     if (layoutSuggestion === null) {
       return;
     }
-    setDraft((current) => layoutSuggestedDraft(current, layoutSuggestion.layout));
     setLayoutSuggestion(null);
+    replaceDraftWithHistory((current) => layoutSuggestedDraft(current, layoutSuggestion.layout));
   }
 
   function rewriteItems() {
     if (!canEditItems) {
       return;
     }
-    setLayoutSuggestion(null);
-    setDraft((current) => ({
+    replaceDraftWithHistory((current) => ({
       ...current,
       items: rewriteSlideItems(current),
     }));
   }
 
   function draftNotes() {
-    setLayoutSuggestion(null);
-    setDraft((current) => ({
+    replaceDraftWithHistory((current) => ({
       ...current,
       speakerNotes: draftSpeakerNotes(current),
+    }));
+  }
+
+  function undoDraft() {
+    const previous = firstDistinctDraftFromEnd(draftHistory.past, draft);
+    if (previous === undefined) {
+      return;
+    }
+    setDraft(previous);
+    setLayoutSuggestion(null);
+    setPreviewingTransition(false);
+    setDraftHistory((history) => ({
+      past: trimTrailingEquivalentDrafts(history.past, previous),
+      future: prependDraftHistory(history.future, draft),
+    }));
+  }
+
+  function redoDraft() {
+    const next = firstDistinctDraftFromStart(draftHistory.future, draft);
+    if (next === undefined) {
+      return;
+    }
+    setDraft(next);
+    setLayoutSuggestion(null);
+    setPreviewingTransition(false);
+    setDraftHistory((history) => ({
+      past: appendDraftHistory(history.past, draft),
+      future: trimLeadingEquivalentDrafts(history.future, next),
     }));
   }
 
@@ -3749,15 +4367,168 @@ function SlideEditor({
     });
   }
 
+  const controller: SlideEditorController | null =
+    slide === null
+      ? null
+      : {
+          draft,
+          selectedShape,
+          selectedShapeId: selectedShape?.id ?? null,
+          selectedShapeIndex,
+          canPasteShape: shapeClipboard !== null,
+          canUndo: draftHistory.past.length > 0,
+          canRedo: draftHistory.future.length > 0,
+          mediaShapes,
+          animationTimeline,
+          driveImageAssets,
+          driveMediaAssets,
+          imageUploadPending: imageUploadMutation.isPending,
+          imageUploadError: imageUploadMutation.isError,
+          mediaUploadPending: mediaUploadMutation.isPending,
+          mediaUploadError: mediaUploadMutation.isError,
+          layoutSuggestion,
+          mediaTrimPreviewStatus,
+          canEditItems,
+          saving,
+          canSave:
+            !saving &&
+            !imageUploadMutation.isPending &&
+            !mediaUploadMutation.isPending &&
+            draft.title.trim().length > 0,
+          setSelectedShapeId,
+          patchDraft,
+          patchShape,
+          patchSelectedShape,
+          addShape,
+          insertDroppedImage,
+          insertDroppedText,
+          copySelectedShape,
+          cutSelectedShape,
+          pasteShape,
+          deleteShape,
+          deleteSelectedShape,
+          moveSelectedShape,
+          undo: undoDraft,
+          redo: redoDraft,
+          changeLayout,
+          uploadSelectedShapeImage,
+          uploadSelectedShapeMedia,
+          pickDriveImageAsset,
+          pickDriveMediaAsset,
+          pickDriveMediaPosterAsset,
+          previewTransition,
+          previewSelectedMediaTrim,
+          suggestLayout,
+          applyLayoutSuggestion,
+          rewriteItems,
+          draftNotes,
+          save: () => onSave(contentWithEditableFields(slide.content, draft), draft.speakerNotes),
+          transitionFromSelection: (selection: string) =>
+            transitionFromSelection(selection, draft.transition),
+          animationFromSelection,
+        };
+
+  return {
+    controller,
+    previewRef,
+    transitionPreviewRun,
+    previewingTransition,
+    setPreviewingTransition,
+  };
+}
+
+/**
+ * Slide canvas. Presentational: reads selection / draft from the controller
+ * supplied by `useSlideEditorController` (called in the parent so the side
+ * panel inspectors can share state).
+ */
+function SlideEditor({
+  slide,
+  theme,
+  controller,
+  previewRef,
+  transitionPreviewRun,
+  previewingTransition,
+  onTransitionAnimationEnd,
+  remoteShapeSelections = [],
+  showGrid,
+  showRulers,
+  snapToGuides,
+  zoomPercent,
+}: {
+  readonly slide: SlidesApiSlide;
+  readonly theme: SlideTheme;
+  readonly controller: SlideEditorController;
+  readonly previewRef: React.RefObject<HTMLDivElement | null>;
+  readonly transitionPreviewRun: number;
+  readonly previewingTransition: boolean;
+  readonly onTransitionAnimationEnd: () => void;
+  readonly remoteShapeSelections?: readonly PresentationRemoteShapeSelection[] | undefined;
+  readonly showGrid: boolean;
+  readonly showRulers: boolean;
+  readonly snapToGuides: boolean;
+  readonly zoomPercent: number;
+}) {
+  const { draft, selectedShape } = controller;
   const previewSlide = {
     ...slide,
-    content: nextContent,
+    content: contentWithEditableFields(slide.content, draft),
     speakerNotes: draft.speakerNotes,
   };
 
+  function handleDragOver(event: ReactDragEvent<HTMLDivElement>) {
+    if (
+      droppedSlideImageFile(event.dataTransfer) === undefined &&
+      !hasDroppedSlideText(event.dataTransfer)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleDrop(event: ReactDragEvent<HTMLDivElement>) {
+    const file = droppedSlideImageFile(event.dataTransfer);
+    if (file !== undefined) {
+      event.preventDefault();
+      controller.insertDroppedImage(file, slideDropPlacement(event, event.currentTarget));
+      return;
+    }
+    const text = droppedSlideText(event.dataTransfer);
+    if (text.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    controller.insertDroppedText(
+      text,
+      slideDropPlacement(event, event.currentTarget),
+      droppedSlideLinkUrl(event.dataTransfer),
+    );
+  }
+
   return (
-    <>
-      <div ref={previewRef}>
+    <div
+      data-slides-editor-frame="true"
+      data-slides-show-rulers={String(showRulers)}
+      data-slides-zoom-percent={String(zoomPercent)}
+      style={slideEditorFrameStyle(showRulers, zoomPercent)}
+    >
+      {showRulers ? (
+        <>
+          <div aria-hidden="true" style={SLIDE_RULER_CORNER_STYLE} />
+          <div aria-hidden="true" data-slides-ruler="horizontal" style={SLIDE_HORIZONTAL_RULER_STYLE} />
+          <div aria-hidden="true" data-slides-ruler="vertical" style={SLIDE_VERTICAL_RULER_STYLE} />
+        </>
+      ) : null}
+      <div
+        ref={previewRef}
+        data-slides-canvas-wrap="true"
+        data-slides-show-grid={String(showGrid)}
+        data-slides-snap-to-guides={String(snapToGuides)}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        style={SLIDE_CANVAS_WRAP_STYLE}
+      >
         <SlidePreview
           key={`slide-preview-${slide.id}-${transitionPreviewRun}`}
           slide={previewSlide}
@@ -3765,981 +4536,198 @@ function SlideEditor({
           animateTransition={previewingTransition}
           selectedShapeId={selectedShape?.id ?? null}
           remoteShapeSelections={remoteShapeSelections}
-          onSelectShape={setSelectedShapeId}
-          onChangeShape={patchShape}
-          onTransitionAnimationEnd={() => setPreviewingTransition(false)}
+          onSelectShape={controller.setSelectedShapeId}
+          onChangeShape={controller.patchShape}
+          onDeleteShape={controller.deleteShape}
+          onTransitionAnimationEnd={onTransitionAnimationEnd}
+          showGrid={showGrid}
+          snapToGuides={snapToGuides}
         />
       </div>
-      <form
-        style={INSPECTOR_STYLE}
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSave(nextContent, draft.speakerNotes);
-        }}
-      >
-        <label style={FIELD_STYLE}>
-          <span style={LABEL_STYLE}>Layout</span>
-          <select
-            aria-label="Slide layout"
-            value={draft.layout}
-            onChange={(event) => changeLayout(event.target.value as SlideLayout)}
-            style={INPUT_STYLE}
-          >
-            {SLIDE_LAYOUT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div style={LAYOUT_SUGGESTION_STYLE} aria-label="Layout suggestion">
-          <button className="btn sm" type="button" onClick={suggestLayout}>
-            <Icons.Sparkles /> Suggest layout
-          </button>
-          {canEditItems ? (
-            <button className="btn sm" type="button" onClick={rewriteItems}>
-              <Icons.Sparkles /> Rewrite bullets
-            </button>
-          ) : null}
-          <button className="btn sm" type="button" onClick={draftNotes}>
-            <Icons.Sparkles /> Draft notes
-          </button>
-          {layoutSuggestion === null ? null : (
-            <div style={LAYOUT_SUGGESTION_RESULT_STYLE}>
-              <span>
-                Suggested: {slideLayoutLabel(layoutSuggestion.layout)}. {layoutSuggestion.reason}
-              </span>
-              <button
-                className="btn primary sm"
-                type="button"
-                disabled={layoutSuggestion.layout === draft.layout}
-                onClick={applyLayoutSuggestion}
-              >
-                Apply layout
-              </button>
-            </div>
-          )}
-        </div>
-        <label style={FIELD_STYLE}>
-          <span style={LABEL_STYLE}>Title</span>
-          <input
-            aria-label="Slide title"
-            value={draft.title}
-            onChange={(event) => patchDraft({ title: event.target.value })}
-            style={INPUT_STYLE}
-          />
-        </label>
-        <label style={FIELD_STYLE}>
-          <span style={LABEL_STYLE}>Transition</span>
-          <select
-            aria-label="Slide transition"
-            value={draft.transition?.type ?? "none"}
-            onChange={(event) =>
-              patchDraft({
-                transition: transitionFromSelection(event.target.value, draft.transition),
-              })
-            }
-            style={INPUT_STYLE}
-          >
-            <option value="none">None</option>
-            <option value="fade">Fade</option>
-            <option value="slide">Slide</option>
-            <option value="zoom">Zoom</option>
-          </select>
-        </label>
-        {draft.transition !== undefined ? (
-          <div style={SHAPE_GRID_STYLE}>
-            <NumberField
-              label="Transition duration"
-              value={draft.transition.durationMs ?? 420}
-              min={120}
-              max={3_000}
-              onChange={(value) =>
-                patchDraft({
-                  transition: normalizeSlideTransition({
-                    ...draft.transition,
-                    durationMs: value,
-                  }),
-                })
-              }
-            />
-            {draft.transition.type === "slide" ? (
-              <label style={FIELD_STYLE}>
-                <span style={LABEL_STYLE}>Direction</span>
-                <select
-                  aria-label="Transition direction"
-                  value={draft.transition.direction ?? "right"}
-                  onChange={(event) =>
-                    patchDraft({
-                      transition: normalizeSlideTransition({
-                        ...draft.transition,
-                        direction: event.target.value as SlideTransitionDirection,
-                      }),
-                    })
-                  }
-                  style={INPUT_STYLE}
-                >
-                  <option value="right">Right</option>
-                  <option value="left">Left</option>
-                  <option value="up">Up</option>
-                  <option value="down">Down</option>
-                </select>
-              </label>
-            ) : null}
-            <button
-              type="button"
-              className="btn sm"
-              onClick={previewTransition}
-              style={TRANSITION_PREVIEW_BUTTON_STYLE}
-            >
-              <Icons.Eye /> Preview transition
-            </button>
-          </div>
-        ) : null}
-        {draft.layout === "title" ? (
-          <>
-            <label style={FIELD_STYLE}>
-              <span style={LABEL_STYLE}>Eyebrow</span>
-              <input
-                aria-label="Slide eyebrow"
-                value={draft.eyebrow}
-                onChange={(event) => patchDraft({ eyebrow: event.target.value })}
-                style={INPUT_STYLE}
-              />
-            </label>
-            <label style={FIELD_STYLE}>
-              <span style={LABEL_STYLE}>Subtitle</span>
-              <textarea
-                aria-label="Slide subtitle"
-                value={draft.subtitle}
-                onChange={(event) => patchDraft({ subtitle: event.target.value })}
-                rows={3}
-                style={TEXTAREA_STYLE}
-              />
-            </label>
-            <label style={FIELD_STYLE}>
-              <span style={LABEL_STYLE}>Background</span>
-              <select
-                aria-label="Title background"
-                value={draft.bg}
-                onChange={(event) => patchDraft({ bg: event.target.value as SlideBackground })}
-                style={INPUT_STYLE}
-              >
-                <option value="accent">Accent</option>
-                <option value="neutral">Neutral</option>
-              </select>
-            </label>
-          </>
-        ) : null}
-        {canEditItems ? (
-          <label style={FIELD_STYLE}>
-            <span style={LABEL_STYLE}>
-              {draft.layout === "agenda" ? "Agenda items" : "Bullets"}
-            </span>
-            <textarea
-              aria-label={draft.layout === "agenda" ? "Agenda items" : "Slide bullets"}
-              value={draft.items}
-              onChange={(event) => patchDraft({ items: event.target.value })}
-              rows={5}
-              style={TEXTAREA_STYLE}
-            />
-          </label>
-        ) : null}
-        {draft.layout === "stats" ? (
-          <>
-            <label style={FIELD_STYLE}>
-              <span style={LABEL_STYLE}>Subtitle</span>
-              <textarea
-                aria-label="Slide subtitle"
-                value={draft.subtitle}
-                onChange={(event) => patchDraft({ subtitle: event.target.value })}
-                rows={3}
-                style={TEXTAREA_STYLE}
-              />
-            </label>
-            <label style={FIELD_STYLE}>
-              <span style={LABEL_STYLE}>Stats</span>
-              <textarea
-                aria-label="Slide stats"
-                value={draft.stats}
-                onChange={(event) => patchDraft({ stats: event.target.value })}
-                rows={5}
-                style={TEXTAREA_STYLE}
-              />
-            </label>
-          </>
-        ) : null}
-        {draft.layout === "split" ? (
-          <>
-            <label style={FIELD_STYLE}>
-              <span style={LABEL_STYLE}>Left column</span>
-              <textarea
-                aria-label="Left column"
-                value={draft.left}
-                onChange={(event) => patchDraft({ left: event.target.value })}
-                rows={4}
-                style={TEXTAREA_STYLE}
-              />
-            </label>
-            <label style={FIELD_STYLE}>
-              <span style={LABEL_STYLE}>Right side</span>
-              <select
-                aria-label="Right side type"
-                value={draft.rightKind}
-                onChange={(event) =>
-                  patchDraft({ rightKind: event.target.value as "list" | "quote" })
-                }
-                style={INPUT_STYLE}
-              >
-                <option value="list">List</option>
-                <option value="quote">Quote</option>
-              </select>
-            </label>
-            <label style={FIELD_STYLE}>
-              <span style={LABEL_STYLE}>Right content</span>
-              <textarea
-                aria-label="Right content"
-                value={draft.rightContent}
-                onChange={(event) => patchDraft({ rightContent: event.target.value })}
-                rows={4}
-                style={TEXTAREA_STYLE}
-              />
-            </label>
-            {draft.rightKind === "quote" ? (
-              <label style={FIELD_STYLE}>
-                <span style={LABEL_STYLE}>Quote source</span>
-                <input
-                  aria-label="Quote source"
-                  value={draft.quoteWho}
-                  onChange={(event) => patchDraft({ quoteWho: event.target.value })}
-                  style={INPUT_STYLE}
-                />
-              </label>
-            ) : null}
-          </>
-        ) : null}
-        {draft.layout === "image" ? (
-          <label style={FIELD_STYLE}>
-            <span style={LABEL_STYLE}>Image note</span>
-            <textarea
-              aria-label="Image note"
-              value={draft.note}
-              onChange={(event) => patchDraft({ note: event.target.value })}
-              rows={5}
-              style={TEXTAREA_STYLE}
-            />
-          </label>
-        ) : null}
-        <fieldset style={SHAPE_FIELDSET_STYLE}>
-          <legend style={SHAPE_LEGEND_STYLE}>Shapes</legend>
-          <div style={SHAPE_ACTION_ROW_STYLE}>
-            <button className="btn sm" type="button" onClick={() => addShape("text")}>
-              <Icons.Plus /> Text
-            </button>
-            <button className="btn sm" type="button" onClick={() => addShape("rectangle")}>
-              <Icons.Plus /> Rectangle
-            </button>
-            <button className="btn sm" type="button" onClick={() => addShape("connector")}>
-              <Icons.Plus /> Connector
-            </button>
-            <button className="btn sm" type="button" onClick={() => addShape("image")}>
-              <Icons.Plus /> Image
-            </button>
-            <button className="btn sm" type="button" onClick={() => addShape("media")}>
-              <Icons.Plus /> Media
-            </button>
-          </div>
-          {draft.shapes.length > 0 ? (
-            <>
-              <label style={FIELD_STYLE}>
-                <span style={LABEL_STYLE}>Selected shape</span>
-                <select
-                  aria-label="Slide shape"
-                  value={selectedShape?.id ?? ""}
-                  onChange={(event) => setSelectedShapeId(event.target.value)}
-                  style={INPUT_STYLE}
-                >
-                  {draft.shapes.map((shape, index) => (
-                    <option key={shape.id} value={shape.id}>
-                      {shapeLabel(shape, index)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {mediaShapes.length > 0 ? (
-                <MediaAssetTable
-                  shapes={mediaShapes}
-                  selectedShapeId={selectedShape?.id ?? null}
-                  onSelectShape={setSelectedShapeId}
-                />
-              ) : null}
-              {animationTimeline.length > 0 ? (
-                <ShapeAnimationTimeline
-                  rows={animationTimeline}
-                  selectedShapeId={selectedShape?.id ?? null}
-                  onSelectShape={setSelectedShapeId}
-                />
-              ) : null}
-              {selectedShape !== null ? (
-                <>
-                  <label style={FIELD_STYLE}>
-                    <span style={LABEL_STYLE}>Kind</span>
-                    <select
-                      aria-label="Shape kind"
-                      value={selectedShape.kind}
-                      onChange={(event) =>
-                        patchSelectedShape({ kind: event.target.value as SlideShapeKind })
-                      }
-                      style={INPUT_STYLE}
-                    >
-                      <option value="text">Text</option>
-                      <option value="rectangle">Rectangle</option>
-                      <option value="connector">Connector</option>
-                      <option value="image">Image</option>
-                      <option value="media">Media</option>
-                    </select>
-                  </label>
-                  <label style={FIELD_STYLE}>
-                    <span style={LABEL_STYLE}>Text</span>
-                    <input
-                      aria-label="Shape text"
-                      value={selectedShape.text ?? ""}
-                      onChange={(event) => patchSelectedShape({ text: event.target.value })}
-                      style={INPUT_STYLE}
-                    />
-                  </label>
-                  {selectedShape.kind === "image" ? (
-                    <>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Image URL</span>
-                        <input
-                          aria-label="Shape image URL"
-                          value={selectedShape.imageUrl ?? ""}
-                          onChange={(event) => patchSelectedShape({ imageUrl: event.target.value })}
-                          style={INPUT_STYLE}
-                        />
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Alt text</span>
-                        <input
-                          aria-label="Shape image alt text"
-                          value={selectedShape.imageAlt ?? ""}
-                          onChange={(event) => patchSelectedShape({ imageAlt: event.target.value })}
-                          style={INPUT_STYLE}
-                        />
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Image fit</span>
-                        <select
-                          aria-label="Shape image fit"
-                          value={selectedShape.imageFit ?? "cover"}
-                          onChange={(event) =>
-                            patchSelectedShape({ imageFit: event.target.value as SlideImageFit })
-                          }
-                          style={INPUT_STYLE}
-                        >
-                          <option value="cover">Fill</option>
-                          <option value="contain">Fit</option>
-                        </select>
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Image mask</span>
-                        <select
-                          aria-label="Shape image mask"
-                          value={selectedShape.imageMask ?? "rounded"}
-                          onChange={(event) =>
-                            patchSelectedShape({ imageMask: event.target.value as SlideImageMask })
-                          }
-                          style={INPUT_STYLE}
-                        >
-                          <option value="rounded">Rounded</option>
-                          <option value="rectangle">Rectangle</option>
-                          <option value="circle">Circle</option>
-                        </select>
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Upload image</span>
-                        <input
-                          aria-label="Upload shape image"
-                          type="file"
-                          accept="image/*"
-                          disabled={imageUploadMutation.isPending}
-                          onChange={(event) => {
-                            const file = event.currentTarget.files?.[0];
-                            event.currentTarget.value = "";
-                            void uploadSelectedShapeImage(file);
-                          }}
-                          style={INPUT_STYLE}
-                        />
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Drive image</span>
-                        <select
-                          aria-label="Drive image asset"
-                          value={driveAssetSelectValue(selectedShape.imageUrl, driveImageAssets)}
-                          disabled={driveImageAssets.length === 0}
-                          onChange={(event) => pickDriveImageAsset(event.target.value)}
-                          style={INPUT_STYLE}
-                        >
-                          <option value="">
-                            {driveImageAssets.length === 0 ? "No Drive images" : "Choose image"}
-                          </option>
-                          {driveImageAssets.map((asset) => (
-                            <option key={asset.id} value={asset.id}>
-                              {asset.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {imageUploadMutation.isPending ? (
-                        <div role="status" style={EMPTY_STYLE}>
-                          Uploading image...
-                        </div>
-                      ) : null}
-                      {imageUploadMutation.isError ? (
-                        <div role="alert" style={EMPTY_STYLE}>
-                          Image upload failed.
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {selectedShape.kind === "media" ? (
-                    <>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Media URL</span>
-                        <input
-                          aria-label="Shape media URL"
-                          value={selectedShape.mediaUrl ?? ""}
-                          onChange={(event) => patchSelectedShape({ mediaUrl: event.target.value })}
-                          style={INPUT_STYLE}
-                        />
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Media title</span>
-                        <input
-                          aria-label="Shape media title"
-                          value={selectedShape.mediaTitle ?? ""}
-                          onChange={(event) =>
-                            patchSelectedShape({ mediaTitle: event.target.value })
-                          }
-                          style={INPUT_STYLE}
-                        />
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Media type</span>
-                        <select
-                          aria-label="Shape media type"
-                          value={selectedShape.mediaType ?? "video"}
-                          onChange={(event) =>
-                            patchSelectedShape({ mediaType: event.target.value as SlideMediaType })
-                          }
-                          style={INPUT_STYLE}
-                        >
-                          <option value="video">Video</option>
-                          <option value="audio">Audio</option>
-                        </select>
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Caption track URL</span>
-                        <input
-                          aria-label="Shape media caption URL"
-                          value={selectedShape.mediaCaptionUrl ?? ""}
-                          onChange={(event) =>
-                            patchSelectedShape({ mediaCaptionUrl: event.target.value })
-                          }
-                          style={INPUT_STYLE}
-                        />
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Caption label</span>
-                        <input
-                          aria-label="Shape media caption label"
-                          value={selectedShape.mediaCaptionLabel ?? ""}
-                          onChange={(event) =>
-                            patchSelectedShape({ mediaCaptionLabel: event.target.value })
-                          }
-                          style={INPUT_STYLE}
-                        />
-                      </label>
-                      {(selectedShape.mediaType ?? "video") === "video" ? (
-                        <>
-                          <label style={FIELD_STYLE}>
-                            <span style={LABEL_STYLE}>Poster URL</span>
-                            <input
-                              aria-label="Shape media poster URL"
-                              value={selectedShape.mediaPosterUrl ?? ""}
-                              onChange={(event) =>
-                                patchSelectedShape({ mediaPosterUrl: event.target.value })
-                              }
-                              style={INPUT_STYLE}
-                            />
-                          </label>
-                          <label style={FIELD_STYLE}>
-                            <span style={LABEL_STYLE}>Drive poster</span>
-                            <select
-                              aria-label="Drive poster image"
-                              value={driveAssetSelectValue(
-                                selectedShape.mediaPosterUrl,
-                                driveImageAssets,
-                              )}
-                              disabled={driveImageAssets.length === 0}
-                              onChange={(event) => pickDriveMediaPosterAsset(event.target.value)}
-                              style={INPUT_STYLE}
-                            >
-                              <option value="">
-                                {driveImageAssets.length === 0
-                                  ? "No Drive images"
-                                  : "Choose poster"}
-                              </option>
-                              {driveImageAssets.map((asset) => (
-                                <option key={asset.id} value={asset.id}>
-                                  {asset.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <div style={SHAPE_GRID_STYLE}>
-                            <NumberField
-                              label="Shape media trim start"
-                              value={selectedShape.mediaStartSeconds ?? 0}
-                              max={86_400}
-                              onChange={(value) => patchSelectedShape({ mediaStartSeconds: value })}
-                            />
-                            <NumberField
-                              label="Shape media trim end"
-                              value={selectedShape.mediaEndSeconds ?? 0}
-                              max={86_400}
-                              onChange={(value) => patchSelectedShape({ mediaEndSeconds: value })}
-                            />
-                          </div>
-                          <div style={MEDIA_PREVIEW_ROW_STYLE}>
-                            <button
-                              type="button"
-                              className="btn sm"
-                              disabled={(selectedShape.mediaUrl?.trim().length ?? 0) === 0}
-                              onClick={previewSelectedMediaTrim}
-                            >
-                              <Icons.Video /> Preview trim
-                            </button>
-                            {mediaTrimPreviewStatus.length > 0 ? (
-                              <span role="status" style={EMPTY_STYLE}>
-                                {mediaTrimPreviewStatus}
-                              </span>
-                            ) : null}
-                          </div>
-                          <div style={SHAPE_GRID_STYLE}>
-                            <label style={CHECKBOX_LABEL_STYLE}>
-                              <input
-                                aria-label="Shape media autoplay"
-                                type="checkbox"
-                                checked={selectedShape.mediaAutoplay === true}
-                                onChange={(event) =>
-                                  patchSelectedShape({ mediaAutoplay: event.target.checked })
-                                }
-                              />
-                              Autoplay
-                            </label>
-                            <label style={CHECKBOX_LABEL_STYLE}>
-                              <input
-                                aria-label="Shape media loop"
-                                type="checkbox"
-                                checked={selectedShape.mediaLoop === true}
-                                onChange={(event) =>
-                                  patchSelectedShape({ mediaLoop: event.target.checked })
-                                }
-                              />
-                              Loop
-                            </label>
-                            <label style={CHECKBOX_LABEL_STYLE}>
-                              <input
-                                aria-label="Shape media muted"
-                                type="checkbox"
-                                checked={selectedShape.mediaMuted === true}
-                                onChange={(event) =>
-                                  patchSelectedShape({ mediaMuted: event.target.checked })
-                                }
-                              />
-                              Muted
-                            </label>
-                          </div>
-                        </>
-                      ) : null}
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Upload media</span>
-                        <input
-                          aria-label="Upload shape media"
-                          type="file"
-                          accept="video/*,audio/*"
-                          disabled={mediaUploadMutation.isPending}
-                          onChange={(event) => {
-                            const file = event.currentTarget.files?.[0];
-                            event.currentTarget.value = "";
-                            void uploadSelectedShapeMedia(file);
-                          }}
-                          style={INPUT_STYLE}
-                        />
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Drive media</span>
-                        <select
-                          aria-label="Drive media asset"
-                          value={driveAssetSelectValue(selectedShape.mediaUrl, driveMediaAssets)}
-                          disabled={driveMediaAssets.length === 0}
-                          onChange={(event) => pickDriveMediaAsset(event.target.value)}
-                          style={INPUT_STYLE}
-                        >
-                          <option value="">
-                            {driveMediaAssets.length === 0 ? "No Drive media" : "Choose media"}
-                          </option>
-                          {driveMediaAssets.map((asset) => (
-                            <option key={asset.id} value={asset.id}>
-                              {asset.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {mediaUploadMutation.isPending ? (
-                        <div role="status" style={EMPTY_STYLE}>
-                          Uploading media...
-                        </div>
-                      ) : null}
-                      {mediaUploadMutation.isError ? (
-                        <div role="alert" style={EMPTY_STYLE}>
-                          Media upload failed.
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                  <div style={SHAPE_GRID_STYLE}>
-                    <NumberField
-                      label="Shape x"
-                      value={selectedShape.x}
-                      onChange={(value) => patchSelectedShape({ x: value })}
-                    />
-                    <NumberField
-                      label="Shape y"
-                      value={selectedShape.y}
-                      onChange={(value) => patchSelectedShape({ y: value })}
-                    />
-                    <NumberField
-                      label="Shape width"
-                      value={selectedShape.width}
-                      onChange={(value) => patchSelectedShape({ width: value })}
-                    />
-                    <NumberField
-                      label="Shape height"
-                      value={selectedShape.height}
-                      onChange={(value) => patchSelectedShape({ height: value })}
-                    />
-                  </div>
-                  <label style={FIELD_STYLE}>
-                    <span style={LABEL_STYLE}>Tone</span>
-                    <select
-                      aria-label="Shape tone"
-                      value={selectedShape.tone ?? "accent"}
-                      onChange={(event) =>
-                        patchSelectedShape({ tone: event.target.value as SlideShapeTone })
-                      }
-                      style={INPUT_STYLE}
-                    >
-                      <option value="accent">Accent</option>
-                      <option value="light">Light</option>
-                      <option value="dark">Dark</option>
-                    </select>
-                  </label>
-                  <label style={FIELD_STYLE}>
-                    <span style={LABEL_STYLE}>Animation</span>
-                    <select
-                      aria-label="Shape animation"
-                      value={selectedShape.animation?.type ?? "none"}
-                      onChange={(event) =>
-                        patchSelectedShape({
-                          animation: animationFromSelection(
-                            event.target.value,
-                            selectedShape.animation,
-                            selectedShapeIndex,
-                          ),
-                        })
-                      }
-                      style={INPUT_STYLE}
-                    >
-                      <option value="none">None</option>
-                      <option value="fade">Entrance fade</option>
-                      <option value="fly">Entrance fly</option>
-                      <option value="zoom">Entrance zoom</option>
-                    </select>
-                  </label>
-                  {selectedShape.animation !== undefined ? (
-                    <div style={SHAPE_GRID_STYLE}>
-                      <NumberField
-                        label="Animation order"
-                        value={selectedShape.animation.order ?? Math.max(selectedShapeIndex, 0)}
-                        max={199}
-                        onChange={(value) =>
-                          patchSelectedShape({
-                            animation: normalizeSlideShapeAnimation({
-                              ...selectedShape.animation,
-                              order: value,
-                            }),
-                          })
-                        }
-                      />
-                      <NumberField
-                        label="Animation duration"
-                        value={selectedShape.animation.durationMs ?? 620}
-                        min={120}
-                        max={5_000}
-                        onChange={(value) =>
-                          patchSelectedShape({
-                            animation: normalizeSlideShapeAnimation({
-                              ...selectedShape.animation,
-                              durationMs: value,
-                            }),
-                          })
-                        }
-                      />
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Easing</span>
-                        <select
-                          aria-label="Animation easing"
-                          value={selectedShape.animation.easing ?? "standard"}
-                          onChange={(event) =>
-                            patchSelectedShape({
-                              animation: normalizeSlideShapeAnimation({
-                                ...selectedShape.animation,
-                                easing: event.target.value as SlideShapeAnimationEasing,
-                              }),
-                            })
-                          }
-                          style={INPUT_STYLE}
-                        >
-                          <option value="standard">Standard</option>
-                          <option value="linear">Linear</option>
-                          <option value="easeIn">Ease in</option>
-                          <option value="easeOut">Ease out</option>
-                          <option value="easeInOut">Ease in/out</option>
-                        </select>
-                      </label>
-                      {selectedShape.animation.type === "fly" ? (
-                        <label style={FIELD_STYLE}>
-                          <span style={LABEL_STYLE}>Motion path</span>
-                          <select
-                            aria-label="Shape motion path"
-                            value={selectedShape.animation.motionPath ?? "left"}
-                            onChange={(event) =>
-                              patchSelectedShape({
-                                animation: normalizeSlideShapeAnimation({
-                                  ...selectedShape.animation,
-                                  motionPath: event.target.value as SlideShapeMotionPath,
-                                }),
-                              })
-                            }
-                            style={INPUT_STYLE}
-                          >
-                            <option value="left">Left</option>
-                            <option value="right">Right</option>
-                            <option value="up">Up</option>
-                            <option value="down">Down</option>
-                          </select>
-                        </label>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <label style={FIELD_STYLE}>
-                    <span style={LABEL_STYLE}>Exit animation</span>
-                    <select
-                      aria-label="Shape exit animation"
-                      value={selectedShape.exitAnimation?.type ?? "none"}
-                      onChange={(event) =>
-                        patchSelectedShape({
-                          exitAnimation: animationFromSelection(
-                            event.target.value,
-                            selectedShape.exitAnimation,
-                            selectedShapeIndex,
-                          ),
-                        })
-                      }
-                      style={INPUT_STYLE}
-                    >
-                      <option value="none">None</option>
-                      <option value="fade">Exit fade</option>
-                      <option value="fly">Exit fly</option>
-                      <option value="zoom">Exit zoom</option>
-                    </select>
-                  </label>
-                  {selectedShape.exitAnimation !== undefined ? (
-                    <div style={SHAPE_GRID_STYLE}>
-                      <NumberField
-                        label="Exit animation order"
-                        value={selectedShape.exitAnimation.order ?? Math.max(selectedShapeIndex, 0)}
-                        max={199}
-                        onChange={(value) =>
-                          patchSelectedShape({
-                            exitAnimation: normalizeSlideShapeAnimation({
-                              ...selectedShape.exitAnimation,
-                              order: value,
-                            }),
-                          })
-                        }
-                      />
-                      <NumberField
-                        label="Exit animation duration"
-                        value={selectedShape.exitAnimation.durationMs ?? 620}
-                        min={120}
-                        max={5_000}
-                        onChange={(value) =>
-                          patchSelectedShape({
-                            exitAnimation: normalizeSlideShapeAnimation({
-                              ...selectedShape.exitAnimation,
-                              durationMs: value,
-                            }),
-                          })
-                        }
-                      />
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Exit easing</span>
-                        <select
-                          aria-label="Exit animation easing"
-                          value={selectedShape.exitAnimation.easing ?? "standard"}
-                          onChange={(event) =>
-                            patchSelectedShape({
-                              exitAnimation: normalizeSlideShapeAnimation({
-                                ...selectedShape.exitAnimation,
-                                easing: event.target.value as SlideShapeAnimationEasing,
-                              }),
-                            })
-                          }
-                          style={INPUT_STYLE}
-                        >
-                          <option value="standard">Standard</option>
-                          <option value="linear">Linear</option>
-                          <option value="easeIn">Ease in</option>
-                          <option value="easeOut">Ease out</option>
-                          <option value="easeInOut">Ease in/out</option>
-                        </select>
-                      </label>
-                      {selectedShape.exitAnimation.type === "fly" ? (
-                        <label style={FIELD_STYLE}>
-                          <span style={LABEL_STYLE}>Exit motion path</span>
-                          <select
-                            aria-label="Shape exit motion path"
-                            value={selectedShape.exitAnimation.motionPath ?? "left"}
-                            onChange={(event) =>
-                              patchSelectedShape({
-                                exitAnimation: normalizeSlideShapeAnimation({
-                                  ...selectedShape.exitAnimation,
-                                  motionPath: event.target.value as SlideShapeMotionPath,
-                                }),
-                              })
-                            }
-                            style={INPUT_STYLE}
-                          >
-                            <option value="left">Left</option>
-                            <option value="right">Right</option>
-                            <option value="up">Up</option>
-                            <option value="down">Down</option>
-                          </select>
-                        </label>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {selectedShape.kind === "connector" ? (
-                    <>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Direction</span>
-                        <select
-                          aria-label="Connector direction"
-                          value={selectedShape.connectorDirection ?? "up"}
-                          onChange={(event) =>
-                            patchSelectedShape({
-                              connectorDirection: event.target.value as SlideConnectorDirection,
-                            })
-                          }
-                          style={INPUT_STYLE}
-                        >
-                          <option value="up">Up</option>
-                          <option value="down">Down</option>
-                        </select>
-                      </label>
-                      <label style={FIELD_STYLE}>
-                        <span style={LABEL_STYLE}>Arrow</span>
-                        <select
-                          aria-label="Connector arrow"
-                          value={selectedShape.connectorArrow ?? "end"}
-                          onChange={(event) =>
-                            patchSelectedShape({
-                              connectorArrow: event.target.value as SlideConnectorArrow,
-                            })
-                          }
-                          style={INPUT_STYLE}
-                        >
-                          <option value="start">Start</option>
-                          <option value="end">End</option>
-                          <option value="both">Both</option>
-                          <option value="none">None</option>
-                        </select>
-                      </label>
-                    </>
-                  ) : null}
-                  <div style={SHAPE_ACTION_ROW_STYLE}>
-                    <button
-                      className="btn sm"
-                      type="button"
-                      aria-label="Send shape backward"
-                      disabled={selectedShapeIndex <= 0}
-                      onClick={() => moveSelectedShape(-1)}
-                    >
-                      <Icons.ChevronDown style={{ transform: "rotate(90deg)" }} /> Back
-                    </button>
-                    <button
-                      className="btn sm"
-                      type="button"
-                      aria-label="Bring shape forward"
-                      disabled={
-                        selectedShapeIndex < 0 || selectedShapeIndex >= draft.shapes.length - 1
-                      }
-                      onClick={() => moveSelectedShape(1)}
-                    >
-                      <Icons.ChevronDown style={{ transform: "rotate(-90deg)" }} /> Front
-                    </button>
-                  </div>
-                  <button className="btn sm" type="button" onClick={deleteSelectedShape}>
-                    <Icons.Trash /> Delete shape
-                  </button>
-                </>
-              ) : null}
-            </>
-          ) : (
-            <p style={EMPTY_STYLE}>No shapes</p>
-          )}
-        </fieldset>
-        <label style={FIELD_STYLE}>
-          <span style={LABEL_STYLE}>Speaker notes</span>
-          <textarea
-            aria-label="Speaker notes"
-            value={draft.speakerNotes}
-            onChange={(event) => patchDraft({ speakerNotes: event.target.value })}
-            rows={4}
-            style={TEXTAREA_STYLE}
-          />
-        </label>
-        <div style={ACTION_ROW_STYLE}>
-          <button
-            type="submit"
-            className="btn sm primary"
-            disabled={
-              saving ||
-              imageUploadMutation.isPending ||
-              mediaUploadMutation.isPending ||
-              draft.title.trim().length === 0
-            }
-          >
-            {saving ? "Saving..." : "Save slide"}
-          </button>
-        </div>
-      </form>
-    </>
+    </div>
   );
+}
+
+const SLIDE_DROPPED_IMAGE_EXTENSION =
+  /\.(?:avif|bmp|gif|heic|heif|j2k|jfif|jpeg|jpg|jpe|jp2|jpf|jpm|jpx|jxl|png|svg|tif|tiff|webp)$/iu;
+
+function droppedSlideImageFile(dataTransfer: DataTransfer): File | undefined {
+  for (let index = 0; index < dataTransfer.items.length; index += 1) {
+    const item = dataTransfer.items[index];
+    if (item?.kind !== "file") {
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file !== null && isDroppedSlideImageFile(file)) {
+      return file;
+    }
+  }
+  for (let index = 0; index < dataTransfer.files.length; index += 1) {
+    const file = dataTransfer.files.item(index);
+    if (file !== null && isDroppedSlideImageFile(file)) {
+      return file;
+    }
+  }
+  return undefined;
+}
+
+function isDroppedSlideImageFile(file: File): boolean {
+  const mimeType = file.type.trim().toLowerCase();
+  return mimeType.startsWith("image/") || SLIDE_DROPPED_IMAGE_EXTENSION.test(file.name);
+}
+
+function slideDropPlacement(
+  event: ReactDragEvent<HTMLDivElement>,
+  editorElement: HTMLElement,
+): SlideImageDropPlacement | undefined {
+  const previewElement =
+    editorElement.querySelector<HTMLElement>('[aria-label="Slide preview"]') ?? editorElement;
+  const rect = previewElement.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return undefined;
+  }
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * 100,
+    y: ((event.clientY - rect.top) / rect.height) * 100,
+  };
+}
+
+function droppedImageShape(
+  shape: SlideShape,
+  file: File,
+  placement: SlideImageDropPlacement | undefined,
+): SlideShape {
+  if (placement === undefined) {
+    return normalizeSlideShape({
+      ...shape,
+      imageAlt: imageAltFromFilename(file.name),
+    });
+  }
+  return normalizeSlideShape({
+    ...shape,
+    x: clampShapeNumber(placement.x - shape.width / 2, 0, 100 - shape.width),
+    y: clampShapeNumber(placement.y - shape.height / 2, 0, 100 - shape.height),
+    imageAlt: imageAltFromFilename(file.name),
+  });
+}
+
+function hasDroppedSlideText(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types).some(
+    (type) => type === "text/plain" || type === "text/uri-list" || type === "text/html",
+  );
+}
+
+function droppedSlideText(dataTransfer: DataTransfer): string {
+  const plainText = safeDataTransferText(dataTransfer, "text/plain");
+  if (plainText.trim().length > 0) {
+    return plainText;
+  }
+  const uriListUrl = firstDroppedUriListUrl(safeDataTransferText(dataTransfer, "text/uri-list"));
+  if (uriListUrl !== undefined) {
+    return uriListUrl;
+  }
+  const html = safeDataTransferText(dataTransfer, "text/html");
+  return html.trim().length > 0 ? textFromDroppedHtml(html) : "";
+}
+
+function droppedSlideLinkUrl(dataTransfer: DataTransfer): string | undefined {
+  const uriListUrl = firstDroppedUriListUrl(safeDataTransferText(dataTransfer, "text/uri-list"));
+  const normalizedUriListUrl =
+    uriListUrl === undefined ? undefined : normalizedSafeSlideLinkUrl(uriListUrl);
+  if (normalizedUriListUrl !== undefined) {
+    return normalizedUriListUrl;
+  }
+
+  const htmlLinkUrl = linkUrlFromDroppedHtml(safeDataTransferText(dataTransfer, "text/html"));
+  if (htmlLinkUrl !== undefined) {
+    return htmlLinkUrl;
+  }
+
+  return normalizedSafeSlideLinkUrl(safeDataTransferText(dataTransfer, "text/plain"));
+}
+
+function safeDataTransferText(dataTransfer: DataTransfer, type: string): string {
+  try {
+    return dataTransfer.getData(type);
+  } catch {
+    return "";
+  }
+}
+
+function firstDroppedUriListUrl(uriList: string): string | undefined {
+  return uriList
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !line.startsWith("#"));
+}
+
+function textFromDroppedHtml(html: string): string {
+  try {
+    return new DOMParser().parseFromString(html, "text/html").body.textContent ?? "";
+  } catch {
+    return html.replace(/<[^>]*>/gu, " ");
+  }
+}
+
+function linkUrlFromDroppedHtml(html: string): string | undefined {
+  if (html.trim().length === 0) {
+    return undefined;
+  }
+  try {
+    const href = new DOMParser()
+      .parseFromString(html, "text/html")
+      .querySelector<HTMLAnchorElement>("a[href]")
+      ?.getAttribute("href");
+    return normalizedSafeSlideLinkUrl(href ?? "");
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizedDroppedSlideText(text: string): string {
+  return text
+    .replace(/\u0000/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+function normalizedSafeSlideLinkUrl(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:"
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function droppedTextShape(
+  shape: SlideShape,
+  text: string,
+  placement: SlideImageDropPlacement | undefined,
+  linkUrl?: string,
+): SlideShape {
+  const safeLinkUrl = normalizedSafeSlideLinkUrl(linkUrl ?? "");
+  if (placement === undefined) {
+    return normalizeSlideShape({
+      ...shape,
+      text,
+      ...(safeLinkUrl === undefined ? {} : { linkUrl: safeLinkUrl }),
+    });
+  }
+  return normalizeSlideShape({
+    ...shape,
+    x: clampShapeNumber(placement.x - shape.width / 2, 0, 100 - shape.width),
+    y: clampShapeNumber(placement.y - shape.height / 2, 0, 100 - shape.height),
+    text,
+    ...(safeLinkUrl === undefined ? {} : { linkUrl: safeLinkUrl }),
+  });
 }
 
 type ShapeDragMode = "move" | "resize" | "connector-left" | "connector-right";
@@ -5032,7 +5020,7 @@ function initials(name: string): string {
     .join("");
 }
 
-function NumberField({
+export function NumberField({
   label,
   value,
   min = 0,
@@ -5061,7 +5049,7 @@ function NumberField({
   );
 }
 
-function MediaAssetTable({
+export function MediaAssetTable({
   shapes,
   selectedShapeId,
   onSelectShape,
@@ -5117,7 +5105,7 @@ function MediaAssetTable({
   );
 }
 
-function ShapeAnimationTimeline({
+export function ShapeAnimationTimeline({
   rows,
   selectedShapeId,
   onSelectShape,
@@ -5707,28 +5695,9 @@ function DeckAnimationTimelineTable({
   );
 }
 
-interface SlideDraft {
-  readonly layout: SlideLayout;
-  readonly title: string;
-  readonly eyebrow: string;
-  readonly subtitle: string;
-  readonly items: string;
-  readonly stats: string;
-  readonly left: string;
-  readonly rightKind: "list" | "quote";
-  readonly rightContent: string;
-  readonly quoteWho: string;
-  readonly note: string;
-  readonly bg: SlideBackground;
-  readonly shapes: readonly SlideShape[];
-  readonly transition?: SlideTransition;
-  readonly speakerNotes: string;
-}
+type SlideDraft = import("./slide-editor-controller").SlideDraft;
 
-interface SlideLayoutSuggestion {
-  readonly layout: SlideLayout;
-  readonly reason: string;
-}
+type SlideLayoutSuggestion = import("./slide-editor-controller").SlideLayoutSuggestion;
 
 function suggestSlideLayout(draft: SlideDraft): SlideLayoutSuggestion {
   const itemLines = linesFromText(draft.items, []);
@@ -5946,7 +5915,7 @@ function isMetricValue(value: string): boolean {
   return /^(?:[$]?\d+(?:\.\d+)?%?|[+-]?\d+(?:\.\d+)?x)$/u.test(value);
 }
 
-function slideLayoutLabel(layout: SlideLayout): string {
+export function slideLayoutLabel(layout: SlideLayout): string {
   return SLIDE_LAYOUT_OPTIONS.find((option) => option.value === layout)?.label ?? layout;
 }
 
@@ -6034,6 +6003,311 @@ function draftFromSlide(content: SlideContent, speakerNotes: string): SlideDraft
         note: content.note,
       };
   }
+}
+
+interface StoredSlideDraftRecovery {
+  readonly slideId: string;
+  readonly slideUpdatedAt: string;
+  readonly savedAt: string;
+  readonly draft: SlideDraft;
+}
+
+function recoveredDraftFromSlide(slide: SlidesApiSlide): SlideDraft {
+  const fallback = draftFromSlide(slide.content, slide.speakerNotes);
+  const stored = readRecoveredSlideDraft(slide.id);
+  if (stored === null || stored.slideId !== slide.id || !isSlideDraft(stored.draft)) {
+    return fallback;
+  }
+  const savedAt = Date.parse(stored.savedAt);
+  const slideUpdatedAt = Date.parse(slide.updatedAt);
+  if (!Number.isFinite(savedAt) || !Number.isFinite(slideUpdatedAt) || savedAt <= slideUpdatedAt) {
+    removeRecoveredSlideDraft(slide.id);
+    return fallback;
+  }
+  return stored.draft;
+}
+
+function writeRecoveredSlideDraft(slide: SlidesApiSlide, draft: SlideDraft): void {
+  try {
+    globalThis.localStorage?.setItem(
+      recoveredSlideDraftKey(slide.id),
+      JSON.stringify({
+        slideId: slide.id,
+        slideUpdatedAt: slide.updatedAt,
+        savedAt: new Date().toISOString(),
+        draft,
+      } satisfies StoredSlideDraftRecovery),
+    );
+  } catch {
+    // Draft recovery is best-effort; failed storage should not block editing.
+  }
+}
+
+function readRecoveredSlideDraft(slideId: string): StoredSlideDraftRecovery | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(recoveredSlideDraftKey(slideId));
+    if (raw === null || raw === undefined) {
+      return null;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!isStoredSlideDraftRecovery(parsed)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function removeRecoveredSlideDraft(slideId: string): void {
+  try {
+    globalThis.localStorage?.removeItem(recoveredSlideDraftKey(slideId));
+  } catch {
+    // Ignore storage errors; the persisted draft will be overwritten later.
+  }
+}
+
+function recoveredSlideDraftKey(slideId: string): string {
+  return `${SLIDES_DRAFT_RECOVERY_PREFIX}.${slideId}`;
+}
+
+function readNativePresentationViewPreference(): NativePresentationViewPreference {
+  try {
+    const raw = globalThis.localStorage?.getItem(SLIDES_VIEW_PREFERENCE_KEY);
+    if (raw === null || raw === undefined) {
+      return DEFAULT_NATIVE_PRESENTATION_VIEW_PREFERENCE;
+    }
+    return normalizeNativePresentationViewPreference(JSON.parse(raw) as unknown);
+  } catch {
+    return DEFAULT_NATIVE_PRESENTATION_VIEW_PREFERENCE;
+  }
+}
+
+function writeNativePresentationViewPreference(value: NativePresentationViewPreference): void {
+  try {
+    globalThis.localStorage?.setItem(
+      SLIDES_VIEW_PREFERENCE_KEY,
+      JSON.stringify(normalizeNativePresentationViewPreference(value)),
+    );
+  } catch {
+    // View preferences are best-effort and should never block editing.
+  }
+}
+
+function readStoredSlideShapeClipboard(): SlideShape | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(SLIDES_SHAPE_CLIPBOARD_KEY);
+    if (raw === null || raw === undefined) {
+      return null;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!isStoredSlideShapeClipboard(parsed)) {
+      return null;
+    }
+    return normalizeSlideShape(parsed.shape);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredSlideShapeClipboard(shape: SlideShape): void {
+  try {
+    globalThis.localStorage?.setItem(
+      SLIDES_SHAPE_CLIPBOARD_KEY,
+      JSON.stringify({
+        shape: normalizeSlideShape(shape),
+        copiedAt: new Date().toISOString(),
+      } satisfies StoredSlideShapeClipboard),
+    );
+  } catch {
+    // Internal clipboard persistence is best-effort.
+  }
+}
+
+function isStoredSlideShapeClipboard(value: unknown): value is StoredSlideShapeClipboard {
+  return (
+    isObjectRecord(value) &&
+    isSlideShapeLike(value.shape) &&
+    typeof value.copiedAt === "string"
+  );
+}
+
+function normalizeNativePresentationViewPreference(
+  value: unknown,
+): NativePresentationViewPreference {
+  if (!isObjectRecord(value)) {
+    return DEFAULT_NATIVE_PRESENTATION_VIEW_PREFERENCE;
+  }
+  return {
+    showGrid:
+      typeof value.showGrid === "boolean"
+        ? value.showGrid
+        : DEFAULT_NATIVE_PRESENTATION_VIEW_PREFERENCE.showGrid,
+    showRulers:
+      typeof value.showRulers === "boolean"
+        ? value.showRulers
+        : DEFAULT_NATIVE_PRESENTATION_VIEW_PREFERENCE.showRulers,
+    snapToGuides:
+      typeof value.snapToGuides === "boolean"
+        ? value.snapToGuides
+        : DEFAULT_NATIVE_PRESENTATION_VIEW_PREFERENCE.snapToGuides,
+    zoomPercent:
+      typeof value.zoomPercent === "number"
+        ? clampZoomPercent(value.zoomPercent)
+        : DEFAULT_NATIVE_PRESENTATION_VIEW_PREFERENCE.zoomPercent,
+  };
+}
+
+function clampZoomPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return SLIDES_FIT_ZOOM_PERCENT;
+  }
+  return Math.max(SLIDES_MIN_ZOOM_PERCENT, Math.min(SLIDES_MAX_ZOOM_PERCENT, Math.round(value)));
+}
+
+function isStoredSlideDraftRecovery(value: unknown): value is StoredSlideDraftRecovery {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.slideId === "string" &&
+    typeof value.slideUpdatedAt === "string" &&
+    typeof value.savedAt === "string" &&
+    isSlideDraft(value.draft)
+  );
+}
+
+function isSlideDraft(value: unknown): value is SlideDraft {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+  return (
+    isSlideLayout(value.layout) &&
+    typeof value.title === "string" &&
+    typeof value.eyebrow === "string" &&
+    typeof value.subtitle === "string" &&
+    typeof value.items === "string" &&
+    typeof value.stats === "string" &&
+    typeof value.left === "string" &&
+    (value.rightKind === "list" || value.rightKind === "quote") &&
+    typeof value.rightContent === "string" &&
+    typeof value.quoteWho === "string" &&
+    typeof value.note === "string" &&
+    (value.bg === "accent" || value.bg === "neutral") &&
+    Array.isArray(value.shapes) &&
+    value.shapes.every(isSlideShapeLike) &&
+    (value.transition === undefined || isObjectRecord(value.transition)) &&
+    typeof value.speakerNotes === "string"
+  );
+}
+
+function isSlideLayout(value: unknown): value is SlideLayout {
+  return SLIDE_LAYOUT_OPTIONS.some((option) => option.value === value);
+}
+
+function isSlideShapeLike(value: unknown): value is SlideShape {
+  return (
+    isObjectRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.kind === "string" &&
+    typeof value.x === "number" &&
+    typeof value.y === "number" &&
+    typeof value.width === "number" &&
+    typeof value.height === "number"
+  );
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function slideDraftsEqual(left: SlideDraft, right: SlideDraft): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function slideDraftsEquivalentForHistory(left: SlideDraft, right: SlideDraft): boolean {
+  return slideDraftsEqual(normalizeSlideDraftForHistory(left), normalizeSlideDraftForHistory(right));
+}
+
+function normalizeSlideDraftForHistory(draft: SlideDraft): SlideDraft {
+  return {
+    ...draft,
+    shapes: draft.shapes.map(normalizeSlideShape),
+    transition:
+      draft.transition === undefined ? undefined : normalizeSlideTransition(draft.transition),
+  };
+}
+
+function appendDraftHistory(
+  entries: readonly SlideDraft[],
+  draft: SlideDraft,
+): readonly SlideDraft[] {
+  const last = entries.at(-1);
+  if (last !== undefined && slideDraftsEquivalentForHistory(last, draft)) {
+    return entries;
+  }
+  return [...entries, draft].slice(-50);
+}
+
+function prependDraftHistory(
+  entries: readonly SlideDraft[],
+  draft: SlideDraft,
+): readonly SlideDraft[] {
+  const first = entries[0];
+  if (first !== undefined && slideDraftsEquivalentForHistory(first, draft)) {
+    return entries;
+  }
+  return [draft, ...entries].slice(0, 50);
+}
+
+function trimTrailingEquivalentDrafts(
+  entries: readonly SlideDraft[],
+  draft: SlideDraft,
+): readonly SlideDraft[] {
+  let end = entries.length;
+  while (end > 0 && slideDraftsEquivalentForHistory(entries[end - 1] as SlideDraft, draft)) {
+    end -= 1;
+  }
+  return entries.slice(0, end);
+}
+
+function trimLeadingEquivalentDrafts(
+  entries: readonly SlideDraft[],
+  draft: SlideDraft,
+): readonly SlideDraft[] {
+  let start = 0;
+  while (
+    start < entries.length &&
+    slideDraftsEquivalentForHistory(entries[start] as SlideDraft, draft)
+  ) {
+    start += 1;
+  }
+  return entries.slice(start);
+}
+
+function firstDistinctDraftFromEnd(
+  entries: readonly SlideDraft[],
+  current: SlideDraft,
+): SlideDraft | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry !== undefined && !slideDraftsEquivalentForHistory(entry, current)) {
+      return entry;
+    }
+  }
+  return undefined;
+}
+
+function firstDistinctDraftFromStart(
+  entries: readonly SlideDraft[],
+  current: SlideDraft,
+): SlideDraft | undefined {
+  for (const entry of entries) {
+    if (!slideDraftsEquivalentForHistory(entry, current)) {
+      return entry;
+    }
+  }
+  return undefined;
 }
 
 function contentWithEditableFields(content: SlideContent, draft: SlideDraft): SlideContent {
@@ -6376,13 +6650,8 @@ function compareShapeBuildEntries(
 }
 
 function createSlideShape(shapes: readonly SlideShape[], kind: SlideShapeKind): SlideShape {
-  const nextNumber =
-    shapes.reduce((highest, shape) => {
-      const match = /^shape-(\d+)$/u.exec(shape.id);
-      return match?.[1] === undefined ? highest : Math.max(highest, Number(match[1]));
-    }, 0) + 1;
   return normalizeSlideShape({
-    id: `shape-${String(nextNumber)}`,
+    id: nextSlideShapeId(shapes),
     kind,
     x: kind === "text" ? 14 : kind === "connector" ? 36 : kind === "image" ? 52 : 46,
     y: kind === "text" ? 18 : kind === "connector" ? 38 : kind === "image" ? 16 : 42,
@@ -6408,9 +6677,33 @@ function createSlideShape(shapes: readonly SlideShape[], kind: SlideShapeKind): 
   });
 }
 
+function pastedSlideShape(shape: SlideShape, shapes: readonly SlideShape[]): SlideShape {
+  return normalizeSlideShape({
+    ...shape,
+    id: nextSlideShapeId(shapes),
+    x: shape.x + 4,
+    y: shape.y + 4,
+  });
+}
+
+function nextSlideShapeId(shapes: readonly SlideShape[]): string {
+  const nextNumber =
+    shapes.reduce((highest, shape) => {
+      const match = /^shape-(\d+)$/u.exec(shape.id);
+      return match?.[1] === undefined ? highest : Math.max(highest, Number(match[1]));
+    }, 0) + 1;
+  return `shape-${String(nextNumber)}`;
+}
+
 function normalizeSlideShape(shape: SlideShape): SlideShape {
   const width = clampShapeNumber(shape.width, 6, 100);
   const height = clampShapeNumber(shape.height, 6, 100);
+  const linkUrl = normalizedSafeSlideLinkUrl(shape.linkUrl ?? "");
+  const fontFamily = normalizeSlideShapeFontFamily(shape.fontFamily);
+  const fontSize = normalizeSlideShapeFontSize(shape.fontSize);
+  const textAlign = normalizeSlideShapeTextAlign(shape.textAlign);
+  const textColor = normalizeSlideShapeColor(shape.textColor);
+  const highlightColor = normalizeSlideShapeColor(shape.highlightColor);
   const kind =
     shape.kind === "rectangle" ||
     shape.kind === "connector" ||
@@ -6426,7 +6719,17 @@ function normalizeSlideShape(shape: SlideShape): SlideShape {
     width,
     height,
     ...(shape.text === undefined ? {} : { text: shape.text }),
+    ...(linkUrl === undefined ? {} : { linkUrl }),
     tone: shape.tone === "light" || shape.tone === "dark" ? shape.tone : "accent",
+    ...(fontFamily === "inter" ? {} : { fontFamily }),
+    ...(fontSize === 16 ? {} : { fontSize }),
+    ...(shape.bold === true ? { bold: true } : {}),
+    ...(shape.italic === true ? { italic: true } : {}),
+    ...(shape.underline === true ? { underline: true } : {}),
+    ...(shape.strikethrough === true ? { strikethrough: true } : {}),
+    ...(textAlign === "center" ? {} : { textAlign }),
+    ...(textColor === undefined ? {} : { textColor }),
+    ...(highlightColor === undefined ? {} : { highlightColor }),
     ...(kind === "connector"
       ? {
           connectorDirection: shape.connectorDirection === "down" ? "down" : "up",
@@ -6480,6 +6783,28 @@ function normalizeSlideShape(shape: SlideShape): SlideShape {
   };
 }
 
+function normalizeSlideShapeFontFamily(value: SlideShape["fontFamily"]): SlideShapeFontFamily {
+  return value === "serif" || value === "mono" || value === "system" ? value : "inter";
+}
+
+function normalizeSlideShapeFontSize(value: SlideShape["fontSize"]): number {
+  if (!Number.isFinite(value)) {
+    return 16;
+  }
+  return clampShapeNumber(value as number, 8, 96);
+}
+
+function normalizeSlideShapeTextAlign(value: SlideShape["textAlign"]): SlideShapeTextAlign {
+  return value === "left" || value === "right" || value === "justify" ? value : "center";
+}
+
+function normalizeSlideShapeColor(value: SlideShape["textColor"]): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : undefined;
+}
+
 function animationFromSelection(
   value: string,
   current: SlideShapeAnimation | undefined,
@@ -6512,7 +6837,7 @@ function transitionFromSelection(
   });
 }
 
-function normalizeSlideTransition(transition: Partial<SlideTransition>): SlideTransition {
+export function normalizeSlideTransition(transition: Partial<SlideTransition>): SlideTransition {
   const type =
     transition.type === "slide" || transition.type === "zoom" || transition.type === "fade"
       ? transition.type
@@ -6526,7 +6851,7 @@ function normalizeSlideTransition(transition: Partial<SlideTransition>): SlideTr
   };
 }
 
-function normalizeSlideShapeAnimation(
+export function normalizeSlideShapeAnimation(
   animation: Partial<SlideShapeAnimation>,
 ): SlideShapeAnimation {
   const type =
@@ -6607,7 +6932,10 @@ function driveObjectContentUrl(objectId: string): string {
   return `/api/drive/objects/${encodeURIComponent(objectId)}/content`;
 }
 
-function driveAssetSelectValue(url: string | undefined, assets: readonly DriveApiEntry[]): string {
+export function driveAssetSelectValue(
+  url: string | undefined,
+  assets: readonly DriveApiEntry[],
+): string {
   if (url === undefined) {
     return "";
   }
@@ -6640,7 +6968,7 @@ function downloadSlug(value: string): string {
   return slug.length > 0 ? slug : "deck";
 }
 
-function shapeLabel(shape: SlideShape, index: number): string {
+export function shapeLabel(shape: SlideShape, index: number): string {
   const text = shapeLabelText(shape);
   if (text !== undefined && text.length > 0) {
     return text;
@@ -6761,6 +7089,13 @@ function deckExportBlockedTitle(readiness: DeckMediaReadiness): string {
   return `Resolve ${String(readiness.exportBlockers)} media export blocker${
     readiness.exportBlockers === 1 ? "" : "s"
   } before export.`;
+}
+
+function slidesSyncErrorMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message.trim() : "";
+  return detail.length > 0
+    ? `Slides realtime save failed: ${detail}. Changes may not be saved until this is resolved.`
+    : "Slides realtime save failed. Changes may not be saved until this is resolved.";
 }
 
 function mediaBlockingSourceCount(
@@ -6935,6 +7270,66 @@ function nextShapeFromDrag(drag: ShapeDragState, point: ShapeDragPoint): SlideSh
     drag.mode === "connector-left" ? "left" : "right",
     point,
   );
+}
+
+function maybeSnapShapeToGuides(shape: SlideShape, enabled: boolean): SlideShape {
+  if (!enabled) {
+    return shape;
+  }
+  return normalizeSlideShape({
+    ...shape,
+    x: snapShapeAxis(shape.x, shape.width),
+    y: snapShapeAxis(shape.y, shape.height),
+  });
+}
+
+function snapShapeAxis(position: number, size: number): number {
+  const threshold = 1.5;
+  const candidates = [
+    { current: position, next: 50 },
+    { current: position + size / 2, next: 50 - size / 2 },
+    { current: position + size, next: 50 - size },
+  ];
+  for (const candidate of candidates) {
+    if (Math.abs(candidate.current - 50) <= threshold) {
+      return candidate.next;
+    }
+  }
+  return position;
+}
+
+type ShapeKeyboardDirection = "left" | "right" | "up" | "down";
+
+function shapeKeyboardDirection(key: string): ShapeKeyboardDirection | null {
+  if (key === "ArrowLeft") return "left";
+  if (key === "ArrowRight") return "right";
+  if (key === "ArrowUp") return "up";
+  if (key === "ArrowDown") return "down";
+  return null;
+}
+
+function keyboardMovedShape(
+  shape: SlideShape,
+  direction: ShapeKeyboardDirection,
+  step: number,
+): SlideShape {
+  return normalizeSlideShape({
+    ...shape,
+    x: shape.x + (direction === "left" ? -step : direction === "right" ? step : 0),
+    y: shape.y + (direction === "up" ? -step : direction === "down" ? step : 0),
+  });
+}
+
+function keyboardResizedShape(
+  shape: SlideShape,
+  direction: ShapeKeyboardDirection,
+  step: number,
+): SlideShape {
+  return normalizeSlideShape({
+    ...shape,
+    width: shape.width + (direction === "left" ? -step : direction === "right" ? step : 0),
+    height: shape.height + (direction === "up" ? -step : direction === "down" ? step : 0),
+  });
 }
 
 function connectorEndpoints(shape: SlideShape): {
@@ -7319,6 +7714,15 @@ const EXPORT_GATE_STATUS_STYLE = {
   lineHeight: 1.25,
 } satisfies CSSProperties;
 
+const SYNC_ERROR_BANNER_STYLE = {
+  padding: "6px 16px",
+  borderBottom: "1px solid color-mix(in srgb, var(--danger) 26%, transparent)",
+  background: "color-mix(in srgb, var(--danger) 10%, var(--surface))",
+  color: "var(--danger)",
+  fontSize: "var(--text-caption)",
+  lineHeight: 1.35,
+} satisfies CSSProperties;
+
 const COLLABORATOR_ROW_STYLE = {
   display: "flex",
   alignItems: "center",
@@ -7429,13 +7833,18 @@ const THUMB_COMMENT_BADGE_STYLE = {
 
 const CANVAS_COLUMN_STYLE = {
   display: "grid",
-  gridTemplateColumns: "minmax(360px, 1fr) 320px",
+  gridTemplateColumns: "minmax(0, 1fr)",
   gap: 16,
   minHeight: 0,
   padding: 16,
   overflow: "auto",
   background: "var(--bg)",
 } satisfies CSSProperties;
+
+function collaboratorColor(_collaborator: PresentationCollaborator): string {
+  // TODO: derive a stable color hash from actor id; using accent for now.
+  return "var(--accent)";
+}
 
 const SLIDE_CANVAS_STYLE = {
   position: "relative",
@@ -7448,6 +7857,60 @@ const SLIDE_CANVAS_STYLE = {
   color: "#fff",
   overflow: "hidden",
   boxShadow: "var(--shadow-sm)",
+} satisfies CSSProperties;
+
+function slideEditorFrameStyle(showRulers: boolean, zoomPercent: number): CSSProperties {
+  return {
+    display: "grid",
+    gridTemplateAreas: showRulers ? '"corner horizontal" "vertical canvas"' : '"canvas"',
+    gridTemplateColumns: showRulers ? "24px minmax(0, 1fr)" : "minmax(0, 1fr)",
+    gridTemplateRows: showRulers ? "20px minmax(0, 1fr)" : "minmax(0, 1fr)",
+    alignSelf: "start",
+    width: `${String(clampZoomPercent(zoomPercent))}%`,
+    minWidth: 0,
+  };
+}
+
+const SLIDE_CANVAS_WRAP_STYLE = {
+  gridArea: "canvas",
+  minWidth: 0,
+} satisfies CSSProperties;
+
+const SLIDE_GRID_STYLE = {
+  position: "absolute",
+  inset: 0,
+  zIndex: 0,
+  pointerEvents: "none",
+  backgroundImage:
+    "linear-gradient(rgba(255,255,255,.16) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.16) 1px, transparent 1px)",
+  backgroundSize: "6.25% 11.111%",
+} satisfies CSSProperties;
+
+const SLIDE_RULER_CORNER_STYLE = {
+  gridArea: "corner",
+  border: "1px solid var(--border)",
+  borderRight: 0,
+  borderBottom: 0,
+  borderRadius: "6px 0 0 0",
+  background: "var(--surface-2)",
+} satisfies CSSProperties;
+
+const SLIDE_HORIZONTAL_RULER_STYLE = {
+  gridArea: "horizontal",
+  border: "1px solid var(--border)",
+  borderBottom: 0,
+  borderRadius: "0 6px 0 0",
+  background:
+    "repeating-linear-gradient(90deg, var(--surface-2) 0 31px, color-mix(in srgb, var(--text-3) 36%, transparent) 31px 32px)",
+} satisfies CSSProperties;
+
+const SLIDE_VERTICAL_RULER_STYLE = {
+  gridArea: "vertical",
+  border: "1px solid var(--border)",
+  borderRight: 0,
+  borderRadius: "0 0 0 6px",
+  background:
+    "repeating-linear-gradient(180deg, var(--surface-2) 0 31px, color-mix(in srgb, var(--text-3) 36%, transparent) 31px 32px)",
 } satisfies CSSProperties;
 
 const SHAPE_LAYER_STYLE = {
@@ -7615,6 +8078,61 @@ const SHAPE_TEXT_STYLE = {
   overflowWrap: "anywhere",
 } satisfies CSSProperties;
 
+const SHAPE_LINK_STYLE = {
+  ...SHAPE_TEXT_STYLE,
+  color: "inherit",
+  textDecoration: "underline",
+  textUnderlineOffset: 3,
+  pointerEvents: "auto",
+} satisfies CSSProperties;
+
+function shapeFontFamily(shape: SlideShape): string {
+  switch (shape.fontFamily) {
+    case "serif":
+      return 'Georgia, "Times New Roman", serif';
+    case "mono":
+      return '"SFMono-Regular", Consolas, "Liberation Mono", monospace';
+    case "system":
+      return 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    case "inter":
+    default:
+      return 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  }
+}
+
+function shapeTextDecoration(shape: SlideShape, baseUnderline: boolean): string | undefined {
+  const decorations = [
+    baseUnderline || shape.underline === true ? "underline" : "",
+    shape.strikethrough === true ? "line-through" : "",
+  ].filter(Boolean);
+  return decorations.length === 0 ? undefined : decorations.join(" ");
+}
+
+function shapeTextStyle(shape: SlideShape): CSSProperties {
+  return {
+    ...SHAPE_TEXT_STYLE,
+    fontFamily: shapeFontFamily(shape),
+    fontSize: shape.fontSize ?? SHAPE_TEXT_STYLE.fontSize,
+    fontWeight: shape.bold === true ? 700 : 400,
+    fontStyle: shape.italic === true ? "italic" : "normal",
+    textDecoration: shapeTextDecoration(shape, false),
+    textAlign: shape.textAlign ?? SHAPE_TEXT_STYLE.textAlign,
+    color: shape.textColor ?? undefined,
+    backgroundColor: shape.highlightColor ?? undefined,
+  };
+}
+
+function shapeLinkTextStyle(shape: SlideShape): CSSProperties {
+  return {
+    ...SHAPE_LINK_STYLE,
+    ...shapeTextStyle(shape),
+    color: shape.textColor ?? SHAPE_LINK_STYLE.color,
+    textDecoration: shapeTextDecoration(shape, true),
+    textUnderlineOffset: SHAPE_LINK_STYLE.textUnderlineOffset,
+    pointerEvents: SHAPE_LINK_STYLE.pointerEvents,
+  };
+}
+
 const TITLE_LAYOUT_STYLE = {
   display: "flex",
   flexDirection: "column",
@@ -7686,14 +8204,12 @@ const STAT_STYLE = {
   borderRadius: 8,
 } satisfies CSSProperties;
 
-const INSPECTOR_STYLE = {
+export const INSPECTOR_TAB_STYLE = {
   display: "grid",
   alignContent: "start",
   gap: 12,
   minWidth: 0,
   padding: 12,
-  border: "1px solid var(--border)",
-  borderRadius: 8,
   background: "var(--surface)",
 } satisfies CSSProperties;
 
@@ -7862,13 +8378,13 @@ const MENTION_PICKER_EMAIL_STYLE = {
   overflowWrap: "anywhere",
 } satisfies CSSProperties;
 
-const FIELD_STYLE = { display: "grid", gap: 6 } satisfies CSSProperties;
-const LABEL_STYLE = {
+export const FIELD_STYLE = { display: "grid", gap: 6 } satisfies CSSProperties;
+export const LABEL_STYLE = {
   fontSize: "var(--text-caption)",
   color: "var(--text-3)",
 } satisfies CSSProperties;
 
-const LAYOUT_SUGGESTION_STYLE = {
+export const LAYOUT_SUGGESTION_STYLE = {
   display: "grid",
   gap: 8,
   padding: 10,
@@ -7877,14 +8393,14 @@ const LAYOUT_SUGGESTION_STYLE = {
   background: "var(--surface-2)",
 } satisfies CSSProperties;
 
-const LAYOUT_SUGGESTION_RESULT_STYLE = {
+export const LAYOUT_SUGGESTION_RESULT_STYLE = {
   display: "grid",
   gap: 8,
   fontSize: "var(--text-body-sm)",
   color: "var(--text-2)",
 } satisfies CSSProperties;
 
-const SHAPE_FIELDSET_STYLE = {
+export const SHAPE_FIELDSET_STYLE = {
   display: "grid",
   gap: 10,
   minWidth: 0,
@@ -7894,32 +8410,32 @@ const SHAPE_FIELDSET_STYLE = {
   borderRadius: 6,
 } satisfies CSSProperties;
 
-const SHAPE_LEGEND_STYLE = {
+export const SHAPE_LEGEND_STYLE = {
   padding: "0 4px",
   fontSize: "var(--text-caption)",
   color: "var(--text-2)",
   fontWeight: 700,
 } satisfies CSSProperties;
 
-const SHAPE_ACTION_ROW_STYLE = {
+export const SHAPE_ACTION_ROW_STYLE = {
   display: "flex",
   alignItems: "center",
   flexWrap: "wrap",
   gap: 6,
 } satisfies CSSProperties;
 
-const SHAPE_GRID_STYLE = {
+export const SHAPE_GRID_STYLE = {
   display: "grid",
   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
   gap: 8,
 } satisfies CSSProperties;
 
-const TRANSITION_PREVIEW_BUTTON_STYLE = {
+export const TRANSITION_PREVIEW_BUTTON_STYLE = {
   alignSelf: "end",
   minHeight: 34,
 } satisfies CSSProperties;
 
-const CHECKBOX_LABEL_STYLE = {
+export const CHECKBOX_LABEL_STYLE = {
   display: "flex",
   alignItems: "center",
   gap: 8,
@@ -7994,7 +8510,7 @@ const MEDIA_ASSET_ROW_SELECTED_STYLE = {
   background: "var(--surface-2)",
 } satisfies CSSProperties;
 
-const MEDIA_PREVIEW_ROW_STYLE = {
+export const MEDIA_PREVIEW_ROW_STYLE = {
   display: "flex",
   alignItems: "center",
   gap: 10,
@@ -8019,7 +8535,7 @@ const MEDIA_ASSET_CHECKBOX_LABEL_STYLE = {
   color: "var(--text-2)",
 } satisfies CSSProperties;
 
-const INPUT_STYLE = {
+export const INPUT_STYLE = {
   minWidth: 0,
   border: "1px solid var(--border)",
   borderRadius: 6,
@@ -8029,17 +8545,17 @@ const INPUT_STYLE = {
   font: "inherit",
 } satisfies CSSProperties;
 
-const TEXTAREA_STYLE = {
+export const TEXTAREA_STYLE = {
   ...INPUT_STYLE,
   resize: "vertical",
 } satisfies CSSProperties;
 
-const ACTION_ROW_STYLE = {
+export const ACTION_ROW_STYLE = {
   display: "flex",
   justifyContent: "flex-end",
 } satisfies CSSProperties;
 
-const EMPTY_STYLE = {
+export const EMPTY_STYLE = {
   margin: 0,
   color: "var(--text-3)",
   fontSize: "var(--text-body-sm)",

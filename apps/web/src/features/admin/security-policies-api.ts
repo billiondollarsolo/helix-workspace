@@ -34,15 +34,14 @@ export const securityPolicyLabels: Record<SecurityPolicyType, string> = {
   device_trust: "Device trust",
 };
 
-export const securityPolicyGroup: Record<SecurityPolicyType, "Authentication" | "Access & data"> =
-  {
-    mfa: "Authentication",
-    sso: "Authentication",
-    session: "Authentication",
-    external_sharing: "Access & data",
-    dlp: "Access & data",
-    device_trust: "Access & data",
-  };
+export const securityPolicyGroup: Record<SecurityPolicyType, "Authentication" | "Access & data"> = {
+  mfa: "Authentication",
+  sso: "Authentication",
+  session: "Authentication",
+  external_sharing: "Access & data",
+  dlp: "Access & data",
+  device_trust: "Access & data",
+};
 
 export const POLICY_ENFORCEMENTS = ["disabled", "optional", "required"] as const;
 export type PolicyEnforcement = (typeof POLICY_ENFORCEMENTS)[number];
@@ -63,12 +62,20 @@ export type SecurityPolicy = z.infer<typeof securityPolicySchema>;
 
 const policiesResponseSchema = z.object({ policies: z.array(securityPolicySchema) });
 const policyResponseSchema = z.object({ policy: securityPolicySchema });
+const ssoTestLoginResponseSchema = z.object({
+  testLogin: z.object({
+    status: z.enum(["configuration_required", "runtime_pending"]),
+    message: z.string(),
+  }),
+});
 
 export interface UpdateSecurityPolicyInput {
   readonly enabled?: boolean;
   readonly enforcement?: PolicyEnforcement;
   readonly settings?: Record<string, unknown>;
 }
+
+export type SsoTestLoginResponse = z.infer<typeof ssoTestLoginResponseSchema>["testLogin"];
 
 // ---------------------------------------------------------------------------
 // Query keys + options
@@ -95,8 +102,7 @@ export async function fetchSecurityPolicies(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly SecurityPolicy[]> {
   const response = await fetchImpl("/api/admin/security-policies", { method: "GET" });
-  return (await parseResponse(response, "load security policies", policiesResponseSchema))
-    .policies;
+  return (await parseResponse(response, "load security policies", policiesResponseSchema)).policies;
 }
 
 export async function fetchSecurityPolicy(
@@ -124,6 +130,17 @@ export async function updateSecurityPolicy(
     },
   );
   return (await parseResponse(response, "update security policy", policyResponseSchema)).policy;
+}
+
+export async function testSsoLogin(
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<SsoTestLoginResponse> {
+  const response = await fetchImpl("/api/admin/security-policies/sso/test-login", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: "{}",
+  });
+  return (await parseResponse(response, "test SSO login", ssoTestLoginResponseSchema)).testLogin;
 }
 
 // ---------------------------------------------------------------------------

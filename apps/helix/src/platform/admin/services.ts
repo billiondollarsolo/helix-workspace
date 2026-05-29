@@ -1027,7 +1027,11 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
     label: "Mail",
     summary: "SMTP ingress, outbound relay, filters, labels, vacation responders, and mail search.",
     category: "communication",
-    scopes: ["mail.read", "mail.write", "mail.send", "mail.external", "mail.delete"],
+    // `mail.system` is service-only (REVIEW.md CRITICAL-4): it is included
+    // here for catalog completeness but the scope catalog flags it under the
+    // `service` surface so it cannot be issued on agent OAuth clients or app
+    // passwords.
+    scopes: ["mail.read", "mail.write", "mail.send", "mail.external", "mail.delete", "mail.system"],
     adminScopes: ["mail.admin", adminConfigReadScope, adminConfigWriteScope],
     uiRoutes: ["/mail"],
     apiRoutes: [

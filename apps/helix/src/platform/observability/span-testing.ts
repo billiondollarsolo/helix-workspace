@@ -1,10 +1,12 @@
-import { trace } from "@opentelemetry/api";
+import { context, trace } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
   type ReadableSpan,
 } from "@opentelemetry/sdk-trace-base";
+import { createTenantSpanProcessor } from "./tenant-span.js";
 
 /**
  * Test-only OpenTelemetry harness: installs an in-memory tracer provider so
@@ -27,8 +29,10 @@ export interface SpanCaptureHarness {
 export function installSpanCapture(): SpanCaptureHarness {
   const exporter = new InMemorySpanExporter();
   const provider = new BasicTracerProvider({
-    spanProcessors: [new SimpleSpanProcessor(exporter)],
+    spanProcessors: [createTenantSpanProcessor(), new SimpleSpanProcessor(exporter)],
   });
+  const contextManager = new AsyncLocalStorageContextManager().enable();
+  context.setGlobalContextManager(contextManager);
   trace.setGlobalTracerProvider(provider);
   return {
     spans: () => exporter.getFinishedSpans(),
@@ -38,6 +42,7 @@ export function installSpanCapture(): SpanCaptureHarness {
     },
     dispose: async () => {
       await provider.shutdown();
+      context.disable();
       trace.disable();
     },
   };

@@ -6,6 +6,7 @@ import {
   type DocsExportFormat,
   type DocsExportResult,
 } from "../types.js";
+import { sanitizeHtmlForExport } from "./sanitize-html.js";
 
 export interface ExportDocsDocumentInput {
   readonly document: DocsExportDocument;
@@ -188,7 +189,9 @@ export function renderMarkdown(
         options.references === "text"
           ? title
           : `[${escapeMarkdownLinkLabel(title)}](#${epubAnchorId(item.anchor || item.id)})`;
-      lines.push(`${"  ".repeat(Math.max(item.level - 1, 0))}- ${body}`);
+      lines.push(
+        `${"  ".repeat(Math.max(item.level - 1, 0))}- ${body}`,
+      );
     }
   }
   if (includeComments && document.comments !== undefined && document.comments.length > 0) {
@@ -279,7 +282,9 @@ function renderNativeDocumentExportTokens(
 
 function renderHtmlForPdf(document: DocsExportDocument, markdown: string): string {
   if (document.html !== undefined && document.html.trim().length > 0) {
-    return renderNativeDocumentExportTokens(document.html);
+    // Untrusted document HTML: must be sanitized before it reaches Chromium.
+    // See sanitize-html.ts and CRITICAL-6 in docs/reviews/REVIEW.md.
+    return sanitizeHtmlForExport(renderNativeDocumentExportTokens(document.html));
   }
   const layout = nativeDocumentExportLayout(document);
   const body = markdown
@@ -299,7 +304,7 @@ function renderHtmlForPdf(document: DocsExportDocument, markdown: string): strin
       return `<p>${markdownInlineToHtml(line)}</p>`;
     })
     .join("\n");
-  return `<!doctype html>
+  return sanitizeHtmlForExport(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -318,7 +323,7 @@ function renderHtmlForPdf(document: DocsExportDocument, markdown: string): strin
     ${body}
     </main>
   </body>
-</html>`;
+</html>`);
 }
 
 function nativeDocumentExportLayout(document: DocsExportDocument): NativeDocumentExportLayout {
@@ -337,7 +342,9 @@ function nativeDocumentExportLayout(document: DocsExportDocument): NativeDocumen
   };
 }
 
-function firstNativeDocumentSection(value: unknown): {
+function firstNativeDocumentSection(
+  value: unknown,
+): {
   readonly columnCount?: 1 | 2;
   readonly pageSize?: "letter" | "a4";
   readonly orientation?: "portrait" | "landscape";
@@ -498,7 +505,9 @@ function renderDocxScaffold(
   const blocks = docxBlocksFromMarkdown(markdown);
   const images = blocks.filter(isDocxImageBlock).map((block) => block.image);
   const hyperlinks = docxHyperlinksFromBlocks(blocks);
-  const paragraphs = blocks.filter(isDocxParagraphBlock).map((block) => block.text);
+  const paragraphs = blocks
+    .filter(isDocxParagraphBlock)
+    .map((block) => block.text);
   const paragraphComments = assignDocxCommentsToParagraphs(paragraphs, comments);
   const paragraphBlocks = blocks.filter(isDocxParagraphBlock);
   const hasStyles = blocks.some(
@@ -574,13 +583,15 @@ function renderDocxScaffold(
     });
   }
   if (hasComments) {
-    entries.push({
-      name: "word/comments.xml",
-      data: xmlBuffer(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    entries.push(
+      {
+        name: "word/comments.xml",
+        data: xmlBuffer(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   ${comments.map(docxCommentXml).join("\n  ")}
 </w:comments>`),
-    });
+      },
+    );
   }
   for (const image of images) {
     entries.push({
@@ -700,11 +711,7 @@ function docxParagraphFromMarkdownLine(
     };
   }
   const inline = docxInlineRunsFromMarkdown(line, hyperlinkOffset);
-  return {
-    text: docxTextFromRuns(inline.runs),
-    runs: inline.runs,
-    hyperlinkCount: inline.hyperlinkCount,
-  };
+  return { text: docxTextFromRuns(inline.runs), runs: inline.runs, hyperlinkCount: inline.hyperlinkCount };
 }
 
 function docxInlineRunsFromMarkdown(
@@ -748,9 +755,7 @@ function nextInlineMarkdownToken(
   if (candidates.length === 0) {
     return null;
   }
-  return (
-    candidates.sort((left, right) => left.start - right.start || right.end - left.end)[0] ?? null
-  );
+  return candidates.sort((left, right) => left.start - right.start || right.end - left.end)[0] ?? null;
 }
 
 function inlineMarkdownLinkRun(
@@ -841,7 +846,9 @@ function docxHyperlinksFromBlocks(
 }
 
 function stripInlineMarkdownText(text: string): string {
-  return text.replace(/[`*_~>]/gu, "").replace(/\[(.*?)\]\([^)]*\)/gu, "$1");
+  return text
+    .replace(/[`*_~>]/gu, "")
+    .replace(/\[(.*?)\]\([^)]*\)/gu, "$1");
 }
 
 function isDocxParagraphBlock(
@@ -898,10 +905,7 @@ function docxImageFromMarkdownImage(
   };
 }
 
-function fallbackDocxImageText(image: {
-  readonly altText: string;
-  readonly source: string;
-}): string {
+function fallbackDocxImageText(image: { readonly altText: string; readonly source: string }): string {
   const altText = image.altText.trim();
   return altText.length === 0 ? `Image: ${image.source}` : `Image: ${altText}`;
 }
@@ -937,7 +941,9 @@ function markdownTableCells(line: string): readonly string[] {
 function normalizeDocxTableRows(rows: readonly (readonly string[])[]): DocxTable {
   const columnCount = Math.max(...rows.map((row) => row.length), 1);
   return {
-    rows: rows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? "")),
+    rows: rows.map((row) =>
+      Array.from({ length: columnCount }, (_, index) => row[index] ?? ""),
+    ),
   };
 }
 
@@ -1192,7 +1198,9 @@ function markdownInlineToMarkup(text: string, escapeText: (value: string) => str
     }
     const label = stripInlineMarkdownText(match[1] ?? "");
     const href = match[2] ?? "";
-    parts.push(`<a href="${escapeXmlAttribute(href)}">${escapeText(label)}</a>`);
+    parts.push(
+      `<a href="${escapeXmlAttribute(href)}">${escapeText(label)}</a>`,
+    );
     cursor = index + match[0].length;
   }
   if (cursor < text.length) {

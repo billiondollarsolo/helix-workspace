@@ -50,6 +50,34 @@ describe("fileTypeFromEntry", () => {
     expect(fileTypeFromEntry(makeEntry({ id: "5", type: "file", name: "notes.txt" }))).toBe(
       "doc",
     );
+    expect(fileTypeFromEntry(makeEntry({ id: "6", type: "file", name: "pitch.pptx" }))).toBe(
+      "slides",
+    );
+    expect(
+      fileTypeFromEntry(
+        makeEntry({
+          id: "7",
+          type: "file",
+          mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        }),
+      ),
+    ).toBe("slides");
+    expect(fileTypeFromEntry(makeEntry({ id: "8", type: "file", name: "pitch.odp" }))).toBe(
+      "slides",
+    );
+  });
+
+  it("prefers native app metadata over generic mime classification", () => {
+    expect(
+      fileTypeFromEntry(
+        makeEntry({
+          id: "native-deck",
+          type: "file",
+          app: "slides",
+          mimeType: "application/octet-stream",
+        }),
+      ),
+    ).toBe("slides");
   });
 });
 
@@ -62,13 +90,21 @@ describe("entry adapters", () => {
   });
 
   it("maps a file entry into a card model", () => {
+    const preview = {
+      kind: "image" as const,
+      status: "available" as const,
+      mimeType: "image/png",
+      url: "https://cdn.example/thumb.png",
+    };
     const file = fileItemFromEntry(
       makeEntry({
         id: "x1",
         type: "file",
         name: "Q3-Forecast.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         byteSize: 184 * 1024,
         ownerActorId: "Naveen Iyer",
+        preview,
       }),
     );
     expect(file).toMatchObject({
@@ -77,7 +113,28 @@ describe("entry adapters", () => {
       type: "sheet",
       owner: "Naveen Iyer",
       size: "184 KB",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      preview,
     });
+  });
+
+  it("normalizes legacy metadata preview into the card model", () => {
+    const preview = {
+      kind: "office" as const,
+      status: "unsupported" as const,
+      mimeType: "application/vnd.ms-excel",
+      blocker: "Office preview conversion requires the LibreOffice preview service.",
+    };
+    const file = fileItemFromEntry(
+      makeEntry({
+        id: "x-legacy-preview",
+        type: "file",
+        name: "Legacy budget.xls",
+        mimeType: "application/vnd.ms-excel",
+        metadata: { preview },
+      }),
+    );
+    expect(file.preview).toEqual(preview);
   });
 
   it("falls back to a placeholder owner when none is set", () => {
@@ -85,5 +142,19 @@ describe("entry adapters", () => {
       makeEntry({ id: "x2", type: "file", ownerActorId: null }),
     );
     expect(file.owner).toBe("Unknown owner");
+  });
+
+  it("prefers resolved owner names over raw actor ids", () => {
+    const file = fileItemFromEntry(
+      makeEntry({
+        id: "x3",
+        type: "file",
+        ownerActorId: "11111111-1111-4111-8111-111111111111",
+        ownerDisplayName: "Maya Chen",
+        ownerEmail: "maya@helix.local",
+      }),
+    );
+
+    expect(file.owner).toBe("Maya Chen");
   });
 });

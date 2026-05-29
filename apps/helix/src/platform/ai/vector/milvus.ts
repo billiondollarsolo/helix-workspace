@@ -12,6 +12,7 @@ import {
 } from "./http.js";
 import {
   assertVectorMetric,
+  scopedCollectionName,
   validateCollectionName,
   validateDimension,
   validateLimit,
@@ -19,6 +20,7 @@ import {
   type VectorItem,
   type VectorMatch,
   type VectorMetric,
+  type VectorOrgScope,
   type VectorQueryOpts,
   type VectorStore,
 } from "./types.js";
@@ -31,9 +33,14 @@ export class MilvusVectorStore implements VectorStore {
     this.#config = normalizeHttpConfig(config);
   }
 
-  async createCollection(name: string, dim: number, metric: VectorMetric): Promise<void> {
+  async createCollection(
+    orgId: VectorOrgScope,
+    name: string,
+    dim: number,
+    metric: VectorMetric,
+  ): Promise<void> {
     await requestJson(this.id, this.#config, "POST", "/v2/vectordb/collections/create", {
-      collectionName: validateCollectionName(name),
+      collectionName: scopedCollectionName(orgId, validateCollectionName(name)),
       dimension: validateDimension(dim),
       metricType: milvusMetric(assertVectorMetric(metric)),
       primaryFieldName: "id",
@@ -41,12 +48,12 @@ export class MilvusVectorStore implements VectorStore {
     });
   }
 
-  async upsert(collection: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
     if (items.length === 0) {
       return;
     }
     await requestJson(this.id, this.#config, "POST", "/v2/vectordb/entities/upsert", {
-      collectionName: validateCollectionName(collection),
+      collectionName: scopedCollectionName(orgId, validateCollectionName(collection)),
       data: items.map((item) => ({
         id: item.id,
         vector: [...validateVector(item.vector)],
@@ -55,9 +62,14 @@ export class MilvusVectorStore implements VectorStore {
     });
   }
 
-  async query(collection: string, vector: readonly number[], opts: VectorQueryOpts = {}): Promise<readonly VectorMatch[]> {
+  async query(
+    orgId: VectorOrgScope,
+    collection: string,
+    vector: readonly number[],
+    opts: VectorQueryOpts = {},
+  ): Promise<readonly VectorMatch[]> {
     const response = await requestJson(this.id, this.#config, "POST", "/v2/vectordb/entities/search", {
-      collectionName: validateCollectionName(collection),
+      collectionName: scopedCollectionName(orgId, validateCollectionName(collection)),
       data: [[...validateVector(vector)]],
       limit: validateLimit(opts.limit),
       outputFields: opts.includeVectors === true ? ["id", "metadata", "vector"] : ["id", "metadata"],
@@ -67,12 +79,12 @@ export class MilvusVectorStore implements VectorStore {
     return data.map(milvusMatch).filter((match): match is VectorMatch => match !== null);
   }
 
-  async delete(collection: string, ids: readonly string[]): Promise<void> {
+  async delete(orgId: VectorOrgScope, collection: string, ids: readonly string[]): Promise<void> {
     if (ids.length === 0) {
       return;
     }
     await requestJson(this.id, this.#config, "POST", "/v2/vectordb/entities/delete", {
-      collectionName: validateCollectionName(collection),
+      collectionName: scopedCollectionName(orgId, validateCollectionName(collection)),
       filter: `id in [${ids.map((id) => JSON.stringify(id)).join(", ")}]`,
     });
   }
@@ -110,4 +122,3 @@ function milvusMatch(value: unknown): VectorMatch | null {
     vector: optionalVector(value.vector),
   });
 }
-

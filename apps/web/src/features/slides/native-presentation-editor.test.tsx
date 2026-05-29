@@ -15,6 +15,7 @@ import type { SlideShape } from "./seed";
 const deckId = "11111111-1111-4111-8111-111111111111";
 const firstSlideId = "22222222-2222-4222-8222-222222222222";
 const secondSlideId = "33333333-3333-4333-8333-333333333333";
+const deckVersionId = "99999999-9999-4999-8999-999999999999";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -45,6 +46,7 @@ describe("NativePresentationEditor", () => {
       queryClient,
       getColorMode: () => "system",
     });
+    window.history.replaceState(null, "", `/slides?deck=${deckId}&comment=comment-1&q=board`);
     toolCalls = [];
     deckMetadata = { audience: "board" };
     originalMediaDevices = navigator.mediaDevices;
@@ -95,8 +97,40 @@ describe("NativePresentationEditor", () => {
       const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
       toolCalls.push({ url, body });
 
+      if (url === "/api/auth/get-session") {
+        return Promise.resolve(
+          Response.json({
+            user: {
+              id: "session-user",
+              email: "owner@helix.local",
+              name: "Owner One",
+              actorId: "actor-1",
+            },
+          }),
+        );
+      }
+
       if (url === "/api/tools/slides.deck.get") {
         return Promise.resolve(Response.json({ deck: deck(), slides }));
+      }
+
+      if (url === "/api/tools/drive.access.list") {
+        return Promise.resolve(
+          Response.json({
+            grants: [
+              {
+                actorId: "actor-2",
+                role: "reader",
+                displayName: "Maya Chen",
+                email: "maya@helix.local",
+                grantedByActorId: "actor-1",
+                expiresAt: null,
+                createdAt: "2026-05-20T12:00:00.000Z",
+                updatedAt: "2026-05-20T12:00:00.000Z",
+              },
+            ],
+          }),
+        );
       }
 
       if (url === "/api/tools/slides.deck.update") {
@@ -249,6 +283,37 @@ describe("NativePresentationEditor", () => {
             metadata: { generatedBy: `helix.slides.export.${format}` },
           }),
         );
+      }
+
+      if (url === "/api/tools/slides.version.list") {
+        return Promise.resolve(
+          Response.json({
+            versions: [
+              {
+                id: deckVersionId,
+                deckId,
+                versionNumber: 4,
+                mimeType: "application/vnd.helix.presentation+json",
+                byteSize: 768,
+                sha256: "0".repeat(64),
+                metadata: { title: "Restored deck", slideCount: 1 },
+                createdByActorId: "actor-1",
+                createdAt: "2026-05-20T13:00:00.000Z",
+              },
+            ],
+          }),
+        );
+      }
+
+      if (url === "/api/tools/slides.version.restore") {
+        slides = [
+          slide(firstSlideId, 0, {
+            layout: "title",
+            title: "Restored deck title",
+            subtitle: "Recovered from snapshot",
+          }),
+        ];
+        return Promise.resolve(Response.json({ deck: deck(), slides }));
       }
 
       if (url === "/api/tools/slides.slide.update") {
@@ -407,6 +472,237 @@ describe("NativePresentationEditor", () => {
     queryClient.clear();
     window.localStorage.clear();
     vi.unstubAllGlobals();
+  });
+
+  it("copies a stable deck link from the Share menu", async () => {
+    render();
+    await settle();
+
+    clickAppMenu("share");
+    clickOpenMenuItem("Copy link");
+    await settle();
+
+    const expected = new URL(window.location.href);
+    expected.pathname = "/slides";
+    expected.search = "";
+    expected.searchParams.set("deck", deckId);
+    expect(clipboardWriteText).toHaveBeenCalledWith(expected.href);
+  });
+
+  it("opens the real Drive share dialog from the app-bar Share button", async () => {
+    render();
+    await settle();
+
+    clickAppBarShare();
+    await settle();
+
+    expect(
+      container.querySelector('[role="dialog"][aria-label="Share Board narrative"]'),
+    ).not.toBeNull();
+    expect(container.textContent ?? "").toContain("People with access");
+    expect(container.textContent ?? "").toContain("Maya Chen");
+  });
+
+  it("persists Slides view grid, rulers, snap, and zoom preferences from the View menu", async () => {
+    render();
+    await settle();
+
+    expect(container.querySelector('[data-slides-grid="true"]')).toBeNull();
+    expect(container.querySelector('[data-slides-ruler="horizontal"]')).toBeNull();
+    expect(canvasWrap().dataset.slidesSnapToGuides).toBe("true");
+    expect(slidesEditorFrame().dataset.slidesZoomPercent).toBe("100");
+
+    clickAppMenu("view");
+    clickOpenMenuItem("Show grid");
+    await settle();
+    expect(container.querySelector('[data-slides-grid="true"]')).not.toBeNull();
+
+    clickAppMenu("view");
+    clickOpenMenuItem("Show rulers");
+    await settle();
+    expect(container.querySelector('[data-slides-ruler="horizontal"]')).not.toBeNull();
+    expect(container.querySelector('[data-slides-ruler="vertical"]')).not.toBeNull();
+
+    clickAppMenu("view");
+    clickOpenMenuItem("Disable snap to guides");
+    await settle();
+    expect(canvasWrap().dataset.slidesSnapToGuides).toBe("false");
+
+    clickAppMenu("view");
+    clickOpenMenuItem("Zoom in");
+    await settle();
+    expect(slidesEditorFrame().dataset.slidesZoomPercent).toBe("110");
+    const stored = JSON.parse(window.localStorage.getItem("helix.slides.view.v1") ?? "{}") as {
+      readonly showGrid?: boolean;
+      readonly showRulers?: boolean;
+      readonly snapToGuides?: boolean;
+      readonly zoomPercent?: number;
+    };
+    expect(stored).toMatchObject({
+      showGrid: true,
+      showRulers: true,
+      snapToGuides: false,
+      zoomPercent: 110,
+    });
+
+    remountFreshEditor();
+    await settle();
+    expect(container.querySelector('[data-slides-grid="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-slides-ruler="horizontal"]')).not.toBeNull();
+    expect(canvasWrap().dataset.slidesSnapToGuides).toBe("false");
+    expect(slidesEditorFrame().dataset.slidesZoomPercent).toBe("110");
+
+    clickAppMenu("view");
+    clickOpenMenuItem("Fit to window");
+    await settle();
+    expect(slidesEditorFrame().dataset.slidesZoomPercent).toBe("100");
+  });
+
+  it("snaps moved slide shapes to center guides when snap to guides is enabled", async () => {
+    slides = [
+      slide(firstSlideId, 0, {
+        layout: "title",
+        title: "Snap story",
+        subtitle: "Guides",
+        shapes: [
+          {
+            id: "shape-snap",
+            kind: "text",
+            x: 20,
+            y: 20,
+            width: 20,
+            height: 20,
+            text: "Snap me",
+          },
+        ],
+      }),
+    ];
+
+    render();
+    await settle();
+
+    setElementRect(shapeLayer(), { left: 0, top: 0, width: 1000, height: 500 });
+    await dragElement(shapeByLabel("Text box Snap me"), { x: 200, y: 100 }, { x: 405, y: 195 });
+    expect(Number(input("Shape x").value)).toBeCloseTo(40);
+    expect(Number(input("Shape y").value)).toBeCloseTo(40);
+
+    clickAppMenu("view");
+    clickOpenMenuItem("Disable snap to guides");
+    await settle();
+    await dragElement(shapeByLabel("Text box Snap me"), { x: 400, y: 200 }, { x: 445, y: 205 });
+    expect(Number(input("Shape x").value)).toBeCloseTo(45);
+    expect(Number(input("Shape y").value)).toBeCloseTo(41);
+  });
+
+  it("copies, pastes, and cuts selected slide shapes from the Edit menu", async () => {
+    slides = [
+      slide(firstSlideId, 0, {
+        layout: "title",
+        title: "Clipboard story",
+        subtitle: "Shape editing",
+        shapes: [
+          {
+            id: "shape-1",
+            kind: "text",
+            x: 10,
+            y: 12,
+            width: 24,
+            height: 12,
+            text: "Copy me",
+            tone: "light",
+          },
+        ],
+      }),
+    ];
+
+    render();
+    await settle();
+
+    expect(shapeCount("Text box Copy me")).toBe(1);
+
+    clickAppMenu("edit");
+    clickOpenMenuItem("Copy");
+    await settle();
+    const stored = JSON.parse(window.localStorage.getItem("helix.slides.shapeClipboard.v1") ?? "{}") as {
+      readonly shape?: { readonly text?: string };
+    };
+    expect(stored.shape?.text).toBe("Copy me");
+
+    clickAppMenu("edit");
+    clickOpenMenuItem("Paste");
+    await settle();
+    expect(shapeCount("Text box Copy me")).toBe(2);
+    expect(input("Shape x").value).toBe("14");
+    expect(input("Shape y").value).toBe("16");
+
+    clickAppMenu("edit");
+    clickOpenMenuItem("Cut");
+    await settle();
+    expect(shapeCount("Text box Copy me")).toBe(1);
+
+    clickAppMenu("edit");
+    clickOpenMenuItem("Paste");
+    await settle();
+    expect(shapeCount("Text box Copy me")).toBe(2);
+
+    await clickButton("Save slide");
+    await settle();
+    const saved = latestToolCallBody("/api/tools/slides.slide.update") as {
+      readonly content: { readonly shapes?: readonly SlideShape[] };
+    };
+    expect(saved.content.shapes).toEqual([
+      expect.objectContaining({ id: "shape-1", text: "Copy me", x: 10, y: 12 }),
+      expect.objectContaining({ id: "shape-2", text: "Copy me", x: 18, y: 20 }),
+    ]);
+  });
+
+  it("undoes and redoes unsaved slide draft edits from the top ribbon", async () => {
+    slides = [
+      slide(firstSlideId, 0, {
+        layout: "title",
+        title: "Undo story",
+        subtitle: "Draft controls",
+        shapes: [
+          {
+            id: "shape-undo",
+            kind: "text",
+            x: 16,
+            y: 20,
+            width: 42,
+            height: 16,
+            text: "Undo me",
+          },
+        ],
+      }),
+    ];
+
+    render();
+    await settle();
+
+    const undoButton = container.querySelector<HTMLButtonElement>('button[aria-label="Undo"]');
+    const redoButton = container.querySelector<HTMLButtonElement>('button[aria-label="Redo"]');
+    expect(undoButton?.disabled).toBe(true);
+    expect(redoButton?.disabled).toBe(true);
+
+    await clickButtonByLabel("Bold");
+    const formattedText = shapeByLabel("Text box Undo me").querySelector<HTMLElement>("span");
+    expect(formattedText?.style.fontWeight).toBe("700");
+    expect(undoButton?.disabled).toBe(false);
+    expect(redoButton?.disabled).toBe(true);
+
+    await clickButtonByLabel("Undo");
+    expect(formattedText?.style.fontWeight).toBe("400");
+    expect(undoButton?.disabled).toBe(true);
+    expect(redoButton?.disabled).toBe(false);
+
+    await clickButtonByLabel("Redo");
+    expect(formattedText?.style.fontWeight).toBe("700");
+    expect(undoButton?.disabled).toBe(false);
+    expect(redoButton?.disabled).toBe(true);
+
+    await clickButton("Save slide");
+    await settle();
+    expect(latestUpdatedShape(firstSlideId, "shape-undo")).toMatchObject({ bold: true });
   });
 
   it("renders a native deck, saves typed slide content, and creates slides", async () => {
@@ -634,6 +930,15 @@ describe("NativePresentationEditor", () => {
     expect(input("Shape y").value).toBe("34");
     expect(input("Shape width").value).toBe("41");
     expect(input("Shape height").value).toBe("26");
+    await clickButtonByLabel("Bold");
+    await clickButtonByLabel("Italic");
+    await clickButtonByLabel("Underline");
+    await clickButtonByLabel("Align right");
+    const formattedText = shapeByLabel("Text box Q3 emphasis").querySelector<HTMLElement>("span");
+    expect(formattedText?.style.fontWeight).toBe("700");
+    expect(formattedText?.style.fontStyle).toBe("italic");
+    expect(formattedText?.style.textDecoration).toContain("underline");
+    expect(formattedText?.style.textAlign).toBe("right");
     await clickButton("Save slide");
     await settle();
 
@@ -658,6 +963,10 @@ describe("NativePresentationEditor", () => {
               height: 26,
               text: "Q3 emphasis",
               tone: "dark",
+              bold: true,
+              italic: true,
+              underline: true,
+              textAlign: "right",
               animation: {
                 type: "fly",
                 motionPath: "right",
@@ -720,6 +1029,10 @@ describe("NativePresentationEditor", () => {
               height: 26,
               text: "Q3 emphasis",
               tone: "dark",
+              bold: true,
+              italic: true,
+              underline: true,
+              textAlign: "right",
               animation: {
                 type: "fly",
                 motionPath: "right",
@@ -827,6 +1140,10 @@ describe("NativePresentationEditor", () => {
               height: 26,
               text: "Q3 emphasis",
               tone: "dark",
+              bold: true,
+              italic: true,
+              underline: true,
+              textAlign: "right",
               animation: {
                 type: "fly",
                 motionPath: "right",
@@ -951,6 +1268,10 @@ describe("NativePresentationEditor", () => {
               height: 26,
               text: "Q3 emphasis",
               tone: "dark",
+              bold: true,
+              italic: true,
+              underline: true,
+              textAlign: "right",
               animation: {
                 type: "fly",
                 motionPath: "right",
@@ -1033,6 +1354,303 @@ describe("NativePresentationEditor", () => {
       },
     });
     expect(input("Slide title").value).toBe("Key points");
+  });
+
+  it("recovers unsaved slide drafts after reload and clears recovery after save", async () => {
+    render();
+    await settle();
+
+    await changeInput("Slide title", "Recovered unsaved story");
+    await changeTextarea("Slide bullets", "Positioning\nDemo\nPricing");
+    await settle();
+
+    const recoveryKey = `helix.slides.unsavedDraft.v1.${firstSlideId}`;
+    expect(window.localStorage.getItem(recoveryKey)).not.toBeNull();
+    expect(toolCalls.some((call) => call.url === "/api/tools/slides.slide.update")).toBe(false);
+
+    remountFreshEditor();
+    await settle();
+
+    expect(input("Slide title").value).toBe("Recovered unsaved story");
+    expect(textarea("Slide bullets").value).toBe("Positioning\nDemo\nPricing");
+
+    await clickButton("Save slide");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/slides.slide.update",
+      body: {
+        slideId: firstSlideId,
+        content: {
+          layout: "bullets",
+          title: "Recovered unsaved story",
+          items: ["Positioning", "Demo", "Pricing"],
+        },
+        speakerNotes: "Opening notes",
+      },
+    });
+    expect(window.localStorage.getItem(recoveryKey)).toBeNull();
+  });
+
+  it("drops image files onto the slide canvas as Drive-backed image shapes", async () => {
+    render();
+    await settle();
+
+    const preview = slidePreview();
+    setElementRect(preview, { left: 100, top: 50, width: 800, height: 450 });
+    const digestSpy = vi.spyOn(crypto.subtle, "digest").mockResolvedValue(new ArrayBuffer(32));
+    await dropFileOnSlide(preview, new File(["png"], "Roadmap_photo.png", { type: "image/png" }), {
+      x: 500,
+      y: 275,
+    });
+    await settle();
+    digestSpy.mockRestore();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/drive.upload",
+      body: {
+        name: "Roadmap_photo.png",
+        folderId: null,
+        mimeType: "image/png",
+        byteSize: 3,
+        sha256: "0".repeat(64),
+        metadata: { source: "web-shell" },
+      },
+    });
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/drive.finalize",
+      body: {
+        objectId: "55555555-5555-4555-8555-555555555555",
+        byteSize: 3,
+        sha256: "0".repeat(64),
+        mimeType: "image/png",
+        storageKey: "drive/555/Roadmap_photo.png",
+        contentBase64: "cG5n",
+        metadata: { source: "web-shell" },
+      },
+    });
+
+    const droppedShape = shapeByLabel("Image Roadmap photo");
+    expect(droppedShape.querySelector("img")?.getAttribute("src")).toBe(
+      "/api/drive/objects/55555555-5555-4555-8555-555555555555/content",
+    );
+    expect(droppedShape.querySelector("img")?.getAttribute("alt")).toBe("Roadmap photo");
+    expect(input("Shape x").value).toBe("34");
+    expect(input("Shape y").value).toBe("38");
+
+    await clickButton("Save slide");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/slides.slide.update",
+      body: {
+        slideId: firstSlideId,
+        content: {
+          layout: "bullets",
+          title: "Launch story",
+          items: ["Positioning", "Demo"],
+          shapes: [
+            {
+              id: "shape-1",
+              kind: "image",
+              x: 34,
+              y: 38,
+              width: 32,
+              height: 24,
+              text: "",
+              tone: "accent",
+              imageUrl: "/api/drive/objects/55555555-5555-4555-8555-555555555555/content",
+              imageAlt: "Roadmap photo",
+            },
+          ],
+        },
+        speakerNotes: "Opening notes",
+      },
+    });
+  });
+
+  it("drops text snippets onto the slide canvas as editable text shapes", async () => {
+    render();
+    await settle();
+
+    const preview = slidePreview();
+    setElementRect(preview, { left: 100, top: 50, width: 800, height: 450 });
+    await dropTextOnSlide(preview, "Customer quote: faster onboarding", { x: 420, y: 230 });
+    await settle();
+
+    shapeByLabel("Text box Customer quote: faster onboarding");
+    expect(input("Shape text").value).toBe("Customer quote: faster onboarding");
+    expect(input("Shape x").value).toBe("23");
+    expect(input("Shape y").value).toBe("33");
+
+    await clickButton("Save slide");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/slides.slide.update",
+      body: {
+        slideId: firstSlideId,
+        content: {
+          layout: "bullets",
+          title: "Launch story",
+          items: ["Positioning", "Demo"],
+          shapes: [
+            {
+              id: "shape-1",
+              kind: "text",
+              x: 23,
+              y: 33,
+              width: 34,
+              height: 14,
+              text: "Customer quote: faster onboarding",
+              tone: "light",
+            },
+          ],
+        },
+        speakerNotes: "Opening notes",
+      },
+    });
+  });
+
+  it("drops safe URLs as linked text shapes that persist and present as anchors", async () => {
+    render();
+    await settle();
+
+    const preview = slidePreview();
+    const linkUrl = "https://example.com/launch-plan";
+    setElementRect(preview, { left: 100, top: 50, width: 800, height: 450 });
+    await dropTextOnSlide(preview, linkUrl, { x: 420, y: 230 }, "text/uri-list");
+    await settle();
+
+    shapeByLabel(`Text box ${linkUrl}`);
+    expect(input("Shape text").value).toBe(linkUrl);
+    expect(input("Shape link").value).toBe(linkUrl);
+
+    await clickButton("Save slide");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/slides.slide.update",
+      body: {
+        slideId: firstSlideId,
+        content: {
+          layout: "bullets",
+          title: "Launch story",
+          items: ["Positioning", "Demo"],
+          shapes: [
+            {
+              id: "shape-1",
+              kind: "text",
+              x: 23,
+              y: 33,
+              width: 34,
+              height: 14,
+              text: linkUrl,
+              linkUrl,
+              tone: "light",
+            },
+          ],
+        },
+        speakerNotes: "Opening notes",
+      },
+    });
+
+    await clickButton("Present");
+    const presenterLink = dialog("Presentation mode").querySelector<HTMLAnchorElement>(
+      `a[href="${linkUrl}"]`,
+    );
+    expect(presenterLink?.textContent).toBe(linkUrl);
+    expect(presenterLink?.target).toBe("_blank");
+    expect(presenterLink?.rel).toBe("noopener noreferrer");
+  });
+
+  it("keeps unsafe dropped URLs as unlinked slide text", async () => {
+    render();
+    await settle();
+
+    const preview = slidePreview();
+    setElementRect(preview, { left: 100, top: 50, width: 800, height: 450 });
+    await dropTextOnSlide(preview, "javascript:alert(1)", { x: 420, y: 230 });
+    await settle();
+
+    shapeByLabel("Text box javascript:alert(1)");
+    expect(input("Shape text").value).toBe("javascript:alert(1)");
+    expect(input("Shape link").value).toBe("");
+
+    await clickButton("Save slide");
+    await settle();
+
+    expect(latestUpdatedShape(firstSlideId, "shape-1")).not.toHaveProperty("linkUrl");
+  });
+
+  it("nudges, resizes, and deletes selected slide shapes from the keyboard", async () => {
+    render();
+    await settle();
+
+    await clickButton("Text");
+    await changeInput("Shape text", "Keyboard object");
+    await changeInput("Shape x", "20");
+    await changeInput("Shape y", "24");
+    await changeInput("Shape width", "36");
+    await changeInput("Shape height", "16");
+    const shape = shapeByLabel("Text box Keyboard object");
+    shape.focus();
+
+    await keyDownElement(shape, "ArrowRight");
+    await keyDownElement(shape, "ArrowDown");
+    await keyDownElement(shape, "ArrowRight", { shiftKey: true });
+    await keyDownElement(shape, "ArrowDown", { shiftKey: true });
+
+    expect(input("Shape x").value).toBe("21");
+    expect(input("Shape y").value).toBe("25");
+    expect(input("Shape width").value).toBe("37");
+    expect(input("Shape height").value).toBe("17");
+
+    await clickButton("Save slide");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/slides.slide.update",
+      body: {
+        slideId: firstSlideId,
+        content: {
+          layout: "bullets",
+          title: "Launch story",
+          items: ["Positioning", "Demo"],
+          shapes: [
+            {
+              id: "shape-1",
+              kind: "text",
+              x: 21,
+              y: 25,
+              width: 37,
+              height: 17,
+              text: "Keyboard object",
+              tone: "light",
+            },
+          ],
+        },
+        speakerNotes: "Opening notes",
+      },
+    });
+
+    await keyDownElement(shapeByLabel("Text box Keyboard object"), "Delete");
+    expect(container.querySelector('[aria-label="Text box Keyboard object"]')).toBeNull();
+    await clickButton("Save slide");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/slides.slide.update",
+      body: {
+        slideId: firstSlideId,
+        content: {
+          layout: "bullets",
+          title: "Launch story",
+          items: ["Positioning", "Demo"],
+        },
+        speakerNotes: "Opening notes",
+      },
+    });
   });
 
   it("supports Drive-backed slide and shape review comments", async () => {
@@ -1804,7 +2422,7 @@ describe("NativePresentationEditor", () => {
     );
     expect(imageShape.querySelector("img")?.getAttribute("alt")).toBe("Roadmap hero");
 
-    await clickButton("Media");
+    await clickButtonByLabel("Add media shape");
     await settle();
     expect(select("Drive media asset").textContent).toContain("Product_demo_clip.mp4");
     expect(select("Drive media asset").textContent).toContain("Founder_update.mp3");
@@ -2031,8 +2649,9 @@ describe("NativePresentationEditor", () => {
     });
     await settle();
 
-    expect(container.textContent).toContain("Live collaboration connected");
-    expect(container.textContent).toContain("1 collaborator");
+    // Live status pill replaces the previous "Live collaboration connected" header text.
+    expect(container.querySelector('[role="status"][aria-label="Live"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Active collaborators"]')).not.toBeNull();
     expect(container.textContent).toContain("GH");
     expect(
       container.querySelector('[aria-label="Active collaborators"] span')?.getAttribute("title"),
@@ -2196,6 +2815,77 @@ describe("NativePresentationEditor", () => {
     ).toBe(false);
   });
 
+  it("surfaces Slides realtime save errors instead of leaving the editor looking live", async () => {
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    render();
+    await settle();
+
+    const socket = MockWebSocket.instances.at(-1);
+    act(() => {
+      socket?.open();
+      socket?.receive({
+        type: "ready",
+        protocol: "slides-sync",
+        deckId,
+        revision: 0,
+        deck: deck(),
+        slides,
+      });
+      socket?.receive({
+        type: "error",
+        error: 'column "revision" does not exist',
+      });
+    });
+    await settle();
+
+    expect(container.querySelector('[role="status"][aria-label="Save failed"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Slides realtime save failed: column "revision" does not exist.',
+    );
+  });
+
+  it("falls back to REST slide saves when realtime send fails", async () => {
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    render();
+    await settle();
+
+    const socket = MockWebSocket.instances.at(-1);
+    act(() => {
+      socket?.open();
+      socket?.receive({
+        type: "ready",
+        protocol: "slides-sync",
+        deckId,
+        revision: 0,
+        deck: deck(),
+        slides,
+      });
+    });
+    await settle();
+
+    if (socket !== undefined) {
+      socket.throwOnSend = true;
+    }
+    await changeInput("Slide title", "REST fallback story");
+    await clickButton("Save slide");
+    await settle();
+
+    expect(socket?.closed).toBe(true);
+    expect(container.querySelector('[role="status"][aria-label="Save failed"]')).not.toBeNull();
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/slides.slide.update",
+      body: {
+        slideId: firstSlideId,
+        content: {
+          layout: "bullets",
+          title: "REST fallback story",
+          items: ["Positioning", "Demo"],
+        },
+        speakerNotes: "Opening notes",
+      },
+    });
+  });
+
   it("exports a native deck as PPTX, PDF, and image series from the editor header", async () => {
     const createObjectUrl = vi.fn(() => "blob:slides-export");
     const revokeObjectUrl = vi.fn();
@@ -2226,6 +2916,25 @@ describe("NativePresentationEditor", () => {
     expect(createObjectUrl).toHaveBeenCalledTimes(3);
     expect(anchorClick).toHaveBeenCalledTimes(3);
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:slides-export");
+  });
+
+  it("lists and restores deck versions from the side panel", async () => {
+    render();
+    await settle();
+
+    await clickSidePanelTab("Versions");
+    expect(container.textContent).toContain("Version history");
+    expect(container.textContent).toContain("Version 4");
+    expect(container.textContent).toContain("1 slide");
+
+    await clickButton("Restore");
+    await settle();
+
+    expect(toolCalls).toContainEqual({
+      url: "/api/tools/slides.version.restore",
+      body: { deckId, versionId: deckVersionId },
+    });
+    expect(container.textContent).toContain("Restored deck title");
   });
 
   it("registers presentation command palette actions", async () => {
@@ -2291,7 +3000,7 @@ describe("NativePresentationEditor", () => {
     render();
     await settle();
 
-    await clickButton("Media");
+    await clickButtonByLabel("Add media shape");
     expect(select("Shape kind").value).toBe("media");
     await changeInput("Shape media URL", "https://example.test/product-demo.mp4");
     await changeInput("Shape media title", "Product walkthrough");
@@ -2467,7 +3176,7 @@ describe("NativePresentationEditor", () => {
     render();
     await settle();
 
-    await clickButton("Media");
+    await clickButtonByLabel("Add media shape");
     await changeInput("Shape media title", "");
     await uploadFile(
       "Upload shape media",
@@ -3170,6 +3879,8 @@ class MockWebSocket {
   static instances: MockWebSocket[] = [];
   readyState = 0;
   readonly sent: unknown[] = [];
+  closed = false;
+  throwOnSend = false;
   private readonly listeners = new Map<string, Set<(event: Event) => void>>();
 
   constructor(readonly url: string) {
@@ -3177,12 +3888,16 @@ class MockWebSocket {
   }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+    if (this.throwOnSend) {
+      throw new Error("socket send failed");
+    }
     if (typeof data === "string") {
       this.sent.push(JSON.parse(data));
     }
   }
 
   close(): void {
+    this.closed = true;
     this.readyState = 3;
     this.emit("close", new Event("close"));
   }
@@ -3247,6 +3962,22 @@ function render(props: Partial<NativePresentationEditorProps> = {}) {
       </WebPlatformProvider>,
     );
   });
+}
+
+function remountFreshEditor(props: Partial<NativePresentationEditorProps> = {}) {
+  act(() => {
+    root.unmount();
+  });
+  queryClient.clear();
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 0 } },
+  });
+  platformHost = createWebPlatformHost({
+    queryClient,
+    getColorMode: () => "system",
+  });
+  root = createRoot(container);
+  render(props);
 }
 
 function deck() {
@@ -3561,12 +4292,40 @@ function shapeLayer(): HTMLElement {
   return target;
 }
 
+function slidePreview(): HTMLElement {
+  const target = container.querySelector<HTMLElement>('[aria-label="Slide preview"]');
+  if (target === null) {
+    throw new Error("Missing slide preview");
+  }
+  return target;
+}
+
+function slidesEditorFrame(): HTMLElement {
+  const target = container.querySelector<HTMLElement>('[data-slides-editor-frame="true"]');
+  if (target === null) {
+    throw new Error("Missing slides editor frame");
+  }
+  return target;
+}
+
+function canvasWrap(): HTMLElement {
+  const target = container.querySelector<HTMLElement>('[data-slides-canvas-wrap="true"]');
+  if (target === null) {
+    throw new Error("Missing slides canvas wrap");
+  }
+  return target;
+}
+
 function shapeByLabel(label: string): HTMLElement {
   const target = container.querySelector<HTMLElement>(`[aria-label="${label}"]`);
   if (target === null) {
     throw new Error(`Missing shape element: ${label}`);
   }
   return target;
+}
+
+function shapeCount(label: string): number {
+  return container.querySelectorAll(`[aria-label="${label}"]`).length;
 }
 
 function connectorSvgLine(): SVGLineElement {
@@ -3646,6 +4405,84 @@ async function dragElement(
   });
 }
 
+async function keyDownElement(
+  element: HTMLElement,
+  key: string,
+  options: {
+    readonly shiftKey?: boolean;
+    readonly altKey?: boolean;
+    readonly ctrlKey?: boolean;
+  } = {},
+): Promise<void> {
+  await act(async () => {
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key,
+        shiftKey: options.shiftKey ?? false,
+        altKey: options.altKey ?? false,
+        ctrlKey: options.ctrlKey ?? false,
+      }),
+    );
+    await Promise.resolve();
+  });
+}
+
+async function dropFileOnSlide(
+  element: HTMLElement,
+  file: File,
+  point: { readonly x: number; readonly y: number },
+): Promise<void> {
+  const dataTransfer = {
+    dropEffect: "none",
+    items: {
+      length: 1,
+      0: {
+        kind: "file",
+        type: file.type,
+        getAsFile: () => file,
+      },
+    },
+    files: {
+      length: 1,
+      0: file,
+      item: (index: number) => (index === 0 ? file : null),
+    },
+  } as unknown as DataTransfer;
+  await act(async () => {
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+    Object.defineProperty(event, "clientX", { value: point.x });
+    Object.defineProperty(event, "clientY", { value: point.y });
+    element.dispatchEvent(event);
+    await Promise.resolve();
+  });
+}
+
+async function dropTextOnSlide(
+  element: HTMLElement,
+  text: string,
+  point: { readonly x: number; readonly y: number },
+  type = "text/plain",
+): Promise<void> {
+  const dataTransfer = {
+    dropEffect: "none",
+    types: [type],
+    getData: (requestedType: string) => (requestedType === type ? text : ""),
+    items: { length: 0 },
+    files: { length: 0, item: () => null },
+  } as unknown as DataTransfer;
+  await act(async () => {
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+    Object.defineProperty(event, "clientX", { value: point.x });
+    Object.defineProperty(event, "clientY", { value: point.y });
+    element.dispatchEvent(event);
+    await Promise.resolve();
+  });
+}
+
 async function clickButton(label: string): Promise<void> {
   const target = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
     (button) => button.textContent?.includes(label) === true,
@@ -3659,6 +4496,25 @@ async function clickButton(label: string): Promise<void> {
   });
 }
 
+async function clickSidePanelTab(label: string): Promise<void> {
+  const sidePanel = container.querySelector<HTMLElement>('[data-testid="editor-side-panel"]');
+  const target = Array.from(sidePanel?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []).find(
+    (tab) => tab.getAttribute("aria-label") === label || tab.textContent?.trim() === label,
+  );
+  if (target === undefined) {
+    throw new Error(`Missing side-panel tab: ${label}`);
+  }
+  await act(async () => {
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    target.click();
+    await Promise.resolve();
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 async function clickButtonByLabel(label: string): Promise<void> {
   const target = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
   if (target === null) {
@@ -3667,6 +4523,53 @@ async function clickButtonByLabel(label: string): Promise<void> {
   await act(async () => {
     target.click();
     await Promise.resolve();
+  });
+}
+
+function clickAppMenu(menuId: string): void {
+  const target = container.querySelector<HTMLButtonElement>(`button[data-menu-id="${menuId}"]`);
+  if (target === null) {
+    throw new Error(`Missing app menu: ${menuId}`);
+  }
+  act(() => {
+    target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+function clickAppBarShare(): void {
+  const target =
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Share" && button.dataset.menuId !== "share",
+    ) ?? null;
+  if (target === null) {
+    throw new Error("Missing app-bar Share button");
+  }
+  act(() => {
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+function clickOpenMenuItem(label: string): void {
+  const target =
+    Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitem']")).find((node) =>
+      node.textContent?.includes(label),
+    ) ?? null;
+  if (target === null) {
+    throw new Error(
+      `Missing open menu item: ${label}. Found: ${JSON.stringify(
+        Array.from(document.body.querySelectorAll<HTMLElement>("[role='menuitem']")).map((node) =>
+          node.textContent?.trim(),
+        ),
+      )}`,
+    );
+  }
+  act(() => {
+    target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
 }
 
@@ -3694,5 +4597,40 @@ async function settle() {
         setTimeout(resolve, 0);
       });
     });
+  }
+  // The slide editor's side panel now hosts the inspector tabs and only lazily
+  // mounts a tab's content the first time it is activated. To keep these
+  // tests source-stable (they look up fields by aria-label across the whole
+  // container), eagerly click each inspector tab so the field markup is in
+  // the DOM, then return to the Comments tab where the original tests left
+  // the panel.
+  await ensureInspectorTabsMounted();
+}
+
+async function ensureInspectorTabsMounted(): Promise<void> {
+  // The slide editor's side panel hosts the inspector tabs and only lazily
+  // mounts each tab's content the first time it is activated. Eagerly click
+  // every tab so that subsequent `container.querySelector` lookups by
+  // aria-label find the inspector fields regardless of which tab the editor
+  // happens to leave active. Radix Tabs.Trigger needs mousedown+mouseup+click
+  // to actually flip the active tab in JSDOM.
+  const sidePanel = container.querySelector<HTMLElement>('[data-testid="editor-side-panel"]');
+  if (sidePanel === null) return;
+  const triggers = Array.from(sidePanel.querySelectorAll<HTMLElement>('[role="tab"]'));
+  if (triggers.length === 0) return;
+  for (const trigger of triggers) {
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      trigger.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      trigger.click();
+      await Promise.resolve();
+    });
+    for (let index = 0; index < 3; index += 1) {
+      await act(async () => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 0);
+        });
+      });
+    }
   }
 }

@@ -13,6 +13,7 @@ import {
 } from "./http.js";
 import {
   assertVectorMetric,
+  scopedCollectionName,
   validateCollectionName,
   validateDimension,
   validateLimit,
@@ -20,6 +21,7 @@ import {
   type VectorItem,
   type VectorMatch,
   type VectorMetric,
+  type VectorOrgScope,
   type VectorQueryOpts,
   type VectorStore,
 } from "./types.js";
@@ -32,17 +34,24 @@ export class QdrantVectorStore implements VectorStore {
     this.#config = normalizeHttpConfig(config);
   }
 
-  async createCollection(name: string, dim: number, metric: VectorMetric): Promise<void> {
-    await requestJson(this.id, this.#config, "PUT", `/collections/${encodeURIComponent(validateCollectionName(name))}`, {
+  async createCollection(
+    orgId: VectorOrgScope,
+    name: string,
+    dim: number,
+    metric: VectorMetric,
+  ): Promise<void> {
+    const collection = scopedCollectionName(orgId, validateCollectionName(name));
+    await requestJson(this.id, this.#config, "PUT", `/collections/${encodeURIComponent(collection)}`, {
       vectors: { size: validateDimension(dim), distance: qdrantDistance(assertVectorMetric(metric)) },
     });
   }
 
-  async upsert(collection: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
     if (items.length === 0) {
       return;
     }
-    await requestJson(this.id, this.#config, "PUT", `/collections/${encodeURIComponent(validateCollectionName(collection))}/points?wait=true`, {
+    const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
+    await requestJson(this.id, this.#config, "PUT", `/collections/${encodeURIComponent(scoped)}/points?wait=true`, {
       points: items.map((item) => ({
         id: item.id,
         vector: [...validateVector(item.vector)],
@@ -51,8 +60,14 @@ export class QdrantVectorStore implements VectorStore {
     });
   }
 
-  async query(collection: string, vector: readonly number[], opts: VectorQueryOpts = {}): Promise<readonly VectorMatch[]> {
-    const response = await requestJson(this.id, this.#config, "POST", `/collections/${encodeURIComponent(validateCollectionName(collection))}/points/search`, {
+  async query(
+    orgId: VectorOrgScope,
+    collection: string,
+    vector: readonly number[],
+    opts: VectorQueryOpts = {},
+  ): Promise<readonly VectorMatch[]> {
+    const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
+    const response = await requestJson(this.id, this.#config, "POST", `/collections/${encodeURIComponent(scoped)}/points/search`, {
       vector: [...validateVector(vector)],
       limit: validateLimit(opts.limit),
       with_payload: true,
@@ -63,11 +78,12 @@ export class QdrantVectorStore implements VectorStore {
     return result.map(qdrantMatch).filter((match): match is VectorMatch => match !== null);
   }
 
-  async delete(collection: string, ids: readonly string[]): Promise<void> {
+  async delete(orgId: VectorOrgScope, collection: string, ids: readonly string[]): Promise<void> {
     if (ids.length === 0) {
       return;
     }
-    await requestJson(this.id, this.#config, "POST", `/collections/${encodeURIComponent(validateCollectionName(collection))}/points/delete?wait=true`, {
+    const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
+    await requestJson(this.id, this.#config, "POST", `/collections/${encodeURIComponent(scoped)}/points/delete?wait=true`, {
       points: [...ids],
     });
   }
@@ -103,4 +119,3 @@ function qdrantMatch(value: unknown): VectorMatch | null {
     vector: optionalVector(value.vector),
   });
 }
-

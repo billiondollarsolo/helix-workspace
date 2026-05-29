@@ -12,8 +12,16 @@
  * `tools:read`/`tools:write`). Defining everything here closes that drift.
  */
 
-/** Surface a scope is primarily issued through. */
-export type ScopeSurface = "platform" | "agent" | "app_password" | "admin";
+/**
+ * Surface a scope is primarily issued through.
+ *
+ * `service` is reserved for service-only scopes (e.g. `mail.system`) that
+ * must NEVER appear on agent OAuth credentials or app passwords — only on
+ * internal service-account tokens issued out-of-band to platform daemons
+ * (SMTP receiver, bridges, etc.). It is intentionally excluded from
+ * {@link agentCredentialScopeCatalog} and {@link appPasswordScopeCatalog}.
+ */
+export type ScopeSurface = "platform" | "agent" | "app_password" | "admin" | "service";
 
 export interface ScopeDefinition {
   /** The scope token, e.g. `mail.send`. */
@@ -69,6 +77,16 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
     description: "Send mail to recipients outside the organization's domains.",
     composite: true,
     surfaces: ["agent"],
+  },
+  {
+    // Service-only scope (PRD §9.4 / REVIEW.md CRITICAL-4): authorises the
+    // `mail.inbound.accept` bridge tool. Never issued on agent or app-password
+    // surfaces — a user-level credential MUST NOT be able to inject inbound
+    // mail. The tool additionally gates on `actor.type === "service_account"`
+    // so a service token mistakenly granted to a user actor is still rejected.
+    scope: "mail.system",
+    description: "Service-only: accept inbound mail on behalf of the SMTP/bridge receiver.",
+    surfaces: ["service"],
   },
 
   // Drive.

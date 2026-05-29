@@ -8,6 +8,7 @@ import type {
   PrepareDriveUploadInput,
 } from "./store.js";
 import type {
+  DriveAccessGrantRecord,
   DriveCommentRecord,
   DriveEntryRecord,
   DrivePdfFormStateRecord,
@@ -17,6 +18,7 @@ import type {
 } from "./types.js";
 import type { DocsStore, CreateDocsDocumentInput } from "../docs/store.js";
 import type { DocsDocumentRecord } from "../docs/types.js";
+import { HELIX_NATIVE_DOCUMENT_ENGINE } from "../docs/native-state.js";
 import type { SheetsStore, CreateSheetInput } from "../sheets/store.js";
 import type { SheetWithTabs } from "../sheets/types.js";
 import type { SlidesStore, CreateSlideDeckInput } from "../slides/store.js";
@@ -46,6 +48,9 @@ describe("drive tools", () => {
         .filter((tool) => tool.id.startsWith("drive."))
         .map((tool) => tool.id),
     ).toEqual([
+      "drive.access.list",
+      "drive.access.remove",
+      "drive.access.update",
       "drive.comment.create",
       "drive.comment.delete",
       "drive.comment.list",
@@ -63,6 +68,7 @@ describe("drive tools", () => {
       "drive.restore",
       "drive.search",
       "drive.share",
+      "drive.star.set",
       "drive.trash",
       "drive.upload",
     ]);
@@ -100,6 +106,7 @@ describe("drive tools", () => {
       objectId,
       storageKey: `drive/${orgId}/${objectId}/v1/report.pdf`,
       uploadUrl: "https://storage.example/upload",
+      uploadHeaders: { "content-type": "application/pdf" },
       createdAt: now.toISOString(),
     });
 
@@ -120,40 +127,6 @@ describe("drive tools", () => {
       objectId,
       versionNumber: 1,
       createdAt: now.toISOString(),
-    });
-  });
-
-  it("resolves drive.share email refs before granting access", async () => {
-    const registry = createToolRegistry();
-    registerDriveTools(registry, {
-      store: new FakeDriveStore(),
-      resolveShareActorRefs: async (input) => {
-        expect(input).toEqual({ orgId, refs: ["maya@helix.local"] });
-        return {
-          actorIds: ["66666666-6666-4666-8666-666666666666"],
-          unresolvedRefs: [],
-        };
-      },
-    });
-    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.write"] };
-
-    await expect(
-      registry.invoke(
-        "drive.share",
-        {
-          objectId,
-          actorRefs: ["maya@helix.local"],
-          role: "reader",
-        },
-        { actor },
-      ),
-    ).resolves.toMatchObject({
-      ok: true,
-      output: {
-        objectId,
-        role: "reader",
-        sharedWithActorIds: ["66666666-6666-4666-8666-666666666666"],
-      },
     });
   });
 
@@ -427,11 +400,75 @@ describe("drive tools", () => {
       ok: true,
       output: { objectId, role: "reader" },
     });
+    await expect(
+      registry.invoke(
+        "drive.share",
+        {
+          objectId,
+          actorRefs: ["maya@helix.local"],
+          role: "reader",
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "Drive share by email or name is not configured.",
+    });
+    await expect(
+      registry.invoke("drive.access.list", { objectId }, { actor }),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: {
+        grants: [
+          {
+            actorId: "66666666-6666-4666-8666-666666666666",
+            role: "reader",
+            displayName: "Maya Chen",
+            email: "maya@helix.local",
+            createdAt: now.toISOString(),
+          },
+        ],
+      },
+    });
+    await expect(
+      registry.invoke(
+        "drive.access.remove",
+        { objectId, actorId: "66666666-6666-4666-8666-666666666666" },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { objectId, actorId: "66666666-6666-4666-8666-666666666666", removed: true },
+    });
+    await expect(
+      registry.invoke(
+        "drive.access.update",
+        { objectId, actorId: "66666666-6666-4666-8666-666666666666", role: "editor" },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: {
+        objectId,
+        actorId: "66666666-6666-4666-8666-666666666666",
+        grant: {
+          actorId: "66666666-6666-4666-8666-666666666666",
+          role: "editor",
+          displayName: "Maya Chen",
+        },
+      },
+    });
     await expect(registry.invoke("drive.trash", { objectId }, { actor })).resolves.toMatchObject({
       ok: true,
     });
     await expect(registry.invoke("drive.restore", { objectId }, { actor })).resolves.toMatchObject({
       ok: true,
+    });
+    await expect(
+      registry.invoke("drive.star.set", { objectId, starred: true }, { actor }),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { id: objectId, metadata: { starred: true } },
     });
     await expect(registry.invoke("drive.delete", { objectId }, { actor })).resolves.toEqual({
       ok: true,
@@ -446,7 +483,6 @@ describe("drive tools", () => {
           {
             objectId,
             name: "report.pdf",
-            ownerActorId: actorId,
             previewMetadata: {
               kind: "pdf",
               status: "available",
@@ -459,25 +495,47 @@ describe("drive tools", () => {
     });
   });
 
-  it("drive.search decorates hits with owner display metadata when a resolver is provided", async () => {
+  it("resolves Drive share email/name refs before granting object access", async () => {
     const registry = createToolRegistry();
     registerDriveTools(registry, {
       store: new FakeDriveStore(),
-      resolveActorNames: async (ids) =>
-        new Map(ids.map((id) => [id, { displayName: "Local Helix Admin", email: "admin@helix.local" }])),
+      resolveShareActorRefs: async ({ orgId: refOrgId, refs }) => {
+        expect(refOrgId).toBe(orgId);
+        expect(refs).toEqual(["maya@helix.local", "Maya Chen"]);
+        return {
+          actorIds: [
+            "66666666-6666-4666-8666-666666666666",
+            "77777777-7777-4777-8777-777777777777",
+          ],
+          unresolvedRefs: [],
+        };
+      },
     });
-    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.read"] };
+    const actor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      scopes: ["drive.write"],
+    };
 
-    await expect(registry.invoke("drive.search", { query: "report" }, { actor })).resolves.toMatchObject({
+    await expect(
+      registry.invoke(
+        "drive.share",
+        {
+          objectId,
+          actorIds: ["66666666-6666-4666-8666-666666666666"],
+          actorRefs: ["maya@helix.local", "Maya Chen"],
+          role: "reader",
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
       ok: true,
       output: {
-        hits: [
-          {
-            objectId,
-            ownerActorId: actorId,
-            ownerDisplayName: "Local Helix Admin",
-            ownerEmail: "admin@helix.local",
-          },
+        objectId,
+        sharedWithActorIds: [
+          "66666666-6666-4666-8666-666666666666",
+          "77777777-7777-4777-8777-777777777777",
         ],
       },
     });
@@ -543,6 +601,8 @@ describe("drive tools", () => {
       actorId,
       title: "My Doc",
       folderId,
+      editorEngine: HELIX_NATIVE_DOCUMENT_ENGINE,
+      formatVersion: 1,
     });
     if (result.ok) {
       expect(result.output).toMatchObject({ id: objectId, app: "docs" });
@@ -775,6 +835,24 @@ class AppFilterFakeDriveStore implements DriveStore {
   async search(): Promise<readonly DriveSearchHit[]> {
     return [];
   }
+  async createComment(): Promise<DriveCommentRecord> {
+    throw new Error("not used");
+  }
+  async listComments(): Promise<readonly DriveCommentRecord[]> {
+    return [];
+  }
+  async resolveComment(): Promise<DriveCommentRecord | null> {
+    return null;
+  }
+  async reopenComment(): Promise<DriveCommentRecord | null> {
+    return null;
+  }
+  async updateComment(): Promise<DriveCommentRecord | null> {
+    return null;
+  }
+  async deleteComment(): Promise<DriveCommentRecord | null> {
+    return null;
+  }
 }
 
 const deckId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
@@ -791,6 +869,9 @@ class FakeDriveStore implements DriveStore {
   readonly requestedPdfFormStates: Parameters<NonNullable<DriveStore["getPdfFormState"]>>[0][] = [];
   readonly savedPdfFormStates: Parameters<NonNullable<DriveStore["savePdfFormState"]>>[0][] = [];
   readonly clearedPdfFormStates: Parameters<NonNullable<DriveStore["clearPdfFormState"]>>[0][] = [];
+  readonly starred: Parameters<NonNullable<DriveStore["setStarred"]>>[0][] = [];
+  readonly removedAccess: Parameters<NonNullable<DriveStore["removeAccess"]>>[0][] = [];
+  readonly updatedAccess: Parameters<NonNullable<DriveStore["updateAccess"]>>[0][] = [];
   pdfFormState: DrivePdfFormStateRecord | null = null;
 
   async createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord> {
@@ -822,6 +903,7 @@ class FakeDriveStore implements DriveStore {
       folderId: input.folderId ?? null,
       storageKey: `drive/${input.orgId}/${objectId}/v1/${input.name}`,
       uploadUrl: "https://storage.example/upload",
+      uploadHeaders: { "content-type": input.mimeType },
       mimeType: input.mimeType,
       byteSize: input.byteSize ?? 0,
       sha256: input.sha256 ?? null,
@@ -857,8 +939,49 @@ class FakeDriveStore implements DriveStore {
     return { objectId: input.objectId, sharedWithActorIds: input.targetActorIds, role: input.role };
   }
 
+  async listAccess(): Promise<readonly DriveAccessGrantRecord[]> {
+    return [
+      {
+        actorId: "66666666-6666-4666-8666-666666666666",
+        role: "reader",
+        displayName: "Maya Chen",
+        email: "maya@helix.local",
+        grantedByActorId: actorId,
+        expiresAt: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+  }
+
+  async removeAccess(input: Parameters<NonNullable<DriveStore["removeAccess"]>>[0]) {
+    this.removedAccess.push(input);
+    return true;
+  }
+
+  async updateAccess(
+    input: Parameters<NonNullable<DriveStore["updateAccess"]>>[0],
+  ): Promise<DriveAccessGrantRecord | null> {
+    this.updatedAccess.push(input);
+    return {
+      actorId: input.targetActorId,
+      role: input.role,
+      displayName: "Maya Chen",
+      email: "maya@helix.local",
+      grantedByActorId: input.actorId,
+      expiresAt: input.expiresAt ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   async move(): Promise<DriveEntryRecord | null> {
     return entry();
+  }
+
+  async setStarred(input: Parameters<NonNullable<DriveStore["setStarred"]>>[0]) {
+    this.starred.push(input);
+    return { ...entry(), metadata: { ...entry().metadata, starred: input.starred } };
   }
 
   async trash(): Promise<DriveEntryRecord | null> {
@@ -878,8 +1001,6 @@ class FakeDriveStore implements DriveStore {
       {
         objectId,
         name: "report.pdf",
-        ownerActorId: actorId,
-        app: null,
         mimeType: "application/pdf",
         byteSize: 128,
         sha256,
@@ -891,7 +1012,6 @@ class FakeDriveStore implements DriveStore {
           mimeType: "application/pdf",
           url: "https://cdn.example/report.pdf",
         },
-        metadata: {},
         updatedAt: now,
       },
     ];

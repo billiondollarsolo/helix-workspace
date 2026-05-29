@@ -1,0 +1,18 @@
+# Default ownership until dedicated platform/editor teams exist in GitHub.
+* @mjtechguy
+
+# Editors sibling-repo integration boundary.
+/apps/helix/src/platform/editors/ @mjtechguy
+/packages/sdk-types/src/editors.ts @mjtechguy
+/packages/sdk-types/package.json @mjtechguy
+/infra/helm/helix/templates/deployment.yaml @mjtechguy
+/infra/helm/helix/templates/service.yaml @mjtechguy
+/infra/helm/helix/templates/pdb.yaml @mjtechguy
+/infra/helm/helix/templates/role-deployments.yaml @mjtechguy
+/infra/helm/helix/README.md @mjtechguy
+
+# Workspace editor-boundary enforcement.
+/.github/workflows/editors-contract.yml @mjtechguy
+/infra/scripts/verify-editors-contract.sh @mjtechguy
+/infra/scripts/verify-workspace-editor-boundaries.mjs @mjtechguy
+/infra/scripts/verify-workspace-editor-boundaries.test.mjs @mjtechguy

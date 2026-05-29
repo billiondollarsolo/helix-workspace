@@ -12,6 +12,7 @@
 
 import type { IconComponent } from "@/components/icons";
 import { Icons } from "@/components/icons";
+import type { DriveApiPreview } from "@/features/drive/api";
 
 export type DocFolderId = "all" | "recent" | "mine" | "shared" | "starred" | "trash";
 
@@ -27,14 +28,19 @@ export interface DocSummary {
   readonly starred: boolean;
   /** True when the signed-in user owns the document. */
   readonly mine: boolean;
+  /** Non-null when the Drive object is in trash. */
+  readonly deletedAt: string | null;
   /** "backend" rows come from the Docs API; "local" rows are local-only. */
   readonly source: "backend" | "local";
+  readonly mimeType?: string | undefined;
   /** Short uppercase chip label for the source format (e.g. "MD", "DOCX",
    *  "PDF") so the user can tell at a glance how the doc was originally
    *  imported. */
   readonly formatLabel: string;
+  readonly preview?: DriveApiPreview | undefined;
   readonly editorEngine?: string | undefined;
   readonly formatVersion?: number | undefined;
+  readonly openMode?: "native" | "office" | undefined;
 }
 
 export interface DocFolder {

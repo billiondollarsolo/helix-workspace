@@ -33,6 +33,19 @@ export interface PlatformMetrics {
     readonly actorType: string;
     readonly reason: string;
   }): void;
+  recordSignupFunnelEvent(input: {
+    readonly step: string;
+    readonly tier?: string | undefined;
+    readonly planId?: string | undefined;
+    readonly region?: string | undefined;
+  }): void;
+  recordSignupActivationSlo(input: {
+    readonly tier: string;
+    readonly planId: string;
+    readonly region: string;
+    readonly durationSeconds: number;
+    readonly withinTarget: boolean;
+  }): void;
   recordPermissionCheck(input: {
     readonly action: string;
     readonly actorType: string;
@@ -57,42 +70,6 @@ export interface PlatformMetrics {
     readonly recordCount: number;
     readonly lagSeconds: number;
   }): void;
-  recordTenantStorageMigrationJob(input: {
-    readonly target: "byo" | "helix-default";
-    readonly status:
-      | "queued"
-      | "running"
-      | "succeeded"
-      | "succeeded_with_errors"
-      | "failed"
-      | "dry_run";
-  }): void;
-  setTenantStorageMigrationObservability(input: {
-    readonly activeJobs: readonly {
-      readonly target: "byo" | "helix-default";
-      readonly status: "queued" | "running" | "failed";
-      readonly count: number;
-    }[];
-    readonly stalledJobs: readonly {
-      readonly target: "byo" | "helix-default";
-      readonly count: number;
-      readonly oldestAgeSeconds: number;
-    }[];
-  }): void;
-  recordTenantExportJob(input: {
-    readonly status: "succeeded" | "failed";
-    readonly objectBytes: "included" | "metadata_only";
-  }): void;
-  setTenantExportJobObservability(input: {
-    readonly activeJobs: readonly {
-      readonly status: "queued" | "running" | "failed";
-      readonly count: number;
-    }[];
-    readonly stalledJobs: {
-      readonly count: number;
-      readonly oldestAgeSeconds: number;
-    };
-  }): void;
   /**
    * Records a WebSocket connecting on a route (Follow-up B). Increments the
    * `helix_websocket_connections_active` gauge that the Helm HPA scales on.
@@ -100,6 +77,8 @@ export interface PlatformMetrics {
   recordWebsocketConnectionOpened(input: { readonly route: string }): void;
   /** Records a WebSocket disconnecting on a route, decrementing the gauge. */
   recordWebsocketConnectionClosed(input: { readonly route: string }): void;
+  setStoragePoolSize(input: { readonly size: number }): void;
+  recordStoragePoolEviction(): void;
 }
 
 export function createPlatformMetrics(): PlatformMetrics {
@@ -124,6 +103,19 @@ export function createPlatformMetrics(): PlatformMetrics {
     name: "helix_agent_tool_limiter_denials_total",
     help: "Total denied agent or service-account tool invocations by limiter reason.",
     labelNames: ["tool_id", "tier", "actor_type", "reason"],
+    registers: [registry],
+  });
+  const signupFunnelEvents = new Counter({
+    name: "helix_signup_funnel_events_total",
+    help: "Total privacy-safe signup funnel events by step and plan dimensions.",
+    labelNames: ["step", "tier", "plan_id", "region"],
+    registers: [registry],
+  });
+  const signupActivationDuration = new Histogram({
+    name: "helix_signup_activation_duration_seconds",
+    help: "Self-service signup activation duration by plan dimensions and SLO target result.",
+    labelNames: ["tier", "plan_id", "region", "within_target"],
+    buckets: [1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600],
     registers: [registry],
   });
   const llmCalls = new Counter({
@@ -197,56 +189,20 @@ export function createPlatformMetrics(): PlatformMetrics {
     labelNames: ["destination"],
     registers: [registry],
   });
-  const tenantStorageMigrationJobs = new Counter({
-    name: "helix_tenant_storage_migration_jobs_total",
-    help: "Total tenant storage migration jobs processed by target and terminal status.",
-    labelNames: ["target", "status"],
-    registers: [registry],
-  });
-  const tenantStorageMigrationActiveJobs = new Gauge({
-    name: "helix_tenant_storage_migration_jobs_active",
-    help: "Active tenant storage migration jobs by target and status.",
-    labelNames: ["target", "status"],
-    registers: [registry],
-  });
-  const tenantStorageMigrationStalledJobs = new Gauge({
-    name: "helix_tenant_storage_migration_stalled_jobs",
-    help: "Running tenant storage migration jobs older than the stalled threshold.",
-    labelNames: ["target"],
-    registers: [registry],
-  });
-  const tenantStorageMigrationOldestStalledAge = new Gauge({
-    name: "helix_tenant_storage_migration_oldest_stalled_age_seconds",
-    help: "Age in seconds of the oldest stalled tenant storage migration job by target.",
-    labelNames: ["target"],
-    registers: [registry],
-  });
-  const tenantExportJobs = new Counter({
-    name: "helix_tenant_export_jobs_total",
-    help: "Total tenant export jobs processed by terminal status and object-byte mode.",
-    labelNames: ["status", "object_bytes"],
-    registers: [registry],
-  });
-  const tenantExportActiveJobs = new Gauge({
-    name: "helix_tenant_export_jobs_active",
-    help: "Active tenant export jobs by retryable status.",
-    labelNames: ["status"],
-    registers: [registry],
-  });
-  const tenantExportStalledJobs = new Gauge({
-    name: "helix_tenant_export_stalled_jobs",
-    help: "Running tenant export jobs older than the stalled threshold.",
-    registers: [registry],
-  });
-  const tenantExportOldestStalledAge = new Gauge({
-    name: "helix_tenant_export_oldest_stalled_age_seconds",
-    help: "Age in seconds of the oldest stalled tenant export job.",
-    registers: [registry],
-  });
   const websocketConnectionsActive = new Gauge({
     name: "helix_websocket_connections_active",
     help: "Currently open WebSocket connections by route. Referenced by the Helm HPA.",
     labelNames: ["route"],
+    registers: [registry],
+  });
+  const storagePoolSize = new Gauge({
+    name: "helix_storage_pool_size",
+    help: "Resolved tenant object-storage clients currently cached in this process.",
+    registers: [registry],
+  });
+  const storagePoolEvictions = new Counter({
+    name: "helix_storage_pool_evictions_total",
+    help: "Total resolved tenant object-storage client cache evictions in this process.",
     registers: [registry],
   });
   const permissionChecks = new Counter({
@@ -313,6 +269,24 @@ export function createPlatformMetrics(): PlatformMetrics {
       };
       agentToolLimiterDenials.inc(labels);
     },
+    recordSignupFunnelEvent(input) {
+      const labels: LabelValues<"step" | "tier" | "plan_id" | "region"> = {
+        step: input.step,
+        tier: input.tier ?? "unknown",
+        plan_id: input.planId ?? "unknown",
+        region: input.region ?? "unknown",
+      };
+      signupFunnelEvents.inc(labels);
+    },
+    recordSignupActivationSlo(input) {
+      const labels: LabelValues<"tier" | "plan_id" | "region" | "within_target"> = {
+        tier: input.tier,
+        plan_id: input.planId,
+        region: input.region,
+        within_target: input.withinTarget ? "true" : "false",
+      };
+      signupActivationDuration.observe(labels, input.durationSeconds);
+    },
     recordPermissionCheck(input) {
       const labels: LabelValues<"policy" | "resource_type" | "action" | "actor_type" | "decision"> =
         {
@@ -351,38 +325,17 @@ export function createPlatformMetrics(): PlatformMetrics {
       auditShippingBacklog.set(labels, input.recordCount);
       auditShippingLag.set(labels, input.lagSeconds);
     },
-    recordTenantStorageMigrationJob(input) {
-      tenantStorageMigrationJobs.inc({ target: input.target, status: input.status });
-    },
-    setTenantStorageMigrationObservability(input) {
-      for (const target of ["byo", "helix-default"] as const) {
-        for (const status of ["queued", "running", "failed"] as const) {
-          const count =
-            input.activeJobs.find((entry) => entry.target === target && entry.status === status)
-              ?.count ?? 0;
-          tenantStorageMigrationActiveJobs.set({ target, status }, count);
-        }
-        const stalled = input.stalledJobs.find((entry) => entry.target === target);
-        tenantStorageMigrationStalledJobs.set({ target }, stalled?.count ?? 0);
-        tenantStorageMigrationOldestStalledAge.set({ target }, stalled?.oldestAgeSeconds ?? 0);
-      }
-    },
-    recordTenantExportJob(input) {
-      tenantExportJobs.inc({ status: input.status, object_bytes: input.objectBytes });
-    },
-    setTenantExportJobObservability(input) {
-      for (const status of ["queued", "running", "failed"] as const) {
-        const count = input.activeJobs.find((entry) => entry.status === status)?.count ?? 0;
-        tenantExportActiveJobs.set({ status }, count);
-      }
-      tenantExportStalledJobs.set(input.stalledJobs.count);
-      tenantExportOldestStalledAge.set(input.stalledJobs.oldestAgeSeconds);
-    },
     recordWebsocketConnectionOpened(input) {
       websocketConnectionsActive.inc({ route: input.route });
     },
     recordWebsocketConnectionClosed(input) {
       websocketConnectionsActive.dec({ route: input.route });
+    },
+    setStoragePoolSize(input) {
+      storagePoolSize.set(input.size);
+    },
+    recordStoragePoolEviction() {
+      storagePoolEvictions.inc();
     },
   };
 }

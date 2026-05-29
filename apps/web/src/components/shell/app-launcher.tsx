@@ -4,6 +4,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { APPS } from "@/components/apps";
+import { useEnabledApps, type AppId } from "@/features/apps/use-enabled-apps";
 
 export interface AppLauncherProps {
   open: boolean;
@@ -12,9 +13,11 @@ export interface AppLauncherProps {
 
 export function AppLauncher({ open, onClose }: AppLauncherProps) {
   const navigate = useNavigate();
+  const enabled = useEnabledApps();
   if (!open) {
     return null;
   }
+  const visible = APPS.filter((app) => enabled.isEnabled(app.id as AppId));
   return (
     <div className="launcher" onClick={(event) => event.stopPropagation()}>
       <div
@@ -30,7 +33,7 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
         Helix apps
       </div>
       <div className="launcher-grid">
-        {APPS.map((app) => {
+        {visible.map((app) => {
           const Icon = Icons[app.icon];
           return (
             <button

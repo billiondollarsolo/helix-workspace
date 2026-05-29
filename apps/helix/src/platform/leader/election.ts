@@ -234,7 +234,17 @@ export class SingletonWorkerSupervisor {
         this.workerRunning = true;
         this.stopRetryTimer();
         this.options.onLeadershipAcquired?.(this.options.name);
-        await this.options.worker.start();
+        // Fire-and-forget: a slow worker.start() must not block the rest of
+        // Promise.all(supervisors.map(s => s.start())) in server bootstrap.
+        // Errors from start() surface via onError; supervisors that never
+        // finish start() simply leave workerRunning=true indefinitely (their
+        // run loop runs in the background like any other worker).
+        Promise.resolve()
+          .then(() => this.options.worker.start())
+          .catch((error: unknown) => {
+            this.workerRunning = false;
+            this.options.onError?.(error, this.options.name);
+          });
       } else {
         this.options.onLeadershipSkipped?.(this.options.name);
         this.scheduleRetry();

@@ -50,7 +50,6 @@ export interface GroupRecord {
   readonly id: string;
   readonly orgId: string;
   readonly name: string;
-  readonly externalId: string | null;
   readonly email: string | null;
   readonly kind: GroupKind;
   readonly description: string;
@@ -92,7 +91,6 @@ export interface UpdateOrgUnitInput {
 export interface CreateGroupInput {
   readonly orgId: string;
   readonly name: string;
-  readonly externalId?: string | null | undefined;
   readonly email: string | null;
   readonly kind: GroupKind;
   readonly description: string;
@@ -104,7 +102,6 @@ export interface UpdateGroupInput {
   readonly orgId: string;
   readonly id: string;
   readonly name?: string | undefined;
-  readonly externalId?: string | null | undefined;
   readonly email?: string | null | undefined;
   readonly kind?: GroupKind | undefined;
   readonly description?: string | undefined;
@@ -578,7 +575,6 @@ interface GroupRow {
   readonly id: string;
   readonly org_id: string;
   readonly name: string;
-  readonly external_id: string | null;
   readonly email: string | null;
   readonly kind: GroupKind;
   readonly description: string;
@@ -701,7 +697,7 @@ export class PostgresGroupsStore implements GroupsStore {
   async listGroups(orgId: string): Promise<readonly GroupRecord[]> {
     const rows = (await this.sql`
       select
-        g.id, g.org_id, g.name, g.external_id, g.email, g.kind, g.description, g.org_unit_id,
+        g.id, g.org_id, g.name, g.email, g.kind, g.description, g.org_unit_id,
         coalesce(count(gm.id), 0) as member_count,
         g.created_at, g.updated_at
       from admin_groups g
@@ -716,7 +712,7 @@ export class PostgresGroupsStore implements GroupsStore {
   async getGroup(orgId: string, id: string): Promise<GroupRecord | null> {
     const rows = (await this.sql`
       select
-        g.id, g.org_id, g.name, g.external_id, g.email, g.kind, g.description, g.org_unit_id,
+        g.id, g.org_id, g.name, g.email, g.kind, g.description, g.org_unit_id,
         coalesce(count(gm.id), 0) as member_count,
         g.created_at, g.updated_at
       from admin_groups g
@@ -730,11 +726,11 @@ export class PostgresGroupsStore implements GroupsStore {
 
   async createGroup(input: CreateGroupInput): Promise<GroupRecord> {
     const rows = (await this.sql`
-      insert into admin_groups (org_id, name, external_id, email, kind, description, org_unit_id, created_by)
-      values (${input.orgId}, ${input.name}, ${input.externalId ?? null}, ${input.email}, ${input.kind},
+      insert into admin_groups (org_id, name, email, kind, description, org_unit_id, created_by)
+      values (${input.orgId}, ${input.name}, ${input.email}, ${input.kind},
               ${input.description}, ${input.orgUnitId}, ${input.createdBy})
       on conflict do nothing
-      returning id, org_id, name, external_id, email, kind, description, org_unit_id,
+      returning id, org_id, name, email, kind, description, org_unit_id,
                 0 as member_count, created_at, updated_at
     `) as unknown as readonly GroupRow[];
     const row = rows[0];
@@ -752,14 +748,13 @@ export class PostgresGroupsStore implements GroupsStore {
     const rows = (await this.sql`
       update admin_groups
       set name = ${input.name ?? existing.name},
-          external_id = ${input.externalId === undefined ? existing.externalId : input.externalId},
           email = ${input.email === undefined ? existing.email : input.email},
           kind = ${input.kind ?? existing.kind},
           description = ${input.description ?? existing.description},
           org_unit_id = ${input.orgUnitId === undefined ? existing.orgUnitId : input.orgUnitId},
           updated_at = now()
       where org_id = ${input.orgId} and id = ${input.id}
-      returning id, org_id, name, external_id, email, kind, description, org_unit_id,
+      returning id, org_id, name, email, kind, description, org_unit_id,
                 0 as member_count, created_at, updated_at
     `) as unknown as readonly GroupRow[];
     const row = rows[0];
@@ -809,7 +804,11 @@ export class PostgresGroupsStore implements GroupsStore {
     return rows.length > 0;
   }
 
-  async #computePath(orgId: string, parentId: string | null, name: string): Promise<string> {
+  async #computePath(
+    orgId: string,
+    parentId: string | null,
+    name: string,
+  ): Promise<string> {
     if (parentId === null) {
       return name;
     }
@@ -844,7 +843,6 @@ function mapGroupRow(row: GroupRow): GroupRecord {
     id: row.id,
     orgId: row.org_id,
     name: row.name,
-    externalId: row.external_id,
     email: row.email,
     kind: row.kind,
     description: row.description,
@@ -884,7 +882,6 @@ interface MemGroup {
   id: string;
   orgId: string;
   name: string;
-  externalId: string | null;
   email: string | null;
   kind: GroupKind;
   description: string;
@@ -963,7 +960,6 @@ export class InMemoryGroupsStore implements GroupsStore {
       id: group.id,
       orgId: group.orgId,
       name: group.name,
-      externalId: group.externalId,
       email: group.email,
       kind: group.kind,
       description: group.description,
@@ -1085,7 +1081,6 @@ export class InMemoryGroupsStore implements GroupsStore {
       id: this.#id(),
       orgId: input.orgId,
       name: input.name,
-      externalId: input.externalId ?? null,
       email: input.email,
       kind: input.kind,
       description: input.description,
@@ -1104,9 +1099,6 @@ export class InMemoryGroupsStore implements GroupsStore {
     }
     if (input.name !== undefined) {
       group.name = input.name;
-    }
-    if (input.externalId !== undefined) {
-      group.externalId = input.externalId;
     }
     if (input.email !== undefined) {
       group.email = input.email;

@@ -43,12 +43,62 @@ describe("AuditShippingWorker", () => {
       "00000000-0000-4000-8000-000000000002",
     ]);
     expect(shipper.shippedGroups).toEqual([
-      ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"],
+      [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000002",
+      ],
     ]);
     expect(store.savedCheckpoints).toEqual([
       {
         id: "00000000-0000-4000-8000-000000000002",
         createdAt: "2026-05-20T00:01:00.000Z",
+      },
+    ]);
+  });
+
+  it("ships mixed-org pages as one immutable batch per org and checkpoints after all groups succeed", async () => {
+    const records = [
+      auditRecord("00000000-0000-4000-8000-000000000001", "2026-05-20T00:00:00.000Z", {
+        orgId: "org-a",
+      }),
+      auditRecord("00000000-0000-4000-8000-000000000002", "2026-05-20T00:01:00.000Z", {
+        orgId: "org-b",
+      }),
+      auditRecord("00000000-0000-4000-8000-000000000003", "2026-05-20T00:02:00.000Z", {
+        orgId: "org-a",
+      }),
+    ];
+    const store = new InMemoryAuditShippingStore(records, {
+      recordCount: 0,
+    });
+    const shipper = new RecordingAuditBatchShipper();
+    const worker = new AuditShippingWorker({
+      store,
+      shipper,
+      batchSize: 3,
+      now: fixedNow("2026-05-20T00:03:00.000Z"),
+    });
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      status: "shipped",
+      shippedRecordCount: 3,
+      checkpoint: {
+        id: "00000000-0000-4000-8000-000000000003",
+        createdAt: "2026-05-20T00:02:00.000Z",
+      },
+    });
+
+    expect(shipper.shippedGroups).toEqual([
+      [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000003",
+      ],
+      ["00000000-0000-4000-8000-000000000002"],
+    ]);
+    expect(store.savedCheckpoints).toEqual([
+      {
+        id: "00000000-0000-4000-8000-000000000003",
+        createdAt: "2026-05-20T00:02:00.000Z",
       },
     ]);
   });
@@ -71,6 +121,35 @@ describe("AuditShippingWorker", () => {
       backlog: { recordCount: 1, oldestCreatedAt: "2026-05-20T00:00:00.000Z" },
       lagSeconds: 120,
     });
+    expect(store.savedCheckpoints).toEqual([]);
+  });
+
+  it("does not advance the checkpoint when a later org group fails", async () => {
+    const store = new InMemoryAuditShippingStore([
+      auditRecord("00000000-0000-4000-8000-000000000001", "2026-05-20T00:00:00.000Z", {
+        orgId: "org-a",
+      }),
+      auditRecord("00000000-0000-4000-8000-000000000002", "2026-05-20T00:01:00.000Z", {
+        orgId: "org-b",
+      }),
+    ]);
+    const shipper = new FailOnGroupAuditBatchShipper("org-b");
+    const worker = new AuditShippingWorker({
+      store,
+      shipper,
+      now: fixedNow("2026-05-20T00:02:00.000Z"),
+    });
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      status: "error",
+      error: "S3 object lock rejected org-b",
+      shippedRecordCount: 0,
+      checkpoint: null,
+    });
+    expect(shipper.shippedGroups).toEqual([
+      ["00000000-0000-4000-8000-000000000001"],
+      ["00000000-0000-4000-8000-000000000002"],
+    ]);
     expect(store.savedCheckpoints).toEqual([]);
   });
 
@@ -122,53 +201,6 @@ describe("AuditShippingWorker", () => {
       }),
     );
   });
-
-  it("ships mixed-org pages as contiguous org-scoped batches before checkpointing", async () => {
-    const records = [
-      auditRecord("00000000-0000-4000-8000-000000000001", "2026-05-20T00:00:00.000Z", {
-        orgId: "org-a",
-      }),
-      auditRecord("00000000-0000-4000-8000-000000000002", "2026-05-20T00:01:00.000Z", {
-        orgId: "org-a",
-      }),
-      auditRecord("00000000-0000-4000-8000-000000000003", "2026-05-20T00:02:00.000Z", {
-        orgId: "org-b",
-      }),
-      auditRecord("00000000-0000-4000-8000-000000000004", "2026-05-20T00:03:00.000Z", {
-        orgId: "org-a",
-      }),
-    ];
-    const store = new InMemoryAuditShippingStore(records, { recordCount: 0 });
-    const shipper = new RecordingAuditBatchShipper();
-    const worker = new AuditShippingWorker({
-      store,
-      shipper,
-      batchSize: 10,
-      now: fixedNow("2026-05-20T00:04:00.000Z"),
-    });
-
-    const result = await worker.runOnce();
-
-    expect(result).toMatchObject({
-      status: "shipped",
-      shippedRecordCount: 4,
-      checkpoint: {
-        id: "00000000-0000-4000-8000-000000000004",
-        createdAt: "2026-05-20T00:03:00.000Z",
-      },
-    });
-    expect(shipper.shippedGroups).toEqual([
-      ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"],
-      ["00000000-0000-4000-8000-000000000003"],
-      ["00000000-0000-4000-8000-000000000004"],
-    ]);
-    expect(store.savedCheckpoints).toEqual([
-      {
-        id: "00000000-0000-4000-8000-000000000004",
-        createdAt: "2026-05-20T00:03:00.000Z",
-      },
-    ]);
-  });
 });
 
 class InMemoryAuditShippingStore implements AuditShippingStore {
@@ -197,12 +229,10 @@ class InMemoryAuditShippingStore implements AuditShippingStore {
   }
 
   async getAuditShippingBacklog(): Promise<AuditShippingBacklog> {
-    return (
-      this.backlog ?? {
-        recordCount: this.records.length,
-        ...(this.records[0] === undefined ? {} : { oldestCreatedAt: this.records[0].createdAt }),
-      }
-    );
+    return this.backlog ?? {
+      recordCount: this.records.length,
+      ...(this.records[0] === undefined ? {} : { oldestCreatedAt: this.records[0].createdAt }),
+    };
   }
 }
 
@@ -254,8 +284,30 @@ class RecordingAuditBatchShipper implements AuditBatchShipper {
   readonly shippedGroups: string[][] = [];
 
   async ship(records: readonly ImmutableAuditActivityRecord[]): Promise<ImmutableAuditShipResult> {
+    const ids = records.map((record) => record.id);
+    this.shippedIds.push(...ids);
+    this.shippedGroups.push(ids);
+    return {
+      batchId: "batch-1",
+      recordCount: records.length,
+      recordsKey: "audit/batch-1.ndjson",
+      recordsSha256: "a".repeat(64),
+      manifestKey: "audit/batch-1.manifest.json",
+      manifestSha256: "b".repeat(64),
+    };
+  }
+}
+
+class FailOnGroupAuditBatchShipper implements AuditBatchShipper {
+  readonly shippedGroups: string[][] = [];
+
+  constructor(private readonly failingOrgId: string) {}
+
+  async ship(records: readonly ImmutableAuditActivityRecord[]): Promise<ImmutableAuditShipResult> {
     this.shippedGroups.push(records.map((record) => record.id));
-    this.shippedIds.push(...records.map((record) => record.id));
+    if (records.some((record) => record.orgId === this.failingOrgId)) {
+      throw new Error(`S3 object lock rejected ${this.failingOrgId}`);
+    }
     return {
       batchId: "batch-1",
       recordCount: records.length,

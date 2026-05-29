@@ -5,6 +5,8 @@ import { SlidesShell, type SlidesViewRouteState } from "@/features/slides/slides
 interface SlidesRouteSearch {
   readonly deck?: string;
   readonly comment?: string;
+  readonly open?: "office";
+  readonly q?: string;
 }
 
 function validateSlidesRouteSearch(search: Record<string, unknown>): SlidesRouteSearch {
@@ -14,9 +16,14 @@ function validateSlidesRouteSearch(search: Record<string, unknown>): SlidesRoute
     typeof search.comment === "string" && search.comment.trim().length > 0
       ? search.comment
       : undefined;
+  const open = search.open === "office" ? "office" : undefined;
+  const q =
+    typeof search.q === "string" && search.q.trim().length > 0 ? search.q.trim() : undefined;
   return {
     ...(deck === undefined ? {} : { deck }),
     ...(comment === undefined ? {} : { comment }),
+    ...(open === undefined ? {} : { open }),
+    ...(q === undefined ? {} : { q }),
   };
 }
 
@@ -34,7 +41,23 @@ function SlidesRoute() {
       onRouteStateChange={(nextState) => {
         void navigate({
           replace: true,
-          search: () => slidesRouteSearchFromState(nextState),
+          search: (previous) => ({
+            ...slidesRouteSearchFromState(nextState),
+            q:
+              typeof (previous as SlidesRouteSearch).q === "string"
+                ? (previous as SlidesRouteSearch).q
+                : undefined,
+          }),
+        });
+      }}
+      initialSearchQuery={search.q ?? ""}
+      onSearchQueryChange={(nextQuery) => {
+        void navigate({
+          replace: true,
+          search: (previous) => ({
+            ...(previous as SlidesRouteSearch),
+            q: nextQuery.trim().length > 0 ? nextQuery : undefined,
+          }),
         });
       }}
     />
@@ -45,6 +68,8 @@ function slidesRouteStateFromSearch(search: SlidesRouteSearch): SlidesViewRouteS
   return {
     deckId: search.deck ?? null,
     commentId: search.comment ?? null,
+    openMode: search.open ?? null,
+    searchQuery: search.q ?? "",
   };
 }
 
@@ -52,5 +77,7 @@ function slidesRouteSearchFromState(state: SlidesViewRouteState): SlidesRouteSea
   return {
     deck: state.deckId ?? undefined,
     comment: state.commentId ?? undefined,
+    open: state.openMode === "office" ? "office" : undefined,
+    q: state.searchQuery.trim().length > 0 ? state.searchQuery : undefined,
   };
 }

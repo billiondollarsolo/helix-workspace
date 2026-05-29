@@ -112,6 +112,45 @@ describe("platform metrics", () => {
     expect(output).not.toContain("actor_id=");
   });
 
+  it("records signup funnel and activation SLO metrics without tenant or actor labels", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordSignupFunnelEvent({ step: "form_viewed" });
+    metrics.recordSignupFunnelEvent({
+      step: "verified",
+      tier: "personal",
+      planId: "personal",
+      region: "default",
+    });
+    metrics.recordSignupActivationSlo({
+      tier: "personal",
+      planId: "personal",
+      region: "default",
+      durationSeconds: 42,
+      withinTarget: true,
+    });
+
+    const output = await metrics.registry.metrics();
+
+    expect(output).toContain(
+      'helix_signup_funnel_events_total{step="form_viewed",tier="unknown",plan_id="unknown",region="unknown"} 1',
+    );
+    expect(output).toContain(
+      'helix_signup_funnel_events_total{step="verified",tier="personal",plan_id="personal",region="default"} 1',
+    );
+    expect(output).toContain(
+      'helix_signup_activation_duration_seconds_count{tier="personal",plan_id="personal",region="default",within_target="true"} 1',
+    );
+    expect(output).toContain(
+      'helix_signup_activation_duration_seconds_sum{tier="personal",plan_id="personal",region="default",within_target="true"} 42',
+    );
+    expect(output).not.toContain("org_id=");
+    expect(output).not.toContain("org_slug=");
+    expect(output).not.toContain("actor_id=");
+    expect(output).not.toContain("owner@example.com");
+    expect(output).not.toContain("token");
+  });
+
   it("tracks the helix_websocket_connections_active gauge per route (Follow-up B)", async () => {
     const metrics = createPlatformMetrics();
 
@@ -126,70 +165,17 @@ describe("platform metrics", () => {
     expect(output).toContain('helix_websocket_connections_active{route="/sync/docs/:docId"} 1');
   });
 
-  it("records tenant storage migration metrics without high-cardinality labels", async () => {
+  it("records tenant storage pool size and eviction metrics", async () => {
     const metrics = createPlatformMetrics();
 
-    metrics.recordTenantStorageMigrationJob({ target: "byo", status: "succeeded" });
-    metrics.recordTenantStorageMigrationJob({ target: "helix-default", status: "failed" });
-    metrics.setTenantStorageMigrationObservability({
-      activeJobs: [
-        { target: "byo", status: "running", count: 2 },
-        { target: "helix-default", status: "failed", count: 1 },
-      ],
-      stalledJobs: [{ target: "byo", count: 1, oldestAgeSeconds: 2_400 }],
-    });
+    metrics.setStoragePoolSize({ size: 2 });
+    metrics.recordStoragePoolEviction();
+    metrics.recordStoragePoolEviction();
+    metrics.setStoragePoolSize({ size: 1 });
 
     const output = await metrics.registry.metrics();
 
-    expect(output).toContain(
-      'helix_tenant_storage_migration_jobs_total{target="byo",status="succeeded"} 1',
-    );
-    expect(output).toContain(
-      'helix_tenant_storage_migration_jobs_total{target="helix-default",status="failed"} 1',
-    );
-    expect(output).toContain(
-      'helix_tenant_storage_migration_jobs_active{target="byo",status="running"} 2',
-    );
-    expect(output).toContain(
-      'helix_tenant_storage_migration_jobs_active{target="helix-default",status="failed"} 1',
-    );
-    expect(output).toContain('helix_tenant_storage_migration_stalled_jobs{target="byo"} 1');
-    expect(output).toContain(
-      'helix_tenant_storage_migration_oldest_stalled_age_seconds{target="byo"} 2400',
-    );
-    expect(output).not.toContain("org_id=");
-    expect(output).not.toContain("job_id=");
-  });
-
-  it("records tenant export job metrics without high-cardinality labels", async () => {
-    const metrics = createPlatformMetrics();
-
-    metrics.recordTenantExportJob({ status: "succeeded", objectBytes: "included" });
-    metrics.recordTenantExportJob({ status: "failed", objectBytes: "metadata_only" });
-    metrics.setTenantExportJobObservability({
-      activeJobs: [
-        { status: "queued", count: 2 },
-        { status: "running", count: 1 },
-        { status: "failed", count: 1 },
-      ],
-      stalledJobs: { count: 1, oldestAgeSeconds: 1_950 },
-    });
-
-    const output = await metrics.registry.metrics();
-
-    expect(output).toContain(
-      'helix_tenant_export_jobs_total{status="succeeded",object_bytes="included"} 1',
-    );
-    expect(output).toContain(
-      'helix_tenant_export_jobs_total{status="failed",object_bytes="metadata_only"} 1',
-    );
-    expect(output).toContain('helix_tenant_export_jobs_active{status="queued"} 2');
-    expect(output).toContain('helix_tenant_export_jobs_active{status="running"} 1');
-    expect(output).toContain('helix_tenant_export_jobs_active{status="failed"} 1');
-    expect(output).toContain("helix_tenant_export_stalled_jobs 1");
-    expect(output).toContain("helix_tenant_export_oldest_stalled_age_seconds 1950");
-    expect(output).not.toContain("org_id=");
-    expect(output).not.toContain("job_id=");
-    expect(output).not.toContain("actor_id=");
+    expect(output).toContain("helix_storage_pool_size 1");
+    expect(output).toContain("helix_storage_pool_evictions_total 2");
   });
 });

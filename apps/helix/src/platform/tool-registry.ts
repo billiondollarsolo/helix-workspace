@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
+import type { FeatureFlagProvider } from "@helix/sdk";
 import type {
   AuditRecord,
   Actor,
@@ -110,6 +111,8 @@ export interface ToolInvocationMetrics {
   }): void;
 }
 
+export type ToolFeatureFlagResolver = (tool: ToolDefinition) => string | undefined;
+
 export interface RuntimeToolRegistry {
   register(tool: ToolDefinition): void;
   unregister(toolId: string): void;
@@ -172,6 +175,8 @@ export interface ToolRegistryOptions {
   readonly agentLimitTier?: TierSecurityDefaults["tier"];
   readonly agentLimitBudget?: Partial<AgentLimitBudget>;
   readonly metrics?: ToolInvocationMetrics;
+  readonly featureFlags?: FeatureFlagProvider;
+  readonly toolFeatureFlag?: ToolFeatureFlagResolver;
 }
 
 export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeToolRegistry {
@@ -195,8 +200,9 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     list() {
       return [...tools.values()].sort((left, right) => left.id.localeCompare(right.id));
     },
-    listVisible(actor) {
-      return filterToolsForActor(this.list(), actor, accessPolicy);
+    async listVisible(actor) {
+      const visible = await filterToolsForActor(this.list(), actor, accessPolicy);
+      return filterToolsByFeatureFlags(visible, actor);
     },
     async invoke<Output = unknown>(
       toolId: string,
@@ -225,6 +231,22 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
               ok: false,
               statusCode: 403,
               error: `Actor cannot invoke tool: ${toolId}`,
+            },
+            tool.id,
+            start,
+            invocationMetrics,
+          );
+        }
+        const featureFlagDecision = await evaluateToolFeatureFlag(tool, actor);
+        if (!featureFlagDecision.enabled) {
+          span.setAttribute("helix.tool.feature_flag", featureFlagDecision.flag);
+          span.setAttribute("helix.tool.feature_flag_enabled", false);
+          return toolInvokeResultWithSpan(
+            span,
+            {
+              ok: false,
+              statusCode: 403,
+              error: `Tool ${toolId} is disabled by tenant feature flag: ${featureFlagDecision.flag}`,
             },
             tool.id,
             start,
@@ -506,6 +528,54 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
       costUsdMicros,
     });
   }
+
+  async function filterToolsByFeatureFlags(
+    candidateTools: readonly ToolDefinition[],
+    actor: Actor,
+  ): Promise<readonly ToolDefinition[]> {
+    const filtered: ToolDefinition[] = [];
+    for (const tool of candidateTools) {
+      if ((await evaluateToolFeatureFlag(tool, actor)).enabled) {
+        filtered.push(tool);
+      }
+    }
+    return filtered;
+  }
+
+  async function evaluateToolFeatureFlag(
+    tool: ToolDefinition,
+    actor: Actor,
+  ): Promise<{ readonly enabled: true } | { readonly enabled: false; readonly flag: string }> {
+    const flag = (options.toolFeatureFlag ?? featureFlagForTool)(tool);
+    if (flag === undefined || options.featureFlags === undefined) {
+      return { enabled: true };
+    }
+    const enabled = await options.featureFlags.getAsync(flag, true, {
+      orgId: actor.orgId,
+      actorId: actor.id,
+      attributes: { toolId: tool.id },
+    });
+    return enabled === true ? { enabled: true } : { enabled: false, flag };
+  }
+}
+
+export function featureFlagForTool(tool: Pick<ToolDefinition, "id">): string | undefined {
+  if (tool.id === "mail.send" || tool.id === "mail.reply") {
+    return "mail_outbound";
+  }
+  if (tool.id === "drive.share" || tool.id.startsWith("drive.access.")) {
+    return "b2b_sharing";
+  }
+  if (tool.id.startsWith("docs.")) {
+    return "editors_native_document";
+  }
+  if (tool.id.startsWith("sheets.")) {
+    return "editors_native_spreadsheet";
+  }
+  if (tool.id.startsWith("slides.")) {
+    return "editors_native_presentation";
+  }
+  return undefined;
 }
 
 /**

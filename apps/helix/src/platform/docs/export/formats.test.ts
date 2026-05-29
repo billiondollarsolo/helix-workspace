@@ -335,7 +335,9 @@ describe("docs export formats", () => {
     expect(packageText).toContain('<w:commentRangeEnd w:id="0"/>');
     expect(packageText).toContain('<w:commentReference w:id="0"/>');
     const titleIndex = packageText.indexOf("<w:t>Launch Plan</w:t>");
-    const anchorIndex = packageText.indexOf("<w:t>Ship PDF, DOCX, and Markdown exports.</w:t>");
+    const anchorIndex = packageText.indexOf(
+      "<w:t>Ship PDF, DOCX, and Markdown exports.</w:t>",
+    );
     const commentRangeIndex = packageText.indexOf('<w:commentRangeStart w:id="0"/>');
     expect(commentRangeIndex).toBeGreaterThan(titleIndex);
     expect(commentRangeIndex).toBeLessThan(anchorIndex);
@@ -466,7 +468,9 @@ describe("docs export formats", () => {
     const packageText = docx.toString("utf8");
 
     expect(packageText).toContain("word/media/image1.png");
-    expect(packageText).toContain('<Default Extension="png" ContentType="image/png"/>');
+    expect(packageText).toContain(
+      '<Default Extension="png" ContentType="image/png"/>',
+    );
     expect(packageText).toContain(
       'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"',
     );

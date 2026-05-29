@@ -4,9 +4,7 @@ import {
   cutoverTenantStorageMigration,
   fetchTenantConfig,
   fetchTenantStorageMigration,
-  fetchTenantStorageMigrations,
   requestTenantStorageMigration,
-  rotateByoStorageCredentials,
   testByoStorage,
   updateTenantConfig,
 } from "./tenant-config-api";
@@ -125,51 +123,6 @@ describe("tenant-config-api", () => {
     });
   });
 
-  it("rotates BYO storage credentials through the admin endpoint", async () => {
-    const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(
-      Response.json({
-        credentials: {
-          credentials_vault_path: "tenants/org-1/byo-storage/s3",
-          rotated: true,
-        },
-        health: {
-          status: "healthy",
-          checked_at: "2026-05-24T09:00:00.000Z",
-          message: "Tenant object storage write/read/delete probe succeeded.",
-          managedBy: "byo",
-          prefix: "helix/",
-        },
-      }),
-    );
-
-    const result = await rotateByoStorageCredentials(
-      {
-        credentials: {
-          accessKeyId: "rotated-access-key",
-          secretAccessKey: "rotated-secret-key",
-          sessionToken: "rotated-session-token",
-        },
-        reason: "admin settings update: byo storage credentials",
-      },
-      fetchImpl,
-    );
-
-    expect(result.credentials.rotated).toBe(true);
-    expect(result.health.status).toBe("healthy");
-    expect(fetchImpl).toHaveBeenCalledWith("/api/admin/tenant-config/byo-storage/credentials", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        credentials: {
-          accessKeyId: "rotated-access-key",
-          secretAccessKey: "rotated-secret-key",
-          sessionToken: "rotated-session-token",
-        },
-        reason: "admin settings update: byo storage credentials",
-      }),
-    });
-  });
-
   it("requests tenant storage migration jobs through the admin endpoint", async () => {
     const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(Response.json(migrationPayload));
 
@@ -221,34 +174,6 @@ describe("tenant-config-api", () => {
     );
   });
 
-  it("fetches tenant storage migration history", async () => {
-    const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(
-      Response.json({
-        migrations: [
-          migrationPayload.migration,
-          {
-            ...migrationPayload.migration,
-            id: "6f0951a7-8e65-4634-a6a4-af2f2b4797db",
-            status: "dry_run",
-          },
-        ],
-        nextCursor: "cursor-2",
-      }),
-    );
-
-    const result = await fetchTenantStorageMigrations(
-      { limit: 10, cursor: " cursor-1 " },
-      fetchImpl,
-    );
-
-    expect(result.migrations).toHaveLength(2);
-    expect(result.nextCursor).toBe("cursor-2");
-    expect(fetchImpl).toHaveBeenCalledWith(
-      "/api/admin/tenant-config/byo-storage/migrations?limit=10&cursor=cursor-1",
-      { method: "GET" },
-    );
-  });
-
   it("cuts over tenant storage migration jobs through the admin endpoint", async () => {
     const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(
       Response.json({
@@ -288,26 +213,5 @@ describe("tenant-config-api", () => {
     const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(Response.json({ tenantConfig: {} }));
 
     await expect(fetchTenantConfig(fetchImpl)).rejects.toThrow("malformed response");
-  });
-
-  it("rejects malformed credential rotation responses at the trust boundary", async () => {
-    const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(
-      Response.json({
-        credentials: { credentials_vault_path: "tenants/org-1/byo-storage/s3" },
-        health: { status: "healthy" },
-      }),
-    );
-
-    await expect(
-      rotateByoStorageCredentials(
-        {
-          credentials: {
-            accessKeyId: "rotated-access-key",
-            secretAccessKey: "rotated-secret-key",
-          },
-        },
-        fetchImpl,
-      ),
-    ).rejects.toThrow("malformed response");
   });
 });

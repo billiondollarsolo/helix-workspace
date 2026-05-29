@@ -13,10 +13,14 @@ export interface PlaywrightChromiumModule {
         readonly viewport: { readonly width: number; readonly height: number };
         readonly deviceScaleFactor: number;
       }): Promise<{
+        route(
+          url: string,
+          handler: (route: { abort(): Promise<void> }) => Promise<void> | void,
+        ): Promise<unknown>;
         setContent(
           html: string,
           options: {
-            readonly waitUntil: "networkidle";
+            readonly waitUntil: "domcontentloaded";
             readonly timeout: number;
           },
         ): Promise<void>;
@@ -53,8 +57,18 @@ export function createHeadlessChromiumPdfRenderer(
           viewport: { width: 816, height: 1056 },
           deviceScaleFactor: 1,
         });
+        // SSRF defense (CRITICAL-6): unconditionally abort every subresource
+        // request issued by the rendered HTML. Combined with the HTML
+        // sanitizer in sanitize-html.ts, this prevents a malicious document
+        // from causing Chromium to fetch arbitrary URLs from inside our
+        // network perimeter. Do not add an allowlist — full block.
+        await page.route("**", (route) => route.abort());
         await page.setContent(input.html, {
-          waitUntil: "networkidle",
+          // We control the HTML and have blocked all subresource fetches, so
+          // we never need to wait for "networkidle" — DOM construction is
+          // sufficient. Waiting for networkidle here would also let a doc
+          // hold the export open until the per-request timeout.
+          waitUntil: "domcontentloaded",
           timeout: options.timeoutMs ?? 15_000,
         });
         const pdf = await page.pdf({

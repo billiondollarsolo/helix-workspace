@@ -1,4 +1,9 @@
 import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { setSpanTenantAttributes, type TenantSpanContext } from "./tenant-span.js";
+
+export interface JobSpanOptions {
+  readonly tenant?: TenantSpanContext | undefined;
+}
 
 /**
  * Synthesizes a `job.<id>` span for one run of a background worker (P2-6).
@@ -14,11 +19,15 @@ import { SpanStatusCode, trace } from "@opentelemetry/api";
 export async function withJobSpan<T>(
   jobId: string,
   run: () => Promise<T>,
+  options: JobSpanOptions = {},
 ): Promise<T> {
   return trace.getTracer("helix.jobs").startActiveSpan(
     `job.${jobId}`,
     { attributes: { "helix.job.id": jobId } },
     async (span) => {
+      if (options.tenant !== undefined) {
+        setSpanTenantAttributes(span, options.tenant);
+      }
       try {
         return await run();
       } catch (error) {

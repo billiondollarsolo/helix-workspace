@@ -17,3 +17,4 @@ spec:
       protocol: TCP
   selector:
     {{- include "helix.selectorLabels" . | nindent 4 }}
+    helix.io/role: default

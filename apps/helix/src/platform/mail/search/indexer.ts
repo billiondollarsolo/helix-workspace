@@ -62,6 +62,12 @@ export function mailRecordToIndexDocument(record: MailSearchRecord): IndexDocume
       classification: record.classification,
       sentAt: record.sentAt,
       metadata: record.metadata,
+      // RAG visibility — mail is personal-by-default. Only the mailbox owner
+      // can retrieve their mail via the assistant. Recipients indexing their
+      // OWN copies is a follow-up (would need per-recipient indexing).
+      ...(record.ownerActorId === null
+        ? { ragVisibility: "org" }
+        : { ragVisibility: "private", ragOwnerActorId: record.ownerActorId }),
     }),
     updatedAt: record.updatedAt ?? record.sentAt,
   };

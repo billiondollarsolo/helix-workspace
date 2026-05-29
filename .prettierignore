@@ -4,3 +4,4 @@ dist
 .tanstack
 coverage
 data
+.github/CODEOWNERS

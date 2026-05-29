@@ -4,15 +4,12 @@ import { describe, expect, it } from "vitest";
 import type { StorageObject } from "@helix/sdk-types";
 import {
   createTenantStorageMigrationPairResolver,
-  createTenantStorageMigrationWriteCoordinator,
   listTenantStorageMigrationObjects,
   PostgresTenantStorageMigrationJobStore,
   runTenantStorageMigration,
   TenantStorageMigrationWorker,
   type TenantStorageMigrationJobRecord,
   type TenantStorageMigrationJobStore,
-  type TenantStorageMigrationMetrics,
-  type TenantStorageMigrationObservabilitySnapshot,
 } from "./migration.js";
 import type { TenantStorageClient } from "./tenant-resolver.js";
 
@@ -288,167 +285,6 @@ describe("PostgresTenantStorageMigrationJobStore", () => {
     expect(recording.calls[0]?.text).toContain("source_storage");
     expect(recording.calls[0]?.text).toContain("target_storage");
   });
-
-  it("builds low-cardinality observability snapshots for active and stalled jobs", async () => {
-    const recording = createRecordingSql([
-      [
-        { target: "byo", status: "running", count: "2" },
-        { target: "helix-default", status: "failed", count: 1 },
-      ],
-      [{ target: "byo", count: "1", oldest_age_seconds: "2400" }],
-    ]);
-    const store = new PostgresTenantStorageMigrationJobStore(recording.sql);
-
-    const snapshot = await store.getObservabilitySnapshot({
-      stalledBefore: new Date("2026-05-24T10:00:00.000Z"),
-      now: new Date("2026-05-24T10:40:00.000Z"),
-    });
-
-    expect(snapshot).toEqual({
-      activeJobs: [
-        { target: "byo", status: "running", count: 2 },
-        { target: "helix-default", status: "failed", count: 1 },
-      ],
-      stalledJobs: [{ target: "byo", count: 1, oldestAgeSeconds: 2400 }],
-    });
-    expect(recording.calls[0]?.text).toContain("group by target, status");
-    expect(recording.calls[1]?.text).toContain("updated_at < ?");
-  });
-
-  it("lists recent migration jobs for one org newest first", async () => {
-    const recording = createRecordingSql([
-      [
-        jobRow({
-          id: "job-new",
-          org_id: "org-1",
-          status: "running",
-          created_at: new Date("2026-05-24T10:05:00.000Z"),
-        }),
-        jobRow({
-          id: "job-old",
-          org_id: "org-1",
-          status: "dry_run",
-          dry_run: true,
-          created_at: new Date("2026-05-24T10:00:00.000Z"),
-        }),
-      ],
-    ]);
-    const store = new PostgresTenantStorageMigrationJobStore(recording.sql);
-
-    const cursorCreatedAt = new Date("2026-05-24T10:10:00.000Z");
-    const jobs = await store.listForOrg({
-      orgId: "org-1",
-      limit: 25,
-      cursor: {
-        createdAt: cursorCreatedAt,
-        id: "99999999-9999-4999-8999-999999999999",
-      },
-      target: "byo",
-      status: "running",
-    });
-
-    expect(jobs.map((job) => job.id)).toEqual(["job-new", "job-old"]);
-    expect(recording.calls[0]?.text).toContain("where org_id = ?");
-    expect(recording.calls[0]?.text).toContain("(created_at, id) <");
-    expect(recording.calls[0]?.text).toContain("target = ?");
-    expect(recording.calls[0]?.text).toContain("status = ?");
-    expect(recording.calls[0]?.text).toContain("order by created_at desc, id desc");
-    expect(recording.calls[0]?.text).toContain("limit ?");
-    expect(recording.calls[0]?.values).toEqual([
-      "org-1",
-      cursorCreatedAt,
-      cursorCreatedAt,
-      "99999999-9999-4999-8999-999999999999",
-      "byo",
-      "byo",
-      "running",
-      "running",
-      25,
-    ]);
-  });
-
-  it("finds active live migration jobs for write coordination", async () => {
-    const currentStorage = { managedBy: "helix-default" as const, storage: null };
-    const recording = createRecordingSql([
-      [
-        jobRow({
-          id: "job-live",
-          status: "running",
-          dry_run: false,
-          source_storage: currentStorage,
-          target_storage: {
-            managedBy: "byo",
-            storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
-          },
-        }),
-      ],
-    ]);
-    const store = new PostgresTenantStorageMigrationJobStore(recording.sql);
-
-    const job = await store.findLiveWriteTargetForOrg({
-      orgId: "org-1",
-      currentStorage,
-    });
-
-    expect(job).toMatchObject({
-      id: "job-live",
-      status: "running",
-      dryRun: false,
-      sourceStorage: currentStorage,
-      targetStorage: {
-        managedBy: "byo",
-        storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
-      },
-    });
-    expect(recording.calls[0]?.text).toContain("dry_run = false");
-    expect(recording.calls[0]?.text).toContain(
-      "status in ('queued', 'running', 'failed', 'succeeded')",
-    );
-    expect(recording.calls[0]?.text).toContain("source_storage = ?");
-    expect(recording.calls[0]?.text).toContain("target_storage is not null");
-    expect(recording.calls[0]?.values).toContain("org-1");
-    expect(recording.calls[0]?.values).toContainEqual(currentStorage);
-  });
-});
-
-describe("createTenantStorageMigrationWriteCoordinator", () => {
-  it("resolves the target storage snapshot for live migration dual-writes", async () => {
-    const targetStorage = new MemoryStorageClient();
-    const currentStorage = { managedBy: "helix-default" as const, storage: null };
-    const coordinator = createTenantStorageMigrationWriteCoordinator({
-      store: {
-        async findLiveWriteTargetForOrg(input) {
-          expect(input).toEqual({ orgId: "org-1", currentStorage });
-          return migrationJob({
-            id: "job-1",
-            status: "running",
-            dryRun: false,
-            sourceStorage: currentStorage,
-            targetStorage: {
-              managedBy: "byo",
-              storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
-            },
-          });
-        },
-      },
-      snapshotStorageResolver: ({ orgId, state }) => {
-        expect(orgId).toBe("org-1");
-        expect(state).toEqual({
-          managedBy: "byo",
-          storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
-        });
-        return { client: targetStorage, managedBy: "byo", prefix: "" };
-      },
-    });
-
-    await expect(
-      coordinator.resolveWriteTarget({ orgId: "org-1", currentStorage }),
-    ).resolves.toEqual({
-      jobId: "job-1",
-      target: "byo",
-      client: targetStorage,
-    });
-  });
 });
 
 describe("TenantStorageMigrationWorker", () => {
@@ -531,85 +367,6 @@ describe("TenantStorageMigrationWorker", () => {
       failed: 1,
     });
     expect(store.failed).toEqual([{ id: "job-1", error: "BYO storage config is not ready." }]);
-  });
-
-  it("records migration job and stalled-job metrics after worker runs", async () => {
-    const store = new InMemoryTenantStorageMigrationJobStore(
-      [
-        migrationJob({
-          id: "job-1",
-          orgId: "org-1",
-          target: "byo",
-          sourceStorage: { managedBy: "helix-default", storage: null },
-          targetStorage: {
-            managedBy: "byo",
-            storage: { kind: "byo", provider: "aws-s3", bucket: "customer-bucket" },
-          },
-        }),
-      ],
-      {
-        activeJobs: [{ target: "byo", status: "failed", count: 1 }],
-        stalledJobs: [{ target: "byo", count: 1, oldestAgeSeconds: 1_900 }],
-      },
-    );
-    const metrics = new RecordingTenantStorageMigrationMetrics();
-    const worker = new TenantStorageMigrationWorker({
-      store,
-      metrics,
-      now: () => new Date("2026-05-24T10:40:00.000Z"),
-      stalledAfterMs: 30 * 60_000,
-      listObjects: () => [],
-      resolveStoragePair: () => {
-        throw new Error("BYO storage config is not ready.");
-      },
-    });
-
-    await worker.runOnce();
-
-    expect(metrics.jobs).toEqual([{ target: "byo", status: "failed" }]);
-    expect(metrics.snapshots).toEqual([
-      {
-        activeJobs: [{ target: "byo", status: "failed", count: 1 }],
-        stalledJobs: [{ target: "byo", count: 1, oldestAgeSeconds: 1_900 }],
-      },
-    ]);
-    expect(store.stalledBeforeValues).toEqual([new Date("2026-05-24T10:10:00.000Z")]);
-  });
-
-  it("does not fail completed migration work when metrics snapshot refresh fails", async () => {
-    const store = new InMemoryTenantStorageMigrationJobStore(
-      [
-        migrationJob({
-          id: "job-1",
-          orgId: "org-1",
-          target: "byo",
-          dryRun: true,
-        }),
-      ],
-      new Error("metrics snapshot unavailable"),
-    );
-    const errors: unknown[] = [];
-    const worker = new TenantStorageMigrationWorker({
-      store,
-      metrics: new RecordingTenantStorageMigrationMetrics(),
-      listObjects: () => [{ storageKey: "drive/report.txt" }],
-      resolveStoragePair: () => {
-        throw new Error("storage pair should not be resolved for dry-run jobs");
-      },
-      onError: (error) => {
-        errors.push(error);
-      },
-    });
-
-    await expect(worker.runOnce()).resolves.toEqual({
-      claimed: 1,
-      succeeded: 0,
-      dryRun: 1,
-      failed: 0,
-    });
-    expect(store.completed).toHaveLength(1);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toEqual(new Error("metrics snapshot unavailable"));
   });
 
   it("fails live jobs before copy when staged storage snapshots are missing", async () => {
@@ -985,19 +742,12 @@ function migrationJob(
 
 class InMemoryTenantStorageMigrationJobStore implements Pick<
   TenantStorageMigrationJobStore,
-  "claimPending" | "getObservabilitySnapshot" | "markCompleted" | "markFailed"
+  "claimPending" | "markCompleted" | "markFailed"
 > {
   readonly completed: Parameters<TenantStorageMigrationJobStore["markCompleted"]>[0][] = [];
   readonly failed: Parameters<TenantStorageMigrationJobStore["markFailed"]>[0][] = [];
-  readonly stalledBeforeValues: Date[] = [];
 
-  constructor(
-    private readonly jobs: TenantStorageMigrationJobRecord[],
-    private readonly snapshot: Error | TenantStorageMigrationObservabilitySnapshot = {
-      activeJobs: [],
-      stalledJobs: [],
-    },
-  ) {}
+  constructor(private readonly jobs: TenantStorageMigrationJobRecord[]) {}
 
   async claimPending(): Promise<readonly TenantStorageMigrationJobRecord[]> {
     return this.jobs.splice(0, this.jobs.length).map((job) => ({
@@ -1029,33 +779,5 @@ class InMemoryTenantStorageMigrationJobStore implements Pick<
   ): Promise<TenantStorageMigrationJobRecord> {
     this.failed.push(input);
     return migrationJob({ id: input.id, status: "failed", lastError: input.error });
-  }
-
-  async getObservabilitySnapshot(input: {
-    readonly stalledBefore: Date;
-  }): Promise<TenantStorageMigrationObservabilitySnapshot> {
-    this.stalledBeforeValues.push(input.stalledBefore);
-    if (this.snapshot instanceof Error) {
-      throw this.snapshot;
-    }
-    return this.snapshot;
-  }
-}
-
-class RecordingTenantStorageMigrationMetrics implements TenantStorageMigrationMetrics {
-  readonly jobs: Parameters<TenantStorageMigrationMetrics["recordTenantStorageMigrationJob"]>[0][] =
-    [];
-  readonly snapshots: TenantStorageMigrationObservabilitySnapshot[] = [];
-
-  recordTenantStorageMigrationJob(
-    input: Parameters<TenantStorageMigrationMetrics["recordTenantStorageMigrationJob"]>[0],
-  ): void {
-    this.jobs.push(input);
-  }
-
-  setTenantStorageMigrationObservability(
-    snapshot: TenantStorageMigrationObservabilitySnapshot,
-  ): void {
-    this.snapshots.push(snapshot);
   }
 }

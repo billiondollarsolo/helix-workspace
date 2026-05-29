@@ -36,6 +36,10 @@ export interface SlidesApiSlide {
   readonly layout: SlideLayout;
   readonly content: SlideContent;
   readonly speakerNotes: string;
+  /** Per-slide CAS counter; clients send this back as `expectedRevision` on
+   * `update-slide` / `delete-slide` so concurrent edits to the same slide
+   * fail fast instead of silently last-write-winning. */
+  readonly revision?: number;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -59,10 +63,23 @@ export interface SlidesExportResult {
 export interface SlidesImportResult extends SlidesApiDeck {
   readonly slides: readonly SlidesApiSlide[];
   readonly import: {
-    readonly sourceFormat: "pptx";
+    readonly sourceFormat: string;
     readonly slideCount: number;
     readonly fidelity: string;
   };
+}
+
+export interface SlidesVersion {
+  readonly id: string;
+  readonly orgId?: string;
+  readonly deckId: string;
+  readonly versionNumber: number;
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly sha256: string;
+  readonly metadata: Record<string, unknown>;
+  readonly createdByActorId: string | null;
+  readonly createdAt: string;
 }
 
 export interface SlidesDriveComment {
@@ -139,6 +156,37 @@ export async function exportSlidesDeck(
   return callSlidesTool<SlidesExportResult>(
     "slides.export",
     { deckId: input.deckId, format: input.format ?? "pptx" },
+    fetchImpl,
+  );
+}
+
+/** `slides.version.list` — list saved snapshot versions for a native deck. */
+export async function listSlidesVersions(
+  input: { readonly deckId: string; readonly limit?: number },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<readonly SlidesVersion[]> {
+  const output = await callSlidesTool<{ readonly versions?: readonly SlidesVersion[] }>(
+    "slides.version.list",
+    {
+      deckId: input.deckId,
+      limit: input.limit ?? 25,
+    },
+    fetchImpl,
+  );
+  return output.versions ?? [];
+}
+
+/** `slides.version.restore` — restore a native deck from a saved snapshot version. */
+export async function restoreSlidesVersion(
+  input: { readonly deckId: string; readonly versionId: string },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<SlidesApiDeckDetail> {
+  return callSlidesTool<SlidesApiDeckDetail>(
+    "slides.version.restore",
+    {
+      deckId: input.deckId,
+      versionId: input.versionId,
+    },
     fetchImpl,
   );
 }
@@ -243,6 +291,28 @@ export async function createSlidesDeck(
   return callSlidesTool<SlidesApiDeck>(
     "slides.deck.create",
     { title: input.title, metadata: input.metadata ?? {} },
+    fetchImpl,
+  );
+}
+
+/** `slides.deck.copy` — copy a native deck with all slide content. */
+export async function copySlidesDeck(
+  input: {
+    readonly deckId: string;
+    readonly title?: string;
+    readonly folderId?: string | null;
+    readonly metadata?: Record<string, unknown>;
+  },
+  fetchImpl: SlidesApiFetch = authenticatedFetch,
+): Promise<SlidesApiDeckDetail> {
+  return callSlidesTool<SlidesApiDeckDetail>(
+    "slides.deck.copy",
+    {
+      deckId: input.deckId,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+      metadata: input.metadata ?? {},
+    },
     fetchImpl,
   );
 }

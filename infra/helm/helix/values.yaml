@@ -119,6 +119,15 @@ podDisruptionBudget:
   enabled: true
   minAvailable: 1
 
+monitoring:
+  prometheusRule:
+    enabled: false
+    # Requires Prometheus Operator CRDs (monitoring.coreos.com/v1).
+    namespace: ""
+    labels: {}
+    annotations: {}
+    runbookUrl: docs/specs/05-operations/runbooks/signup-activation-slo-breach.md
+
 # Confirmed Helix architecture: core apps are toggleable platform modules that
 # ship in ONE image. The primary Deployment above runs the default role (all
 # enabled apps). `roleDeployments` optionally adds extra Deployments of the
@@ -192,6 +201,8 @@ external:
     namespace: ""
     authPath: kubernetes
     role: helix
+    byoStorageMount: secret
+    byoStorageKvVersion: "2"
   siem:
     enabled: false
     endpoint: https://siem.example.internal/ingest
@@ -214,24 +225,6 @@ env: []
 
 extraVolumes: []
 extraVolumeMounts: []
-
-monitoring:
-  tenantStorageMigrationPrometheusRule:
-    enabled: false
-    namespace: ""
-    labels: {}
-    annotations: {}
-    runbookUrl: docs/specs/05-operations/runbooks/tenant-storage-migration.md
-    stalledFor: 10m
-    failedWindow: 15m
-  tenantExportPrometheusRule:
-    enabled: false
-    namespace: ""
-    labels: {}
-    annotations: {}
-    runbookUrl: docs/specs/05-operations/runbooks/tenant-export-too-large.md
-    stalledFor: 10m
-    failedWindow: 15m
 
 networkPolicy:
   enabled: true

@@ -6,13 +6,17 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DriveShell } from "./drive-shell";
 import type { DriveApiEntry } from "./api";
+import { HELIX_DRIVE_ITEM_DRAG_MIME } from "./drag-payload";
 
 // Mock @tanstack/react-router so DriveShell can call router hooks without a router context.
-const navigateMock = vi.fn();
-let routerSearch: Record<string, unknown> = {};
+const routerMocks = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  search: {} as Record<string, unknown>,
+}));
+const navigateMock = routerMocks.navigate;
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
-  useSearch: () => routerSearch,
+  useSearch: () => routerMocks.search,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -23,22 +27,20 @@ vi.mock("@tanstack/react-router", () => ({
 function firstFileCard(container: HTMLElement): HTMLButtonElement | null {
   return (
     Array.from(container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")).find(
-      (button) => !button.classList.contains("btn"),
+      (button) => !button.classList.contains("btn") && !button.classList.contains("icon-btn"),
     ) ?? null
   );
 }
 
-function setInputValue(input: HTMLInputElement, value: string): void {
-  const descriptor = Object.getOwnPropertyDescriptor(
-    Object.getPrototypeOf(input) as HTMLInputElement,
-    "value",
+function fileButton(container: HTMLElement, name: string): HTMLButtonElement | null {
+  return (
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")).find(
+      (button) =>
+        !button.classList.contains("btn") &&
+        !button.classList.contains("icon-btn") &&
+        button.textContent?.includes(name),
+    ) ?? null
   );
-  if (descriptor?.set !== undefined) {
-    Reflect.apply(descriptor.set, input, [value]);
-  } else {
-    input.value = value;
-  }
-  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function entry(
@@ -56,6 +58,13 @@ function entry(
 
 const ROOT_ENTRIES: readonly DriveApiEntry[] = [
   entry({ id: "folder-eng", type: "folder", name: "Engineering" }),
+  entry({
+    id: "file-specs",
+    type: "file",
+    name: "Specs.pdf",
+    mimeType: "application/pdf",
+    byteSize: 1024,
+  }),
   entry({
     id: "file-roadmap",
     type: "file",
@@ -91,7 +100,7 @@ describe("DriveShell", () => {
 
   beforeEach(() => {
     navigateMock.mockClear();
-    routerSearch = {};
+    routerMocks.search = {};
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -116,7 +125,16 @@ describe("DriveShell", () => {
       }
 
       if (url === "/api/auth/get-session") {
-        return Promise.resolve(Response.json({}));
+        return Promise.resolve(
+          Response.json({
+            user: {
+              id: "session-user",
+              email: "owner@helix.local",
+              name: "Owner One",
+              actorId: "owner-1",
+            },
+          }),
+        );
       }
       if (url === "/api/tools/drive.list") {
         const folderId = (body as { folderId?: string | null }).folderId ?? null;
@@ -124,29 +142,63 @@ describe("DriveShell", () => {
         return Promise.resolve(Response.json({ entries }));
       }
       if (url === "/api/tools/drive.search") {
+        return Promise.resolve(Response.json({ hits: [] }));
+      }
+      if (url === "/api/tools/drive.trash") {
+        return Promise.resolve(Response.json({ id: "file-roadmap", deletedAt: "now" }));
+      }
+      if (url === "/api/tools/drive.access.list") {
         return Promise.resolve(
           Response.json({
-            hits: [
+            grants: [
               {
-                objectId: "file-roadmap",
-                name: "Roadmap.docx",
-                ownerActorId: "owner-1",
-                ownerDisplayName: "Avery Park",
-                app: null,
-                mimeType: "application/msword",
-                byteSize: 2048,
-                sha256: null,
-                folderId: null,
-                preview: "Roadmap.docx application/msword",
-                metadata: {},
+                actorId: "66666666-6666-4666-8666-666666666666",
+                role: "reader",
+                displayName: "Maya Chen",
+                email: "maya@helix.local",
+                grantedByActorId: "owner-1",
+                expiresAt: null,
+                createdAt: "2026-05-20T12:00:00.000Z",
                 updatedAt: "2026-05-20T12:00:00.000Z",
               },
             ],
           }),
         );
       }
-      if (url === "/api/tools/drive.trash") {
-        return Promise.resolve(Response.json({ id: "file-roadmap", deletedAt: "now" }));
+      if (url === "/api/tools/drive.access.remove") {
+        return Promise.resolve(
+          Response.json({
+            objectId: (body as { objectId?: string }).objectId,
+            actorId: (body as { actorId?: string }).actorId,
+            removed: true,
+          }),
+        );
+      }
+      if (url === "/api/tools/drive.access.update") {
+        return Promise.resolve(
+          Response.json({
+            objectId: (body as { objectId?: string }).objectId,
+            actorId: (body as { actorId?: string }).actorId,
+            grant: {
+              actorId: (body as { actorId?: string }).actorId,
+              role: (body as { role?: string }).role,
+              displayName: "Maya Chen",
+              email: "maya@helix.local",
+              grantedByActorId: "owner-1",
+              expiresAt: null,
+              createdAt: "2026-05-20T12:00:00.000Z",
+              updatedAt: "2026-05-20T12:01:00.000Z",
+            },
+          }),
+        );
+      }
+      if (url === "/api/tools/drive.star.set") {
+        return Promise.resolve(
+          Response.json({
+            id: (body as { objectId?: string }).objectId,
+            metadata: { starred: (body as { starred?: boolean }).starred },
+          }),
+        );
       }
       return Promise.resolve(Response.json({}));
     });
@@ -182,6 +234,42 @@ describe("DriveShell", () => {
     }
   }
 
+  function clickControl(label: string): void {
+    const target = [...container.querySelectorAll<HTMLElement>("button,[role='button']")].find(
+      (control) =>
+        control.textContent?.includes(label) === true ||
+        control.getAttribute("aria-label")?.includes(label) === true,
+    );
+    if (target === undefined) {
+      throw new Error(`Missing control: ${label}`);
+    }
+    act(() => {
+      target.click();
+    });
+  }
+
+  function setInputValue(input: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    if (setter === undefined) {
+      throw new Error("native input value setter unavailable");
+    }
+    act(() => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function setSelectValue(select: HTMLSelectElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+    if (setter === undefined) {
+      throw new Error("native select value setter unavailable");
+    }
+    act(() => {
+      setter.call(select, value);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
   it("renders backend folders and files from drive.list", async () => {
     render();
     await settle();
@@ -190,6 +278,76 @@ describe("DriveShell", () => {
     expect(text).toContain("Engineering");
     expect(text).toContain("Roadmap.docx");
     expect(toolCalls.some((call) => call.url === "/api/tools/drive.list")).toBe(true);
+  });
+
+  it("uses the Drive URL query to run backend search instead of the folder list", async () => {
+    routerMocks.search = { q: "budget" };
+
+    render();
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.search")?.body).toEqual({
+      query: "budget",
+      folderId: null,
+      limit: 51,
+    });
+    expect(toolCalls.some((call) => call.url === "/api/tools/drive.list")).toBe(false);
+  });
+
+  it("lets large Drive folders request the next backend page size", async () => {
+    const largeEntries = Array.from({ length: 101 }, (_, index) =>
+      entry({
+        id: `file-${String(index).padStart(3, "0")}`,
+        type: "file",
+        name: `Large file ${String(index).padStart(3, "0")}.pdf`,
+        mimeType: "application/pdf",
+        byteSize: 1024,
+      }),
+    );
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      if (url !== "/api/auth/get-session") {
+        toolCalls.push({ url, body });
+      }
+      if (url === "/api/auth/get-session") {
+        return Promise.resolve(
+          Response.json({
+            user: { id: "session-user", email: "owner@helix.local", name: "Owner One", actorId: "owner-1" },
+          }),
+        );
+      }
+      if (url === "/api/tools/drive.list") {
+        return Promise.resolve(Response.json({ entries: largeEntries }));
+      }
+      return Promise.resolve(Response.json({}));
+    });
+
+    render();
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.list")?.body).toMatchObject({
+      limit: 101,
+    });
+    clickControl("Show more");
+    await settle();
+
+    expect(
+      toolCalls.filter((call) => call.url === "/api/tools/drive.list").at(-1)?.body,
+    ).toMatchObject({ limit: 201 });
+  });
+
+  it("stars files through the Drive star tool", async () => {
+    render();
+    await settle();
+
+    clickControl("Star Specs.pdf");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.star.set")?.body).toEqual({
+      objectId: "file-specs",
+      starred: true,
+    });
   });
 
   it("navigates into a folder and updates the breadcrumb", async () => {
@@ -247,38 +405,227 @@ describe("DriveShell", () => {
     expect(panel?.textContent ?? "").toContain("Owner");
   });
 
-  it("shares a file by email instead of requiring a raw actor id", async () => {
+  it("shares from the details panel by email/name refs and actor ids", async () => {
     render();
     await settle();
 
+    const fileCard = firstFileCard(container);
+    expect(fileCard).not.toBeNull();
     act(() => {
-      firstFileCard(container)?.click();
+      fileCard?.click();
     });
-    const shareInput = container.querySelector<HTMLInputElement>(
-      'input[placeholder="Email, name, or actor ID"]',
+    await settle();
+
+    const input = container.querySelector<HTMLInputElement>(
+      'aside[aria-label="File details"] input[placeholder="Email, name, or actor ID"]',
     );
-    expect(shareInput).not.toBeNull();
-    act(() => {
-      if (shareInput !== null) {
-        setInputValue(shareInput, "maya@helix.local");
-      }
-    });
-    const shareButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent?.trim() === "Share",
+    expect(input).not.toBeNull();
+    setInputValue(
+      input!,
+      "maya@helix.local 66666666-6666-4666-8666-666666666666 Maya",
     );
+    const shareRole = container.querySelector<HTMLSelectElement>(
+      'aside[aria-label="File details"] select[aria-label="Share role"]',
+    );
+    expect(shareRole).not.toBeNull();
+    setSelectValue(shareRole!, "commenter");
+    const shareButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('aside[aria-label="File details"] button'),
+    ).find((button) => button.textContent?.trim() === "Share");
     expect(shareButton).not.toBeNull();
     act(() => {
       shareButton?.click();
     });
     await settle();
 
-    const shareCall = toolCalls.find((call) => call.url === "/api/tools/drive.share");
-    expect(shareCall?.body).toMatchObject({
-      objectId: "file-roadmap",
-      actorIds: [],
-      actorRefs: ["maya@helix.local"],
-      role: "reader",
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.share")?.body).toEqual({
+      objectId: "file-specs",
+      actorIds: ["66666666-6666-4666-8666-666666666666"],
+      actorRefs: ["maya@helix.local", "Maya"],
+      role: "commenter",
+      expiresAt: null,
     });
+    expect(container.textContent ?? "").toContain("People with access");
+    expect(container.textContent ?? "").toContain("Maya Chen");
+  });
+
+  it("removes Drive access grants from the details panel", async () => {
+    render();
+    await settle();
+
+    const fileCard = firstFileCard(container);
+    expect(fileCard).not.toBeNull();
+    act(() => {
+      fileCard?.click();
+    });
+    await settle();
+
+    clickControl("Remove access for Maya Chen");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.access.remove")?.body).toEqual({
+      objectId: "file-specs",
+      actorId: "66666666-6666-4666-8666-666666666666",
+    });
+  });
+
+  it("updates Drive access grant roles from the details panel", async () => {
+    render();
+    await settle();
+
+    const fileCard = firstFileCard(container);
+    expect(fileCard).not.toBeNull();
+    act(() => {
+      fileCard?.click();
+    });
+    await settle();
+
+    const roleSelect = container.querySelector<HTMLSelectElement>(
+      'aside[aria-label="File details"] select[aria-label="Access role for Maya Chen"]',
+    );
+    expect(roleSelect).not.toBeNull();
+    setSelectValue(roleSelect!, "editor");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.access.update")?.body).toEqual({
+      objectId: "file-specs",
+      actorId: "66666666-6666-4666-8666-666666666666",
+      role: "editor",
+      expiresAt: null,
+    });
+  });
+
+  it("makes Drive file cards draggable with internal open payloads", async () => {
+    render();
+    await settle();
+
+    const roadmapCard = fileButton(container, "Roadmap.docx");
+    expect(roadmapCard).not.toBeNull();
+    expect(roadmapCard?.draggable).toBe(true);
+
+    const data = new Map<string, string>();
+    const dataTransfer = {
+      dropEffect: "none",
+      effectAllowed: "uninitialized",
+      setData: vi.fn((type: string, value: string) => {
+        data.set(type, value);
+      }),
+    };
+    act(() => {
+      const event = new Event("dragstart", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+      roadmapCard?.dispatchEvent(event);
+    });
+
+    const expectedHref = new URL("/open/file-roadmap", window.location.origin).href;
+    expect(data.get("text/uri-list")).toBe(expectedHref);
+    expect(data.get("text/plain")).toBe("Roadmap.docx");
+    expect(data.get(HELIX_DRIVE_ITEM_DRAG_MIME)).toContain('"id":"file-roadmap"');
+    expect(data.get(HELIX_DRIVE_ITEM_DRAG_MIME)).toContain(`"href":"${expectedHref}"`);
+  });
+
+  it("asks before creating an editable copy from a foreign document", async () => {
+    render();
+    await settle();
+
+    const docxButton = fileButton(container, "Roadmap.docx");
+    expect(docxButton).not.toBeNull();
+    act(() => {
+      docxButton?.click();
+    });
+    await settle();
+
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(container.querySelector('aside[aria-label="File details"]')).toBeNull();
+    expect(document.body.textContent ?? "").toContain("Create editable copy?");
+    expect(document.body.textContent ?? "").toContain("Roadmap.docx");
+    expect(toolCalls.some((call) => call.url.includes("docs.import"))).toBe(false);
+  });
+
+  it("does not offer Create copy for previewable formats without a native converter", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+      if (url !== "/api/auth/get-session") {
+        toolCalls.push({ url, body });
+      }
+      if (url === "/api/auth/get-session") {
+        return Promise.resolve(Response.json({}));
+      }
+      if (url === "/api/tools/drive.list") {
+        return Promise.resolve(
+          Response.json({
+            entries: [
+              entry({
+                id: "file-planning-odp",
+                type: "file",
+                name: "Planning deck.odp",
+                mimeType: "application/vnd.oasis.opendocument.presentation",
+              }),
+            ],
+          }),
+        );
+      }
+      if (url === "/api/tools/drive.search") {
+        return Promise.resolve(Response.json({ hits: [] }));
+      }
+      return Promise.resolve(Response.json({}));
+    });
+
+    render();
+    await settle();
+
+    const odpButton = fileButton(container, "Planning deck.odp");
+    expect(odpButton).not.toBeNull();
+    act(() => {
+      odpButton?.click();
+    });
+    await settle();
+
+    expect(document.body.textContent ?? "").toContain("Preview/download only");
+    expect(document.body.textContent ?? "").toContain("Planning deck.odp");
+    expect(document.body.textContent ?? "").toContain("editable conversion for ODP");
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).some(
+        (button) => button.textContent?.trim() === "Create copy",
+      ),
+    ).toBe(false);
+    expect(toolCalls.some((call) => call.url.includes("slides.import"))).toBe(false);
+  });
+
+  it("uses the same copy decision from the details panel Open button", async () => {
+    render();
+    await settle();
+
+    const docxButton = fileButton(container, "Roadmap.docx");
+    act(() => {
+      docxButton?.click();
+    });
+    await settle();
+
+    const previewOnly = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.trim() === "Preview only");
+    expect(previewOnly).not.toBeNull();
+    act(() => {
+      previewOnly?.click();
+    });
+    await settle();
+
+    const panel = container.querySelector('aside[aria-label="File details"]');
+    expect(panel).not.toBeNull();
+    const openButton = Array.from(panel?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
+      (button) => button.textContent?.trim() === "Open",
+    );
+    expect(openButton).not.toBeNull();
+    act(() => {
+      openButton?.click();
+    });
+    await settle();
+
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(document.body.textContent ?? "").toContain("Create editable copy?");
+    expect(document.body.textContent ?? "").toContain("Roadmap.docx");
   });
 
   it("trashes a file via the drive.trash tool", async () => {
@@ -313,7 +660,6 @@ describe("DriveShell", () => {
     });
     await settle();
     expect(sharedButton?.getAttribute("aria-current")).toBe("page");
-    // Empty non-folder scopes use cross-folder drive.list so owner/app metadata survives.
     expect(
       toolCalls.some(
         (call) =>
@@ -321,102 +667,6 @@ describe("DriveShell", () => {
           (call.body as { acrossFolders?: boolean }).acrossFolders === true,
       ),
     ).toBe(true);
-  });
-
-  it("uses /drive?q route state to search Drive instead of returning the unfiltered list", async () => {
-    routerSearch = { q: "roadmap" };
-    render();
-    await settle();
-
-    expect(
-      toolCalls.some(
-        (call) =>
-          call.url === "/api/tools/drive.search" &&
-          (call.body as { query?: string }).query === "roadmap",
-      ),
-    ).toBe(true);
-    expect(container.textContent ?? "").toContain("Roadmap.docx");
-  });
-
-  it("renders shared entries using owner metadata from cross-folder drive.list", async () => {
-    routerSearch = { scope: "shared" };
-    fetchMock.mockImplementation((input, init) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-      if (url !== "/api/auth/get-session") {
-        toolCalls.push({ url, body });
-      }
-      if (url === "/api/auth/get-session") {
-        return Promise.resolve(
-          Response.json({
-            user: {
-              id: "user-self",
-              email: "local-admin@helix.local",
-              name: "Local Helix Admin",
-              actorId: "actor-self",
-            },
-          }),
-        );
-      }
-      if (url === "/api/tools/drive.list") {
-        return Promise.resolve(
-          Response.json({
-            entries: [
-              {
-                id: "shared-file",
-                type: "file",
-                name: "Maya Shared Plan.pdf",
-                folderId: null,
-                ownerActorId: "actor-maya",
-                ownerDisplayName: "Maya Sharma",
-                ownerEmail: "maya@helix.local",
-                app: null,
-                mimeType: "application/pdf",
-                byteSize: 1024,
-                sha256: null,
-                metadata: {},
-                deletedAt: null,
-                createdAt: "2026-05-21T12:00:00.000Z",
-                updatedAt: "2026-05-21T12:00:00.000Z",
-              },
-              {
-                id: "owned-file",
-                type: "file",
-                name: "My Private Plan.pdf",
-                folderId: null,
-                ownerActorId: "actor-self",
-                ownerDisplayName: "Local Helix Admin",
-                app: null,
-                mimeType: "application/pdf",
-                byteSize: 1024,
-                sha256: null,
-                metadata: {},
-                deletedAt: null,
-                createdAt: "2026-05-21T12:00:00.000Z",
-                updatedAt: "2026-05-21T12:00:00.000Z",
-              },
-            ],
-          }),
-        );
-      }
-      return Promise.resolve(Response.json({ entries: [] }));
-    });
-
-    render();
-    await settle();
-
-    const text = container.textContent ?? "";
-    expect(text).toContain("Maya Shared Plan.pdf");
-    expect(text).not.toContain("My Private Plan.pdf");
-
-    act(() => {
-      const sharedCard = Array.from(
-        container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]"),
-      ).find((button) => button.textContent?.includes("Maya Shared Plan.pdf"));
-      sharedCard?.click();
-    });
-
-    expect(container.textContent ?? "").toContain("Maya Sharma");
   });
 
   it("surfaces a clean error state when the backend listing errors", async () => {
@@ -812,7 +1062,10 @@ describe("DriveShell", () => {
       digestSpy.mockRestore();
     });
 
-    it("imports dropped CSV files as native spreadsheets and opens Sheets", async () => {
+    it("uploads dropped editable files as raw Drive objects and opens the explicit copy flow", async () => {
+      const digestSpy = vi.spyOn(crypto.subtle, "digest").mockResolvedValue(new ArrayBuffer(32));
+      const uploadedIds = new Map<string, string>();
+
       fetchMock.mockImplementation((input, init) => {
         const url =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -826,19 +1079,47 @@ describe("DriveShell", () => {
         if (url === "/api/tools/drive.list") {
           return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
         }
-        if (url === "/api/tools/sheets.import-csv") {
+        if (url === "/api/tools/drive.upload") {
+          const name = (body as { name?: string }).name ?? "upload.bin";
+          const objectId = `uploaded-${name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/gu, "-")
+            .replace(/^-|-$/gu, "")}`;
+          uploadedIds.set(name, objectId);
           return Promise.resolve(
             Response.json({
-              id: "11111111-1111-4111-8111-111111111111",
-              title: "Renewals",
-              tabs: [],
-              import: {
-                format: "csv",
-                filename: "Renewals.csv",
-                rowCount: 2,
-                columnCount: 2,
-                populatedCellCount: 4,
-              },
+              objectId,
+              orgId: "org-1",
+              ownerActorId: "actor-1",
+              name,
+              folderId: null,
+              storageKey: `drive/${name}`,
+              mimeType: (body as { mimeType?: string }).mimeType ?? "application/octet-stream",
+              byteSize: (body as { byteSize?: number }).byteSize ?? 0,
+              sha256: "a".repeat(64),
+              status: "prepared",
+              uploadUrl: null,
+              uploadHeaders: {},
+              metadata: {},
+              createdAt: "2026-05-21T00:00:00.000Z",
+              updatedAt: "2026-05-21T00:00:00.000Z",
+            }),
+          );
+        }
+        if (url === "/api/tools/drive.finalize") {
+          return Promise.resolve(
+            Response.json({
+              id: "ver-1",
+              orgId: "org-1",
+              objectId: (body as { objectId?: string }).objectId ?? "uploaded",
+              versionNumber: 1,
+              storageKey: (body as { storageKey?: string }).storageKey ?? "drive/uploaded",
+              mimeType: (body as { mimeType?: string }).mimeType ?? "application/octet-stream",
+              byteSize: (body as { byteSize?: number }).byteSize ?? 0,
+              sha256: "a".repeat(64),
+              metadata: {},
+              createdByActorId: "actor-1",
+              createdAt: "2026-05-21T00:00:00.000Z",
             }),
           );
         }
@@ -850,352 +1131,53 @@ describe("DriveShell", () => {
 
       const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
       expect(main).not.toBeNull();
-      const csvFile = new File(["Customer,ARR\nAcme,1200"], "Renewals.csv", { type: "text/csv" });
-      Object.defineProperty(csvFile, "text", {
-        configurable: true,
-        value: () => Promise.resolve("Customer,ARR\nAcme,1200"),
-      });
-      const dt = makeDataTransfer([csvFile]);
 
-      act(() => {
-        fireDragEvent(main!, "drop", dt);
-      });
-      await settle();
+      const files = [
+        new File(["Customer,ARR\nAcme,1200"], "Renewals.csv", { type: "text/csv" }),
+        new File([Uint8Array.from([1, 2, 3])], "Forecast.xlsx", {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+        new File([Uint8Array.from([4, 5, 6])], "Forecast.ods", {
+          type: "application/vnd.oasis.opendocument.spreadsheet",
+        }),
+        new File([Uint8Array.from([4, 5, 6])], "Launch plan.docx", {
+          type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }),
+        new File([Uint8Array.from([7, 8, 9])], "Board narrative.pptx", {
+          type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        }),
+        new File([Uint8Array.from([10, 11, 12])], "Legacy deck.ppt", {
+          type: "application/vnd.ms-powerpoint",
+        }),
+        new File(["Customer\tStage\nAcme\tCommit"], "Pipeline.tsv", {
+          type: "text/tab-separated-values",
+        }),
+      ];
 
-      expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-csv")?.body).toEqual({
-        filename: "Renewals.csv",
-        title: "Renewals",
-        folderId: null,
-        csvText: "Customer,ARR\nAcme,1200",
-        metadata: { source: "web.drive-shell.import-csv" },
-      });
-      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
-      expect(navigateMock).toHaveBeenCalledWith({
-        to: "/sheets",
-        search: { sheet: "11111111-1111-4111-8111-111111111111" },
-      });
-    });
+      for (const file of files) {
+        navigateMock.mockClear();
+        act(() => {
+          fireDragEvent(main!, "drop", makeDataTransfer([file]));
+        });
+        await settle();
 
-    it("imports dropped XLSX files as native spreadsheets and opens Sheets", async () => {
-      fetchMock.mockImplementation((input, init) => {
-        const url =
-          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-        if (url !== "/api/auth/get-session") {
-          toolCalls.push({ url, body });
-        }
-        if (url === "/api/auth/get-session") {
-          return Promise.resolve(Response.json({}));
-        }
-        if (url === "/api/tools/drive.list") {
-          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
-        }
-        if (url === "/api/tools/sheets.import-xlsx") {
-          return Promise.resolve(
-            Response.json({
-              id: "11111111-1111-4111-8111-111111111111",
-              title: "Forecast",
-              tabs: [],
-              import: {
-                format: "xlsx",
-                filename: "Forecast.xlsx",
-                sheetCount: 1,
-                rowCount: 2,
-                columnCount: 2,
-                populatedCellCount: 4,
-              },
-            }),
-          );
-        }
-        return Promise.resolve(Response.json({}));
-      });
+        const objectId = uploadedIds.get(file.name);
+        expect(objectId).toBeDefined();
+        expect(navigateMock).toHaveBeenCalledWith({
+          to: "/open/$objectId",
+          params: { objectId },
+        });
+      }
 
-      render();
-      await settle();
+      expect(toolCalls.some((call) => call.url.includes(".import-"))).toBe(false);
+      expect(toolCalls.filter((call) => call.url === "/api/tools/drive.upload")).toHaveLength(
+        files.length,
+      );
+      expect(toolCalls.filter((call) => call.url === "/api/tools/drive.finalize")).toHaveLength(
+        files.length,
+      );
 
-      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
-      expect(main).not.toBeNull();
-      const bytes = Uint8Array.from([1, 2, 3]);
-      const xlsxFile = new File([bytes], "Forecast.xlsx", {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-      Object.defineProperty(xlsxFile, "arrayBuffer", {
-        configurable: true,
-        value: () => Promise.resolve(Uint8Array.from([1, 2, 3]).buffer),
-      });
-      const dt = makeDataTransfer([xlsxFile]);
-
-      act(() => {
-        fireDragEvent(main!, "drop", dt);
-      });
-      await settle();
-
-      expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-xlsx")?.body).toEqual({
-        filename: "Forecast.xlsx",
-        title: "Forecast",
-        folderId: null,
-        contentBase64: "AQID",
-        metadata: { source: "web.drive-shell.import-xlsx" },
-      });
-      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
-      expect(navigateMock).toHaveBeenCalledWith({
-        to: "/sheets",
-        search: { sheet: "11111111-1111-4111-8111-111111111111" },
-      });
-    });
-
-    it("imports dropped ODS files as native spreadsheets and opens Sheets", async () => {
-      fetchMock.mockImplementation((input, init) => {
-        const url =
-          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-        if (url !== "/api/auth/get-session") {
-          toolCalls.push({ url, body });
-        }
-        if (url === "/api/auth/get-session") {
-          return Promise.resolve(Response.json({}));
-        }
-        if (url === "/api/tools/drive.list") {
-          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
-        }
-        if (url === "/api/tools/sheets.import-ods") {
-          return Promise.resolve(
-            Response.json({
-              id: "11111111-1111-4111-8111-111111111111",
-              title: "Forecast",
-              tabs: [],
-              import: {
-                format: "ods",
-                filename: "Forecast.ods",
-                sheetCount: 1,
-                rowCount: 2,
-                columnCount: 2,
-                populatedCellCount: 4,
-              },
-            }),
-          );
-        }
-        return Promise.resolve(Response.json({}));
-      });
-
-      render();
-      await settle();
-
-      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
-      expect(main).not.toBeNull();
-      const bytes = Uint8Array.from([4, 5, 6]);
-      const odsFile = new File([bytes], "Forecast.ods", {
-        type: "application/vnd.oasis.opendocument.spreadsheet",
-      });
-      Object.defineProperty(odsFile, "arrayBuffer", {
-        configurable: true,
-        value: () => Promise.resolve(Uint8Array.from([4, 5, 6]).buffer),
-      });
-      const dt = makeDataTransfer([odsFile]);
-
-      act(() => {
-        fireDragEvent(main!, "drop", dt);
-      });
-      await settle();
-
-      expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-ods")?.body).toEqual({
-        filename: "Forecast.ods",
-        title: "Forecast",
-        folderId: null,
-        contentBase64: "BAUG",
-        metadata: { source: "web.drive-shell.import-ods" },
-      });
-      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
-      expect(navigateMock).toHaveBeenCalledWith({
-        to: "/sheets",
-        search: { sheet: "11111111-1111-4111-8111-111111111111" },
-      });
-    });
-
-    it("imports dropped DOCX files as native documents and opens Docs", async () => {
-      fetchMock.mockImplementation((input, init) => {
-        const url =
-          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-        if (url !== "/api/auth/get-session") {
-          toolCalls.push({ url, body });
-        }
-        if (url === "/api/auth/get-session") {
-          return Promise.resolve(Response.json({}));
-        }
-        if (url === "/api/tools/drive.list") {
-          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
-        }
-        if (url === "/api/tools/docs.import-docx") {
-          return Promise.resolve(
-            Response.json({
-              id: "99999999-9999-4999-8999-999999999999",
-              title: "Launch plan",
-            }),
-          );
-        }
-        return Promise.resolve(Response.json({}));
-      });
-
-      render();
-      await settle();
-
-      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
-      expect(main).not.toBeNull();
-      const bytes = Uint8Array.from([4, 5, 6]);
-      const docxFile = new File([bytes], "Launch plan.docx", {
-        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      });
-      Object.defineProperty(docxFile, "arrayBuffer", {
-        configurable: true,
-        value: () => Promise.resolve(Uint8Array.from([4, 5, 6]).buffer),
-      });
-      const dt = makeDataTransfer([docxFile]);
-
-      act(() => {
-        fireDragEvent(main!, "drop", dt);
-      });
-      await settle();
-
-      expect(toolCalls.find((call) => call.url === "/api/tools/docs.import-docx")?.body).toEqual({
-        filename: "Launch plan.docx",
-        title: "Launch plan",
-        folderId: null,
-        contentBase64: "BAUG",
-        metadata: { source: "web.drive-shell.import-docx" },
-      });
-      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
-      expect(navigateMock).toHaveBeenCalledWith({
-        to: "/docs/$documentId",
-        params: { documentId: "99999999-9999-4999-8999-999999999999" },
-      });
-    });
-
-    it("imports dropped PPTX files as native presentations and opens Slides", async () => {
-      fetchMock.mockImplementation((input, init) => {
-        const url =
-          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-        if (url !== "/api/auth/get-session") {
-          toolCalls.push({ url, body });
-        }
-        if (url === "/api/auth/get-session") {
-          return Promise.resolve(Response.json({}));
-        }
-        if (url === "/api/tools/drive.list") {
-          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
-        }
-        if (url === "/api/tools/slides.import-pptx") {
-          return Promise.resolve(
-            Response.json({
-              id: "88888888-8888-4888-8888-888888888888",
-              title: "Board narrative",
-              slides: [],
-              import: { sourceFormat: "pptx", slideCount: 2, fidelity: "first-pass-text" },
-            }),
-          );
-        }
-        return Promise.resolve(Response.json({}));
-      });
-
-      render();
-      await settle();
-
-      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
-      expect(main).not.toBeNull();
-      const bytes = Uint8Array.from([7, 8, 9]);
-      const pptxFile = new File([bytes], "Board narrative.pptx", {
-        type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      });
-      Object.defineProperty(pptxFile, "arrayBuffer", {
-        configurable: true,
-        value: () => Promise.resolve(Uint8Array.from([7, 8, 9]).buffer),
-      });
-      const dt = makeDataTransfer([pptxFile]);
-
-      act(() => {
-        fireDragEvent(main!, "drop", dt);
-      });
-      await settle();
-
-      expect(toolCalls.find((call) => call.url === "/api/tools/slides.import-pptx")?.body).toEqual({
-        filename: "Board narrative.pptx",
-        title: "Board narrative",
-        folderId: null,
-        contentBase64: "BwgJ",
-        metadata: { source: "web.drive-shell.import-pptx" },
-      });
-      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
-      expect(navigateMock).toHaveBeenCalledWith({
-        to: "/slides",
-        search: { deck: "88888888-8888-4888-8888-888888888888" },
-      });
-    });
-
-    it("imports dropped TSV files as native spreadsheets and opens Sheets", async () => {
-      fetchMock.mockImplementation((input, init) => {
-        const url =
-          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-        if (url !== "/api/auth/get-session") {
-          toolCalls.push({ url, body });
-        }
-        if (url === "/api/auth/get-session") {
-          return Promise.resolve(Response.json({}));
-        }
-        if (url === "/api/tools/drive.list") {
-          return Promise.resolve(Response.json({ entries: ROOT_ENTRIES }));
-        }
-        if (url === "/api/tools/sheets.import-tsv") {
-          return Promise.resolve(
-            Response.json({
-              id: "11111111-1111-4111-8111-111111111111",
-              title: "Pipeline",
-              tabs: [],
-              import: {
-                format: "tsv",
-                filename: "Pipeline.tsv",
-                rowCount: 2,
-                columnCount: 2,
-                populatedCellCount: 4,
-              },
-            }),
-          );
-        }
-        return Promise.resolve(Response.json({}));
-      });
-
-      render();
-      await settle();
-
-      const main = container.querySelector<HTMLDivElement>('[data-testid="drive-main"]');
-      expect(main).not.toBeNull();
-      const tsvFile = new File(["Customer\tStage\nAcme\tCommit"], "Pipeline.tsv", {
-        type: "text/tab-separated-values",
-      });
-      Object.defineProperty(tsvFile, "text", {
-        configurable: true,
-        value: () => Promise.resolve("Customer\tStage\nAcme\tCommit"),
-      });
-      const dt = makeDataTransfer([tsvFile]);
-
-      act(() => {
-        fireDragEvent(main!, "drop", dt);
-      });
-      await settle();
-
-      expect(toolCalls.find((call) => call.url === "/api/tools/sheets.import-tsv")?.body).toEqual({
-        filename: "Pipeline.tsv",
-        title: "Pipeline",
-        folderId: null,
-        tsvText: "Customer\tStage\nAcme\tCommit",
-        metadata: { source: "web.drive-shell.import-tsv" },
-      });
-      expect(toolCalls.some((call) => call.url === "/api/tools/drive.upload")).toBe(false);
-      expect(navigateMock).toHaveBeenCalledWith({
-        to: "/sheets",
-        search: { sheet: "11111111-1111-4111-8111-111111111111" },
-      });
+      digestSpy.mockRestore();
     });
   });
 

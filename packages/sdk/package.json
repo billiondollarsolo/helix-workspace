@@ -4,20 +4,35 @@
   "type": "module",
   "private": true,
   "dependencies": {
-    "@helix/sdk-types": "workspace:*"
+    "@helix/sdk-types": "workspace:*",
+    "drizzle-orm": "latest"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./db-tenant-scoped": {
+      "types": "./dist/db-tenant-scoped.d.ts",
+      "default": "./dist/db-tenant-scoped.js"
+    },
+    "./feature-flags": {
+      "types": "./dist/feature-flags.d.ts",
+      "default": "./dist/feature-flags.js"
+    },
     "./manifest": {
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
+    },
+    "./metering": {
+      "types": "./dist/metering.d.ts",
+      "default": "./dist/metering.js"
     }
   },
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "lint": "eslint src --max-warnings=0",

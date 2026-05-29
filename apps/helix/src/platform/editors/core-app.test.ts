@@ -38,7 +38,7 @@ describe("resolveEditorsModuleOptions", () => {
           modules: {
             editors: {
               enabled: true,
-              config: { ooxmlFidelityMode: "onlyoffice-compat" },
+              config: { ooxmlFidelityMode: "legacy" },
             },
           },
         },
@@ -47,7 +47,7 @@ describe("resolveEditorsModuleOptions", () => {
     ).toEqual({
       enabled: true,
       enabledRoles: ["editors-export-worker"],
-      ooxmlFidelityMode: "onlyoffice-compat",
+      ooxmlFidelityMode: "legacy",
       registerPlaceholders: true,
     });
   });
@@ -288,6 +288,7 @@ describe("createEditorsRuntimeHost", () => {
             id: input.documentId,
             orgId: input.orgId,
             title: `Doc for ${input.actor.id}`,
+            ownerActorId: input.actor.id,
             editorEngine: "helix-native-document",
             formatVersion: 1,
             updateSeq: 3,
@@ -316,6 +317,7 @@ describe("createEditorsRuntimeHost", () => {
           actorId: request.actor?.id ?? null,
           documentId: session?.id ?? null,
           title: session?.title ?? null,
+          ownerActorId: session?.ownerActorId ?? null,
         });
       },
     });
@@ -330,6 +332,7 @@ describe("createEditorsRuntimeHost", () => {
       actorId: "actor-1",
       documentId: "doc-1",
       title: "Doc for actor-1",
+      ownerActorId: "actor-1",
     });
   });
 });

@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import type { TenantStorageResolver } from "../storage/index.js";
-import { type DriveStorageClient, PostgresDriveStore } from "./store.js";
+import { PostgresDriveStore } from "./store.js";
 
 interface RecordedQuery {
   readonly text: string;
@@ -11,8 +9,8 @@ interface RecordedQuery {
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
+const folderId = "33333333-3333-4333-8333-333333333333";
 const objectId = "44444444-4444-4444-8444-444444444444";
-const now = new Date("2026-05-20T12:00:00.000Z");
 
 function createRecordingSql(responses: readonly (readonly unknown[])[] = []): {
   readonly sql: postgres.Sql;
@@ -23,10 +21,7 @@ function createRecordingSql(responses: readonly (readonly unknown[])[] = []): {
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join("?");
     calls.push({ text, values });
-    if (
-      text.trim().startsWith("(") &&
-      (text.includes("objects.owner_actor_id") || text.includes("drive_folders.owner_actor_id"))
-    ) {
+    if (text.includes("objects.owner_actor_id") || text.includes("drive_folders.owner_actor_id")) {
       return { text, values };
     }
     return Promise.resolve(responses[callIndex++] ?? []);
@@ -37,199 +32,112 @@ function createRecordingSql(responses: readonly (readonly unknown[])[] = []): {
     begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>): Promise<T> =>
       callback(sql as unknown as postgres.TransactionSql),
   }) as unknown as postgres.Sql;
-  return { sql, calls };
-}
-
-function objectRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
-    id: objectId,
-    org_id: orgId,
-    owner_actor_id: actorId,
-    kind: "file",
-    storage_key: `drive/${orgId}/${objectId}/v1/report.txt`,
-    mime_type: "text/plain",
-    byte_size: 0,
-    sha256: null,
-    metadata: { name: "report.txt", status: "pending_upload" },
-    deleted_at: null,
-    created_at: now,
-    updated_at: now,
-    ...overrides,
+    sql,
+    calls,
   };
 }
 
-function versionRow(overrides: Partial<Record<string, unknown>> = {}) {
-  return {
-    id: "88888888-8888-4888-8888-888888888888",
-    org_id: orgId,
-    object_id: objectId,
-    version_number: 1,
-    storage_key: `drive/${orgId}/${objectId}/v1/report.txt`,
-    mime_type: "text/plain",
-    byte_size: 0,
-    sha256: "0".repeat(64),
-    metadata: {},
-    created_by_actor_id: actorId,
-    created_at: now,
-    ...overrides,
-  };
-}
+describe("PostgresDriveStore query shape", () => {
+  it("scopes Drive list permission predicates to the request org", async () => {
+    const recording = createRecordingSql();
+    const store = new PostgresDriveStore(recording.sql);
 
-describe("PostgresDriveStore comment query shape", () => {
-  it("prepares uploads through the tenant storage resolver when configured", async () => {
-    const storageCalls: string[] = [];
-    const storage = {
-      put: async () => {},
-      get: async () => null,
-      delete: async () => {},
-      presignPutUrl: async (key: string, options?: { readonly contentType?: string }) => {
-        storageCalls.push(`presign-put:${key}:${options?.contentType ?? ""}`);
-        return `put://${key}`;
-      },
-    } satisfies DriveStorageClient;
-    const resolvedOrgIds: string[] = [];
-    const storageResolver: TenantStorageResolver = async ({ orgId: resolvedOrgId }) => {
-      resolvedOrgIds.push(resolvedOrgId);
-      return { client: storage, managedBy: "helix-default", prefix: "" };
-    };
-    const recording = createRecordingSql([[objectRow()], [], [], [], []]);
-    const store = new PostgresDriveStore(recording.sql, undefined, { storageResolver });
+    await store.list({ orgId, actorId, limit: 10 });
 
-    const upload = await store.prepareUpload({
-      orgId,
-      actorId,
-      name: "report.txt",
-      mimeType: "text/plain",
-    });
-
-    expect(upload.uploadUrl).toMatch(/^put:\/\/drive\//u);
-    expect(resolvedOrgIds).toEqual([orgId]);
-    expect(storageCalls).toHaveLength(1);
-    expect(storageCalls[0]).toContain(`presign-put:drive/${orgId}/`);
-    expect(storageCalls[0]).toContain(":text/plain");
+    const permissionQueries = recording.calls.filter((call) =>
+      call.text.includes("from permissions p"),
+    );
+    expect(permissionQueries).toHaveLength(2);
+    expect(permissionQueries.every((call) => call.text.includes("p.org_id = ?"))).toBe(true);
+    expect(permissionQueries.every((call) => call.values.includes(orgId))).toBe(true);
   });
 
-  it("propagates resolver presigned-write blocking during upload preparation", async () => {
-    const storage = {
-      put: async () => {},
-      get: async () => null,
-      delete: async () => {},
-      presignPutUrl: async () => {
-        throw new Error("Tenant storage migration job-1 is in progress; presigned writes blocked.");
-      },
-    } satisfies DriveStorageClient;
-    const storageResolver: TenantStorageResolver = async () => ({
-      client: storage,
-      managedBy: "helix-default",
-      prefix: "",
-    });
-    const recording = createRecordingSql([[objectRow()], [], [], [], []]);
-    const store = new PostgresDriveStore(recording.sql, undefined, { storageResolver });
-
-    await expect(
-      store.prepareUpload({
-        orgId,
-        actorId,
-        name: "report.txt",
-        mimeType: "text/plain",
-      }),
-    ).rejects.toThrow("presigned writes blocked");
-  });
-
-  it("finalizes inline uploads through the tenant storage resolver when configured", async () => {
-    const body = new Uint8Array([1, 2, 3, 4]);
-    const sha256 = createHash("sha256").update(body).digest("hex");
-    const putCalls: {
-      readonly key: string;
-      readonly body: Uint8Array;
-      readonly contentType: string | undefined;
-      readonly metadata: Record<string, string> | undefined;
-    }[] = [];
-    const storage = {
-      put: async (object) => {
-        putCalls.push({
-          key: object.key,
-          body: object.body as Uint8Array,
-          contentType: object.contentType,
-          metadata: object.metadata,
-        });
-      },
-      get: async () => null,
-      delete: async () => {},
-    } satisfies DriveStorageClient;
-    const resolvedOrgIds: string[] = [];
-    const storageResolver: TenantStorageResolver = async ({ orgId: resolvedOrgId }) => {
-      resolvedOrgIds.push(resolvedOrgId);
-      return { client: storage, managedBy: "helix-default", prefix: "" };
-    };
-    const storageKey = `drive/${orgId}/${objectId}/v1/report.txt`;
+  it("projects mine and shared count metadata from Drive list permissions", async () => {
+    const now = new Date("2026-05-20T12:00:00.000Z");
     const recording = createRecordingSql([
       [
-        objectRow({
-          storage_key: storageKey,
-          mime_type: "text/plain",
-          metadata: { name: "report.txt", status: "pending_upload" },
-        }),
-      ],
-      [
-        versionRow({
-          storage_key: storageKey,
-          byte_size: body.byteLength,
-          sha256,
-        }),
-      ],
-      [],
-      [],
-      [],
-      [],
-    ]);
-    const store = new PostgresDriveStore(recording.sql, undefined, { storageResolver });
-
-    await store.finalizeUpload({
-      orgId,
-      actorId,
-      objectId,
-      byteSize: body.byteLength,
-      sha256,
-      content: body,
-    });
-
-    expect(resolvedOrgIds).toEqual([orgId]);
-    expect(putCalls).toEqual([
-      {
-        key: storageKey,
-        body,
-        contentType: "text/plain",
-        metadata: { objectId, sha256 },
-      },
-    ]);
-  });
-
-  it("fails closed for inline finalized content when no storage client is configured", async () => {
-    const body = new Uint8Array([1, 2, 3, 4]);
-    const sha256 = createHash("sha256").update(body).digest("hex");
-    const recording = createRecordingSql([
-      [
-        objectRow({
-          metadata: { name: "report.txt", status: "pending_upload" },
-        }),
+        {
+          id: objectId,
+          org_id: orgId,
+          owner_actor_id: "99999999-9999-4999-8999-999999999999",
+          kind: "file",
+          storage_key: "drive/test/shared.pdf",
+          mime_type: "application/pdf",
+          byte_size: 128,
+          sha256: "a".repeat(64),
+          metadata: { name: "shared.pdf" },
+          version_number: 3,
+          mine: false,
+          shared_count: "2",
+          deleted_at: null,
+          created_at: now,
+          updated_at: now,
+        },
       ],
     ]);
     const store = new PostgresDriveStore(recording.sql);
 
+    await expect(store.list({ orgId, actorId, acrossFolders: true })).resolves.toMatchObject([
+      {
+        id: objectId,
+        metadata: { name: "shared.pdf", mine: false, sharedCount: 2 },
+      },
+    ]);
+
+    const fileQuery = recording.calls.find((call) => call.text.includes("from objects o"));
+    expect(fileQuery?.text).toContain("as mine");
+    expect(fileQuery?.text).toContain("as shared_count");
+    expect(fileQuery?.text).toContain("count(distinct p.actor_id)");
+    expect(fileQuery?.values).toEqual(expect.arrayContaining([orgId, actorId]));
+  });
+
+  it("scopes Drive search permission predicates to the request org", async () => {
+    const recording = createRecordingSql();
+    const store = new PostgresDriveStore(recording.sql);
+
+    await store.search({ orgId, actorId, query: "plan" });
+
+    const query = recording.calls.find((call) => call.text.includes("from permissions p"));
+    expect(query?.text).toContain("p.org_id = ?");
+    expect(query?.values).toContain(orgId);
+  });
+
+  it("scopes object access helper predicates to the request org", async () => {
+    const recording = createRecordingSql();
+    const store = new PostgresDriveStore(recording.sql);
+
+    await expect(store.readFile({ orgId, actorId, objectId })).rejects.toThrow(
+      "Unknown or inaccessible Drive object",
+    );
+
+    const query = recording.calls.find((call) => call.text.includes("from permissions p"));
+    expect(query?.text).toContain("p.org_id = ?");
+    expect(query?.values).toContain(orgId);
+  });
+
+  it("updates access roles only for owner-managed object grants in the request org", async () => {
+    const recording = createRecordingSql();
+    const store = new PostgresDriveStore(recording.sql);
+
     await expect(
-      store.finalizeUpload({
+      store.updateAccess({
         orgId,
         actorId,
         objectId,
-        byteSize: body.byteLength,
-        sha256,
-        content: body,
+        targetActorId: "55555555-5555-4555-8555-555555555555",
+        role: "editor",
       }),
-    ).rejects.toThrow("Drive content storage is not configured");
+    ).resolves.toBeNull();
+
+    const query = recording.calls.find((call) => call.text.includes("update permissions p"));
+    expect(query?.text).toContain("p.org_id = ?");
+    expect(query?.text).toContain("o.owner_actor_id = ?");
+    expect(query?.text).toContain("p.actor_id <> o.owner_actor_id");
+    expect(query?.values).toEqual(expect.arrayContaining([orgId, actorId, objectId, "editor"]));
   });
 
-  it("scopes PDF form state lookups by org, object, actor, and PDF permissions", async () => {
+  it("scopes PDF form state lookups by org, object, actor, and object permissions", async () => {
     const recording = createRecordingSql([
       [
         {
@@ -243,8 +151,8 @@ describe("PostgresDriveStore comment query shape", () => {
           sha256: "a".repeat(64),
           metadata: {},
           deleted_at: null,
-          created_at: now,
-          updated_at: now,
+          created_at: new Date("2026-05-20T12:00:00.000Z"),
+          updated_at: new Date("2026-05-20T12:00:00.000Z"),
         },
       ],
       [],
@@ -253,11 +161,11 @@ describe("PostgresDriveStore comment query shape", () => {
 
     await expect(store.getPdfFormState({ orgId, actorId, objectId })).resolves.toBeNull();
 
-    const accessQuery = recording.calls.find((call) =>
-      call.text.includes("mime_type = 'application/pdf'"),
+    const permissionQuery = recording.calls.find((call) =>
+      call.text.includes("from permissions p"),
     );
-    expect(accessQuery?.text).toContain("p.org_id = ?");
-    expect(accessQuery?.values).toEqual(expect.arrayContaining([orgId, actorId, objectId]));
+    expect(permissionQuery?.text).toContain("p.org_id = ?");
+    expect(permissionQuery?.values).toContain(orgId);
 
     const stateQuery = recording.calls.find((call) =>
       call.text.includes("from drive_pdf_form_states s"),
@@ -269,6 +177,7 @@ describe("PostgresDriveStore comment query shape", () => {
   });
 
   it("fans out Drive comment mention notifications to matched object collaborators", async () => {
+    const now = new Date("2026-05-20T12:00:00.000Z");
     const mentionedActorId = "55555555-5555-4555-8555-555555555555";
     const commentId = "66666666-6666-4666-8666-666666666666";
     const recording = createRecordingSql([
@@ -308,8 +217,16 @@ describe("PostgresDriveStore comment query shape", () => {
       [],
       [],
       [
-        { id: actorId, display_name: "Owner Admin", email: "owner@example.com" },
-        { id: mentionedActorId, display_name: "Maya Chen", email: "maya@example.com" },
+        {
+          id: actorId,
+          display_name: "Owner Admin",
+          email: "owner@example.com",
+        },
+        {
+          id: mentionedActorId,
+          display_name: "Maya Chen",
+          email: "maya@example.com",
+        },
       ],
       [
         {
@@ -367,5 +284,18 @@ describe("PostgresDriveStore comment query shape", () => {
       mentionsText: ["maya chen", "missing", "maya"],
       app: "slides",
     });
+  });
+
+  it("scopes folder access helper predicates to the request org", async () => {
+    const recording = createRecordingSql();
+    const store = new PostgresDriveStore(recording.sql);
+
+    await expect(store.list({ orgId, actorId, folderId })).rejects.toThrow(
+      "Unknown or inaccessible Drive folder",
+    );
+
+    const query = recording.calls.find((call) => call.text.includes("from permissions p"));
+    expect(query?.text).toContain("p.org_id = ?");
+    expect(query?.values).toContain(orgId);
   });
 });

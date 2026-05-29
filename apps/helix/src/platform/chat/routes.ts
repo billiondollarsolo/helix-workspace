@@ -7,9 +7,47 @@ import type { ChatPresenceStore, ChatRoomBus, ChatRoomEvent } from "./realtime.j
 import { InMemoryChatPresenceStore, InMemoryChatRoomBus } from "./realtime.js";
 import type { WebsocketConnectionMetrics } from "../websocket-metrics.js";
 import { trackWebsocketConnection } from "../websocket-metrics.js";
+import type { ResourceClassifier } from "../../api/classify-resource.js";
 
 /** Route label for the chat WebSocket connection gauge. */
 const CHAT_WS_ROUTE = "/ws/chat";
+
+/**
+ * Per-connection token-bucket rate limit (Chat C1). One bucket per socket,
+ * shared across all inbound frame types so a misbehaving client cannot flood
+ * any single channel (send / typing / read / presence / subscribe).
+ *
+ * Defaults: capacity 30 tokens, refill 30 tokens per 10 seconds (3 tokens/s).
+ */
+const CHAT_WS_RATE_LIMIT_CAPACITY = 30;
+const CHAT_WS_RATE_LIMIT_REFILL_PER_SECOND = 3;
+
+interface TokenBucket {
+  tokens: number;
+  lastRefillMs: number;
+}
+
+function createBucket(): TokenBucket {
+  return { tokens: CHAT_WS_RATE_LIMIT_CAPACITY, lastRefillMs: Date.now() };
+}
+
+/** Returns true when a token was available and consumed. */
+function consumeToken(bucket: TokenBucket): boolean {
+  const now = Date.now();
+  const elapsedSeconds = Math.max(0, (now - bucket.lastRefillMs) / 1000);
+  if (elapsedSeconds > 0) {
+    bucket.tokens = Math.min(
+      CHAT_WS_RATE_LIMIT_CAPACITY,
+      bucket.tokens + elapsedSeconds * CHAT_WS_RATE_LIMIT_REFILL_PER_SECOND,
+    );
+    bucket.lastRefillMs = now;
+  }
+  if (bucket.tokens >= 1) {
+    bucket.tokens -= 1;
+    return true;
+  }
+  return false;
+}
 
 interface ChatSocket {
   send(data: string): void;
@@ -55,6 +93,12 @@ export interface RegisterChatRoutesOptions {
   readonly onError?: ((error: unknown) => void) | undefined;
   /** Active-connections gauge recorder (Follow-up B). */
   readonly metrics?: WebsocketConnectionMetrics | undefined;
+  /**
+   * Auto-classification hook (Chat C2). When provided, `send` frames received
+   * over the WebSocket are classified in the same way as the REST `chat.send`
+   * tool (PRD §8.4), keeping the two ingress paths in sync.
+   */
+  readonly classifyResource?: ResourceClassifier | undefined;
 }
 
 type ChatSocketOptions = {
@@ -64,6 +108,7 @@ type ChatSocketOptions = {
   readonly presence: ChatPresenceStore;
   readonly onError?: ((error: unknown) => void) | undefined;
   readonly metrics?: WebsocketConnectionMetrics | undefined;
+  readonly classifyResource?: ResourceClassifier | undefined;
   /** Live registry of open chat sockets, used by graceful-shutdown broadcast. */
   readonly connections?: Set<ChatSocket> | undefined;
 };
@@ -127,11 +172,22 @@ export async function handleChatSocket(
 
   const actor = await options.actorFromRequest(request);
   const subscriptions = new Map<string, Awaited<ReturnType<ChatRoomBus["subscribe"]>>>();
+  // Per-connection token bucket for rate limiting (Chat C1).
+  const rateLimitBucket = createBucket();
 
   // Track this socket so graceful shutdown (PRD §16.3 step 5) can reach it.
   options.connections?.add(socket);
 
   socket.on("message", (data) => {
+    if (!consumeToken(rateLimitBucket)) {
+      // Drop the frame, signal the client, and do not advance state.
+      sendSocket(socket, {
+        type: "error",
+        error: "rate_limited",
+        message: "Chat rate limit exceeded; slow down inbound frames.",
+      });
+      return;
+    }
     void handleInboundMessage({
       socket,
       actor,

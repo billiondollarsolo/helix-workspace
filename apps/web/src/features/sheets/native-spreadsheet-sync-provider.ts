@@ -3,6 +3,8 @@ import type { SheetsApiTabWithCells, SheetsCellEdit } from "./api";
 
 const socketOpen = 1;
 const protocol = "sheets-ot";
+const defaultReconnectDelayMs = 1_000;
+const defaultMaxReconnectAttempts = 5;
 
 export type NativeSpreadsheetSyncStatus = "offline" | "connecting" | "connected";
 
@@ -61,6 +63,13 @@ export interface NativeSpreadsheetSyncProviderInput {
   readonly onOperation?: ((frame: NativeSpreadsheetOperationFrame) => void) | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
   readonly operationId?: (() => string) | undefined;
+  readonly reconnect?: boolean | undefined;
+  readonly reconnectDelayMs?: number | undefined;
+  readonly maxReconnectAttempts?: number | undefined;
+}
+
+export interface NativeSpreadsheetSyncProviderDisconnectOptions {
+  readonly notify?: boolean | undefined;
 }
 
 export class NativeSpreadsheetSyncProvider {
@@ -70,9 +79,14 @@ export class NativeSpreadsheetSyncProvider {
   private readonly onOperation: ((frame: NativeSpreadsheetOperationFrame) => void) | undefined;
   private readonly onError: ((error: unknown) => void) | undefined;
   private readonly operationId: () => string;
+  private readonly reconnect: boolean;
+  private readonly reconnectDelayMs: number;
+  private readonly maxReconnectAttempts: number;
   private socket: WebSocket | null = null;
   private revision = 0;
   private status: NativeSpreadsheetSyncStatus = "offline";
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(input: NativeSpreadsheetSyncProviderInput) {
     this.sheetId = input.sheetId;
@@ -81,9 +95,13 @@ export class NativeSpreadsheetSyncProvider {
     this.onOperation = input.onOperation;
     this.onError = input.onError;
     this.operationId = input.operationId ?? randomOperationId;
+    this.reconnect = input.reconnect ?? true;
+    this.reconnectDelayMs = input.reconnectDelayMs ?? defaultReconnectDelayMs;
+    this.maxReconnectAttempts = input.maxReconnectAttempts ?? defaultMaxReconnectAttempts;
   }
 
   connect(): void {
+    this.clearReconnectTimer();
     if (this.socket !== null || this.WebSocketCtor === undefined) {
       this.setStatus("offline");
       return;
@@ -97,10 +115,15 @@ export class NativeSpreadsheetSyncProvider {
     socket.addEventListener("error", this.handleError);
   }
 
-  disconnect(): void {
+  disconnect(options: NativeSpreadsheetSyncProviderDisconnectOptions = {}): void {
+    const notify = options.notify ?? true;
+    this.clearReconnectTimer();
+    this.reconnectAttempts = 0;
     const socket = this.socket;
     if (socket === null) {
-      this.setStatus("offline");
+      if (notify) {
+        this.setStatus("offline");
+      }
       return;
     }
     this.socket = null;
@@ -109,7 +132,11 @@ export class NativeSpreadsheetSyncProvider {
     socket.removeEventListener("close", this.handleClose);
     socket.removeEventListener("error", this.handleError);
     socket.close(1000, "native spreadsheet editor closed");
-    this.setStatus("offline");
+    if (notify) {
+      this.setStatus("offline");
+    } else {
+      this.status = "offline";
+    }
   }
 
   getStatus(): NativeSpreadsheetSyncStatus {
@@ -139,21 +166,27 @@ export class NativeSpreadsheetSyncProvider {
     if (!this.canSendOperation() || changes.length === 0) {
       return false;
     }
-    this.socket?.send(
-      JSON.stringify({
-        type: "operation",
-        tabId,
-        operation: {
-          id: this.operationId(),
-          baseRevision: this.revision,
-          changes,
-        },
-      }),
-    );
+    try {
+      this.socket?.send(
+        JSON.stringify({
+          type: "operation",
+          tabId,
+          operation: {
+            id: this.operationId(),
+            baseRevision: this.revision,
+            changes,
+          },
+        }),
+      );
+    } catch (error) {
+      this.handleRealtimeFailure(error);
+      return false;
+    }
     return true;
   }
 
   private readonly handleOpen = (): void => {
+    this.reconnectAttempts = 0;
     this.setStatus("connected");
   };
 
@@ -174,21 +207,75 @@ export class NativeSpreadsheetSyncProvider {
         return;
       }
       if (isErrorFrame(message)) {
-        this.onError?.(new Error(message.error));
+        this.handleRealtimeFailure(new Error(message.error));
       }
     } catch (error) {
-      this.onError?.(error);
+      this.handleRealtimeFailure(error);
     }
   };
 
   private readonly handleClose = (): void => {
-    this.socket = null;
+    const socket = this.socket;
+    if (socket !== null) {
+      socket.removeEventListener("open", this.handleOpen);
+      socket.removeEventListener("message", this.handleMessage);
+      socket.removeEventListener("close", this.handleClose);
+      socket.removeEventListener("error", this.handleError);
+      this.socket = null;
+    }
     this.setStatus("offline");
+    this.scheduleReconnect();
   };
 
   private readonly handleError = (event: Event): void => {
-    this.onError?.(event);
+    this.handleRealtimeFailure(event);
   };
+
+  private handleRealtimeFailure(error: unknown): void {
+    this.onError?.(error);
+    const socket = this.socket;
+    if (socket === null) {
+      this.setStatus("offline");
+      return;
+    }
+    this.socket = null;
+    socket.removeEventListener("open", this.handleOpen);
+    socket.removeEventListener("message", this.handleMessage);
+    socket.removeEventListener("close", this.handleClose);
+    socket.removeEventListener("error", this.handleError);
+    try {
+      socket.close(1011, "native spreadsheet sync failed");
+    } catch {
+      // Ignore close failures; the provider is already in fallback mode.
+    }
+    this.setStatus("offline");
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (
+      !this.reconnect ||
+      this.WebSocketCtor === undefined ||
+      this.socket !== null ||
+      this.reconnectTimer !== null ||
+      this.reconnectAttempts >= this.maxReconnectAttempts
+    ) {
+      return;
+    }
+    this.reconnectAttempts += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, this.reconnectDelayMs);
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer === null) {
+      return;
+    }
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+  }
 
   private setStatus(status: NativeSpreadsheetSyncStatus): void {
     if (this.status !== status) {

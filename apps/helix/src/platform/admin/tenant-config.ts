@@ -8,13 +8,8 @@ import {
   canReadAdminConsole,
   canWriteAdminConsole,
   conflict,
-  cursorQuerySchema,
-  decodeCursor,
   invalidRequest,
-  invalidCursor,
-  limitQuerySchema,
   notFound,
-  paginate,
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "./console-shared.js";
@@ -23,22 +18,16 @@ import {
   defaultTenantStoragePrefix,
   testTenantStorageConnection,
   type TenantStorageResolver,
-  type TenantStorageSecretWriter,
   type TenantStorageMigrationJobRecord,
   type TenantStorageMigrationJobStore,
   type TenantStorageMigrationStorageState,
 } from "../storage/index.js";
-import type {
-  CutoverTenantStorageConfigInput,
-  OrgRecord,
-  UpdateTenantConfigInput,
-} from "../tenancy/orgs.js";
+import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
 import { buildEffectiveTenantConfig, type PlanRecord, type PlanStore } from "../tenancy/plans.js";
 
 export interface TenantConfigAdminStore {
   findById(id: string): Promise<OrgRecord | null>;
   updateTenantConfig(input: UpdateTenantConfigInput): Promise<OrgRecord | null>;
-  cutoverTenantStorageConfig(input: CutoverTenantStorageConfigInput): Promise<OrgRecord | null>;
 }
 
 export interface TenantConfigAdminView {
@@ -61,35 +50,13 @@ export interface TenantConfigAdminView {
   };
 }
 
-interface TenantStorageMigrationJobView {
-  readonly id: string;
-  readonly orgId: string;
-  readonly target: TenantStorageMigrationJobRecord["target"];
-  readonly status: TenantStorageMigrationJobRecord["status"];
-  readonly dryRun: boolean;
-  readonly sourceStorage: TenantStorageMigrationStorageState | null;
-  readonly targetStorage: TenantStorageMigrationStorageState | null;
-  readonly plannedCount: number;
-  readonly copiedCount: number;
-  readonly verifiedCount: number;
-  readonly failures: TenantStorageMigrationJobRecord["failures"];
-  readonly lastError: string | null;
-  readonly attemptCount: number;
-  readonly requestedByActorId: string | null;
-  readonly startedAt: string | null;
-  readonly completedAt: string | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
-
 export interface RegisterTenantConfigAdminRoutesOptions {
   readonly store: TenantConfigAdminStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly auditSink?: AdminConsoleAuditSink | undefined;
   readonly storageResolver?: TenantStorageResolver | undefined;
-  readonly storageCredentialWriter?: TenantStorageSecretWriter | undefined;
   readonly storageMigrationJobs?:
-    | Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg" | "listForOrg">
+    | Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg">
     | undefined;
   readonly plans?: Pick<PlanStore, "findById"> | undefined;
   readonly featureFlagEvents?: Pick<EventBus, "publish"> | undefined;
@@ -273,39 +240,9 @@ const storageMigrationParams = z.object({
   id: z.string().uuid(),
 });
 
-const storageMigrationListQuery = z.object({
-  cursor: cursorQuerySchema,
-  limit: limitQuerySchema,
-  status: z
-    .enum(["queued", "running", "succeeded", "succeeded_with_errors", "failed", "dry_run"])
-    .optional(),
-  target: z.enum(["byo", "helix-default"]).optional(),
-});
-
 const storageMigrationCutoverBody = z
   .object({
     confirm: z.literal("CUTOVER"),
-  })
-  .strict();
-
-const credentialSecretString = z
-  .string()
-  .min(1)
-  .max(4096)
-  .refine((value) => value.trim().length > 0, {
-    message: "Credential values must not be blank.",
-  });
-
-const byoStorageCredentialsBody = z
-  .object({
-    credentials: z
-      .object({
-        accessKeyId: credentialSecretString,
-        secretAccessKey: credentialSecretString,
-        sessionToken: credentialSecretString.optional(),
-      })
-      .strict(),
-    reason: z.string().trim().min(1).max(500).optional(),
   })
   .strict();
 
@@ -415,100 +352,6 @@ export async function registerTenantConfigAdminRoutes(
       },
     });
     return { health };
-  });
-
-  app.post("/api/admin/tenant-config/byo-storage/credentials", async (request, reply) => {
-    const actor = await options.actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
-    if (options.storageCredentialWriter === undefined) {
-      return reply
-        .code(503)
-        .send(invalidRequest("BYO storage credential writer is not configured.", []));
-    }
-    const body = byoStorageCredentialsBody.safeParse(request.body ?? {});
-    if (!body.success) {
-      return reply
-        .code(400)
-        .send(invalidRequest("Invalid BYO storage credentials request.", body.error.issues));
-    }
-    const org = await options.store.findById(actor.orgId);
-    if (org === null) {
-      return reply.code(404).send(notFound("Tenant config not found."));
-    }
-
-    let credentialsVaultPath: string;
-    try {
-      credentialsVaultPath = currentByoStorageCredentialsVaultPath(org);
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message.length > 0
-          ? error.message
-          : "BYO storage credentials path is not configured.";
-      return reply.code(400).send(invalidRequest(message, []));
-    }
-
-    await options.storageCredentialWriter.write(
-      credentialsVaultPath,
-      byoStorageCredentialSecret(body.data.credentials),
-    );
-    const health = await testTenantStorageConnection({
-      orgId: actor.orgId,
-      storageResolver: options.storageResolver,
-      refresh: true,
-    });
-    await auditAdminAction(options.auditSink, {
-      orgId: actor.orgId,
-      actorId: actor.id,
-      verb: "admin.tenant_config.byo_storage_credentials_rotated",
-      objectType: "tenant_config",
-      objectId: actor.orgId,
-      metadata: {
-        credentialsVaultPath,
-        status: health.status,
-        managedBy: health.managedBy ?? null,
-      },
-    });
-    return {
-      credentials: {
-        credentials_vault_path: credentialsVaultPath,
-        rotated: true,
-      },
-      health,
-    };
-  });
-
-  app.get("/api/admin/tenant-config/byo-storage/migrations", async (request, reply) => {
-    const actor = await options.actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleReadScope);
-    }
-    if (options.storageMigrationJobs === undefined) {
-      return reply
-        .code(503)
-        .send(invalidRequest("Tenant storage migration jobs are not configured.", []));
-    }
-    const query = storageMigrationListQuery.safeParse(request.query ?? {});
-    if (!query.success) {
-      return reply
-        .code(400)
-        .send(invalidRequest("Invalid tenant storage migration list request.", query.error.issues));
-    }
-    const cursor = query.data.cursor === undefined ? undefined : decodeCursor(query.data.cursor);
-    if (cursor === null) {
-      return reply.code(400).send(invalidCursor());
-    }
-    const limit = query.data.limit;
-    const jobs = await options.storageMigrationJobs.listForOrg({
-      orgId: actor.orgId,
-      limit: limit + 1,
-      ...(cursor === undefined ? {} : { cursor }),
-      ...(query.data.status === undefined ? {} : { status: query.data.status }),
-      ...(query.data.target === undefined ? {} : { target: query.data.target }),
-    });
-    const page = paginate(jobs.map(tenantStorageMigrationJobView), limit);
-    return { migrations: page.items, nextCursor: page.nextCursor };
   });
 
   app.post("/api/admin/tenant-config/byo-storage/migrations", async (request, reply) => {
@@ -641,10 +484,9 @@ export async function registerTenantConfigAdminRoutes(
       }
 
       let storageConfig: JsonObject;
-      let expectedCurrentStorage: JsonObject | null;
       try {
         storageConfig = cutoverStorageConfig(job);
-        expectedCurrentStorage = currentStorageMatchingCutoverJob(org, job, storageConfig).storage;
+        assertCurrentStorageMatchesCutoverJob(org, job, storageConfig);
       } catch (error) {
         const message =
           error instanceof Error && error.message.length > 0
@@ -657,18 +499,18 @@ export async function registerTenantConfigAdminRoutes(
         job.target === "byo" && org.featureFlags.byo_storage !== true
           ? { ...org.featureFlags, byo_storage: true }
           : undefined;
-      const updatedOrg = await options.store.cutoverTenantStorageConfig({
+      const updatedOrg = await options.store.updateTenantConfig({
         orgId: actor.orgId,
-        storageConfig,
-        enableByoStorage: featureFlags !== undefined,
-        expectedCurrentStorage,
+        byoConfig: {
+          ...org.byoConfig,
+          storage: storageConfig,
+        },
+        ...(featureFlags === undefined ? {} : { featureFlags }),
         changedByActorId: actor.id,
         reason: `tenant storage migration cutover: ${job.id}`,
       });
       if (updatedOrg === null) {
-        return reply
-          .code(409)
-          .send(conflict("Tenant storage config changed during cutover. Refresh and retry."));
+        return reply.code(404).send(notFound("Tenant config not found."));
       }
 
       await auditAdminAction(options.auditSink, {
@@ -735,7 +577,7 @@ function planView(plan: PlanRecord | null): TenantConfigAdminView["plan"] {
 
 function tenantStorageMigrationJobView(
   job: TenantStorageMigrationJobRecord,
-): TenantStorageMigrationJobView {
+): Record<string, unknown> {
   return {
     id: job.id,
     orgId: job.orgId,
@@ -771,16 +613,6 @@ function toJsonObject(value: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
-function byoStorageCredentialSecret(
-  input: z.infer<typeof byoStorageCredentialsBody>["credentials"],
-): Record<string, string> {
-  return {
-    accessKeyId: input.accessKeyId,
-    secretAccessKey: input.secretAccessKey,
-    ...(input.sessionToken === undefined ? {} : { sessionToken: input.sessionToken }),
-  };
-}
-
 function tenantStorageMigrationState(
   storage: z.infer<typeof byoStorageSchema> | undefined,
   fallback: "byo" | "helix-default",
@@ -792,23 +624,6 @@ function tenantStorageMigrationState(
     managedBy: storage.kind === "byo" ? "byo" : "helix-default",
     storage: toJsonObject(storage),
   };
-}
-
-function currentByoStorageCredentialsVaultPath(org: OrgRecord): string {
-  const storage = (org.byoConfig as { readonly storage?: unknown }).storage;
-  const parsed = byoStorageSchema.safeParse(storage);
-  if (!parsed.success || parsed.data.kind !== "byo") {
-    throw new Error("BYO storage credentials path is not configured.");
-  }
-  const path = parsed.data.credentials_vault_path;
-  if (path === undefined || path.length === 0) {
-    throw new Error("BYO storage credentials path is not configured.");
-  }
-  const expectedPrefix = `tenants/${org.slug}/byo-storage/`;
-  if (!path.startsWith(expectedPrefix)) {
-    throw new Error("BYO storage credentials path must be scoped to this tenant.");
-  }
-  return path;
 }
 
 function currentTenantStorageMigrationState(org: OrgRecord): TenantStorageMigrationStorageState {
@@ -863,23 +678,22 @@ function cutoverStorageConfig(job: TenantStorageMigrationJobRecord): JsonObject 
   return toJsonObject(parsed.data);
 }
 
-function currentStorageMatchingCutoverJob(
+function assertCurrentStorageMatchesCutoverJob(
   org: OrgRecord,
   job: TenantStorageMigrationJobRecord,
   targetStorageConfig: JsonObject,
-): TenantStorageMigrationStorageState {
+): void {
   const current = currentTenantStorageMigrationState(org);
   const target = tenantStorageMigrationState(
     byoStorageSchema.parse(targetStorageConfig),
     job.target,
   );
   if (storageStatesEqual(current, target)) {
-    return current;
+    return;
   }
   if (!storageStatesEqual(current, job.sourceStorage)) {
     throw new Error("Tenant storage config changed after the migration job was created.");
   }
-  return current;
 }
 
 function storageStatesEqual(

@@ -280,6 +280,78 @@ describe("slides sync routes", () => {
     });
   });
 
+  it("emits a slide-conflict frame with the fresh snapshot when expectedRevision is stale", async () => {
+    // Regression test for the data-loss bug: two clients editing the same
+    // slide concurrently would last-write-win the entire slide JSON,
+    // dropping the first writer's work. With per-slide CAS, the second
+    // writer gets a slide-conflict frame carrying the authoritative
+    // server snapshot and the first writer's content is preserved.
+    const store = new InMemorySlidesStore();
+    const deck = await store.createDeck({ orgId, actorId, title: "Concurrent CAS" });
+    const slide = await store.createSlide({
+      orgId,
+      actorId,
+      deckId: deck.id,
+      content: { layout: "title", title: "Original" },
+    });
+    const writerA = new FakeSocket();
+    const writerB = new FakeSocket();
+    const state = { rooms: new Map() };
+
+    await handleSlidesSocket(writerA, requestFor(deck.id), options(store), state);
+    await handleSlidesSocket(writerB, requestFor(deck.id), options(store), state);
+
+    writerA.receive({
+      type: "operation",
+      operationId: "op-a",
+      operation: {
+        kind: "update-slide",
+        slideId: slide.id,
+        content: { layout: "title", title: "Writer A wins" },
+        expectedRevision: 1,
+      },
+    });
+    await settle();
+
+    writerB.receive({
+      type: "operation",
+      operationId: "op-b",
+      operation: {
+        kind: "update-slide",
+        slideId: slide.id,
+        content: { layout: "title", title: "Writer B would clobber" },
+        expectedRevision: 1,
+      },
+    });
+    await settle();
+
+    const conflict = writerB.messages.at(-1);
+    expect(conflict).toMatchObject({
+      type: "slide-conflict",
+      protocol: SLIDES_WS_PROTOCOL,
+      operationId: "op-b",
+      slideId: slide.id,
+      currentSlideRevision: 2,
+      slides: [
+        expect.objectContaining({
+          id: slide.id,
+          content: { layout: "title", title: "Writer A wins" },
+        }),
+      ],
+    });
+
+    // Server state still has writer A's content, not writer B's.
+    await expect(store.getDeckForActor({ orgId, actorId, deckId: deck.id })).resolves.toMatchObject(
+      {
+        slides: [
+          expect.objectContaining({
+            content: { layout: "title", title: "Writer A wins" },
+          }),
+        ],
+      },
+    );
+  });
+
   it("closes inaccessible decks before registering message handlers", async () => {
     const store = new InMemorySlidesStore();
     const deck = await store.createDeck({ orgId, actorId: otherActorId, title: "Private" });
@@ -292,57 +364,6 @@ describe("slides sync routes", () => {
       reason: "Unknown or inaccessible presentation",
     });
     expect(socket.messageHandlerCount).toBe(0);
-  });
-
-  it("enforces the concurrent editor quota per presentation room", async () => {
-    const store = new InMemorySlidesStore();
-    const deck = await store.createDeck({ orgId, actorId, title: "Quota" });
-    const firstSocket = new FakeSocket();
-    const blockedSocket = new FakeSocket();
-    const state = { rooms: new Map() };
-    const routeOptions = options(store, { concurrentEditorLimit: 1 });
-
-    await handleSlidesSocket(firstSocket, requestFor(deck.id), routeOptions, state);
-    await handleSlidesSocket(blockedSocket, requestFor(deck.id), routeOptions, state);
-
-    expect(firstSocket.closed).toBeNull();
-    expect(blockedSocket.closed).toEqual({
-      code: 1008,
-      reason: "Concurrent editor quota exceeded",
-    });
-    expect(blockedSocket.messageHandlerCount).toBe(0);
-
-    firstSocket.close();
-    const nextSocket = new FakeSocket();
-    await handleSlidesSocket(nextSocket, requestFor(deck.id), routeOptions, state);
-
-    expect(nextSocket.closed).toBeNull();
-    expect(nextSocket.messages[0]).toMatchObject({ type: "ready", deckId: deck.id });
-  });
-
-  it("treats a null concurrent editor quota as unlimited for presentations", async () => {
-    const store = new InMemorySlidesStore();
-    const deck = await store.createDeck({ orgId, actorId, title: "Unlimited" });
-    const firstSocket = new FakeSocket();
-    const secondSocket = new FakeSocket();
-    const state = { rooms: new Map() };
-
-    await handleSlidesSocket(
-      firstSocket,
-      requestFor(deck.id),
-      options(store, { concurrentEditorLimit: null }),
-      state,
-    );
-    await handleSlidesSocket(
-      secondSocket,
-      requestFor(deck.id),
-      options(store, { concurrentEditorLimit: null }),
-      state,
-    );
-
-    expect(firstSocket.closed).toBeNull();
-    expect(secondSocket.closed).toBeNull();
-    expect(secondSocket.messages[0]).toMatchObject({ type: "ready", deckId: deck.id });
   });
 
   it("tracks active websocket metrics with the slides route label", async () => {
@@ -373,15 +394,11 @@ function options(
   store: SlidesStore,
   overrides: {
     readonly metrics?: RecordingWebsocketMetrics | undefined;
-    readonly concurrentEditorLimit?: number | null | undefined;
   } = {},
 ): Parameters<typeof handleSlidesSocket>[2] {
   return {
     store,
     actorFromRequest: () => actor,
-    ...(overrides.concurrentEditorLimit === undefined
-      ? {}
-      : { concurrentEditorLimit: () => overrides.concurrentEditorLimit }),
     ...(overrides.metrics === undefined ? {} : { metrics: overrides.metrics }),
   };
 }

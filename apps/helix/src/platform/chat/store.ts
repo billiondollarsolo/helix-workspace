@@ -431,6 +431,7 @@ export class PostgresChatStore
           where p.resource_type = 'thread'
             and p.resource_id = messages.thread_id
             and p.actor_id = ${input.actorId}
+            and p.org_id = ${input.orgId}
         )
       returning
         messages.*,
@@ -461,6 +462,7 @@ export class PostgresChatStore
           where p.resource_type = 'thread'
             and p.resource_id = messages.thread_id
             and p.actor_id = ${input.actorId}
+            and p.org_id = ${input.orgId}
         )
       returning
         messages.*,
@@ -564,6 +566,7 @@ export class PostgresChatStore
             where p.resource_type = 'thread'
               and p.resource_id = t.id
               and p.actor_id = ${input.actorId}
+              and p.org_id = ${input.orgId}
           )
         )
       order by m.sent_at desc

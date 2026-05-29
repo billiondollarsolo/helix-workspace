@@ -1,30 +1,28 @@
 import fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ToolDefinition } from "@helix/sdk-types";
+import { SYSTEM_TENANT_CONFIG, type ToolDefinition } from "@helix/sdk-types";
 import { createPlatformMetrics } from "./api/metrics.js";
+import { InMemoryOAuthClientStore, type AccessTokenRecord } from "./platform/auth/oauth.js";
 import {
-  InMemoryOAuthClientStore,
-  type AccessTokenRecord,
-} from "./platform/auth/oauth.js";
-import { PostgresOAuthStore } from "./platform/auth/postgres-store.js";
-import { PostgresAuditStore } from "./platform/audit/store.js";
-import { PostgresPlatformConfigStore } from "./platform/config/admin.js";
-import { PostgresOrgStore, PostgresPlanStore, type OrgRecord } from "./platform/tenancy/index.js";
-import { InMemoryAgentRateCostLimiter, type AgentLimitBudget } from "./platform/limits/index.js";
-import {
-  PostgresTenantStorageMigrationJobStore,
-  type TenantStorageMigrationJobRecord,
-} from "./platform/storage/index.js";
+  InMemoryAgentRateCostLimiter,
+  InMemoryTenantApiRpsLimiter,
+  type AgentLimitBudget,
+} from "./platform/limits/index.js";
 import { registerSearchTools } from "./platform/search/index.js";
-import type { IndexDocument, SearchEngine, SearchRequest, SearchResponse } from "./platform/search/types.js";
+import type {
+  IndexDocument,
+  SearchEngine,
+  SearchRequest,
+  SearchResponse,
+} from "./platform/search/types.js";
 import { createToolRegistry } from "./platform/tool-registry.js";
 import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "./platform/tools/registry.js";
 import { InMemoryIdempotencyStore } from "./api/idempotency.js";
+import { TenantActorMismatchError, installTenantContextHook } from "./platform/tenancy/index.js";
 import {
   aiRoutingPolicyFromConfig,
   createAssistantEmbeddingProvider,
   createAssistantProviders,
-  createHelixServer,
   formatAssistantSseEvent,
   getAuditDestinationConfigs,
   getBetterAuthRuntimeConfig,
@@ -33,8 +31,10 @@ import {
   getSmtpMailReceiverConfig,
   registerActionStatusRoutes,
   registerAssistantStreamRoute,
+  installTenantApiRpsLimitHook,
   registerToolRestRoutes,
   rewriteVersionedApiUrl,
+  verifyDefaultOrgAtBoot,
   type AssistantStreamOrchestrator,
 } from "./server.js";
 import type { AssistantStreamEvent } from "./platform/assistant/index.js";
@@ -44,7 +44,6 @@ const later = new Date("2026-05-20T01:00:00.000Z");
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.restoreAllMocks();
 });
 
 describe("mail server env config", () => {
@@ -106,119 +105,195 @@ describe("BetterAuth server env config", () => {
   });
 });
 
-describe("createHelixServer tenant config admin routes", () => {
-  it("registers tenant config read and BYO storage probe endpoints", async () => {
-    const org = orgRecord();
-    vi.stubEnv("BETTER_AUTH_ENABLED", "false");
-    vi.spyOn(PostgresPlatformConfigStore.prototype, "loadOverrides").mockResolvedValue({});
-    vi.spyOn(PostgresOAuthStore.prototype, "findToken").mockResolvedValue(
-      accessToken({
-        token: "tenant-config-token",
-        actorId: "admin-1",
-        orgId: org.id,
-        scopes: ["admin.console.read", "admin.console.write"],
-      }),
-    );
-    vi.spyOn(PostgresOrgStore.prototype, "findById").mockResolvedValue(org);
-    vi.spyOn(PostgresPlanStore.prototype, "findById").mockResolvedValue(null);
-    vi.spyOn(PostgresAuditStore.prototype, "append").mockResolvedValue({
-      id: "audit-1",
-      thisHash: "hash-1",
+describe("default org boot verification", () => {
+  it("verifies the single-tenant default org during server boot", async () => {
+    const calls: unknown[] = [];
+    const logs: unknown[] = [];
+    const org = await verifyDefaultOrgAtBoot({
+      config: { mode: "single-tenant" },
+      defaultOrg: { id: "11111111-1111-4111-8111-111111111111", slug: "acme" },
+      orgs: {
+        async getOrCreateDefaultOrg(input) {
+          calls.push(input);
+          return {
+            id: input?.id ?? "missing",
+            slug: input?.slug ?? "missing",
+            displayName: input?.displayName ?? "Acme",
+            status: "active",
+            tier: "personal",
+            planId: "personal",
+            region: input?.region ?? "us-east-1",
+            byoConfig: {},
+            featureFlags: {},
+            quotas: {},
+            branding: {},
+            suspendedAt: null,
+            softDeletedAt: null,
+            hardDeletedAt: null,
+          };
+        },
+      },
+      logger: {
+        info(input, message) {
+          logs.push({ input, message });
+        },
+      },
     });
-    const migrationJob = tenantStorageMigrationJobRecord({
-      orgId: org.id,
-      requestedByActorId: "admin-1",
+
+    expect(org?.id).toBe("11111111-1111-4111-8111-111111111111");
+    expect(calls).toEqual([{ id: "11111111-1111-4111-8111-111111111111", slug: "acme" }]);
+    expect(logs).toEqual([
+      {
+        input: {
+          orgId: "11111111-1111-4111-8111-111111111111",
+          slug: "acme",
+          region: "us-east-1",
+        },
+        message: "Verified single-tenant default org at boot",
+      },
+    ]);
+  });
+
+  it("does not create a default org during multi-tenant SaaS boot", async () => {
+    let calls = 0;
+    const org = await verifyDefaultOrgAtBoot({
+      config: { mode: "multi-tenant-saas" },
+      defaultOrg: {},
+      orgs: {
+        async getOrCreateDefaultOrg() {
+          calls += 1;
+          throw new Error("should not be called");
+        },
+      },
+      logger: {
+        info() {
+          throw new Error("should not log");
+        },
+      },
     });
-    const createMigrationJob = vi
-      .spyOn(PostgresTenantStorageMigrationJobStore.prototype, "create")
-      .mockResolvedValue(migrationJob);
-    const findMigrationJob = vi.spyOn(
-      PostgresTenantStorageMigrationJobStore.prototype,
-      "findByIdForOrg",
+
+    expect(org).toBeNull();
+    expect(calls).toBe(0);
+  });
+});
+
+describe("tenant API RPS limiting", () => {
+  it("returns quota headers and a canonical 429 when api_rps_limit is exceeded", async () => {
+    const app = fastify();
+    const events = new RecordingEventBus();
+    installTenantContextHook(app, {
+      async resolveTenantContext() {
+        return tenantContext({ orgId: "org-rps", apiRpsLimit: 1 });
+      },
+    });
+    installTenantApiRpsLimitHook(app, {
+      limiter: new InMemoryTenantApiRpsLimiter(),
+      events,
+    });
+    app.get("/api/ping", async () => ({ ok: true }));
+
+    const first = await app.inject({ method: "GET", url: "/api/ping" });
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["x-helix-quota-api-rps-limit"]).toBe("1");
+    expect(first.headers["x-helix-quota-api-rps-remaining"]).toBe("0");
+
+    const second = await app.inject({ method: "GET", url: "/api/ping" });
+    expect(second.statusCode).toBe(429);
+    expect(second.headers["retry-after"]).toBe("1");
+    expect(second.headers["x-helix-quota-api-rps-limit"]).toBe("1");
+    expect(second.headers["x-helix-quota-api-rps-remaining"]).toBe("0");
+    expect(second.json()).toMatchObject({
+      error: {
+        code: "quota.api_rps.exceeded",
+        message: "Tenant API request rate limit exceeded.",
+        details: {
+          quota: "api_rps_limit",
+          limit: 1,
+          used: 1,
+          remaining: 0,
+          retryAfterSeconds: 1,
+        },
+      },
+    });
+    expect(events.records).toHaveLength(1);
+    expect(events.records[0]).toMatchObject({
+      subject: "quota.api_rps.exceeded",
+      payload: {
+        orgId: "org-rps",
+        quota: "api_rps_limit",
+        surface: "http.request",
+        limit: 1,
+        used: 1,
+        remaining: 0,
+        retryAfterSeconds: 1,
+        method: "GET",
+        path: "/api/ping",
+      },
+    });
+    const eventPayload = asRecord(events.records[0]?.payload);
+    expect(typeof eventPayload.resetsAt).toBe("string");
+    await app.close();
+  });
+
+  it("treats null api_rps_limit as unlimited", async () => {
+    const app = fastify();
+    installTenantContextHook(app, {
+      async resolveTenantContext() {
+        return tenantContext({ orgId: "org-unlimited", apiRpsLimit: null });
+      },
+    });
+    installTenantApiRpsLimitHook(app, { limiter: new InMemoryTenantApiRpsLimiter() });
+    app.get("/api/ping", async () => ({ ok: true }));
+
+    expect((await app.inject({ method: "GET", url: "/api/ping" })).statusCode).toBe(200);
+    const second = await app.inject({ method: "GET", url: "/api/ping" });
+    expect(second.statusCode).toBe(200);
+    expect(second.headers["x-helix-quota-api-rps-limit"]).toBe("unlimited");
+    expect(second.headers["x-helix-quota-api-rps-remaining"]).toBe("unlimited");
+    await app.close();
+  });
+
+  it("scopes api_rps_limit buckets per tenant", async () => {
+    const app = fastify();
+    installTenantContextHook(app, {
+      async resolveTenantContext(request) {
+        return tenantContext({
+          orgId: String(request.headers["x-helix-tenant"] ?? "org-a"),
+          apiRpsLimit: 1,
+        });
+      },
+    });
+    installTenantApiRpsLimitHook(app, { limiter: new InMemoryTenantApiRpsLimiter() });
+    app.get("/api/ping", async () => ({ ok: true }));
+
+    const orgA = { "x-helix-tenant": "org-a" };
+    const orgB = { "x-helix-tenant": "org-b" };
+    expect((await app.inject({ method: "GET", url: "/api/ping", headers: orgA })).statusCode).toBe(
+      200,
     );
-    findMigrationJob.mockResolvedValue(migrationJob);
+    expect((await app.inject({ method: "GET", url: "/api/ping", headers: orgB })).statusCode).toBe(
+      200,
+    );
+    expect((await app.inject({ method: "GET", url: "/api/ping", headers: orgA })).statusCode).toBe(
+      429,
+    );
+    await app.close();
+  });
 
-    const app = await createHelixServer();
-    try {
-      const headers = {
-        authorization: "Bearer tenant-config-token",
-        "x-helix-mfa-verified": "true",
-      };
-      const read = await app.inject({
-        method: "GET",
-        url: "/api/admin/tenant-config",
-        headers,
-      });
-      expect(read.statusCode).toBe(200);
-      expect(read.json()).toMatchObject({
-        tenantConfig: {
-          orgId: org.id,
-          features: { ai_smart_compose: true },
-        },
-      });
+  it("skips tenantless routes", async () => {
+    const app = fastify();
+    installTenantContextHook(app, {
+      async resolveTenantContext() {
+        throw new Error("tenantless route should not resolve tenant context");
+      },
+      shouldResolveTenant: () => false,
+    });
+    installTenantApiRpsLimitHook(app, { limiter: new InMemoryTenantApiRpsLimiter() });
+    app.get("/healthz", async () => ({ ok: true }));
 
-      const storageProbe = await app.inject({
-        method: "POST",
-        url: "/api/admin/tenant-config/byo-storage/test",
-        headers,
-      });
-      expect(storageProbe.statusCode).toBe(200);
-      expect(storageProbe.json()).toMatchObject({
-        health: {
-          status: "degraded",
-        },
-      });
-
-      const migration = await app.inject({
-        method: "POST",
-        url: "/api/admin/tenant-config/byo-storage/migrations",
-        headers,
-        payload: { target: "byo", dryRun: true },
-      });
-      expect(migration.statusCode).toBe(202);
-      expect(migration.json()).toMatchObject({
-        migration: {
-          id: migrationJob.id,
-          orgId: org.id,
-          target: "byo",
-          status: "queued",
-          dryRun: true,
-        },
-      });
-      expect(createMigrationJob).toHaveBeenCalledWith({
-        orgId: org.id,
-        target: "byo",
-        dryRun: true,
-        requestedByActorId: "admin-1",
-        sourceStorage: {
-          managedBy: "helix-default",
-          storage: null,
-        },
-        targetStorage: {
-          managedBy: "byo",
-          storage: null,
-        },
-      });
-
-      const migrationStatus = await app.inject({
-        method: "GET",
-        url: `/api/admin/tenant-config/byo-storage/migrations/${migrationJob.id}`,
-        headers,
-      });
-      expect(migrationStatus.statusCode).toBe(200);
-      expect(migrationStatus.json()).toMatchObject({
-        migration: {
-          id: migrationJob.id,
-          status: "queued",
-        },
-      });
-      expect(findMigrationJob).toHaveBeenCalledWith({
-        id: migrationJob.id,
-        orgId: org.id,
-      });
-    } finally {
-      await app.close();
-    }
+    expect((await app.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
+    await app.close();
   });
 });
 
@@ -301,16 +376,13 @@ describe("audit destination selection (Follow-up A)", () => {
       AUDIT_SIEM_SYSLOG_ENABLED: "true",
       AUDIT_SIEM_SYSLOG_HOST: "siem.internal",
     });
-    expect(configs.map((config) => config.destination)).toEqual([
-      "immutable-s3",
-      "siem-syslog",
-    ]);
+    expect(configs.map((config) => config.destination)).toEqual(["immutable-s3", "siem-syslog"]);
   });
 
   it("fails closed when SIEM syslog is enabled without a host", () => {
-    expect(() =>
-      getAuditDestinationConfigs({ AUDIT_SIEM_SYSLOG_ENABLED: "true" }),
-    ).toThrow("AUDIT_SIEM_SYSLOG_HOST is required");
+    expect(() => getAuditDestinationConfigs({ AUDIT_SIEM_SYSLOG_ENABLED: "true" })).toThrow(
+      "AUDIT_SIEM_SYSLOG_HOST is required",
+    );
   });
 });
 
@@ -438,7 +510,9 @@ describe("AI runtime config", () => {
   it("falls back to deterministic embeddings when embedding config is missing", async () => {
     const provider = createAssistantEmbeddingProvider(undefined, {});
     await expect(provider.embed(["same"])).resolves.toEqual(await provider.embed(["same"]));
-    await expect(provider.embed(["different"])).resolves.not.toEqual(await provider.embed(["same"]));
+    await expect(provider.embed(["different"])).resolves.not.toEqual(
+      await provider.embed(["same"]),
+    );
   });
 });
 
@@ -602,6 +676,73 @@ describe("tool REST routes", () => {
     expect(typeof body.error.traceId).toBe("string");
     expect(body.error.details.retryAfterSeconds).toBeGreaterThan(0);
     expect(calls).toBe(1);
+    await app.close();
+  });
+
+  it("rejects bearer-token actors outside the resolved request tenant", async () => {
+    const engine = new FakeSearchEngine();
+    const tokenStore = new InMemoryOAuthClientStore();
+    await tokenStore.saveToken(
+      accessToken({
+        token: "cross-tenant-token",
+        actorId: "actor-acme",
+        orgId: "org-acme",
+        scopes: ["platform.read"],
+      }),
+    );
+    const app = fastify();
+    installTenantContextHook(app, {
+      async resolveTenantContext() {
+        return {
+          orgId: "org-beta",
+          orgSlug: "beta",
+          orgTier: "business",
+          orgRegion: "us-east-1",
+          effectiveConfig: SYSTEM_TENANT_CONFIG,
+          org: {
+            id: "org-beta",
+            slug: "beta",
+            displayName: "Beta",
+            status: "active",
+            tier: "business",
+            planId: "business",
+            region: "us-east-1",
+            byoConfig: {},
+            featureFlags: {},
+            quotas: {},
+            branding: {},
+            suspendedAt: null,
+            softDeletedAt: null,
+            hardDeletedAt: null,
+          },
+        };
+      },
+    });
+    app.setErrorHandler((error, _request, reply) => {
+      if (error instanceof TenantActorMismatchError) {
+        return reply.code(error.statusCode).send({ code: error.code });
+      }
+      throw error;
+    });
+    const tools = createToolRegistry();
+    registerSearchTools(tools, { engine });
+    registerToolRestRoutes(app, {
+      tools,
+      metrics: createPlatformMetrics(),
+      tokenStore,
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/tools/search.query?query=launch",
+      headers: {
+        authorization: "Bearer cross-tenant-token",
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ code: "tenant-actor-mismatch" });
+    expect(engine.searches).toEqual([]);
     await app.close();
   });
 });
@@ -780,13 +921,28 @@ describe("tool REST idempotency (P1-10)", () => {
     const app = fastify();
     registerToolRestRoutes(
       app,
-      { tools, metrics: createPlatformMetrics(), tokenStore, idempotencyStore: new InMemoryIdempotencyStore() },
+      {
+        tools,
+        metrics: createPlatformMetrics(),
+        tokenStore,
+        idempotencyStore: new InMemoryIdempotencyStore(),
+      },
       ["POST"],
     );
 
     const headers = { authorization: "Bearer idem-token", "idempotency-key": "key-1" };
-    const first = await app.inject({ method: "POST", url: "/api/tools/idem.write", headers, payload: {} });
-    const second = await app.inject({ method: "POST", url: "/api/tools/idem.write", headers, payload: {} });
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/tools/idem.write",
+      headers,
+      payload: {},
+    });
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/tools/idem.write",
+      headers,
+      payload: {},
+    });
 
     expect(first.json()).toEqual({ callNumber: 1 });
     expect(second.json()).toEqual({ callNumber: 1 });
@@ -818,7 +974,12 @@ describe("tool REST idempotency (P1-10)", () => {
     const app = fastify();
     registerToolRestRoutes(
       app,
-      { tools, metrics: createPlatformMetrics(), tokenStore, idempotencyStore: new InMemoryIdempotencyStore() },
+      {
+        tools,
+        metrics: createPlatformMetrics(),
+        tokenStore,
+        idempotencyStore: new InMemoryIdempotencyStore(),
+      },
       ["POST"],
     );
 
@@ -952,6 +1113,38 @@ function createToolRouteTestApp(options: {
   return app;
 }
 
+function tenantContext(input: { readonly orgId: string; readonly apiRpsLimit: number | null }) {
+  return {
+    orgId: input.orgId,
+    orgSlug: input.orgId,
+    orgTier: "business",
+    orgRegion: "us-east-1",
+    effectiveConfig: {
+      ...SYSTEM_TENANT_CONFIG,
+      quotas: {
+        ...SYSTEM_TENANT_CONFIG.quotas,
+        api_rps_limit: input.apiRpsLimit,
+      },
+    },
+    org: {
+      id: input.orgId,
+      slug: input.orgId,
+      displayName: input.orgId,
+      status: "active" as const,
+      tier: "business",
+      planId: "business",
+      region: "us-east-1",
+      byoConfig: {},
+      featureFlags: {},
+      quotas: { api_rps_limit: input.apiRpsLimit },
+      branding: {},
+      suspendedAt: null,
+      softDeletedAt: null,
+      hardDeletedAt: null,
+    },
+  };
+}
+
 function accessToken(
   input: Pick<AccessTokenRecord, "token" | "actorId" | "orgId" | "scopes"> & {
     readonly actorType?: AccessTokenRecord["actorType"];
@@ -966,59 +1159,6 @@ function accessToken(
     scopes: input.scopes,
     issuedAt: now,
     expiresAt: later,
-  };
-}
-
-function orgRecord(overrides: Partial<OrgRecord> = {}): OrgRecord {
-  return {
-    id: "org-tenant-config",
-    slug: "tenant-config",
-    displayName: "Tenant Config",
-    status: "active",
-    tier: "business",
-    planId: "business",
-    region: "us-east-1",
-    byoConfig: {},
-    featureFlags: { ai_smart_compose: true },
-    quotas: { api_rps_limit: 25 },
-    branding: { display_name_override: "Tenant Config" },
-    suspendedAt: null,
-    softDeletedAt: null,
-    hardDeletedAt: null,
-    ...overrides,
-  };
-}
-
-function tenantStorageMigrationJobRecord(
-  overrides: Partial<TenantStorageMigrationJobRecord> = {},
-): TenantStorageMigrationJobRecord {
-  const now = new Date("2026-05-20T02:00:00.000Z");
-  return {
-    id: "11111111-1111-4111-8111-111111111111",
-    orgId: "org-tenant-config",
-    target: "byo",
-    status: "queued",
-    dryRun: true,
-    requestedByActorId: "admin-1",
-    sourceStorage: {
-      managedBy: "helix-default",
-      storage: null,
-    },
-    targetStorage: {
-      managedBy: "byo",
-      storage: null,
-    },
-    plannedCount: 0,
-    copiedCount: 0,
-    verifiedCount: 0,
-    failures: [],
-    lastError: null,
-    attemptCount: 0,
-    startedAt: null,
-    completedAt: null,
-    createdAt: now,
-    updatedAt: now,
-    ...overrides,
   };
 }
 
@@ -1085,6 +1225,21 @@ interface ActionStatusBody {
 
 function actionStatusBody(value: unknown): ActionStatusBody {
   return value as ActionStatusBody;
+}
+
+class RecordingEventBus {
+  readonly records: { readonly subject: string; readonly payload: unknown }[] = [];
+
+  async publish(subject: string, payload: unknown): Promise<void> {
+    this.records.push({ subject, payload });
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Expected event payload to be an object.");
+  }
+  return value as Record<string, unknown>;
 }
 
 class FakeSearchEngine implements SearchEngine {

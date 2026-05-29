@@ -9,6 +9,7 @@ import {
 } from "./http.js";
 import {
   assertVectorMetric,
+  scopedCollectionName,
   validateCollectionName,
   validateDimension,
   validateLimit,
@@ -16,6 +17,7 @@ import {
   type VectorItem,
   type VectorMatch,
   type VectorMetric,
+  type VectorOrgScope,
   type VectorQueryOpts,
   type VectorStore,
 } from "./types.js";
@@ -28,27 +30,39 @@ export class ChromaVectorStore implements VectorStore {
     this.#config = normalizeHttpConfig(config);
   }
 
-  async createCollection(name: string, dim: number, metric: VectorMetric): Promise<void> {
+  async createCollection(
+    orgId: VectorOrgScope,
+    name: string,
+    dim: number,
+    metric: VectorMetric,
+  ): Promise<void> {
     await requestJson(this.id, this.#config, "POST", "/api/v1/collections", {
-      name: validateCollectionName(name),
+      name: scopedCollectionName(orgId, validateCollectionName(name)),
       get_or_create: true,
       metadata: { dimension: validateDimension(dim), metric: assertVectorMetric(metric) },
     });
   }
 
-  async upsert(collection: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
     if (items.length === 0) {
       return;
     }
-    await requestJson(this.id, this.#config, "POST", `/api/v1/collections/${encodeURIComponent(validateCollectionName(collection))}/upsert`, {
+    const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
+    await requestJson(this.id, this.#config, "POST", `/api/v1/collections/${encodeURIComponent(scoped)}/upsert`, {
       ids: items.map((item) => item.id),
       embeddings: items.map((item) => [...validateVector(item.vector)]),
       metadatas: items.map((item) => item.metadata ?? {}),
     });
   }
 
-  async query(collection: string, vector: readonly number[], opts: VectorQueryOpts = {}): Promise<readonly VectorMatch[]> {
-    const response = await requestJson(this.id, this.#config, "POST", `/api/v1/collections/${encodeURIComponent(validateCollectionName(collection))}/query`, {
+  async query(
+    orgId: VectorOrgScope,
+    collection: string,
+    vector: readonly number[],
+    opts: VectorQueryOpts = {},
+  ): Promise<readonly VectorMatch[]> {
+    const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
+    const response = await requestJson(this.id, this.#config, "POST", `/api/v1/collections/${encodeURIComponent(scoped)}/query`, {
       query_embeddings: [[...validateVector(vector)]],
       n_results: validateLimit(opts.limit),
       include: opts.includeVectors === true ? ["metadatas", "distances", "embeddings"] : ["metadatas", "distances"],
@@ -57,11 +71,12 @@ export class ChromaVectorStore implements VectorStore {
     return chromaMatches(response, opts.includeVectors === true);
   }
 
-  async delete(collection: string, ids: readonly string[]): Promise<void> {
+  async delete(orgId: VectorOrgScope, collection: string, ids: readonly string[]): Promise<void> {
     if (ids.length === 0) {
       return;
     }
-    await requestJson(this.id, this.#config, "POST", `/api/v1/collections/${encodeURIComponent(validateCollectionName(collection))}/delete`, {
+    const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
+    await requestJson(this.id, this.#config, "POST", `/api/v1/collections/${encodeURIComponent(scoped)}/delete`, {
       ids: [...ids],
     });
   }

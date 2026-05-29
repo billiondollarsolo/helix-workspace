@@ -13,7 +13,7 @@ import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
-import type { SheetsStore } from "./store.js";
+import type { SheetsStore, SheetVersionRecord } from "./store.js";
 import type {
   SheetCellEdit,
   SheetCellRecord,
@@ -47,6 +47,16 @@ const SUPPORTED_DATA_VALIDATION_DATE_LOCALES = new Set(["iso", "en-US", "en-GB",
 const formatSchema = z
   .record(z.unknown())
   .superRefine((format, ctx) => {
+    const linkUrl = format["linkUrl"];
+    if (linkUrl !== undefined && linkUrl !== null && linkUrl !== "") {
+      if (typeof linkUrl !== "string" || normalizedSafeSheetLinkUrl(linkUrl) === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["linkUrl"],
+          message: "Cell link URL must use http, https, or mailto.",
+        });
+      }
+    }
     if (format["numberFormat"] === "custom") {
       const customNumberFormat = format["customNumberFormat"];
       if (
@@ -111,6 +121,13 @@ const createSchema = z.object({
   metadata: metadataSchema,
 });
 
+const copySchema = z.object({
+  sheetId: uuidSchema,
+  title: z.string().min(1).max(255).optional(),
+  folderId: uuidSchema.nullable().optional(),
+  metadata: metadataSchema,
+});
+
 const importCsvSchema = z.object({
   filename: z.string().min(1).max(255),
   title: z.string().min(1).max(255).optional(),
@@ -157,6 +174,16 @@ const listSchema = z.object({
 
 const getSchema = z.object({
   sheetId: uuidSchema,
+});
+
+const listVersionsSchema = z.object({
+  sheetId: uuidSchema,
+  limit: z.number().int().positive().max(100).default(50),
+});
+
+const restoreVersionSchema = z.object({
+  sheetId: uuidSchema,
+  versionId: uuidSchema,
 });
 
 const updateSchema = z.object({
@@ -312,6 +339,43 @@ export function createSheetsToolDefinitions(
         return serializeSheetWithTabs(sheet);
       },
     }),
+    defineTool<z.output<typeof listVersionsSchema>, unknown>({
+      id: "sheets.version.list",
+      description: "List saved snapshot versions for a spreadsheet.",
+      permission: "sheets.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(listVersionsSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const versions = await store.listVersions({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          sheetId: input.sheetId,
+          limit: input.limit,
+        });
+        return { versions: versions.map(serializeVersion) };
+      },
+    }),
+    defineTool<z.output<typeof restoreVersionSchema>, unknown>({
+      id: "sheets.version.restore",
+      description: "Restore a spreadsheet from a saved snapshot version.",
+      permission: "sheets.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(restoreVersionSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const restored = await store.restoreVersion({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          sheetId: input.sheetId,
+          versionId: input.versionId,
+        });
+        if (restored === null) {
+          throw new Error(`Unknown or inaccessible sheet version: ${input.versionId}`);
+        }
+        return serializeSheetWithTabs(restored);
+      },
+    }),
     defineTool<z.output<typeof createSchema>, unknown>({
       id: "sheets.create",
       description: "Create a spreadsheet with one or more tabs.",
@@ -333,6 +397,28 @@ export function createSheetsToolDefinitions(
           resourceId: sheet.id,
           derivation: { content: input.title, scanContent: true },
         });
+        return serializeSheetWithTabs(sheet);
+      },
+    }),
+    defineTool<z.output<typeof copySchema>, unknown>({
+      id: "sheets.copy",
+      description: "Copy a native spreadsheet with its tabs, cells, and metadata.",
+      permission: "sheets.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(copySchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const sheet = await store.copySheet({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          sheetId: input.sheetId,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+          metadata: toJsonObject(input.metadata),
+        });
+        if (sheet === null) {
+          throw new Error(`Unknown or inaccessible sheet: ${input.sheetId}`);
+        }
         return serializeSheetWithTabs(sheet);
       },
     }),
@@ -468,6 +554,7 @@ export function createSheetsToolDefinitions(
       handler: async (input, ctx) => {
         const parsed = await parseXlsxForImport(input.contentBase64);
         const title = input.title ?? titleFromWorkbookFilename(input.filename);
+        const sourceFormat = spreadsheetWorkbookSourceFormat(input.filename);
         const sheet = await store.createSheet({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -476,7 +563,7 @@ export function createSheetsToolDefinitions(
           ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
           metadata: toJsonObject({
             ...input.metadata,
-            importedFrom: "xlsx",
+            importedFrom: sourceFormat,
             sourceFilename: input.filename,
           }),
         });
@@ -509,7 +596,7 @@ export function createSheetsToolDefinitions(
         return {
           ...serializeSheetWithTabs(imported),
           import: {
-            format: "xlsx",
+            format: sourceFormat,
             filename: input.filename,
             sheetCount: parsed.tabs.length,
             rowCount: parsed.rowCount,
@@ -946,6 +1033,21 @@ function serializeSheetWithTabs(sheet: SheetWithTabs) {
   return { ...serializeSheet(sheet), tabs: sheet.tabs.map(serializeTab) };
 }
 
+function serializeVersion(version: SheetVersionRecord) {
+  return {
+    id: version.id,
+    orgId: version.orgId,
+    sheetId: version.sheetId,
+    versionNumber: version.versionNumber,
+    mimeType: version.mimeType,
+    byteSize: version.byteSize,
+    sha256: version.sha256,
+    metadata: version.metadata,
+    createdByActorId: version.createdByActorId,
+    createdAt: version.createdAt.toISOString(),
+  };
+}
+
 function serializeTab(tab: SheetTabRecord) {
   return {
     id: tab.id,
@@ -1359,6 +1461,10 @@ function xlsxExportCellValue(cell: SheetCellRecord): CellValue {
     };
   }
   const numeric = numericCellValue(cell.value);
+  const linkUrl = normalizedSafeSheetLinkUrl(cell.format["linkUrl"]);
+  if (linkUrl !== undefined) {
+    return { text: cell.value, hyperlink: linkUrl };
+  }
   return numeric ?? cell.value;
 }
 
@@ -1375,6 +1481,24 @@ function numericCellValue(value: string): number | null {
     return null;
   }
   return Number(trimmed.replace(/,/gu, ""));
+}
+
+function normalizedSafeSheetLinkUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:"
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function xlsxExportNumberFormat(format: JsonObject): string | undefined {
@@ -1939,7 +2063,7 @@ function odsContentXml(
           "\n",
         )}\n      </table:content-validations>\n`;
   return `<?xml version="1.0" encoding="UTF-8"?>
-<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:of="urn:oasis:names:tc:opendocument:xmlns:of:1.2" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2">
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:of="urn:oasis:names:tc:opendocument:xmlns:of:1.2" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2">
 ${automaticStyles}  <office:body>
     <office:spreadsheet>
 ${validations}${tabs.map((tab) => odsTableXml(tab, context, exportComments, validationContext)).join("\n")}
@@ -1999,11 +2123,19 @@ function odsCellXml(
   if (numeric !== null) {
     return `<table:table-cell${attributes} office:value-type="float" office:value="${String(
       numeric,
-    )}">${annotation}<text:p>${xmlText(cell.value)}</text:p></table:table-cell>`;
+    )}">${annotation}${odsCellTextParagraph(cell.value, cell.format)}</table:table-cell>`;
   }
-  return `<table:table-cell${attributes} office:value-type="string">${annotation}<text:p>${xmlText(
+  return `<table:table-cell${attributes} office:value-type="string">${annotation}${odsCellTextParagraph(
     cell.value,
-  )}</text:p></table:table-cell>`;
+    cell.format,
+  )}</table:table-cell>`;
+}
+
+function odsCellTextParagraph(value: string, format: JsonObject): string {
+  const linkUrl = normalizedSafeSheetLinkUrl(format["linkUrl"]);
+  return linkUrl === undefined
+    ? `<text:p>${xmlText(value)}</text:p>`
+    : `<text:p><text:a xlink:href="${xmlAttribute(linkUrl)}">${xmlText(value)}</text:a></text:p>`;
 }
 
 function buildOdsExportContext(
@@ -2462,39 +2594,52 @@ async function parseXlsxForImport(contentBase64: string): Promise<{
   readonly columnCount: number;
   readonly populatedCellCount: number;
 }> {
-  const ExcelJS = (await import("exceljs")).default;
-  const workbook = new ExcelJS.Workbook();
+  const XLSX = await import("xlsx");
   const bytes = Buffer.from(contentBase64, "base64");
-  const workbookBuffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(workbookBuffer).set(bytes);
-  await workbook.xlsx.load(workbookBuffer);
+  const workbook = XLSX.read(bytes, {
+    type: "buffer",
+    cellDates: true,
+    cellFormula: true,
+    cellNF: true,
+    sheetStubs: true,
+  });
 
   const tabs: ImportedWorkbookTab[] = [];
   let rowCount = 0;
   let columnCount = 0;
   let populatedCellCount = 0;
 
-  workbook.eachSheet((worksheet) => {
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
     const edits: SheetCellEdit[] = [];
     let tabRowCount = 0;
     let tabColumnCount = 0;
-    worksheet.eachRow((row, rowNumber) => {
-      tabRowCount = Math.max(tabRowCount, rowNumber);
-      row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-        const value = xlsxCellValueText(cell.value);
-        if (value.length === 0) {
-          return;
+    const range = typeof worksheet?.["!ref"] === "string" ? worksheet["!ref"] : undefined;
+    if (worksheet !== undefined && range !== undefined) {
+      const decoded = XLSX.utils.decode_range(range);
+      for (let rowIndex = decoded.s.r; rowIndex <= decoded.e.r; rowIndex += 1) {
+        tabRowCount = Math.max(tabRowCount, rowIndex + 1);
+        for (let colIndex = decoded.s.c; colIndex <= decoded.e.c; colIndex += 1) {
+          const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+          const cell = worksheet[address] as SheetJsCell | undefined;
+          if (cell === undefined) {
+            continue;
+          }
+          const value = sheetJsCellValueText(cell);
+          if (value.length === 0) {
+            continue;
+          }
+          tabColumnCount = Math.max(tabColumnCount, colIndex + 1);
+          const format = xlsxCellFormat(cell);
+          edits.push({
+            row: rowIndex,
+            col: colIndex,
+            value,
+            ...(format === undefined ? {} : { format }),
+          });
         }
-        tabColumnCount = Math.max(tabColumnCount, colNumber);
-        const format = xlsxCellFormat(cell);
-        edits.push({
-          row: rowNumber - 1,
-          col: colNumber - 1,
-          value,
-          ...(format === undefined ? {} : { format }),
-        });
-      });
-    });
+      }
+    }
     rowCount = Math.max(rowCount, tabRowCount);
     columnCount = Math.max(columnCount, tabColumnCount);
     populatedCellCount += edits.length;
@@ -2502,17 +2647,64 @@ async function parseXlsxForImport(contentBase64: string): Promise<{
       throw new Error("XLSX import is limited to 5,000 populated cells for this first pass.");
     }
     tabs.push({
-      name: worksheet.name.slice(0, 120) || `Sheet ${String(tabs.length + 1)}`,
+      name: importedWorkbookTabName(sheetName, tabs.length),
       rowCount: tabRowCount,
       columnCount: tabColumnCount,
       edits,
     });
-  });
+  }
 
   if (tabs.length === 0) {
     throw new Error("XLSX workbook must contain at least one worksheet.");
   }
   return { tabs, rowCount, columnCount, populatedCellCount };
+}
+
+interface SheetJsCell {
+  readonly t?: string;
+  readonly v?: unknown;
+  readonly f?: string;
+  readonly z?: string;
+  readonly w?: string;
+  readonly numFmt?: string;
+  readonly l?: { readonly Target?: unknown };
+}
+
+function sheetJsCellValueText(cell: SheetJsCell): string {
+  if (typeof cell.f === "string" && cell.f.length > 0) {
+    const formula = sanitizeImportedSpreadsheetText(cell.f);
+    return formula.length > 0 ? `=${formula}` : "";
+  }
+  const value = sanitizeImportedSpreadsheetText(xlsxCellValueText(cell.v));
+  if (value.length > 0) {
+    return value;
+  }
+  if (cell.t === "e" && typeof cell.w === "string") {
+    return sanitizeImportedSpreadsheetText(cell.w);
+  }
+  return "";
+}
+
+function importedWorkbookTabName(rawName: string, index: number): string {
+  const fallback = `Sheet ${String(index + 1)}`;
+  if (hasWorkbookTabControlCharacter(rawName)) {
+    return fallback;
+  }
+  return sanitizeImportedSpreadsheetText(rawName).trim().slice(0, 120) || fallback;
+}
+
+function hasWorkbookTabControlCharacter(value: string): boolean {
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sanitizeImportedSpreadsheetText(value: string): string {
+  return value.replaceAll("\u0000", "");
 }
 
 async function parseOdsForImport(contentBase64: string): Promise<{
@@ -2592,12 +2784,22 @@ async function parseOdsForImport(contentBase64: string): Promise<{
   return { tabs, rowCount, columnCount, populatedCellCount };
 }
 
-function xlsxCellFormat(cell: { readonly numFmt?: string | undefined }): JsonObject | undefined {
-  const numFmt = cell.numFmt?.trim();
-  if (numFmt === undefined || !SUPPORTED_CUSTOM_NUMBER_FORMAT_SET.has(numFmt)) {
-    return undefined;
+function xlsxCellFormat(cell: {
+  readonly numFmt?: string | undefined;
+  readonly z?: string | undefined;
+  readonly l?: { readonly Target?: unknown } | undefined;
+}): JsonObject | undefined {
+  const format: Record<string, string> = {};
+  const linkUrl = normalizedSafeSheetLinkUrl(cell.l?.Target);
+  if (linkUrl !== undefined) {
+    format["linkUrl"] = linkUrl;
   }
-  return { numberFormat: "custom", customNumberFormat: numFmt };
+  const numFmt = (cell.numFmt ?? cell.z)?.trim();
+  if (numFmt !== undefined && SUPPORTED_CUSTOM_NUMBER_FORMAT_SET.has(numFmt)) {
+    format["numberFormat"] = "custom";
+    format["customNumberFormat"] = numFmt;
+  }
+  return Object.keys(format).length === 0 ? undefined : format;
 }
 
 function xlsxCellValueText(value: unknown): string {
@@ -2757,7 +2959,22 @@ function titleFromTsvFilename(filename: string): string {
 }
 
 function titleFromWorkbookFilename(filename: string): string {
-  return filename.replace(/\.(xlsx|ods)$/iu, "").trim() || "Imported workbook";
+  return filename.replace(/\.(xlsx|xlsm|xlsb|xltx|xltm|xls|ods)$/iu, "").trim() || "Imported workbook";
+}
+
+function spreadsheetWorkbookSourceFormat(filename: string): string {
+  const extension = /\.([^.]+)$/u.exec(filename.trim())?.[1]?.toLowerCase();
+  switch (extension) {
+    case "xls":
+    case "xlsb":
+    case "xlsm":
+    case "xltx":
+    case "xltm":
+    case "xlsx":
+      return extension;
+    default:
+      return "xlsx";
+  }
 }
 
 function tabNameFromCsvFilename(filename: string): string {

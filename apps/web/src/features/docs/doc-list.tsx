@@ -1,9 +1,18 @@
 /* Docs list view — sidebar (New doc + folders + tag folders + templates) plus
-   the main pane (Recent grid with striped thumbnails + All-documents table).
+   the main pane (card grid or table, driven by the shared document view preference).
    Ported from the design handoff (app-docs.jsx → DocsSidebar + DocList). */
 
+import { useState, type CSSProperties } from "react";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
+import { EditorsAlphaDisabledNotice } from "@/features/apps/editors-alpha";
+import { setHelixDriveItemDragData } from "@/features/drive/drag-payload";
+import { FileNameText } from "@/features/drive/file-name-text";
+import { FileThumbnail } from "@/features/drive/file-thumbnail";
+import {
+  DocumentSurfaceViewToggle,
+  useDocumentSurfaceViewPreference,
+} from "@/features/drive/view-preference";
 import {
   DOC_FOLDERS,
   DOC_TEMPLATES,
@@ -21,13 +30,19 @@ export interface DocListProps {
   readonly query: string;
   readonly onFolder: (folder: string) => void;
   readonly onNewDoc: () => void;
-  readonly onImportDocx: () => void;
+  readonly onImportDocument: () => void;
   readonly onOpenDoc: (document: DocSummary) => void;
   readonly onMigrateDocument?: ((id: string) => void) | undefined;
+  readonly onTrashDocument?: ((id: string) => void) | undefined;
+  readonly onRestoreDocument?: ((id: string) => void) | undefined;
+  readonly onDeleteDocumentForever?: ((id: string) => void) | undefined;
+  readonly onSetDocumentStarred?: ((id: string, starred: boolean) => void) | undefined;
   /** True when the Docs backend could not be reached. */
   readonly isBackendUnavailable: boolean;
   /** True while the documents query is in flight (first paint, no data yet). */
   readonly isLoading?: boolean;
+  readonly hasMore?: boolean;
+  readonly onShowMore?: () => void;
   /** True while a `docs.create` request is in flight. */
   readonly isCreating?: boolean;
   readonly isImporting?: boolean;
@@ -35,6 +50,10 @@ export interface DocListProps {
   readonly createError?: Error | null;
   readonly importError?: Error | null;
   readonly migrationError?: Error | null;
+  readonly actionError?: Error | null;
+  readonly busyDocumentId?: string | null | undefined;
+  /** False when native editing/creation is disabled by Admin > Core apps. */
+  readonly editorsEnabled?: boolean;
 }
 
 export function DocList({
@@ -43,20 +62,30 @@ export function DocList({
   query,
   onFolder,
   onNewDoc,
-  onImportDocx,
+  onImportDocument,
   onOpenDoc,
   onMigrateDocument,
+  onTrashDocument,
+  onRestoreDocument,
+  onDeleteDocumentForever,
+  onSetDocumentStarred,
   isBackendUnavailable,
   isLoading = false,
+  hasMore = false,
+  onShowMore,
   isCreating = false,
   isImporting = false,
   migratingDocumentId = null,
   createError = null,
   importError = null,
   migrationError = null,
+  actionError = null,
+  busyDocumentId = null,
+  editorsEnabled = true,
 }: DocListProps) {
   const visible = filterDocuments(documents, folder, query);
   const heading = headingForFolder(folder);
+  const [view, setView] = useDocumentSurfaceViewPreference();
 
   return (
     <>
@@ -64,9 +93,10 @@ export function DocList({
         folder={folder}
         onFolder={onFolder}
         onNewDoc={onNewDoc}
-        onImportDocx={onImportDocx}
+        onImportDocument={onImportDocument}
         isCreating={isCreating}
         isImporting={isImporting}
+        editorsEnabled={editorsEnabled}
       />
       <div
         style={{
@@ -83,17 +113,35 @@ export function DocList({
             {visible.length} item{visible.length === 1 ? "" : "s"}
           </span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <DocumentSurfaceViewToggle view={view} onViewChange={setView} />
             <button className="btn" type="button">
               <Icons.Filter /> Filter
             </button>
-            <button className="btn" type="button" onClick={onImportDocx} disabled={isImporting}>
-              <Icons.Upload /> {isImporting ? "Importing..." : "Import DOCX"}
+            <button
+              className="btn"
+              type="button"
+              onClick={onImportDocument}
+              disabled={isImporting}
+            >
+              <Icons.Upload /> {isImporting ? "Importing..." : "Import"}
             </button>
-            <button className="btn primary" type="button" onClick={onNewDoc}>
+            <button
+              className="btn primary"
+              type="button"
+              onClick={onNewDoc}
+              disabled={isCreating || !editorsEnabled}
+              title={
+                editorsEnabled
+                  ? undefined
+                  : "Editors alpha is disabled by an admin. Import and preview files from Drive."
+              }
+            >
               <Icons.Plus /> New doc
             </button>
           </div>
         </div>
+
+        {editorsEnabled ? null : <EditorsAlphaDisabledNotice surface="Docs" />}
 
         {isBackendUnavailable ? (
           <div
@@ -151,7 +199,7 @@ export function DocList({
             }}
           >
             <Icons.Upload />
-            DOCX import failed — {importError.message}
+            Document import failed — {importError.message}
           </div>
         ) : null}
 
@@ -175,6 +223,26 @@ export function DocList({
           </div>
         ) : null}
 
+        {actionError !== null ? (
+          <div
+            role="alert"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 12px",
+              marginBottom: 16,
+              fontSize: "var(--text-meta)",
+              color: "var(--text-2)",
+              background: "var(--warning-soft)",
+              borderRadius: 6,
+            }}
+          >
+            <Icons.Trash />
+            Document action failed — {actionError.message}
+          </div>
+        ) : null}
+
         {isLoading && visible.length === 0 ? (
           <div
             role="status"
@@ -189,10 +257,10 @@ export function DocList({
           </div>
         ) : visible.length === 0 ? (
           <EmptyState folder={folder} hasQuery={query.trim().length > 0} />
-        ) : (
+        ) : view === "grid" ? (
           <>
             <div className="section-label" style={{ padding: "0 0 8px" }}>
-              Recent
+              Documents
             </div>
             <div
               style={{
@@ -202,7 +270,7 @@ export function DocList({
                 marginBottom: 24,
               }}
             >
-              {visible.slice(0, 4).map((document) => (
+              {visible.map((document) => (
                 <RecentCard
                   key={document.id}
                   document={document}
@@ -210,7 +278,12 @@ export function DocList({
                 />
               ))}
             </div>
-
+            {hasMore && onShowMore !== undefined ? (
+              <ShowMoreButton label="Show more documents" onClick={onShowMore} />
+            ) : null}
+          </>
+        ) : (
+          <>
             <div className="section-label" style={{ padding: "0 0 8px" }}>
               All documents
             </div>
@@ -235,72 +308,28 @@ export function DocList({
                 <span>Action</span>
               </div>
               {visible.map((document) => (
-                <div
+                <DocRow
                   key={document.id}
-                  role="button"
-                  tabIndex={0}
-                  className="list-row"
-                  onClick={() => onOpenDoc(document)}
-                  onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) {
-                      return;
-                    }
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onOpenDoc(document);
-                    }
-                  }}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 160px 140px 80px 96px",
-                    padding: "0 16px",
-                    height: 36,
-                    alignItems: "center",
-                    fontSize: "var(--text-meta)",
-                    width: "100%",
-                    textAlign: "left",
-                    borderBottom: "1px solid var(--border)",
-                  }}
-                >
-                  <span className="row gap-2" style={{ minWidth: 0 }}>
-                    <Icons.Doc />
-                    <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
-                      {document.title}
-                    </span>
-                    {document.formatLabel ? <DocFormatChip label={document.formatLabel} /> : null}
-                  </span>
-                  <span className="row gap-2" style={{ minWidth: 0 }}>
-                    <Avatar name={document.owner} size={18} />
-                    <span className="truncate">{document.owner}</span>
-                  </span>
-                  <span style={{ color: "var(--text-2)" }}>{document.modified}</span>
-                  <span style={{ color: "var(--text-2)" }}>{document.shared} people</span>
-                  {isLegacyDocument(document) && onMigrateDocument !== undefined ? (
-                    <button
-                      type="button"
-                      className="btn sm"
-                      aria-label={`Migrate ${document.title} to native editor`}
-                      disabled={migratingDocumentId === document.id}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onMigrateDocument(document.id);
-                      }}
-                    >
-                      <Icons.Doc />{" "}
-                      {migratingDocumentId === document.id ? "Migrating..." : "Migrate"}
-                    </button>
-                  ) : (
-                    <span
-                      className="icon-btn"
-                      role="presentation"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <Icons.MoreV />
-                    </span>
-                  )}
-                </div>
+                  document={document}
+                  isTrash={folder === "trash"}
+                  isBusy={
+                    busyDocumentId === document.id || migratingDocumentId === document.id
+                  }
+                  canMigrate={
+                    editorsEnabled && isLegacyDocument(document) && onMigrateDocument !== undefined
+                  }
+                  onOpen={() => onOpenDoc(document)}
+                  onMigrate={() => onMigrateDocument?.(document.id)}
+                  onTrash={() => onTrashDocument?.(document.id)}
+                  onRestore={() => onRestoreDocument?.(document.id)}
+                  onDeleteForever={() => onDeleteDocumentForever?.(document.id)}
+                  onSetStarred={(starred) => onSetDocumentStarred?.(document.id, starred)}
+                />
               ))}
             </div>
+            {hasMore && onShowMore !== undefined ? (
+              <ShowMoreButton label="Show more documents" onClick={onShowMore} />
+            ) : null}
           </>
         )}
       </div>
@@ -308,24 +337,246 @@ export function DocList({
   );
 }
 
+function ShowMoreButton({
+  label,
+  onClick,
+}: {
+  readonly label: string;
+  readonly onClick: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
+      <button type="button" className="btn" onClick={onClick}>
+        <Icons.ChevronDown />
+        {label}
+      </button>
+    </div>
+  );
+}
+
 function isLegacyDocument(document: DocSummary): boolean {
   return document.editorEngine === "legacy-yjs";
+}
+
+function DocRow({
+  document,
+  isTrash,
+  isBusy,
+  canMigrate,
+  onOpen,
+  onMigrate,
+  onTrash,
+  onRestore,
+  onDeleteForever,
+  onSetStarred,
+}: {
+  readonly document: DocSummary;
+  readonly isTrash: boolean;
+  readonly isBusy: boolean;
+  readonly canMigrate: boolean;
+  readonly onOpen: () => void;
+  readonly onMigrate: () => void;
+  readonly onTrash: () => void;
+  readonly onRestore: () => void;
+  readonly onDeleteForever: () => void;
+  readonly onSetStarred: (starred: boolean) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <div
+        role="button"
+        tabIndex={0}
+        className="list-row"
+        draggable
+        onDragStart={(event) => {
+          setHelixDriveItemDragData(event.dataTransfer, {
+            id: document.id,
+            name: document.title,
+            href: documentDragHref(document),
+            mimeType: document.mimeType,
+            app: "docs",
+          });
+        }}
+        onClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) {
+            return;
+          }
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 160px 140px 80px 96px",
+          padding: "0 16px",
+          height: 36,
+          alignItems: "center",
+          fontSize: "var(--text-meta)",
+          width: "100%",
+          textAlign: "left",
+          borderBottom: "1px solid var(--border)",
+          opacity: isBusy ? 0.5 : 1,
+        }}
+      >
+        <span className="row gap-2" style={{ minWidth: 0 }}>
+          <Icons.Doc />
+          <FileNameText name={document.title} style={{ flex: 1, minWidth: 0 }} />
+        </span>
+        <span className="row gap-2" style={{ minWidth: 0 }}>
+          <Avatar name={document.owner} size={18} />
+          <span className="truncate">{document.owner}</span>
+        </span>
+        <span style={{ color: "var(--text-2)" }}>{document.modified}</span>
+        <span style={{ color: "var(--text-2)" }}>{document.shared} people</span>
+        <span
+          className="icon-btn"
+          role="button"
+          tabIndex={-1}
+          aria-label={`More actions for ${document.title}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(event) => {
+            event.stopPropagation();
+            setMenuOpen((open) => !open);
+          }}
+        >
+          <Icons.MoreV />
+        </span>
+      </div>
+
+      {menuOpen ? (
+        <div
+          role="menu"
+          style={{
+            position: "absolute",
+            right: 12,
+            top: 32,
+            zIndex: 10,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            boxShadow: "0 8px 24px rgba(0,0,0,.18)",
+            minWidth: 170,
+            padding: 4,
+          }}
+        >
+          {isTrash ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isBusy}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  onRestore();
+                }}
+                style={docMenuItemStyle}
+              >
+                <Icons.History /> Restore
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isBusy}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  onDeleteForever();
+                }}
+                style={{ ...docMenuItemStyle, color: "var(--danger)" }}
+              >
+                <Icons.Trash /> Delete forever
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isBusy}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  onSetStarred(!document.starred);
+                }}
+                style={docMenuItemStyle}
+              >
+                <Icons.Star fill={document.starred ? "currentColor" : "none"} />{" "}
+                {document.starred ? "Unstar" : "Star"}
+              </button>
+              {canMigrate ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={isBusy}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuOpen(false);
+                    onMigrate();
+                  }}
+                  style={docMenuItemStyle}
+                >
+                  <Icons.Doc /> {isBusy ? "Migrating..." : "Migrate"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isBusy}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  onTrash();
+                }}
+                style={{ ...docMenuItemStyle, color: "var(--danger)" }}
+              >
+                <Icons.Trash /> Move to trash
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const docMenuItemStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  width: "100%",
+  padding: "6px 8px",
+  fontSize: "var(--text-meta)",
+  textAlign: "left",
+  borderRadius: 4,
+  background: "transparent",
+};
+
+function documentDragHref(document: DocSummary): string {
+  const suffix = document.openMode === "office" ? "?open=office" : "";
+  return `/docs/${encodeURIComponent(document.id)}${suffix}`;
 }
 
 function DocsSidebar({
   folder,
   onFolder,
   onNewDoc,
-  onImportDocx,
+  onImportDocument,
   isCreating = false,
   isImporting = false,
+  editorsEnabled = true,
 }: {
   readonly folder: string;
   readonly onFolder: (folder: string) => void;
   readonly onNewDoc: () => void;
-  readonly onImportDocx: () => void;
+  readonly onImportDocument: () => void;
   readonly isCreating?: boolean;
   readonly isImporting?: boolean;
+  readonly editorsEnabled?: boolean;
 }) {
   return (
     <aside aria-label="Docs navigation" className="surf-sidebar">
@@ -333,7 +584,12 @@ function DocsSidebar({
         className="btn primary lg"
         type="button"
         onClick={onNewDoc}
-        disabled={isCreating}
+        disabled={isCreating || !editorsEnabled}
+        title={
+          editorsEnabled
+            ? undefined
+            : "Editors alpha is disabled by an admin. Import and preview files from Drive."
+        }
         style={{ width: "100%", marginBottom: 12 }}
       >
         <Icons.Plus /> {isCreating ? "Creating…" : "New doc"}
@@ -341,11 +597,11 @@ function DocsSidebar({
       <button
         className="btn lg"
         type="button"
-        onClick={onImportDocx}
+        onClick={onImportDocument}
         disabled={isImporting}
         style={{ width: "100%", marginBottom: 12 }}
       >
-        <Icons.Upload /> {isImporting ? "Importing..." : "Import DOCX"}
+        <Icons.Upload /> {isImporting ? "Importing..." : "Import document"}
       </button>
       <nav aria-label="Document folders" style={{ overflowY: "auto", flex: 1 }}>
         {DOC_FOLDERS.map((entry) => {
@@ -387,6 +643,16 @@ function RecentCard({
   return (
     <button
       type="button"
+      draggable
+      onDragStart={(event) => {
+        setHelixDriveItemDragData(event.dataTransfer, {
+          id: document.id,
+          name: document.title,
+          href: documentDragHref(document),
+          mimeType: document.mimeType,
+          app: "docs",
+        });
+      }}
       onClick={onOpen}
       style={{
         background: "var(--surface)",
@@ -399,39 +665,16 @@ function RecentCard({
         gap: 8,
       }}
     >
-      <div
-        aria-hidden="true"
-        style={{
-          aspectRatio: "8 / 11",
-          background: "var(--surface-2)",
-          borderRadius: 4,
-          padding: 10,
-          overflow: "hidden",
-          border: "1px solid var(--border)",
-        }}
-      >
-        <div
-          style={{
-            height: 4,
-            background: "var(--text-3)",
-            width: "70%",
-            marginBottom: 4,
-            borderRadius: 1,
-          }}
-        />
-        {Array.from({ length: 14 }).map((_, index) => (
-          <div
-            key={`stripe-${String(index)}`}
-            style={{
-              height: 2,
-              background: "var(--border-2)",
-              width: `${50 + ((index * 13) % 50)}%`,
-              marginBottom: 2,
-              borderRadius: 1,
-            }}
-          />
-        ))}
-      </div>
+      <FileThumbnail
+        objectId={document.id}
+        name={document.title}
+        mimeType={document.mimeType}
+        preview={document.preview}
+        aspectRatio="8 / 11"
+        icon="Doc"
+        color="#2563eb"
+        fallback={<DocumentThumbnailPlaceholder />}
+      />
       <div>
         <div
           style={{
@@ -441,13 +684,10 @@ function RecentCard({
             marginBottom: 2,
           }}
         >
-          <div
-            className="truncate"
+          <FileNameText
+            name={document.title}
             style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}
-          >
-            {document.title}
-          </div>
-          {document.formatLabel ? <DocFormatChip label={document.formatLabel} /> : null}
+          />
         </div>
         <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
           {document.modified}
@@ -457,30 +697,40 @@ function RecentCard({
   );
 }
 
-/** Small uppercase chip showing the doc's original format (e.g. "MD",
- *  "DOCX"). Lives next to the doc title in both the recent-cards grid and
- *  the all-documents table so the user can tell formats apart at a glance. */
-function DocFormatChip({ label }: { readonly label: string }) {
+function DocumentThumbnailPlaceholder() {
   return (
-    <span
-      aria-label={`Format: ${label}`}
+    <div
+      aria-hidden="true"
       style={{
-        flexShrink: 0,
-        padding: "0 5px",
-        height: 16,
-        lineHeight: "16px",
-        borderRadius: 3,
-        fontSize: "var(--text-overline)",
-        fontWeight: 700,
-        letterSpacing: ".04em",
-        color: "var(--accent)",
-        background: "var(--accent-soft)",
-        border: "1px solid var(--accent)33",
-        textTransform: "uppercase",
+        boxSizing: "border-box",
+        width: "100%",
+        height: "100%",
+        padding: 10,
+        background: "var(--surface-2)",
       }}
     >
-      {label}
-    </span>
+      <div
+        style={{
+          height: 4,
+          background: "var(--text-3)",
+          width: "70%",
+          marginBottom: 4,
+          borderRadius: 1,
+        }}
+      />
+      {Array.from({ length: 14 }).map((_, index) => (
+        <div
+          key={`stripe-${String(index)}`}
+          style={{
+            height: 2,
+            background: "var(--border-2)",
+            width: `${50 + ((index * 13) % 50)}%`,
+            marginBottom: 2,
+            borderRadius: 1,
+          }}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -527,7 +777,10 @@ export function filterDocuments(
   folder: string,
   query: string,
 ): readonly DocSummary[] {
-  let rows = documents;
+  let rows =
+    folder === "trash"
+      ? documents.filter((document) => document.deletedAt !== null)
+      : documents.filter((document) => document.deletedAt === null);
   if (folder === "mine") {
     rows = rows.filter((document) => document.mine);
   } else if (folder === "shared") {
@@ -536,8 +789,6 @@ export function filterDocuments(
     rows = rows.slice(0, 5);
   } else if (folder === "starred") {
     rows = rows.filter((document) => document.starred);
-  } else if (folder === "trash") {
-    rows = [];
   }
 
   const normalized = query.trim().toLowerCase();

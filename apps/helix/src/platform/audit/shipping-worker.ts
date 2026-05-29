@@ -17,10 +17,7 @@ export interface ListAuditShippingRecordsInput {
 
 export interface AuditShippingStore {
   loadAuditShippingCheckpoint(destination: string): Promise<AuditShippingCheckpoint | null>;
-  saveAuditShippingCheckpoint(
-    destination: string,
-    checkpoint: AuditShippingCheckpoint,
-  ): Promise<void>;
+  saveAuditShippingCheckpoint(destination: string, checkpoint: AuditShippingCheckpoint): Promise<void>;
   listAuditShippingRecords(
     input: ListAuditShippingRecordsInput,
   ): Promise<readonly ImmutableAuditActivityRecord[]>;
@@ -68,14 +65,8 @@ export class AuditShippingWorker {
 
   constructor(private readonly options: AuditShippingWorkerOptions) {
     this.destination = options.destination ?? defaultDestination;
-    this.batchSize = positiveInteger(
-      options.batchSize ?? defaultBatchSize,
-      "audit shipping batchSize",
-    );
-    this.intervalMs = positiveInteger(
-      options.intervalMs ?? defaultIntervalMs,
-      "audit shipping intervalMs",
-    );
+    this.batchSize = positiveInteger(options.batchSize ?? defaultBatchSize, "audit shipping batchSize");
+    this.intervalMs = positiveInteger(options.intervalMs ?? defaultIntervalMs, "audit shipping intervalMs");
     this.now = options.now ?? (() => new Date());
   }
 
@@ -186,46 +177,33 @@ async function shipRecordsByOrg(
   records: readonly ImmutableAuditActivityRecord[],
 ): Promise<number> {
   let shippedRecordCount = 0;
-  for (const group of contiguousOrgGroups(records)) {
+  for (const group of groupRecordsByOrg(records)) {
     const result = await shipper.ship(group);
     shippedRecordCount += result.recordCount;
   }
   return shippedRecordCount;
 }
 
-function contiguousOrgGroups(
+function groupRecordsByOrg(
   records: readonly ImmutableAuditActivityRecord[],
 ): readonly (readonly ImmutableAuditActivityRecord[])[] {
-  const groups: ImmutableAuditActivityRecord[][] = [];
-  let currentGroup: ImmutableAuditActivityRecord[] = [];
-  let currentOrgId: string | undefined;
-
+  const groups = new Map<string, ImmutableAuditActivityRecord[]>();
   for (const record of records) {
-    if (currentGroup.length === 0 || record.orgId === currentOrgId) {
-      currentGroup.push(record);
-      currentOrgId = record.orgId;
+    const group = groups.get(record.orgId);
+    if (group === undefined) {
+      groups.set(record.orgId, [record]);
       continue;
     }
-
-    groups.push(currentGroup);
-    currentGroup = [record];
-    currentOrgId = record.orgId;
+    group.push(record);
   }
-
-  if (currentGroup.length > 0) {
-    groups.push(currentGroup);
-  }
-
-  return groups;
+  return [...groups.values()];
 }
 
 function checkpointFromRecord(record: ImmutableAuditActivityRecord): AuditShippingCheckpoint {
   return { id: record.id, createdAt: record.createdAt };
 }
 
-function lastRecord(
-  records: readonly ImmutableAuditActivityRecord[],
-): ImmutableAuditActivityRecord {
+function lastRecord(records: readonly ImmutableAuditActivityRecord[]): ImmutableAuditActivityRecord {
   const record = records[records.length - 1];
   if (record === undefined) {
     throw new Error("Expected at least one audit shipping record.");

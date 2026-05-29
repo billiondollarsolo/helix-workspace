@@ -428,7 +428,49 @@ describe("handleMcpJsonRpcRequest", () => {
       },
     });
   });
+
+  it("maps resource read quota denials to MCP rate-limit errors", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+    const resources = {
+      async list() {
+        return [];
+      },
+      async read() {
+        throw new ResourceQuotaExceededError();
+      },
+    };
+
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        actor: agentActor,
+        resources,
+        body: {
+          jsonrpc: "2.0",
+          id: "quota",
+          method: "resources/read",
+          params: { uri: "helix://docs/document/doc-1" },
+        },
+      }),
+    ).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: "quota",
+      error: {
+        code: -32029,
+        message: "Tenant export job quota exceeded.",
+      },
+    });
+  });
 });
+
+class ResourceQuotaExceededError extends Error {
+  readonly statusCode = 429;
+
+  constructor() {
+    super("Tenant export job quota exceeded.");
+    this.name = "ResourceQuotaExceededError";
+  }
+}
 
 const requestLimitBudget: AgentLimitBudget = {
   requestsPerMinute: 1,

@@ -12,6 +12,7 @@ export interface DriveApiPreview {
   readonly mimeType: string;
   readonly text?: string;
   readonly url?: string;
+  readonly storageKey?: string;
   readonly pageCount?: number;
   readonly width?: number;
   readonly height?: number;
@@ -47,17 +48,12 @@ export interface DriveApiEntry {
 export interface DriveApiSearchHit {
   readonly objectId: string;
   readonly name: string;
-  readonly ownerActorId: string | null;
-  readonly ownerDisplayName?: string;
-  readonly ownerEmail?: string;
-  readonly app?: string | null;
   readonly mimeType: string;
   readonly byteSize: number;
   readonly sha256: string | null;
   readonly folderId: string | null;
   readonly preview: string;
   readonly previewMetadata?: DriveApiPreview;
-  readonly metadata?: Record<string, unknown>;
   readonly updatedAt: string;
 }
 
@@ -68,6 +64,19 @@ export interface DriveShareInput {
   readonly role?: "reader" | "commenter" | "editor" | "owner";
   readonly expiresAt?: string | null;
 }
+
+export interface DriveAccessGrant {
+  readonly actorId: string;
+  readonly role: string;
+  readonly displayName?: string;
+  readonly email?: string;
+  readonly grantedByActorId: string | null;
+  readonly expiresAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type DriveAccessRole = "reader" | "commenter" | "editor";
 
 export interface DriveUploadInput {
   readonly name: string;
@@ -183,6 +192,52 @@ export async function uploadDriveFile(
     fetchImpl,
   );
 
+  // Direct-to-storage when the server returned a presigned PUT URL (RustFS /
+  // S3-compatible backends). Matches Google Drive / OneDrive / Dropbox: bytes
+  // go straight to object storage, never through the API server. If the
+  // browser cannot complete that PUT (local object-store CORS, blocked network,
+  // expired signature), retry through the authenticated finalize path; the API
+  // server still writes the bytes into tenant storage.
+  if (prepared.uploadUrl) {
+    try {
+      const putRes = await fetch(prepared.uploadUrl, {
+        method: "PUT",
+        headers: { ...(prepared.uploadHeaders ?? {}), "content-type": mimeType },
+        body: buffer,
+      });
+      if (!putRes.ok) {
+        throw new Error(`Direct upload to storage failed: HTTP ${putRes.status}`);
+      }
+      await finalizeDriveUpload(
+        {
+          objectId: prepared.objectId,
+          byteSize: buffer.byteLength,
+          sha256,
+          mimeType,
+          storageKey: prepared.storageKey,
+          metadata: { source: "web-shell" },
+        },
+        fetchImpl,
+      );
+      return prepared;
+    } catch {
+      await finalizeDriveUploadWithContent(prepared, buffer, sha256, mimeType, fetchImpl);
+      return prepared;
+    }
+  } else {
+    await finalizeDriveUploadWithContent(prepared, buffer, sha256, mimeType, fetchImpl);
+  }
+
+  return prepared;
+}
+
+async function finalizeDriveUploadWithContent(
+  prepared: DriveUploadResult,
+  buffer: ArrayBuffer,
+  sha256: string,
+  mimeType: string,
+  fetchImpl: DriveApiFetch,
+): Promise<void> {
   await finalizeDriveUpload(
     {
       objectId: prepared.objectId,
@@ -195,8 +250,6 @@ export async function uploadDriveFile(
     },
     fetchImpl,
   );
-
-  return prepared;
 }
 
 async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
@@ -283,12 +336,65 @@ export async function shareDrive(
   );
 }
 
+export async function listDriveAccess(
+  objectId: string,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<readonly DriveAccessGrant[]> {
+  const output = await callDriveTool<{ readonly grants?: readonly DriveAccessGrant[] }>(
+    "drive.access.list",
+    { objectId },
+    fetchImpl,
+  );
+  return output.grants ?? [];
+}
+
+export async function removeDriveAccess(
+  objectId: string,
+  actorId: string,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<{ readonly objectId: string; readonly actorId: string; readonly removed: boolean }> {
+  return callDriveTool(
+    "drive.access.remove",
+    { objectId, actorId },
+    fetchImpl,
+  );
+}
+
+export async function updateDriveAccessRole(
+  objectId: string,
+  actorId: string,
+  role: DriveAccessRole,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<{
+  readonly objectId: string;
+  readonly actorId: string;
+  readonly grant: DriveAccessGrant | null;
+}> {
+  return callDriveTool(
+    "drive.access.update",
+    { objectId, actorId, role, expiresAt: null },
+    fetchImpl,
+  );
+}
+
 export async function moveDriveObject(
   objectId: string,
   folderId: string | null,
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<DriveApiEntry | null> {
   return callDriveTool<DriveApiEntry | null>("drive.move", { objectId, folderId }, fetchImpl);
+}
+
+export async function setDriveObjectStarred(
+  objectId: string,
+  starred: boolean,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<DriveApiEntry | null> {
+  return callDriveTool<DriveApiEntry | null>(
+    "drive.star.set",
+    { objectId, starred },
+    fetchImpl,
+  );
 }
 
 export interface DriveDownloadResult {
@@ -298,9 +404,11 @@ export interface DriveDownloadResult {
 }
 
 /**
- * Resolve where the "Open" / "Download" buttons should point for a Drive
- * entry. Native editor files (docs / sheets / slides) and PDFs open in their
- * in-app surfaces; other raw binaries stream through the browser preview path.
+ * Resolve where a preview/download URL should point for a Drive entry. Native
+ * editor files (docs / sheets / slides) and PDFs open in their in-app
+ * surfaces; raw binaries stream through the browser preview path. Editable
+ * foreign formats are intentionally not routed through silent import here; the
+ * Drive UI owns the explicit copy/convert prompt.
  *
  * (The historical `/dav/<id>` URL never existed as a backend route —
  * `/dav/*` is reserved for CalDAV / CardDAV / WebDAV with app-password
@@ -327,9 +435,7 @@ export function driveDownloadResult(entry: DriveApiEntry): DriveDownloadResult {
  *   1. Native Helix editors (.helixdoc / .helixsheet / .helixdeck) — these
  *      use the in-app Tiptap / sheets / slides surfaces.
  *   2. Plain PDFs — open in the in-app PDF viewer shell.
- *   3. OOXML (DOCX / XLSX / PPTX) — opens in the OnlyOffice editor
- *      at `/edit/:objectId`.
- *   4. Everything else — return null so the caller falls back to the
+ *   3. Everything else — return null so the caller falls back to the
  *      read-only preview endpoint. */
 function inAppEditorUrl(entry: DriveApiEntry): string | null {
   if (entry.app === "docs") {
@@ -344,23 +450,8 @@ function inAppEditorUrl(entry: DriveApiEntry): string | null {
   const mime = entry.mimeType ?? "";
   const name = entry.name.toLowerCase();
   if (mime === "application/pdf" || (mime.length === 0 && name.endsWith(".pdf"))) {
-    const sourceFolder =
-      entry.folderId === null ? "" : `?folder=${encodeURIComponent(entry.folderId)}`;
+    const sourceFolder = entry.folderId === null ? "" : `?folder=${encodeURIComponent(entry.folderId)}`;
     return `/pdf/${encodeURIComponent(entry.id)}${sourceFolder}`;
-  }
-  // OOXML formats — opened via OnlyOffice Document Server (Phase 3).
-  const isOoxml =
-    mime.includes("wordprocessingml") ||
-    mime.includes("spreadsheetml") ||
-    mime.includes("presentationml") ||
-    name.endsWith(".docx") ||
-    name.endsWith(".xlsx") ||
-    name.endsWith(".pptx") ||
-    name.endsWith(".doc") ||
-    name.endsWith(".xls") ||
-    name.endsWith(".ppt");
-  if (isOoxml) {
-    return `/edit/${encodeURIComponent(entry.id)}`;
   }
   return null;
 }

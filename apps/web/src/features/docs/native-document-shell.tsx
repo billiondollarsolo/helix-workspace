@@ -1,17 +1,32 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import { useWebPlatformHost } from "@helix/sdk-web";
+import {
+  EditorAppBar,
+  EditorSidePanel,
+  EditorWorkspace,
+  type SidePanelTab,
+} from "@helix/editors-ui";
+import { Edit3, History, List as ListIcon, MessageSquare, Sparkles } from "lucide-react";
 import {
   lazy,
   Suspense,
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from "react";
 import { Icons } from "@/components/icons";
+import { trashDriveObject } from "@/features/drive/api";
+import { DriveShareDialog } from "@/features/drive/drive-share-dialog";
+import { driveQueryKeys } from "@/features/drive/queries";
+import { cn } from "@/lib/utils";
+// TODO v1: wire menu-launched modals (Find/Replace, Equation, Word count) using
+// `@/components/ui/dialog`. They are intentionally not imported yet to keep this file lean.
 import {
   nativeDocumentBlocksFromStateBase64,
   nativeDocumentInspectorSnapshotFromBlocks,
@@ -32,11 +47,14 @@ import {
   type NativeDocumentSelectionAnchor,
 } from "./native-document-anchors";
 import { NativeDocumentCommentsRail } from "./native-document-comments-rail";
+import { NativeDocumentRuler, NativeDocumentVerticalRuler } from "./native-document-ruler";
 import { NativeDocumentSuggestionsRail } from "./native-document-suggestions-rail";
 import { NativeDocumentVersionsRail } from "./native-document-versions-rail";
 import {
   answerDocsQuestion,
   clearDocsAskHistory,
+  copyDocsDocument,
+  createDocsDocument,
   exportDocsDocument,
   updateDocsLayout,
   updateDocsTitle,
@@ -56,6 +74,14 @@ import {
   docsSuggestionsQueryOptions,
   nativeDocumentSessionQueryOptions,
 } from "./queries";
+import {
+  buildDocsMenus,
+  buildDocsRibbon,
+  type DocsChromeContext,
+  type DocsDocumentMode,
+  type DocsChromeEditorLike,
+  type DocsParagraphStyle,
+} from "./native-document-chrome";
 
 const NativeDocumentEditor = lazy(() =>
   import("./native-document-editor").then((module) => ({
@@ -67,11 +93,15 @@ type NativeDocumentLayoutMode = "page" | "pageless";
 type NativeDocumentColumnCount = 1 | 2;
 type NativeDocumentPageSize = "letter" | "a4";
 type NativeDocumentOrientation = "portrait" | "landscape";
+type NativeDocumentHelpDialog = "shortcuts" | "about";
 
 const DEFAULT_NATIVE_DOCUMENT_LAYOUT_SETTINGS: NativeDocumentLayoutSettings = {
   layoutMode: "page",
   columnCount: 1,
 };
+const NATIVE_DOCUMENT_RULER_PREFERENCE_KEY = "helix.docs.showRulers";
+const NATIVE_DOCUMENT_NONPRINTING_PREFERENCE_KEY = "helix.docs.showNonPrinting";
+const NATIVE_DOCUMENT_MODE_PREFERENCE_KEY = "helix.docs.documentMode";
 
 export interface NativeDocumentShellProps {
   readonly documentId: string;
@@ -80,6 +110,7 @@ export interface NativeDocumentShellProps {
 export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
   const queryClient = useQueryClient();
   const platformHost = useWebPlatformHost();
+  const router = useTryRouter();
   const sessionQuery = useQuery(nativeDocumentSessionQueryOptions(documentId));
   const openCommentsQuery = useQuery(docsCommentsQueryOptions(documentId, "open"));
   const pendingSuggestionsQuery = useQuery(docsSuggestionsQueryOptions(documentId, "pending"));
@@ -95,8 +126,39 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
   const [selectionAnchor, setSelectionAnchor] = useState<NativeDocumentSelectionAnchor | null>(
     null,
   );
+  const lastEditorSelectionRef = useRef<{ readonly from: number; readonly to: number } | null>(
+    null,
+  );
   const [liveInspectorSnapshot, setLiveInspectorSnapshot] =
     useState<NativeDocumentInspectorSnapshot | null>(null);
+  // Default closed — matches Google Docs / Office where comments + side
+  // panels stay tucked behind a toggle until the user opens them. Keeps the
+  // editing surface as the primary focus.
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  const [activeTabId, setActiveTabId] = useState<string>("comments");
+  const [chromeEditor, setChromeEditor] = useState<DocsChromeEditorLike | null>(null);
+  const [hasRecoveredDocumentDraft, setHasRecoveredDocumentDraft] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [helpDialog, setHelpDialog] = useState<NativeDocumentHelpDialog | null>(null);
+  const [textColor, setTextColor] = useState<string>("#000000");
+  const [highlightColor, setHighlightColor] = useState<string>("#fef08a");
+  const [paragraphStyle, setParagraphStyle] = useState<DocsParagraphStyle>("paragraph");
+  const [documentMode, setDocumentMode] = useState<DocsDocumentMode>(() =>
+    nativeDocumentModeFromStorage(window.localStorage.getItem(NATIVE_DOCUMENT_MODE_PREFERENCE_KEY)),
+  );
+  const [showRulers, setShowRulers] = useState(
+    () => window.localStorage.getItem(NATIVE_DOCUMENT_RULER_PREFERENCE_KEY) !== "false",
+  );
+  const [showNonPrintingCharacters, setShowNonPrintingCharacters] = useState(
+    () => window.localStorage.getItem(NATIVE_DOCUMENT_NONPRINTING_PREFERENCE_KEY) === "true",
+  );
+  const updateLastEditorSelection = useCallback(
+    (range: { readonly from: number; readonly to: number } | null) => {
+      lastEditorSelectionRef.current = range;
+    },
+    [],
+  );
+
   const titleMutation = useMutation({
     onMutate: () => undefined,
     onError: () => undefined,
@@ -157,7 +219,58 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
       downloadDocsExport(exported);
     },
   });
+  const createMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
+    mutationFn: () =>
+      createDocsDocument({
+        title: "Untitled document",
+        initialMarkdown: "",
+        editorEngine: "helix-native-document",
+        formatVersion: 1,
+        metadata: { createdFrom: "web.native-document-shell" },
+      }),
+    onSuccess: (document) => {
+      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+      void router?.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
+    },
+  });
+  const makeCopyMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
+    mutationFn: () => {
+      if (session === undefined) {
+        throw new Error("Document session is not loaded.");
+      }
+      return copyDocsDocument({
+        docId: session.document.id,
+        title: `${session.document.title} (Copy)`,
+        metadata: {
+          createdFrom: "web.native-document-shell.make-copy",
+        },
+      });
+    },
+    onSuccess: (document) => {
+      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+      void router?.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
+    },
+  });
+  const trashMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
+    mutationFn: () => trashDriveObject(documentId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+      void router?.navigate({ to: "/docs" });
+    },
+  });
   const session = sessionQuery.data;
+  useEffect(() => {
+    setHasRecoveredDocumentDraft(false);
+  }, [documentId]);
   useEffect(() => {
     const layoutSettings =
       session?.document.layoutSettings ?? DEFAULT_NATIVE_DOCUMENT_LAYOUT_SETTINGS;
@@ -210,7 +323,11 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
         keywords: ["ask", "ai", "question", session.document.title],
         shortcut: "Docs",
         order: 10,
-        run: () => focusNativeDocumentControl("native-document-ask-question"),
+        run: () => {
+          setSidePanelOpen(true);
+          setActiveTabId("ask");
+          focusNativeDocumentControl("native-document-ask-question");
+        },
       },
       {
         id: `docs:${session.document.id}:find`,
@@ -249,7 +366,7 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
         order: 40,
         run: () => dispatchNativeDocumentCommand({ command: "refresh-fields" }),
       },
-      ...(["person", "doc", "event"] as const).map((kind, index) => ({
+      ...(["person", "doc", "file", "event"] as const).map((kind, index) => ({
         id: `docs:${session.document.id}:chip:${kind}`,
         pluginId: "com.helix.docs",
         label: `Insert @${kind} smart chip`,
@@ -265,7 +382,11 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
         group: "Document",
         keywords: ["comments", "review"],
         order: 70,
-        run: () => focusNativeDocumentControl("native-document-comments-panel"),
+        run: () => {
+          setSidePanelOpen(true);
+          setActiveTabId("comments");
+          focusNativeDocumentControl("native-document-comments-panel");
+        },
       },
       {
         id: `docs:${session.document.id}:suggestions`,
@@ -274,7 +395,11 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
         group: "Document",
         keywords: ["suggestions", "tracked changes", "review"],
         order: 80,
-        run: () => focusNativeDocumentControl("native-document-suggestions-panel"),
+        run: () => {
+          setSidePanelOpen(true);
+          setActiveTabId("suggestions");
+          focusNativeDocumentControl("native-document-suggestions-panel");
+        },
       },
       {
         id: `docs:${session.document.id}:versions`,
@@ -283,7 +408,11 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
         group: "Document",
         keywords: ["versions", "history", "restore"],
         order: 90,
-        run: () => focusNativeDocumentControl("native-document-versions-panel"),
+        run: () => {
+          setSidePanelOpen(true);
+          setActiveTabId("versions");
+          focusNativeDocumentControl("native-document-versions-panel");
+        },
       },
       {
         id: `docs:${session.document.id}:export-docx`,
@@ -336,15 +465,15 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
 
   if (sessionQuery.isLoading) {
     return (
-      <NativeDocumentFrame title="Loading..." status="Opening">
+      <NativeDocumentChromeFrame title="Loading…" status={{ kind: "saving", label: "Opening" }}>
         <DocumentPageSkeleton />
-      </NativeDocumentFrame>
+      </NativeDocumentChromeFrame>
     );
   }
 
   if (sessionQuery.isError || session === undefined) {
     return (
-      <NativeDocumentFrame title="Document" status="Unavailable">
+      <NativeDocumentChromeFrame title="Document" status={{ kind: "error", label: "Unavailable" }}>
         <div style={EMPTY_STATE_STYLE}>
           <div style={EMPTY_STATE_TITLE_STYLE}>Could not open this document.</div>
           <div style={EMPTY_STATE_BODY_STYLE}>
@@ -356,302 +485,467 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
             Back to Docs
           </Link>
         </div>
-      </NativeDocumentFrame>
+      </NativeDocumentChromeFrame>
     );
   }
 
-  return (
-    <NativeDocumentFrame
-      title={
-        <NativeDocumentTitleEditor
-          title={session.document.title}
-          disabled={titleMutation.isPending}
-          error={titleMutation.error instanceof Error ? titleMutation.error.message : null}
-          onResetError={() => titleMutation.reset()}
-          onSave={(title) => titleMutation.mutateAsync(title)}
+  const status = titleMutation.isPending
+    ? { kind: "saving" as const, label: "Renaming" }
+    : titleMutation.isError
+      ? { kind: "error" as const, label: "Rename failed" }
+      : layoutMutation.isPending
+        ? { kind: "saving" as const, label: "Saving layout" }
+        : layoutMutation.isError
+          ? { kind: "error" as const, label: "Layout save failed" }
+        : createMutation.isPending
+          ? { kind: "saving" as const, label: "Creating document" }
+          : createMutation.isError
+            ? { kind: "error" as const, label: "Create failed" }
+            : makeCopyMutation.isPending
+              ? { kind: "saving" as const, label: "Making copy" }
+              : makeCopyMutation.isError
+                ? { kind: "error" as const, label: "Copy failed" }
+                : trashMutation.isPending
+                  ? { kind: "saving" as const, label: "Moving to trash" }
+                  : trashMutation.isError
+                    ? { kind: "error" as const, label: "Trash failed" }
+                    : hasRecoveredDocumentDraft
+                      ? { kind: "offline" as const, label: "Recovered" }
+                      : { kind: "live" as const, label: "Connected" };
+
+  const chromeCtx: DocsChromeContext = {
+    editor: chromeEditor,
+    state: {
+      textColor,
+      highlightColor,
+      paragraphStyle,
+      documentMode,
+      showRulers,
+      showNonPrintingCharacters,
+    },
+    callbacks: {
+      onBack: () => {
+        router?.navigate({ to: "/docs" });
+      },
+      onNewDocument: () => createMutation.mutate(),
+      onOpenDocuments: () => {
+        router?.navigate({ to: "/docs" });
+      },
+      onMakeCopy: () => makeCopyMutation.mutate(),
+      onMoveToTrash: () => trashMutation.mutate(),
+      onCopyLink: () => {
+        void copyTextToClipboard(window.location.href).catch(() => undefined);
+      },
+      onOpenShareDialog: () => setShareDialogOpen(true),
+      onRename: () => {
+        // TODO v1: open inline title editor in AppBar via a ref API
+      },
+      onOpenFindReplace: () => dispatchNativeDocumentCommand({ command: "find" }),
+      onCut: () => dispatchNativeDocumentCommandWithSelection(chromeEditor, lastEditorSelectionRef.current, {
+        command: "cut",
+      }),
+      onCopy: () =>
+        dispatchNativeDocumentCommandWithSelection(chromeEditor, lastEditorSelectionRef.current, {
+          command: "copy",
+        }),
+      onPaste: () =>
+        dispatchNativeDocumentCommandWithSelection(chromeEditor, lastEditorSelectionRef.current, {
+          command: "paste",
+        }),
+      onPastePlain: () =>
+        dispatchNativeDocumentCommandWithSelection(chromeEditor, lastEditorSelectionRef.current, {
+          command: "paste-plain",
+        }),
+      onInsertLink: () => dispatchNativeDocumentCommand({ command: "insert-link" }),
+      onOpenOutline: () => {
+        setSidePanelOpen(true);
+        setActiveTabId("outline");
+      },
+      onOpenWordCount: () => {
+        setSidePanelOpen(true);
+        setActiveTabId("outline");
+      },
+      onInsertTOC: () => dispatchNativeDocumentCommand({ command: "insert-toc" }),
+      onInsertImage: () => dispatchNativeDocumentCommand({ command: "insert-image" }),
+      onInsertTable: () => dispatchNativeDocumentCommand({ command: "insert-table" }),
+      onInsertEquation: () => dispatchNativeDocumentCommand({ command: "insert-equation" }),
+      onInsertBookmark: () => dispatchNativeDocumentCommand({ command: "insert-bookmark" }),
+      onInsertCrossReference: () =>
+        dispatchNativeDocumentCommand({ command: "insert-cross-reference" }),
+      onInsertField: () => dispatchNativeDocumentCommand({ command: "insert-field" }),
+      onInsertSmartChip: () => dispatchNativeDocumentCommand({ command: "open-smart-chip-picker" }),
+      onInsertPageBreak: () => dispatchNativeDocumentCommand({ command: "insert-page-break" }),
+      onInsertFootnote: () => dispatchNativeDocumentCommand({ command: "insert-footnote" }),
+      onRefreshFields: () => dispatchNativeDocumentCommand({ command: "refresh-fields" }),
+      onAskAI: () => {
+        setSidePanelOpen(true);
+        setActiveTabId("ask");
+      },
+      onSmartCompose: () => {
+        // TODO v1: focus the smart-compose input in editor
+      },
+      onOpenKeyboardShortcuts: () => setHelpDialog("shortcuts"),
+      onOpenAbout: () => setHelpDialog("about"),
+      onOpenVersionHistory: () => {
+        setSidePanelOpen(true);
+        setActiveTabId("versions");
+      },
+      onToggleRulers: () => {
+        setShowRulers((current) => {
+          const next = !current;
+          window.localStorage.setItem(NATIVE_DOCUMENT_RULER_PREFERENCE_KEY, String(next));
+          return next;
+        });
+      },
+      onToggleNonPrintingCharacters: () => {
+        setShowNonPrintingCharacters((current) => {
+          const next = !current;
+          window.localStorage.setItem(NATIVE_DOCUMENT_NONPRINTING_PREFERENCE_KEY, String(next));
+          return next;
+        });
+      },
+      onSetDocumentMode: (mode) => {
+        setDocumentMode(mode);
+        window.localStorage.setItem(NATIVE_DOCUMENT_MODE_PREFERENCE_KEY, mode);
+      },
+      onToggleFullscreen: () => toggleNativeDocumentFullscreen(),
+      onPrint: () => window.print(),
+      onExport: (format) => exportMutation.mutate(format),
+      onInsertComment: () => {
+        setSidePanelOpen(true);
+        setActiveTabId("comments");
+      },
+      onSetTextColor: (color) => {
+        setTextColor(color);
+        restoreLastEditorSelection(chromeEditor, lastEditorSelectionRef.current);
+      },
+      onSetHighlightColor: (color) => {
+        setHighlightColor(color);
+        restoreLastEditorSelection(chromeEditor, lastEditorSelectionRef.current);
+      },
+      onSetParagraphStyle: (style) => setParagraphStyle(style),
+    },
+  };
+
+  const menus = buildDocsMenus(chromeCtx);
+  const ribbon = buildDocsRibbon(chromeCtx);
+
+  const sidePanelTabs: SidePanelTab[] = [
+    {
+      id: "comments",
+      label: "Comments",
+      icon: <MessageSquare className="h-4 w-4" aria-hidden="true" />,
+      badge: openCommentsQuery.data?.length,
+      content: (
+        <NativeDocumentCommentsRail
+          documentId={session.document.id}
+          formatVersion={session.document.formatVersion}
+          selectionAnchor={selectionAnchor}
         />
-      }
-      status={
-        titleMutation.isPending
-          ? "Renaming"
-          : titleMutation.isError
-            ? "Rename failed"
-            : layoutMutation.isPending
-              ? "Saving layout"
-              : layoutMutation.isError
-                ? "Layout save failed"
-                : "Connected"
-      }
-      actions={
-        <>
-          <div style={TOOLBAR_SEGMENT_STYLE} aria-label="Document layout">
-            <button
-              className={layoutMode === "page" ? "btn primary sm" : "btn sm"}
-              type="button"
-              aria-pressed={layoutMode === "page"}
-              onClick={() => {
-                updateLayoutSettings(
-                  nativeDocumentLayoutSettingsFromState(
-                    "page",
-                    columnCount,
-                    sectionPageSize,
-                    sectionOrientation,
-                    layoutSections,
-                  ),
-                );
-              }}
-            >
-              <Icons.Doc />
-              Page
-            </button>
-            <button
-              className={layoutMode === "pageless" ? "btn primary sm" : "btn sm"}
-              type="button"
-              aria-pressed={layoutMode === "pageless"}
-              onClick={() => {
-                updateLayoutSettings(
-                  nativeDocumentLayoutSettingsFromState(
-                    "pageless",
-                    columnCount,
-                    sectionPageSize,
-                    sectionOrientation,
-                    layoutSections,
-                  ),
-                );
-              }}
-            >
-              <Icons.Doc />
-              Pageless
-            </button>
-          </div>
-          <div style={TOOLBAR_SEGMENT_STYLE} aria-label="Document columns">
-            <button
-              className={columnCount === 1 ? "btn primary sm" : "btn sm"}
-              type="button"
-              aria-pressed={columnCount === 1}
-              onClick={() => {
-                updateLayoutSettings(
-                  nativeDocumentLayoutSettingsFromState(
-                    layoutMode,
-                    1,
-                    sectionPageSize,
-                    sectionOrientation,
-                    layoutSections,
-                  ),
-                );
-              }}
-            >
-              <Icons.Grid />1 col
-            </button>
-            <button
-              className={columnCount === 2 ? "btn primary sm" : "btn sm"}
-              type="button"
-              aria-pressed={columnCount === 2}
-              onClick={() => {
-                updateLayoutSettings(
-                  nativeDocumentLayoutSettingsFromState(
-                    layoutMode,
-                    2,
-                    sectionPageSize,
-                    sectionOrientation,
-                    layoutSections,
-                  ),
-                );
-              }}
-            >
-              <Icons.Grid />2 col
-            </button>
-          </div>
-          <label style={TOOLBAR_FIELD_STYLE}>
-            <span className="sr-only">Section page size</span>
-            <select
-              aria-label="Section page size"
-              className="btn sm"
-              value={sectionPageSize}
-              onChange={(event) => {
-                const pageSize = event.target.value === "a4" ? "a4" : "letter";
-                updateLayoutSettings(
-                  nativeDocumentLayoutSettingsFromState(
-                    layoutMode,
-                    columnCount,
-                    pageSize,
-                    sectionOrientation,
-                    layoutSections,
-                  ),
-                );
-              }}
-            >
-              <option value="letter">Letter</option>
-              <option value="a4">A4</option>
-            </select>
-          </label>
-          <div style={TOOLBAR_SEGMENT_STYLE} aria-label="Section orientation">
-            <button
-              className={sectionOrientation === "portrait" ? "btn primary sm" : "btn sm"}
-              type="button"
-              aria-pressed={sectionOrientation === "portrait"}
-              onClick={() => {
-                updateLayoutSettings(
-                  nativeDocumentLayoutSettingsFromState(
-                    layoutMode,
-                    columnCount,
-                    sectionPageSize,
-                    "portrait",
-                    layoutSections,
-                  ),
-                );
-              }}
-            >
-              <Icons.Doc />
-              Portrait
-            </button>
-            <button
-              className={sectionOrientation === "landscape" ? "btn primary sm" : "btn sm"}
-              type="button"
-              aria-pressed={sectionOrientation === "landscape"}
-              onClick={() => {
-                updateLayoutSettings(
-                  nativeDocumentLayoutSettingsFromState(
-                    layoutMode,
-                    columnCount,
-                    sectionPageSize,
-                    "landscape",
-                    layoutSections,
-                  ),
-                );
-              }}
-            >
-              <Icons.Doc />
-              Landscape
-            </button>
-          </div>
-          <button
-            className="btn sm"
-            type="button"
-            aria-pressed={printPreview}
-            onClick={() => {
-              setPrintPreview((current) => !current);
-            }}
-          >
-            <Icons.Eye />
-            Preview
-          </button>
-          <button
-            className="btn sm"
-            type="button"
-            onClick={() => {
-              window.print();
-            }}
-          >
-            <Icons.Print />
-            Print
-          </button>
-          <button
-            className="btn sm"
-            type="button"
-            disabled={exportMutation.isPending}
-            onClick={() => {
-              exportMutation.mutate("docx");
-            }}
-          >
-            <Icons.Download />
-            DOCX
-          </button>
-          <button
-            className="btn sm"
-            type="button"
-            disabled={exportMutation.isPending}
-            onClick={() => {
-              exportMutation.mutate("pdf");
-            }}
-          >
-            <Icons.Download />
-            PDF
-          </button>
-          <button
-            className="btn sm"
-            type="button"
-            disabled={exportMutation.isPending}
-            onClick={() => {
-              exportMutation.mutate("epub");
-            }}
-          >
-            <Icons.Download />
-            EPUB
-          </button>
-        </>
-      }
+      ),
+    },
+    {
+      id: "suggestions",
+      label: "Suggestions",
+      icon: <Edit3 className="h-4 w-4" aria-hidden="true" />,
+      badge: pendingSuggestionsQuery.data?.length,
+      content: (
+        <NativeDocumentSuggestionsRail
+          documentId={session.document.id}
+          formatVersion={session.document.formatVersion}
+          selectionAnchor={selectionAnchor}
+        />
+      ),
+    },
+    {
+      id: "versions",
+      label: "Versions",
+      icon: <History className="h-4 w-4" aria-hidden="true" />,
+      content: <NativeDocumentVersionsRail documentId={session.document.id} />,
+    },
+    {
+      id: "outline",
+      label: "Outline",
+      icon: <ListIcon className="h-4 w-4" aria-hidden="true" />,
+      content: <DocumentInspector outline={outline} stats={stats} />,
+    },
+    {
+      id: "ask",
+      label: "Ask",
+      icon: <Sparkles className="h-4 w-4" aria-hidden="true" />,
+      content: (
+        <NativeDocumentAskPanel
+          documentId={session.document.id}
+          documentBlocks={askDocumentBlocks}
+          documentText={askDocumentText}
+          selectionAnchor={selectionAnchor}
+        />
+      ),
+    },
+  ];
+
+  return (
+    <div
+      className="flex flex-col h-full min-h-screen bg-[var(--bg)]"
+      role="region"
+      aria-label="Native document"
     >
-      <main style={PAGE_WRAP_STYLE}>
-        <div
-          className={
-            printPreview
-              ? "native-document-workspace native-document-workspace--print-preview"
-              : "native-document-workspace"
+      <EditorAppBar
+        onBack={() => router?.navigate({ to: "/docs" })}
+        title={session.document.title}
+        onTitleChange={(next) => {
+          if (next.trim().length > 0 && next !== session.document.title) {
+            void titleMutation.mutateAsync(next.trim());
           }
-          style={DOCUMENT_WORKSPACE_STYLE}
-        >
-          <article
-            className={`native-document-page native-document-page--${layoutMode}`}
-            data-layout-mode={layoutMode}
-            data-column-count={String(columnCount)}
-            style={nativeDocumentPageStyle(layoutMode)}
-            aria-label={session.document.title}
+        }}
+        status={status}
+        menus={menus}
+        sidePanelOpen={sidePanelOpen}
+        onSidePanelToggle={() => setSidePanelOpen((open) => !open)}
+        onOpenVersionHistory={() => {
+          setSidePanelOpen(true);
+          setActiveTabId("versions");
+        }}
+        onShare={() => setShareDialogOpen(true)}
+      />
+      {ribbon}
+      <EditorWorkspace
+        sidePanel={
+          <EditorSidePanel
+            open={sidePanelOpen}
+            onOpenChange={setSidePanelOpen}
+            tabs={sidePanelTabs}
+            activeTabId={activeTabId}
+            onActiveTabChange={setActiveTabId}
+          />
+        }
+      >
+        <main style={PAGE_WRAP_STYLE}>
+          {/* Floating outline-rail icon — pinned to the far left of the doc
+              workspace like Google Docs. Toggles the Outline tab in the side
+              panel. */}
+          <button
+            type="button"
+            aria-label="Show document outline"
+            title="Show document outline"
+            onClick={() => {
+              setSidePanelOpen(true);
+              setActiveTabId("outline");
+            }}
+            style={{
+              position: "absolute",
+              top: 18,
+              left: 16,
+              width: 36,
+              height: 36,
+              borderRadius: "50%",
+              background: "var(--surface-2)",
+              color: "var(--text-2)",
+              border: "1px solid var(--border)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              zIndex: 5,
+            }}
           >
-            <header style={PAGE_HEADER_STYLE}>
-              <p style={EYEBROW_STYLE}>{session.document.editorEngine}</p>
-              <h1 style={TITLE_STYLE}>{session.document.title}</h1>
-            </header>
-            <dl
-              className="native-document-session-facts"
-              style={SESSION_GRID_STYLE}
-              aria-label="Document session"
+            <ListIcon className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <div
+            className={
+              printPreview
+                ? "native-document-workspace native-document-workspace--print-preview"
+                : "native-document-workspace"
+            }
+            style={DOCUMENT_WORKSPACE_STYLE}
+          >
+            {/* Google-Docs page-with-rulers wrapper. Horizontal ruler sits
+                flush above the page (no gap), vertical ruler hugs the
+                left edge. The wrapper is sized to vertical-ruler + page so
+                everything lines up. */}
+            <div
+              style={{
+                display: "block",
+                width: 850 + (showRulers ? 22 : 0), // page + optional vertical ruler
+                margin: "0 auto",
+                position: "relative",
+              }}
             >
-              <SessionFact label="Format" value={`v${String(session.document.formatVersion)}`} />
-              <SessionFact label="Updates" value={String(session.document.updateSeq)} />
-              <SessionFact label="Sync" value={session.sync.protocol.toUpperCase()} />
-              <SessionFact
-                label="State"
-                value={session.document.stateBase64 === null ? "Empty" : "Loaded"}
-              />
-            </dl>
-            <Suspense fallback={<DocumentBlocks blocks={blocks} columnCount={columnCount} />}>
-              <NativeDocumentEditor
-                session={session}
-                anchorDecorations={anchorDecorations}
-                columnCount={columnCount}
-                onInspectorSnapshotChange={setLiveInspectorSnapshot}
-                onSelectionAnchorChange={setSelectionAnchor}
-              />
-            </Suspense>
-          </article>
-          <aside
-            className="native-document-side-rail"
-            style={SIDE_RAIL_STYLE}
-            aria-label="Document side rail"
-          >
-            <DocumentInspector outline={outline} stats={stats} />
-            <NativeDocumentAskPanel
-              documentId={session.document.id}
-              documentBlocks={askDocumentBlocks}
-              documentText={askDocumentText}
-              selectionAnchor={selectionAnchor}
-            />
-            <NativeDocumentSuggestionsRail
-              documentId={session.document.id}
-              formatVersion={session.document.formatVersion}
-              selectionAnchor={selectionAnchor}
-            />
-            <NativeDocumentVersionsRail documentId={session.document.id} />
-            <NativeDocumentCommentsRail
-              documentId={session.document.id}
-              formatVersion={session.document.formatVersion}
-              selectionAnchor={selectionAnchor}
-            />
-          </aside>
+              {/* Horizontal ruler offset right by the vertical-ruler width so
+                  the inch ticks line up with the page columns, not the rail. */}
+              {showRulers ? (
+                <div data-native-document-rulers="true">
+                  <div style={{ paddingLeft: 22 }}>
+                    <NativeDocumentRuler pageWidth={850} sidePadding={96} />
+                  </div>
+                </div>
+              ) : null}
+              <div style={{ display: "flex", alignItems: "flex-start" }}>
+                {showRulers ? (
+                  <NativeDocumentVerticalRuler pageHeight={1100} verticalPadding={72} />
+                ) : null}
+                <article
+                  className={`native-document-page native-document-page--${layoutMode}`}
+                  data-layout-mode={layoutMode}
+                  data-column-count={String(columnCount)}
+                  style={nativeDocumentPageStyle(layoutMode)}
+                  aria-label={session.document.title}
+                >
+                  <Suspense fallback={<DocumentBlocks blocks={blocks} columnCount={columnCount} />}>
+                    <NativeDocumentEditor
+                      session={session}
+                      anchorDecorations={anchorDecorations}
+                      columnCount={columnCount}
+                      editable={documentMode === "editing"}
+                      showNonPrintingCharacters={showNonPrintingCharacters}
+                      onRecoveryStatusChange={setHasRecoveredDocumentDraft}
+                      onInspectorSnapshotChange={setLiveInspectorSnapshot}
+                      onSelectionAnchorChange={setSelectionAnchor}
+                      onSelectionRangeChange={updateLastEditorSelection}
+                      onEditorReady={setChromeEditor}
+                    />
+                  </Suspense>
+                </article>
+              </div>
+            </div>
+          </div>
+        </main>
+      </EditorWorkspace>
+      <DriveShareDialog
+        objectId={session.document.id}
+        objectName={session.document.title}
+        ownerActorId={session.document.ownerActorId}
+        open={shareDialogOpen}
+        shareUrl={window.location.href}
+        onOpenChange={setShareDialogOpen}
+      />
+      {helpDialog === null ? null : (
+        <NativeDocumentHelpDialogSurface
+          kind={helpDialog}
+          documentTitle={session.document.title}
+          onClose={() => setHelpDialog(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function restoreLastEditorSelection(
+  editor: DocsChromeEditorLike | null,
+  range: { readonly from: number; readonly to: number } | null,
+): void {
+  if (editor === null || range === null) {
+    return;
+  }
+  try {
+    editor.chain().focus().setTextSelection(range).run();
+  } catch {
+    // Selection restoration is best-effort; if the stored range no longer
+    // exists, the following formatting command applies at the current cursor.
+  }
+}
+
+async function copyTextToClipboard(value: string): Promise<void> {
+  const clipboard = navigator.clipboard;
+  if (clipboard === undefined) {
+    throw new Error("Clipboard is not available.");
+  }
+  await clipboard.writeText(value);
+}
+
+function toggleNativeDocumentFullscreen(): void {
+  if (document.fullscreenElement === null) {
+    void document.documentElement.requestFullscreen?.().catch(() => undefined);
+    return;
+  }
+  void document.exitFullscreen?.().catch(() => undefined);
+}
+
+function useTryRouter() {
+  try {
+    return useRouter();
+  } catch {
+    return null;
+  }
+}
+
+function NativeDocumentChromeFrame({
+  title,
+  status,
+  children,
+}: {
+  readonly title: string;
+  readonly status: {
+    readonly kind: "saving" | "saved" | "live" | "offline" | "error";
+    readonly label?: string;
+  };
+  readonly children: ReactNode;
+}) {
+  return (
+    <div
+      className="flex flex-col h-full min-h-screen bg-[var(--bg)]"
+      role="region"
+      aria-label="Native document"
+    >
+      <EditorAppBar title={title} status={status} />
+      {children}
+    </div>
+  );
+}
+
+function NativeDocumentHelpDialogSurface({
+  kind,
+  documentTitle,
+  onClose,
+}: {
+  readonly kind: NativeDocumentHelpDialog;
+  readonly documentTitle: string;
+  readonly onClose: () => void;
+}) {
+  const title = kind === "shortcuts" ? "Keyboard shortcuts" : "About Helix Docs";
+  return (
+    <div style={HELP_DIALOG_BACKDROP_STYLE} role="presentation" onMouseDown={onClose}>
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        style={HELP_DIALOG_STYLE}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div style={HELP_DIALOG_HEADER_STYLE}>
+          <h2 style={HELP_DIALOG_TITLE_STYLE}>{title}</h2>
+          <button type="button" className="btn sm ghost" onClick={onClose}>
+            Close
+          </button>
         </div>
-      </main>
-    </NativeDocumentFrame>
+        {kind === "shortcuts" ? (
+          <dl style={HELP_SHORTCUT_GRID_STYLE}>
+            <dt>Find in document</dt>
+            <dd>Ctrl+F</dd>
+            <dt>Copy</dt>
+            <dd>Ctrl+C</dd>
+            <dt>Cut</dt>
+            <dd>Ctrl+X</dd>
+            <dt>Paste</dt>
+            <dd>Ctrl+V</dd>
+            <dt>Word count</dt>
+            <dd>Ctrl+Shift+C</dd>
+            <dt>Print</dt>
+            <dd>Ctrl+P</dd>
+          </dl>
+        ) : (
+          <div style={HELP_ABOUT_STYLE}>
+            <p>
+              Helix Docs native editor for <strong>{documentTitle}</strong>.
+            </p>
+            <p>
+              Supports native editing, autosave, version history, comments, suggestions, Drive
+              sharing, and Workspace-style import/export workflows.
+            </p>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -685,6 +979,19 @@ export function nativeDocumentAnchorDecorationsFromRecords(input: {
 
 function dispatchNativeDocumentCommand(detail: NativeDocumentCommandEventDetail): void {
   window.dispatchEvent(new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, { detail }));
+}
+
+function dispatchNativeDocumentCommandWithSelection(
+  editor: DocsChromeEditorLike | null,
+  range: { readonly from: number; readonly to: number } | null,
+  detail: NativeDocumentCommandEventDetail,
+): void {
+  restoreLastEditorSelection(editor, range);
+  dispatchNativeDocumentCommand(detail);
+}
+
+function nativeDocumentModeFromStorage(value: string | null): DocsDocumentMode {
+  return value === "viewing" ? "viewing" : "editing";
 }
 
 function focusNativeDocumentControl(id: string): void {
@@ -732,142 +1039,6 @@ function base64ToArrayBuffer(value: string): ArrayBuffer {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes.buffer;
-}
-
-function NativeDocumentFrame({
-  title,
-  status,
-  actions,
-  children,
-}: {
-  readonly title: ReactNode;
-  readonly status: string;
-  readonly actions?: ReactNode;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div style={SHELL_STYLE}>
-      <header className="native-document-toolbar" style={TOOLBAR_STYLE}>
-        <Link to="/docs" className="btn sm" aria-label="Back to Docs">
-          <Icons.ArrowLeft />
-        </Link>
-        <div style={TITLE_WRAP_STYLE}>
-          <div style={TOOLBAR_TITLE_SLOT_STYLE}>{title}</div>
-          <div style={TOOLBAR_STATUS_STYLE}>{status}</div>
-        </div>
-        {actions === undefined ? null : <div style={TOOLBAR_ACTIONS_STYLE}>{actions}</div>}
-      </header>
-      {children}
-    </div>
-  );
-}
-
-function NativeDocumentTitleEditor({
-  title,
-  disabled,
-  error,
-  onResetError,
-  onSave,
-}: {
-  readonly title: string;
-  readonly disabled: boolean;
-  readonly error: string | null;
-  readonly onResetError: () => void;
-  readonly onSave: (title: string) => Promise<unknown>;
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draftTitle, setDraftTitle] = useState(title);
-  const normalizedTitle = draftTitle.trim();
-  const canSave = normalizedTitle.length > 0 && normalizedTitle !== title && !disabled;
-
-  useEffect(() => {
-    if (!isEditing) {
-      setDraftTitle(title);
-    }
-  }, [isEditing, title]);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (normalizedTitle.length === 0) {
-      return;
-    }
-    if (normalizedTitle === title) {
-      setIsEditing(false);
-      return;
-    }
-    try {
-      await onSave(normalizedTitle);
-      setIsEditing(false);
-    } catch {
-      // The mutation state renders the error inline and keeps the draft open.
-    }
-  }
-
-  if (isEditing) {
-    return (
-      <form style={TITLE_FORM_STYLE} onSubmit={(event) => void handleSubmit(event)}>
-        <input
-          aria-label="Document title"
-          value={draftTitle}
-          disabled={disabled}
-          maxLength={255}
-          onChange={(event) => {
-            setDraftTitle(event.currentTarget.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              setDraftTitle(title);
-              setIsEditing(false);
-              onResetError();
-            }
-          }}
-          style={TITLE_INPUT_STYLE}
-        />
-        <button className="btn sm primary" type="submit" disabled={!canSave}>
-          Save
-        </button>
-        <button
-          className="btn sm"
-          type="button"
-          disabled={disabled}
-          onClick={() => {
-            setDraftTitle(title);
-            setIsEditing(false);
-            onResetError();
-          }}
-        >
-          Cancel
-        </button>
-        {error === null ? null : (
-          <span role="status" style={TITLE_ERROR_STYLE}>
-            {error}
-          </span>
-        )}
-      </form>
-    );
-  }
-
-  return (
-    <div style={TITLE_DISPLAY_STYLE}>
-      <span className="truncate" style={TOOLBAR_TITLE_STYLE}>
-        {title}
-      </span>
-      <button
-        className="btn sm"
-        type="button"
-        aria-label="Rename document"
-        onClick={() => {
-          onResetError();
-          setDraftTitle(title);
-          setIsEditing(true);
-        }}
-      >
-        <Icons.EditPen />
-        Rename
-      </button>
-    </div>
-  );
 }
 
 function DocumentPageSkeleton() {
@@ -1468,106 +1639,8 @@ function nativeDocumentLayoutSettingsFromState(
   };
 }
 
-const SHELL_STYLE = {
-  display: "flex",
-  minHeight: "100%",
-  flexDirection: "column",
-  background: "var(--bg)",
-} satisfies CSSProperties;
-
-const TOOLBAR_STYLE = {
-  display: "flex",
-  alignItems: "center",
-  gap: 12,
-  minHeight: 56,
-  padding: "8px 16px",
-  borderBottom: "1px solid var(--border)",
-  background: "var(--surface)",
-} satisfies CSSProperties;
-
-const TITLE_WRAP_STYLE = {
-  display: "grid",
-  flex: 1,
-  minWidth: 0,
-  gap: 2,
-} satisfies CSSProperties;
-
-const TOOLBAR_ACTIONS_STYLE = {
-  display: "flex",
-  alignItems: "center",
-  flexWrap: "wrap",
-  gap: 8,
-  marginLeft: "auto",
-} satisfies CSSProperties;
-
-const TOOLBAR_SEGMENT_STYLE = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 4,
-  padding: 2,
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  background: "var(--surface-2)",
-} satisfies CSSProperties;
-
-const TOOLBAR_FIELD_STYLE = {
-  display: "inline-flex",
-  alignItems: "center",
-} satisfies CSSProperties;
-
-const TOOLBAR_TITLE_STYLE = {
-  fontSize: "var(--text-body)",
-  fontWeight: 600,
-  color: "var(--text-1)",
-} satisfies CSSProperties;
-
-const TOOLBAR_TITLE_SLOT_STYLE = {
-  minWidth: 0,
-} satisfies CSSProperties;
-
-const TITLE_DISPLAY_STYLE = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 8,
-  minWidth: 0,
-  maxWidth: "100%",
-} satisfies CSSProperties;
-
-const TITLE_FORM_STYLE = {
-  display: "flex",
-  alignItems: "center",
-  flexWrap: "wrap",
-  gap: 8,
-  minWidth: 0,
-  maxWidth: "100%",
-} satisfies CSSProperties;
-
-const TITLE_INPUT_STYLE = {
-  width: "min(320px, 100%)",
-  minWidth: 180,
-  height: 32,
-  border: "1px solid var(--border-strong)",
-  borderRadius: 6,
-  background: "var(--surface)",
-  color: "var(--text-1)",
-  font: "inherit",
-  fontSize: "var(--text-body)",
-  fontWeight: 600,
-  padding: "0 10px",
-} satisfies CSSProperties;
-
-const TITLE_ERROR_STYLE = {
-  color: "var(--danger)",
-  fontSize: "var(--text-caption)",
-  fontWeight: 600,
-} satisfies CSSProperties;
-
-const TOOLBAR_STATUS_STYLE = {
-  fontSize: "var(--text-caption)",
-  color: "var(--text-3)",
-} satisfies CSSProperties;
-
 const PAGE_WRAP_STYLE = {
+  position: "relative", // anchor for the floating outline button
   display: "flex",
   flex: 1,
   justifyContent: "center",
@@ -1576,20 +1649,30 @@ const PAGE_WRAP_STYLE = {
 } satisfies CSSProperties;
 
 const DOCUMENT_WORKSPACE_STYLE = {
-  display: "grid",
-  alignItems: "start",
-  gap: 16,
-  width: "min(100%, 1140px)",
+  // Switched off grid+justify-items (collapsed children to min-content width)
+  // in favor of a plain block container. The ruler + article use their own
+  // marginInline:auto for horizontal centering.
+  display: "block",
+  width: "100%",
+  maxWidth: 1140,
+  marginInline: "auto",
 } satisfies CSSProperties;
 
 const PAGE_STYLE = {
-  width: "100%",
-  maxWidth: 900,
-  minHeight: 640,
-  padding: "56px min(8vw, 72px)",
+  // Fixed 850px so it composes deterministically next to the vertical ruler
+  // and any future left rail. Outer wrapper handles the responsive squish.
+  width: 850,
+  flexShrink: 0,
+  minHeight: 1100, // ~A4 height — even empty docs feel like a page
+  padding: "72px min(8vw, 96px)",
+  // Theme-aware paper: uses --surface (lighter in light mode, dark card in
+  // dark mode) so the page reads as a paper island vs the --bg backdrop in
+  // both themes, like Google Docs / Office both honor system theme.
   background: "var(--surface)",
+  color: "var(--text-1)",
+  borderRadius: 2,
   border: "1px solid var(--border)",
-  boxShadow: "0 18px 50px color-mix(in oklab, var(--text-1) 8%, transparent)",
+  boxShadow: "0 1px 3px rgba(0,0,0,0.12), 0 8px 32px rgba(0,0,0,0.08)",
 } satisfies CSSProperties;
 
 const PAGELESS_PAGE_STYLE = {
@@ -1655,13 +1738,6 @@ const SESSION_VALUE_STYLE = {
 const INSPECTOR_STYLE = {
   display: "grid",
   gap: 16,
-} satisfies CSSProperties;
-
-const SIDE_RAIL_STYLE = {
-  display: "grid",
-  gap: 16,
-  position: "sticky",
-  top: 16,
 } satisfies CSSProperties;
 
 const INSPECTOR_SECTION_STYLE = {
@@ -1879,6 +1955,55 @@ const ASK_HISTORY_META_STYLE = {
   whiteSpace: "nowrap",
   fontSize: "var(--text-caption)",
   color: "var(--text-3)",
+} satisfies CSSProperties;
+
+const HELP_DIALOG_BACKDROP_STYLE = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 60,
+  display: "grid",
+  placeItems: "center",
+  padding: 24,
+  background: "rgba(15, 23, 42, 0.38)",
+} satisfies CSSProperties;
+
+const HELP_DIALOG_STYLE = {
+  width: "min(520px, 100%)",
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  background: "var(--surface)",
+  boxShadow: "0 24px 80px rgba(15, 23, 42, 0.24)",
+  padding: 18,
+  color: "var(--text-1)",
+} satisfies CSSProperties;
+
+const HELP_DIALOG_HEADER_STYLE = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  marginBottom: 14,
+} satisfies CSSProperties;
+
+const HELP_DIALOG_TITLE_STYLE = {
+  margin: 0,
+  fontSize: 16,
+  fontWeight: 700,
+} satisfies CSSProperties;
+
+const HELP_SHORTCUT_GRID_STYLE = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  gap: "10px 18px",
+  margin: 0,
+  fontSize: 13,
+} satisfies CSSProperties;
+
+const HELP_ABOUT_STYLE = {
+  display: "grid",
+  gap: 10,
+  fontSize: 13,
+  lineHeight: 1.5,
 } satisfies CSSProperties;
 
 const DOCUMENT_BODY_STYLE = {

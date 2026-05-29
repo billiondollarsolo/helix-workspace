@@ -6,20 +6,49 @@ import {
   useState,
   type CSSProperties,
   type ClipboardEvent,
+  type ChangeEvent,
+  type DragEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useWebPlatformHost } from "@helix/sdk-web";
+import {
+  EditorAppBar,
+  EditorSidePanel,
+  EditorWorkspace,
+  type EditorAppBarStatus,
+} from "@helix/editors-ui";
 import { Icons } from "@/components/icons";
+import { trashDriveObject, uploadDriveFile } from "@/features/drive/api";
+import { DriveShareDialog } from "@/features/drive/drive-share-dialog";
+import { driveQueryKeys } from "@/features/drive/queries";
+import {
+  OfficeVersionHistoryPanel,
+  type OfficeVersionRecord,
+} from "@/features/_open/ui/OfficeVersionHistoryPanel";
+import {
+  buildSheetsMenus,
+  buildSheetsRibbon,
+  buildSheetsSidePanelTabs,
+  type SheetsBorderPreset,
+  type SheetsChromeContext,
+  type SheetsHorizontalAlign,
+  type SheetsNumberFormat,
+  type SheetsSidePanelTabId,
+  type SheetsVerticalAlign,
+} from "./native-spreadsheet-chrome";
 import {
   createSheetTab,
+  copySheet,
+  createSheet,
   deleteSheetTab,
   createSheetComment,
   deleteSheetComment,
   listSheetComments,
   reopenSheetComment,
   resolveSheetComment,
+  restoreSheetVersion,
   exportSheet,
   sortSheetRange,
   updateSheetComment,
@@ -49,7 +78,12 @@ import {
   type NativeSpreadsheetOperationChange,
   type NativeSpreadsheetSyncStatus,
 } from "./native-spreadsheet-sync-provider";
-import { sheetQueryOptions, sheetsQueryKeys, sheetTabQueryOptions } from "./queries";
+import {
+  sheetQueryOptions,
+  sheetTabQueryOptions,
+  sheetVersionsQueryOptions,
+  sheetsQueryKeys,
+} from "./queries";
 import { columnLetter } from "./seed";
 import {
   analyzeSpreadsheetRange,
@@ -68,6 +102,7 @@ const SHEET_CELL_WIDTH = 96;
 const SHEET_CELL_HEIGHT = 32;
 const MS_PER_DAY = 86_400_000;
 const SHEETS_CLIPBOARD_MIME = "application/x-helix-sheets-cells+json";
+const SHEETS_GRID_RECOVERY_PREFIX = "helix.sheets.unsavedGrid.v1";
 const SERIES_MONTH_NAMES = [
   { short: "jan", long: "january" },
   { short: "feb", long: "february" },
@@ -148,6 +183,17 @@ type HorizontalAlign = "left" | "center" | "right";
 type NumberFormat = "plain" | "number" | "currency" | "percent" | "date" | "custom";
 type BorderPreset = "all" | "outer" | "none";
 type SortDirection = "asc" | "desc";
+interface SheetCellHistoryEntry {
+  readonly tabId: string;
+  readonly undoEdits: readonly SheetsCellEdit[];
+  readonly redoEdits: readonly SheetsCellEdit[];
+}
+
+interface SheetsInternalClipboard {
+  readonly text: string;
+  readonly formattedCells: string;
+}
+
 type DataValidationKind = "none" | "number" | "email" | "url" | "date" | "list" | "customFormula";
 type DataValidationMode = "warn" | "reject";
 type DataValidationDateLocale = "iso" | "en-US" | "en-GB" | "de-DE";
@@ -208,6 +254,34 @@ interface SheetChartPlacement {
 }
 
 type SheetChartsUpdater = (charts: readonly SheetChartSpec[]) => readonly SheetChartSpec[];
+
+interface SheetImageSpec {
+  readonly id: string;
+  readonly tabId: string;
+  readonly driveObjectId: string;
+  readonly src: string;
+  readonly alt: string;
+  readonly title: string;
+  readonly mimeType: string;
+  readonly placement: SheetImagePlacement;
+}
+
+interface SheetImagePlacement {
+  readonly anchorRow: number;
+  readonly anchorCol: number;
+  readonly rowSpan: number;
+  readonly colSpan: number;
+}
+
+type SheetImagesUpdater = (images: readonly SheetImageSpec[]) => readonly SheetImageSpec[];
+
+interface SheetImageDragState {
+  readonly imageId: string;
+  readonly mode: "move" | "resize";
+  readonly startX: number;
+  readonly startY: number;
+  readonly originalPlacement: SheetImagePlacement;
+}
 
 type SheetPivotAggregation = "sum" | "count";
 
@@ -374,6 +448,7 @@ interface SeriesDateValue {
 export interface NativeSpreadsheetEditorProps {
   readonly sheetId: string;
   readonly onBack: () => void;
+  readonly onOpenSheet?: ((sheetId: string) => void) | undefined;
 }
 
 interface NativeSpreadsheetCommandHandlers {
@@ -392,7 +467,11 @@ interface NativeSpreadsheetCommandHandlers {
   readonly focusComments: () => void;
 }
 
-export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEditorProps) {
+export function NativeSpreadsheetEditor({
+  sheetId,
+  onBack,
+  onOpenSheet,
+}: NativeSpreadsheetEditorProps) {
   const queryClient = useQueryClient();
   const platformHost = useWebPlatformHost();
   const commandHandlersRef = useRef<NativeSpreadsheetCommandHandlers>({
@@ -411,6 +490,7 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
     focusComments: () => undefined,
   });
   const sheetQuery = useQuery(sheetQueryOptions(sheetId));
+  const versionsQuery = useQuery(sheetVersionsQueryOptions(sheetId));
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [tabNameDraft, setTabNameDraft] = useState("");
   const visibleTabs = useMemo(
@@ -467,14 +547,24 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
     () => padGrid(gridFromCells(tabCells), tabWindow.endRow + 1, tabWindow.endCol + 1),
     [tabCells, tabWindow],
   );
-  const displayGrid = useMemo(
+  const baseDisplayGrid = useMemo(
     () => padGrid(displayGridFromCells(tabCells), tabWindow.endRow + 1, tabWindow.endCol + 1),
     [tabCells, tabWindow],
   );
   const formatMap = useMemo(() => cellFormatMap(tabCells), [tabCells]);
   const [grid, setGrid] = useState<EditableGrid>(() => baseGrid);
+  const [cellHistory, setCellHistory] = useState<{
+    readonly past: readonly SheetCellHistoryEntry[];
+    readonly future: readonly SheetCellHistoryEntry[];
+  }>({ past: [], future: [] });
+  const [hasRecoveredGridDraft, setHasRecoveredGridDraft] = useState(false);
+  const displayGrid = useMemo(
+    () => displayGridWithLocalSheetEdits(baseGrid, baseDisplayGrid, grid),
+    [baseDisplayGrid, baseGrid, grid],
+  );
   const [selectedCell, setSelectedCell] = useState<CellAddress | null>(null);
   const [selectedRange, setSelectedRange] = useState<CellRange | null>(null);
+  const [cellClipboard, setCellClipboard] = useState<SheetsInternalClipboard | null>(null);
   const [fillPreviewRange, setFillPreviewRange] = useState<CellRange | null>(null);
   const [editingCell, setEditingCell] = useState<CellAddress | null>(null);
   const [comments, setComments] = useState<readonly SheetsDriveComment[]>([]);
@@ -483,20 +573,64 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
   const [commentDraft, setCommentDraft] = useState("");
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [commentEditDrafts, setCommentEditDrafts] = useState<Record<string, string>>({});
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [chartType, setChartType] = useState<SheetChartType>("bar");
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+  const [imageDragPreview, setImageDragPreview] = useState<{
+    readonly imageId: string;
+    readonly placement: SheetImagePlacement;
+  } | null>(null);
   const [rangeAssist, setRangeAssist] = useState<SpreadsheetRangeAssist | null>(null);
   const [syncStatus, setSyncStatus] = useState<NativeSpreadsheetSyncStatus>("offline");
   const [activeFilterViewId, setActiveFilterViewId] = useState<string | null>(null);
+  const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  const [sidePanelTabId, setSidePanelTabId] = useState<SheetsSidePanelTabId>("comments");
   const skipNextProgrammaticFocus = useRef(false);
+  const skipNextGridBlurCommit = useRef<CellAddress | null>(null);
   const gridWrapRef = useRef<HTMLDivElement | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageDragRef = useRef<SheetImageDragState | null>(null);
   const rangeDragAnchorRef = useRef<CellAddress | null>(null);
   const viewportRef = useRef<CellAddress>(viewport);
   const activeTabIdRef = useRef<string | null>(null);
   const syncProviderRef = useRef<NativeSpreadsheetSyncProvider | null>(null);
+  const applyingRecoveredGridRef = useRef(false);
+  const suppressGridRecoveryRef = useRef(false);
 
   useEffect(() => {
-    setGrid(baseGrid);
-  }, [baseGrid]);
+    if (activeTabId === null) {
+      setGrid(baseGrid);
+      setHasRecoveredGridDraft(false);
+      return;
+    }
+    if (tabQuery.data === undefined) {
+      setGrid(baseGrid);
+      setHasRecoveredGridDraft(false);
+      return;
+    }
+    const recovered = gridWithRecoveredSheetEdits(baseGrid, sheetId, activeTabId);
+    applyingRecoveredGridRef.current = recovered.recovered;
+    setGrid(recovered.grid);
+    setHasRecoveredGridDraft(recovered.recovered);
+  }, [activeTabId, baseGrid, sheetId, tabQuery.data]);
+
+  useEffect(() => {
+    if (activeTabId === null || tabQuery.data === undefined || suppressGridRecoveryRef.current) {
+      return;
+    }
+    const dirtyEdits = diffSheetGrid(baseGrid, grid);
+    if (dirtyEdits.length === 0) {
+      if (applyingRecoveredGridRef.current) {
+        return;
+      }
+      removeRecoveredSheetGrid(sheetId, activeTabId);
+      setHasRecoveredGridDraft(false);
+      return;
+    }
+    applyingRecoveredGridRef.current = false;
+    writeRecoveredSheetGrid(sheetId, activeTabId, dirtyEdits);
+    setHasRecoveredGridDraft(true);
+  }, [activeTabId, baseGrid, grid, sheetId, tabQuery.data]);
 
   useEffect(() => {
     setViewport({ row: 0, col: 0 });
@@ -509,6 +643,9 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
 
   useEffect(() => {
     setActiveFilterViewId(null);
+    setSelectedImageId(null);
+    setImageDragPreview(null);
+    imageDragRef.current = null;
   }, [activeTabId]);
 
   useEffect(() => {
@@ -535,9 +672,12 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
       },
     });
     syncProviderRef.current = provider;
-    provider.connect();
+    const connectTimer = window.setTimeout(() => {
+      provider.connect();
+    }, 0);
     return () => {
-      provider.disconnect();
+      window.clearTimeout(connectTimer);
+      provider.disconnect({ notify: false });
       if (syncProviderRef.current === provider) {
         syncProviderRef.current = null;
       }
@@ -556,6 +696,10 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
   );
   const sheetCharts = useMemo(
     () => sheetChartsFromMetadata(sheetQuery.data?.metadata),
+    [sheetQuery.data?.metadata],
+  );
+  const sheetImages = useMemo(
+    () => sheetImagesFromMetadata(sheetQuery.data?.metadata),
     [sheetQuery.data?.metadata],
   );
   const pivotTables = useMemo(
@@ -580,6 +724,9 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
   );
   const activeSheetCharts = sheetCharts.filter(
     (chart) => activeTabId === null || chart.tabId === activeTabId,
+  );
+  const activeSheetImages = sheetImages.filter(
+    (image) => activeTabId === null || image.tabId === activeTabId,
   );
   const activePivotTables = pivotTables.filter(
     (pivot) => activeTabId === null || pivot.tabId === activeTabId,
@@ -686,12 +833,12 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
   }, [commentStatusFilter, sheetId]);
 
   const updateMutation = useMutation({
-    mutationFn: (input: { readonly edits: readonly SheetsCellEdit[] }) => {
-      if (activeTabId === null) {
-        throw new Error("No active spreadsheet tab.");
-      }
+    mutationFn: (input: {
+      readonly tabId: string;
+      readonly edits: readonly SheetsCellEdit[];
+    }) => {
       return updateSheetCells({
-        tabId: activeTabId,
+        tabId: input.tabId,
         edits: input.edits,
       });
     },
@@ -747,6 +894,79 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
     onError: () => undefined,
   });
 
+  const createSheetMutation = useMutation({
+    mutationFn: () =>
+      createSheet({
+        title: "Untitled spreadsheet",
+        tabNames: ["Sheet 1"],
+        metadata: { createdFrom: "web.native-spreadsheet-editor" },
+      }),
+    onMutate: () => undefined,
+    onSuccess: async (sheet) => {
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+      onOpenSheet?.(sheet.id);
+    },
+    onError: () => undefined,
+  });
+
+  const copySheetMutation = useMutation({
+    mutationFn: () => {
+      const title = sheetQuery.data?.title ?? "Spreadsheet";
+      return copySheet({
+        sheetId,
+        title: `${title} (Copy)`,
+        metadata: { createdFrom: "web.native-spreadsheet-editor.make-copy" },
+      });
+    },
+    onMutate: () => undefined,
+    onSuccess: async (sheet) => {
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+      onOpenSheet?.(sheet.id);
+    },
+    onError: () => undefined,
+  });
+
+  const trashSheetMutation = useMutation({
+    mutationFn: () => trashDriveObject(sheetId),
+    onMutate: () => undefined,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+      onBack();
+    },
+    onError: () => undefined,
+  });
+
+  const restoreVersionMutation = useMutation({
+    mutationFn: (versionId: string) => restoreSheetVersion({ sheetId, versionId }),
+    onMutate: () => undefined,
+    onSuccess: async (sheet) => {
+      const visibleRestoredTabs = sheet.tabs.filter((tab) => tab.deletedAt === null);
+      setCellHistory({ past: [], future: [] });
+      suppressGridRecoveryRef.current = true;
+      for (const tab of visibleRestoredTabs) {
+        removeRecoveredSheetGrid(sheetId, tab.id);
+      }
+      setHasRecoveredGridDraft(false);
+      setCellCacheByTab({});
+      setActiveTabId(visibleRestoredTabs[0]?.id ?? null);
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.sheet(sheetId) });
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.versions(sheetId) });
+      await Promise.all(
+        visibleRestoredTabs.map((tab) =>
+          queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.tab(tab.id) }),
+        ),
+      );
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
+      window.setTimeout(() => {
+        suppressGridRecoveryRef.current = false;
+      }, 0);
+    },
+    onError: () => undefined,
+  });
+
   const chartsMutation = useMutation({
     mutationFn: (updater: SheetChartsUpdater) => {
       const latestSheet = queryClient.getQueryData<SheetsApiSheetWithTabs>(
@@ -763,6 +983,62 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.sheet(sheetId) });
       await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
+    },
+    onError: () => undefined,
+  });
+
+  const imagesMutation = useMutation({
+    mutationFn: async (input: { readonly file: File; readonly placement: SheetImagePlacement }) => {
+      if (activeTabId === null) {
+        throw new Error("No active spreadsheet tab.");
+      }
+      const uploaded = await uploadDriveFile({ file: input.file, folderId: null });
+      const latestSheet = queryClient.getQueryData<SheetsApiSheetWithTabs>(
+        sheetsQueryKeys.sheet(sheetId),
+      );
+      const latestMetadata = latestSheet?.metadata ?? sheetQuery.data?.metadata ?? {};
+      const nextImage = createSheetImageSpec({
+        tabId: activeTabId,
+        file: input.file,
+        driveObjectId: uploaded.objectId,
+        placement: input.placement,
+      });
+      return updateSheet({
+        sheetId,
+        metadata: metadataWithImages(latestMetadata, [
+          ...sheetImagesFromMetadata(latestMetadata),
+          nextImage,
+        ]),
+      });
+    },
+    onMutate: () => undefined,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.sheet(sheetId) });
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.versions(sheetId) });
+    },
+    onError: () => undefined,
+  });
+
+  const imageMetadataMutation = useMutation({
+    mutationFn: (updater: SheetImagesUpdater) => {
+      const latestSheet = queryClient.getQueryData<SheetsApiSheetWithTabs>(
+        sheetsQueryKeys.sheet(sheetId),
+      );
+      const latestMetadata = latestSheet?.metadata ?? sheetQuery.data?.metadata ?? {};
+      return updateSheet({
+        sheetId,
+        metadata: metadataWithImages(
+          latestMetadata,
+          updater(sheetImagesFromMetadata(latestMetadata)),
+        ),
+      });
+    },
+    onMutate: () => undefined,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.sheet(sheetId) });
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
+      await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.versions(sheetId) });
     },
     onError: () => undefined,
   });
@@ -999,9 +1275,13 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
         !cellIsCoveredByMergedRange(edit.row, edit.col, activeMergedRanges, activeTabId) &&
         !cellEditRejectedByValidation(edit, formatMap, validationChoiceContext),
     );
+    applyLocalCellValues(editableEdits);
+  }
+
+  function applyLocalCellValues(edits: readonly SheetsCellEdit[]) {
     setGrid((current) => {
       const next = [...current];
-      for (const edit of editableEdits) {
+      for (const edit of edits) {
         const row = [
           ...(next[edit.row] ??
             Array.from({ length: Math.max(SHEET_MAX_COLS, edit.col + 1) }, () => "")),
@@ -1020,26 +1300,82 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
     if (cellRejectsValue(row, col, value, formatMap, validationChoiceContext)) {
       return;
     }
-    const edit = diffCellEdit(baseGrid, row, col, value);
+    const edit = cellEditWithAutoLink(baseGrid, formatMap, row, col, value);
     commitCells(edit === null ? [] : [edit]);
   }
 
-  function commitCells(edits: readonly SheetsCellEdit[]) {
+  function commitGridCellFromBlur(row: number, col: number, value?: string) {
+    const skipped = skipNextGridBlurCommit.current;
+    if (skipped !== null && skipped.row === row && skipped.col === col) {
+      skipNextGridBlurCommit.current = null;
+      return;
+    }
+    commitCell(row, col, value);
+  }
+
+  function commitCells(
+    edits: readonly SheetsCellEdit[],
+    options: { readonly recordHistory?: boolean } = {},
+  ) {
+    const targetTabId = activeTabId;
+    if (targetTabId === null) {
+      return;
+    }
     const editableEdits = edits.filter(
       (edit) =>
         cellBlockingProtectedRange(edit.row, edit.col, protectedRanges, activeTabId) === null &&
         !cellIsCoveredByMergedRange(edit.row, edit.col, activeMergedRanges, activeTabId) &&
         !cellEditRejectedByValidation(edit, formatMap, validationChoiceContext),
     );
-    if (editableEdits.length > 0 && !updateMutation.isPending) {
+    const meaningfulEdits = meaningfulSheetCellEdits(editableEdits, baseGrid, formatMap);
+    if (meaningfulEdits.length > 0 && !updateMutation.isPending) {
+      if (options.recordHistory !== false) {
+        recordSheetCellHistory(targetTabId, meaningfulEdits);
+      }
       if (
-        activeTabId !== null &&
-        syncProviderRef.current?.sendCellEdits(activeTabId, editableEdits) === true
+        syncProviderRef.current?.sendCellEdits(targetTabId, meaningfulEdits) === true
       ) {
         return;
       }
-      updateMutation.mutate({ edits: editableEdits });
+      updateMutation.mutate({ tabId: targetTabId, edits: meaningfulEdits });
     }
+  }
+
+  function recordSheetCellHistory(tabId: string, redoEdits: readonly SheetsCellEdit[]) {
+    const entry = sheetCellHistoryEntry(tabId, redoEdits, baseGrid, formatMap);
+    if (entry === null) {
+      return;
+    }
+    setCellHistory((history) => ({
+      past: [...history.past, entry].slice(-50),
+      future: [],
+    }));
+  }
+
+  function undoSheetCellHistory() {
+    const entry = cellHistory.past.at(-1);
+    if (entry === undefined || entry.tabId !== activeTabId || updateMutation.isPending) {
+      return;
+    }
+    applyLocalCellValues(entry.undoEdits);
+    commitCells(entry.undoEdits, { recordHistory: false });
+    setCellHistory((history) => ({
+      past: history.past.slice(0, -1),
+      future: [entry, ...history.future].slice(0, 50),
+    }));
+  }
+
+  function redoSheetCellHistory() {
+    const entry = cellHistory.future[0];
+    if (entry === undefined || entry.tabId !== activeTabId || updateMutation.isPending) {
+      return;
+    }
+    applyLocalCellValues(entry.redoEdits);
+    commitCells(entry.redoEdits, { recordHistory: false });
+    setCellHistory((history) => ({
+      past: [...history.past, entry].slice(-50),
+      future: history.future.slice(1),
+    }));
   }
 
   function beginFillDrag(event: ReactMouseEvent<HTMLButtonElement>, sourceRange: CellRange) {
@@ -1144,10 +1480,16 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
     return next;
   }
 
-  function handlePaste(row: number, col: number, text: string, formattedCells: string) {
+  function handlePaste(
+    row: number,
+    col: number,
+    text: string,
+    formattedCells: string,
+    droppedLinkUrl?: string,
+  ) {
     const edits = (
       editsFromFormattedClipboard(formattedCells, row, col) ??
-      editsFromClipboardText(text, row, col, baseGrid)
+      editsFromClipboardText(text, row, col, baseGrid, formatMap, droppedLinkUrl)
     ).filter(
       (edit) =>
         cellBlockingProtectedRange(edit.row, edit.col, protectedRanges, activeTabId) === null &&
@@ -1167,6 +1509,50 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
       });
       revealCell({ row: end.row, col: end.col });
     }
+  }
+
+  function copySelectedCellsToInternalClipboard(): SheetsInternalClipboard | null {
+    if (selectedCommentTarget === null) {
+      return null;
+    }
+    const clipboard: SheetsInternalClipboard = {
+      text: clipboardTextForRange(grid, selectedCommentTarget),
+      formattedCells: formattedClipboardTextForRange(grid, selectedCommentTarget, formatMap),
+    };
+    setCellClipboard(clipboard);
+    void writePlainClipboardText(clipboard.text).catch(() => undefined);
+    return clipboard;
+  }
+
+  function cutSelectedCellsToInternalClipboard() {
+    const copied = copySelectedCellsToInternalClipboard();
+    if (copied === null || selectedCommentTarget === null) {
+      return;
+    }
+    const edits = clearedCellEditsForRange(selectedCommentTarget);
+    if (edits.length === 0) {
+      return;
+    }
+    updateLocalCells(edits);
+    commitCells(edits);
+  }
+
+  function pasteInternalClipboardToSelection() {
+    const target = selectedCell ?? selectedCommentTarget?.start ?? null;
+    if (target === null) {
+      return;
+    }
+    if (cellClipboard !== null) {
+      handlePaste(target.row, target.col, cellClipboard.text, cellClipboard.formattedCells);
+      return;
+    }
+    void readPlainClipboardText()
+      .then((text) => {
+        if (text.length > 0) {
+          handlePaste(target.row, target.col, text, "");
+        }
+      })
+      .catch(() => undefined);
   }
 
   function applyFormatPatch(patch: CellFormat) {
@@ -1431,6 +1817,201 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
       ...currentCharts,
       createSheetChartSpec(activeTabId, targetRange, chartType),
     ]);
+  }
+
+  function insertImageFromPicker() {
+    if (activeTabId === null || imagesMutation.isPending || imageMetadataMutation.isPending) {
+      return;
+    }
+    imageFileInputRef.current?.click();
+  }
+
+  function handleImageInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = Array.from(event.currentTarget.files ?? []).find(isDroppedSheetImageFile);
+    event.currentTarget.value = "";
+    if (
+      file === undefined ||
+      activeTabId === null ||
+      imagesMutation.isPending ||
+      imageMetadataMutation.isPending
+    ) {
+      return;
+    }
+    const anchor =
+      selectedCell ??
+      (selectedCommentTarget === null
+        ? { row: viewport.row, col: viewport.col }
+        : selectedCommentTarget.start);
+    imagesMutation.mutate({
+      file,
+      placement: defaultSheetImagePlacementForAnchor(anchor.row, anchor.col),
+    });
+  }
+
+  function handleSheetDragOver(event: DragEvent<HTMLDivElement>) {
+    if (
+      activeTabId === null ||
+      (droppedSheetImageFile(event.dataTransfer) === undefined &&
+        !hasDroppedSheetText(event.dataTransfer))
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleSheetDrop(event: DragEvent<HTMLDivElement>) {
+    if (activeTabId === null || imagesMutation.isPending || imageMetadataMutation.isPending) {
+      return;
+    }
+    const file = droppedSheetImageFile(event.dataTransfer);
+    if (file !== undefined) {
+      const placement = sheetImagePlacementFromDrop(event, visibleRows, visibleCols);
+      if (placement === null) {
+        return;
+      }
+      event.preventDefault();
+      imagesMutation.mutate({ file, placement });
+      return;
+    }
+    const text = droppedSheetText(event.dataTransfer);
+    const targetCell = sheetCellFromDrop(event, visibleRows, visibleCols);
+    if (text.length === 0 || targetCell === null) {
+      return;
+    }
+    event.preventDefault();
+    handlePaste(targetCell.row, targetCell.col, text, "", droppedSheetLinkUrl(event.dataTransfer));
+  }
+
+  function deleteSheetImage(imageId: string) {
+    if (imageMetadataMutation.isPending) {
+      return;
+    }
+    setSelectedImageId(null);
+    setImageDragPreview(null);
+    imageDragRef.current = null;
+    imageMetadataMutation.mutate((currentImages) =>
+      currentImages.filter((image) => image.id !== imageId),
+    );
+  }
+
+  function beginSheetImageDrag(event: ReactMouseEvent<HTMLElement>, image: SheetImageSpec) {
+    if (event.button !== 0 || imageMetadataMutation.isPending) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.focus();
+    setSelectedImageId(image.id);
+    const dragState: SheetImageDragState = {
+      imageId: image.id,
+      mode: "move",
+      startX: event.clientX,
+      startY: event.clientY,
+      originalPlacement: image.placement,
+    };
+    imageDragRef.current = dragState;
+    setImageDragPreview({ imageId: image.id, placement: image.placement });
+
+    const handleMove = (moveEvent: globalThis.MouseEvent) => {
+      const currentDrag = imageDragRef.current;
+      if (currentDrag === null) {
+        return;
+      }
+      const deltaCol = Math.round((moveEvent.clientX - currentDrag.startX) / SHEET_CELL_WIDTH);
+      const deltaRow = Math.round((moveEvent.clientY - currentDrag.startY) / SHEET_CELL_HEIGHT);
+      setImageDragPreview({
+        imageId: currentDrag.imageId,
+        placement: sheetImagePlacementForDrag(currentDrag, deltaRow, deltaCol),
+      });
+    };
+
+    const handleUp = (upEvent: globalThis.MouseEvent) => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      const currentDrag = imageDragRef.current;
+      imageDragRef.current = null;
+      if (currentDrag === null) {
+        setImageDragPreview(null);
+        return;
+      }
+      const deltaCol = Math.round((upEvent.clientX - currentDrag.startX) / SHEET_CELL_WIDTH);
+      const deltaRow = Math.round((upEvent.clientY - currentDrag.startY) / SHEET_CELL_HEIGHT);
+      const nextPlacement = sheetImagePlacementForDrag(currentDrag, deltaRow, deltaCol);
+      setImageDragPreview(null);
+      if (sheetImagePlacementEqual(nextPlacement, currentDrag.originalPlacement)) {
+        return;
+      }
+      imageMetadataMutation.mutate((currentImages) =>
+        currentImages.map((currentImage) =>
+          currentImage.id === currentDrag.imageId
+            ? { ...currentImage, placement: nextPlacement }
+            : currentImage,
+        ),
+      );
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  }
+
+  function beginSheetImageResize(event: ReactMouseEvent<HTMLElement>, image: SheetImageSpec) {
+    if (event.button !== 0 || imageMetadataMutation.isPending) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedImageId(image.id);
+    const dragState: SheetImageDragState = {
+      imageId: image.id,
+      mode: "resize",
+      startX: event.clientX,
+      startY: event.clientY,
+      originalPlacement: image.placement,
+    };
+    imageDragRef.current = dragState;
+    setImageDragPreview({ imageId: image.id, placement: image.placement });
+
+    const handleMove = (moveEvent: globalThis.MouseEvent) => {
+      const currentDrag = imageDragRef.current;
+      if (currentDrag === null) {
+        return;
+      }
+      const deltaCol = Math.round((moveEvent.clientX - currentDrag.startX) / SHEET_CELL_WIDTH);
+      const deltaRow = Math.round((moveEvent.clientY - currentDrag.startY) / SHEET_CELL_HEIGHT);
+      setImageDragPreview({
+        imageId: currentDrag.imageId,
+        placement: sheetImagePlacementForDrag(currentDrag, deltaRow, deltaCol),
+      });
+    };
+
+    const handleUp = (upEvent: globalThis.MouseEvent) => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      const currentDrag = imageDragRef.current;
+      imageDragRef.current = null;
+      if (currentDrag === null) {
+        setImageDragPreview(null);
+        return;
+      }
+      const deltaCol = Math.round((upEvent.clientX - currentDrag.startX) / SHEET_CELL_WIDTH);
+      const deltaRow = Math.round((upEvent.clientY - currentDrag.startY) / SHEET_CELL_HEIGHT);
+      const nextPlacement = sheetImagePlacementForDrag(currentDrag, deltaRow, deltaCol);
+      setImageDragPreview(null);
+      if (sheetImagePlacementEqual(nextPlacement, currentDrag.originalPlacement)) {
+        return;
+      }
+      imageMetadataMutation.mutate((currentImages) =>
+        currentImages.map((currentImage) =>
+          currentImage.id === currentDrag.imageId
+            ? { ...currentImage, placement: nextPlacement }
+            : currentImage,
+        ),
+      );
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
   }
 
   function addPivotTable() {
@@ -2085,7 +2666,7 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
       {
         id: `sheets:${sheetId}:sort:asc`,
         pluginId: "com.helix.sheets",
-        label: "Sort selected range A-Z",
+        label: "Sort range A to Z",
         group: "Spreadsheet",
         keywords: ["sort", "ascending", "a-z", activeTab?.name ?? ""],
         order: 150,
@@ -2094,7 +2675,7 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
       {
         id: `sheets:${sheetId}:sort:desc`,
         pluginId: "com.helix.sheets",
-        label: "Sort selected range Z-A",
+        label: "Sort range Z to A",
         group: "Spreadsheet",
         keywords: ["sort", "descending", "z-a", activeTab?.name ?? ""],
         order: 151,
@@ -2142,6 +2723,7 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
     }
 
     commitCell(row, col, value);
+    skipNextGridBlurCommit.current = { row, col };
     if (shiftKey) {
       const anchor = selectedRange?.start ?? selectedCell ?? { row, col };
       setSelectedCell(next);
@@ -2217,2065 +2799,1742 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
     return <EditorNotice icon={<Icons.Globe />} text="Spreadsheet unavailable." />;
   }
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+  /* ── Unified editor chrome (menus + ribbon + side panel) ──
+     The detailed formatting toolbar, viewport navigation, and right rail
+     below are preserved temporarily for backward-compatibility with the
+     extensive existing test suite. Future cleanup: remove the legacy
+     toolbar/aside once tests are migrated to the chrome surfaces. */
+  const chromeStatus: EditorAppBarStatus =
+    updateMutation.isPending ||
+    chartsMutation.isPending ||
+    imagesMutation.isPending ||
+    imageMetadataMutation.isPending ||
+    pivotTablesMutation.isPending ||
+    namedRangesMutation.isPending ||
+    filterViewsMutation.isPending ||
+    protectedRangesMutation.isPending ||
+    restoreVersionMutation.isPending ||
+    tabMutationPending
+      ? { kind: "saving" }
+      : hasRecoveredGridDraft
+        ? { kind: "offline", label: "Recovered" }
+        : syncStatus === "connected"
+          ? { kind: "live" }
+          : syncStatus === "offline"
+            ? { kind: "offline" }
+            : { kind: "saved" };
+
+  const chromeContext: SheetsChromeContext = {
+    hasSelection: selectedCell !== null,
+    selectionLocked: selectedRangeBlocked,
+    fontFamily:
+      typeof selectedFormat.fontFamily === "string" ? selectedFormat.fontFamily : "default",
+    fontSize: typeof selectedFormat.fontSize === "string" ? selectedFormat.fontSize : "11",
+    bold: formatBoolean(selectedFormat.bold),
+    italic: formatBoolean(selectedFormat.italic),
+    underline: formatBoolean(selectedFormat.underline),
+    strikethrough: formatBoolean(selectedFormat.strikethrough),
+    textColor:
+      typeof selectedFormat.textColor === "string" ? (selectedFormat.textColor as string) : "",
+    fillColor:
+      typeof selectedFormat.fillColor === "string" ? (selectedFormat.fillColor as string) : "",
+    numberFormat: formatNumberFormat(
+      selectedFormat.numberFormat,
+      selectedFormat.customNumberFormat,
+    ) as SheetsNumberFormat,
+    horizontalAlign: formatAlign(selectedFormat.align) as SheetsHorizontalAlign,
+    verticalAlign: formatVerticalAlign(selectedFormat.verticalAlign),
+    wrapText: formatBoolean(selectedFormat.wrapText),
+    mergeCellsEnabled:
+      activeTabId !== null &&
+      selectedCommentTarget !== null &&
+      canMergeRange(selectedCommentTarget) &&
+      !selectedRangeMerged &&
+      !rangeIntersectsMergedRanges(selectedCommentTarget, activeMergedRanges, activeTabId) &&
+      !mergedRangesMutation.isPending &&
+      !selectedRangeBlocked,
+    setFontFamily: (next) =>
+      applyFormatPatch({
+        fontFamily: next === "default" ? "" : next,
+      }),
+    setFontSize: (next) =>
+      applyFormatPatch({
+        fontSize: next === "11" ? "" : next,
+      }),
+    setBold: (next) => applyFormatPatch({ bold: next }),
+    setItalic: (next) => applyFormatPatch({ italic: next }),
+    setUnderline: (next) => applyFormatPatch({ underline: next }),
+    setStrikethrough: (next) => applyFormatPatch({ strikethrough: next }),
+    setTextColor: (color) => applyFormatPatch({ textColor: color }),
+    setFillColor: (color) => applyFormatPatch({ fillColor: color }),
+    setNumberFormat: (next) =>
+      applyFormatPatch(numberFormatPatch(next, selectedFormat.customNumberFormat)),
+    increaseDecimals: () => undefined,
+    decreaseDecimals: () => undefined,
+    setPercent: () =>
+      applyFormatPatch(numberFormatPatch("percent", selectedFormat.customNumberFormat)),
+    setCurrency: () =>
+      applyFormatPatch(numberFormatPatch("currency", selectedFormat.customNumberFormat)),
+    setHorizontalAlign: (next) => applyFormatPatch({ align: next }),
+    setVerticalAlign: (next) =>
+      applyFormatPatch({
+        verticalAlign: next === "top" ? "" : next,
+      }),
+    setWrapText: (next) => applyFormatPatch({ wrapText: next }),
+    applyBorderPreset: (preset: SheetsBorderPreset) => {
+      // The legacy applyBorderPreset only supports a subset (all / outer / none).
+      // Map richer preset values into the legacy set where possible.
+      const legacy = preset === "all" || preset === "outer" || preset === "none" ? preset : "outer";
+      applyBorderPreset(legacy);
+    },
+    mergeSelectedCells: mergeSelectedRange,
+    canUndo:
+      !updateMutation.isPending &&
+      cellHistory.past.at(-1)?.tabId === activeTabId,
+    canRedo:
+      !updateMutation.isPending &&
+      cellHistory.future[0]?.tabId === activeTabId,
+    undo: undoSheetCellHistory,
+    redo: redoSheetCellHistory,
+    canCutCopyCells: selectedCommentTarget !== null && !selectedRangeBlocked,
+    canPasteCells:
+      selectedCell !== null &&
+      !selectedRangeBlocked &&
+      (cellClipboard !== null ||
+        (typeof navigator !== "undefined" &&
+          navigator.clipboard !== undefined &&
+          typeof navigator.clipboard.readText === "function")),
+    cutCells: cutSelectedCellsToInternalClipboard,
+    copyCells: copySelectedCellsToInternalClipboard,
+    pasteCells: pasteInternalClipboardToSelection,
+    sortRangeAsc: () => sortSelectedRange("asc"),
+    sortRangeDesc: () => sortSelectedRange("desc"),
+    toggleFilter: () => undefined,
+    filterActive: activeFilterViewId !== null,
+    insertChart: addChart,
+    insertPivotTable: addPivotTable,
+    insertImage: insertImageFromPicker,
+    insertFunction: (kind) => {
+      if (isFormulaHelperKind(kind)) {
+        insertFormulaHelper(kind);
+      }
+    },
+    availableFunctions: FORMULA_HELPERS.map((helper) => ({
+      value: helper.value,
+      label: helper.label,
+    })),
+    insertRowAbove: () => {
+      if (selectedCell !== null) {
+        sendStructuralOperation({ kind: "insert-rows", index: selectedCell.row, count: 1 });
+      }
+    },
+    insertRowBelow: () => {
+      if (selectedCell !== null) {
+        sendStructuralOperation({ kind: "insert-rows", index: selectedCell.row + 1, count: 1 });
+      }
+    },
+    insertColumnLeft: () => {
+      if (selectedCell !== null) {
+        sendStructuralOperation({ kind: "insert-columns", index: selectedCell.col, count: 1 });
+      }
+    },
+    insertColumnRight: () => {
+      if (selectedCell !== null) {
+        sendStructuralOperation({ kind: "insert-columns", index: selectedCell.col + 1, count: 1 });
+      }
+    },
+    deleteRow: () => {
+      if (selectedCell !== null) {
+        sendStructuralOperation({ kind: "delete-rows", index: selectedCell.row, count: 1 });
+      }
+    },
+    deleteColumn: () => {
+      if (selectedCell !== null) {
+        sendStructuralOperation({ kind: "delete-columns", index: selectedCell.col, count: 1 });
+      }
+    },
+    rowColOpsEnabled: activeTabId !== null && selectedCell !== null && syncStatus === "connected",
+    onShare: () => setShareDialogOpen(true),
+    onNewSpreadsheet: () => createSheetMutation.mutate(),
+    onOpenSpreadsheet: onBack,
+    onMakeCopy: () => copySheetMutation.mutate(),
+    onMoveToTrash: () => trashSheetMutation.mutate(),
+    onExportCsv: () => exportMutation.mutate("csv"),
+    onExportTsv: () => exportMutation.mutate("tsv"),
+    onExportXlsx: () => exportMutation.mutate("xlsx"),
+    onExportOds: () => exportMutation.mutate("ods"),
+    onAnalyzeRange: analyzeSelectedRange,
+    onCopyLink: () => {
+      void copyCurrentSpreadsheetLink(sheetId).catch(() => undefined);
+    },
+    openSidePanelTab: (tabId) => {
+      setSidePanelTabId(tabId);
+      setSidePanelOpen(true);
+    },
+  };
+
+  const chromeMenus = buildSheetsMenus(chromeContext);
+  const chromeRibbon = buildSheetsRibbon(chromeContext);
+
+  /* ── Side-panel section JSX (formerly the right-rail <aside>) ────────────
+     Each section's JSX is constructed here and slotted into the new
+     EditorSidePanel tab content map below. The legacy <aside> wrapper is
+     removed; the tab label takes the place of the section heading. */
+  const sidePanelAiContent = (
+    <div style={SIDE_PANEL_TAB_CONTENT_STYLE}>
+      <section aria-label="Range analysis" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Sparkles size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Range analysis</strong>
+        </div>
+        <button
+          type="button"
+          className="btn sm"
+          aria-label="Analyze selected range"
+          disabled={selectedCommentTarget === null}
+          onClick={analyzeSelectedRange}
+        >
+          <Icons.Sparkles size={14} />
+          Analyze
+        </button>
+        <select
+          aria-label="Formula helper"
+          disabled={
+            activeTabId === null || selectedCommentTarget === null || updateMutation.isPending
+          }
+          value=""
+          onChange={(event) => {
+            const helper = event.currentTarget.value;
+            if (isFormulaHelperKind(helper)) {
+              insertFormulaHelper(helper);
+            }
+          }}
+          style={SIDE_PANEL_SELECT_STYLE}
+        >
+          <option value="">Formula</option>
+          {FORMULA_HELPERS.map((helper) => (
+            <option key={helper.value} value={helper.value}>
+              {helper.label}
+            </option>
+          ))}
+        </select>
+      </section>
+      {rangeAssist === null ? (
+        <div style={COMMENTS_EMPTY_STYLE} aria-label="Sheet assists">
+          Select a range and analyze it.
+        </div>
+      ) : (
+        <div style={ASSIST_PANEL_STYLE} aria-label="Sheet assists">
+          <strong>{rangeAssist.summary}</strong>
+          <ul style={ASSIST_LIST_STYLE}>
+            {rangeAssist.findings.map((finding) => (
+              <li key={finding}>{finding}</li>
+            ))}
+          </ul>
+          {rangeAssist.formulas.length === 0 ? (
+            <div style={COMMENTS_EMPTY_STYLE}>No formula suggestions for this range.</div>
+          ) : (
+            <div style={ASSIST_ACTIONS_STYLE}>
+              {rangeAssist.formulas.map((assist) => (
+                <button
+                  key={assist.id}
+                  type="button"
+                  className="btn sm"
+                  aria-label={assist.label}
+                  disabled={updateMutation.isPending}
+                  onClick={() => applyFormulaAssist(assist)}
+                >
+                  {assist.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const sidePanelChartsContent = (
+    <div style={SIDE_PANEL_TAB_CONTENT_STYLE} aria-label="Sheet charts">
+      <section aria-label="Insert chart" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Sheet size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Insert chart</strong>
+        </div>
+        <select
+          aria-label="Chart type"
+          disabled={selectedCell === null}
+          value={chartType}
+          onChange={(event) => setChartType(event.currentTarget.value as SheetChartType)}
+          style={SIDE_PANEL_SELECT_STYLE}
+        >
+          <option value="bar">Bar chart</option>
+          <option value="line">Line chart</option>
+          <option value="pie">Pie chart</option>
+          <option value="scatter">Scatter chart</option>
+          <option value="combo">Combo chart</option>
+          <option value="sparkline">Sparkline</option>
+        </select>
+        <button
+          type="button"
+          className="btn sm"
+          aria-label="Add chart"
+          disabled={
+            activeTabId === null || selectedCommentTarget === null || chartsMutation.isPending
+          }
+          onClick={addChart}
+        >
+          <Icons.Sheet size={14} />
+          Add chart
+        </button>
+      </section>
+      {activeSheetCharts.length === 0 ? (
+        <div style={COMMENTS_EMPTY_STYLE}>No charts yet.</div>
+      ) : (
+        <ol aria-label="Sheet chart list" style={COMMENT_LIST_STYLE}>
+          {activeSheetCharts.map((chart) => (
+            <li key={chart.id} style={COMMENT_ITEM_STYLE}>
+              <div style={CHART_EDIT_ROW_STYLE}>
+                <input
+                  aria-label={`Chart title ${chart.type} ${chart.title}`}
+                  defaultValue={chart.title}
+                  disabled={chartsMutation.isPending}
+                  onBlur={(event) => {
+                    const title = event.currentTarget.value.trim();
+                    if (title.length > 0 && title !== chart.title) {
+                      updateChart(chart.id, { title });
+                    }
+                  }}
+                  style={CHART_TITLE_INPUT_STYLE}
+                />
+                <select
+                  aria-label={`Chart type ${chart.type} ${chart.title}`}
+                  value={chart.type}
+                  disabled={chartsMutation.isPending}
+                  onChange={(event) =>
+                    updateChart(chart.id, {
+                      type: event.currentTarget.value as SheetChartType,
+                    })
+                  }
+                  style={SIDE_PANEL_SELECT_STYLE}
+                >
+                  <option value="bar">Bar</option>
+                  <option value="line">Line</option>
+                  <option value="pie">Pie</option>
+                  <option value="scatter">Scatter</option>
+                  <option value="combo">Combo</option>
+                  <option value="sparkline">Sparkline</option>
+                </select>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Use selected range for ${chart.type} chart ${chart.title}`}
+                  disabled={
+                    chartsMutation.isPending ||
+                    selectedCommentTarget === null ||
+                    activeTabId !== chart.tabId
+                  }
+                  onClick={() => {
+                    if (selectedCommentTarget !== null) {
+                      updateChartRange(chart.id, selectedCommentTarget);
+                    }
+                  }}
+                >
+                  <Icons.Grid size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Place ${chart.type} chart ${chart.title} at selected cell`}
+                  disabled={
+                    chartsMutation.isPending ||
+                    selectedCommentTarget === null ||
+                    activeTabId !== chart.tabId
+                  }
+                  onClick={() => {
+                    if (selectedCommentTarget !== null) {
+                      updateChartPlacement(chart.id, selectedCommentTarget);
+                    }
+                  }}
+                >
+                  <Icons.Pin size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Delete ${chart.type} chart ${chart.title}`}
+                  disabled={chartsMutation.isPending}
+                  onClick={() => deleteChart(chart.id)}
+                >
+                  <Icons.Trash size={14} />
+                </button>
+              </div>
+              <div style={CHART_EDIT_ROW_STYLE}>
+                <select
+                  aria-label={`Chart label column ${chart.type} ${chart.title}`}
+                  value={String(chartLabelColumn(chart))}
+                  disabled={chartsMutation.isPending}
+                  onChange={(event) =>
+                    updateChart(chart.id, {
+                      labelCol: Number(event.currentTarget.value),
+                    })
+                  }
+                  style={SIDE_PANEL_SELECT_STYLE}
+                >
+                  {chartRangeColumns(chart).map((column) => (
+                    <option key={column} value={column}>
+                      Label {columnLetter(column)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label={`Chart value column ${chart.type} ${chart.title}`}
+                  value={String(chartValueColumn(chart))}
+                  disabled={chartsMutation.isPending}
+                  onChange={(event) =>
+                    updateChart(chart.id, {
+                      valueCol: Number(event.currentTarget.value),
+                    })
+                  }
+                  style={SIDE_PANEL_SELECT_STYLE}
+                >
+                  {chartRangeColumns(chart).map((column) => (
+                    <option key={column} value={column}>
+                      Value {columnLetter(column)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <SheetChartPreview
+                chart={chart}
+                grid={grid}
+                displayGrid={displayGrid}
+                showDataTable
+              />
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+
+  const sidePanelPivotsContent = (
+    <div style={SIDE_PANEL_TAB_CONTENT_STYLE} aria-label="Pivot tables">
+      <div style={COMMENTS_EMPTY_STYLE}>
+        {selectedCommentTarget === null
+          ? "Select at least two columns"
+          : `Selected ${rangeLabel(selectedCommentTarget)}`}
+      </div>
+      <button
+        type="button"
+        className="btn sm"
+        aria-label="Create pivot table"
+        disabled={
+          activeTabId === null ||
+          selectedCommentTarget === null ||
+          !canCreatePivotTableFromRange(selectedCommentTarget) ||
+          pivotTablesMutation.isPending
+        }
+        onClick={addPivotTable}
+      >
+        <Icons.Grid size={14} />
+        Pivot
+      </button>
+      {activePivotTables.length === 0 ? (
+        <div style={COMMENTS_EMPTY_STYLE}>No pivot tables.</div>
+      ) : (
+        <ol aria-label="Pivot table list" style={COMMENT_LIST_STYLE}>
+          {activePivotTables.map((pivot) => (
+            <li key={pivot.id} style={COMMENT_ITEM_STYLE}>
+              {(() => {
+                const slicer = pivotSlicer(pivot);
+                return (
+                  <>
+                    <div style={CHART_EDIT_ROW_STYLE}>
+                      <input
+                        aria-label={`Pivot title ${pivot.title}`}
+                        defaultValue={pivot.title}
+                        disabled={pivotTablesMutation.isPending}
+                        onBlur={(event) => {
+                          const title = event.currentTarget.value.trim();
+                          if (title.length > 0 && title !== pivot.title) {
+                            updatePivotTable(pivot.id, { title });
+                          }
+                        }}
+                        style={CHART_TITLE_INPUT_STYLE}
+                      />
+                      <select
+                        aria-label={`Pivot aggregation ${pivot.title}`}
+                        value={pivot.aggregation}
+                        disabled={pivotTablesMutation.isPending}
+                        onChange={(event) =>
+                          updatePivotTable(pivot.id, {
+                            aggregation: event.currentTarget.value as SheetPivotAggregation,
+                          })
+                        }
+                        style={SIDE_PANEL_SELECT_STYLE}
+                      >
+                        <option value="sum">Sum</option>
+                        <option value="count">Count</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        aria-label={`Use selected range for pivot table ${pivot.title}`}
+                        disabled={
+                          pivotTablesMutation.isPending ||
+                          selectedCommentTarget === null ||
+                          !canCreatePivotTableFromRange(selectedCommentTarget) ||
+                          activeTabId !== pivot.tabId
+                        }
+                        onClick={() => {
+                          if (selectedCommentTarget !== null) {
+                            updatePivotTableRange(pivot.id, selectedCommentTarget);
+                          }
+                        }}
+                      >
+                        <Icons.Grid size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        aria-label={`Delete pivot table ${pivot.title}`}
+                        disabled={pivotTablesMutation.isPending}
+                        onClick={() => deletePivotTable(pivot.id)}
+                      >
+                        <Icons.Trash size={14} />
+                      </button>
+                    </div>
+                    <div style={CHART_EDIT_ROW_STYLE}>
+                      <select
+                        aria-label={`Pivot slicer column ${pivot.title}`}
+                        value={String(slicer.column)}
+                        disabled={pivotTablesMutation.isPending}
+                        onChange={(event) =>
+                          updatePivotTable(pivot.id, {
+                            slicer: {
+                              ...slicer,
+                              column: Number(event.currentTarget.value),
+                            },
+                          })
+                        }
+                        style={SIDE_PANEL_SELECT_STYLE}
+                      >
+                        {pivotColumns(pivot).map((column) => (
+                          <option key={column} value={column}>
+                            {columnLetter(column)}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        aria-label={`Pivot slicer value ${pivot.title}`}
+                        defaultValue={slicer.value}
+                        disabled={pivotTablesMutation.isPending}
+                        onBlur={(event) => {
+                          const value = event.currentTarget.value.trim();
+                          if (value !== slicer.value) {
+                            updatePivotTable(pivot.id, {
+                              slicer: { ...slicer, value },
+                            });
+                          }
+                        }}
+                        placeholder="Filter contains"
+                        style={CHART_TITLE_INPUT_STYLE}
+                      />
+                    </div>
+                    <SheetPivotTablePreview pivot={pivot} grid={displayGrid} />
+                  </>
+                );
+              })()}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+
+  const sidePanelNamesContent = (
+    <div style={SIDE_PANEL_TAB_CONTENT_STYLE} aria-label="Named ranges">
+      <div style={COMMENTS_EMPTY_STYLE}>
+        {selectedCommentTarget === null
+          ? "Select a cell or range"
+          : `Selected ${rangeLabel(selectedCommentTarget)}`}
+      </div>
+      <button
+        type="button"
+        className="btn sm"
+        aria-label="Name selected range"
+        disabled={
+          activeTabId === null || selectedCommentTarget === null || namedRangesMutation.isPending
+        }
+        onClick={addNamedRange}
+      >
+        <Icons.Hash size={14} />
+        Name range
+      </button>
+      {activeNamedRanges.length === 0 ? (
+        <div style={COMMENTS_EMPTY_STYLE}>No named ranges.</div>
+      ) : (
+        <ol aria-label="Named range list" style={COMMENT_LIST_STYLE}>
+          {activeNamedRanges.map((range) => (
+            <li key={range.id} style={COMMENT_ITEM_STYLE}>
+              <div style={CHART_EDIT_ROW_STYLE}>
+                <input
+                  aria-label={`Named range ${range.name}`}
+                  defaultValue={range.name}
+                  disabled={namedRangesMutation.isPending}
+                  onBlur={(event) => {
+                    const name = event.currentTarget.value.trim();
+                    if (name.length > 0 && name !== range.name) {
+                      updateNamedRange(range.id, { name });
+                    }
+                  }}
+                  style={CHART_TITLE_INPUT_STYLE}
+                />
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Use selected range for named range ${range.name}`}
+                  disabled={
+                    namedRangesMutation.isPending ||
+                    selectedCommentTarget === null ||
+                    activeTabId !== range.tabId
+                  }
+                  onClick={() => {
+                    if (selectedCommentTarget !== null) {
+                      updateNamedRangeSelection(range.id, selectedCommentTarget);
+                    }
+                  }}
+                >
+                  <Icons.Grid size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Delete named range ${range.name}`}
+                  disabled={namedRangesMutation.isPending}
+                  onClick={() => deleteNamedRange(range.id)}
+                >
+                  <Icons.Trash size={14} />
+                </button>
+              </div>
+              <div style={COMMENT_META_STYLE}>{namedRangeLabel(range)}</div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+
+  const sidePanelCellsContent = (
+    <div style={SIDE_PANEL_TAB_CONTENT_STYLE}>
+      <section aria-label="Quick formatting" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Sheet size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Quick formatting</strong>
+        </div>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {FILL_COLORS.map((color) => (
+            <button
+              key={color.value}
+              type="button"
+              className="btn sm"
+              aria-label={`Fill ${color.label.toLowerCase()}`}
+              aria-pressed={selectedFormat.fillColor === color.value}
+              disabled={selectedCell === null || selectedRangeBlocked}
+              onClick={() =>
+                applyFormatPatch({
+                  fillColor: selectedFormat.fillColor === color.value ? "" : color.value,
+                })
+              }
+              style={{ background: color.value, minWidth: 28, height: 28 }}
+            >
+              {color.label[0] ?? ""}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {TEXT_COLORS.map((color) => (
+            <button
+              key={color.label}
+              type="button"
+              className="btn sm"
+              aria-label={`Text ${color.label.toLowerCase()}`}
+              aria-pressed={
+                color.value === ""
+                  ? selectedFormat.textColor === undefined
+                  : selectedFormat.textColor === color.value
+              }
+              disabled={selectedCell === null || selectedRangeBlocked}
+              onClick={() =>
+                applyFormatPatch({
+                  textColor: color.value,
+                })
+              }
+              style={{ color: color.value || "var(--text)", minWidth: 28, height: 28 }}
+            >
+              A
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {[
+            { label: "Border all", preset: "all" as BorderPreset },
+            { label: "Border outer", preset: "outer" as BorderPreset },
+            { label: "Border none", preset: "none" as BorderPreset },
+          ].map((item) => (
+            <button
+              key={item.preset}
+              type="button"
+              className="btn sm"
+              aria-label={item.label}
+              disabled={selectedCell === null || selectedRangeBlocked}
+              onClick={() => applyBorderPreset(item.preset)}
+            >
+              {item.label.replace("Border ", "")}
+            </button>
+          ))}
+        </div>
+      </section>
+      <section aria-label="Cell link" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Link size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Link</strong>
+        </div>
+        <input
+          aria-label="Cell link"
+          inputMode="url"
+          disabled={selectedCell === null || selectedRangeBlocked}
+          placeholder="https://example.com"
+          value={formatCellLinkUrl(selectedFormat.linkUrl)}
+          onChange={(event) =>
+            applyFormatPatch({
+              linkUrl: event.currentTarget.value,
+            })
+          }
+          style={SIDE_PANEL_SELECT_STYLE}
+        />
+      </section>
+      <section aria-label="Number format" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Sheet size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Number format</strong>
+        </div>
+        <select
+          aria-label="Number format"
+          disabled={selectedCell === null || selectedRangeBlocked}
+          value={formatNumberFormat(selectedFormat.numberFormat, selectedFormat.customNumberFormat)}
+          onChange={(event) =>
+            applyFormatPatch({
+              ...numberFormatPatch(
+                event.currentTarget.value as NumberFormat,
+                selectedFormat.customNumberFormat,
+              ),
+            })
+          }
+          style={SIDE_PANEL_SELECT_STYLE}
+        >
+          <option value="plain">Plain</option>
+          <option value="number">Number</option>
+          <option value="currency">Currency</option>
+          <option value="percent">Percent</option>
+          <option value="date">Date</option>
+          <option value="custom">Custom</option>
+        </select>
+        {formatNumberFormat(selectedFormat.numberFormat, selectedFormat.customNumberFormat) ===
+        "custom" ? (
+          <input
+            aria-label="Custom number format"
+            list="sheet-custom-number-formats"
+            disabled={selectedCell === null || selectedRangeBlocked}
+            value={formatCustomNumberFormat(selectedFormat.customNumberFormat)}
+            onChange={(event) =>
+              applyFormatPatch({
+                numberFormat: "custom",
+                customNumberFormat: event.currentTarget.value,
+              })
+            }
+            style={SIDE_PANEL_SELECT_STYLE}
+          />
+        ) : null}
+        <datalist id="sheet-custom-number-formats">
+          {CUSTOM_NUMBER_FORMATS.map((format) => (
+            <option key={format} value={format} />
+          ))}
+        </datalist>
+      </section>
+      <section aria-label="Data validation" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Check size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Data validation</strong>
+        </div>
+        <select
+          aria-label="Data validation"
+          disabled={selectedCell === null || selectedRangeBlocked}
+          value={formatDataValidationKind(selectedFormat.dataValidation)}
+          onChange={(event) =>
+            applyFormatPatch({
+              dataValidation: dataValidationPatch(
+                event.currentTarget.value as DataValidationKind,
+                selectedFormat.dataValidation,
+              ),
+            })
+          }
+          style={SIDE_PANEL_SELECT_STYLE}
+        >
+          <option value="none">No validation</option>
+          <option value="number">Number only</option>
+          <option value="email">Email only</option>
+          <option value="url">URL only</option>
+          <option value="date">Date</option>
+          <option value="list">Dropdown list</option>
+          <option value="customFormula">Custom formula</option>
+        </select>
+        {formatDataValidationKind(selectedFormat.dataValidation) === "date" ? (
+          <select
+            aria-label="Validation date format"
+            disabled={selectedCell === null || selectedRangeBlocked}
+            value={dataValidationDateLocale(selectedFormat.dataValidation)}
+            onChange={(event) =>
+              applyFormatPatch({
+                dataValidation: dataValidationWithDateLocale(
+                  selectedFormat.dataValidation,
+                  event.currentTarget.value as DataValidationDateLocale,
+                ),
+              })
+            }
+            style={SIDE_PANEL_SELECT_STYLE}
+          >
+            <option value="iso">yyyy-mm-dd</option>
+            <option value="en-US">m/d/yyyy</option>
+            <option value="en-GB">d/m/yyyy</option>
+            <option value="de-DE">d.m.yyyy</option>
+          </select>
+        ) : null}
+        {formatDataValidationKind(selectedFormat.dataValidation) === "list" ? (
+          <>
+            {activeNamedRanges.length === 0 ? null : (
+              <select
+                aria-label="Validation list source"
+                disabled={selectedCell === null || selectedRangeBlocked}
+                value={dataValidationListSource(selectedFormat.dataValidation)}
+                onChange={(event) =>
+                  applyFormatPatch({
+                    dataValidation: dataValidationListSourcePatch(
+                      event.currentTarget.value,
+                      selectedFormat.dataValidation,
+                    ),
+                  })
+                }
+                style={SIDE_PANEL_SELECT_STYLE}
+              >
+                <option value="manual">Manual choices</option>
+                {activeNamedRanges.map((range) => (
+                  <option key={range.id} value={range.id}>
+                    {range.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {dataValidationNamedRangeId(selectedFormat.dataValidation) === null ? (
+              <input
+                aria-label="Validation choices"
+                disabled={selectedCell === null || selectedRangeBlocked}
+                value={dataValidationChoicesText(selectedFormat.dataValidation)}
+                onChange={(event) =>
+                  applyFormatPatch({
+                    dataValidation: {
+                      type: "list",
+                      choices: parseDataValidationChoices(event.currentTarget.value),
+                      ...dataValidationModePatch(
+                        formatDataValidationMode(selectedFormat.dataValidation),
+                      ),
+                    },
+                  })
+                }
+                style={SIDE_PANEL_SELECT_STYLE}
+              />
+            ) : null}
+          </>
+        ) : null}
+        {formatDataValidationKind(selectedFormat.dataValidation) === "customFormula" ? (
+          <input
+            aria-label="Validation formula"
+            disabled={selectedCell === null || selectedRangeBlocked}
+            value={dataValidationFormulaText(selectedFormat.dataValidation)}
+            onChange={(event) =>
+              applyFormatPatch({
+                dataValidation: dataValidationWithFormula(
+                  selectedFormat.dataValidation,
+                  event.currentTarget.value,
+                ),
+              })
+            }
+            style={SIDE_PANEL_SELECT_STYLE}
+          />
+        ) : null}
+        {formatDataValidationKind(selectedFormat.dataValidation) === "none" ? null : (
+          <select
+            aria-label="Validation mode"
+            disabled={selectedCell === null || selectedRangeBlocked}
+            value={formatDataValidationMode(selectedFormat.dataValidation)}
+            onChange={(event) =>
+              applyFormatPatch({
+                dataValidation: dataValidationWithMode(
+                  selectedFormat.dataValidation,
+                  event.currentTarget.value as DataValidationMode,
+                ),
+              })
+            }
+            style={SIDE_PANEL_SELECT_STYLE}
+          >
+            <option value="warn">Warn only</option>
+            <option value="reject">Reject invalid</option>
+          </select>
+        )}
+      </section>
+      <section aria-label="Conditional formatting" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Sparkles size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Conditional formatting</strong>
+        </div>
+        <select
+          aria-label="Conditional format"
+          disabled={selectedCell === null || selectedRangeBlocked}
+          value={formatConditionalFormatKind(selectedFormat.conditionalFormat)}
+          onChange={(event) =>
+            applyFormatPatch({
+              conditionalFormat: conditionalFormatForKind(
+                event.currentTarget.value as ConditionalFormatKind,
+              ),
+            })
+          }
+          style={SIDE_PANEL_SELECT_STYLE}
+        >
+          <option value="none">No conditional</option>
+          <option value="greaterThan100">&gt; 100 green</option>
+          <option value="lessThanZero">&lt; 0 red</option>
+          <option value="textContains">Text contains</option>
+          <option value="customFormula">Custom formula</option>
+        </select>
+        {formatConditionalFormatKind(selectedFormat.conditionalFormat) === "greaterThan100" ||
+        formatConditionalFormatKind(selectedFormat.conditionalFormat) === "lessThanZero" ? (
+          <input
+            aria-label="Conditional threshold"
+            disabled={selectedCell === null || selectedRangeBlocked}
+            type="number"
+            value={conditionalFormatThresholdValue(selectedFormat.conditionalFormat)}
+            onChange={(event) =>
+              applyFormatPatch({
+                conditionalFormat: conditionalFormatWithThreshold(
+                  selectedFormat.conditionalFormat,
+                  event.currentTarget.value,
+                ),
+              })
+            }
+            style={SIDE_PANEL_SELECT_STYLE}
+          />
+        ) : null}
+        {formatConditionalFormatKind(selectedFormat.conditionalFormat) === "textContains" ? (
+          <input
+            aria-label="Conditional text contains"
+            disabled={selectedCell === null || selectedRangeBlocked}
+            value={conditionalFormatTextContainsText(selectedFormat.conditionalFormat)}
+            onChange={(event) =>
+              applyFormatPatch({
+                conditionalFormat: conditionalFormatWithTextContains(
+                  selectedFormat.conditionalFormat,
+                  event.currentTarget.value,
+                ),
+              })
+            }
+            style={SIDE_PANEL_SELECT_STYLE}
+          />
+        ) : null}
+        {formatConditionalFormatKind(selectedFormat.conditionalFormat) === "customFormula" ? (
+          <input
+            aria-label="Conditional formula"
+            disabled={selectedCell === null || selectedRangeBlocked}
+            value={conditionalFormatFormulaText(selectedFormat.conditionalFormat)}
+            onChange={(event) =>
+              applyFormatPatch({
+                conditionalFormat: conditionalFormatWithFormula(
+                  selectedFormat.conditionalFormat,
+                  event.currentTarget.value,
+                ),
+              })
+            }
+            style={SIDE_PANEL_SELECT_STYLE}
+          />
+        ) : null}
+      </section>
+      <section aria-label="Merged cells" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Grid size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Merged cells</strong>
+        </div>
+        <div style={COMMENTS_EMPTY_STYLE}>
+          {selectedCommentTarget === null
+            ? "Select a range"
+            : `Selected ${rangeLabel(selectedCommentTarget)}`}
+        </div>
+        <button
+          type="button"
+          className="btn sm"
+          aria-label="Merge selected cells"
+          disabled={
+            activeTabId === null ||
+            selectedCommentTarget === null ||
+            !canMergeRange(selectedCommentTarget) ||
+            selectedRangeMerged ||
+            rangeIntersectsMergedRanges(selectedCommentTarget, activeMergedRanges, activeTabId) ||
+            mergedRangesMutation.isPending
+          }
+          onClick={mergeSelectedRange}
+        >
+          <Icons.Grid size={14} />
+          Merge cells
+        </button>
+        {activeMergedRanges.length === 0 ? (
+          <div style={COMMENTS_EMPTY_STYLE}>No merged cells.</div>
+        ) : (
+          <ol aria-label="Merged cell list" style={COMMENT_LIST_STYLE}>
+            {activeMergedRanges.map((range) => (
+              <li key={range.id} style={COMMENT_ITEM_STYLE}>
+                <div style={CHART_EDIT_ROW_STYLE}>
+                  <strong>{range.label}</strong>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    aria-label={`Select merged range ${range.label}`}
+                    disabled={mergedRangesMutation.isPending}
+                    onClick={() => selectMergedRange(range)}
+                  >
+                    <Icons.Grid size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    aria-label={`Unmerge range ${range.label}`}
+                    disabled={mergedRangesMutation.isPending}
+                    onClick={() => unmergeRange(range.id)}
+                  >
+                    <Icons.Trash size={14} />
+                  </button>
+                </div>
+                <div style={COMMENT_META_STYLE}>{mergedRangeLabel(range)}</div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+      <section aria-label="Frozen panes" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Pin size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Frozen panes</strong>
+        </div>
+        <div style={COMMENTS_EMPTY_STYLE}>
+          Rows {activeFrozenPane.frozenRows} · Columns {activeFrozenPane.frozenCols}
+        </div>
+        <div style={SIDE_TABLE_ACTIONS_STYLE}>
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Freeze rows to selection"
+            disabled={
+              activeTabId === null ||
+              selectedCommentTarget === null ||
+              frozenPanesMutation.isPending
+            }
+            onClick={freezeRowsToSelection}
+          >
+            <Icons.Pin size={14} />
+            Freeze rows
+          </button>
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Freeze columns to selection"
+            disabled={
+              activeTabId === null ||
+              selectedCommentTarget === null ||
+              frozenPanesMutation.isPending
+            }
+            onClick={freezeColumnsToSelection}
+          >
+            <Icons.Pin size={14} />
+            Freeze columns
+          </button>
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Clear frozen panes"
+            disabled={
+              activeTabId === null ||
+              (activeFrozenPane.frozenRows === 0 && activeFrozenPane.frozenCols === 0) ||
+              frozenPanesMutation.isPending
+            }
+            onClick={clearFrozenPanes}
+          >
+            <Icons.Trash size={14} />
+          </button>
+        </div>
+      </section>
+      <section aria-label="Data validation rules" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Check size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Validation rules</strong>
+        </div>
+        {validationRules.length === 0 ? (
+          <div style={COMMENTS_EMPTY_STYLE}>No validation rules.</div>
+        ) : (
+          <table aria-label="Data validation rule table" style={SIDE_TABLE_STYLE}>
+            <thead>
+              <tr>
+                <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                  Range
+                </th>
+                <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                  Rule
+                </th>
+                <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                  Mode
+                </th>
+                <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {validationRules.map((rule) => (
+                <tr key={rule.id}>
+                  <td style={SIDE_TABLE_CELL_STYLE}>{rule.label}</td>
+                  <td style={SIDE_TABLE_CELL_STYLE}>
+                    {dataValidationRuleLabel(rule.validation, validationChoiceContext)}
+                  </td>
+                  <td style={SIDE_TABLE_CELL_STYLE}>
+                    <select
+                      aria-label={`Validation rule mode ${rule.label}`}
+                      disabled={updateMutation.isPending}
+                      value={formatDataValidationMode(rule.validation)}
+                      onChange={(event) =>
+                        updateDataValidationRuleMode(
+                          rule,
+                          event.currentTarget.value as DataValidationMode,
+                        )
+                      }
+                      style={SIDE_TABLE_SELECT_STYLE}
+                    >
+                      <option value="warn">Warn only</option>
+                      <option value="reject">Reject invalid</option>
+                    </select>
+                  </td>
+                  <td style={SIDE_TABLE_CELL_STYLE}>
+                    <div style={SIDE_TABLE_ACTIONS_STYLE}>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        aria-label={`Select validation rule ${rule.label}`}
+                        onClick={() => selectDataValidationRule(rule)}
+                      >
+                        Select
+                      </button>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        aria-label={`Clear validation rule ${rule.label}`}
+                        disabled={updateMutation.isPending}
+                        onClick={() => clearDataValidationRule(rule)}
+                      >
+                        <Icons.Trash size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+      <section aria-label="Conditional formatting rules" style={SIDE_SECTION_STYLE}>
+        <div style={SIDE_SECTION_HEADER_STYLE}>
+          <Icons.Sparkles size={16} />
+          <strong style={{ fontSize: "var(--text-sm)" }}>Conditional rules</strong>
+        </div>
+        {conditionalFormatRules.length === 0 ? (
+          <div style={COMMENTS_EMPTY_STYLE}>No conditional rules.</div>
+        ) : (
+          <table aria-label="Conditional formatting rule table" style={SIDE_TABLE_STYLE}>
+            <thead>
+              <tr>
+                <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                  Range
+                </th>
+                <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                  Rule
+                </th>
+                <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {conditionalFormatRules.map((rule) => (
+                <tr key={rule.id}>
+                  <td style={SIDE_TABLE_CELL_STYLE}>{rule.label}</td>
+                  <td style={SIDE_TABLE_CELL_STYLE}>
+                    {conditionalFormatRuleLabel(rule.conditionalFormat)}
+                  </td>
+                  <td style={SIDE_TABLE_CELL_STYLE}>
+                    <div style={SIDE_TABLE_ACTIONS_STYLE}>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        aria-label={`Select conditional rule ${rule.label}`}
+                        onClick={() => selectConditionalFormatRule(rule)}
+                      >
+                        Select
+                      </button>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        aria-label={`Clear conditional rule ${rule.label}`}
+                        disabled={updateMutation.isPending}
+                        onClick={() => clearConditionalFormatRule(rule)}
+                      >
+                        <Icons.Trash size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </div>
+  );
+
+  const sidePanelFiltersContent = (
+    <div style={SIDE_PANEL_TAB_CONTENT_STYLE} aria-label="Saved filter views">
+      <div style={COMMENTS_EMPTY_STYLE}>
+        {selectedCommentTarget === null
+          ? "Select a cell or range"
+          : `Selected ${rangeLabel(selectedCommentTarget)}`}
+      </div>
+      {activeDisplayFilterView === null ? null : (
+        <button
+          type="button"
+          className="btn sm"
+          aria-label="Clear filter preview"
+          onClick={() => setActiveFilterViewId(null)}
+        >
+          Clear preview
+        </button>
+      )}
+      <div style={ASSIST_ACTIONS_STYLE}>
+        <button
+          type="button"
+          className="btn sm"
+          aria-label="Save A-Z filter view"
+          disabled={
+            activeTabId === null || selectedCommentTarget === null || filterViewsMutation.isPending
+          }
+          onClick={() => addFilterView("asc")}
+        >
+          A-Z
+        </button>
+        <button
+          type="button"
+          className="btn sm"
+          aria-label="Save Z-A filter view"
+          disabled={
+            activeTabId === null || selectedCommentTarget === null || filterViewsMutation.isPending
+          }
+          onClick={() => addFilterView("desc")}
+        >
+          Z-A
+        </button>
+      </div>
+      {activeFilterViews.length === 0 ? (
+        <div style={COMMENTS_EMPTY_STYLE}>No filter views.</div>
+      ) : (
+        <ol aria-label="Saved filter view list" style={COMMENT_LIST_STYLE}>
+          {activeFilterViews.map((view) => (
+            <li key={view.id} style={COMMENT_ITEM_STYLE}>
+              <div style={FILTER_VIEW_ACTION_ROW_STYLE}>
+                <input
+                  aria-label={`Filter view ${view.name}`}
+                  defaultValue={view.name}
+                  disabled={filterViewsMutation.isPending}
+                  onBlur={(event) => {
+                    const name = event.currentTarget.value.trim();
+                    if (name.length > 0 && name !== view.name) {
+                      updateFilterView(view.id, { name });
+                    }
+                  }}
+                  style={CHART_TITLE_INPUT_STYLE}
+                />
+                <select
+                  aria-label={`Filter view sort ${view.name}`}
+                  value={view.sortDirection}
+                  disabled={filterViewsMutation.isPending}
+                  onChange={(event) =>
+                    updateFilterView(view.id, {
+                      sortDirection: event.currentTarget.value as SortDirection,
+                    })
+                  }
+                  style={SIDE_PANEL_SELECT_STYLE}
+                >
+                  <option value="asc">A-Z</option>
+                  <option value="desc">Z-A</option>
+                </select>
+                <select
+                  aria-label={`Filter view sort column ${view.name}`}
+                  value={String(filterViewSortColumn(view))}
+                  disabled={filterViewsMutation.isPending}
+                  onChange={(event) =>
+                    updateFilterViewPrimarySortColumn(view, Number(event.currentTarget.value))
+                  }
+                  style={SIDE_PANEL_SELECT_STYLE}
+                >
+                  {filterViewColumns(view).map((column) => (
+                    <option key={column} value={column}>
+                      {columnLetter(column)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label={`Filter view secondary sort column ${view.name}`}
+                  value={String(filterViewSecondarySortColumn(view) ?? "")}
+                  disabled={filterViewsMutation.isPending}
+                  onChange={(event) =>
+                    updateFilterViewSecondarySortColumn(view, event.currentTarget.value)
+                  }
+                  style={SIDE_PANEL_SELECT_STYLE}
+                >
+                  <option value="">Then none</option>
+                  {filterViewColumns(view).map((column) => (
+                    <option key={column} value={column}>
+                      Then {columnLetter(column)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-pressed={activeDisplayFilterView?.id === view.id}
+                  aria-label={`Preview filter view ${view.name}`}
+                  disabled={filterViewsMutation.isPending}
+                  onClick={() => toggleDisplayFilterView(view)}
+                >
+                  <Icons.Eye size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Apply filter view ${view.name}`}
+                  disabled={filterViewsMutation.isPending || updateMutation.isPending}
+                  onClick={() => applyFilterView(view)}
+                >
+                  <Icons.Check size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Use selected range for filter view ${view.name}`}
+                  disabled={
+                    filterViewsMutation.isPending ||
+                    selectedCommentTarget === null ||
+                    activeTabId !== view.tabId
+                  }
+                  onClick={() => {
+                    if (selectedCommentTarget !== null) {
+                      updateFilterViewSelection(view.id, selectedCommentTarget);
+                    }
+                  }}
+                >
+                  <Icons.Grid size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Delete filter view ${view.name}`}
+                  disabled={filterViewsMutation.isPending}
+                  onClick={() => deleteFilterView(view.id)}
+                >
+                  <Icons.Trash size={14} />
+                </button>
+              </div>
+              <div style={FILTER_PREDICATE_LIST_STYLE}>
+                {filterViewEditablePredicates(view).map((predicate, predicateIndex) => (
+                  <div
+                    key={`${view.id}-${String(predicateIndex)}`}
+                    style={FILTER_PREDICATE_ROW_STYLE}
+                  >
+                    <label style={FILTER_PREDICATE_LABEL_STYLE}>
+                      Column
+                      <select
+                        aria-label={`Filter view predicate ${String(
+                          predicateIndex + 1,
+                        )} column ${view.name}`}
+                        value={String(predicate.column)}
+                        disabled={filterViewsMutation.isPending}
+                        onChange={(event) =>
+                          updateFilterViewPredicateAt(view, predicateIndex, {
+                            column: Number(event.currentTarget.value),
+                          })
+                        }
+                        style={SIDE_PANEL_SELECT_STYLE}
+                      >
+                        {filterViewColumns(view).map((column) => (
+                          <option key={column} value={column}>
+                            {columnLetter(column)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={FILTER_PREDICATE_LABEL_STYLE}>
+                      Operator
+                      <select
+                        aria-label={`Filter view predicate ${String(
+                          predicateIndex + 1,
+                        )} operator ${view.name}`}
+                        value={predicate.operator}
+                        disabled={filterViewsMutation.isPending}
+                        onChange={(event) =>
+                          updateFilterViewPredicateAt(view, predicateIndex, {
+                            operator: event.currentTarget.value as SheetFilterPredicateOperator,
+                          })
+                        }
+                        style={SIDE_PANEL_SELECT_STYLE}
+                      >
+                        <option value="contains">Contains</option>
+                        <option value="equals">Equals</option>
+                        <option value="greaterThan">Greater than</option>
+                        <option value="notEmpty">Not empty</option>
+                      </select>
+                    </label>
+                    <label style={FILTER_PREDICATE_LABEL_STYLE}>
+                      Value
+                      <input
+                        key={`${view.id}-${String(predicateIndex)}-${predicate.operator}`}
+                        aria-label={`Filter view predicate ${String(
+                          predicateIndex + 1,
+                        )} ${filterPredicateOperatorLabel(predicate.operator)} ${view.name}`}
+                        defaultValue={predicate.value}
+                        disabled={
+                          filterViewsMutation.isPending ||
+                          !filterPredicateNeedsValue(predicate.operator)
+                        }
+                        onBlur={(event) =>
+                          updateFilterViewPredicateAt(view, predicateIndex, {
+                            value: event.currentTarget.value,
+                          })
+                        }
+                        style={CHART_TITLE_INPUT_STYLE}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      aria-label={`Remove filter view predicate ${String(
+                        predicateIndex + 1,
+                      )} ${view.name}`}
+                      disabled={
+                        filterViewsMutation.isPending ||
+                        filterViewEditablePredicates(view).length <= 1
+                      }
+                      onClick={() => deleteFilterViewPredicate(view, predicateIndex)}
+                    >
+                      <Icons.Trash size={14} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn sm"
+                  aria-label={`Add filter view predicate ${view.name}`}
+                  disabled={filterViewsMutation.isPending}
+                  onClick={() => addFilterViewPredicate(view)}
+                >
+                  <Icons.Filter size={14} />
+                  Add criterion
+                </button>
+              </div>
+              <div style={COMMENT_META_STYLE}>
+                {filterViewLabel(view)} · Sort {filterViewSortLabel(view)}
+                {filterViewPredicateSummary(view)}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+
+  const sidePanelPermissionsContent = (
+    <div style={SIDE_PANEL_TAB_CONTENT_STYLE} aria-label="Protected ranges">
+      <div style={COMMENTS_EMPTY_STYLE}>
+        {selectedCommentTarget === null
+          ? "Select a cell or range"
+          : `Selected ${rangeLabel(selectedCommentTarget)}`}
+      </div>
+      <button
+        type="button"
+        className="btn sm"
+        aria-label="Protect selected range"
+        disabled={
+          activeTabId === null ||
+          selectedCommentTarget === null ||
+          selectedRangeProtected ||
+          protectedRangesMutation.isPending
+        }
+        onClick={addProtectedRange}
+      >
+        <Icons.Lock size={14} />
+        Protect range
+      </button>
+      {activeProtectedRanges.length === 0 ? (
+        <div style={COMMENTS_EMPTY_STYLE}>No protected ranges.</div>
+      ) : (
+        <table aria-label="Protected range table" style={SIDE_TABLE_STYLE}>
+          <thead>
+            <tr>
+              <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                Range
+              </th>
+              <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                Tab
+              </th>
+              <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                Cells
+              </th>
+              <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                Mode
+              </th>
+              <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {activeProtectedRanges.map((range) => (
+              <tr key={range.id}>
+                <td style={SIDE_TABLE_CELL_STYLE}>{range.label}</td>
+                <td style={SIDE_TABLE_CELL_STYLE}>
+                  {tabNameById.get(range.tabId) ?? "Unknown tab"}
+                </td>
+                <td style={SIDE_TABLE_CELL_STYLE}>{protectedRangeCellCount(range)}</td>
+                <td style={SIDE_TABLE_CELL_STYLE}>
+                  <select
+                    aria-label={`Protected range mode ${range.label}`}
+                    disabled={protectedRangesMutation.isPending}
+                    value={protectedRangeMode(range)}
+                    onChange={(event) =>
+                      updateProtectedRangeMode(
+                        range.id,
+                        event.currentTarget.value as SheetProtectedRangeMode,
+                      )
+                    }
+                    style={SIDE_TABLE_SELECT_STYLE}
+                  >
+                    <option value="block">Block edits</option>
+                    <option value="warn">Warn only</option>
+                  </select>
+                </td>
+                <td style={SIDE_TABLE_CELL_STYLE}>
+                  <div style={SIDE_TABLE_ACTIONS_STYLE}>
+                    <button
+                      type="button"
+                      className="btn sm"
+                      aria-label={`Select protected range ${range.label}`}
+                      onClick={() => selectProtectedRange(range)}
+                    >
+                      Select
+                    </button>
+                    <button
+                      type="button"
+                      className="btn sm"
+                      aria-label={`Remove protected range ${range.label}`}
+                      disabled={protectedRangesMutation.isPending}
+                      onClick={() => deleteProtectedRange(range.id)}
+                    >
+                      <Icons.Trash size={14} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+
+  const sidePanelVersionsContent = (
+    <OfficeVersionHistoryPanel
+      ariaLabel="Spreadsheet version history"
+      versions={versionsQuery.data ?? []}
+      loading={versionsQuery.isLoading}
+      loadError={versionsQuery.isError}
+      restoreError={restoreVersionMutation.isError}
+      restoringVersionId={
+        restoreVersionMutation.isPending ? (restoreVersionMutation.variables ?? null) : null
+      }
+      emptyLabel="No saved spreadsheet snapshots"
+      detailLabel={sheetVersionDetailLabel}
+      onRestore={(version) => restoreVersionMutation.mutate(version.id)}
+    />
+  );
+
+  const sidePanelCommentsContent = (
+    <div
+      id="native-spreadsheet-comments-panel"
+      aria-label="Sheet comments"
+      tabIndex={-1}
+      style={SIDE_PANEL_TAB_CONTENT_STYLE}
+    >
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
-          padding: "12px 16px",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--surface)",
+          marginBottom: 8,
         }}
       >
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={onBack}
-          aria-label="Back to sheets list"
+        <Icons.Comment size={16} />
+        <strong style={{ fontSize: "var(--text-sm)" }}>Comments</strong>
+        <select
+          aria-label="Sheet comment status"
+          value={commentStatusFilter}
+          onChange={(event) =>
+            setCommentStatusFilter(event.currentTarget.value as SheetsCommentStatus)
+          }
+          style={{ ...SIDE_PANEL_SELECT_STYLE, marginLeft: "auto" }}
         >
-          <Icons.ArrowLeft />
-        </button>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div className="truncate" style={{ fontWeight: 600 }}>
-            {sheetQuery.data.title}
-          </div>
-          <div style={{ color: "var(--text-3)", fontSize: "var(--text-caption)" }}>
-            {updateMutation.isPending ||
-            chartsMutation.isPending ||
-            pivotTablesMutation.isPending ||
-            namedRangesMutation.isPending ||
-            filterViewsMutation.isPending ||
-            protectedRangesMutation.isPending ||
-            tabMutationPending
-              ? "Saving..."
-              : syncStatus === "connected"
-                ? "Live collaboration connected"
-                : "All changes saved"}
-          </div>
-        </div>
-        <div className="row gap-2" aria-label="Sheet tabs">
-          {visibleTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              className={`btn sm ${tab.id === activeTabId ? "primary" : ""}`}
-              onClick={() => setActiveTabId(tab.id)}
-              aria-label={`Open tab ${tab.name}`}
-            >
-              {tab.name}
-            </button>
-          ))}
-        </div>
-        <div className="row gap-2" aria-label="Sheet export">
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Export workbook as XLSX"
-            disabled={exportMutation.isPending || visibleTabs.length === 0}
-            onClick={() => exportMutation.mutate("xlsx")}
-          >
-            <Icons.Download size={14} />
-          </button>
-          <button
-            type="button"
-            className="btn sm"
-            aria-label="Export workbook as ODS"
-            disabled={exportMutation.isPending || visibleTabs.length === 0}
-            onClick={() => exportMutation.mutate("ods")}
-          >
-            ODS
-          </button>
-          <button
-            type="button"
-            className="btn sm"
-            disabled={exportMutation.isPending || activeTab === null}
-            onClick={() => exportMutation.mutate("csv")}
-          >
-            CSV
-          </button>
-          <button
-            type="button"
-            className="btn sm"
-            disabled={exportMutation.isPending || activeTab === null}
-            onClick={() => exportMutation.mutate("tsv")}
-          >
-            TSV
-          </button>
-        </div>
-        <div className="row gap-2" aria-label="Sheet tab management">
-          <input
-            aria-label="Active tab name"
-            value={tabNameDraft}
-            disabled={activeTab === null || tabMutationPending}
-            onChange={(event) => setTabNameDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                renameActiveTab();
-              }
-            }}
-            style={TAB_NAME_INPUT_STYLE}
-          />
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Rename active tab"
-            disabled={
-              activeTab === null ||
-              tabNameDraft.trim().length === 0 ||
-              tabNameDraft.trim() === activeTab.name ||
-              tabMutationPending
-            }
-            onClick={renameActiveTab}
-          >
-            <Icons.Check size={14} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Move active tab left"
-            disabled={activeTab === null || activeTabIndex <= 0 || tabMutationPending}
-            onClick={() => moveActiveTab(-1)}
-          >
-            <Icons.ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Move active tab right"
-            disabled={
-              activeTab === null ||
-              activeTabIndex < 0 ||
-              activeTabIndex >= visibleTabs.length - 1 ||
-              tabMutationPending
-            }
-            onClick={() => moveActiveTab(1)}
-          >
-            <Icons.ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Add sheet tab"
-            disabled={tabMutationPending}
-            onClick={() => createTabMutation.mutate()}
-          >
-            <Icons.Plus size={14} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Delete active tab"
-            disabled={activeTab === null || visibleTabs.length <= 1 || tabMutationPending}
-            onClick={deleteActiveTab}
-          >
-            <Icons.Trash size={14} />
-          </button>
-        </div>
+          <option value="open">Open</option>
+          <option value="resolved">Resolved</option>
+          <option value="all">All</option>
+        </select>
       </div>
-
-      <div style={{ overflow: "auto", flex: 1, background: "var(--bg)", padding: 16 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "stretch",
-            gap: 16,
-            minWidth: 0,
-          }}
-        >
-          <div style={{ minWidth: 0, flex: 1, overflow: "auto" }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                marginBottom: 8,
-                padding: 4,
-                border: "1px solid var(--border)",
-                background: "var(--surface)",
-              }}
-            >
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label="Bold"
-                aria-pressed={formatBoolean(selectedFormat.bold)}
-                disabled={selectedCell === null || selectedRangeBlocked}
-                onClick={() => applyFormatPatch({ bold: !formatBoolean(selectedFormat.bold) })}
-              >
-                <Icons.Bold size={16} />
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label="Italic"
-                aria-pressed={formatBoolean(selectedFormat.italic)}
-                disabled={selectedCell === null || selectedRangeBlocked}
-                onClick={() => applyFormatPatch({ italic: !formatBoolean(selectedFormat.italic) })}
-              >
-                <Icons.Italic size={16} />
-              </button>
-              <select
-                aria-label="Number format"
-                disabled={selectedCell === null || selectedRangeBlocked}
-                value={formatNumberFormat(
-                  selectedFormat.numberFormat,
-                  selectedFormat.customNumberFormat,
-                )}
-                onChange={(event) =>
-                  applyFormatPatch({
-                    ...numberFormatPatch(
-                      event.currentTarget.value as NumberFormat,
-                      selectedFormat.customNumberFormat,
-                    ),
-                  })
-                }
-                style={TOOLBAR_SELECT_STYLE}
-              >
-                <option value="plain">Plain</option>
-                <option value="number">Number</option>
-                <option value="currency">Currency</option>
-                <option value="percent">Percent</option>
-                <option value="date">Date</option>
-                <option value="custom">Custom</option>
-              </select>
-              {formatNumberFormat(
-                selectedFormat.numberFormat,
-                selectedFormat.customNumberFormat,
-              ) === "custom" ? (
-                <input
-                  aria-label="Custom number format"
-                  list="sheet-custom-number-formats"
-                  disabled={selectedCell === null || selectedRangeBlocked}
-                  value={formatCustomNumberFormat(selectedFormat.customNumberFormat)}
-                  onChange={(event) =>
-                    applyFormatPatch({
-                      numberFormat: "custom",
-                      customNumberFormat: event.currentTarget.value,
-                    })
-                  }
-                  style={CUSTOM_FORMAT_INPUT_STYLE}
-                />
-              ) : null}
-              <datalist id="sheet-custom-number-formats">
-                {CUSTOM_NUMBER_FORMATS.map((format) => (
-                  <option key={format} value={format} />
-                ))}
-              </datalist>
-              <select
-                aria-label="Horizontal alignment"
-                disabled={selectedCell === null || selectedRangeBlocked}
-                value={formatAlign(selectedFormat.align)}
-                onChange={(event) => applyFormatPatch({ align: event.currentTarget.value })}
-                style={TOOLBAR_SELECT_STYLE}
-              >
-                <option value="left">Left</option>
-                <option value="center">Center</option>
-                <option value="right">Right</option>
-              </select>
-              <select
-                aria-label="Data validation"
-                disabled={selectedCell === null || selectedRangeBlocked}
-                value={formatDataValidationKind(selectedFormat.dataValidation)}
-                onChange={(event) =>
-                  applyFormatPatch({
-                    dataValidation: dataValidationPatch(
-                      event.currentTarget.value as DataValidationKind,
-                      selectedFormat.dataValidation,
-                    ),
-                  })
-                }
-                style={TOOLBAR_SELECT_STYLE}
-              >
-                <option value="none">No validation</option>
-                <option value="number">Number only</option>
-                <option value="email">Email only</option>
-                <option value="url">URL only</option>
-                <option value="date">Date</option>
-                <option value="list">Dropdown list</option>
-                <option value="customFormula">Custom formula</option>
-              </select>
-              {formatDataValidationKind(selectedFormat.dataValidation) === "date" ? (
-                <select
-                  aria-label="Validation date format"
-                  disabled={selectedCell === null || selectedRangeBlocked}
-                  value={dataValidationDateLocale(selectedFormat.dataValidation)}
-                  onChange={(event) =>
-                    applyFormatPatch({
-                      dataValidation: dataValidationWithDateLocale(
-                        selectedFormat.dataValidation,
-                        event.currentTarget.value as DataValidationDateLocale,
-                      ),
-                    })
-                  }
-                  style={TOOLBAR_SELECT_STYLE}
-                >
-                  <option value="iso">yyyy-mm-dd</option>
-                  <option value="en-US">m/d/yyyy</option>
-                  <option value="en-GB">d/m/yyyy</option>
-                  <option value="de-DE">d.m.yyyy</option>
-                </select>
-              ) : null}
-              {formatDataValidationKind(selectedFormat.dataValidation) === "list" ? (
-                <>
-                  {activeNamedRanges.length === 0 ? null : (
-                    <select
-                      aria-label="Validation list source"
-                      disabled={selectedCell === null || selectedRangeBlocked}
-                      value={dataValidationListSource(selectedFormat.dataValidation)}
-                      onChange={(event) =>
-                        applyFormatPatch({
-                          dataValidation: dataValidationListSourcePatch(
-                            event.currentTarget.value,
-                            selectedFormat.dataValidation,
-                          ),
-                        })
-                      }
-                      style={TOOLBAR_SELECT_STYLE}
-                    >
-                      <option value="manual">Manual choices</option>
-                      {activeNamedRanges.map((range) => (
-                        <option key={range.id} value={range.id}>
-                          {range.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {dataValidationNamedRangeId(selectedFormat.dataValidation) === null ? (
-                    <input
-                      aria-label="Validation choices"
-                      disabled={selectedCell === null || selectedRangeBlocked}
-                      value={dataValidationChoicesText(selectedFormat.dataValidation)}
-                      onChange={(event) =>
-                        applyFormatPatch({
-                          dataValidation: {
-                            type: "list",
-                            choices: parseDataValidationChoices(event.currentTarget.value),
-                            ...dataValidationModePatch(
-                              formatDataValidationMode(selectedFormat.dataValidation),
-                            ),
-                          },
-                        })
-                      }
-                      style={CUSTOM_FORMAT_INPUT_STYLE}
-                    />
-                  ) : null}
-                </>
-              ) : null}
-              {formatDataValidationKind(selectedFormat.dataValidation) === "customFormula" ? (
-                <input
-                  aria-label="Validation formula"
-                  disabled={selectedCell === null || selectedRangeBlocked}
-                  value={dataValidationFormulaText(selectedFormat.dataValidation)}
-                  onChange={(event) =>
-                    applyFormatPatch({
-                      dataValidation: dataValidationWithFormula(
-                        selectedFormat.dataValidation,
-                        event.currentTarget.value,
-                      ),
-                    })
-                  }
-                  style={CUSTOM_FORMAT_INPUT_STYLE}
-                />
-              ) : null}
-              {formatDataValidationKind(selectedFormat.dataValidation) === "none" ? null : (
-                <select
-                  aria-label="Validation mode"
-                  disabled={selectedCell === null || selectedRangeBlocked}
-                  value={formatDataValidationMode(selectedFormat.dataValidation)}
-                  onChange={(event) =>
-                    applyFormatPatch({
-                      dataValidation: dataValidationWithMode(
-                        selectedFormat.dataValidation,
-                        event.currentTarget.value as DataValidationMode,
-                      ),
-                    })
-                  }
-                  style={TOOLBAR_SELECT_STYLE}
-                >
-                  <option value="warn">Warn only</option>
-                  <option value="reject">Reject invalid</option>
-                </select>
-              )}
-              <select
-                aria-label="Conditional format"
-                disabled={selectedCell === null || selectedRangeBlocked}
-                value={formatConditionalFormatKind(selectedFormat.conditionalFormat)}
-                onChange={(event) =>
-                  applyFormatPatch({
-                    conditionalFormat: conditionalFormatForKind(
-                      event.currentTarget.value as ConditionalFormatKind,
-                    ),
-                  })
-                }
-                style={TOOLBAR_SELECT_STYLE}
-              >
-                <option value="none">No conditional</option>
-                <option value="greaterThan100">&gt; 100 green</option>
-                <option value="lessThanZero">&lt; 0 red</option>
-                <option value="textContains">Text contains</option>
-                <option value="customFormula">Custom formula</option>
-              </select>
-              {formatConditionalFormatKind(selectedFormat.conditionalFormat) === "greaterThan100" ||
-              formatConditionalFormatKind(selectedFormat.conditionalFormat) === "lessThanZero" ? (
-                <input
-                  aria-label="Conditional threshold"
-                  disabled={selectedCell === null || selectedRangeBlocked}
-                  type="number"
-                  value={conditionalFormatThresholdValue(selectedFormat.conditionalFormat)}
-                  onChange={(event) =>
-                    applyFormatPatch({
-                      conditionalFormat: conditionalFormatWithThreshold(
-                        selectedFormat.conditionalFormat,
-                        event.currentTarget.value,
-                      ),
-                    })
-                  }
-                  style={CUSTOM_FORMAT_INPUT_STYLE}
-                />
-              ) : null}
-              {formatConditionalFormatKind(selectedFormat.conditionalFormat) === "textContains" ? (
-                <input
-                  aria-label="Conditional text contains"
-                  disabled={selectedCell === null || selectedRangeBlocked}
-                  value={conditionalFormatTextContainsText(selectedFormat.conditionalFormat)}
-                  onChange={(event) =>
-                    applyFormatPatch({
-                      conditionalFormat: conditionalFormatWithTextContains(
-                        selectedFormat.conditionalFormat,
-                        event.currentTarget.value,
-                      ),
-                    })
-                  }
-                  style={CUSTOM_FORMAT_INPUT_STYLE}
-                />
-              ) : null}
-              {formatConditionalFormatKind(selectedFormat.conditionalFormat) === "customFormula" ? (
-                <input
-                  aria-label="Conditional formula"
-                  disabled={selectedCell === null || selectedRangeBlocked}
-                  value={conditionalFormatFormulaText(selectedFormat.conditionalFormat)}
-                  onChange={(event) =>
-                    applyFormatPatch({
-                      conditionalFormat: conditionalFormatWithFormula(
-                        selectedFormat.conditionalFormat,
-                        event.currentTarget.value,
-                      ),
-                    })
-                  }
-                  style={CUSTOM_FORMAT_INPUT_STYLE}
-                />
-              ) : null}
-              <div aria-label="Fill color" style={SWATCH_GROUP_STYLE}>
-                {FILL_COLORS.map((color) => (
-                  <button
-                    key={color.value}
-                    type="button"
-                    aria-label={`Fill ${color.label.toLowerCase()}`}
-                    aria-pressed={selectedFormat.fillColor === color.value}
-                    disabled={selectedCell === null || selectedRangeBlocked}
-                    onClick={() =>
-                      applyFormatPatch({
-                        fillColor: selectedFormat.fillColor === color.value ? "" : color.value,
-                      })
-                    }
-                    style={{
-                      ...SWATCH_BUTTON_STYLE,
-                      background: color.value,
-                    }}
-                  />
-                ))}
-              </div>
-              <div aria-label="Text color" style={SWATCH_GROUP_STYLE}>
-                {TEXT_COLORS.map((color) => (
-                  <button
-                    key={color.label}
-                    type="button"
-                    aria-label={`Text ${color.label.toLowerCase()}`}
-                    aria-pressed={
-                      color.value === ""
-                        ? selectedFormat.textColor === undefined
-                        : selectedFormat.textColor === color.value
-                    }
-                    disabled={selectedCell === null || selectedRangeBlocked}
-                    onClick={() =>
-                      applyFormatPatch({
-                        textColor: color.value,
-                      })
-                    }
-                    style={{
-                      ...SWATCH_BUTTON_STYLE,
-                      color: color.value || "var(--text)",
-                      background: "var(--surface)",
-                    }}
-                  >
-                    A
-                  </button>
-                ))}
-              </div>
-              <div aria-label="Borders" style={SWATCH_GROUP_STYLE}>
-                {(
-                  [
-                    { label: "Border all", preset: "all" },
-                    { label: "Border outer", preset: "outer" },
-                    { label: "Border none", preset: "none" },
-                  ] as const
-                ).map((item) => (
-                  <button
-                    key={item.preset}
-                    type="button"
-                    aria-label={item.label}
-                    disabled={selectedCell === null || selectedRangeBlocked}
-                    onClick={() => applyBorderPreset(item.preset)}
-                    style={SWATCH_BUTTON_STYLE}
-                  >
-                    <BorderGlyph preset={item.preset} />
-                  </button>
-                ))}
-              </div>
-              <select
-                aria-label="Formula helper"
-                disabled={
-                  activeTabId === null || selectedCommentTarget === null || updateMutation.isPending
-                }
-                value=""
-                onChange={(event) => {
-                  const helper = event.currentTarget.value;
-                  if (isFormulaHelperKind(helper)) {
-                    insertFormulaHelper(helper);
-                  }
-                }}
-                style={TOOLBAR_SELECT_STYLE}
-              >
-                <option value="">Formula</option>
-                {FORMULA_HELPERS.map((helper) => (
-                  <option key={helper.value} value={helper.value}>
-                    {helper.label}
-                  </option>
-                ))}
-              </select>
+      <div style={{ color: "var(--text-3)", fontSize: "var(--text-caption)", marginBottom: 6 }}>
+        {selectedCommentLabel}
+      </div>
+      <textarea
+        aria-label="Sheet comment"
+        disabled={selectedCommentTarget === null || activeTabId === null}
+        value={commentDraft}
+        onChange={(event) => setCommentDraft(event.currentTarget.value)}
+        rows={3}
+        style={{
+          width: "100%",
+          resize: "vertical",
+          border: "1px solid var(--border)",
+          background: "var(--surface)",
+          color: "var(--text)",
+          font: "inherit",
+          padding: 8,
+        }}
+      />
+      <button
+        type="button"
+        className="btn sm primary"
+        aria-label="Add comment"
+        disabled={commentDraft.trim().length === 0 || selectedCommentTarget === null}
+        onClick={() => void addComment()}
+        style={{ marginTop: 8 }}
+      >
+        <Icons.Comment size={14} />
+        Add comment
+      </button>
+      {commentsStatus === "loading" ? (
+        <div style={COMMENTS_EMPTY_STYLE}>Loading comments...</div>
+      ) : commentsStatus === "error" ? (
+        <div style={COMMENTS_EMPTY_STYLE}>Could not load comments.</div>
+      ) : activeSheetCommentThreads.length === 0 ? (
+        <div style={COMMENTS_EMPTY_STYLE}>{emptyCommentsLabel(commentStatusFilter)}</div>
+      ) : (
+        <ol aria-label="Sheet comment list" style={COMMENT_LIST_STYLE}>
+          {activeSheetCommentThreads.map(({ comment, replies }) => (
+            <li key={comment.id} style={COMMENT_ITEM_STYLE}>
               <button
                 type="button"
                 className="btn sm"
-                aria-label="Sort selected range A-Z"
-                disabled={
-                  selectedRange === null ||
-                  selectedRangeBlocked ||
-                  updateMutation.isPending ||
-                  sortMutation.isPending
-                }
-                onClick={() => sortSelectedRange("asc")}
-              >
-                A-Z
-              </button>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Sort selected range Z-A"
-                disabled={
-                  selectedRange === null ||
-                  selectedRangeBlocked ||
-                  updateMutation.isPending ||
-                  sortMutation.isPending
-                }
-                onClick={() => sortSelectedRange("desc")}
-              >
-                Z-A
-              </button>
-              <div aria-label="Rows and columns" style={SWATCH_GROUP_STYLE}>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  aria-label="Insert row above"
-                  disabled={
-                    activeTabId === null || selectedCell === null || syncStatus !== "connected"
+                onClick={() => {
+                  const range = rangeFromSheetComment(comment);
+                  if (range === null) {
+                    return;
                   }
-                  onClick={() =>
-                    selectedCell === null
-                      ? undefined
-                      : sendStructuralOperation({
-                          kind: "insert-rows",
-                          index: selectedCell.row,
-                          count: 1,
-                        })
-                  }
-                >
-                  <Icons.Plus size={14} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  aria-label="Delete selected row"
-                  disabled={
-                    activeTabId === null || selectedCell === null || syncStatus !== "connected"
-                  }
-                  onClick={() =>
-                    selectedCell === null
-                      ? undefined
-                      : sendStructuralOperation({
-                          kind: "delete-rows",
-                          index: selectedCell.row,
-                          count: 1,
-                        })
-                  }
-                >
-                  <Icons.Minus size={14} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  aria-label="Insert column left"
-                  disabled={
-                    activeTabId === null || selectedCell === null || syncStatus !== "connected"
-                  }
-                  onClick={() =>
-                    selectedCell === null
-                      ? undefined
-                      : sendStructuralOperation({
-                          kind: "insert-columns",
-                          index: selectedCell.col,
-                          count: 1,
-                        })
-                  }
-                >
-                  <Icons.Plus size={14} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  aria-label="Delete selected column"
-                  disabled={
-                    activeTabId === null || selectedCell === null || syncStatus !== "connected"
-                  }
-                  onClick={() =>
-                    selectedCell === null
-                      ? undefined
-                      : sendStructuralOperation({
-                          kind: "delete-columns",
-                          index: selectedCell.col,
-                          count: 1,
-                        })
-                  }
-                >
-                  <Icons.Minus size={14} />
-                </button>
-              </div>
-              <select
-                aria-label="Chart type"
-                disabled={selectedCell === null}
-                value={chartType}
-                onChange={(event) => setChartType(event.currentTarget.value as SheetChartType)}
-                style={TOOLBAR_SELECT_STYLE}
-              >
-                <option value="bar">Bar chart</option>
-                <option value="line">Line chart</option>
-                <option value="pie">Pie chart</option>
-                <option value="scatter">Scatter chart</option>
-                <option value="combo">Combo chart</option>
-                <option value="sparkline">Sparkline</option>
-              </select>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Add chart"
-                disabled={
-                  activeTabId === null || selectedCommentTarget === null || chartsMutation.isPending
-                }
-                onClick={addChart}
-              >
-                <Icons.Sheet size={14} />
-                Chart
-              </button>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Create pivot table from selected range"
-                disabled={
-                  activeTabId === null ||
-                  selectedCommentTarget === null ||
-                  !canCreatePivotTableFromRange(selectedCommentTarget) ||
-                  pivotTablesMutation.isPending
-                }
-                onClick={addPivotTable}
-              >
-                <Icons.Grid size={14} />
-                Pivot
-              </button>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Analyze selected range"
-                disabled={selectedCommentTarget === null}
-                onClick={analyzeSelectedRange}
-              >
-                <Icons.Sparkles size={14} />
-                Analyze
-              </button>
-            </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "64px minmax(0, 1fr)",
-                marginBottom: 8,
-                border: "1px solid var(--border)",
-                background: "var(--surface)",
-              }}
-            >
-              <div
-                aria-label="Selected cell"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  minWidth: 0,
-                  height: 32,
-                  borderRight: "1px solid var(--border)",
-                  background: "var(--surface-2)",
-                  color: "var(--text-3)",
-                  fontSize: "var(--text-caption)",
-                  fontWeight: 600,
+                  setSelectedCell({
+                    row: normalizeRange(range).top,
+                    col: normalizeRange(range).left,
+                  });
+                  setSelectedRange(range);
+                  revealCell({
+                    row: normalizeRange(range).top,
+                    col: normalizeRange(range).left,
+                  });
                 }}
               >
-                {selectedRange === null
-                  ? selectedCell === null
-                    ? ""
-                    : cellLabel(selectedCell)
-                  : rangeLabel(selectedRange)}
-              </div>
-              <input
-                aria-label="Formula bar"
-                disabled={selectedCell === null || selectedRangeBlocked}
-                value={formulaBarValue}
-                onChange={(event) => {
-                  if (selectedCell !== null) {
-                    updateLocalCell(selectedCell.row, selectedCell.col, event.currentTarget.value);
-                  }
-                }}
-                onBlur={(event) => {
-                  if (selectedCell !== null) {
-                    commitCell(selectedCell.row, selectedCell.col, event.currentTarget.value);
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.currentTarget.blur();
-                  }
-                }}
-                style={{
-                  height: 32,
-                  minWidth: 0,
-                  border: 0,
-                  padding: "0 8px",
-                  font: "inherit",
-                  background: "transparent",
-                  color: "var(--text)",
-                }}
-              />
-            </div>
-            {selectedRangeSummary === null ? null : (
-              <div
-                role="status"
-                aria-label="Selected range summary"
-                style={SELECTED_RANGE_SUMMARY_STYLE}
-              >
-                {selectedRangeSummaryText(selectedRangeSummary)}
-              </div>
-            )}
-            <div style={VIEWPORT_TOOLBAR_STYLE} aria-label="Sheet viewport">
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Scroll sheet to first rows"
-                disabled={viewport.row === 0}
-                onClick={() => scrollViewport(-SHEET_MAX_ROWS, 0)}
-              >
-                Rows 1
+                {sheetCommentLabel(comment)}
               </button>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Scroll sheet up"
-                disabled={viewport.row === 0}
-                onClick={() => scrollViewport(-VISIBLE_ROWS, 0)}
-              >
-                Up
-              </button>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Scroll sheet down"
-                disabled={viewport.row >= SHEET_MAX_ROWS - VISIBLE_ROWS}
-                onClick={() => scrollViewport(VISIBLE_ROWS, 0)}
-              >
-                Down
-              </button>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Scroll sheet left"
-                disabled={viewport.col === 0}
-                onClick={() => scrollViewport(0, -VISIBLE_COLS)}
-              >
-                Left
-              </button>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Scroll sheet right"
-                disabled={viewport.col >= SHEET_MAX_COLS - VISIBLE_COLS}
-                onClick={() => scrollViewport(0, VISIBLE_COLS)}
-              >
-                Right
-              </button>
-              <span style={VIEWPORT_STATUS_STYLE}>
-                Rows {viewport.row + 1}-{Math.min(viewport.row + VISIBLE_ROWS, SHEET_MAX_ROWS)} ·
-                Cols {columnLetter(viewport.col)}-
-                {columnLetter(Math.min(viewport.col + VISIBLE_COLS - 1, SHEET_MAX_COLS - 1))}
-              </span>
-            </div>
-            <div ref={gridWrapRef} style={SHEET_GRID_WRAP_STYLE}>
-              <div
-                role="grid"
-                aria-label={`${sheetQuery.data.title} spreadsheet grid`}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: `${String(SHEET_ROW_HEADER_WIDTH)}px repeat(${String(
-                    VISIBLE_COLS,
-                  )}, ${String(SHEET_CELL_WIDTH)}px)`,
-                  minWidth: SHEET_ROW_HEADER_WIDTH + VISIBLE_COLS * SHEET_CELL_WIDTH,
-                  borderTop: "1px solid var(--border)",
-                  borderLeft: "1px solid var(--border)",
-                  background: "var(--surface)",
-                }}
-              >
-                <GridHeaderCell />
-                {visibleCols.map((col) => (
-                  <GridHeaderCell key={col}>{columnLetter(col)}</GridHeaderCell>
-                ))}
-                {visibleRows.map(({ row, displayRow, rowIndex }) => (
-                  <GridRow
-                    key={rowIndex}
-                    row={row}
-                    grid={grid}
-                    displayRow={displayRow}
-                    formatMap={formatMap}
-                    validationChoiceContext={validationChoiceContext}
-                    openComments={openSheetComments}
-                    activeTabId={activeTabId}
-                    mergedRanges={activeMergedRanges}
-                    protectedRanges={protectedRanges}
-                    rowIndex={rowIndex}
-                    visibleCols={visibleCols}
-                    editingCell={editingCell}
-                    selectedRange={selectedRange}
-                    fillPreviewRange={fillPreviewRange}
-                    onChange={updateLocalCell}
-                    onCommit={commitCell}
-                    onCopyCells={(event, row, col) => {
-                      const range = selectedRange ?? singleCellRange(row, col);
-                      event.clipboardData.setData("text/plain", clipboardTextForRange(grid, range));
-                      event.clipboardData.setData(
-                        SHEETS_CLIPBOARD_MIME,
-                        formattedClipboardTextForRange(grid, range, formatMap),
-                      );
-                      event.preventDefault();
-                    }}
-                    onPasteCells={(event, row, col) => {
-                      const text = event.clipboardData.getData("text/plain");
-                      const formattedCells = event.clipboardData.getData(SHEETS_CLIPBOARD_MIME);
-                      if (text.length === 0 && formattedCells.length === 0) {
-                        return;
-                      }
-                      event.preventDefault();
-                      handlePaste(row, col, text, formattedCells);
-                    }}
-                    onNavigateCell={navigateCell}
-                    onFocusCell={(row, col) => {
-                      if (skipNextProgrammaticFocus.current) {
-                        skipNextProgrammaticFocus.current = false;
-                        return;
-                      }
-                      const cell = { row, col };
-                      setSelectedCell(cell);
-                      setSelectedRange(singleCellRange(row, col));
-                      setEditingCell(cell);
-                    }}
-                    onExtendSelection={(row, col) => {
-                      const anchor = selectedCell ?? { row, col };
-                      setSelectedCell({ row, col });
-                      setSelectedRange({ start: anchor, end: { row, col } });
-                      setEditingCell(null);
-                    }}
-                    onBeginRangeSelection={beginRangeDragSelection}
-                    onDragSelectCell={extendRangeDragSelection}
-                    onBlurCell={() => setEditingCell(null)}
-                  />
-                ))}
-              </div>
-              {visibleCommentRangeOverlays(openSheetComments, visibleRows, visibleCols).map(
-                (overlay) => (
-                  <div
-                    key={overlay.key}
-                    aria-label={`Comment range ${overlay.label}`}
-                    title={`Comment range ${overlay.label}`}
-                    style={overlay.style}
-                  />
-                ),
-              )}
-              {visibleMergedRangeOverlays(activeMergedRanges, visibleRows, visibleCols).map(
-                (overlay) => (
-                  <div
-                    key={overlay.key}
-                    aria-label={`Merged range ${overlay.label}`}
-                    title={`Merged range ${overlay.label}`}
-                    style={overlay.style}
-                  />
-                ),
-              )}
-              {fillPreviewRange === null
-                ? null
-                : (() => {
-                    const style = fillPreviewStyle(fillPreviewRange, visibleRows, visibleCols);
-                    return style === null ? null : (
-                      <div aria-label="Fill preview range" style={style} />
-                    );
-                  })()}
-              {selectedFillRange === null || fillHandlePlacement === null ? null : (
-                <button
-                  type="button"
-                  aria-label="Spreadsheet fill handle"
-                  style={fillHandleStyle(fillHandlePlacement)}
-                  onMouseDown={(event) => beginFillDrag(event, selectedFillRange)}
-                />
-              )}
-              {activeSheetCharts.map((chart) => (
-                <EmbeddedSheetChart
-                  key={chart.id}
-                  chart={chart}
-                  grid={grid}
-                  displayGrid={displayGrid}
-                  visibleRows={visibleRows}
-                  visibleCols={visibleCols}
-                />
-              ))}
-            </div>
-          </div>
-          <aside
-            aria-label="Sheet side panel"
-            style={{
-              width: 320,
-              minWidth: 280,
-              border: "1px solid var(--border)",
-              background: "var(--surface)",
-              padding: 12,
-              alignSelf: "flex-start",
-            }}
-          >
-            <section aria-label="Sheet assists" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Sparkles size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Assists</strong>
-              </div>
-              {rangeAssist === null ? (
-                <div style={COMMENTS_EMPTY_STYLE}>Select a range and analyze it.</div>
+              <div style={COMMENT_META_STYLE}>{commentAuthorLabel(comment)}</div>
+              {commentEditDrafts[comment.id] === undefined ? (
+                <p style={{ margin: "6px 0 0" }}>{comment.body}</p>
               ) : (
-                <div style={ASSIST_PANEL_STYLE}>
-                  <strong>{rangeAssist.summary}</strong>
-                  <ul style={ASSIST_LIST_STYLE}>
-                    {rangeAssist.findings.map((finding) => (
-                      <li key={finding}>{finding}</li>
-                    ))}
-                  </ul>
-                  {rangeAssist.formulas.length === 0 ? (
-                    <div style={COMMENTS_EMPTY_STYLE}>No formula suggestions for this range.</div>
-                  ) : (
-                    <div style={ASSIST_ACTIONS_STYLE}>
-                      {rangeAssist.formulas.map((assist) => (
-                        <button
-                          key={assist.id}
-                          type="button"
-                          className="btn sm"
-                          aria-label={assist.label}
-                          disabled={updateMutation.isPending}
-                          onClick={() => applyFormulaAssist(assist)}
-                        >
-                          {assist.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                <div style={COMMENT_ACTIONS_STYLE}>
+                  <textarea
+                    aria-label={`Edit comment ${comment.body}`}
+                    value={commentEditDrafts[comment.id] ?? ""}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      setCommentEditDrafts((current) => ({
+                        ...current,
+                        [comment.id]: value,
+                      }));
+                    }}
+                    rows={2}
+                    style={COMMENT_REPLY_STYLE}
+                  />
+                  <button
+                    type="button"
+                    className="btn sm"
+                    aria-label={`Save comment ${comment.body}`}
+                    disabled={(commentEditDrafts[comment.id] ?? "").trim().length === 0}
+                    onClick={() => void saveCommentEdit(comment.id)}
+                  >
+                    <Icons.Check size={14} />
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    aria-label={`Cancel edit ${comment.body}`}
+                    onClick={() => cancelCommentEdit(comment.id)}
+                  >
+                    <Icons.X size={14} />
+                    Cancel
+                  </button>
                 </div>
               )}
-            </section>
-            <section aria-label="Sheet charts" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Sheet size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Charts</strong>
-              </div>
-              {activeSheetCharts.length === 0 ? (
-                <div style={COMMENTS_EMPTY_STYLE}>No charts yet.</div>
-              ) : (
-                <ol aria-label="Sheet chart list" style={COMMENT_LIST_STYLE}>
-                  {activeSheetCharts.map((chart) => (
-                    <li key={chart.id} style={COMMENT_ITEM_STYLE}>
-                      <div style={CHART_EDIT_ROW_STYLE}>
-                        <input
-                          aria-label={`Chart title ${chart.type} ${chart.title}`}
-                          defaultValue={chart.title}
-                          disabled={chartsMutation.isPending}
-                          onBlur={(event) => {
-                            const title = event.currentTarget.value.trim();
-                            if (title.length > 0 && title !== chart.title) {
-                              updateChart(chart.id, { title });
-                            }
-                          }}
-                          style={CHART_TITLE_INPUT_STYLE}
-                        />
-                        <select
-                          aria-label={`Chart type ${chart.type} ${chart.title}`}
-                          value={chart.type}
-                          disabled={chartsMutation.isPending}
-                          onChange={(event) =>
-                            updateChart(chart.id, {
-                              type: event.currentTarget.value as SheetChartType,
-                            })
-                          }
-                          style={TOOLBAR_SELECT_STYLE}
-                        >
-                          <option value="bar">Bar</option>
-                          <option value="line">Line</option>
-                          <option value="pie">Pie</option>
-                          <option value="scatter">Scatter</option>
-                          <option value="combo">Combo</option>
-                          <option value="sparkline">Sparkline</option>
-                        </select>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Use selected range for ${chart.type} chart ${chart.title}`}
-                          disabled={
-                            chartsMutation.isPending ||
-                            selectedCommentTarget === null ||
-                            activeTabId !== chart.tabId
-                          }
-                          onClick={() => {
-                            if (selectedCommentTarget !== null) {
-                              updateChartRange(chart.id, selectedCommentTarget);
-                            }
-                          }}
-                        >
-                          <Icons.Grid size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Place ${chart.type} chart ${chart.title} at selected cell`}
-                          disabled={
-                            chartsMutation.isPending ||
-                            selectedCommentTarget === null ||
-                            activeTabId !== chart.tabId
-                          }
-                          onClick={() => {
-                            if (selectedCommentTarget !== null) {
-                              updateChartPlacement(chart.id, selectedCommentTarget);
-                            }
-                          }}
-                        >
-                          <Icons.Pin size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Delete ${chart.type} chart ${chart.title}`}
-                          disabled={chartsMutation.isPending}
-                          onClick={() => deleteChart(chart.id)}
-                        >
-                          <Icons.Trash size={14} />
-                        </button>
-                      </div>
-                      <div style={CHART_EDIT_ROW_STYLE}>
-                        <select
-                          aria-label={`Chart label column ${chart.type} ${chart.title}`}
-                          value={String(chartLabelColumn(chart))}
-                          disabled={chartsMutation.isPending}
-                          onChange={(event) =>
-                            updateChart(chart.id, {
-                              labelCol: Number(event.currentTarget.value),
-                            })
-                          }
-                          style={TOOLBAR_SELECT_STYLE}
-                        >
-                          {chartRangeColumns(chart).map((column) => (
-                            <option key={column} value={column}>
-                              Label {columnLetter(column)}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          aria-label={`Chart value column ${chart.type} ${chart.title}`}
-                          value={String(chartValueColumn(chart))}
-                          disabled={chartsMutation.isPending}
-                          onChange={(event) =>
-                            updateChart(chart.id, {
-                              valueCol: Number(event.currentTarget.value),
-                            })
-                          }
-                          style={TOOLBAR_SELECT_STYLE}
-                        >
-                          {chartRangeColumns(chart).map((column) => (
-                            <option key={column} value={column}>
-                              Value {columnLetter(column)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <SheetChartPreview
-                        chart={chart}
-                        grid={grid}
-                        displayGrid={displayGrid}
-                        showDataTable
-                      />
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
-            <section aria-label="Pivot tables" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Grid size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Pivot tables</strong>
-              </div>
-              <div style={COMMENTS_EMPTY_STYLE}>
-                {selectedCommentTarget === null
-                  ? "Select at least two columns"
-                  : `Selected ${rangeLabel(selectedCommentTarget)}`}
-              </div>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Create pivot table"
-                disabled={
-                  activeTabId === null ||
-                  selectedCommentTarget === null ||
-                  !canCreatePivotTableFromRange(selectedCommentTarget) ||
-                  pivotTablesMutation.isPending
-                }
-                onClick={addPivotTable}
-              >
-                <Icons.Grid size={14} />
-                Pivot
-              </button>
-              {activePivotTables.length === 0 ? (
-                <div style={COMMENTS_EMPTY_STYLE}>No pivot tables.</div>
-              ) : (
-                <ol aria-label="Pivot table list" style={COMMENT_LIST_STYLE}>
-                  {activePivotTables.map((pivot) => (
-                    <li key={pivot.id} style={COMMENT_ITEM_STYLE}>
-                      {(() => {
-                        const slicer = pivotSlicer(pivot);
-                        return (
-                          <>
-                            <div style={CHART_EDIT_ROW_STYLE}>
-                              <input
-                                aria-label={`Pivot title ${pivot.title}`}
-                                defaultValue={pivot.title}
-                                disabled={pivotTablesMutation.isPending}
-                                onBlur={(event) => {
-                                  const title = event.currentTarget.value.trim();
-                                  if (title.length > 0 && title !== pivot.title) {
-                                    updatePivotTable(pivot.id, { title });
-                                  }
-                                }}
-                                style={CHART_TITLE_INPUT_STYLE}
-                              />
-                              <select
-                                aria-label={`Pivot aggregation ${pivot.title}`}
-                                value={pivot.aggregation}
-                                disabled={pivotTablesMutation.isPending}
-                                onChange={(event) =>
-                                  updatePivotTable(pivot.id, {
-                                    aggregation: event.currentTarget.value as SheetPivotAggregation,
-                                  })
-                                }
-                                style={TOOLBAR_SELECT_STYLE}
-                              >
-                                <option value="sum">Sum</option>
-                                <option value="count">Count</option>
-                              </select>
-                              <button
-                                type="button"
-                                className="icon-btn"
-                                aria-label={`Use selected range for pivot table ${pivot.title}`}
-                                disabled={
-                                  pivotTablesMutation.isPending ||
-                                  selectedCommentTarget === null ||
-                                  !canCreatePivotTableFromRange(selectedCommentTarget) ||
-                                  activeTabId !== pivot.tabId
-                                }
-                                onClick={() => {
-                                  if (selectedCommentTarget !== null) {
-                                    updatePivotTableRange(pivot.id, selectedCommentTarget);
-                                  }
-                                }}
-                              >
-                                <Icons.Grid size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                className="icon-btn"
-                                aria-label={`Delete pivot table ${pivot.title}`}
-                                disabled={pivotTablesMutation.isPending}
-                                onClick={() => deletePivotTable(pivot.id)}
-                              >
-                                <Icons.Trash size={14} />
-                              </button>
-                            </div>
-                            <div style={CHART_EDIT_ROW_STYLE}>
-                              <select
-                                aria-label={`Pivot slicer column ${pivot.title}`}
-                                value={String(slicer.column)}
-                                disabled={pivotTablesMutation.isPending}
-                                onChange={(event) =>
-                                  updatePivotTable(pivot.id, {
-                                    slicer: {
-                                      ...slicer,
-                                      column: Number(event.currentTarget.value),
-                                    },
-                                  })
-                                }
-                                style={TOOLBAR_SELECT_STYLE}
-                              >
-                                {pivotColumns(pivot).map((column) => (
-                                  <option key={column} value={column}>
-                                    {columnLetter(column)}
-                                  </option>
-                                ))}
-                              </select>
-                              <input
-                                aria-label={`Pivot slicer value ${pivot.title}`}
-                                defaultValue={slicer.value}
-                                disabled={pivotTablesMutation.isPending}
-                                onBlur={(event) => {
-                                  const value = event.currentTarget.value.trim();
-                                  if (value !== slicer.value) {
-                                    updatePivotTable(pivot.id, {
-                                      slicer: { ...slicer, value },
-                                    });
-                                  }
-                                }}
-                                placeholder="Filter contains"
-                                style={CHART_TITLE_INPUT_STYLE}
-                              />
-                            </div>
-                            <SheetPivotTablePreview pivot={pivot} grid={displayGrid} />
-                          </>
-                        );
-                      })()}
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
-            <section aria-label="Named ranges" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Hash size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Named ranges</strong>
-              </div>
-              <div style={COMMENTS_EMPTY_STYLE}>
-                {selectedCommentTarget === null
-                  ? "Select a cell or range"
-                  : `Selected ${rangeLabel(selectedCommentTarget)}`}
-              </div>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Name selected range"
-                disabled={
-                  activeTabId === null ||
-                  selectedCommentTarget === null ||
-                  namedRangesMutation.isPending
-                }
-                onClick={addNamedRange}
-              >
-                <Icons.Hash size={14} />
-                Name range
-              </button>
-              {activeNamedRanges.length === 0 ? (
-                <div style={COMMENTS_EMPTY_STYLE}>No named ranges.</div>
-              ) : (
-                <ol aria-label="Named range list" style={COMMENT_LIST_STYLE}>
-                  {activeNamedRanges.map((range) => (
-                    <li key={range.id} style={COMMENT_ITEM_STYLE}>
-                      <div style={CHART_EDIT_ROW_STYLE}>
-                        <input
-                          aria-label={`Named range ${range.name}`}
-                          defaultValue={range.name}
-                          disabled={namedRangesMutation.isPending}
-                          onBlur={(event) => {
-                            const name = event.currentTarget.value.trim();
-                            if (name.length > 0 && name !== range.name) {
-                              updateNamedRange(range.id, { name });
-                            }
-                          }}
-                          style={CHART_TITLE_INPUT_STYLE}
-                        />
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Use selected range for named range ${range.name}`}
-                          disabled={
-                            namedRangesMutation.isPending ||
-                            selectedCommentTarget === null ||
-                            activeTabId !== range.tabId
-                          }
-                          onClick={() => {
-                            if (selectedCommentTarget !== null) {
-                              updateNamedRangeSelection(range.id, selectedCommentTarget);
-                            }
-                          }}
-                        >
-                          <Icons.Grid size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Delete named range ${range.name}`}
-                          disabled={namedRangesMutation.isPending}
-                          onClick={() => deleteNamedRange(range.id)}
-                        >
-                          <Icons.Trash size={14} />
-                        </button>
-                      </div>
-                      <div style={COMMENT_META_STYLE}>{namedRangeLabel(range)}</div>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
-            <section aria-label="Merged cells" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Grid size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Merged cells</strong>
-              </div>
-              <div style={COMMENTS_EMPTY_STYLE}>
-                {selectedCommentTarget === null
-                  ? "Select a range"
-                  : `Selected ${rangeLabel(selectedCommentTarget)}`}
-              </div>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Merge selected cells"
-                disabled={
-                  activeTabId === null ||
-                  selectedCommentTarget === null ||
-                  !canMergeRange(selectedCommentTarget) ||
-                  selectedRangeMerged ||
-                  rangeIntersectsMergedRanges(
-                    selectedCommentTarget,
-                    activeMergedRanges,
-                    activeTabId,
-                  ) ||
-                  mergedRangesMutation.isPending
-                }
-                onClick={mergeSelectedRange}
-              >
-                <Icons.Grid size={14} />
-                Merge cells
-              </button>
-              {activeMergedRanges.length === 0 ? (
-                <div style={COMMENTS_EMPTY_STYLE}>No merged cells.</div>
-              ) : (
-                <ol aria-label="Merged cell list" style={COMMENT_LIST_STYLE}>
-                  {activeMergedRanges.map((range) => (
-                    <li key={range.id} style={COMMENT_ITEM_STYLE}>
-                      <div style={CHART_EDIT_ROW_STYLE}>
-                        <strong>{range.label}</strong>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Select merged range ${range.label}`}
-                          disabled={mergedRangesMutation.isPending}
-                          onClick={() => selectMergedRange(range)}
-                        >
-                          <Icons.Grid size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Unmerge range ${range.label}`}
-                          disabled={mergedRangesMutation.isPending}
-                          onClick={() => unmergeRange(range.id)}
-                        >
-                          <Icons.Trash size={14} />
-                        </button>
-                      </div>
-                      <div style={COMMENT_META_STYLE}>{mergedRangeLabel(range)}</div>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
-            <section aria-label="Frozen panes" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Pin size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Frozen panes</strong>
-              </div>
-              <div style={COMMENTS_EMPTY_STYLE}>
-                Rows {activeFrozenPane.frozenRows} · Columns {activeFrozenPane.frozenCols}
-              </div>
-              <div style={SIDE_TABLE_ACTIONS_STYLE}>
-                <button
-                  type="button"
-                  className="btn sm"
-                  aria-label="Freeze rows to selection"
-                  disabled={
-                    activeTabId === null ||
-                    selectedCommentTarget === null ||
-                    frozenPanesMutation.isPending
-                  }
-                  onClick={freezeRowsToSelection}
-                >
-                  <Icons.Pin size={14} />
-                  Freeze rows
-                </button>
-                <button
-                  type="button"
-                  className="btn sm"
-                  aria-label="Freeze columns to selection"
-                  disabled={
-                    activeTabId === null ||
-                    selectedCommentTarget === null ||
-                    frozenPanesMutation.isPending
-                  }
-                  onClick={freezeColumnsToSelection}
-                >
-                  <Icons.Pin size={14} />
-                  Freeze columns
-                </button>
-                <button
-                  type="button"
-                  className="btn sm"
-                  aria-label="Clear frozen panes"
-                  disabled={
-                    activeTabId === null ||
-                    (activeFrozenPane.frozenRows === 0 && activeFrozenPane.frozenCols === 0) ||
-                    frozenPanesMutation.isPending
-                  }
-                  onClick={clearFrozenPanes}
-                >
-                  <Icons.Trash size={14} />
-                </button>
-              </div>
-            </section>
-            <section aria-label="Saved filter views" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Filter size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Filter views</strong>
-              </div>
-              <div style={COMMENTS_EMPTY_STYLE}>
-                {selectedCommentTarget === null
-                  ? "Select a cell or range"
-                  : `Selected ${rangeLabel(selectedCommentTarget)}`}
-              </div>
-              {activeDisplayFilterView === null ? null : (
-                <button
-                  type="button"
-                  className="btn sm"
-                  aria-label="Clear filter preview"
-                  onClick={() => setActiveFilterViewId(null)}
-                >
-                  Clear preview
-                </button>
-              )}
-              <div style={ASSIST_ACTIONS_STYLE}>
-                <button
-                  type="button"
-                  className="btn sm"
-                  aria-label="Save A-Z filter view"
-                  disabled={
-                    activeTabId === null ||
-                    selectedCommentTarget === null ||
-                    filterViewsMutation.isPending
-                  }
-                  onClick={() => addFilterView("asc")}
-                >
-                  A-Z
-                </button>
-                <button
-                  type="button"
-                  className="btn sm"
-                  aria-label="Save Z-A filter view"
-                  disabled={
-                    activeTabId === null ||
-                    selectedCommentTarget === null ||
-                    filterViewsMutation.isPending
-                  }
-                  onClick={() => addFilterView("desc")}
-                >
-                  Z-A
-                </button>
-              </div>
-              {activeFilterViews.length === 0 ? (
-                <div style={COMMENTS_EMPTY_STYLE}>No filter views.</div>
-              ) : (
-                <ol aria-label="Saved filter view list" style={COMMENT_LIST_STYLE}>
-                  {activeFilterViews.map((view) => (
-                    <li key={view.id} style={COMMENT_ITEM_STYLE}>
-                      <div style={FILTER_VIEW_ACTION_ROW_STYLE}>
-                        <input
-                          aria-label={`Filter view ${view.name}`}
-                          defaultValue={view.name}
-                          disabled={filterViewsMutation.isPending}
-                          onBlur={(event) => {
-                            const name = event.currentTarget.value.trim();
-                            if (name.length > 0 && name !== view.name) {
-                              updateFilterView(view.id, { name });
-                            }
-                          }}
-                          style={CHART_TITLE_INPUT_STYLE}
-                        />
-                        <select
-                          aria-label={`Filter view sort ${view.name}`}
-                          value={view.sortDirection}
-                          disabled={filterViewsMutation.isPending}
-                          onChange={(event) =>
-                            updateFilterView(view.id, {
-                              sortDirection: event.currentTarget.value as SortDirection,
-                            })
-                          }
-                          style={TOOLBAR_SELECT_STYLE}
-                        >
-                          <option value="asc">A-Z</option>
-                          <option value="desc">Z-A</option>
-                        </select>
-                        <select
-                          aria-label={`Filter view sort column ${view.name}`}
-                          value={String(filterViewSortColumn(view))}
-                          disabled={filterViewsMutation.isPending}
-                          onChange={(event) =>
-                            updateFilterViewPrimarySortColumn(
-                              view,
-                              Number(event.currentTarget.value),
-                            )
-                          }
-                          style={TOOLBAR_SELECT_STYLE}
-                        >
-                          {filterViewColumns(view).map((column) => (
-                            <option key={column} value={column}>
-                              {columnLetter(column)}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          aria-label={`Filter view secondary sort column ${view.name}`}
-                          value={String(filterViewSecondarySortColumn(view) ?? "")}
-                          disabled={filterViewsMutation.isPending}
-                          onChange={(event) =>
-                            updateFilterViewSecondarySortColumn(view, event.currentTarget.value)
-                          }
-                          style={TOOLBAR_SELECT_STYLE}
-                        >
-                          <option value="">Then none</option>
-                          {filterViewColumns(view).map((column) => (
-                            <option key={column} value={column}>
-                              Then {columnLetter(column)}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-pressed={activeDisplayFilterView?.id === view.id}
-                          aria-label={`Preview filter view ${view.name}`}
-                          disabled={filterViewsMutation.isPending}
-                          onClick={() => toggleDisplayFilterView(view)}
-                        >
-                          <Icons.Eye size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Apply filter view ${view.name}`}
-                          disabled={filterViewsMutation.isPending || updateMutation.isPending}
-                          onClick={() => applyFilterView(view)}
-                        >
-                          <Icons.Check size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Use selected range for filter view ${view.name}`}
-                          disabled={
-                            filterViewsMutation.isPending ||
-                            selectedCommentTarget === null ||
-                            activeTabId !== view.tabId
-                          }
-                          onClick={() => {
-                            if (selectedCommentTarget !== null) {
-                              updateFilterViewSelection(view.id, selectedCommentTarget);
-                            }
-                          }}
-                        >
-                          <Icons.Grid size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Delete filter view ${view.name}`}
-                          disabled={filterViewsMutation.isPending}
-                          onClick={() => deleteFilterView(view.id)}
-                        >
-                          <Icons.Trash size={14} />
-                        </button>
-                      </div>
-                      <div style={FILTER_PREDICATE_LIST_STYLE}>
-                        {filterViewEditablePredicates(view).map((predicate, predicateIndex) => (
-                          <div
-                            key={`${view.id}-${String(predicateIndex)}`}
-                            style={FILTER_PREDICATE_ROW_STYLE}
-                          >
-                            <label style={FILTER_PREDICATE_LABEL_STYLE}>
-                              Column
-                              <select
-                                aria-label={`Filter view predicate ${String(
-                                  predicateIndex + 1,
-                                )} column ${view.name}`}
-                                value={String(predicate.column)}
-                                disabled={filterViewsMutation.isPending}
-                                onChange={(event) =>
-                                  updateFilterViewPredicateAt(view, predicateIndex, {
-                                    column: Number(event.currentTarget.value),
-                                  })
-                                }
-                                style={TOOLBAR_SELECT_STYLE}
-                              >
-                                {filterViewColumns(view).map((column) => (
-                                  <option key={column} value={column}>
-                                    {columnLetter(column)}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label style={FILTER_PREDICATE_LABEL_STYLE}>
-                              Operator
-                              <select
-                                aria-label={`Filter view predicate ${String(
-                                  predicateIndex + 1,
-                                )} operator ${view.name}`}
-                                value={predicate.operator}
-                                disabled={filterViewsMutation.isPending}
-                                onChange={(event) =>
-                                  updateFilterViewPredicateAt(view, predicateIndex, {
-                                    operator: event.currentTarget
-                                      .value as SheetFilterPredicateOperator,
-                                  })
-                                }
-                                style={TOOLBAR_SELECT_STYLE}
-                              >
-                                <option value="contains">Contains</option>
-                                <option value="equals">Equals</option>
-                                <option value="greaterThan">Greater than</option>
-                                <option value="notEmpty">Not empty</option>
-                              </select>
-                            </label>
-                            <label style={FILTER_PREDICATE_LABEL_STYLE}>
-                              Value
-                              <input
-                                key={`${view.id}-${String(predicateIndex)}-${predicate.operator}`}
-                                aria-label={`Filter view predicate ${String(
-                                  predicateIndex + 1,
-                                )} ${filterPredicateOperatorLabel(predicate.operator)} ${
-                                  view.name
-                                }`}
-                                defaultValue={predicate.value}
-                                disabled={
-                                  filterViewsMutation.isPending ||
-                                  !filterPredicateNeedsValue(predicate.operator)
-                                }
-                                onBlur={(event) =>
-                                  updateFilterViewPredicateAt(view, predicateIndex, {
-                                    value: event.currentTarget.value,
-                                  })
-                                }
-                                style={CHART_TITLE_INPUT_STYLE}
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              className="icon-btn"
-                              aria-label={`Remove filter view predicate ${String(
-                                predicateIndex + 1,
-                              )} ${view.name}`}
-                              disabled={
-                                filterViewsMutation.isPending ||
-                                filterViewEditablePredicates(view).length <= 1
-                              }
-                              onClick={() => deleteFilterViewPredicate(view, predicateIndex)}
-                            >
-                              <Icons.Trash size={14} />
-                            </button>
-                          </div>
-                        ))}
-                        <button
-                          type="button"
-                          className="btn sm"
-                          aria-label={`Add filter view predicate ${view.name}`}
-                          disabled={filterViewsMutation.isPending}
-                          onClick={() => addFilterViewPredicate(view)}
-                        >
-                          <Icons.Filter size={14} />
-                          Add criterion
-                        </button>
-                      </div>
-                      <div style={COMMENT_META_STYLE}>
-                        {filterViewLabel(view)} · Sort {filterViewSortLabel(view)}
-                        {filterViewPredicateSummary(view)}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
-            <section aria-label="Protected ranges" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Lock size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Protected ranges</strong>
-              </div>
-              <div style={COMMENTS_EMPTY_STYLE}>
-                {selectedCommentTarget === null
-                  ? "Select a cell or range"
-                  : `Selected ${rangeLabel(selectedCommentTarget)}`}
-              </div>
-              <button
-                type="button"
-                className="btn sm"
-                aria-label="Protect selected range"
-                disabled={
-                  activeTabId === null ||
-                  selectedCommentTarget === null ||
-                  selectedRangeProtected ||
-                  protectedRangesMutation.isPending
-                }
-                onClick={addProtectedRange}
-              >
-                <Icons.Lock size={14} />
-                Protect range
-              </button>
-              {activeProtectedRanges.length === 0 ? (
-                <div style={COMMENTS_EMPTY_STYLE}>No protected ranges.</div>
-              ) : (
-                <table aria-label="Protected range table" style={SIDE_TABLE_STYLE}>
-                  <thead>
-                    <tr>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Range
-                      </th>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Tab
-                      </th>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Cells
-                      </th>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Mode
-                      </th>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeProtectedRanges.map((range) => (
-                      <tr key={range.id}>
-                        <td style={SIDE_TABLE_CELL_STYLE}>{range.label}</td>
-                        <td style={SIDE_TABLE_CELL_STYLE}>
-                          {tabNameById.get(range.tabId) ?? "Unknown tab"}
-                        </td>
-                        <td style={SIDE_TABLE_CELL_STYLE}>{protectedRangeCellCount(range)}</td>
-                        <td style={SIDE_TABLE_CELL_STYLE}>
-                          <select
-                            aria-label={`Protected range mode ${range.label}`}
-                            disabled={protectedRangesMutation.isPending}
-                            value={protectedRangeMode(range)}
-                            onChange={(event) =>
-                              updateProtectedRangeMode(
-                                range.id,
-                                event.currentTarget.value as SheetProtectedRangeMode,
-                              )
-                            }
-                            style={SIDE_TABLE_SELECT_STYLE}
-                          >
-                            <option value="block">Block edits</option>
-                            <option value="warn">Warn only</option>
-                          </select>
-                        </td>
-                        <td style={SIDE_TABLE_CELL_STYLE}>
-                          <div style={SIDE_TABLE_ACTIONS_STYLE}>
-                            <button
-                              type="button"
-                              className="btn sm"
-                              aria-label={`Select protected range ${range.label}`}
-                              onClick={() => selectProtectedRange(range)}
-                            >
-                              Select
-                            </button>
-                            <button
-                              type="button"
-                              className="btn sm"
-                              aria-label={`Remove protected range ${range.label}`}
-                              disabled={protectedRangesMutation.isPending}
-                              onClick={() => deleteProtectedRange(range.id)}
-                            >
-                              <Icons.Trash size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </section>
-            <section aria-label="Data validation rules" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Check size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Validation rules</strong>
-              </div>
-              {validationRules.length === 0 ? (
-                <div style={COMMENTS_EMPTY_STYLE}>No validation rules.</div>
-              ) : (
-                <table aria-label="Data validation rule table" style={SIDE_TABLE_STYLE}>
-                  <thead>
-                    <tr>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Range
-                      </th>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Rule
-                      </th>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Mode
-                      </th>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {validationRules.map((rule) => (
-                      <tr key={rule.id}>
-                        <td style={SIDE_TABLE_CELL_STYLE}>{rule.label}</td>
-                        <td style={SIDE_TABLE_CELL_STYLE}>
-                          {dataValidationRuleLabel(rule.validation, validationChoiceContext)}
-                        </td>
-                        <td style={SIDE_TABLE_CELL_STYLE}>
-                          <select
-                            aria-label={`Validation rule mode ${rule.label}`}
-                            disabled={updateMutation.isPending}
-                            value={formatDataValidationMode(rule.validation)}
-                            onChange={(event) =>
-                              updateDataValidationRuleMode(
-                                rule,
-                                event.currentTarget.value as DataValidationMode,
-                              )
-                            }
-                            style={SIDE_TABLE_SELECT_STYLE}
-                          >
-                            <option value="warn">Warn only</option>
-                            <option value="reject">Reject invalid</option>
-                          </select>
-                        </td>
-                        <td style={SIDE_TABLE_CELL_STYLE}>
-                          <div style={SIDE_TABLE_ACTIONS_STYLE}>
-                            <button
-                              type="button"
-                              className="btn sm"
-                              aria-label={`Select validation rule ${rule.label}`}
-                              onClick={() => selectDataValidationRule(rule)}
-                            >
-                              Select
-                            </button>
-                            <button
-                              type="button"
-                              className="btn sm"
-                              aria-label={`Clear validation rule ${rule.label}`}
-                              disabled={updateMutation.isPending}
-                              onClick={() => clearDataValidationRule(rule)}
-                            >
-                              <Icons.Trash size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </section>
-            <section aria-label="Conditional formatting rules" style={SIDE_SECTION_STYLE}>
-              <div style={SIDE_SECTION_HEADER_STYLE}>
-                <Icons.Sparkles size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Conditional rules</strong>
-              </div>
-              {conditionalFormatRules.length === 0 ? (
-                <div style={COMMENTS_EMPTY_STYLE}>No conditional rules.</div>
-              ) : (
-                <table aria-label="Conditional formatting rule table" style={SIDE_TABLE_STYLE}>
-                  <thead>
-                    <tr>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Range
-                      </th>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Rule
-                      </th>
-                      <th style={SIDE_TABLE_HEADER_STYLE} scope="col">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {conditionalFormatRules.map((rule) => (
-                      <tr key={rule.id}>
-                        <td style={SIDE_TABLE_CELL_STYLE}>{rule.label}</td>
-                        <td style={SIDE_TABLE_CELL_STYLE}>
-                          {conditionalFormatRuleLabel(rule.conditionalFormat)}
-                        </td>
-                        <td style={SIDE_TABLE_CELL_STYLE}>
-                          <div style={SIDE_TABLE_ACTIONS_STYLE}>
-                            <button
-                              type="button"
-                              className="btn sm"
-                              aria-label={`Select conditional rule ${rule.label}`}
-                              onClick={() => selectConditionalFormatRule(rule)}
-                            >
-                              Select
-                            </button>
-                            <button
-                              type="button"
-                              className="btn sm"
-                              aria-label={`Clear conditional rule ${rule.label}`}
-                              disabled={updateMutation.isPending}
-                              onClick={() => clearConditionalFormatRule(rule)}
-                            >
-                              <Icons.Trash size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </section>
-            <section
-              id="native-spreadsheet-comments-panel"
-              aria-label="Sheet comments"
-              tabIndex={-1}
-              style={SIDE_SECTION_STYLE}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginBottom: 8,
-                }}
-              >
-                <Icons.Comment size={16} />
-                <strong style={{ fontSize: "var(--text-sm)" }}>Comments</strong>
-                <select
-                  aria-label="Sheet comment status"
-                  value={commentStatusFilter}
-                  onChange={(event) =>
-                    setCommentStatusFilter(event.currentTarget.value as SheetsCommentStatus)
-                  }
-                  style={{ ...TOOLBAR_SELECT_STYLE, marginLeft: "auto" }}
-                >
-                  <option value="open">Open</option>
-                  <option value="resolved">Resolved</option>
-                  <option value="all">All</option>
-                </select>
-              </div>
-              <div
-                style={{ color: "var(--text-3)", fontSize: "var(--text-caption)", marginBottom: 6 }}
-              >
-                {selectedCommentLabel}
-              </div>
-              <textarea
-                aria-label="Sheet comment"
-                disabled={selectedCommentTarget === null || activeTabId === null}
-                value={commentDraft}
-                onChange={(event) => setCommentDraft(event.currentTarget.value)}
-                rows={3}
-                style={{
-                  width: "100%",
-                  resize: "vertical",
-                  border: "1px solid var(--border)",
-                  background: "var(--surface)",
-                  color: "var(--text)",
-                  font: "inherit",
-                  padding: 8,
-                }}
-              />
-              <button
-                type="button"
-                className="btn sm primary"
-                aria-label="Add comment"
-                disabled={commentDraft.trim().length === 0 || selectedCommentTarget === null}
-                onClick={() => void addComment()}
-                style={{ marginTop: 8 }}
-              >
-                <Icons.Comment size={14} />
-                Add comment
-              </button>
-              {commentsStatus === "loading" ? (
-                <div style={COMMENTS_EMPTY_STYLE}>Loading comments...</div>
-              ) : commentsStatus === "error" ? (
-                <div style={COMMENTS_EMPTY_STYLE}>Could not load comments.</div>
-              ) : activeSheetCommentThreads.length === 0 ? (
-                <div style={COMMENTS_EMPTY_STYLE}>{emptyCommentsLabel(commentStatusFilter)}</div>
-              ) : (
-                <ol aria-label="Sheet comment list" style={COMMENT_LIST_STYLE}>
-                  {activeSheetCommentThreads.map(({ comment, replies }) => (
-                    <li key={comment.id} style={COMMENT_ITEM_STYLE}>
-                      <button
-                        type="button"
-                        className="btn sm"
-                        onClick={() => {
-                          const range = rangeFromSheetComment(comment);
-                          if (range === null) {
-                            return;
-                          }
-                          setSelectedCell({
-                            row: normalizeRange(range).top,
-                            col: normalizeRange(range).left,
-                          });
-                          setSelectedRange(range);
-                          revealCell({
-                            row: normalizeRange(range).top,
-                            col: normalizeRange(range).left,
-                          });
-                        }}
-                      >
-                        {sheetCommentLabel(comment)}
-                      </button>
-                      <div style={COMMENT_META_STYLE}>{commentAuthorLabel(comment)}</div>
-                      {commentEditDrafts[comment.id] === undefined ? (
-                        <p style={{ margin: "6px 0 0" }}>{comment.body}</p>
+              {replies.length > 0 ? (
+                <ol aria-label={`Replies to ${comment.body}`} style={REPLY_LIST_STYLE}>
+                  {replies.map((reply) => (
+                    <li key={reply.id} style={REPLY_ITEM_STYLE}>
+                      <div style={COMMENT_META_STYLE}>{commentAuthorLabel(reply)}</div>
+                      {commentEditDrafts[reply.id] === undefined ? (
+                        <p style={{ margin: "4px 0 0" }}>{reply.body}</p>
                       ) : (
                         <div style={COMMENT_ACTIONS_STYLE}>
                           <textarea
-                            aria-label={`Edit comment ${comment.body}`}
-                            value={commentEditDrafts[comment.id] ?? ""}
+                            aria-label={`Edit comment ${reply.body}`}
+                            value={commentEditDrafts[reply.id] ?? ""}
                             onChange={(event) => {
                               const value = event.currentTarget.value;
                               setCommentEditDrafts((current) => ({
                                 ...current,
-                                [comment.id]: value,
+                                [reply.id]: value,
                               }));
                             }}
                             rows={2}
@@ -4284,9 +4543,9 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
                           <button
                             type="button"
                             className="btn sm"
-                            aria-label={`Save comment ${comment.body}`}
-                            disabled={(commentEditDrafts[comment.id] ?? "").trim().length === 0}
-                            onClick={() => void saveCommentEdit(comment.id)}
+                            aria-label={`Save comment ${reply.body}`}
+                            disabled={(commentEditDrafts[reply.id] ?? "").trim().length === 0}
+                            onClick={() => void saveCommentEdit(reply.id)}
                           >
                             <Icons.Check size={14} />
                             Save
@@ -4294,89 +4553,20 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
                           <button
                             type="button"
                             className="btn sm"
-                            aria-label={`Cancel edit ${comment.body}`}
-                            onClick={() => cancelCommentEdit(comment.id)}
+                            aria-label={`Cancel edit ${reply.body}`}
+                            onClick={() => cancelCommentEdit(reply.id)}
                           >
                             <Icons.X size={14} />
                             Cancel
                           </button>
                         </div>
                       )}
-                      {replies.length > 0 ? (
-                        <ol aria-label={`Replies to ${comment.body}`} style={REPLY_LIST_STYLE}>
-                          {replies.map((reply) => (
-                            <li key={reply.id} style={REPLY_ITEM_STYLE}>
-                              <div style={COMMENT_META_STYLE}>{commentAuthorLabel(reply)}</div>
-                              {commentEditDrafts[reply.id] === undefined ? (
-                                <p style={{ margin: "4px 0 0" }}>{reply.body}</p>
-                              ) : (
-                                <div style={COMMENT_ACTIONS_STYLE}>
-                                  <textarea
-                                    aria-label={`Edit comment ${reply.body}`}
-                                    value={commentEditDrafts[reply.id] ?? ""}
-                                    onChange={(event) => {
-                                      const value = event.currentTarget.value;
-                                      setCommentEditDrafts((current) => ({
-                                        ...current,
-                                        [reply.id]: value,
-                                      }));
-                                    }}
-                                    rows={2}
-                                    style={COMMENT_REPLY_STYLE}
-                                  />
-                                  <button
-                                    type="button"
-                                    className="btn sm"
-                                    aria-label={`Save comment ${reply.body}`}
-                                    disabled={
-                                      (commentEditDrafts[reply.id] ?? "").trim().length === 0
-                                    }
-                                    onClick={() => void saveCommentEdit(reply.id)}
-                                  >
-                                    <Icons.Check size={14} />
-                                    Save
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn sm"
-                                    aria-label={`Cancel edit ${reply.body}`}
-                                    onClick={() => cancelCommentEdit(reply.id)}
-                                  >
-                                    <Icons.X size={14} />
-                                    Cancel
-                                  </button>
-                                </div>
-                              )}
-                              <div style={COMMENT_ACTIONS_STYLE}>
-                                <button
-                                  type="button"
-                                  className="btn sm"
-                                  aria-label={`Edit ${reply.body}`}
-                                  onClick={() => beginCommentEdit(reply)}
-                                >
-                                  <Icons.EditPen size={14} />
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn sm danger"
-                                  aria-label={`Delete ${reply.body}`}
-                                  onClick={() => void removeComment(reply.id)}
-                                >
-                                  <Icons.Trash size={14} />
-                                  Delete
-                                </button>
-                              </div>
-                            </li>
-                          ))}
-                        </ol>
-                      ) : null}
                       <div style={COMMENT_ACTIONS_STYLE}>
                         <button
                           type="button"
                           className="btn sm"
-                          aria-label={`Edit ${comment.body}`}
-                          onClick={() => beginCommentEdit(comment)}
+                          aria-label={`Edit ${reply.body}`}
+                          onClick={() => beginCommentEdit(reply)}
                         >
                           <Icons.EditPen size={14} />
                           Edit
@@ -4384,66 +4574,500 @@ export function NativeSpreadsheetEditor({ sheetId, onBack }: NativeSpreadsheetEd
                         <button
                           type="button"
                           className="btn sm danger"
-                          aria-label={`Delete ${comment.body}`}
-                          onClick={() => void removeComment(comment.id)}
+                          aria-label={`Delete ${reply.body}`}
+                          onClick={() => void removeComment(reply.id)}
                         >
                           <Icons.Trash size={14} />
                           Delete
                         </button>
-                        {comment.status === "resolved" ? (
-                          <button
-                            type="button"
-                            className="btn sm"
-                            aria-label={`Reopen ${comment.body}`}
-                            onClick={() => void reopenComment(comment.id)}
-                          >
-                            <Icons.Refresh size={14} />
-                            Reopen
-                          </button>
-                        ) : null}
                       </div>
-                      {comment.status === "open" ? (
-                        <div style={COMMENT_ACTIONS_STYLE}>
-                          <textarea
-                            aria-label={`Reply to ${comment.body}`}
-                            value={replyDrafts[comment.id] ?? ""}
-                            onChange={(event) =>
-                              setReplyDrafts((current) => ({
-                                ...current,
-                                [comment.id]: event.target.value,
-                              }))
-                            }
-                            rows={2}
-                            style={COMMENT_REPLY_STYLE}
-                          />
-                          <button
-                            type="button"
-                            className="btn sm"
-                            aria-label={`Add reply to ${comment.body}`}
-                            disabled={(replyDrafts[comment.id] ?? "").trim().length === 0}
-                            onClick={() => void addReply(comment)}
-                          >
-                            Reply
-                          </button>
-                          <button
-                            type="button"
-                            className="btn sm"
-                            aria-label={`Resolve ${comment.body}`}
-                            onClick={() => void resolveComment(comment.id)}
-                          >
-                            <Icons.Check size={14} />
-                            Resolve
-                          </button>
-                        </div>
-                      ) : null}
                     </li>
                   ))}
                 </ol>
-              )}
-            </section>
-          </aside>
+              ) : null}
+              <div style={COMMENT_ACTIONS_STYLE}>
+                <button
+                  type="button"
+                  className="btn sm"
+                  aria-label={`Edit ${comment.body}`}
+                  onClick={() => beginCommentEdit(comment)}
+                >
+                  <Icons.EditPen size={14} />
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="btn sm danger"
+                  aria-label={`Delete ${comment.body}`}
+                  onClick={() => void removeComment(comment.id)}
+                >
+                  <Icons.Trash size={14} />
+                  Delete
+                </button>
+                {comment.status === "resolved" ? (
+                  <button
+                    type="button"
+                    className="btn sm"
+                    aria-label={`Reopen ${comment.body}`}
+                    onClick={() => void reopenComment(comment.id)}
+                  >
+                    <Icons.Refresh size={14} />
+                    Reopen
+                  </button>
+                ) : null}
+              </div>
+              {comment.status === "open" ? (
+                <div style={COMMENT_ACTIONS_STYLE}>
+                  <textarea
+                    aria-label={`Reply to ${comment.body}`}
+                    value={replyDrafts[comment.id] ?? ""}
+                    onChange={(event) =>
+                      setReplyDrafts((current) => ({
+                        ...current,
+                        [comment.id]: event.target.value,
+                      }))
+                    }
+                    rows={2}
+                    style={COMMENT_REPLY_STYLE}
+                  />
+                  <button
+                    type="button"
+                    className="btn sm"
+                    aria-label={`Add reply to ${comment.body}`}
+                    disabled={(replyDrafts[comment.id] ?? "").trim().length === 0}
+                    onClick={() => void addReply(comment)}
+                  >
+                    Reply
+                  </button>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    aria-label={`Resolve ${comment.body}`}
+                    onClick={() => void resolveComment(comment.id)}
+                  >
+                    <Icons.Check size={14} />
+                    Resolve
+                  </button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+
+  const chromeSidePanelTabs = buildSheetsSidePanelTabs(
+    {
+      comments: sidePanelCommentsContent,
+      charts: sidePanelChartsContent,
+      pivots: sidePanelPivotsContent,
+      ai: sidePanelAiContent,
+      cells: sidePanelCellsContent,
+      filters: sidePanelFiltersContent,
+      names: sidePanelNamesContent,
+      versions: sidePanelVersionsContent,
+      permissions: sidePanelPermissionsContent,
+    },
+    { commentsBadge: openSheetComments.length || undefined },
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+      <EditorAppBar
+        title={sheetQuery.data.title}
+        onBack={onBack}
+        status={chromeStatus}
+        menus={chromeMenus}
+        sidePanelOpen={sidePanelOpen}
+        onSidePanelToggle={() => setSidePanelOpen((open) => !open)}
+        onShare={() => setShareDialogOpen(true)}
+      />
+      {chromeRibbon}
+      <div className="flex h-8 items-center gap-2 px-2 bg-[var(--surface)] border-b border-[var(--border)] shrink-0">
+        <span className="text-xs font-semibold text-[var(--text-2)] tracking-wider">fx</span>
+        <input
+          aria-label="Name box"
+          type="text"
+          className="h-6 w-20 px-2 rounded border border-[var(--border)] bg-[var(--surface)] text-sm"
+          readOnly
+          value={
+            selectedRange === null
+              ? selectedCell === null
+                ? ""
+                : cellLabel(selectedCell)
+              : rangeLabel(selectedRange)
+          }
+        />
+        <div className="w-px h-5 bg-[var(--border)]" />
+        <input
+          aria-label="Formula bar"
+          type="text"
+          disabled={selectedCell === null || selectedRangeBlocked}
+          className="flex-1 h-6 px-2 rounded border border-[var(--border)] bg-[var(--surface)] text-sm font-mono"
+          value={formulaBarValue}
+          onChange={(event) => {
+            if (selectedCell !== null) {
+              updateLocalCell(selectedCell.row, selectedCell.col, event.currentTarget.value);
+            }
+          }}
+          onBlur={(event) => {
+            if (selectedCell !== null) {
+              commitCell(selectedCell.row, selectedCell.col, event.currentTarget.value);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        <div
+          aria-label="Selected cell"
+          className="text-xs text-[var(--text-3)] font-semibold tabular-nums px-2"
+        >
+          {selectedRange === null
+            ? selectedCell === null
+              ? ""
+              : cellLabel(selectedCell)
+            : rangeLabel(selectedRange)}
         </div>
       </div>
+      <EditorWorkspace
+        sidePanel={
+          <EditorSidePanel
+            open={sidePanelOpen}
+            onOpenChange={setSidePanelOpen}
+            tabs={chromeSidePanelTabs}
+            activeTabId={sidePanelTabId}
+            onActiveTabChange={(id: string) => setSidePanelTabId(id as SheetsSidePanelTabId)}
+          />
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+          <div style={{ overflow: "auto", flex: 1, background: "var(--bg)", padding: 16 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "stretch",
+                gap: 16,
+                minWidth: 0,
+              }}
+            >
+              <div style={{ minWidth: 0, flex: 1, overflow: "auto" }}>
+                {selectedRangeSummary === null ? null : (
+                  <div
+                    role="status"
+                    aria-label="Selected range summary"
+                    style={SELECTED_RANGE_SUMMARY_STYLE}
+                  >
+                    {selectedRangeSummaryText(selectedRangeSummary)}
+                  </div>
+                )}
+                <div ref={gridWrapRef} style={SHEET_GRID_WRAP_STYLE}>
+                  <input
+                    ref={imageFileInputRef}
+                    type="file"
+                    accept="image/*,.avif,.bmp,.gif,.heic,.heif,.j2k,.jfif,.jpeg,.jpg,.jpe,.jp2,.jpf,.jpm,.jpx,.jxl,.png,.svg,.tif,.tiff,.webp"
+                    hidden
+                    aria-label="Choose spreadsheet image"
+                    onChange={handleImageInputChange}
+                  />
+                  <div
+                    role="grid"
+                    aria-label={`${sheetQuery.data.title} spreadsheet grid`}
+                    onDragOver={handleSheetDragOver}
+                    onDrop={handleSheetDrop}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: `${String(SHEET_ROW_HEADER_WIDTH)}px repeat(${String(
+                        VISIBLE_COLS,
+                      )}, ${String(SHEET_CELL_WIDTH)}px)`,
+                      minWidth: SHEET_ROW_HEADER_WIDTH + VISIBLE_COLS * SHEET_CELL_WIDTH,
+                      borderTop: "1px solid var(--border)",
+                      borderLeft: "1px solid var(--border)",
+                      background: "var(--surface)",
+                    }}
+                  >
+                    <GridHeaderCell />
+                    {visibleCols.map((col) => (
+                      <GridHeaderCell key={col}>{columnLetter(col)}</GridHeaderCell>
+                    ))}
+                    {visibleRows.map(({ row, displayRow, rowIndex }) => (
+                      <GridRow
+                        key={rowIndex}
+                        row={row}
+                        grid={grid}
+                        displayRow={displayRow}
+                        formatMap={formatMap}
+                        validationChoiceContext={validationChoiceContext}
+                        openComments={openSheetComments}
+                        activeTabId={activeTabId}
+                        mergedRanges={activeMergedRanges}
+                        protectedRanges={protectedRanges}
+                        rowIndex={rowIndex}
+                        visibleCols={visibleCols}
+                        editingCell={editingCell}
+                        selectedRange={selectedRange}
+                        fillPreviewRange={fillPreviewRange}
+                        onChange={updateLocalCell}
+                        onCommit={commitGridCellFromBlur}
+                        onCopyCells={(event, row, col) => {
+                          const range = selectedRange ?? singleCellRange(row, col);
+                          event.clipboardData.setData(
+                            "text/plain",
+                            clipboardTextForRange(grid, range),
+                          );
+                          event.clipboardData.setData(
+                            SHEETS_CLIPBOARD_MIME,
+                            formattedClipboardTextForRange(grid, range, formatMap),
+                          );
+                          event.preventDefault();
+                        }}
+                        onPasteCells={(event, row, col) => {
+                          const text = event.clipboardData.getData("text/plain");
+                          const formattedCells = event.clipboardData.getData(SHEETS_CLIPBOARD_MIME);
+                          if (text.length === 0 && formattedCells.length === 0) {
+                            return;
+                          }
+                          event.preventDefault();
+                          handlePaste(row, col, text, formattedCells);
+                        }}
+                        onNavigateCell={navigateCell}
+                        onFocusCell={(row, col) => {
+                          if (skipNextProgrammaticFocus.current) {
+                            skipNextProgrammaticFocus.current = false;
+                            return;
+                          }
+                          setSelectedImageId(null);
+                          const cell = { row, col };
+                          setSelectedCell(cell);
+                          setSelectedRange(singleCellRange(row, col));
+                          setEditingCell(cell);
+                        }}
+                        onExtendSelection={(row, col) => {
+                          const anchor = selectedCell ?? { row, col };
+                          setSelectedCell({ row, col });
+                          setSelectedRange({ start: anchor, end: { row, col } });
+                          setEditingCell(null);
+                        }}
+                        onBeginRangeSelection={beginRangeDragSelection}
+                        onDragSelectCell={extendRangeDragSelection}
+                        onBlurCell={() => setEditingCell(null)}
+                      />
+                    ))}
+                  </div>
+                  {visibleCommentRangeOverlays(openSheetComments, visibleRows, visibleCols).map(
+                    (overlay) => (
+                      <div
+                        key={overlay.key}
+                        aria-label={`Comment range ${overlay.label}`}
+                        title={`Comment range ${overlay.label}`}
+                        style={overlay.style}
+                      />
+                    ),
+                  )}
+                  {visibleMergedRangeOverlays(activeMergedRanges, visibleRows, visibleCols).map(
+                    (overlay) => (
+                      <div
+                        key={overlay.key}
+                        aria-label={`Merged range ${overlay.label}`}
+                        title={`Merged range ${overlay.label}`}
+                        style={overlay.style}
+                      />
+                    ),
+                  )}
+                  {fillPreviewRange === null
+                    ? null
+                    : (() => {
+                        const style = fillPreviewStyle(fillPreviewRange, visibleRows, visibleCols);
+                        return style === null ? null : (
+                          <div aria-label="Fill preview range" style={style} />
+                        );
+                      })()}
+                  {selectedFillRange === null || fillHandlePlacement === null ? null : (
+                    <button
+                      type="button"
+                      aria-label="Spreadsheet fill handle"
+                      style={fillHandleStyle(fillHandlePlacement)}
+                      onMouseDown={(event) => beginFillDrag(event, selectedFillRange)}
+                    />
+                  )}
+                  {activeSheetCharts.map((chart) => (
+                    <EmbeddedSheetChart
+                      key={chart.id}
+                      chart={chart}
+                      grid={grid}
+                      displayGrid={displayGrid}
+                      visibleRows={visibleRows}
+                      visibleCols={visibleCols}
+                    />
+                  ))}
+                  {activeSheetImages.map((image) => (
+                    <EmbeddedSheetImage
+                      key={image.id}
+                      image={image}
+                      placement={
+                        imageDragPreview?.imageId === image.id
+                          ? imageDragPreview.placement
+                          : image.placement
+                      }
+                      selected={selectedImageId === image.id}
+                      visibleRows={visibleRows}
+                      visibleCols={visibleCols}
+                      onSelect={setSelectedImageId}
+                      onDelete={deleteSheetImage}
+                      onDragStart={beginSheetImageDrag}
+                      onResizeStart={beginSheetImageResize}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* Bottom tab strip — sheet tabs + tab management + exports. */}
+          <div
+            aria-label="Sheet tabs"
+            style={{
+              minHeight: 32,
+              borderTop: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "0 8px",
+              flexShrink: 0,
+              overflowX: "auto",
+              flexWrap: "wrap",
+            }}
+          >
+            {visibleTabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`btn sm ${tab.id === activeTabId ? "primary" : ""}`}
+                aria-label={`Open tab ${tab.name}`}
+                onClick={() => setActiveTabId(tab.id)}
+                style={{ whiteSpace: "nowrap" }}
+              >
+                {tab.name}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Add sheet tab"
+              disabled={tabMutationPending}
+              onClick={() => createTabMutation.mutate()}
+            >
+              <Icons.Plus size={14} />
+            </button>
+            <input
+              aria-label="Active tab name"
+              value={tabNameDraft}
+              disabled={activeTab === null || tabMutationPending}
+              onChange={(event) => setTabNameDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  renameActiveTab();
+                }
+              }}
+              style={TAB_NAME_INPUT_STYLE}
+            />
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Rename active tab"
+              disabled={
+                activeTab === null ||
+                tabNameDraft.trim().length === 0 ||
+                tabNameDraft.trim() === activeTab.name ||
+                tabMutationPending
+              }
+              onClick={renameActiveTab}
+            >
+              <Icons.Check size={14} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Move active tab left"
+              disabled={activeTab === null || activeTabIndex <= 0 || tabMutationPending}
+              onClick={() => moveActiveTab(-1)}
+            >
+              <Icons.ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Move active tab right"
+              disabled={
+                activeTab === null ||
+                activeTabIndex < 0 ||
+                activeTabIndex >= visibleTabs.length - 1 ||
+                tabMutationPending
+              }
+              onClick={() => moveActiveTab(1)}
+            >
+              <Icons.ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Delete active tab"
+              disabled={activeTab === null || visibleTabs.length <= 1 || tabMutationPending}
+              onClick={deleteActiveTab}
+            >
+              <Icons.Trash size={14} />
+            </button>
+            <div style={{ marginLeft: "auto" }} aria-label="Sheet export" className="row gap-2">
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Export workbook as XLSX"
+                disabled={exportMutation.isPending || visibleTabs.length === 0}
+                onClick={() => exportMutation.mutate("xlsx")}
+              >
+                <Icons.Download size={14} />
+              </button>
+              <button
+                type="button"
+                className="btn sm"
+                aria-label="Export workbook as ODS"
+                disabled={exportMutation.isPending || visibleTabs.length === 0}
+                onClick={() => exportMutation.mutate("ods")}
+              >
+                ODS
+              </button>
+              <button
+                type="button"
+                className="btn sm"
+                disabled={exportMutation.isPending || activeTab === null}
+                onClick={() => exportMutation.mutate("csv")}
+              >
+                CSV
+              </button>
+              <button
+                type="button"
+                className="btn sm"
+                disabled={exportMutation.isPending || activeTab === null}
+                onClick={() => exportMutation.mutate("tsv")}
+              >
+                TSV
+              </button>
+            </div>
+          </div>
+        </div>
+      </EditorWorkspace>
+      <DriveShareDialog
+        objectId={sheetId}
+        objectName={sheetQuery.data.title}
+        ownerActorId={sheetQuery.data.ownerActorId}
+        open={shareDialogOpen}
+        shareUrl={shareDialogOpen ? buildCurrentSpreadsheetLink(sheetId) : undefined}
+        onOpenChange={setShareDialogOpen}
+      />
     </div>
   );
 }
@@ -4527,6 +5151,8 @@ function GridRow({
         const displayValue = displayRow[absoluteColIndex] ?? rawValue;
         const format = formatMap.get(cellCoordinateKey(rowIndex, absoluteColIndex)) ?? {};
         const formulaPreview = rawValue.trimStart().startsWith("=") && !focused;
+        const linkUrl = formatCellLinkUrl(format.linkUrl);
+        const linkPreview = linkUrl.length > 0 && !focused;
         const renderedValue = focused ? rawValue : formatDisplayValue(displayValue, format);
         const cellBorders = cellBorderShadow(format.borders);
         const validationMessage = validationMessageForCell(
@@ -4576,97 +5202,177 @@ function GridRow({
         ]
           .filter((shadow): shadow is string => shadow !== undefined)
           .join(", ");
+        const cellBackground = selected
+          ? "var(--accent-soft)"
+          : fillPreviewed
+            ? "rgba(37, 99, 235, .08)"
+            : protectedRangeBlocked
+              ? "var(--surface-2)"
+              : formulaPreview
+                ? "var(--surface-2)"
+                : (conditionalStyle.background ?? formatColor(format.fillColor) ?? "transparent");
+        const cellColor =
+          conditionalStyle.color ??
+          formatColor(format.textColor) ??
+          (linkPreview ? "var(--accent)" : "var(--text)");
+        const cellFontFamily = formatFontFamily(format.fontFamily);
+        const cellFontSize = formatFontSize(format.fontSize);
+        const cellFontWeight = formatBoolean(format.bold) ? 700 : undefined;
+        const cellFontStyle = formatBoolean(format.italic) ? "italic" : undefined;
+        const cellTextDecoration = formatTextDecoration(format, linkPreview);
+        const cellTextAlign = formatAlign(format.align);
+        const cellVerticalAlign = formatVerticalAlign(format.verticalAlign);
+        const wrapText = formatBoolean(format.wrapText);
+        const visualOverflow = cellVisualOverflowPlacement({
+          displayRow,
+          focused,
+          coveredByMerge,
+          col: absoluteColIndex,
+          renderedValue,
+          textAlign: cellTextAlign,
+          visibleCols,
+          wrapText,
+        });
+        const visualOverflows = visualOverflow.span > 1;
         return (
           <Fragment key={absoluteColIndex}>
-            <input
-              aria-label={`${columnLetter(absoluteColIndex)}${String(rowIndex + 1)}`}
-              list={validationListId}
-              readOnly={protectedRangeBlocked || coveredByMerge}
-              aria-readonly={coveredByMerge || protectedRangeBlocked}
-              title={
-                coveredByMerge && mergedRange !== null
-                  ? `Merged into ${mergedRange.label}`
-                  : protectedRange !== null
-                    ? `${protectedRangeBlocked ? "Protected" : "Warning"} range: ${
-                        protectedRange.label
-                      }`
-                    : (validationMessage ?? (formulaPreview ? rawValue : undefined))
-              }
-              value={renderedValue}
-              onMouseDown={(event) => {
-                if (event.shiftKey) {
-                  event.preventDefault();
-                  onExtendSelection(rowIndex, absoluteColIndex);
-                  return;
-                }
-                onBeginRangeSelection(
-                  event,
-                  focusCell?.row ?? rowIndex,
-                  focusCell?.col ?? absoluteColIndex,
-                );
-                onFocusCell(focusCell?.row ?? rowIndex, focusCell?.col ?? absoluteColIndex);
-              }}
-              onMouseOver={() => onDragSelectCell(rowIndex, absoluteColIndex)}
-              onFocus={() =>
-                onFocusCell(focusCell?.row ?? rowIndex, focusCell?.col ?? absoluteColIndex)
-              }
-              onChange={(event) => {
-                if (!protectedRangeBlocked && !coveredByMerge) {
-                  onChange(rowIndex, absoluteColIndex, event.currentTarget.value);
-                }
-              }}
-              onCopy={(event) => onCopyCells(event, rowIndex, absoluteColIndex)}
-              onPaste={(event) => onPasteCells(event, rowIndex, absoluteColIndex)}
-              onBlur={(event) => {
-                onBlurCell();
-                onCommit(
-                  rowIndex,
-                  absoluteColIndex,
-                  formulaPreview ? rawValue : event.currentTarget.value,
-                );
-              }}
-              onKeyDown={(event) => {
-                if (isSpreadsheetNavigationKey(event.key)) {
-                  event.preventDefault();
-                  onNavigateCell(
-                    rowIndex,
-                    absoluteColIndex,
-                    event.key,
-                    event.shiftKey,
-                    event.ctrlKey || event.metaKey,
-                    event.currentTarget.value,
-                  );
-                }
-              }}
+            <div
+              data-testid={`sheet-cell-shell-${columnLetter(absoluteColIndex)}${String(
+                rowIndex + 1,
+              )}`}
               style={{
+                position: "relative",
                 height: 32,
                 minWidth: 0,
                 border: 0,
                 borderRight: "1px solid var(--border)",
                 borderBottom: "1px solid var(--border)",
-                padding: "0 8px",
                 font: "inherit",
-                fontWeight: formatBoolean(format.bold) ? 700 : undefined,
-                fontStyle: formatBoolean(format.italic) ? "italic" : undefined,
-                textAlign: formatAlign(format.align),
-                background: selected
-                  ? "var(--accent-soft)"
-                  : fillPreviewed
-                    ? "rgba(37, 99, 235, .08)"
-                    : protectedRangeBlocked
-                      ? "var(--surface-2)"
-                      : formulaPreview
-                        ? "var(--surface-2)"
-                        : (conditionalStyle.background ??
-                          formatColor(format.fillColor) ??
-                          "transparent"),
-                color: conditionalStyle.color ?? formatColor(format.textColor) ?? "var(--text)",
+                background: cellBackground,
+                color: cellColor,
                 opacity: coveredByMerge ? 0 : undefined,
                 boxShadow: boxShadow.length > 0 ? boxShadow : undefined,
                 outline: focused ? "2px solid var(--accent)" : undefined,
                 outlineOffset: -2,
+                overflow: visualOverflows ? "visible" : "hidden",
+                zIndex: visualOverflows ? 2 : undefined,
               }}
-            />
+            >
+              <div
+                aria-hidden="true"
+                data-testid={`sheet-cell-visual-${columnLetter(absoluteColIndex)}${String(
+                  rowIndex + 1,
+                )}`}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  bottom: 0,
+                  left: visualOverflow.offsetPx,
+                  right: visualOverflows ? undefined : 0,
+                  width: visualOverflows ? visualOverflow.span * SHEET_CELL_WIDTH : undefined,
+                  display: focused ? "none" : "flex",
+                  alignItems: cellVisualAlignItems(cellVerticalAlign),
+                  padding: "0 8px",
+                  pointerEvents: "none",
+                  overflow: visualOverflows ? "visible" : "hidden",
+                  fontFamily: cellFontFamily,
+                  fontSize: cellFontSize,
+                  fontWeight: cellFontWeight,
+                  fontStyle: cellFontStyle,
+                  textDecoration: cellTextDecoration,
+                  textAlign: cellTextAlign,
+                  color: cellColor,
+                  whiteSpace: wrapText ? "pre-wrap" : "nowrap",
+                  overflowWrap: wrapText ? "anywhere" : undefined,
+                  wordBreak: wrapText ? "break-word" : undefined,
+                  textOverflow: wrapText || visualOverflows ? undefined : "ellipsis",
+                }}
+              >
+                <span style={{ width: "100%" }}>{renderedValue}</span>
+              </div>
+              <input
+                aria-label={`${columnLetter(absoluteColIndex)}${String(rowIndex + 1)}`}
+                list={validationListId}
+                readOnly={protectedRangeBlocked || coveredByMerge}
+                aria-readonly={coveredByMerge || protectedRangeBlocked}
+                title={
+                  coveredByMerge && mergedRange !== null
+                    ? `Merged into ${mergedRange.label}`
+                    : protectedRange !== null
+                      ? `${protectedRangeBlocked ? "Protected" : "Warning"} range: ${
+                          protectedRange.label
+                        }`
+                      : (validationMessage ?? (formulaPreview ? rawValue : undefined))
+                }
+                value={renderedValue}
+                onMouseDown={(event) => {
+                  if (event.shiftKey) {
+                    event.preventDefault();
+                    onExtendSelection(rowIndex, absoluteColIndex);
+                    return;
+                  }
+                  onBeginRangeSelection(
+                    event,
+                    focusCell?.row ?? rowIndex,
+                    focusCell?.col ?? absoluteColIndex,
+                  );
+                  onFocusCell(focusCell?.row ?? rowIndex, focusCell?.col ?? absoluteColIndex);
+                }}
+                onMouseOver={() => onDragSelectCell(rowIndex, absoluteColIndex)}
+                onFocus={() =>
+                  onFocusCell(focusCell?.row ?? rowIndex, focusCell?.col ?? absoluteColIndex)
+                }
+                onChange={(event) => {
+                  if (!protectedRangeBlocked && !coveredByMerge) {
+                    onChange(rowIndex, absoluteColIndex, event.currentTarget.value);
+                  }
+                }}
+                onCopy={(event) => onCopyCells(event, rowIndex, absoluteColIndex)}
+                onPaste={(event) => onPasteCells(event, rowIndex, absoluteColIndex)}
+                onBlur={(event) => {
+                  onBlurCell();
+                  onCommit(
+                    rowIndex,
+                    absoluteColIndex,
+                    formulaPreview ? rawValue : event.currentTarget.value,
+                  );
+                }}
+                onKeyDown={(event) => {
+                  if (isSpreadsheetNavigationKey(event.key)) {
+                    event.preventDefault();
+                    onNavigateCell(
+                      rowIndex,
+                      absoluteColIndex,
+                      event.key,
+                      event.shiftKey,
+                      event.ctrlKey || event.metaKey,
+                      event.currentTarget.value,
+                    );
+                  }
+                }}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  minWidth: 0,
+                  border: 0,
+                  padding: "0 8px",
+                  font: "inherit",
+                  fontFamily: cellFontFamily,
+                  fontSize: cellFontSize,
+                  fontWeight: cellFontWeight,
+                  fontStyle: cellFontStyle,
+                  textDecoration: cellTextDecoration,
+                  textAlign: cellTextAlign,
+                  background: "transparent",
+                  color: cellColor,
+                  opacity: focused ? 1 : 0,
+                  whiteSpace: "nowrap",
+                  outline: 0,
+                }}
+              />
+            </div>
             {validationListId === undefined ? null : (
               <datalist id={validationListId}>
                 {validationChoices.map((choice) => (
@@ -5080,6 +5786,62 @@ function cellFormatMap(
   return map;
 }
 
+function meaningfulSheetCellEdits(
+  edits: readonly SheetsCellEdit[],
+  baseGrid: EditableGrid,
+  formatMap: ReadonlyMap<string, CellFormat>,
+): readonly SheetsCellEdit[] {
+  return edits.filter((edit) => {
+    const previousValue = baseGrid[edit.row]?.[edit.col] ?? "";
+    if (previousValue !== edit.value) {
+      return true;
+    }
+    if (edit.format === undefined) {
+      return false;
+    }
+    const previousFormat = formatMap.get(cellCoordinateKey(edit.row, edit.col)) ?? {};
+    return !cellFormatsEqual(previousFormat, edit.format);
+  });
+}
+
+function sheetCellHistoryEntry(
+  tabId: string,
+  redoEdits: readonly SheetsCellEdit[],
+  baseGrid: EditableGrid,
+  formatMap: ReadonlyMap<string, CellFormat>,
+): SheetCellHistoryEntry | null {
+  const meaningfulRedoEdits = meaningfulSheetCellEdits(redoEdits, baseGrid, formatMap);
+  if (meaningfulRedoEdits.length === 0) {
+    return null;
+  }
+  return {
+    tabId,
+    redoEdits: meaningfulRedoEdits.map(cloneSheetCellEdit),
+    undoEdits: meaningfulRedoEdits.map((edit) => {
+      const previousFormat = formatMap.get(cellCoordinateKey(edit.row, edit.col)) ?? {};
+      return {
+        row: edit.row,
+        col: edit.col,
+        value: baseGrid[edit.row]?.[edit.col] ?? "",
+        ...(edit.format === undefined ? {} : { format: { ...previousFormat } }),
+      };
+    }),
+  };
+}
+
+function cloneSheetCellEdit(edit: SheetsCellEdit): SheetsCellEdit {
+  return {
+    row: edit.row,
+    col: edit.col,
+    value: edit.value,
+    ...(edit.format === undefined ? {} : { format: { ...edit.format } }),
+  };
+}
+
+function cellFormatsEqual(left: CellFormat, right: CellFormat): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function isCellInRange(row: number, col: number, range: CellRange): boolean {
   const normalized = normalizeRange(range);
   return (
@@ -5239,6 +6001,185 @@ function metadataWithCharts(
   charts: readonly SheetChartSpec[],
 ): Record<string, unknown> {
   return { ...metadata, charts };
+}
+
+function sheetImagesFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): readonly SheetImageSpec[] {
+  const images = metadata?.images;
+  if (!Array.isArray(images)) {
+    return [];
+  }
+  return images.filter(isSheetImageSpec);
+}
+
+interface StoredSheetGridRecovery {
+  readonly sheetId: string;
+  readonly tabId: string;
+  readonly edits: readonly SheetsCellEdit[];
+  readonly savedAt: string;
+}
+
+function gridWithRecoveredSheetEdits(
+  baseGrid: EditableGrid,
+  sheetId: string,
+  tabId: string,
+): { readonly grid: EditableGrid; readonly recovered: boolean } {
+  const recovery = readRecoveredSheetGrid(sheetId, tabId);
+  if (recovery === null) {
+    return { grid: baseGrid, recovered: false };
+  }
+  const pendingEdits = recovery.edits.filter(
+    (edit) => (baseGrid[edit.row]?.[edit.col] ?? "") !== edit.value,
+  );
+  if (pendingEdits.length === 0) {
+    removeRecoveredSheetGrid(sheetId, tabId);
+    return { grid: baseGrid, recovered: false };
+  }
+  return { grid: applySheetCellEditsToGrid(baseGrid, pendingEdits), recovered: true };
+}
+
+function diffSheetGrid(
+  baseGrid: EditableGrid,
+  currentGrid: EditableGrid,
+): readonly SheetsCellEdit[] {
+  const edits: SheetsCellEdit[] = [];
+  const rowCount = Math.max(baseGrid.length, currentGrid.length);
+  for (let row = 0; row < rowCount; row += 1) {
+    const baseRow = baseGrid[row] ?? [];
+    const currentRow = currentGrid[row] ?? [];
+    const colCount = Math.max(baseRow.length, currentRow.length);
+    for (let col = 0; col < colCount; col += 1) {
+      const value = currentRow[col] ?? "";
+      if ((baseRow[col] ?? "") !== value) {
+        edits.push({ row, col, value });
+      }
+    }
+  }
+  return edits;
+}
+
+function applySheetCellEditsToGrid(
+  grid: EditableGrid,
+  edits: readonly SheetsCellEdit[],
+): EditableGrid {
+  const next = grid.map((row) => [...row]);
+  for (const edit of edits) {
+    const existingRow = next[edit.row] ?? [];
+    const width = Math.max(existingRow.length, edit.col + 1);
+    const row = Array.from({ length: width }, (_, col) => existingRow[col] ?? "");
+    row[edit.col] = edit.value;
+    next[edit.row] = row;
+  }
+  return next;
+}
+
+function displayGridWithLocalSheetEdits(
+  baseGrid: EditableGrid,
+  baseDisplayGrid: EditableGrid,
+  currentGrid: EditableGrid,
+): EditableGrid {
+  return applySheetCellEditsToGrid(baseDisplayGrid, diffSheetGrid(baseGrid, currentGrid));
+}
+
+function readRecoveredSheetGrid(sheetId: string, tabId: string): StoredSheetGridRecovery | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(recoveredSheetGridKey(sheetId, tabId));
+    if (raw === null) {
+      return null;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      !isStoredSheetGridRecovery(parsed) ||
+      parsed.sheetId !== sheetId ||
+      parsed.tabId !== tabId
+    ) {
+      removeRecoveredSheetGrid(sheetId, tabId);
+      return null;
+    }
+    return parsed;
+  } catch {
+    removeRecoveredSheetGrid(sheetId, tabId);
+    return null;
+  }
+}
+
+function writeRecoveredSheetGrid(
+  sheetId: string,
+  tabId: string,
+  edits: readonly SheetsCellEdit[],
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      recoveredSheetGridKey(sheetId, tabId),
+      JSON.stringify({
+        sheetId,
+        tabId,
+        edits,
+        savedAt: new Date().toISOString(),
+      } satisfies StoredSheetGridRecovery),
+    );
+  } catch {
+    // Local recovery is best-effort; normal realtime/REST saves remain authoritative.
+  }
+}
+
+function removeRecoveredSheetGrid(sheetId: string, tabId: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(recoveredSheetGridKey(sheetId, tabId));
+  } catch {
+    // Ignore storage failures; a stale draft should never block editor rendering.
+  }
+}
+
+function recoveredSheetGridKey(sheetId: string, tabId: string): string {
+  return `${SHEETS_GRID_RECOVERY_PREFIX}.${sheetId}.${tabId}`;
+}
+
+function isStoredSheetGridRecovery(value: unknown): value is StoredSheetGridRecovery {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Partial<StoredSheetGridRecovery>;
+  return (
+    typeof record.sheetId === "string" &&
+    typeof record.tabId === "string" &&
+    typeof record.savedAt === "string" &&
+    Array.isArray(record.edits) &&
+    record.edits.every(isSheetCellEdit)
+  );
+}
+
+function isSheetCellEdit(value: unknown): value is SheetsCellEdit {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Partial<SheetsCellEdit>;
+  return (
+    typeof record.row === "number" &&
+    Number.isInteger(record.row) &&
+    record.row >= 0 &&
+    typeof record.col === "number" &&
+    Number.isInteger(record.col) &&
+    record.col >= 0 &&
+    typeof record.value === "string"
+  );
+}
+
+function metadataWithImages(
+  metadata: Record<string, unknown>,
+  images: readonly SheetImageSpec[],
+): Record<string, unknown> {
+  return { ...metadata, images };
 }
 
 function sheetPivotTablesFromMetadata(
@@ -5954,6 +6895,36 @@ function isSheetChartType(value: unknown): value is SheetChartType {
   );
 }
 
+function isSheetImageSpec(value: unknown): value is SheetImageSpec {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const image = value as Record<string, unknown>;
+  return (
+    typeof image.id === "string" &&
+    typeof image.tabId === "string" &&
+    typeof image.driveObjectId === "string" &&
+    typeof image.src === "string" &&
+    typeof image.alt === "string" &&
+    typeof image.title === "string" &&
+    typeof image.mimeType === "string" &&
+    isSheetImagePlacement(image.placement)
+  );
+}
+
+function isSheetImagePlacement(value: unknown): value is SheetImagePlacement {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const placement = value as Record<string, unknown>;
+  return (
+    numberAnchorValue(placement.anchorRow) !== null &&
+    numberAnchorValue(placement.anchorCol) !== null &&
+    numberAnchorValue(placement.rowSpan) !== null &&
+    numberAnchorValue(placement.colSpan) !== null
+  );
+}
+
 function isSheetPivotTableSpec(value: unknown): value is SheetPivotTableSpec {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -6020,6 +6991,80 @@ function createSheetChartSpec(
     valueCol: Math.min(normalized.left + 1, normalized.right),
     placement: defaultChartPlacementForRange(normalized),
   };
+}
+
+function createSheetImageSpec(input: {
+  readonly tabId: string;
+  readonly file: File;
+  readonly driveObjectId: string;
+  readonly placement: SheetImagePlacement;
+}): SheetImageSpec {
+  return {
+    id: newClientId("image"),
+    tabId: input.tabId,
+    driveObjectId: input.driveObjectId,
+    src: `/api/drive/objects/${encodeURIComponent(input.driveObjectId)}/content`,
+    alt: sheetImageAltFromFilename(input.file.name),
+    title: input.file.name,
+    mimeType: input.file.type || "application/octet-stream",
+    placement: input.placement,
+  };
+}
+
+function defaultSheetImagePlacementForAnchor(row: number, col: number): SheetImagePlacement {
+  const rowSpan = 8;
+  const colSpan = 4;
+  return {
+    anchorRow: clampNumber(row, 0, SHEET_MAX_ROWS - rowSpan),
+    anchorCol: clampNumber(col, 0, SHEET_MAX_COLS - colSpan),
+    rowSpan,
+    colSpan,
+  };
+}
+
+function movedSheetImagePlacement(
+  placement: SheetImagePlacement,
+  deltaRow: number,
+  deltaCol: number,
+): SheetImagePlacement {
+  return {
+    ...placement,
+    anchorRow: clampNumber(placement.anchorRow + deltaRow, 0, SHEET_MAX_ROWS - placement.rowSpan),
+    anchorCol: clampNumber(placement.anchorCol + deltaCol, 0, SHEET_MAX_COLS - placement.colSpan),
+  };
+}
+
+function resizedSheetImagePlacement(
+  placement: SheetImagePlacement,
+  deltaRow: number,
+  deltaCol: number,
+): SheetImagePlacement {
+  const maxRowSpan = SHEET_MAX_ROWS - placement.anchorRow;
+  const maxColSpan = SHEET_MAX_COLS - placement.anchorCol;
+  return {
+    ...placement,
+    rowSpan: clampNumber(placement.rowSpan + deltaRow, 1, maxRowSpan),
+    colSpan: clampNumber(placement.colSpan + deltaCol, 1, maxColSpan),
+  };
+}
+
+function sheetImagePlacementForDrag(
+  drag: SheetImageDragState,
+  deltaRow: number,
+  deltaCol: number,
+): SheetImagePlacement {
+  return drag.mode === "resize"
+    ? resizedSheetImagePlacement(drag.originalPlacement, deltaRow, deltaCol)
+    : movedSheetImagePlacement(drag.originalPlacement, deltaRow, deltaCol);
+}
+
+function sheetImagePlacementEqual(left: SheetImagePlacement, right: SheetImagePlacement): boolean {
+  return (
+    left.anchorRow === right.anchorRow &&
+    left.anchorCol === right.anchorCol &&
+    left.rowSpan === right.rowSpan &&
+    left.colSpan === right.colSpan
+  );
 }
 
 function defaultChartPlacementForRange(range: NormalizedCellRange): SheetChartPlacement {
@@ -6113,6 +7158,175 @@ function pivotSlicer(pivot: SheetPivotTableSpec): SheetPivotSlicerSpec {
 
 function newClientId(prefix: string): string {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? String(Date.now())}`;
+}
+
+const SHEET_DROPPED_IMAGE_EXTENSION =
+  /\.(?:avif|bmp|gif|heic|heif|j2k|jfif|jpeg|jpg|jpe|jp2|jpf|jpm|jpx|jxl|png|svg|tif|tiff|webp)$/iu;
+
+function droppedSheetImageFile(dataTransfer: DataTransfer): File | undefined {
+  for (let index = 0; index < dataTransfer.items.length; index += 1) {
+    const item = dataTransfer.items[index];
+    if (item?.kind !== "file") {
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file !== null && isDroppedSheetImageFile(file)) {
+      return file;
+    }
+  }
+  for (let index = 0; index < dataTransfer.files.length; index += 1) {
+    const file = dataTransfer.files.item(index);
+    if (file !== null && isDroppedSheetImageFile(file)) {
+      return file;
+    }
+  }
+  return undefined;
+}
+
+function isDroppedSheetImageFile(file: File): boolean {
+  const mimeType = file.type.trim().toLowerCase();
+  return mimeType.startsWith("image/") || SHEET_DROPPED_IMAGE_EXTENSION.test(file.name);
+}
+
+function hasDroppedSheetText(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types).some(
+    (type) => type === "text/plain" || type === "text/uri-list" || type === "text/html",
+  );
+}
+
+function droppedSheetText(dataTransfer: DataTransfer): string {
+  const plainText = safeDataTransferText(dataTransfer, "text/plain");
+  if (plainText.trim().length > 0) {
+    return plainText;
+  }
+  const uriList = firstDroppedUri(safeDataTransferText(dataTransfer, "text/uri-list"));
+  if (uriList.length > 0) {
+    return uriList;
+  }
+  const html = safeDataTransferText(dataTransfer, "text/html");
+  return html.trim().length > 0 ? textFromDroppedHtml(html) : "";
+}
+
+function droppedSheetLinkUrl(dataTransfer: DataTransfer): string | undefined {
+  const uriListUrl = normalizedSafeSheetLinkUrl(
+    firstDroppedUri(safeDataTransferText(dataTransfer, "text/uri-list")),
+  );
+  if (uriListUrl !== undefined) {
+    return uriListUrl;
+  }
+  const htmlUrl = linkUrlFromDroppedHtml(safeDataTransferText(dataTransfer, "text/html"));
+  if (htmlUrl !== undefined) {
+    return htmlUrl;
+  }
+  return normalizedSafeSheetLinkUrl(safeDataTransferText(dataTransfer, "text/plain"));
+}
+
+function safeDataTransferText(dataTransfer: DataTransfer, type: string): string {
+  try {
+    return dataTransfer.getData(type);
+  } catch {
+    return "";
+  }
+}
+
+function firstDroppedUri(uriList: string): string {
+  return (
+    uriList
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0 && !line.startsWith("#")) ?? ""
+  );
+}
+
+function textFromDroppedHtml(html: string): string {
+  try {
+    return new DOMParser().parseFromString(html, "text/html").body.textContent ?? "";
+  } catch {
+    return html.replace(/<[^>]*>/gu, " ");
+  }
+}
+
+function linkUrlFromDroppedHtml(html: string): string | undefined {
+  if (html.trim().length === 0) {
+    return undefined;
+  }
+  try {
+    const href = new DOMParser()
+      .parseFromString(html, "text/html")
+      .querySelector<HTMLAnchorElement>("a[href]")
+      ?.getAttribute("href");
+    return normalizedSafeSheetLinkUrl(href ?? "");
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizedSafeSheetLinkUrl(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:"
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function sheetImagePlacementFromDrop(
+  event: DragEvent<HTMLElement>,
+  visibleRows: readonly VisibleSheetRow[],
+  visibleCols: readonly number[],
+): SheetImagePlacement | null {
+  const rect = event.currentTarget.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0 || visibleRows.length === 0 || visibleCols.length === 0) {
+    return null;
+  }
+  const rowOffset = clampNumber(
+    Math.floor((event.clientY - rect.top - SHEET_CELL_HEIGHT) / SHEET_CELL_HEIGHT),
+    0,
+    visibleRows.length - 1,
+  );
+  const colOffset = clampNumber(
+    Math.floor((event.clientX - rect.left - SHEET_ROW_HEADER_WIDTH) / SHEET_CELL_WIDTH),
+    0,
+    visibleCols.length - 1,
+  );
+  const row = visibleRows[rowOffset]?.rowIndex ?? 0;
+  const col = visibleCols[colOffset] ?? 0;
+  return defaultSheetImagePlacementForAnchor(row, col);
+}
+
+function sheetCellFromDrop(
+  event: DragEvent<HTMLElement>,
+  visibleRows: readonly VisibleSheetRow[],
+  visibleCols: readonly number[],
+): CellAddress | null {
+  const rect = event.currentTarget.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0 || visibleRows.length === 0 || visibleCols.length === 0) {
+    return null;
+  }
+  const rowOffset = Math.floor((event.clientY - rect.top - SHEET_CELL_HEIGHT) / SHEET_CELL_HEIGHT);
+  const colOffset = Math.floor((event.clientX - rect.left - SHEET_ROW_HEADER_WIDTH) / SHEET_CELL_WIDTH);
+  if (rowOffset < 0 || colOffset < 0) {
+    return null;
+  }
+  const row = visibleRows[rowOffset]?.rowIndex;
+  const col = visibleCols[colOffset];
+  return row === undefined || col === undefined ? null : { row, col };
+}
+
+function sheetImageAltFromFilename(filename: string): string {
+  const name = filename
+    .trim()
+    .replace(/\.[^.]+$/u, "")
+    .replace(/[_-]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return name.length > 0 ? name : "Spreadsheet image";
 }
 
 function chartDataFromGrid(chart: SheetChartSpec, grid: EditableGrid, displayGrid: EditableGrid) {
@@ -6354,6 +7568,94 @@ function EmbeddedSheetChart({
       <SheetChartPreview chart={chart} grid={grid} displayGrid={displayGrid} />
     </div>
   );
+}
+
+function EmbeddedSheetImage({
+  image,
+  placement,
+  selected,
+  visibleRows,
+  visibleCols,
+  onSelect,
+  onDelete,
+  onDragStart,
+  onResizeStart,
+}: {
+  readonly image: SheetImageSpec;
+  readonly placement: SheetImagePlacement;
+  readonly selected: boolean;
+  readonly visibleRows: readonly VisibleSheetRow[];
+  readonly visibleCols: readonly number[];
+  readonly onSelect: (imageId: string) => void;
+  readonly onDelete: (imageId: string) => void;
+  readonly onDragStart: (event: ReactMouseEvent<HTMLElement>, image: SheetImageSpec) => void;
+  readonly onResizeStart: (event: ReactMouseEvent<HTMLElement>, image: SheetImageSpec) => void;
+}) {
+  const style = embeddedImageStyle(placement, visibleRows, visibleCols, selected);
+  if (style === null) {
+    return null;
+  }
+  return (
+    <figure
+      aria-label={`Embedded image ${image.alt}`}
+      aria-selected={selected}
+      role="button"
+      tabIndex={0}
+      style={style}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect(image.id);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Delete" && event.key !== "Backspace") {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        onDelete(image.id);
+      }}
+      onMouseDown={(event) => onDragStart(event, image)}
+    >
+      <img src={image.src} alt={image.alt} title={image.title} style={EMBEDDED_IMAGE_IMG_STYLE} />
+      {selected ? (
+        <button
+          type="button"
+          aria-label={`Resize embedded image ${image.alt}`}
+          title="Resize"
+          style={EMBEDDED_IMAGE_RESIZE_HANDLE_STYLE}
+          onMouseDown={(event) => onResizeStart(event, image)}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        />
+      ) : null}
+    </figure>
+  );
+}
+
+function embeddedImageStyle(
+  placement: SheetImagePlacement,
+  visibleRows: readonly VisibleSheetRow[],
+  visibleCols: readonly number[],
+  selected: boolean,
+): CSSProperties | null {
+  const rowOffset = visibleRowOffset(placement.anchorRow, visibleRows);
+  const colOffset = visibleColOffset(placement.anchorCol, visibleCols);
+  if (rowOffset === null || colOffset === null) {
+    return null;
+  }
+  return {
+    ...EMBEDDED_IMAGE_STYLE,
+    borderColor: selected ? "var(--accent)" : "var(--border)",
+    boxShadow: selected
+      ? "0 0 0 2px rgba(124, 58, 237, 0.22), 0 8px 20px rgba(15, 23, 42, 0.14)"
+      : EMBEDDED_IMAGE_STYLE.boxShadow,
+    left: SHEET_ROW_HEADER_WIDTH + colOffset * SHEET_CELL_WIDTH,
+    top: SHEET_CELL_HEIGHT + rowOffset * SHEET_CELL_HEIGHT,
+    width: placement.colSpan * SHEET_CELL_WIDTH,
+    height: placement.rowSpan * SHEET_CELL_HEIGHT,
+  };
 }
 
 function embeddedChartStyle(
@@ -7207,6 +8509,17 @@ function formattedClipboardTextForRange(
   return JSON.stringify({ version: 1, rows });
 }
 
+function clearedCellEditsForRange(range: CellRange): SheetsCellEdit[] {
+  const normalized = normalizeRange(range);
+  const edits: SheetsCellEdit[] = [];
+  for (let row = normalized.top; row <= normalized.bottom; row += 1) {
+    for (let col = normalized.left; col <= normalized.right; col += 1) {
+      edits.push({ row, col, value: "", format: {} });
+    }
+  }
+  return edits;
+}
+
 function editsFromFormattedClipboard(
   formattedCells: string,
   startRow: number,
@@ -7278,23 +8591,73 @@ function editsFromClipboardText(
   startRow: number,
   startCol: number,
   previous: EditableGrid,
+  formatMap: ReadonlyMap<string, CellFormat>,
+  droppedLinkUrl?: string,
 ): SheetsCellEdit[] {
   const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = normalizedText.endsWith("\n")
     ? normalizedText.slice(0, -1).split("\n")
     : normalizedText.split("\n");
+  const singleCellDrop = lines.length === 1 && !lines[0]?.includes("\t");
   const edits: SheetsCellEdit[] = [];
   lines.forEach((line, rowOffset) => {
     line.split("\t").forEach((value, colOffset) => {
       const row = startRow + rowOffset;
       const col = startCol + colOffset;
-      const edit = diffCellEdit(previous, row, col, value);
+      const edit = cellEditWithAutoLink(
+        previous,
+        formatMap,
+        row,
+        col,
+        value,
+        singleCellDrop && rowOffset === 0 && colOffset === 0 ? droppedLinkUrl : undefined,
+      );
       if (edit !== null) {
         edits.push(edit);
       }
     });
   });
   return edits;
+}
+
+function cellEditWithAutoLink(
+  previous: EditableGrid,
+  formatMap: ReadonlyMap<string, CellFormat>,
+  row: number,
+  col: number,
+  value: string,
+  explicitLinkUrl?: string,
+): SheetsCellEdit | null {
+  const valueEdit = diffCellEdit(previous, row, col, value);
+  const existingFormat = formatMap.get(cellCoordinateKey(row, col)) ?? {};
+  const nextFormat = autoLinkedCellFormat(existingFormat, value, explicitLinkUrl);
+  const formatChanged =
+    nextFormat !== null && JSON.stringify(nextFormat) !== JSON.stringify(existingFormat);
+  if (valueEdit === null && !formatChanged) {
+    return null;
+  }
+  return {
+    row,
+    col,
+    value,
+    ...(formatChanged && nextFormat !== null ? { format: nextFormat } : {}),
+  };
+}
+
+function autoLinkedCellFormat(
+  existing: CellFormat,
+  value: string,
+  explicitLinkUrl?: string,
+): CellFormat | null {
+  const linkUrl = normalizedSafeSheetLinkUrl(explicitLinkUrl ?? value);
+  const currentLinkUrl = formatCellLinkUrl(existing.linkUrl);
+  if (linkUrl !== undefined) {
+    return mergeCellFormat(existing, { linkUrl });
+  }
+  if (currentLinkUrl.length > 0) {
+    return mergeCellFormat(existing, { linkUrl: null });
+  }
+  return null;
 }
 
 function copyFillEdits(
@@ -7730,6 +9093,155 @@ function formatBoolean(value: unknown): boolean {
 
 function formatAlign(value: unknown): HorizontalAlign {
   return value === "center" || value === "right" ? value : "left";
+}
+
+function formatVerticalAlign(value: unknown): SheetsVerticalAlign {
+  return value === "middle" || value === "bottom" ? value : "top";
+}
+
+function cellVisualAlignItems(value: SheetsVerticalAlign): "flex-start" | "center" | "flex-end" {
+  if (value === "middle") {
+    return "center";
+  }
+  if (value === "bottom") {
+    return "flex-end";
+  }
+  return "flex-start";
+}
+
+function cellVisualOverflowPlacement({
+  displayRow,
+  focused,
+  coveredByMerge,
+  col,
+  renderedValue,
+  textAlign,
+  visibleCols,
+  wrapText,
+}: {
+  readonly displayRow: readonly string[];
+  readonly focused: boolean;
+  readonly coveredByMerge: boolean;
+  readonly col: number;
+  readonly renderedValue: string;
+  readonly textAlign: HorizontalAlign;
+  readonly visibleCols: readonly number[];
+  readonly wrapText: boolean;
+}): { readonly span: number; readonly offsetPx: number } {
+  if (
+    focused ||
+    coveredByMerge ||
+    wrapText ||
+    renderedValue.trim().length === 0
+  ) {
+    return { span: 1, offsetPx: 0 };
+  }
+
+  const visibleIndex = visibleCols.indexOf(col);
+  if (visibleIndex < 0) {
+    return { span: 1, offsetPx: 0 };
+  }
+
+  let span = 1;
+  if (textAlign === "center") {
+    let leftSpan = 0;
+    let previousLeftCol = col;
+    for (let index = visibleIndex - 1; index >= 0; index -= 1) {
+      const nextCol = visibleCols[index];
+      if (nextCol !== previousLeftCol - 1) {
+        break;
+      }
+      const nextValue = displayRow[nextCol] ?? "";
+      if (nextValue.trim().length > 0) {
+        break;
+      }
+      leftSpan += 1;
+      previousLeftCol = nextCol;
+    }
+
+    let rightSpan = 0;
+    let previousRightCol = col;
+    for (let index = visibleIndex + 1; index < visibleCols.length; index += 1) {
+      const nextCol = visibleCols[index];
+      if (nextCol !== previousRightCol + 1) {
+        break;
+      }
+      const nextValue = displayRow[nextCol] ?? "";
+      if (nextValue.trim().length > 0) {
+        break;
+      }
+      rightSpan += 1;
+      previousRightCol = nextCol;
+    }
+
+    return {
+      span: leftSpan + 1 + rightSpan,
+      offsetPx: -leftSpan * SHEET_CELL_WIDTH,
+    };
+  }
+
+  if (textAlign === "right") {
+    let previousCol = col;
+    for (let index = visibleIndex - 1; index >= 0; index -= 1) {
+      const nextCol = visibleCols[index];
+      if (nextCol !== previousCol - 1) {
+        break;
+      }
+      const nextValue = displayRow[nextCol] ?? "";
+      if (nextValue.trim().length > 0) {
+        break;
+      }
+      span += 1;
+      previousCol = nextCol;
+    }
+    return { span, offsetPx: -(span - 1) * SHEET_CELL_WIDTH };
+  }
+
+  let previousCol = col;
+  for (let index = visibleIndex + 1; index < visibleCols.length; index += 1) {
+    const nextCol = visibleCols[index];
+    if (nextCol !== previousCol + 1) {
+      break;
+    }
+    const nextValue = displayRow[nextCol] ?? "";
+    if (nextValue.trim().length > 0) {
+      break;
+    }
+    span += 1;
+    previousCol = nextCol;
+  }
+  return { span, offsetPx: 0 };
+}
+
+function formatFontFamily(value: unknown): string | undefined {
+  switch (value) {
+    case "sans":
+      return "Arial, Helvetica, sans-serif";
+    case "serif":
+      return "Georgia, 'Times New Roman', serif";
+    case "mono":
+      return "'SFMono-Regular', Consolas, 'Liberation Mono', monospace";
+    default:
+      return undefined;
+  }
+}
+
+function formatFontSize(value: unknown): string | undefined {
+  return typeof value === "string" && /^(10|11|12|14|18)$/u.test(value)
+    ? `${value}px`
+    : undefined;
+}
+
+function formatTextDecoration(format: CellFormat, linkPreview: boolean): string | undefined {
+  const decorations = [
+    linkPreview || formatBoolean(format.underline) ? "underline" : undefined,
+    formatBoolean(format.strikethrough) ? "line-through" : undefined,
+  ].filter((value): value is string => value !== undefined);
+  return decorations.length === 0 ? undefined : decorations.join(" ");
+}
+
+function formatCellLinkUrl(value: unknown): string {
+  return typeof value === "string" && normalizedSafeSheetLinkUrl(value) !== undefined ? value : "";
 }
 
 function formatNumberFormat(value: unknown, customNumberFormat?: unknown): NumberFormat {
@@ -9034,6 +10546,42 @@ const EMBEDDED_CHART_STYLE = {
   boxShadow: "0 8px 20px rgba(15, 23, 42, 0.14)",
 } satisfies CSSProperties;
 
+const EMBEDDED_IMAGE_STYLE = {
+  position: "absolute",
+  zIndex: 2,
+  overflow: "hidden",
+  margin: 0,
+  padding: 6,
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  background: "var(--surface)",
+  boxShadow: "0 8px 20px rgba(15, 23, 42, 0.14)",
+  cursor: "move",
+  pointerEvents: "auto",
+  userSelect: "none",
+} satisfies CSSProperties;
+
+const EMBEDDED_IMAGE_IMG_STYLE = {
+  display: "block",
+  width: "100%",
+  height: "100%",
+  objectFit: "contain",
+} satisfies CSSProperties;
+
+const EMBEDDED_IMAGE_RESIZE_HANDLE_STYLE = {
+  position: "absolute",
+  right: -5,
+  bottom: -5,
+  width: 12,
+  height: 12,
+  padding: 0,
+  border: "2px solid var(--surface)",
+  borderRadius: 3,
+  background: "var(--accent)",
+  boxShadow: "0 1px 4px rgba(15, 23, 42, 0.24)",
+  cursor: "nwse-resize",
+} satisfies CSSProperties;
+
 const CHART_BAR_ROW_STYLE = {
   display: "grid",
   gridTemplateColumns: "72px minmax(0, 1fr) 44px",
@@ -9190,8 +10738,8 @@ const COMMENT_REPLY_STYLE = {
   padding: 8,
 } satisfies CSSProperties;
 
-const TOOLBAR_SELECT_STYLE = {
-  height: 32,
+const SIDE_PANEL_SELECT_STYLE = {
+  height: 28,
   border: "1px solid var(--border)",
   background: "var(--surface)",
   color: "var(--text)",
@@ -9199,25 +10747,22 @@ const TOOLBAR_SELECT_STYLE = {
   padding: "0 8px",
 } satisfies CSSProperties;
 
-const CUSTOM_FORMAT_INPUT_STYLE = {
-  ...TOOLBAR_SELECT_STYLE,
-  width: 112,
+const SIDE_PANEL_TAB_CONTENT_STYLE = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 12,
+  padding: 12,
+  minWidth: 0,
 } satisfies CSSProperties;
 
 const TAB_NAME_INPUT_STYLE = {
-  ...TOOLBAR_SELECT_STYLE,
+  height: 32,
   width: 132,
-} satisfies CSSProperties;
-
-const VIEWPORT_TOOLBAR_STYLE = {
-  display: "flex",
-  alignItems: "center",
-  flexWrap: "wrap",
-  gap: 6,
-  marginBottom: 8,
-  padding: 8,
   border: "1px solid var(--border)",
   background: "var(--surface)",
+  color: "var(--text)",
+  font: "inherit",
+  padding: "0 8px",
 } satisfies CSSProperties;
 
 const SELECTED_RANGE_SUMMARY_STYLE = {
@@ -9275,94 +10820,23 @@ const MERGED_RANGE_OVERLAY_STYLE = {
   boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, .72)",
 } satisfies CSSProperties;
 
-const VIEWPORT_STATUS_STYLE = {
-  marginLeft: "auto",
-  color: "var(--text-3)",
-  fontSize: "var(--text-caption)",
-  whiteSpace: "nowrap",
-} satisfies CSSProperties;
-
-function BorderGlyph({ preset }: { readonly preset: BorderPreset }) {
-  const innerLine =
-    preset === "all" ? (
-      <>
-        <span style={{ ...BORDER_GLYPH_VERTICAL_LINE_STYLE, left: "50%" }} />
-        <span style={{ ...BORDER_GLYPH_HORIZONTAL_LINE_STYLE, top: "50%" }} />
-      </>
-    ) : null;
-
-  const diagonalLine =
-    preset === "none" ? (
-      <span
-        style={{
-          position: "absolute",
-          top: -1,
-          left: "50%",
-          width: 1,
-          height: 18,
-          background: "var(--text-3)",
-          transform: "rotate(45deg)",
-        }}
-      />
-    ) : null;
-
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        position: "relative",
-        display: "block",
-        width: 16,
-        height: 16,
-        border: "1.5px solid currentColor",
-      }}
-    >
-      {innerLine}
-      {diagonalLine}
-    </span>
-  );
+function sheetVersionDetailLabel(version: OfficeVersionRecord): string {
+  const tabCount = numberMetadata(version.metadata.tabCount);
+  const cellCount = numberMetadata(version.metadata.cellCount);
+  if (cellCount !== null) {
+    return `${String(tabCount ?? 0)} tab${tabCount === 1 ? "" : "s"}, ${String(cellCount)} cell${
+      cellCount === 1 ? "" : "s"
+    }`;
+  }
+  if (tabCount !== null) {
+    return `${String(tabCount)} tab${tabCount === 1 ? "" : "s"}`;
+  }
+  return "Spreadsheet snapshot";
 }
 
-const BORDER_GLYPH_LINE_STYLE = {
-  position: "absolute",
-  background: "currentColor",
-} satisfies CSSProperties;
-
-const BORDER_GLYPH_VERTICAL_LINE_STYLE = {
-  ...BORDER_GLYPH_LINE_STYLE,
-  top: 0,
-  bottom: 0,
-  width: 1,
-} satisfies CSSProperties;
-
-const BORDER_GLYPH_HORIZONTAL_LINE_STYLE = {
-  ...BORDER_GLYPH_LINE_STYLE,
-  left: 0,
-  right: 0,
-  height: 1,
-} satisfies CSSProperties;
-
-const SWATCH_GROUP_STYLE = {
-  display: "flex",
-  alignItems: "center",
-  gap: 2,
-  paddingLeft: 6,
-  marginLeft: 2,
-  borderLeft: "1px solid var(--border)",
-} satisfies CSSProperties;
-
-const SWATCH_BUTTON_STYLE = {
-  display: "grid",
-  placeItems: "center",
-  width: 28,
-  height: 28,
-  border: "1px solid var(--border)",
-  borderRadius: 5,
-  font: "inherit",
-  fontSize: "var(--text-caption)",
-  fontWeight: 700,
-  cursor: "pointer",
-} satisfies CSSProperties;
+function numberMetadata(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 function GridHeaderCell({ children }: { readonly children?: ReactNode }) {
   return (
@@ -9428,6 +10902,39 @@ function focusSpreadsheetControl(id: string): void {
     element.scrollIntoView({ block: "nearest" });
     element.focus();
   }
+}
+
+async function copyCurrentSpreadsheetLink(sheetId: string): Promise<void> {
+  await writePlainClipboardText(buildCurrentSpreadsheetLink(sheetId));
+}
+
+async function writePlainClipboardText(text: string): Promise<void> {
+  if (typeof navigator === "undefined" || navigator.clipboard === undefined) {
+    return;
+  }
+  await navigator.clipboard.writeText(text);
+}
+
+async function readPlainClipboardText(): Promise<string> {
+  if (
+    typeof navigator === "undefined" ||
+    navigator.clipboard === undefined ||
+    typeof navigator.clipboard.readText !== "function"
+  ) {
+    return "";
+  }
+  return navigator.clipboard.readText();
+}
+
+function buildCurrentSpreadsheetLink(sheetId: string): string {
+  const nextUrl =
+    typeof window === "undefined"
+      ? new URL("http://localhost/sheets")
+      : new URL(window.location.href);
+  nextUrl.pathname = "/sheets";
+  nextUrl.search = "";
+  nextUrl.searchParams.set("sheet", sheetId);
+  return nextUrl.href;
 }
 
 function base64ToArrayBuffer(value: string): ArrayBuffer {

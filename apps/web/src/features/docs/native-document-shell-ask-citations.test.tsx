@@ -125,11 +125,17 @@ describe("NativeDocumentShell ask citations", () => {
 
     render();
     await settle();
+    // Ask AI lives in the collapsible side panel; open the panel before switching tabs.
+    clickButton("Show document outline");
+    await settle();
+    clickTab("Ask");
+    await settle();
     act(() => {
       setQuestion("What supports this?");
     });
+    // Submit the Ask form via its submit button (avoid matching the "Ask" tab trigger).
     act(() => {
-      buttonWithText("Ask")?.click();
+      askSubmitButton()?.click();
     });
     await settle();
 
@@ -214,6 +220,50 @@ describe("NativeDocumentShell ask citations", () => {
       ) ?? null
     );
   }
+
+  function clickTab(label: string): void {
+    const tab = Array.from(container.querySelectorAll<HTMLElement>("[role='tab']")).find((node) =>
+      (node.getAttribute("aria-label") ?? node.textContent ?? "").includes(label),
+    );
+    if (tab === undefined) {
+      const tabs = Array.from(container.querySelectorAll<HTMLElement>("[role='tab']")).map(
+        (node) => node.textContent?.trim() ?? "",
+      );
+      const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).map(
+        (node) => node.getAttribute("aria-label") ?? node.textContent?.trim() ?? "",
+      );
+      throw new Error(
+        `Missing side panel tab: ${label}. Tabs: ${tabs.join(", ") || "(none)"}. Buttons: ${
+          buttons.join(", ") || "(none)"
+        }`,
+      );
+    }
+    // Radix Tabs.Trigger needs a real bubbling MouseEvent in jsdom to fire onValueChange.
+    act(() => {
+      tab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+      tab.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    });
+  }
+
+  function clickButton(label: string): void {
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (node) => node.getAttribute("aria-label") === label || node.textContent?.includes(label),
+    );
+    if (button === undefined) {
+      throw new Error(`Missing button: ${label}`);
+    }
+    act(() => {
+      button.click();
+    });
+  }
+
+  function askSubmitButton(): HTMLButtonElement | null {
+    const form = container.querySelector<HTMLFormElement>(
+      "section#native-document-ask-panel form",
+    );
+    if (form === null) return null;
+    return form.querySelector<HTMLButtonElement>("button[type='submit']");
+  }
 });
 
 function nativeSessionResponse() {
@@ -230,6 +280,7 @@ function nativeSessionResponse() {
       id: "doc-1",
       orgId: "org-1",
       title: "Native session doc",
+      ownerActorId: "actor-1",
       editorEngine: "helix-native-document",
       formatVersion: 1,
       updateSeq: 4,

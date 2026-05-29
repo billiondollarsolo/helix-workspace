@@ -36,6 +36,7 @@ export interface NativeDocumentSession {
     readonly id: string;
     readonly orgId: string;
     readonly title: string;
+    readonly ownerActorId: string | null;
     readonly editorEngine: string;
     readonly formatVersion: number;
     readonly updateSeq: number;
@@ -72,8 +73,15 @@ export interface NativeDocumentSectionSettings {
 export interface DocsCreateInput {
   readonly title: string;
   readonly initialMarkdown?: string;
-  readonly editorEngine?: "legacy-yjs" | "onlyoffice-ooxml" | "helix-native-document";
+  readonly editorEngine?: "legacy-yjs" | "helix-native-document";
   readonly formatVersion?: number;
+  readonly folderId?: string | null;
+  readonly metadata?: Record<string, unknown>;
+}
+
+export interface DocsCopyInput {
+  readonly docId: string;
+  readonly title?: string;
   readonly folderId?: string | null;
   readonly metadata?: Record<string, unknown>;
 }
@@ -270,6 +278,22 @@ export async function createDocsDocument(
   );
 }
 
+export async function copyDocsDocument(
+  input: DocsCopyInput,
+  fetchImpl: DocsApiFetch = authenticatedFetch,
+): Promise<DocsApiDocument> {
+  return callDocsTool<DocsApiDocument>(
+    "docs.copy",
+    {
+      docId: input.docId,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+      metadata: input.metadata ?? {},
+    },
+    fetchImpl,
+  );
+}
+
 export async function importDocxDocument(
   input: {
     readonly filename?: string;
@@ -358,6 +382,29 @@ export async function updateDocsLayout(
     {
       docId: input.docId,
       layoutSettings: input.layoutSettings,
+    },
+    fetchImpl,
+  );
+}
+
+export async function saveNativeDocumentState(
+  input: {
+    readonly docId: string;
+    readonly stateBase64: string;
+    readonly stateVectorBase64?: string | undefined;
+    readonly metadata?: Record<string, unknown> | undefined;
+  },
+  fetchImpl: DocsApiFetch = authenticatedFetch,
+): Promise<DocsApiDocument> {
+  return callDocsTool<DocsApiDocument>(
+    "docs.save-native-state",
+    {
+      docId: input.docId,
+      stateBase64: input.stateBase64,
+      ...(input.stateVectorBase64 === undefined
+        ? {}
+        : { stateVectorBase64: input.stateVectorBase64 }),
+      metadata: input.metadata ?? {},
     },
     fetchImpl,
   );

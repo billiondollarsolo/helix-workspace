@@ -5,7 +5,11 @@ import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { MailStore } from "./store.js";
-import { ingestRawMail, type MailAuthenticationSummary } from "./ingest.js";
+import {
+  ingestRawMail,
+  MailauthAuthenticator,
+  type MailAuthenticator,
+} from "./ingest.js";
 import { MailSendService } from "./outbound.js";
 import { MAIL_CATEGORY_TABS } from "./category.js";
 import type {
@@ -189,6 +193,16 @@ export interface CreateMailToolDefinitionsOptions {
    * its subject and body. Best-effort: classification never fails the send.
    */
   readonly classifyResource?: ResourceClassifier;
+  /**
+   * Authenticator used by the `mail.inbound.accept` bridge tool to verify
+   * SPF/DKIM/DMARC on incoming RFC822. Defaults to the real
+   * {@link MailauthAuthenticator}; tests inject a fake to control the
+   * verification *result* (never to bypass authentication). The result is
+   * persisted on the stored message and drives downstream spam/quarantine
+   * decisions — a `fail`/`softfail`/`temperror` verdict does NOT drop the
+   * message, but it is recorded so the From header is not trusted.
+   */
+  readonly inboundAuthenticator?: MailAuthenticator;
 }
 
 /** Lower-cased domain portion of an email address, or "" when unparseable. */
@@ -312,15 +326,37 @@ export function createMailToolDefinitions(
     }),
     defineTool<z.output<typeof inboundAcceptSchema>, unknown>({
       id: "mail.inbound.accept",
-      description: "Accept a trusted inbound RFC822 mail probe or bridge payload.",
-      permission: "mail.write",
+      description:
+        "Accept an inbound RFC822 payload on behalf of the SMTP receiver. " +
+        "Service-only: requires the `mail.system` scope and a service-account / " +
+        "system actor. SPF/DKIM/DMARC are always verified against the raw " +
+        "message; the verification result is persisted on the stored message " +
+        "and used downstream — auth failures do not drop the message but do " +
+        "mean the From header is not trusted.",
+      // CRITICAL-4 (REVIEW.md): previously `mail.write` — any user could
+      // forge inbound mail. Now `mail.system`, a service-only scope that is
+      // explicitly NOT in agentCredentialScopeCatalog or
+      // appPasswordScopeCatalog (see scope-catalog.ts).
+      permission: "mail.system",
       sideEffects: "write",
       confirmationRequired: false,
       inputSchema: zodToolSchema(inboundAcceptSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        // Defence-in-depth: the `mail.system` scope is itself service-only,
+        // but a misconfigured token granted to a user actor MUST still be
+        // rejected. SPF/DKIM/DMARC fakery is no longer possible — see below.
+        if (ctx.actor.type !== "service_account" && ctx.actor.type !== "system") {
+          throw new Error(
+            `mail.inbound.accept requires a service-account or system actor; got ${ctx.actor.type}.`,
+          );
+        }
         const receivedAt = input.receivedAt === undefined ? new Date() : new Date(input.receivedAt);
         const raw = structuredInboundInputToRfc822(input, receivedAt);
+        // Always verify with the real authenticator (MailauthAuthenticator by
+        // default). Tests may inject a fake to control the *result*, but the
+        // verification step itself is unskippable.
+        const authenticator = options.inboundAuthenticator ?? new MailauthAuthenticator();
         const result = await ingestRawMail({
           store: options.store,
           input: {
@@ -332,7 +368,7 @@ export function createMailToolDefinitions(
             ...(input.helo === undefined ? {} : { helo: input.helo }),
             receivedAt,
           },
-          authenticator: trustedInboundAuthenticator,
+          authenticator,
         });
         return {
           ok: true,
@@ -709,21 +745,6 @@ function normalizeAddress(
     ...(!("name" in address) || address.name === undefined ? {} : { name: address.name }),
   };
 }
-
-const trustedInboundAuthenticator = {
-  async authenticate(): Promise<MailAuthenticationSummary> {
-    return {
-      spf: "none",
-      dkim: "none",
-      dmarc: "none",
-      arc: "none",
-      evidence: {
-        source: "mail.inbound.accept",
-        trustedBridge: true,
-      },
-    };
-  },
-};
 
 function structuredInboundInputToRfc822(
   input: z.output<typeof inboundAcceptSchema>,

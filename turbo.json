@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalEnv": ["HELIX_MODE"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

@@ -10,6 +10,7 @@ import {
   type VectorItem,
   type VectorMatch,
   type VectorMetric,
+  type VectorOrgScope,
   type VectorQueryOpts,
   type VectorStore,
 } from "./types.js";
@@ -31,47 +32,99 @@ export class PgVectorStore implements VectorStore {
 
   constructor(private readonly sql: postgres.Sql) {}
 
-  async createCollection(name: string, dim: number, metric: VectorMetric): Promise<void> {
+  async createCollection(
+    orgId: VectorOrgScope,
+    name: string,
+    dim: number,
+    metric: VectorMetric,
+  ): Promise<void> {
     const collection = validateCollectionName(name);
+    // Collection rows are scoped per (org_id, name). A tenant cannot create or
+    // mutate a collection that another tenant already owns under the same
+    // name — the unique key includes org_id.
     await this.sql`
-      insert into vector_collections (name, dim, metric)
-      values (${collection}, ${validateDimension(dim)}, ${assertVectorMetric(metric)})
-      on conflict (name) do update
+      insert into vector_collections (org_id, name, dim, metric)
+      values (${orgId}, ${collection}, ${validateDimension(dim)}, ${assertVectorMetric(metric)})
+      on conflict (org_id, name) do update
       set dim = excluded.dim, metric = excluded.metric, updated_at = now()
     `;
   }
 
-  async upsert(collectionName: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(
+    orgId: VectorOrgScope,
+    collectionName: string,
+    items: readonly VectorItem[],
+  ): Promise<void> {
     if (items.length === 0) {
       return;
     }
     const collection = validateCollectionName(collectionName);
-    const collectionRow = await this.collection(collection);
+    const collectionRow = await this.collection(orgId, collection);
 
     await this.sql.begin(async (tx) => {
       for (const item of items) {
         validateVector(item.vector, collectionRow.dim);
+        const visibility = item.visibility ?? "org";
+        if (visibility === "private" && item.ownerActorId === undefined) {
+          throw new TypeError(
+            `Private vector item ${item.id} requires ownerActorId`,
+          );
+        }
+        const ownerActorId = visibility === "private" ? item.ownerActorId : null;
         await tx`
-          insert into vector_items (collection_name, id, embedding, metadata)
-          values (${collection}, ${item.id}, ${vectorToPgLiteral(item.vector)}::vector, ${tx.json(item.metadata ?? {})})
-          on conflict (collection_name, id) do update
-          set embedding = excluded.embedding, metadata = excluded.metadata, updated_at = now()
+          insert into vector_items (
+            org_id, collection_name, id,
+            embedding, metadata, visibility, owner_actor_id
+          )
+          values (
+            ${orgId}, ${collection}, ${item.id},
+            ${vectorToPgLiteral(item.vector)}::vector, ${tx.json(item.metadata ?? {})},
+            ${visibility}, ${ownerActorId ?? null}
+          )
+          on conflict (org_id, collection_name, id) do update
+          set embedding = excluded.embedding,
+              metadata = excluded.metadata,
+              visibility = excluded.visibility,
+              owner_actor_id = excluded.owner_actor_id,
+              updated_at = now()
         `;
       }
     });
   }
 
-  async query(collectionName: string, vector: readonly number[], opts: VectorQueryOpts = {}): Promise<readonly VectorMatch[]> {
+  async query(
+    orgId: VectorOrgScope,
+    collectionName: string,
+    vector: readonly number[],
+    opts: VectorQueryOpts = {},
+  ): Promise<readonly VectorMatch[]> {
     const collection = validateCollectionName(collectionName);
-    const collectionRow = await this.collection(collection);
+    const collectionRow = await this.collection(orgId, collection);
     validateVector(vector, collectionRow.dim);
     const limit = validateLimit(opts.limit);
     const queryVector = vectorToPgLiteral(vector);
 
     const rows =
       opts.filter === undefined
-        ? await this.queryWithoutFilter(collection, collectionRow.metric, queryVector, limit, opts.includeVectors === true)
-        : await this.queryWithFilter(collection, collectionRow.metric, queryVector, opts.filter, limit, opts.includeVectors === true);
+        ? await this.queryWithoutFilter(
+            orgId,
+            collection,
+            collectionRow.metric,
+            queryVector,
+            limit,
+            opts.includeVectors === true,
+            opts.actorId,
+          )
+        : await this.queryWithFilter(
+            orgId,
+            collection,
+            collectionRow.metric,
+            queryVector,
+            opts.filter,
+            limit,
+            opts.includeVectors === true,
+            opts.actorId,
+          );
 
     return rows.map((row) => ({
       id: row.id,
@@ -81,23 +134,29 @@ export class PgVectorStore implements VectorStore {
     }));
   }
 
-  async delete(collectionName: string, ids: readonly string[]): Promise<void> {
+  async delete(
+    orgId: VectorOrgScope,
+    collectionName: string,
+    ids: readonly string[],
+  ): Promise<void> {
     if (ids.length === 0) {
       return;
     }
     const collection = validateCollectionName(collectionName);
     await this.sql`
       delete from vector_items
-      where collection_name = ${collection}
+      where org_id is not distinct from ${orgId}
+        and collection_name = ${collection}
         and id = any(${this.sql.array([...ids])})
     `;
   }
 
-  private async collection(name: string): Promise<VectorCollectionRow> {
+  private async collection(orgId: VectorOrgScope, name: string): Promise<VectorCollectionRow> {
     const selectedRows = await this.sql`
       select dim, metric
       from vector_collections
-      where name = ${name}
+      where org_id is not distinct from ${orgId}
+        and name = ${name}
       limit 1
     `;
     const rows = selectedRows as unknown as readonly VectorCollectionRow[];
@@ -108,18 +167,37 @@ export class PgVectorStore implements VectorStore {
     return row;
   }
 
+  /**
+   * Build the SQL visibility predicate. When actorId is set, the caller sees
+   * org-shared items plus their own private items. When unset (default-safe),
+   * only org-shared items are returned — a caller that hasn't been updated
+   * for the RAG visibility model can never accidentally pull another user's
+   * private embeddings.
+   */
+  private visibilityClause(actorId: string | undefined) {
+    if (actorId === undefined) {
+      return this.sql`and visibility = 'org'`;
+    }
+    return this.sql`and (visibility = 'org' or (visibility = 'private' and owner_actor_id = ${actorId}))`;
+  }
+
   private async queryWithoutFilter(
+    orgId: VectorOrgScope,
     collection: string,
     metric: VectorMetric,
     queryVector: string,
     limit: number,
     includeVectors: boolean,
+    actorId: string | undefined,
   ): Promise<readonly VectorItemRow[]> {
+    const visibility = this.visibilityClause(actorId);
     if (metric === "cosine") {
       const rows = await this.sql`
         select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, 1 - (embedding <=> ${queryVector}::vector) as score
         from vector_items
-        where collection_name = ${collection}
+        where org_id is not distinct from ${orgId}
+          and collection_name = ${collection}
+          ${visibility}
         order by embedding <=> ${queryVector}::vector
         limit ${limit}
       `;
@@ -129,7 +207,9 @@ export class PgVectorStore implements VectorStore {
       const rows = await this.sql`
         select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, -(embedding <#> ${queryVector}::vector) as score
         from vector_items
-        where collection_name = ${collection}
+        where org_id is not distinct from ${orgId}
+          and collection_name = ${collection}
+          ${visibility}
         order by embedding <#> ${queryVector}::vector
         limit ${limit}
       `;
@@ -138,7 +218,9 @@ export class PgVectorStore implements VectorStore {
     const rows = await this.sql`
       select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, 1 / (1 + (embedding <-> ${queryVector}::vector)) as score
       from vector_items
-      where collection_name = ${collection}
+      where org_id is not distinct from ${orgId}
+        and collection_name = ${collection}
+        ${visibility}
       order by embedding <-> ${queryVector}::vector
       limit ${limit}
     `;
@@ -146,19 +228,24 @@ export class PgVectorStore implements VectorStore {
   }
 
   private async queryWithFilter(
+    orgId: VectorOrgScope,
     collection: string,
     metric: VectorMetric,
     queryVector: string,
     filter: JsonObject,
     limit: number,
     includeVectors: boolean,
+    actorId: string | undefined,
   ): Promise<readonly VectorItemRow[]> {
+    const visibility = this.visibilityClause(actorId);
     if (metric === "cosine") {
       const rows = await this.sql`
         select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, 1 - (embedding <=> ${queryVector}::vector) as score
         from vector_items
-        where collection_name = ${collection}
+        where org_id is not distinct from ${orgId}
+          and collection_name = ${collection}
           and metadata @> ${this.sql.json(filter)}
+          ${visibility}
         order by embedding <=> ${queryVector}::vector
         limit ${limit}
       `;
@@ -168,8 +255,10 @@ export class PgVectorStore implements VectorStore {
       const rows = await this.sql`
         select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, -(embedding <#> ${queryVector}::vector) as score
         from vector_items
-        where collection_name = ${collection}
+        where org_id is not distinct from ${orgId}
+          and collection_name = ${collection}
           and metadata @> ${this.sql.json(filter)}
+          ${visibility}
         order by embedding <#> ${queryVector}::vector
         limit ${limit}
       `;
@@ -178,8 +267,10 @@ export class PgVectorStore implements VectorStore {
     const rows = await this.sql`
       select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, 1 / (1 + (embedding <-> ${queryVector}::vector)) as score
       from vector_items
-      where collection_name = ${collection}
+      where org_id is not distinct from ${orgId}
+        and collection_name = ${collection}
         and metadata @> ${this.sql.json(filter)}
+        ${visibility}
       order by embedding <-> ${queryVector}::vector
       limit ${limit}
     `;

@@ -194,7 +194,20 @@ async function dispatchMcpJsonRpcRequest(
         return jsonRpcError(request.id, -32602, "resources/read requires params.uri.");
       }
       const provider = input.resources ?? emptyResourceProvider;
-      const resource = await provider.read(input.actor, params.uri);
+      let resource: McpResourceContent | null;
+      try {
+        resource = await provider.read(input.actor, params.uri);
+      } catch (error) {
+        const httpError = mcpHttpError(error);
+        if (httpError !== null) {
+          return jsonRpcError(
+            request.id,
+            statusToJsonRpcCode(httpError.statusCode),
+            httpError.message,
+          );
+        }
+        throw error;
+      }
       if (resource === null) {
         return jsonRpcError(request.id, -32004, `Resource not found: ${params.uri}`);
       }
@@ -433,6 +446,27 @@ function jsonRpcResult(id: JsonRpcId | undefined, result: unknown): JsonRpcRespo
 
 function jsonRpcError(id: JsonRpcId | undefined, code: number, message: string): JsonRpcResponse {
   return { jsonrpc: "2.0", id: id ?? null, error: { code, message } };
+}
+
+function mcpHttpError(
+  error: unknown,
+): { readonly statusCode: number; readonly message: string } | null {
+  if (typeof error !== "object" || error === null) {
+    return null;
+  }
+  const statusCode = (error as { readonly statusCode?: unknown }).statusCode;
+  if (
+    typeof statusCode !== "number" ||
+    !Number.isInteger(statusCode) ||
+    statusCode < 400 ||
+    statusCode > 599
+  ) {
+    return null;
+  }
+  return {
+    statusCode,
+    message: error instanceof Error ? error.message : "MCP resource read failed.",
+  };
 }
 
 function isJsonRpcId(value: unknown): value is JsonRpcId {

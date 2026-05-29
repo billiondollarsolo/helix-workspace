@@ -1,8 +1,9 @@
 /* migrate-native-to-ooxml.ts
  *
- * Phase 4 of the OnlyOffice migration: convert every native Helix doc /
- * sheet / slide deck row into the equivalent OOXML file stored on the
- * shared `objects` row.
+ * Historical migration: convert every native Helix doc / sheet / slide
+ * deck row into the equivalent OOXML file stored on the shared `objects`
+ * row. Retained for the one-way migration path; new tenants never run
+ * this — they start out on the native helix editors directly.
  *
  * Strategy: in-place migration. The shared-PK convention means each
  * `docs_documents.id` already has a matching `objects.id` row — we
@@ -199,8 +200,8 @@ async function rewriteObject(
     ? sanitizedTitle
     : `${sanitizedTitle}.${extension}`;
   // Drop the old `app: "docs"|"sheets"|"slides"` discriminator — these
-  // are now raw drive files (Drive UI opens them via OnlyOffice, not the
-  // legacy native editor surface).
+  // are now raw drive files. The Drive UI imports them into a fresh
+  // native helix entity on first open via /open/:objectId.
   const updatedMetadata = {
     ...existingMetadata,
     name: newName,

@@ -158,7 +158,10 @@ export interface ImageProviderCapability {
   readonly id: string;
   readonly protocol: AIProviderProtocol;
   readonly tags?: readonly string[];
-  generateImage(req: ImageGenerationRequest, ctx: AICallContext): Promise<ImageGenerationResponse>;
+  generateImage(
+    req: ImageGenerationRequest,
+    ctx: AICallContext,
+  ): Promise<ImageGenerationResponse>;
   models(): Promise<readonly ModelInfo[]>;
 }
 

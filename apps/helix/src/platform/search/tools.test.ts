@@ -58,6 +58,8 @@ describe("search tools", () => {
         limit: 5,
         offset: 10,
         filter: `attributes.orgId = ${JSON.stringify(orgId)}`,
+        // Server-set RAG actor identity (see createScopedSearchRequest).
+        forActorId: actor.id,
       },
     ]);
   });
@@ -93,6 +95,7 @@ describe("search tools", () => {
           limit: 5,
           offset: 10,
           filter: `attributes.orgId = ${JSON.stringify(orgId)}`,
+          forActorId: actor.id,
         },
       ]);
     },

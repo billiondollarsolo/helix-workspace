@@ -14,6 +14,9 @@
     "helix": "pnpm --filter @helix/app",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:single-tenant": "HELIX_MODE=single-tenant turbo run test",
+    "test:multi-tenant-saas": "HELIX_MODE=multi-tenant-saas turbo run test",
+    "test:cross-tenant-isolation": "HELIX_MODE=multi-tenant-saas pnpm --filter @helix/app exec vitest run src/platform/tenancy/cross-tenant-isolation.test.ts",
     "typecheck": "turbo run typecheck",
     "quality:a11y": "pnpm --filter @helix/web audit:a11y",
     "quality:a11y:fallback": "pnpm --filter @helix/web audit:a11y:fallback",
@@ -28,9 +31,8 @@
     "quality:sheets-fidelity": "bash infra/scripts/verify-sheets-fidelity.sh",
     "quality:live-restore-drill": "bash infra/scripts/live-restore-drill-smoke.sh",
     "quality:mail-deliverability-smoke": "node infra/scripts/mail-deliverability-smoke.mjs",
-    "quality:alertmanager-tenant-storage-routing": "node infra/scripts/alertmanager-tenant-storage-routing-smoke.mjs",
-    "quality:byo-storage-credential-rotation-smoke": "node infra/scripts/byo-storage-credential-rotation-smoke.mjs",
-    "quality:byo-storage-migration-smoke": "node infra/scripts/byo-storage-migration-smoke.mjs",
+    "quality:alertmanager-signup-routing": "node infra/scripts/alertmanager-signup-routing-smoke.mjs",
+    "quality:synthetic-signup-probe": "node infra/scripts/synthetic-signup-probe.mjs",
     "infra:build": "docker compose build",
     "infra:config": "docker compose config",
     "infra:config:observability": "docker compose --profile observability config",
@@ -45,7 +47,10 @@
     "infra:restore:live-smoke": "bash infra/scripts/live-restore-drill-smoke.sh",
     "cerbos:compile": "docker run --rm -v \"$PWD/infra/cerbos/policies:/policies:ro\" ghcr.io/cerbos/cerbos:latest compile /policies",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "corpus:fetch": "tsx test-corpus/fetch.ts",
+    "corpus:fetch:force": "tsx test-corpus/fetch.ts --force",
+    "corpus:seed": "tsx test-corpus/seed.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",

@@ -257,6 +257,11 @@ MCP read. Mint the token with `drive.write`, `docs.write`, `docs.comment`,
 `calendar.write`, `calendar.write:respond`, and `calendar.read:freebusy`. If the
 Drive MCP byte read fails, check that the app was started with `RUSTFS_ENDPOINT`;
 if Calendar create returns `403`, reseed the local OAuth client.
+If `drive.finalize` returns `Drive upload content storage is not configured`,
+treat it as intended fail-closed behavior. Do not repair it by accepting
+metadata-only finalization. Start the API with `RUSTFS_ENDPOINT`, or configure
+tenant BYO storage plus `credentials_vault_path` and its secret reader before
+retrying.
 With `--drive-docs-calendar-search-smoke`, the same live data smoke also runs
 `POST /api/admin/search/reindex` and verifies each created Drive, Docs, and
 Calendar record through POST and read-safe GET `search.query`. If a unified

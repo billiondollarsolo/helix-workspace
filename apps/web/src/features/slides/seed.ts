@@ -7,6 +7,8 @@
  * and SlideContent shapes, and the static `SLIDE_LAYOUT_OPTIONS` list that
  * drives the editor's layout `<select>`. */
 
+import type { DriveApiPreview } from "@/features/drive/api";
+
 /** A deck row in the Slides list view. */
 export interface SlideDeck {
   readonly id: string;
@@ -15,7 +17,16 @@ export interface SlideDeck {
   readonly modified: string;
   readonly slides: number;
   readonly shared: number;
-  /** Native Helix decks open in-app; uploaded PPT/PPTX files open through Office. */
+  /** True when the signed-in user owns the presentation. */
+  readonly mine?: boolean;
+  readonly starred?: boolean;
+  /** Non-null when the Drive object is in trash. */
+  readonly deletedAt?: string | null;
+  readonly mimeType?: string | undefined;
+  /** Uppercase source format shown beside filenames, e.g. PPTX or ODP. */
+  readonly formatLabel?: string;
+  readonly preview?: DriveApiPreview | undefined;
+  /** Native Helix decks open in-app; uploaded decks use explicit copy/preview open flow. */
   readonly openMode?: "native" | "office";
   /** `"backend"` rows are persisted decks; `"seed"` rows are the offline fallback. */
   readonly source?: "backend" | "seed";
@@ -42,6 +53,12 @@ export type SlideShapeKind = "text" | "rectangle" | "connector" | "image" | "med
 
 /** Visual treatment for first-pass freeform shapes. */
 export type SlideShapeTone = "accent" | "light" | "dark";
+
+/** Text face persisted for freeform slide text. */
+export type SlideShapeFontFamily = "inter" | "serif" | "mono" | "system";
+
+/** Paragraph alignment persisted for freeform slide text. */
+export type SlideShapeTextAlign = "left" | "center" | "right" | "justify";
 
 /** Connector line direction inside the shape's percentage bounding box. */
 export type SlideConnectorDirection = "up" | "down";
@@ -96,7 +113,17 @@ export interface SlideShape {
   readonly width: number;
   readonly height: number;
   readonly text?: string;
+  readonly linkUrl?: string;
   readonly tone?: SlideShapeTone;
+  readonly fontFamily?: SlideShapeFontFamily;
+  readonly fontSize?: number;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly strikethrough?: boolean;
+  readonly textAlign?: SlideShapeTextAlign;
+  readonly textColor?: string;
+  readonly highlightColor?: string;
   readonly connectorDirection?: SlideConnectorDirection;
   readonly connectorArrow?: SlideConnectorArrow;
   readonly imageUrl?: string;

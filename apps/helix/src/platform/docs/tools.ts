@@ -47,6 +47,13 @@ const createSchema = z.object({
   metadata: metadataSchema,
 });
 
+const copySchema = z.object({
+  docId: uuidSchema,
+  title: z.string().min(1).max(255).optional(),
+  folderId: uuidSchema.nullable().optional(),
+  metadata: metadataSchema,
+});
+
 const updateTitleSchema = z.object({
   docId: uuidSchema,
   title: z.string().min(1).max(255),
@@ -80,6 +87,13 @@ const updateLayoutSchema = z.object({
       )
       .optional(),
   }),
+});
+
+const saveNativeStateSchema = z.object({
+  docId: uuidSchema,
+  stateBase64: z.string().min(1),
+  stateVectorBase64: z.string().min(1).optional(),
+  metadata: metadataSchema,
 });
 
 const migrateNativeSchema = z.object({
@@ -259,9 +273,12 @@ export interface CreateDocsToolDefinitionsOptions {
 
 type DocsToolStore = DocsExportStore & {
   readonly create?: unknown;
+  readonly copy?: unknown;
   readonly listDocumentsForActor?: unknown;
   readonly updateTitle?: unknown;
   readonly updateLayout?: unknown;
+  readonly appendUpdate?: unknown;
+  readonly compactDocument?: unknown;
   readonly migrateToNativeDocument?: unknown;
   readonly getDocumentForActor?: unknown;
   readonly createComment?: unknown;
@@ -353,6 +370,31 @@ export function createDocsToolDefinitions(
         ).map(serializeDocument),
       }),
     }),
+    defineTool<z.output<typeof copySchema>, unknown>({
+      id: "docs.copy",
+      description: "Copy a Docs document without losing native editor state.",
+      permission: "docs.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(copySchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const document = (await requireStoreMethod(
+          options.store,
+          "copy",
+        )({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          documentId: input.docId,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+          metadata: toJsonObject(input.metadata),
+        })) as DocsDocumentRecord | null;
+        if (document === null) {
+          throw new Error(`Unknown Docs document: ${input.docId}`);
+        }
+        return serializeDocument(document);
+      },
+    }),
     defineTool<z.output<typeof updateTitleSchema>, unknown>({
       id: "docs.update-title",
       description: "Update a Docs document title.",
@@ -392,6 +434,47 @@ export function createDocsToolDefinitions(
           actorId: ctx.actor.id,
           documentId: input.docId,
           layoutSettings: input.layoutSettings,
+        })) as DocsDocumentRecord | null;
+        if (document === null) {
+          throw new Error(`Unknown Docs document: ${input.docId}`);
+        }
+        return serializeDocument(document);
+      },
+    }),
+    defineTool<z.output<typeof saveNativeStateSchema>, unknown>({
+      id: "docs.save-native-state",
+      description: "Persist the current native Docs Yjs state and append a version update.",
+      permission: "docs.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(saveNativeStateSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const state = Buffer.from(input.stateBase64, "base64");
+        const stateVector =
+          input.stateVectorBase64 === undefined
+            ? null
+            : Buffer.from(input.stateVectorBase64, "base64");
+        await requireStoreMethod(
+          options.store,
+          "appendUpdate",
+        )({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          documentId: input.docId,
+          update: state,
+          metadata: {
+            ...input.metadata,
+            stateBase64: input.stateBase64,
+          },
+        });
+        const document = (await requireStoreMethod(
+          options.store,
+          "compactDocument",
+        )({
+          orgId: ctx.actor.orgId,
+          documentId: input.docId,
+          state,
+          stateVector,
         })) as DocsDocumentRecord | null;
         if (document === null) {
           throw new Error(`Unknown Docs document: ${input.docId}`);
@@ -512,11 +595,22 @@ export function createDocsToolDefinitions(
           throw new Error("DOCX import content is empty.");
         }
         const imported = await converter({ buffer: bytes });
-        const title = input.title?.trim() || titleFromFilename(input.filename) || "Imported DOCX";
+        // Mammoth inlines embedded images as `![alt](data:image/...;base64,…)`.
+        // EMF/WMF blobs can be 50KB+ as a single unbroken token, which the
+        // markdown→native renderer then emits as a horizontal wall of text.
+        // Replace the data: URI portion with a clean placeholder so the doc
+        // body stays readable. A follow-up will upload the bytes as real
+        // image attachments and link them by drive-object ref.
+        const sanitizedMarkdown = stripInlineDataUriImages(imported.markdown);
+        const sourceFormat = docsImportSourceFormat(input.filename);
+        const title =
+          input.title?.trim() || titleFromFilename(input.filename) || "Imported document";
         const metadata = toJsonObject({
           ...input.metadata,
-          importedFrom: "docx",
-          ...(input.filename === undefined ? {} : { filename: input.filename }),
+          importedFrom: sourceFormat,
+          ...(input.filename === undefined
+            ? {}
+            : { filename: input.filename, sourceFilename: input.filename }),
           importMessages: imported.messages,
         });
         const document = (await requireStoreMethod(
@@ -526,7 +620,7 @@ export function createDocsToolDefinitions(
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           title,
-          initialMarkdown: imported.markdown,
+          initialMarkdown: sanitizedMarkdown,
           editorEngine: HELIX_NATIVE_DOCUMENT_ENGINE,
           formatVersion: 1,
           folderId: input.folderId ?? null,
@@ -953,8 +1047,7 @@ export function createDocsToolDefinitions(
           beforeSeq: input.beforeSeq,
         })) as readonly DocsUpdateRecord[];
         const versions = rows.slice(0, input.limit);
-        const nextBeforeSeq =
-          rows.length > input.limit ? (versions.at(-1)?.seq ?? null) : null;
+        const nextBeforeSeq = rows.length > input.limit ? (versions.at(-1)?.seq ?? null) : null;
         return {
           versions: versions.map(serializeVersion),
           nextBeforeSeq,
@@ -1200,7 +1293,39 @@ function titleFromFilename(filename: string | undefined): string | undefined {
   if (trimmed === undefined || trimmed.length === 0) {
     return undefined;
   }
-  return trimmed.replace(/\.(docx?|rtf|odt)$/iu, "").trim() || undefined;
+  return (
+    trimmed
+      .replace(/\.(docx?|docm|dotx|dotm|rtf|odt)$/iu, "")
+      .trim() || undefined
+  );
+}
+
+function docsImportSourceFormat(filename: string | undefined): string {
+  const extension = /\.([^.\\/]+)$/u.exec(filename?.trim() ?? "")?.[1]?.toLowerCase();
+  switch (extension) {
+    case "docx":
+    case "docm":
+    case "dotx":
+    case "dotm":
+    case "rtf":
+    case "odt":
+      return extension;
+    default:
+      return "docx";
+  }
+}
+
+/** Replace `![alt](data:image/...;base64,…)` in markdown with a clean
+ *  placeholder. Mammoth emits one of these per embedded DOCX image; EMF/WMF
+ *  blobs can be 50KB+ unbroken which renders as a horizontal text wall. We
+ *  drop the data URI entirely and keep the alt text so the doc reads cleanly.
+ *  Real image preservation lands when the importer uploads each blob as a
+ *  drive object and rewrites the markdown to reference its object id. */
+export function stripInlineDataUriImages(markdown: string): string {
+  return markdown.replace(/!\[([^\]]*)\]\(data:[^)]+\)/gu, (_, altRaw: string) => {
+    const alt = altRaw.trim();
+    return alt.length > 0 ? `_[Image: ${alt}]_` : "_[Embedded image]_";
+  });
 }
 
 function serializeVersion(update: DocsUpdateRecord) {

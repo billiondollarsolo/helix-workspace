@@ -197,6 +197,43 @@ describe("helix/query-refresh-discipline", () => {
   });
 });
 
+describe("helix/direct-drizzle-tenant-query", () => {
+  it("requires tenantScoped() for org-scoped Drizzle tables", () => {
+    ruleTester.run(
+      "direct-drizzle-tenant-query",
+      helixBrowserPlugin.rules["direct-drizzle-tenant-query"],
+      {
+        valid: [
+          "tenantScoped(objects, orgId).select({ id: objects.id });",
+          "tenantScoped(docsDocuments, orgId).update({ title });",
+          "db.select().from(plans);",
+          "db.select().from(platformConfig);",
+          "query.from(dynamicTable);",
+          "sql`select * from objects where org_id = ${orgId}`;",
+        ],
+        invalid: [
+          {
+            code: "db.select().from(objects);",
+            errors: [{ messageId: "directDrizzleTenantQuery" }],
+          },
+          {
+            code: "db.insert(docsDocuments).values(input);",
+            errors: [{ messageId: "directDrizzleTenantQuery" }],
+          },
+          {
+            code: "db.update(permissions).set({ role });",
+            errors: [{ messageId: "directDrizzleTenantQuery" }],
+          },
+          {
+            code: "db['delete'](messages).where(eq(messages.id, id));",
+            errors: [{ messageId: "directDrizzleTenantQuery" }],
+          },
+        ],
+      },
+    );
+  });
+});
+
 describe("helix/pacer-discipline", () => {
   it("requires TanStack Pacer hooks instead of native browser timers", () => {
     ruleTester.run("pacer-discipline", helixBrowserPlugin.rules["pacer-discipline"], {

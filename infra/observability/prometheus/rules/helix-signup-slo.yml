@@ -1,0 +1,39 @@
+groups:
+  - name: helix.signup.slo
+    rules:
+      - alert: HelixSignupActivationP95High
+        expr: histogram_quantile(0.95, sum(rate(helix_signup_activation_duration_seconds_bucket[10m])) by (le, tier, plan_id, region)) > 60
+        for: 15m
+        labels:
+          severity: warning
+          priority: p2
+          service: signup
+          slo: signup_activation
+        annotations:
+          runbook_url: docs/specs/05-operations/runbooks/signup-activation-slo-breach.md
+          summary: "Signup activation p95 is above 60 seconds"
+          description: "Signup activation p95 for tier={{ $labels.tier }}, plan={{ $labels.plan_id }}, region={{ $labels.region }} has exceeded the 60-second target for 15 minutes."
+      - alert: HelixSignupActivationSloMissRateHigh
+        expr: sum(rate(helix_signup_activation_duration_seconds_count{within_target="false"}[10m])) by (tier, plan_id, region) / clamp_min(sum(rate(helix_signup_activation_duration_seconds_count[10m])) by (tier, plan_id, region), 1) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+          priority: p2
+          service: signup
+          slo: signup_activation
+        annotations:
+          runbook_url: docs/specs/05-operations/runbooks/signup-activation-slo-breach.md
+          summary: "Signup activation SLO miss rate is above 5%"
+          description: "More than 5% of signup activations for tier={{ $labels.tier }}, plan={{ $labels.plan_id }}, region={{ $labels.region }} have missed the 60-second target over the last 10 minutes."
+      - alert: HelixSignupActivationSamplesMissing
+        expr: sum(increase(helix_signup_funnel_events_total{step="form_submitted"}[30m])) by (tier, plan_id, region) > 0 unless sum(increase(helix_signup_activation_duration_seconds_count[30m])) by (tier, plan_id, region) > 0
+        for: 15m
+        labels:
+          severity: warning
+          priority: p2
+          service: signup
+          slo: signup_activation
+        annotations:
+          runbook_url: docs/specs/05-operations/runbooks/signup-activation-slo-breach.md
+          summary: "Signup activation SLO samples are missing"
+          description: "Signup form submissions are present for tier={{ $labels.tier }}, plan={{ $labels.plan_id }}, region={{ $labels.region }}, but no activation SLO samples have been recorded for 30 minutes."

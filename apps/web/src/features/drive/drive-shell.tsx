@@ -11,6 +11,7 @@
     - `drive.move`     — moving a file out to the parent folder.
     - `drive.trash` / `drive.restore` / `drive.delete` — trash lifecycle.
     - `drive.share`    — the details-panel share affordance.
+    - `drive.access.*` — details-panel access list and remove access.
    Mutations invalidate the Drive query cache. The typed handoff seed
    (`DRIVE_FOLDERS_SEED` / `DRIVE_FILES_SEED`) is used only as an offline
    fallback when the backend listing yields nothing AND the query errored. */
@@ -19,6 +20,9 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type DragEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -27,15 +31,26 @@ import "./drive-shell.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
-import { Avatar } from "@/components/ui/avatar";
-import { importDocxDocument } from "@/features/docs/api";
+import { detectFormat, fetchDriveBlob, loadDriveObjectForEditor } from "@/features/_open";
+import { setHelixDriveItemDragData } from "./drag-payload";
+import { FileNameText } from "./file-name-text";
+import { FileThumbnail } from "./file-thumbnail";
 import {
-  importCsvSheet,
-  importOdsSheet,
-  importTsvSheet,
-  importXlsxSheet,
-} from "@/features/sheets/api";
-import { importPptxDeck } from "@/features/slides/api";
+  DocumentSurfaceViewToggle,
+  useDocumentSurfaceViewPreference,
+  type DocumentSurfaceView,
+} from "./view-preference";
+import {
+  convertImportedDocToNative,
+  convertImportedSheetToNative,
+  convertImportedDeckToNative,
+  ConverterNotAvailableError,
+} from "@/features/_open/converters";
+import {
+  canCreateEditableCopyFromFormat,
+  editableCopyUnavailableMessage,
+} from "@/features/_open/conversion-capabilities";
+import { Avatar } from "@/components/ui/avatar";
 import { slidesQueryKeys } from "@/features/slides/queries";
 import { sheetsQueryKeys } from "@/features/sheets/queries";
 import {
@@ -43,11 +58,17 @@ import {
   deleteDriveObject,
   driveDownloadResult,
   driveRawDownloadUrl,
+  listDriveAccess,
   moveDriveObject,
+  removeDriveAccess,
   restoreDriveObject,
+  setDriveObjectStarred,
   shareDrive,
   trashDriveObject,
+  updateDriveAccessRole,
   uploadDriveFile,
+  type DriveAccessGrant,
+  type DriveAccessRole,
   type DriveApiEntry,
   type DriveCreateKind,
 } from "./api";
@@ -64,17 +85,20 @@ import {
   driveActorQueryOptions,
   driveItemsQueryOptions,
   driveQueryKeys,
-  entryFromSearchHit,
   type DriveScope,
 } from "./queries";
 
-type DriveView = "grid" | "list";
+interface DriveUploadInput {
+  readonly file: File;
+  readonly openAfterUpload: boolean;
+}
 
-type DriveUploadOutcome =
-  | { readonly kind: "drive" }
-  | { readonly kind: "native-doc"; readonly documentId: string }
-  | { readonly kind: "native-sheet"; readonly sheetId: string }
-  | { readonly kind: "native-slide"; readonly deckId: string };
+interface DriveUploadOutcome {
+  readonly objectId: string;
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly openAfterUpload: boolean;
+}
 
 interface DriveScopeItem {
   readonly id: DriveScope;
@@ -106,6 +130,14 @@ const TILE_GRID: CSSProperties = {
 };
 
 const LIST_COLUMNS = "1fr 160px 120px 90px 32px";
+const DRIVE_DEFAULT_LIST_LIMIT = 100;
+const DRIVE_SEARCH_LIST_LIMIT = 50;
+const DRIVE_MAX_LIST_LIMIT = 250;
+const DRIVE_MAX_SEARCH_LIMIT = 100;
+
+function sentinelLimit(displayLimit: number, maxLimit: number): number {
+  return displayLimit < maxLimit ? displayLimit + 1 : displayLimit;
+}
 
 /** A `navigate()` target opening a specific editor item. */
 type EditorDestination =
@@ -120,12 +152,30 @@ type EditorDestination =
   | {
       readonly to: "/slides";
       readonly search: { readonly deck: string };
+    }
+  | {
+      readonly to: "/pdf/$objectId";
+      readonly params: { readonly objectId: string };
+    }
+  | {
+      readonly to: "/media/$objectId";
+      readonly params: { readonly objectId: string };
     };
+
+type ImportableSurface = "docs" | "sheets" | "slides";
+
+interface PendingConversion {
+  readonly objectId: string;
+  readonly fileName: string;
+  readonly surface: ImportableSurface;
+  readonly canCreateCopy: boolean;
+  readonly formatLabel: string;
+  readonly unavailableMessage: string;
+}
 
 /**
  * Maps a `drive.create` result (`{ id, app }`) to the editor route that opens
- * that item. Docs use the native document route; sheets and slides still read
- * their editor object id from a search param.
+ * that item.
  */
 function editorDestinationFor(app: string, id: string): EditorDestination | null {
   switch (app) {
@@ -140,64 +190,86 @@ function editorDestinationFor(app: string, id: string): EditorDestination | null
   }
 }
 
-function isCsvFile(file: File): boolean {
-  return file.type.toLowerCase().startsWith("text/csv") || file.name.toLowerCase().endsWith(".csv");
-}
-
-function isTsvFile(file: File): boolean {
-  return (
-    file.type.toLowerCase() === "text/tab-separated-values" ||
-    file.name.toLowerCase().endsWith(".tsv")
-  );
-}
-
-function isXlsxFile(file: File): boolean {
-  return file.type.includes("spreadsheetml") || file.name.toLowerCase().endsWith(".xlsx");
-}
-
-function isOdsFile(file: File): boolean {
-  return (
-    file.type.toLowerCase() === "application/vnd.oasis.opendocument.spreadsheet" ||
-    file.name.toLowerCase().endsWith(".ods")
-  );
-}
-
-function isDocxFile(file: File): boolean {
-  const type = file.type.toLowerCase();
-  return (
-    type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    file.name.toLowerCase().endsWith(".docx")
-  );
-}
-
-function isPptxFile(file: File): boolean {
-  const type = file.type.toLowerCase();
-  return (
-    type === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
-    file.name.toLowerCase().endsWith(".pptx")
-  );
-}
-
-function titleFromSheetFilename(filename: string): string {
-  return filename.replace(/\.(csv|tsv|xlsx|ods)$/iu, "").trim() || "Imported sheet";
-}
-
-function titleFromDocxFilename(filename: string): string {
-  return filename.replace(/\.docx$/iu, "").trim() || "Imported document";
-}
-
-function titleFromPptxFilename(filename: string): string {
-  return filename.replace(/\.pptx$/iu, "").trim() || "Imported presentation";
-}
-
-function base64FromArrayBuffer(buffer: ArrayBuffer): string {
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  const chunk = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+/**
+ * Maps a Drive file (raw upload like .docx / .xlsx / .pptx / .pdf / .md /
+ * .csv / .rtf / .eml / .odt / .odp / .ods / …) to the right native editor
+ * route, dispatching by the universal format-detection table. Native editors
+ * are the only editor surface.
+ *
+ * Sharing the same detection table as the universal loader means routing
+ * stays in lockstep with parser availability — adding a new format only
+ * touches `_open/format-detection.ts`.
+ */
+function editorDestinationForFile(
+  fileName: string,
+  fileMimeType: string | undefined,
+  id: string,
+): EditorDestination | null {
+  const format = detectFormat(fileName, fileMimeType);
+  switch (format.surface) {
+    case "docs":
+      return { to: "/docs/$documentId", params: { documentId: id } };
+    case "sheets":
+      return { to: "/sheets", search: { sheet: id } };
+    case "slides":
+      return { to: "/slides", search: { deck: id } };
+    case "pdf":
+      return { to: "/pdf/$objectId", params: { objectId: id } };
+    case "image":
+    case "audio":
+    case "video":
+    case "ebook":
+    case "unknown":
+      // Image/audio/video AND any recognized-but-unparseable format (Visio,
+      // OneNote, EPUB, .one, .accdb, …) all open in the dedicated
+      // `/media/:objectId` viewer. For media surfaces that renders the
+      // matching player; for unsupported, the polished "Preview not
+      // available — download to open in <recommended app>" card.
+      return { to: "/media/$objectId", params: { objectId: id } };
   }
-  return btoa(binary);
+}
+
+function driveFileDragHref(file: DriveFileItem): string {
+  const format = detectFormat(file.name, file.mimeType);
+  if (file.app === "docs") {
+    const suffix = format.surface === "docs" ? "?open=office" : "";
+    return `/docs/${encodeURIComponent(file.id)}${suffix}`;
+  }
+  if (file.app === "sheets") {
+    const suffix = format.surface === "sheets" ? "&open=office" : "";
+    return `/sheets?sheet=${encodeURIComponent(file.id)}${suffix}`;
+  }
+  if (file.app === "slides") {
+    const suffix = format.surface === "slides" ? "&open=office" : "";
+    return `/slides?deck=${encodeURIComponent(file.id)}${suffix}`;
+  }
+  return `/open/${encodeURIComponent(file.id)}`;
+}
+
+function importableSurfaceForFile(
+  fileName: string,
+  fileMimeType: string | undefined,
+): Pick<
+  PendingConversion,
+  "surface" | "canCreateCopy" | "formatLabel" | "unavailableMessage"
+> | null {
+  const format = detectFormat(fileName, fileMimeType);
+  if (
+    format.supported &&
+    (format.surface === "docs" || format.surface === "sheets" || format.surface === "slides")
+  ) {
+    return {
+      surface: format.surface,
+      canCreateCopy: canCreateEditableCopyFromFormat(format),
+      formatLabel: format.label,
+      unavailableMessage: editableCopyUnavailableMessage(format),
+    };
+  }
+  return null;
+}
+
+function shouldOpenUploadedFile(fileName: string, fileMimeType: string | undefined): boolean {
+  return detectFormat(fileName, fileMimeType).surface !== "unknown";
 }
 
 /** Icon + colour override for app-typed file entries. */
@@ -208,8 +280,6 @@ const APP_ICON_META: Record<string, { readonly icon: keyof typeof Icons; readonl
     // No distinct Slides icon — reuse Image (same as the "New > Presentation" menu item).
     slides: { icon: "Image", color: "#ea580c" },
   };
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 /** A folder in the breadcrumb trail. `null` id is the scope root. */
 interface DriveCrumb {
@@ -227,12 +297,11 @@ export function DriveShell() {
     file: string;
   }> = useSearch({ strict: false });
   const queryClient = useQueryClient();
-  const [view, setView] = useState<DriveView>("grid");
+  const [view, setView] = useDocumentSurfaceViewPreference();
   const [scope, setScope] = useState<DriveScope>(driveSearch.scope ?? "my");
   const [trail, setTrail] = useState<readonly DriveCrumb[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(driveSearch.file ?? null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const searchQuery = driveSearch.q?.trim() ?? "";
 
   const folderId =
     trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : (driveSearch.folder ?? null);
@@ -256,12 +325,26 @@ export function DriveShell() {
   const actorQuery = useQuery(driveActorQueryOptions());
   const actorId = actorQuery.data?.actorId ?? null;
 
+  const driveQuery = driveSearch.q?.trim() ?? "";
+  const baseListLimit = driveQuery.length > 0 ? DRIVE_SEARCH_LIST_LIMIT : DRIVE_DEFAULT_LIST_LIMIT;
+  const maxListLimit =
+    driveQuery.length > 0
+      ? DRIVE_MAX_SEARCH_LIMIT
+      : scope === "recent"
+        ? DRIVE_SEARCH_LIST_LIMIT
+        : DRIVE_MAX_LIST_LIMIT;
+  const [listLimit, setListLimit] = useState(baseListLimit);
+  useEffect(() => {
+    setListLimit(baseListLimit);
+  }, [baseListLimit, folderId, scope]);
+  const effectiveListLimit = Math.min(listLimit, maxListLimit);
+  const fetchListLimit = sentinelLimit(effectiveListLimit, maxListLimit);
   const itemsQuery = useQuery(
     driveItemsQueryOptions({
       folderId,
+      query: driveQuery,
       scope,
-      query: searchQuery,
-      limit: searchQuery.length > 0 || scope === "recent" ? 50 : 100,
+      limit: fetchListLimit,
     }),
   );
 
@@ -271,69 +354,14 @@ export function DriveShell() {
   const invalidateDocs = () => queryClient.invalidateQueries({ queryKey: ["docs"] });
 
   const uploadMutation = useMutation({
-    mutationFn: async (file: File): Promise<DriveUploadOutcome> => {
-      if (isDocxFile(file)) {
-        const document = await importDocxDocument({
-          filename: file.name,
-          title: titleFromDocxFilename(file.name),
-          folderId,
-          contentBase64: base64FromArrayBuffer(await file.arrayBuffer()),
-          metadata: { source: "web.drive-shell.import-docx" },
-        });
-        return { kind: "native-doc", documentId: document.id };
-      }
-      if (isCsvFile(file)) {
-        const sheet = await importCsvSheet({
-          filename: file.name,
-          title: titleFromSheetFilename(file.name),
-          folderId,
-          csvText: await file.text(),
-          metadata: { source: "web.drive-shell.import-csv" },
-        });
-        return { kind: "native-sheet", sheetId: sheet.id };
-      }
-      if (isTsvFile(file)) {
-        const sheet = await importTsvSheet({
-          filename: file.name,
-          title: titleFromSheetFilename(file.name),
-          folderId,
-          tsvText: await file.text(),
-          metadata: { source: "web.drive-shell.import-tsv" },
-        });
-        return { kind: "native-sheet", sheetId: sheet.id };
-      }
-      if (isXlsxFile(file)) {
-        const sheet = await importXlsxSheet({
-          filename: file.name,
-          title: titleFromSheetFilename(file.name),
-          folderId,
-          contentBase64: base64FromArrayBuffer(await file.arrayBuffer()),
-          metadata: { source: "web.drive-shell.import-xlsx" },
-        });
-        return { kind: "native-sheet", sheetId: sheet.id };
-      }
-      if (isOdsFile(file)) {
-        const sheet = await importOdsSheet({
-          filename: file.name,
-          title: titleFromSheetFilename(file.name),
-          folderId,
-          contentBase64: base64FromArrayBuffer(await file.arrayBuffer()),
-          metadata: { source: "web.drive-shell.import-ods" },
-        });
-        return { kind: "native-sheet", sheetId: sheet.id };
-      }
-      if (isPptxFile(file)) {
-        const deck = await importPptxDeck({
-          filename: file.name,
-          title: titleFromPptxFilename(file.name),
-          folderId,
-          contentBase64: base64FromArrayBuffer(await file.arrayBuffer()),
-          metadata: { source: "web.drive-shell.import-pptx" },
-        });
-        return { kind: "native-slide", deckId: deck.id };
-      }
-      await uploadDriveFile({ file, folderId });
-      return { kind: "drive" };
+    mutationFn: async (input: DriveUploadInput): Promise<DriveUploadOutcome> => {
+      const uploaded = await uploadDriveFile({ file: input.file, folderId });
+      return {
+        objectId: uploaded.objectId,
+        fileName: input.file.name,
+        mimeType: input.file.type.length > 0 ? input.file.type : "application/octet-stream",
+        openAfterUpload: input.openAfterUpload,
+      };
     },
     onMutate: () => undefined,
     onError: () => undefined,
@@ -342,14 +370,8 @@ export function DriveShell() {
       void invalidateDocs();
       void invalidateSheets();
       void invalidateSlides();
-      if (result.kind === "native-doc") {
-        navigateToEditor({ to: "/docs/$documentId", params: { documentId: result.documentId } });
-      }
-      if (result.kind === "native-sheet") {
-        navigateToEditor({ to: "/sheets", search: { sheet: result.sheetId } });
-      }
-      if (result.kind === "native-slide") {
-        navigateToEditor({ to: "/slides", search: { deck: result.deckId } });
+      if (result.openAfterUpload && shouldOpenUploadedFile(result.fileName, result.mimeType)) {
+        void navigate({ to: "/open/$objectId", params: { objectId: result.objectId } });
       }
     },
   });
@@ -371,6 +393,19 @@ export function DriveShell() {
     onSuccess: () => {
       setSelectedFileId(null);
       void invalidateDrive();
+    },
+  });
+
+  const starMutation = useMutation({
+    mutationFn: (vars: { readonly objectId: string; readonly starred: boolean }) =>
+      setDriveObjectStarred(vars.objectId, vars.starred),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      void invalidateDrive();
+      void invalidateDocs();
+      void invalidateSheets();
+      void invalidateSlides();
     },
   });
 
@@ -399,12 +434,13 @@ export function DriveShell() {
       readonly objectId: string;
       readonly actorIds: readonly string[];
       readonly actorRefs: readonly string[];
+      readonly role: DriveAccessRole;
     }) =>
       shareDrive({
         objectId: vars.objectId,
         actorIds: vars.actorIds,
         actorRefs: vars.actorRefs,
-        role: "reader",
+        role: vars.role,
       }),
     onMutate: () => undefined,
     onError: () => undefined,
@@ -415,6 +451,10 @@ export function DriveShell() {
 
   const navigateToEditor = (destination: EditorDestination): void => {
     if (destination.to === "/docs/$documentId") {
+      void navigate({ to: destination.to, params: destination.params });
+      return;
+    }
+    if (destination.to === "/pdf/$objectId" || destination.to === "/media/$objectId") {
       void navigate({ to: destination.to, params: destination.params });
       return;
     }
@@ -451,7 +491,7 @@ export function DriveShell() {
 
   // Live backend entries for the current scope/folder. Search results are
   // already promoted into entry shape inside `driveItemsQueryOptions`.
-  const liveEntries = useMemo<readonly DriveApiEntry[]>(() => {
+  const liveEntriesRaw = useMemo<readonly DriveApiEntry[]>(() => {
     const data = itemsQuery.data;
     if (data === undefined) {
       return [];
@@ -459,8 +499,28 @@ export function DriveShell() {
     if (data.mode === "list") {
       return applyDriveScope(data.entries, scope, actorId);
     }
-    return applyDriveScope(data.hits.map(entryFromSearchHit), scope, actorId);
+    return data.hits.map((hit) => ({
+      id: hit.objectId,
+      type: "file" as const,
+      name: hit.name,
+      folderId: hit.folderId,
+      ownerActorId: null,
+      mimeType: hit.mimeType,
+      byteSize: hit.byteSize,
+      sha256: hit.sha256,
+      ...(hit.previewMetadata === undefined ? {} : { preview: hit.previewMetadata }),
+      deletedAt: null,
+      createdAt: hit.updatedAt,
+      updatedAt: hit.updatedAt,
+    }));
   }, [itemsQuery.data, scope, actorId]);
+
+  const hasMoreEntries =
+    liveEntriesRaw.length > effectiveListLimit && effectiveListLimit < maxListLimit;
+  const liveEntries = useMemo(
+    () => liveEntriesRaw.slice(0, effectiveListLimit),
+    [effectiveListLimit, liveEntriesRaw],
+  );
 
   const folders = useMemo<readonly DriveFolderItem[]>(
     () => liveEntries.filter((e) => e.type === "folder").map(folderItemFromEntry),
@@ -491,6 +551,42 @@ export function DriveShell() {
    * editor app (docs/sheets/slides) navigate straight into the editor;
    * otherwise open the details panel as usual.
    */
+  const [importing, setImporting] = useState<{ name: string; surface: string } | null>(null);
+  const [importError, setImportErrorState] = useState<string | null>(null);
+  const [pendingConversion, setPendingConversion] = useState<PendingConversion | null>(null);
+
+  const requestEditableCopy = (entry: DriveApiEntry): boolean => {
+    const conversion = importableSurfaceForFile(entry.name, entry.mimeType);
+    if (conversion === null) {
+      return false;
+    }
+    setPendingConversion({ objectId: entry.id, fileName: entry.name, ...conversion });
+    return true;
+  };
+
+  const onOpenFile = (id: string) => {
+    const entry = entryById.get(id);
+    if (entry?.app != null) {
+      const destination = editorDestinationFor(entry.app, id);
+      if (destination !== null) {
+        navigateToEditor(destination);
+        return;
+      }
+    }
+    if (entry === undefined) {
+      return;
+    }
+    if (requestEditableCopy(entry)) {
+      return;
+    }
+    const destination = editorDestinationForFile(entry.name, entry.mimeType, id);
+    if (destination !== null) {
+      navigateToEditor(destination);
+      return;
+    }
+    setSelectedFileId(id);
+  };
+
   const onSelectFile = (id: string) => {
     const entry = entryById.get(id);
     if (entry?.app != null) {
@@ -500,8 +596,73 @@ export function DriveShell() {
         return;
       }
     }
+    // Raw Drive files (foreign formats: .docx / .xlsx / .pptx / .rtf / etc.)
+    // stay user-owned. We ask before creating an editable Helix copy so a
+    // click never silently mints a second file.
+    if (entry !== undefined) {
+      if (requestEditableCopy(entry)) {
+        return;
+      }
+      // Non-editor surfaces (pdf, image, unknown) still go to detail pane.
+    }
     setSelectedFileId(id);
   };
+
+  /** Eagerly convert a foreign-format Drive blob to a native helix entity,
+   *  then navigate to the new entity's URL. Shows a modal-style "Importing…"
+   *  overlay until the conversion completes. */
+  async function importAndOpen(
+    objectId: string,
+    fileName: string,
+    surface: "docs" | "sheets" | "slides",
+  ) {
+    setImporting({ name: fileName, surface });
+    setImportErrorState(null);
+    try {
+      const result = await loadDriveObjectForEditor(objectId, { expectedSurface: surface });
+      if (result.kind !== "imported") {
+        throw new Error(
+          result.kind === "not-found" ? "File no longer exists in Drive." : "Format not supported.",
+        );
+      }
+      const blob = await fetchDriveBlob(objectId);
+      let target;
+      if (surface === "docs" && result.parsed.kind === "doc") {
+        target = await convertImportedDocToNative(blob, result.parsed, objectId);
+      } else if (surface === "sheets" && result.parsed.kind === "sheet") {
+        target = await convertImportedSheetToNative(blob, result.parsed, objectId);
+      } else if (surface === "slides" && result.parsed.kind === "deck") {
+        target = await convertImportedDeckToNative(blob, result.parsed, objectId);
+      } else {
+        throw new Error(
+          `Parse result shape (${result.parsed.kind}) does not match surface (${surface}).`,
+        );
+      }
+
+      switch (target.surface) {
+        case "docs":
+          navigateToEditor({ to: "/docs/$documentId", params: { documentId: target.id } });
+          break;
+        case "sheets":
+          navigateToEditor({ to: "/sheets", search: { sheet: target.id } });
+          break;
+        case "slides":
+          navigateToEditor({ to: "/slides", search: { deck: target.id } });
+          break;
+      }
+    } catch (err) {
+      if (err instanceof ConverterNotAvailableError) {
+        setImportErrorState(`${err.message} The file is still downloadable via its details pane.`);
+      } else {
+        setImportErrorState(
+          `Failed to import ${fileName}: ${(err as Error).message ?? String(err)}`,
+        );
+      }
+      setSelectedFileId(objectId);
+    } finally {
+      setImporting(null);
+    }
+  }
 
   const openFolder = (folder: DriveFolderItem) => {
     setSelectedFileId(null);
@@ -531,7 +692,7 @@ export function DriveShell() {
   const onFileChosen = (event: ChangeEvent<HTMLInputElement>) => {
     const chosen = event.target.files?.[0];
     if (chosen !== undefined) {
-      uploadMutation.mutate(chosen);
+      uploadMutation.mutate({ file: chosen, openAfterUpload: true });
     }
     event.target.value = "";
   };
@@ -548,6 +709,76 @@ export function DriveShell() {
         style={{ display: "none" }}
         onChange={onFileChosen}
       />
+      {importing !== null ? (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: "24px 32px",
+              boxShadow: "var(--shadow-lg)",
+              minWidth: 320,
+              textAlign: "center",
+            }}
+          >
+            <div style={{ fontSize: 32, marginBottom: 12 }}>📄</div>
+            <h2 style={{ margin: "0 0 8px 0", fontSize: "var(--text-h3)", fontWeight: 600 }}>
+              Importing into helix-{importing.surface}…
+            </h2>
+            <p style={{ margin: 0, color: "var(--text-2)", fontSize: "var(--text-body)" }}>
+              <code>{importing.name}</code>
+            </p>
+          </div>
+        </div>
+      ) : null}
+      {importError !== null ? (
+        <div
+          role="alert"
+          style={{
+            position: "fixed",
+            top: 24,
+            right: 24,
+            background: "var(--danger-soft)",
+            border: "1px solid var(--danger)",
+            color: "var(--danger)",
+            padding: "12px 16px",
+            borderRadius: 8,
+            maxWidth: 400,
+            zIndex: 9999,
+          }}
+        >
+          <strong>Import failed</strong>
+          <p style={{ margin: "4px 0 0 0", fontSize: "var(--text-caption)" }}>{importError}</p>
+        </div>
+      ) : null}
+      {pendingConversion !== null ? (
+        <DriveConversionDialog
+          conversion={pendingConversion}
+          onCancel={() => setPendingConversion(null)}
+          onPreviewOnly={() => {
+            setSelectedFileId(pendingConversion.objectId);
+            setPendingConversion(null);
+          }}
+          onCreateCopy={() => {
+            const conversion = pendingConversion;
+            setPendingConversion(null);
+            void importAndOpen(conversion.objectId, conversion.fileName, conversion.surface);
+          }}
+        />
+      ) : null}
       <DriveSidebar
         activeScope={scope}
         onScopeChange={onScopeChange}
@@ -567,15 +798,26 @@ export function DriveShell() {
         selectedFileId={selectedFileId}
         onSelectFile={onSelectFile}
         onOpenFolder={openFolder}
+        onSetStarred={(id, starred) => starMutation.mutate({ objectId: id, starred })}
         onUpload={onPickFile}
         onDropFiles={(droppedFiles) => {
+          const openAfterUpload = droppedFiles.length === 1;
           for (const file of droppedFiles) {
-            uploadMutation.mutate(file);
+            uploadMutation.mutate({ file, openAfterUpload });
           }
         }}
         onNewItem={onNewItem}
         loading={itemsQuery.isLoading}
         error={itemsQuery.isError ? itemsQuery.error : null}
+        hasMore={hasMoreEntries}
+        onShowMore={() =>
+          setListLimit((current) =>
+            Math.min(
+              current + (driveQuery.length > 0 ? DRIVE_SEARCH_LIST_LIMIT : DRIVE_DEFAULT_LIST_LIMIT),
+              maxListLimit,
+            ),
+          )
+        }
         uploadError={uploadMutation.isError ? uploadMutation.error : null}
         onRetry={() => void invalidateDrive()}
         uploading={uploadMutation.isPending}
@@ -594,13 +836,15 @@ export function DriveShell() {
             restoreMutation.isPending ||
             deleteMutation.isPending ||
             moveMutation.isPending ||
-            shareMutation.isPending
+            shareMutation.isPending ||
+            starMutation.isPending
           }
           actionError={
             trashMutation.error ??
             restoreMutation.error ??
             deleteMutation.error ??
             moveMutation.error ??
+            starMutation.error ??
             shareMutation.error ??
             null
           }
@@ -608,17 +852,152 @@ export function DriveShell() {
           onTrash={(id) => trashMutation.mutate(id)}
           onRestore={(id) => restoreMutation.mutate(id)}
           onDelete={(id) => deleteMutation.mutate(id)}
+          onOpen={onOpenFile}
           onMoveToParent={(id) =>
             moveMutation.mutate({
               objectId: id,
               folderId: trail.length > 1 ? (trail[trail.length - 2]?.id ?? null) : null,
             })
           }
-          onShare={(id, targets) => shareMutation.mutate({ objectId: id, ...targets })}
+          onSetStarred={(id, starred) => starMutation.mutate({ objectId: id, starred })}
+          onShare={(id, targets, role) =>
+            shareMutation.mutate({ objectId: id, role, ...driveShareTargetsFromInput(targets) })
+          }
           shareDone={shareMutation.isSuccess}
         />
       ) : null}
     </>
+  );
+}
+
+function DriveConversionDialog({
+  conversion,
+  onCancel,
+  onPreviewOnly,
+  onCreateCopy,
+}: {
+  readonly conversion: PendingConversion;
+  readonly onCancel: () => void;
+  readonly onPreviewOnly: () => void;
+  readonly onCreateCopy: () => void;
+}) {
+  const surfaceLabel =
+    conversion.surface === "docs"
+      ? "document"
+      : conversion.surface === "sheets"
+        ? "spreadsheet"
+        : "presentation";
+  const appLabel =
+    conversion.surface === "docs" ? "Docs" : conversion.surface === "sheets" ? "Sheets" : "Slides";
+
+  return (
+    <div
+      role="presentation"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9998,
+        background: "rgba(15, 23, 42, 0.34)",
+        display: "grid",
+        placeItems: "center",
+        padding: 20,
+      }}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onCancel();
+        }
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="drive-conversion-title"
+        style={{
+          width: "min(460px, 100%)",
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          boxShadow: "var(--shadow-lg)",
+          padding: 18,
+        }}
+      >
+        <div className="row gap-3" style={{ alignItems: "flex-start", marginBottom: 14 }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 8,
+              display: "grid",
+              placeItems: "center",
+              background: "var(--brand-soft)",
+              color: "var(--brand)",
+              flexShrink: 0,
+            }}
+          >
+            <Icons.Copy size={18} />
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <h2
+              id="drive-conversion-title"
+              style={{ margin: 0, fontSize: "var(--text-h3)", fontWeight: 650 }}
+            >
+              {conversion.canCreateCopy ? "Create editable copy?" : "Preview/download only"}
+            </h2>
+            <p
+              style={{
+                margin: "6px 0 0",
+                color: "var(--text-2)",
+                fontSize: "var(--text-body-sm)",
+                lineHeight: 1.5,
+              }}
+            >
+              {conversion.canCreateCopy ? (
+                <>
+                  Helix can create an editable {appLabel} {surfaceLabel} from{" "}
+                  <strong>{conversion.fileName}</strong>. The original file stays unchanged in
+                  Drive.
+                </>
+              ) : (
+                <>
+                  Helix can preview <strong>{conversion.fileName}</strong>, but{" "}
+                  {conversion.unavailableMessage} The original file stays unchanged in Drive.
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 8,
+            borderTop: "1px solid var(--border)",
+            paddingTop: 14,
+          }}
+        >
+          <a
+            className="btn sm"
+            href={`/api/drive/objects/${conversion.objectId}/content?download=1`}
+            download={conversion.fileName}
+          >
+            Download original
+          </a>
+          <button type="button" className="btn sm" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn sm" onClick={onPreviewOnly}>
+            Preview only
+          </button>
+          {conversion.canCreateCopy ? (
+            <button type="button" className="btn sm primary" onClick={onCreateCopy}>
+              <Icons.Copy />
+              Create copy
+            </button>
+          ) : null}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -834,18 +1213,21 @@ function DriveMain({
   selectedFileId,
   onSelectFile,
   onOpenFolder,
+  onSetStarred,
   onUpload,
   onDropFiles,
   onNewItem,
   loading,
   error,
+  hasMore,
+  onShowMore,
   uploadError,
   onRetry,
   uploading,
   creating,
 }: {
-  readonly view: DriveView;
-  readonly onViewChange: (view: DriveView) => void;
+  readonly view: DocumentSurfaceView;
+  readonly onViewChange: (view: DocumentSurfaceView) => void;
   readonly scope: DriveScope;
   readonly trail: readonly DriveCrumb[];
   readonly onNavigateCrumb: (index: number) => void;
@@ -854,11 +1236,14 @@ function DriveMain({
   readonly selectedFileId: string | null;
   readonly onSelectFile: (id: string) => void;
   readonly onOpenFolder: (folder: DriveFolderItem) => void;
+  readonly onSetStarred: (id: string, starred: boolean) => void;
   readonly onUpload: () => void;
   readonly onDropFiles: (files: readonly File[]) => void;
   readonly onNewItem: (kind: DriveCreateKind) => void;
   readonly loading: boolean;
   readonly error: Error | null;
+  readonly hasMore: boolean;
+  readonly onShowMore: () => void;
   readonly uploadError: Error | null;
   readonly onRetry: () => void;
   readonly uploading: boolean;
@@ -949,24 +1334,7 @@ function DriveMain({
       <div style={{ display: "flex", alignItems: "center", marginBottom: 16, gap: 12 }}>
         <DriveBreadcrumb scope={scope} trail={trail} onNavigate={onNavigateCrumb} />
         <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-          <button
-            type="button"
-            aria-label="Grid view"
-            aria-pressed={view === "grid"}
-            className={`btn sm ${view === "grid" ? "primary" : ""}`}
-            onClick={() => onViewChange("grid")}
-          >
-            <Icons.Grid />
-          </button>
-          <button
-            type="button"
-            aria-label="List view"
-            aria-pressed={view === "list"}
-            className={`btn sm ${view === "list" ? "primary" : ""}`}
-            onClick={() => onViewChange("list")}
-          >
-            <Icons.List />
-          </button>
+          <DocumentSurfaceViewToggle view={view} onViewChange={onViewChange} />
           <button type="button" className="btn sm">
             <Icons.Filter />
             Filter
@@ -1055,6 +1423,7 @@ function DriveMain({
                   file={file}
                   selected={file.id === selectedFileId}
                   onSelect={() => onSelectFile(file.id)}
+                  onSetStarred={(starred) => onSetStarred(file.id, starred)}
                 />
               ))}
             </div>
@@ -1089,10 +1458,19 @@ function DriveMain({
                   selected={file.id === selectedFileId}
                   onSelect={() => onSelectFile(file.id)}
                   onOpenFolder={() => onOpenFolder({ id: file.id, name: file.name, itemCount: 0 })}
+                  onSetStarred={(starred) => onSetStarred(file.id, starred)}
                 />
               ))}
             </div>
           )}
+          {hasMore ? (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
+              <button type="button" className="btn" onClick={onShowMore}>
+                <Icons.ChevronDown />
+                Show more
+              </button>
+            </div>
+          ) : null}
         </>
       )}
 
@@ -1267,19 +1645,17 @@ function DriveFileCard({
   file,
   selected,
   onSelect,
+  onSetStarred,
 }: {
   readonly file: DriveFileItem;
   readonly selected: boolean;
   readonly onSelect: () => void;
+  readonly onSetStarred: (starred: boolean) => void;
 }) {
   const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
   const meta = appMeta ?? DRIVE_FILE_META[file.type];
-  const FileIcon = Icons[meta.icon];
   return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onSelect}
+    <div
       style={{
         background: "var(--surface)",
         border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
@@ -1290,78 +1666,80 @@ function DriveFileCard({
         textAlign: "left",
         overflow: "hidden",
         boxShadow: selected ? "0 0 0 3px var(--accent-soft)" : "none",
+        position: "relative",
       }}
     >
-      <div
+      <DriveStarToggle
+        name={file.name}
+        starred={file.starred}
+        onSetStarred={onSetStarred}
+        style={{ position: "absolute", top: 8, right: 8, zIndex: 1 }}
+      />
+      <button
+        type="button"
+        aria-pressed={selected}
+        draggable
+        onDragStart={(event) => {
+          setHelixDriveItemDragData(event.dataTransfer, {
+            id: file.id,
+            name: file.name,
+            href: driveFileDragHref(file),
+            mimeType: file.mimeType,
+            app: file.app,
+          });
+        }}
+        onClick={onSelect}
         style={{
-          aspectRatio: "4 / 3",
-          background: "var(--surface-2)",
-          display: "grid",
-          placeItems: "center",
-          color: meta.color,
-          borderBottom: "1px solid var(--border)",
+          border: "none",
+          background: "transparent",
+          padding: 0,
+          display: "flex",
+          flexDirection: "column",
+          textAlign: "left",
+          width: "100%",
+          height: "100%",
+          font: "inherit",
+          color: "inherit",
         }}
       >
-        <FileIcon size={36} />
-      </div>
-      <div style={{ padding: 10 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            marginBottom: 4,
-          }}
-        >
+        <FileThumbnail
+          objectId={file.id}
+          name={file.name}
+          mimeType={file.mimeType}
+          preview={file.preview}
+          icon={meta.icon}
+          color={meta.color}
+          aspectRatio="4 / 3"
+        />
+        <div style={{ padding: 10, width: "100%", boxSizing: "border-box" }}>
           <div
-            className="truncate"
-            style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginBottom: 4,
+            }}
           >
-            {file.name}
+            <FileNameText
+              name={file.name}
+              style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}
+            />
           </div>
-          {file.formatLabel ? <FormatChip label={file.formatLabel} color={meta.color} /> : null}
+          <div
+            style={{
+              fontSize: "var(--text-caption)",
+              color: "var(--text-3)",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Avatar name={file.owner} size={14} />
+            <span className="truncate">{file.modified}</span>
+          </div>
         </div>
-        <div
-          style={{
-            fontSize: "var(--text-caption)",
-            color: "var(--text-3)",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <Avatar name={file.owner} size={14} />
-          <span className="truncate">{file.modified}</span>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-/** Small uppercase chip that shows the file format (e.g. "DOCX", "PDF",
- *  "MD") so the user can tell file types apart at a glance. Tinted with the
- *  same accent color as the file's icon. */
-function FormatChip({ label, color }: { readonly label: string; readonly color: string }) {
-  return (
-    <span
-      style={{
-        flexShrink: 0,
-        padding: "0 5px",
-        height: 16,
-        lineHeight: "16px",
-        borderRadius: 3,
-        fontSize: "var(--text-overline)",
-        fontWeight: 700,
-        letterSpacing: ".04em",
-        color,
-        background: "var(--surface-2)",
-        border: `1px solid ${color}33`,
-        textTransform: "uppercase",
-      }}
-      aria-label={`Format: ${label}`}
-    >
-      {label}
-    </span>
+      </button>
+    </div>
   );
 }
 
@@ -1370,11 +1748,13 @@ function DriveFileRow({
   selected,
   onSelect,
   onOpenFolder,
+  onSetStarred,
 }: {
   readonly file: DriveFileItem;
   readonly selected: boolean;
   readonly onSelect: () => void;
   readonly onOpenFolder: () => void;
+  readonly onSetStarred: (starred: boolean) => void;
 }) {
   const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
   const meta = appMeta ?? DRIVE_FILE_META[file.type];
@@ -1383,6 +1763,16 @@ function DriveFileRow({
     <button
       type="button"
       aria-pressed={selected}
+      draggable
+      onDragStart={(event) => {
+        setHelixDriveItemDragData(event.dataTransfer, {
+          id: file.id,
+          name: file.name,
+          href: driveFileDragHref(file),
+          mimeType: file.mimeType,
+          app: file.app,
+        });
+      }}
       onClick={file.type === "folder" ? onOpenFolder : onSelect}
       style={{
         display: "grid",
@@ -1398,13 +1788,18 @@ function DriveFileRow({
       }}
     >
       <div className="row gap-2" style={{ minWidth: 0 }}>
+        {file.type !== "folder" ? (
+          <DriveStarToggle
+            name={file.name}
+            starred={file.starred}
+            onSetStarred={onSetStarred}
+            asButton={false}
+          />
+        ) : null}
         <span style={{ color: meta.color, display: "inline-flex" }}>
           <FileIcon />
         </span>
-        <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
-          {file.name}
-        </span>
-        {file.formatLabel ? <FormatChip label={file.formatLabel} color={meta.color} /> : null}
+        <FileNameText name={file.name} style={{ flex: 1, minWidth: 0 }} />
       </div>
       <div className="row gap-2">
         <Avatar name={file.owner} size={18} />
@@ -1424,6 +1819,60 @@ function DriveFileRow({
   );
 }
 
+function DriveStarToggle({
+  name,
+  starred,
+  onSetStarred,
+  style,
+  asButton = true,
+}: {
+  readonly name: string;
+  readonly starred: boolean;
+  readonly onSetStarred: (starred: boolean) => void;
+  readonly style?: CSSProperties;
+  readonly asButton?: boolean;
+}) {
+  const content = <Icons.Star fill={starred ? "currentColor" : "none"} />;
+  const commonProps = {
+    className: "icon-btn",
+    "aria-pressed": starred,
+    "aria-label": `${starred ? "Unstar" : "Star"} ${name}`,
+    title: starred ? "Unstar" : "Star",
+    onClick: (event: MouseEvent<HTMLElement>) => {
+      event.stopPropagation();
+      onSetStarred(!starred);
+    },
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        event.stopPropagation();
+        onSetStarred(!starred);
+      }
+    },
+    style: {
+      color: starred ? "var(--warning, #f59e0b)" : "var(--text-3)",
+      background: "var(--surface)",
+      ...style,
+    },
+  };
+  if (asButton) {
+    return (
+      <button type="button" {...commonProps}>
+        {content}
+      </button>
+    );
+  }
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      {...commonProps}
+    >
+      {content}
+    </span>
+  );
+}
+
 function DriveDetailsPanel({
   file,
   entry,
@@ -1437,7 +1886,9 @@ function DriveDetailsPanel({
   onTrash,
   onRestore,
   onDelete,
+  onOpen,
   onMoveToParent,
+  onSetStarred,
   onShare,
   shareDone,
 }: {
@@ -1453,17 +1904,17 @@ function DriveDetailsPanel({
   readonly onTrash: (id: string) => void;
   readonly onRestore: (id: string) => void;
   readonly onDelete: (id: string) => void;
+  readonly onOpen: (id: string) => void;
   readonly onMoveToParent: (id: string) => void;
-  readonly onShare: (
-    id: string,
-    targets: { readonly actorIds: readonly string[]; readonly actorRefs: readonly string[] },
-  ) => void;
+  readonly onSetStarred: (id: string, starred: boolean) => void;
+  readonly onShare: (id: string, targets: readonly string[], role: DriveAccessRole) => void;
   readonly shareDone: boolean;
 }) {
   const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
   const meta = appMeta ?? DRIVE_FILE_META[file.type];
   const FileIcon = Icons[meta.icon];
   const [shareInput, setShareInput] = useState("");
+  const [shareRole, setShareRole] = useState<DriveAccessRole>("reader");
 
   // Owner label: when the entry is owned by the current actor, show the
   // session display name. Otherwise prefer the server-resolved display
@@ -1496,16 +1947,36 @@ function DriveDetailsPanel({
   }, [entry, ownerLabel, file.owner, file.modified]);
 
   const download = entry === null ? null : driveDownloadResult(entry);
+  const queryClient = useQueryClient();
+  const accessQuery = useQuery({
+    queryKey: ["drive", "access", file.id],
+    queryFn: () => listDriveAccess(file.id),
+    enabled: entry !== null && !isTrash,
+    throwOnError: false,
+  });
+  const removeAccessMutation = useMutation({
+    mutationFn: (actorId: string) => removeDriveAccess(file.id, actorId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["drive", "access", file.id] });
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+    },
+  });
+  const updateAccessMutation = useMutation({
+    mutationFn: (input: { readonly actorId: string; readonly role: DriveAccessRole }) =>
+      updateDriveAccessRole(file.id, input.actorId, input.role),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["drive", "access", file.id] });
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+    },
+  });
 
   const onShareSubmit = () => {
-    const targets = shareInput
+    const ids = shareInput
       .split(/[\s,]+/)
       .map((value) => value.trim())
       .filter((value) => value.length > 0);
-    const actorIds = targets.filter((value) => UUID_RE.test(value));
-    const actorRefs = targets.filter((value) => !UUID_RE.test(value));
-    if (actorIds.length > 0 || actorRefs.length > 0) {
-      onShare(file.id, { actorIds, actorRefs });
+    if (ids.length > 0) {
+      onShare(file.id, ids, shareRole);
       setShareInput("");
     }
   };
@@ -1598,25 +2069,27 @@ function DriveDetailsPanel({
           ) : null}
 
           <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-            <a
+            <button
+              type="button"
               className="btn sm primary"
-              href={download?.url ?? "#"}
-              // Native editor URLs (/docs, /sheets, /slides) stay in-tab;
-              // raw downloads pop a new tab so the user keeps their place.
-              target={
-                entry?.app === null || entry?.app === undefined
-                  ? download?.url.startsWith("/pdf/") === true
-                    ? "_self"
-                    : "_blank"
-                  : "_self"
-              }
-              rel="noreferrer"
-              aria-disabled={download === null}
+              disabled={entry === null}
+              onClick={() => onOpen(file.id)}
               style={{ flex: 1, justifyContent: "center" }}
             >
               <Icons.Eye />
               Open
-            </a>
+            </button>
+            <button
+              type="button"
+              className="btn sm"
+              disabled={busy || entry === null || isTrash}
+              onClick={() => onSetStarred(file.id, !file.starred)}
+              aria-pressed={file.starred}
+              style={{ flex: 1, justifyContent: "center" }}
+            >
+              <Icons.Star fill={file.starred ? "currentColor" : "none"} />
+              {file.starred ? "Unstar" : "Star"}
+            </button>
             {/* Native editor docs (docs/sheets/slides) carry their content as
                 Yjs state inside the typed table, not as a raw blob in RustFS,
                 so the "Download" stream returns nothing useful. Hide the
@@ -1711,13 +2184,28 @@ function DriveDetailsPanel({
               <div className="section-label" style={{ padding: "8px 0 6px" }}>
                 Share
               </div>
-              <input
-                className="input"
-                value={shareInput}
-                onChange={(event) => setShareInput(event.target.value)}
-                placeholder="Email, name, or actor ID"
-                style={{ width: "100%", fontSize: "var(--text-meta)", marginBottom: 6 }}
-              />
+              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                <input
+                  className="input"
+                  value={shareInput}
+                  onChange={(event) => setShareInput(event.target.value)}
+                  placeholder="Email, name, or actor ID"
+                  style={{ flex: 1, minWidth: 0, fontSize: "var(--text-meta)" }}
+                />
+                <select
+                  className="input"
+                  aria-label="Share role"
+                  value={shareRole}
+                  onChange={(event) => setShareRole(event.target.value as DriveAccessRole)}
+                  style={{ width: 112, fontSize: "var(--text-meta)" }}
+                >
+                  {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
+                    <option key={option.role} value={option.role}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <button
                 type="button"
                 className="btn sm"
@@ -1735,6 +2223,15 @@ function DriveDetailsPanel({
                   Access granted.
                 </div>
               ) : null}
+              <AccessList
+                grants={accessQuery.data ?? []}
+                loading={accessQuery.isLoading}
+                currentActorId={currentActorId}
+                ownerActorId={entry?.ownerActorId ?? null}
+                busy={removeAccessMutation.isPending || updateAccessMutation.isPending}
+                onRemove={(actorId) => removeAccessMutation.mutate(actorId)}
+                onRoleChange={(actorId, role) => updateAccessMutation.mutate({ actorId, role })}
+              />
             </>
           ) : null}
 
@@ -1763,4 +2260,131 @@ function DriveDetailsPanel({
       </div>
     </aside>
   );
+}
+
+const DRIVE_ACCESS_ROLE_OPTIONS: ReadonlyArray<{
+  readonly role: DriveAccessRole;
+  readonly label: string;
+}> = [
+  { role: "reader", label: "Viewer" },
+  { role: "commenter", label: "Commenter" },
+  { role: "editor", label: "Editor" },
+];
+
+function driveAccessRoleValue(role: string): DriveAccessRole {
+  return role === "commenter" || role === "editor" ? role : "reader";
+}
+
+function driveAccessRoleLabel(role: string): string {
+  return DRIVE_ACCESS_ROLE_OPTIONS.find((option) => option.role === role)?.label ?? role;
+}
+
+function AccessList({
+  grants,
+  loading,
+  currentActorId,
+  ownerActorId,
+  busy,
+  onRemove,
+  onRoleChange,
+}: {
+  readonly grants: readonly DriveAccessGrant[];
+  readonly loading: boolean;
+  readonly currentActorId: string | null;
+  readonly ownerActorId: string | null;
+  readonly busy: boolean;
+  readonly onRemove: (actorId: string) => void;
+  readonly onRoleChange: (actorId: string, role: DriveAccessRole) => void;
+}) {
+  const canManageAll = currentActorId !== null && ownerActorId === currentActorId;
+  if (loading) {
+    return (
+      <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 8 }}>
+        Loading access...
+      </div>
+    );
+  }
+  if (grants.length === 0) {
+    return null;
+  }
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div className="section-label" style={{ padding: "4px 0 6px" }}>
+        People with access
+      </div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {grants.map((grant) => {
+          const label = grant.displayName ?? grant.email ?? grant.actorId;
+          const canRemove =
+            canManageAll || (currentActorId !== null && grant.actorId === currentActorId);
+          return (
+            <div
+              key={grant.actorId}
+              className="row gap-2"
+              style={{
+                minWidth: 0,
+                fontSize: "var(--text-caption)",
+                padding: "4px 0",
+              }}
+            >
+              <Avatar name={label} size={18} />
+              <span className="truncate" style={{ minWidth: 0 }}>
+                {label}
+              </span>
+              {canManageAll ? (
+                <select
+                  className="input"
+                  aria-label={`Access role for ${label}`}
+                  value={driveAccessRoleValue(grant.role)}
+                  disabled={busy}
+                  onChange={(event) =>
+                    onRoleChange(grant.actorId, event.target.value as DriveAccessRole)
+                  }
+                  style={{ width: 112, height: 28, fontSize: "var(--text-caption)" }}
+                >
+                  {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
+                    <option key={option.role} value={option.role}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span style={{ color: "var(--text-3)" }}>{driveAccessRoleLabel(grant.role)}</span>
+              )}
+              {canRemove ? (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Remove access for ${label}`}
+                  disabled={busy}
+                  onClick={() => onRemove(grant.actorId)}
+                >
+                  <Icons.X />
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function driveShareTargetsFromInput(targets: readonly string[]): {
+  readonly actorIds: readonly string[];
+  readonly actorRefs: readonly string[];
+} {
+  const actorIds: string[] = [];
+  const actorRefs: string[] = [];
+  for (const target of targets) {
+    if (UUID_PATTERN.test(target)) {
+      actorIds.push(target);
+    } else {
+      actorRefs.push(target);
+    }
+  }
+  return { actorIds, actorRefs };
 }

@@ -60,7 +60,9 @@ export interface TenantHourlyQuotaExceeded {
   readonly resetsAt: string;
 }
 
-export type TenantHourlyQuotaDecision = TenantHourlyQuotaAllowed | TenantHourlyQuotaExceeded;
+export type TenantHourlyQuotaDecision =
+  | TenantHourlyQuotaAllowed
+  | TenantHourlyQuotaExceeded;
 
 export interface TenantHourlyQuotaLimiter {
   consume(input: TenantHourlyQuotaInput): Promise<TenantHourlyQuotaDecision>;

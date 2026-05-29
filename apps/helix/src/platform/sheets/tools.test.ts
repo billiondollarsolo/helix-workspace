@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { Actor } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
@@ -31,6 +32,10 @@ describe("sheets tools", () => {
       sideEffects: "read",
     });
     expect(registry.get("sheets.create")).toMatchObject({
+      permission: "sheets.write",
+      sideEffects: "write",
+    });
+    expect(registry.get("sheets.copy")).toMatchObject({
       permission: "sheets.write",
       sideEffects: "write",
     });
@@ -114,6 +119,51 @@ describe("sheets tools", () => {
       { actor },
     );
     expect(listed.ok && listed.output.total).toBe(1);
+  });
+
+  it("copies a spreadsheet with tabs, cells, and metadata", async () => {
+    const { registry } = setup();
+    const actor = writerActor();
+    const created = await registry.invoke<{
+      readonly id: string;
+      readonly tabs: readonly { readonly id: string; readonly name: string }[];
+    }>("sheets.create", { title: "Forecast", tabNames: ["Plan"] }, { actor });
+    expect(created.ok).toBe(true);
+    const sheetId = created.ok ? created.output.id : "";
+    const tabId = created.ok ? (created.output.tabs[0]?.id ?? "") : "";
+    await registry.invoke(
+      "sheets.cells.update",
+      {
+        tabId,
+        edits: [{ row: 1, col: 1, value: "ARR", format: { bold: true } }],
+      },
+      { actor },
+    );
+
+    const copied = await registry.invoke<{
+      readonly id: string;
+      readonly title: string;
+      readonly metadata: Record<string, unknown>;
+      readonly tabs: readonly { readonly id: string; readonly name: string }[];
+    }>(
+      "sheets.copy",
+      { sheetId, title: "Forecast (Copy)", metadata: { createdFrom: "test.copy" } },
+      { actor },
+    );
+
+    expect(copied.ok).toBe(true);
+    expect(copied.ok ? copied.output : undefined).toMatchObject({
+      title: "Forecast (Copy)",
+      metadata: { createdFrom: "test.copy", copiedFromSheetId: sheetId },
+    });
+    const copiedTabId = copied.ok ? (copied.output.tabs[0]?.id ?? "") : "";
+    expect(copiedTabId).not.toBe(tabId);
+    const copiedCells = await registry.invoke<{
+      readonly cells: readonly { readonly row: number; readonly col: number; readonly value: string; readonly format: Record<string, unknown> }[];
+    }>("sheets.tab.get", { tabId: copiedTabId }, { actor });
+    expect(copiedCells.ok ? copiedCells.output.cells : []).toContainEqual(
+      expect.objectContaining({ row: 1, col: 1, value: "ARR", format: { bold: true } }),
+    );
   });
 
   it("imports CSV text into a native spreadsheet", async () => {
@@ -310,6 +360,111 @@ describe("sheets tools", () => {
           format: { numberFormat: "custom", customNumberFormat: "#,##0.00" },
         }),
         expect.objectContaining({ row: 2, col: 1, value: "=SUM(B2:B2)" }),
+      ]),
+    );
+  });
+
+  it("imports legacy and binary Excel workbooks through the same spreadsheet importer", async () => {
+    const { registry } = setup();
+    const actor = writerActor();
+    const XLSX = await import("xlsx");
+
+    for (const fixture of [
+      { filename: "Legacy forecast.xls", bookType: "biff8" as const, format: "xls" },
+      { filename: "Binary forecast.xlsb", bookType: "xlsb" as const, format: "xlsb" },
+    ]) {
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.aoa_to_sheet([
+        ["Customer", "ARR"],
+        ["Acme", 1200],
+      ]);
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Legacy");
+      const output: unknown = XLSX.write(workbook, { type: "buffer", bookType: fixture.bookType });
+      const buffer = Buffer.isBuffer(output) ? output : Buffer.from(output as Uint8Array);
+
+      const imported = await registry.invoke<{
+        readonly title: string;
+        readonly metadata: Record<string, unknown>;
+        readonly tabs: { readonly id: string; readonly name: string }[];
+        readonly import: { readonly format: string };
+      }>(
+        "sheets.import-xlsx",
+        {
+          filename: fixture.filename,
+          contentBase64: Buffer.from(buffer).toString("base64"),
+          metadata: { source: "legacy-excel-test" },
+        },
+        { actor },
+      );
+
+      expect(imported.ok).toBe(true);
+      expect(imported.ok ? imported.output.title : "").toContain("forecast");
+      expect(imported.ok ? imported.output.metadata : {}).toMatchObject({
+        importedFrom: fixture.format,
+        sourceFilename: fixture.filename,
+      });
+      expect(imported.ok ? imported.output.import : undefined).toMatchObject({
+        format: fixture.format,
+      });
+      expect(imported.ok ? imported.output.tabs.map((tab) => tab.name) : []).toEqual(["Legacy"]);
+
+      const tabId = imported.ok ? (imported.output.tabs[0]?.id ?? "") : "";
+      const tabRead = await registry.invoke<{
+        readonly cells: Array<{
+          readonly row: number;
+          readonly col: number;
+          readonly value: string;
+          readonly format: Record<string, unknown>;
+        }>;
+      }>("sheets.tab.get", { tabId }, { actor });
+      expect(tabRead.ok ? tabRead.output.cells : []).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ row: 0, col: 0, value: "Customer" }),
+          expect.objectContaining({
+            row: 1,
+            col: 1,
+            value: "1200",
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("sanitizes corpus XLSB workbook tab names before storing them", async () => {
+    const { registry } = setup();
+    const actor = writerActor();
+    const buffer = readFileSync("../../test-corpus/apache-tika/microsoft/testEXCEL.xlsb");
+
+    const imported = await registry.invoke<{
+      readonly tabs: { readonly id: string; readonly name: string }[];
+    }>(
+      "sheets.import-xlsx",
+      {
+        filename: "testEXCEL.xlsb",
+        contentBase64: buffer.toString("base64"),
+        metadata: { source: "corpus-xlsb-test" },
+      },
+      { actor },
+    );
+
+    expect(imported.ok).toBe(true);
+    expect(imported.ok ? imported.output.tabs.map((tab) => tab.name) : []).toEqual([
+      "Sheet 1",
+      "Sheet 2",
+      "Sheet 3",
+    ]);
+
+    const tabId = imported.ok ? (imported.output.tabs[0]?.id ?? "") : "";
+    const tabRead = await registry.invoke<{
+      readonly cells: Array<{ readonly row: number; readonly col: number; readonly value: string }>;
+    }>("sheets.tab.get", { tabId }, { actor });
+    expect(tabRead.ok ? tabRead.output.cells : []).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          row: 0,
+          col: 0,
+          value: "This is an example spreadsheet created with Microsoft Excel 2007 Beta 2.",
+        }),
       ]),
     );
   });
@@ -1017,6 +1172,12 @@ describe("sheets tools", () => {
             value: "1234.567",
             format: { numberFormat: "custom", customNumberFormat: "#,##0.00" },
           },
+          {
+            row: 3,
+            col: 0,
+            value: "Launch plan",
+            format: { linkUrl: "https://example.test/launch-plan" },
+          },
         ],
       },
       { actor },
@@ -1060,6 +1221,13 @@ describe("sheets tools", () => {
       value: "1234.567",
       format: { numberFormat: "custom", customNumberFormat: "#,##0.00" },
     });
+    const linkedCell = cells.ok
+      ? cells.output.cells.find((cell) => cell.row === 3 && cell.col === 0)
+      : undefined;
+    expect(linkedCell).toMatchObject({
+      value: "Launch plan",
+      format: { linkUrl: "https://example.test/launch-plan" },
+    });
 
     const tabRead = await registry.invoke<{
       readonly cells: Array<{
@@ -1095,6 +1263,7 @@ describe("sheets tools", () => {
       numberFormat: "custom",
       customNumberFormat: "#,##0.00",
     });
+    expect(readFormats.get("3:0")).toEqual({ linkUrl: "https://example.test/launch-plan" });
   });
 
   it("sorts a selected range through the range sort tool", async () => {

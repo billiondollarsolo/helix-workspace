@@ -1,0 +1,4 @@
+# Local corpus cache — fetched once via 'pnpm helix db:fetch:corpus', then
+# replayed offline via 'pnpm helix db:seed:corpus'. Out of git on purpose.
+/corpus-cache/
+

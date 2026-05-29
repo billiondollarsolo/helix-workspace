@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { JsonObject } from "@helix/sdk-types";
-import type { VectorStore, VectorItem, VectorMatch, VectorMetric, VectorQueryOpts } from "../ai/vector/index.js";
+import type {
+  VectorOrgScope,
+  VectorStore,
+  VectorItem,
+  VectorMatch,
+  VectorMetric,
+  VectorQueryOpts,
+} from "../ai/vector/index.js";
 import { SemanticSearchEngine } from "./semantic.js";
 import type { IndexDocument, SearchEngine, SearchRequest, SearchResponse } from "./types.js";
 
@@ -22,7 +29,7 @@ const docs = [
 ] satisfies readonly IndexDocument[];
 
 describe("SemanticSearchEngine", () => {
-  it("indexes documents into keyword search and vector storage", async () => {
+  it("indexes documents into keyword search and per-org vector storage", async () => {
     const keyword = new FakeSearchEngine();
     const embeddings = new FakeEmbeddingProvider();
     const vectorStore = new FakeVectorStore();
@@ -34,13 +41,50 @@ describe("SemanticSearchEngine", () => {
     expect(embeddings.texts).toEqual([
       ["Launch mail\nPlanning notes for the product launch", "Roadmap deck\nQuarterly launch roadmap"],
     ]);
-    expect(vectorStore.collections).toEqual([{ name: "helix_search", dim: 3, metric: "cosine" }]);
+    expect(vectorStore.collections).toEqual([{ orgId: "org-1", name: "helix_search", dim: 3, metric: "cosine" }]);
     expect(vectorStore.upserts).toEqual([
       {
+        orgId: "org-1",
         collection: "helix_search",
         ids: ["mail:1", "drive:1"],
       },
     ]);
+  });
+
+  it("groups vector upserts by tenant when batches mix orgs", async () => {
+    const keyword = new FakeSearchEngine();
+    const embeddings = new FakeEmbeddingProvider();
+    const vectorStore = new FakeVectorStore();
+    const engine = new SemanticSearchEngine({ keyword, embeddings, vectorStore });
+
+    await engine.upsert([
+      { id: "mail:a", type: "mail", title: "Org A note", attributes: { orgId: "org-a" } },
+      { id: "mail:b", type: "mail", title: "Org B note", attributes: { orgId: "org-b" } },
+    ]);
+
+    // The two tenants must produce two distinct collection/upsert pairs —
+    // never a shared one. Tenant A and B never get a combined call.
+    const orgsTouched = vectorStore.upserts.map((upsert) => upsert.orgId).sort();
+    expect(orgsTouched).toEqual(["org-a", "org-b"]);
+    expect(vectorStore.upserts).toHaveLength(2);
+  });
+
+  it("skips vector indexing for documents missing an orgId attribute", async () => {
+    const keyword = new FakeSearchEngine();
+    const embeddings = new FakeEmbeddingProvider();
+    const vectorStore = new FakeVectorStore();
+    const engine = new SemanticSearchEngine({ keyword, embeddings, vectorStore });
+
+    await engine.upsert([{ id: "orphan:1", type: "mail", title: "No org", body: "" }]);
+
+    // Keyword side still receives the document but the vector store sees
+    // nothing — that prevents an orphan document from being keyed by a
+    // tenant id we don't know.
+    expect(keyword.upserts).toEqual([
+      [{ id: "orphan:1", type: "mail", title: "No org", body: "" }],
+    ]);
+    expect(vectorStore.upserts).toEqual([]);
+    expect(vectorStore.collections).toEqual([]);
   });
 
   it("embeds the query and fuses semantic results without leaking other orgs", async () => {
@@ -98,13 +142,31 @@ describe("SemanticSearchEngine", () => {
         filter: 'attributes.orgId = "org-1"',
       },
     ]);
-    expect(vectorStore.queries).toEqual([{ collection: "helix_search", vector: [0.1, 0.2, 0.3], limit: 50 }]);
+    expect(vectorStore.queries).toEqual([{ orgId: "org-1", collection: "helix_search", vector: [0.1, 0.2, 0.3], limit: 50 }]);
     expect(response.hits.map((hit) => hit.id)).toEqual(["mail:1", "chat:1"]);
     expect(response.hits.some((hit) => hit.id === "mail:other")).toBe(false);
     expect(response.hits.some((hit) => hit.id === "drive:1")).toBe(false);
   });
 
-  it("deletes from both keyword and vector indexes", async () => {
+  it("refuses to query the vector store when no tenant filter is supplied", async () => {
+    // Without an explicit tenant filter the engine MUST NOT issue a vector
+    // query — that would let an unscoped caller fan out across every
+    // tenant's embeddings.
+    const keyword = new FakeSearchEngine([
+      { id: "mail:1", type: "mail", title: "Mail", attributes: { orgId: "org-1" } },
+    ]);
+    const embeddings = new FakeEmbeddingProvider();
+    const vectorStore = new FakeVectorStore();
+    const engine = new SemanticSearchEngine({ keyword, embeddings, vectorStore });
+
+    await engine.search({ query: "anything", limit: 5 });
+
+    expect(vectorStore.queries).toEqual([]);
+  });
+
+  it("deletes from keyword search; vector deletes are deferred", async () => {
+    // A blanket delete cannot run against the vector store without a tenant
+    // context, so the engine intentionally no-ops on the vector side.
     const keyword = new FakeSearchEngine();
     const vectorStore = new FakeVectorStore();
     const engine = new SemanticSearchEngine({
@@ -116,7 +178,7 @@ describe("SemanticSearchEngine", () => {
     await engine.delete(["mail:1"]);
 
     expect(keyword.deletes).toEqual([["mail:1"]]);
-    expect(vectorStore.deletes).toEqual([{ collection: "helix_search", ids: ["mail:1"] }]);
+    expect(vectorStore.deletes).toEqual([]);
   });
 });
 
@@ -161,27 +223,27 @@ class FakeSearchEngine implements SearchEngine {
 
 class FakeVectorStore implements VectorStore {
   readonly id = "vector";
-  readonly collections: Array<{ readonly name: string; readonly dim: number; readonly metric: VectorMetric }> = [];
-  readonly upserts: Array<{ readonly collection: string; readonly ids: readonly string[] }> = [];
-  readonly deletes: Array<{ readonly collection: string; readonly ids: readonly string[] }> = [];
-  readonly queries: Array<{ readonly collection: string; readonly vector: readonly number[]; readonly limit: number | undefined }> = [];
+  readonly collections: Array<{ readonly orgId: VectorOrgScope; readonly name: string; readonly dim: number; readonly metric: VectorMetric }> = [];
+  readonly upserts: Array<{ readonly orgId: VectorOrgScope; readonly collection: string; readonly ids: readonly string[] }> = [];
+  readonly deletes: Array<{ readonly orgId: VectorOrgScope; readonly collection: string; readonly ids: readonly string[] }> = [];
+  readonly queries: Array<{ readonly orgId: VectorOrgScope; readonly collection: string; readonly vector: readonly number[]; readonly limit: number | undefined }> = [];
   matches: readonly VectorMatch[] = [];
 
-  async createCollection(name: string, dim: number, metric: VectorMetric): Promise<void> {
-    this.collections.push({ name, dim, metric });
+  async createCollection(orgId: VectorOrgScope, name: string, dim: number, metric: VectorMetric): Promise<void> {
+    this.collections.push({ orgId, name, dim, metric });
   }
 
-  async upsert(collection: string, items: readonly VectorItem[]): Promise<void> {
-    this.upserts.push({ collection, ids: items.map((item) => item.id) });
+  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
+    this.upserts.push({ orgId, collection, ids: items.map((item) => item.id) });
   }
 
-  async query(collection: string, vector: readonly number[], opts?: VectorQueryOpts): Promise<readonly VectorMatch[]> {
-    this.queries.push({ collection, vector, limit: opts?.limit });
+  async query(orgId: VectorOrgScope, collection: string, vector: readonly number[], opts?: VectorQueryOpts): Promise<readonly VectorMatch[]> {
+    this.queries.push({ orgId, collection, vector, limit: opts?.limit });
     return this.matches;
   }
 
-  async delete(collection: string, ids: readonly string[]): Promise<void> {
-    this.deletes.push({ collection, ids: [...ids] });
+  async delete(orgId: VectorOrgScope, collection: string, ids: readonly string[]): Promise<void> {
+    this.deletes.push({ orgId, collection, ids: [...ids] });
   }
 }
 

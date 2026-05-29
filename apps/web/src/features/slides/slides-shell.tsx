@@ -3,38 +3,52 @@
    wrapped in the shared SurfaceFrame chrome. */
 
 import { useEffect, useState } from "react";
-import { useRouter } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
+import { useEditorsAlpha } from "@/features/apps/editors-alpha";
 import {
   NativePresentationEditor,
   type NativePresentationEditorRouteState,
 } from "./native-presentation-editor";
+import { slidesDeckDetailQueryOptions } from "./queries";
 import { SlidesList } from "./slides-list";
 import type { SlideDeck } from "./seed";
+import { UniversalEditorRouter } from "@/features/_open/ui";
 
 export interface SlidesViewRouteState {
   readonly deckId: string | null;
   readonly commentId: string | null;
+  readonly openMode: SlideDeck["openMode"] | null;
+  readonly searchQuery: string;
 }
 
 export interface SlidesShellProps {
   /** Open straight into the editor for this deck id (used by Drive). */
   readonly initialDeckId?: string;
+  readonly initialSearchQuery?: string;
   readonly routeState?: SlidesViewRouteState;
   readonly onRouteStateChange?: (state: SlidesViewRouteState) => void;
+  readonly onSearchQueryChange?: (query: string) => void;
 }
 
 export function SlidesShell({
   initialDeckId,
+  initialSearchQuery = "",
   routeState,
   onRouteStateChange,
+  onSearchQueryChange,
 }: SlidesShellProps = {}) {
   const [deckId, setDeckId] = useState<string | null>(routeState?.deckId ?? initialDeckId ?? null);
-  const [search, setSearch] = useState("");
-  const router = useRouter();
+  const [deckOpenMode, setDeckOpenMode] = useState<SlideDeck["openMode"] | null>(
+    routeState?.openMode ?? null,
+  );
+  const [search, setSearch] = useState(routeState?.searchQuery ?? initialSearchQuery);
   const routeDeckId = routeState?.deckId;
   const routeCommentId = routeState?.commentId ?? null;
+  const routeOpenMode = routeState?.openMode ?? null;
+  const routeSearchQuery = routeState?.searchQuery;
+  const editorsAlpha = useEditorsAlpha();
 
   useEffect(() => {
     if (initialDeckId !== undefined) {
@@ -45,25 +59,47 @@ export function SlidesShell({
   useEffect(() => {
     if (routeDeckId !== undefined) {
       setDeckId(routeDeckId);
+      setDeckOpenMode(routeOpenMode);
     }
-  }, [routeDeckId]);
+  }, [routeDeckId, routeOpenMode]);
 
-  function handleOpenDeck(deck: Pick<SlideDeck, "id" | "openMode">) {
-    if (deck.openMode === "office") {
-      void router.navigate({ to: "/edit/$objectId", params: { objectId: deck.id } });
+  useEffect(() => {
+    if (routeSearchQuery !== undefined) {
+      setSearch(routeSearchQuery);
       return;
     }
+    setSearch(initialSearchQuery);
+  }, [initialSearchQuery, routeSearchQuery]);
+
+  function handleOpenDeck(deck: Pick<SlideDeck, "id" | "openMode">) {
     setDeckId(deck.id);
-    onRouteStateChange?.({ deckId: deck.id, commentId: null });
+    setDeckOpenMode(deck.openMode ?? null);
+    onRouteStateChange?.({
+      deckId: deck.id,
+      commentId: null,
+      openMode: deck.openMode ?? null,
+      searchQuery: search,
+    });
   }
 
   function handleBackToList() {
     setDeckId(null);
-    onRouteStateChange?.({ deckId: null, commentId: null });
+    setDeckOpenMode(null);
+    onRouteStateChange?.({ deckId: null, commentId: null, openMode: null, searchQuery: search });
   }
 
   function handleEditorRouteStateChange(nextState: NativePresentationEditorRouteState) {
-    onRouteStateChange?.({ deckId, commentId: nextState.commentId });
+    onRouteStateChange?.({
+      deckId,
+      commentId: nextState.commentId,
+      openMode: deckOpenMode,
+      searchQuery: search,
+    });
+  }
+
+  function handleSearchChange(nextSearch: string) {
+    setSearch(nextSearch);
+    onSearchQueryChange?.(nextSearch);
   }
 
   if (deckId !== null) {
@@ -73,13 +109,16 @@ export function SlidesShell({
         icon={<Icons.Image />}
         searchPlaceholder="Search presentations"
         searchValue={search}
-        onSearchChange={setSearch}
+        onSearchChange={handleSearchChange}
       >
-        <NativePresentationEditor
+        <SlidesEditorSurface
           deckId={deckId}
-          routeState={{ commentId: routeCommentId }}
-          onRouteStateChange={handleEditorRouteStateChange}
-          onBack={handleBackToList}
+          openMode={deckOpenMode}
+          editorsEnabled={editorsAlpha.enabled}
+          routeCommentId={routeCommentId}
+          handleOpenDeck={(nextDeckId) => handleOpenDeck({ id: nextDeckId, openMode: "native" })}
+          handleEditorRouteStateChange={handleEditorRouteStateChange}
+          handleBackToList={handleBackToList}
         />
       </SurfaceFrame>
     );
@@ -91,9 +130,53 @@ export function SlidesShell({
       icon={<Icons.Image />}
       searchPlaceholder="Search presentations"
       searchValue={search}
-      onSearchChange={setSearch}
+      onSearchChange={handleSearchChange}
     >
-      <SlidesList onOpen={handleOpenDeck} query={search} />
+      <SlidesList onOpen={handleOpenDeck} query={search} editorsEnabled={editorsAlpha.enabled} />
     </SurfaceFrame>
+  );
+}
+
+/** Routes a deck id either to the native presentation editor (when
+ *  slides.get returns a native deck) or to the universal-loader fallback
+ *  (when the id refers to a raw .pptx / .odp Drive upload). */
+function SlidesEditorSurface({
+  deckId,
+  openMode,
+  editorsEnabled,
+  routeCommentId,
+  handleOpenDeck,
+  handleEditorRouteStateChange,
+  handleBackToList,
+}: {
+  readonly deckId: string;
+  readonly openMode: SlideDeck["openMode"] | null;
+  readonly editorsEnabled: boolean;
+  readonly routeCommentId: string | null;
+  readonly handleOpenDeck: (deckId: string) => void;
+  readonly handleEditorRouteStateChange: (s: NativePresentationEditorRouteState) => void;
+  readonly handleBackToList: () => void;
+}) {
+  const shouldTryNative = openMode !== "office" && editorsEnabled;
+  const nativeQuery = useQuery(slidesDeckDetailQueryOptions(deckId, { enabled: shouldTryNative }));
+  const nativeFetch = shouldTryNative
+    ? nativeQuery
+    : { isLoading: false, isError: false, isSuccess: true, data: null };
+  return (
+    <UniversalEditorRouter
+      objectId={deckId}
+      surface="slides"
+      nativeEditingEnabled={editorsEnabled}
+      nativeFetch={nativeFetch}
+      renderNative={() => (
+        <NativePresentationEditor
+          deckId={deckId}
+          routeState={{ commentId: routeCommentId }}
+          onRouteStateChange={handleEditorRouteStateChange}
+          onBack={handleBackToList}
+          onOpenDeck={handleOpenDeck}
+        />
+      )}
+    />
   );
 }

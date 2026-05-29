@@ -44,18 +44,16 @@ if ! command -v "$HELM_BIN" >/dev/null 2>&1; then
 fi
 
 render base
-render monitoring \
-  --set monitoring.tenantStorageMigrationPrometheusRule.enabled=true \
-  --set monitoring.tenantExportPrometheusRule.enabled=true
 render business -f "$CHART_DIR/values-business.yaml"
 render enterprise -f "$CHART_DIR/values-enterprise.yaml"
 render sovereign -f "$CHART_DIR/values-sovereign.yaml"
+render observability --set monitoring.prometheusRule.enabled=true
 
 BASE="$WORK_DIR/base.yaml"
-MONITORING="$WORK_DIR/monitoring.yaml"
 BUSINESS="$WORK_DIR/business.yaml"
 ENTERPRISE="$WORK_DIR/enterprise.yaml"
 SOVEREIGN="$WORK_DIR/sovereign.yaml"
+OBSERVABILITY="$WORK_DIR/observability.yaml"
 
 assert_contains "$BASE" '^kind: Deployment$' "base chart must render a Deployment"
 assert_contains "$BASE" '^kind: HorizontalPodAutoscaler$' "base chart must render an HPA"
@@ -67,26 +65,7 @@ assert_contains "$BASE" '^kind: NetworkPolicy$' "base chart must render a Networ
 assert_contains "$BASE" 'automountServiceAccountToken: false' "service account token automount must be disabled by default"
 assert_contains "$BASE" 'runAsNonRoot: true' "pods must run as non-root"
 assert_contains "$BASE" 'readOnlyRootFilesystem: true' "container filesystem must be read-only"
-assert_not_contains "$BASE" 'HelixTenantStorageMigrationStalled' "tenant storage migration alerts must be opt-in"
-assert_not_contains "$BASE" 'HelixTenantExportStalled' "tenant export alerts must be opt-in"
-
-assert_contains "$MONITORING" '^kind: PrometheusRule$' "monitoring overlay must render opt-in PrometheusRule"
-assert_contains "$MONITORING" 'name: helix\.tenant_storage\.migration' "tenant storage migration alert group must render"
-assert_contains "$MONITORING" 'HelixTenantStorageMigrationStalled' "tenant storage migration stalled alert must render"
-assert_contains "$MONITORING" 'HelixTenantStorageMigrationFailed' "tenant storage migration failed alert must render"
-assert_contains "$MONITORING" 'helix_tenant_storage_migration_stalled_jobs' "stalled alert must use the committed migration stalled metric"
-assert_contains "$MONITORING" 'helix_tenant_storage_migration_jobs_total' "failed alert must use the committed migration job counter"
-assert_contains "$MONITORING" 'runbook_url: "docs/specs/05-operations/runbooks/tenant-storage-migration.md"' "tenant storage migration alerts must link the runbook"
-assert_contains "$MONITORING" 'operation: tenant_storage_migration' "tenant storage migration alerts must carry operation label"
-assert_not_contains "$MONITORING" 'org_id|job_id|actor_id|email_address|user_agent|ip_address' "tenant storage migration alerts must not add high-cardinality labels"
-assert_contains "$MONITORING" 'name: helix\.tenant_export' "tenant export alert group must render"
-assert_contains "$MONITORING" 'HelixTenantExportStalled' "tenant export stalled alert must render"
-assert_contains "$MONITORING" 'HelixTenantExportFailed' "tenant export failed alert must render"
-assert_contains "$MONITORING" 'helix_tenant_export_stalled_jobs' "tenant export stalled alert must use the committed stalled metric"
-assert_contains "$MONITORING" 'helix_tenant_export_jobs_total' "tenant export failed alert must use the committed job counter"
-assert_contains "$MONITORING" 'runbook_url: "docs/specs/05-operations/runbooks/tenant-export-too-large.md"' "tenant export alerts must link the runbook"
-assert_contains "$MONITORING" 'operation: tenant_export' "tenant export alerts must carry operation label"
-assert_not_contains "$MONITORING" 'tenant_id|filename|storage_key' "tenant export alerts must not add high-cardinality labels"
+assert_not_contains "$BASE" '^kind: PrometheusRule$' "PrometheusRule must be opt-in because Prometheus Operator CRDs may be absent"
 
 assert_contains "$BUSINESS" 'helix.io/security-tier: "business"' "business overlay must label the tier"
 assert_contains "$BUSINESS" 'cidr: "10\.0\.0\.0/8"' "business overlay must render private egress allow-list CIDRs"
@@ -98,6 +77,8 @@ assert_contains "$ENTERPRISE" '^kind: ScheduledBackup$' "enterprise overlay must
 assert_contains "$ENTERPRISE" 'barmanObjectStore:' "enterprise overlay must configure CloudNativePG object-store backups"
 assert_contains "$ENTERPRISE" 'helix.io/postgres-tde: required' "enterprise overlay must carry Postgres TDE/KMS annotations"
 assert_contains "$ENTERPRISE" 'VAULT_ADDR' "enterprise overlay must expose Vault wiring"
+assert_contains "$ENTERPRISE" 'HELIX_VAULT_AUTH_PATH' "enterprise overlay must expose Vault auth path for dynamic tenant secret reads"
+assert_contains "$ENTERPRISE" 'HELIX_BYO_STORAGE_VAULT_MOUNT' "enterprise overlay must expose BYO storage Vault mount"
 assert_contains "$ENTERPRISE" 'SIEM_ENDPOINT' "enterprise overlay must expose SIEM wiring"
 
 assert_contains "$SOVEREIGN" 'helix.io/security-tier: "sovereign"' "sovereign overlay must label the tier"
@@ -111,10 +92,18 @@ assert_contains "$SOVEREIGN" '^  egress: \[\]$' "sovereign overlay must default-
 assert_not_contains "$SOVEREIGN" '^    - \{\}$' "sovereign overlay must not allow all egress"
 assert_not_contains "$SOVEREIGN" 'kube-system' "sovereign overlay must not allow DNS egress by default"
 
+assert_contains "$OBSERVABILITY" '^kind: PrometheusRule$' "observability overlay must render a PrometheusRule when enabled"
+assert_contains "$OBSERVABILITY" 'name: helix.signup.slo' "PrometheusRule must include the signup SLO group"
+assert_contains "$OBSERVABILITY" 'HelixSignupActivationP95High' "PrometheusRule must include the signup p95 alert"
+assert_contains "$OBSERVABILITY" 'HelixSignupActivationSloMissRateHigh' "PrometheusRule must include the signup miss-rate alert"
+assert_contains "$OBSERVABILITY" 'HelixSignupActivationSamplesMissing' "PrometheusRule must include the missing-samples alert"
+assert_contains "$OBSERVABILITY" 'runbook_url: "?docs/specs/05-operations/runbooks/signup-activation-slo-breach\.md"?' "signup SLO alerts must link the runbook"
+assert_not_contains "$OBSERVABILITY" 'org_id|actor_id|email_address|user_agent|ip_address' "signup SLO alerts must not carry private or high-cardinality labels"
+
 if command -v kubeconform >/dev/null 2>&1; then
-  kubeconform -strict -ignore-missing-schemas "$BASE" "$MONITORING" "$BUSINESS" "$ENTERPRISE" "$SOVEREIGN"
+  kubeconform -strict -ignore-missing-schemas "$BASE" "$BUSINESS" "$ENTERPRISE" "$SOVEREIGN" "$OBSERVABILITY"
 else
   echo "kubeconform not found; skipped Kubernetes schema validation."
 fi
 
-echo "Helm validation passed: base, monitoring, business, enterprise, and sovereign overlays rendered expected PRD hardening evidence."
+echo "Helm validation passed: base, business, enterprise, sovereign, and observability overlays rendered expected PRD hardening evidence."

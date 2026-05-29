@@ -1,0 +1,559 @@
+{
+  "version": 1,
+  "description": "Real public-domain / open content used to hydrate /docs, /sheets, /slides, /drive for development. Each item is fetched once into seed/corpus-cache/ (gitignored) by db:fetch:corpus, then re-imported repeatedly by db:seed:corpus. Random UUIDs are assigned at import time; the manifest_id is the stable cross-run handle.",
+  "folders": [
+    { "manifestId": "folder.public-filings","name": "Public Filings",             "parent": null,                    "owner": "admin@helix.local",  "share": { "kind": "org" } },
+    { "manifestId": "folder.investor-info", "name": "Investor Info",              "parent": "folder.public-filings", "owner": "admin@helix.local",  "share": { "kind": "org" } },
+    { "manifestId": "folder.research",      "name": "Research & Reports",         "parent": null,                    "owner": "maya@helix.local",   "share": { "kind": "org" } },
+    { "manifestId": "folder.engineering",   "name": "Engineering",                "parent": null,                    "owner": "morgan@helix.local", "share": { "kind": "users", "actors": ["leo@helix.local","sasha@helix.local","priya@helix.local"] } },
+    { "manifestId": "folder.finance",       "name": "Finance & Economics",        "parent": null,                    "owner": "erica@helix.local",  "share": { "kind": "org" } },
+    { "manifestId": "folder.private-maya",  "name": "Maya's Drafts",              "parent": null,                    "owner": "maya@helix.local",   "share": { "kind": "private" } }
+  ],
+  "items": [
+    {
+      "manifestId": "doc.welcome",
+      "kind": "doc",
+      "title": "Welcome to Helix",
+      "owner": "admin@helix.local",
+      "share": { "kind": "org", "orgRole": "commenter" },
+      "folder": null,
+      "tags": ["onboarding"],
+      "source": { "type": "wikipedia", "article": "Helix", "license": "CC BY-SA 4.0" }
+    },
+    {
+      "manifestId": "doc.team-handbook",
+      "kind": "doc",
+      "title": "Team Handbook (working draft)",
+      "owner": "admin@helix.local",
+      "share": { "kind": "org", "orgRole": "editor" },
+      "folder": null,
+      "tags": ["onboarding","reference"],
+      "source": { "type": "wikipedia", "article": "Employee_handbook", "license": "CC BY-SA 4.0" }
+    },
+    {
+      "manifestId": "doc.brand-guidelines",
+      "kind": "doc",
+      "title": "Brand Guidelines",
+      "owner": "admin@helix.local",
+      "share": { "kind": "org", "orgRole": "viewer" },
+      "folder": null,
+      "tags": ["brand"],
+      "source": { "type": "wikipedia", "article": "Brand_guidelines", "license": "CC BY-SA 4.0" }
+    },
+    {
+      "manifestId": "doc.wikipedia.postgresql",
+      "kind": "doc",
+      "title": "PostgreSQL — encyclopedia overview",
+      "owner": "morgan@helix.local",
+      "share": { "kind": "org", "orgRole": "commenter" },
+      "folder": "folder.engineering",
+      "tags": ["engineering","database","reference"],
+      "source": {
+        "type": "wikipedia",
+        "article": "PostgreSQL",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/PostgreSQL"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.kubernetes",
+      "kind": "doc",
+      "title": "Kubernetes — encyclopedia overview",
+      "owner": "leo@helix.local",
+      "share": { "kind": "users", "grants": [
+        { "actor": "morgan@helix.local", "role": "editor" },
+        { "actor": "sasha@helix.local", "role": "editor" },
+        { "actor": "priya@helix.local", "role": "commenter" },
+        { "actor": "admin@helix.local", "role": "viewer" }
+      ] },
+      "folder": "folder.engineering",
+      "tags": ["engineering","infrastructure","reference"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Kubernetes",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Kubernetes"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.typescript",
+      "kind": "doc",
+      "title": "TypeScript — encyclopedia overview",
+      "owner": "sasha@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.engineering",
+      "tags": ["engineering","language","reference"],
+      "source": {
+        "type": "wikipedia",
+        "article": "TypeScript",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/TypeScript"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.apple-inc",
+      "kind": "doc",
+      "title": "Apple Inc. — encyclopedia overview",
+      "owner": "maya@helix.local",
+      "share": { "kind": "org", "orgRole": "viewer", "orgOverrides": [
+        { "actor": "admin@helix.local", "role": "editor" },
+        { "actor": "erica@helix.local", "role": "commenter" }
+      ] },
+      "folder": "folder.investor-info",
+      "tags": ["research","public-company","technology"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Apple_Inc.",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Apple_Inc."
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.tesla-inc",
+      "kind": "doc",
+      "title": "Tesla, Inc. — encyclopedia overview",
+      "owner": "maya@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.investor-info",
+      "tags": ["research","public-company","automotive","energy"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Tesla,_Inc.",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Tesla,_Inc."
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.microsoft",
+      "kind": "doc",
+      "title": "Microsoft — encyclopedia overview",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org", "orgRole": "commenter" },
+      "folder": "folder.investor-info",
+      "tags": ["research","public-company","technology"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Microsoft",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Microsoft"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.nvidia",
+      "kind": "doc",
+      "title": "Nvidia — encyclopedia overview",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.investor-info",
+      "tags": ["research","public-company","semiconductors","ai"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Nvidia",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Nvidia"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.alphabet",
+      "kind": "doc",
+      "title": "Alphabet Inc. — encyclopedia overview",
+      "owner": "erica@helix.local",
+      "share": { "kind": "users", "actors": ["maya@helix.local","admin@helix.local"] },
+      "folder": "folder.investor-info",
+      "tags": ["research","public-company","technology","advertising"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Alphabet_Inc.",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Alphabet_Inc."
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.federal-reserve",
+      "kind": "doc",
+      "title": "Federal Reserve — encyclopedia overview",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org", "orgRole": "viewer", "orgOverrides": [
+        { "actor": "admin@helix.local", "role": "editor" },
+        { "actor": "maya@helix.local",  "role": "commenter" }
+      ] },
+      "folder": "folder.finance",
+      "tags": ["research","economics","central-banking"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Federal_Reserve",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Federal_Reserve"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.consumer-price-index",
+      "kind": "doc",
+      "title": "Consumer Price Index — encyclopedia overview",
+      "owner": "erica@helix.local",
+      "share": { "kind": "users", "actors": ["maya@helix.local"] },
+      "folder": "folder.finance",
+      "tags": ["research","economics","inflation"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Consumer_price_index",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Consumer_price_index"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.transformer-architecture",
+      "kind": "doc",
+      "title": "Transformer (machine learning) — encyclopedia overview",
+      "owner": "priya@helix.local",
+      "share": { "kind": "users", "grants": [
+        { "actor": "admin@helix.local", "role": "editor" },
+        { "actor": "morgan@helix.local","role": "commenter" },
+        { "actor": "leo@helix.local",   "role": "viewer" }
+      ] },
+      "folder": "folder.research",
+      "tags": ["research","ai","machine-learning"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Transformer_(deep_learning_architecture)",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Transformer_(deep_learning_architecture)"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.large-language-model",
+      "kind": "doc",
+      "title": "Large language model — encyclopedia overview",
+      "owner": "priya@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.research",
+      "tags": ["research","ai","language-models"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Large_language_model",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Large_language_model"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.semiconductor-industry",
+      "kind": "doc",
+      "title": "Semiconductor industry — encyclopedia overview",
+      "owner": "maya@helix.local",
+      "share": { "kind": "private" },
+      "folder": "folder.private-maya",
+      "tags": ["research","industry","semiconductors"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Semiconductor_industry",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Semiconductor_industry"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.electric-vehicle",
+      "kind": "doc",
+      "title": "Electric vehicle — encyclopedia overview",
+      "owner": "leo@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.research",
+      "tags": ["research","transport","energy"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Electric_vehicle",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Electric_vehicle"
+      }
+    },
+    {
+      "manifestId": "doc.wikipedia.cloud-computing",
+      "kind": "doc",
+      "title": "Cloud computing — encyclopedia overview",
+      "owner": "morgan@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.engineering",
+      "tags": ["engineering","infrastructure","reference"],
+      "source": {
+        "type": "wikipedia",
+        "article": "Cloud_computing",
+        "license": "CC BY-SA 4.0",
+        "url": "https://en.wikipedia.org/wiki/Cloud_computing"
+      }
+    },
+
+    {
+      "manifestId": "pdf.irs.form-1040-instructions",
+      "kind": "drive_file",
+      "title": "IRS Form 1040 Instructions",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org", "orgRole": "viewer" },
+      "folder": "folder.finance",
+      "tags": ["finance","tax","reference"],
+      "mimeType": "application/pdf",
+      "originalFormat": "pdf",
+      "source": { "type": "url", "url": "https://www.irs.gov/pub/irs-pdf/i1040gi.pdf", "license": "Public domain (US IRS)" }
+    },
+    {
+      "manifestId": "pdf.treasury.daily-statement-2024",
+      "kind": "drive_file",
+      "title": "US Treasury — Daily Treasury Statement guide",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.finance",
+      "tags": ["finance","treasury","public"],
+      "mimeType": "application/pdf",
+      "originalFormat": "pdf",
+      "source": { "type": "url", "url": "https://www.govinfo.gov/content/pkg/FR-2024-01-19/pdf/2024-00936.pdf", "license": "Public domain (US GovInfo)" }
+    },
+    {
+      "manifestId": "pdf.nasa.artemis-overview",
+      "kind": "drive_file",
+      "title": "NASA Artemis Plan — overview report",
+      "owner": "leo@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.research",
+      "tags": ["research","space","aerospace"],
+      "mimeType": "application/pdf",
+      "originalFormat": "pdf",
+      "source": { "type": "url", "url": "https://www.nasa.gov/wp-content/uploads/2020/12/artemis_plan-20200921.pdf", "license": "Public domain (US NASA)" }
+    },
+    {
+      "manifestId": "pdf.sec.investor-bulletin-mutual-funds",
+      "kind": "drive_file",
+      "title": "SEC Investor Bulletin — Mutual Funds and ETFs",
+      "owner": "maya@helix.local",
+      "share": { "kind": "users", "actors": ["admin@helix.local","erica@helix.local"] },
+      "folder": "folder.investor-info",
+      "tags": ["research","finance","regulation"],
+      "mimeType": "application/pdf",
+      "originalFormat": "pdf",
+      "source": { "type": "url", "url": "https://www.sec.gov/investor/pubs/sec-guide-to-mutual-funds.pdf", "license": "Public domain (US SEC)" }
+    },
+    {
+      "manifestId": "csv.bls.cpi-historical",
+      "kind": "drive_file",
+      "title": "BLS — CPI for All Urban Consumers (historical)",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org", "orgRole": "commenter" },
+      "folder": "folder.finance",
+      "tags": ["finance","data","cpi"],
+      "mimeType": "text/csv; charset=utf-8",
+      "originalFormat": "csv",
+      "source": { "type": "url", "url": "https://download.bls.gov/pub/time.series/cu/cu.data.0.Current", "license": "Public domain (US Bureau of Labor Statistics)" }
+    },
+    {
+      "manifestId": "txt.linux.kernel-coding-style",
+      "kind": "drive_file",
+      "title": "Linux Kernel — Coding Style",
+      "owner": "morgan@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.engineering",
+      "tags": ["engineering","reference","standards"],
+      "mimeType": "text/plain; charset=utf-8",
+      "originalFormat": "txt",
+      "source": { "type": "url", "url": "https://www.kernel.org/doc/Documentation/process/coding-style.rst", "license": "GPL-2.0 / public reference" }
+    },
+    {
+      "manifestId": "txt.gnu.gpl-3-license",
+      "kind": "drive_file",
+      "title": "GNU GPL v3 License Text",
+      "owner": "morgan@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.engineering",
+      "tags": ["engineering","legal","license"],
+      "mimeType": "text/plain; charset=utf-8",
+      "originalFormat": "txt",
+      "source": { "type": "url", "url": "https://www.gnu.org/licenses/gpl-3.0.txt", "license": "Verbatim copying permitted" }
+    },
+
+    {
+      "manifestId": "docx.wikipedia.postgresql",
+      "kind": "drive_file",
+      "title": "PostgreSQL — overview",
+      "owner": "morgan@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.engineering",
+      "tags": ["engineering","database","reference"],
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "originalFormat": "docx",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+    {
+      "manifestId": "docx.wikipedia.kubernetes",
+      "kind": "drive_file",
+      "title": "Kubernetes — overview",
+      "owner": "leo@helix.local",
+      "share": { "kind": "org", "orgRole": "commenter", "orgOverrides": [
+        { "actor": "morgan@helix.local", "role": "editor" },
+        { "actor": "sasha@helix.local",  "role": "editor" }
+      ] },
+      "folder": "folder.engineering",
+      "tags": ["engineering","infrastructure","reference"],
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "originalFormat": "docx",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+    {
+      "manifestId": "docx.wikipedia.typescript",
+      "kind": "drive_file",
+      "title": "TypeScript — overview",
+      "owner": "sasha@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.engineering",
+      "tags": ["engineering","language","reference"],
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "originalFormat": "docx",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+    {
+      "manifestId": "docx.wikipedia.cloud-computing",
+      "kind": "drive_file",
+      "title": "Cloud Computing — overview",
+      "owner": "morgan@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.engineering",
+      "tags": ["engineering","infrastructure","reference"],
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "originalFormat": "docx",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+
+    {
+      "manifestId": "pptx.wikipedia.apple-inc",
+      "kind": "drive_file",
+      "title": "Apple Inc. — investor deck",
+      "owner": "maya@helix.local",
+      "share": { "kind": "org", "orgRole": "viewer", "orgOverrides": [
+        { "actor": "admin@helix.local", "role": "editor" },
+        { "actor": "erica@helix.local", "role": "editor" }
+      ] },
+      "folder": "folder.investor-info",
+      "tags": ["research","public-company","slides"],
+      "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "originalFormat": "pptx",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+    {
+      "manifestId": "pptx.wikipedia.tesla-inc",
+      "kind": "drive_file",
+      "title": "Tesla, Inc. — investor deck",
+      "owner": "maya@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.investor-info",
+      "tags": ["research","public-company","slides"],
+      "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "originalFormat": "pptx",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+    {
+      "manifestId": "pptx.wikipedia.microsoft",
+      "kind": "drive_file",
+      "title": "Microsoft — investor deck",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.investor-info",
+      "tags": ["research","public-company","slides"],
+      "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "originalFormat": "pptx",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+    {
+      "manifestId": "pptx.wikipedia.nvidia",
+      "kind": "drive_file",
+      "title": "Nvidia — investor deck",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.investor-info",
+      "tags": ["research","public-company","slides"],
+      "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "originalFormat": "pptx",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+
+    {
+      "manifestId": "txt.wikipedia.federal-reserve",
+      "kind": "drive_file",
+      "title": "Federal Reserve — plain text extract",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.finance",
+      "tags": ["finance","reference"],
+      "mimeType": "text/plain; charset=utf-8",
+      "originalFormat": "txt",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+    {
+      "manifestId": "txt.wikipedia.transformer",
+      "kind": "drive_file",
+      "title": "Transformer architecture — plain text extract",
+      "owner": "priya@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.research",
+      "tags": ["research","ai","reference"],
+      "mimeType": "text/plain; charset=utf-8",
+      "originalFormat": "txt",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+    {
+      "manifestId": "txt.wikipedia.llm",
+      "kind": "drive_file",
+      "title": "Large language model — plain text extract",
+      "owner": "priya@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.research",
+      "tags": ["research","ai","reference"],
+      "mimeType": "text/plain; charset=utf-8",
+      "originalFormat": "txt",
+      "source": { "type": "generated", "license": "CC BY-SA 4.0 (Wikipedia source)" }
+    },
+
+    {
+      "manifestId": "xlsx.bls.cpi-categories",
+      "kind": "drive_file",
+      "title": "BLS — CPI categories reference",
+      "owner": "erica@helix.local",
+      "share": { "kind": "org", "orgRole": "viewer" },
+      "folder": "folder.finance",
+      "tags": ["finance","data","reference"],
+      "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "originalFormat": "xlsx",
+      "source": { "type": "url", "url": "https://www.bls.gov/cpi/tables/relative-importance/2024.xlsx", "license": "Public domain (US BLS)" }
+    },
+    {
+      "manifestId": "png.nasa.earth-from-iss",
+      "kind": "drive_file",
+      "title": "Earth from the ISS (NASA)",
+      "owner": "leo@helix.local",
+      "share": { "kind": "org", "orgRole": "viewer" },
+      "folder": "folder.research",
+      "tags": ["research","image","public-domain"],
+      "mimeType": "image/png",
+      "originalFormat": "png",
+      "source": { "type": "url", "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/The_Earth_seen_from_Apollo_17.jpg/640px-The_Earth_seen_from_Apollo_17.jpg", "license": "Public domain (NASA)" }
+    },
+    {
+      "manifestId": "jpg.commons.helsinki-cathedral",
+      "kind": "drive_file",
+      "title": "Helsinki Cathedral (Wikimedia Commons)",
+      "owner": "maya@helix.local",
+      "share": { "kind": "org", "orgRole": "viewer" },
+      "folder": "folder.research",
+      "tags": ["image","reference","architecture"],
+      "mimeType": "image/jpeg",
+      "originalFormat": "jpg",
+      "source": { "type": "url", "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Helsinki_July_2013-14a.jpg/800px-Helsinki_July_2013-14a.jpg", "license": "CC BY-SA 3.0 (Wikimedia Commons)" }
+    },
+    {
+      "manifestId": "png.commons.logo-helix",
+      "kind": "drive_file",
+      "title": "Helix logo (sample mark)",
+      "owner": "priya@helix.local",
+      "share": { "kind": "org" },
+      "folder": "folder.engineering",
+      "tags": ["brand","design"],
+      "mimeType": "image/png",
+      "originalFormat": "png",
+      "source": { "type": "url", "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/Diamond_logo.png/240px-Diamond_logo.png", "license": "CC BY-SA 3.0 (Wikimedia Commons)" }
+    }
+  ]
+}

@@ -1,4 +1,8 @@
-import type { ToolInvokeErrorResult, ToolRateLimitMetadata } from "../platform/tool-registry.js";
+import type {
+  ToolInvokeErrorResult,
+  ToolQuotaLimitMetadata,
+  ToolRateLimitMetadata,
+} from "../platform/tool-registry.js";
 
 /**
  * The single canonical error response shape returned across every REST and
@@ -25,6 +29,7 @@ const statusCodeToErrorCode: Record<number, string> = {
   404: "not_found",
   405: "method_not_allowed",
   409: "conflict",
+  410: "gone",
   429: "rate_limited",
   500: "internal_error",
 };
@@ -63,6 +68,9 @@ export function toolErrorEnvelope(
   }
   if (result.rateLimit !== undefined) {
     details.rateLimit = result.rateLimit satisfies ToolRateLimitMetadata;
+  }
+  if (result.quotaLimit !== undefined) {
+    details.quotaLimit = result.quotaLimit satisfies ToolQuotaLimitMetadata;
   }
   return buildErrorEnvelope({
     statusCode: result.statusCode,

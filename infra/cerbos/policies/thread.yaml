@@ -13,6 +13,9 @@ resourcePolicy:
     - actions: ["*"]
       effect: EFFECT_ALLOW
       roles: ["admin"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id
 
     - actions: ["create", "list", "search"]
       effect: EFFECT_ALLOW

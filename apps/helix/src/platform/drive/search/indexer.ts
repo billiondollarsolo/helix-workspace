@@ -73,6 +73,14 @@ export function driveRecordToIndexDocument(record: DriveSearchRecord): IndexDocu
       createdAt: record.createdAt,
       trashedAt: record.trashedAt,
       metadata: record.metadata,
+      // RAG visibility — Drive files are owner-private by default. Files
+      // marked as org-shared (classification === "org" or future explicit
+      // share-with-everyone flag) become visibility="org" so any member of
+      // the tenant can RAG them. Without an owner, default to org so
+      // legacy / system-uploaded files remain retrievable.
+      ...(record.classification === "public" || record.owner?.id === undefined
+        ? { ragVisibility: "org" }
+        : { ragVisibility: "private", ragOwnerActorId: record.owner.id }),
     }),
     updatedAt: record.updatedAt ?? record.createdAt,
   };

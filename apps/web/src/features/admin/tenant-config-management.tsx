@@ -4,7 +4,6 @@ import {
   ArrowRightLeft,
   Database,
   Gauge,
-  KeyRound,
   Palette,
   RefreshCcw,
   Save,
@@ -17,15 +16,12 @@ import { Input } from "@/components/ui/input";
 import {
   tenantConfigQueryKeys,
   tenantConfigQueryOptions,
-  tenantStorageMigrationsQueryOptions,
   cutoverTenantStorageMigration,
   fetchTenantStorageMigration,
   requestTenantStorageMigration,
-  rotateByoStorageCredentials,
   testByoStorage,
   updateTenantConfig,
   type TenantConfigAdminView,
-  type RotateByoStorageCredentialsInput,
   type TenantStorageMigrationJob,
   type TenantStorageMigrationTarget,
   type TenantStorageHealthResult,
@@ -126,11 +122,6 @@ type ByoStorageState = Record<ByoStorageFieldKey, string> & {
   readonly provider: ByoStorageProvider;
   readonly force_path_style: boolean;
 };
-type ByoStorageCredentialsState = {
-  readonly accessKeyId: string;
-  readonly secretAccessKey: string;
-  readonly sessionToken: string;
-};
 
 const emptyFeatureState = {
   ...Object.fromEntries(BOOLEAN_FEATURE_FLAGS.map(([key]) => [key, false])),
@@ -150,11 +141,6 @@ const emptyByoStorageState = {
   sse_kms_key_arn: "",
   force_path_style: false,
 } satisfies ByoStorageState;
-const emptyByoStorageCredentialsState = {
-  accessKeyId: "",
-  secretAccessKey: "",
-  sessionToken: "",
-} satisfies ByoStorageCredentialsState;
 
 export function TenantConfigManagement() {
   const queryClient = useQueryClient();
@@ -163,11 +149,6 @@ export function TenantConfigManagement() {
   const [dirtyFeatureKeys, setDirtyFeatureKeys] = useState<ReadonlySet<FeatureFlagKey>>(new Set());
   const [branding, setBranding] = useState<BrandingState>(emptyBrandingState);
   const [byoStorage, setByoStorage] = useState<ByoStorageState>(emptyByoStorageState);
-  const [byoStorageCredentials, setByoStorageCredentials] = useState<ByoStorageCredentialsState>(
-    emptyByoStorageCredentialsState,
-  );
-  const [credentialRotationConfirmed, setCredentialRotationConfirmed] = useState(false);
-  const [credentialRotationStatus, setCredentialRotationStatus] = useState<string | null>(null);
   const [storageHealth, setStorageHealth] = useState<TenantStorageHealthResult | null>(null);
   const [migrationTarget, setMigrationTarget] = useState<TenantStorageMigrationTarget>("byo");
   const [migrationDryRun, setMigrationDryRun] = useState(true);
@@ -175,7 +156,6 @@ export function TenantConfigManagement() {
   const [migrationCutoverConfirmed, setMigrationCutoverConfirmed] = useState(false);
   const [storageMigration, setStorageMigration] = useState<TenantStorageMigrationJob | null>(null);
   const query = useQuery(tenantConfigQueryOptions());
-  const storageMigrationHistoryQuery = useQuery(tenantStorageMigrationsQueryOptions());
 
   useEffect(() => {
     if (query.data === undefined) {
@@ -185,9 +165,6 @@ export function TenantConfigManagement() {
     setDirtyFeatureKeys(new Set());
     setBranding(brandingStateFromConfig(query.data));
     setByoStorage(byoStorageStateFromConfig(query.data));
-    setByoStorageCredentials(emptyByoStorageCredentialsState);
-    setCredentialRotationConfirmed(false);
-    setCredentialRotationStatus(null);
     setMigrationTarget(defaultMigrationTarget(query.data));
     setMigrationRequestConfirmed(false);
     setMigrationCutoverConfirmed(false);
@@ -224,27 +201,6 @@ export function TenantConfigManagement() {
       setStorageHealth(health);
     },
   });
-  const storageCredentialMutation = useMutation({
-    mutationFn: (input: RotateByoStorageCredentialsInput) => rotateByoStorageCredentials(input),
-    onMutate: () => {
-      setError(null);
-      setStorageHealth(null);
-      setCredentialRotationStatus(null);
-    },
-    onError: (mutationError: unknown) => {
-      setError(
-        mutationError instanceof Error
-          ? mutationError.message
-          : "Failed to rotate BYO storage credentials.",
-      );
-    },
-    onSuccess: (result) => {
-      setByoStorageCredentials(emptyByoStorageCredentialsState);
-      setCredentialRotationConfirmed(false);
-      setCredentialRotationStatus(`Credential rotation ${result.health.status}.`);
-      setStorageHealth(result.health);
-    },
-  });
   const storageMigrationMutation = useMutation({
     mutationFn: () => requestTenantStorageMigration(buildStorageMigrationRequest()),
     onMutate: () => {
@@ -260,9 +216,6 @@ export function TenantConfigManagement() {
     onSuccess: (migration) => {
       setStorageMigration(migration);
       setMigrationCutoverConfirmed(false);
-      void queryClient.invalidateQueries({
-        queryKey: tenantConfigQueryKeys.storageMigrations(),
-      });
     },
   });
   const storageMigrationStatusMutation = useMutation({
@@ -280,9 +233,6 @@ export function TenantConfigManagement() {
     onSuccess: (migration) => {
       setStorageMigration(migration);
       setMigrationCutoverConfirmed(false);
-      void queryClient.invalidateQueries({
-        queryKey: tenantConfigQueryKeys.storageMigrations(),
-      });
     },
   });
   const storageMigrationCutoverMutation = useMutation({
@@ -301,7 +251,6 @@ export function TenantConfigManagement() {
       setStorageMigration(result.migration);
       setMigrationCutoverConfirmed(false);
       queryClient.setQueryData(tenantConfigQueryKeys.detail(), result.tenantConfig);
-      await queryClient.invalidateQueries({ queryKey: tenantConfigQueryKeys.storageMigrations() });
       await queryClient.invalidateQueries({ queryKey: tenantConfigQueryKeys.detail() });
     },
   });
@@ -309,7 +258,6 @@ export function TenantConfigManagement() {
   const canSave =
     !mutation.isPending &&
     !storageTestMutation.isPending &&
-    !storageCredentialMutation.isPending &&
     !storageMigrationMutation.isPending &&
     !storageMigrationStatusMutation.isPending &&
     !storageMigrationCutoverMutation.isPending &&
@@ -319,13 +267,12 @@ export function TenantConfigManagement() {
     canSave &&
     migrationCutoverConfirmed &&
     storageMigration !== null &&
-    !storageMigration.dryRun &&
+    storageMigration.dryRun === false &&
     storageMigration.status === "succeeded" &&
     storageMigration.failures.length === 0 &&
     storageMigration.lastError === null &&
     storageMigration.plannedCount === storageMigration.copiedCount &&
     storageMigration.plannedCount === storageMigration.verifiedCount;
-  const canRotateCredentials = canSave && credentialRotationConfirmed && byoStorage.kind === "byo";
   const orgId = query.data?.orgId ?? "tenant";
   const booleanFeatureRows = useMemo(() => [...BOOLEAN_FEATURE_FLAGS], []);
   const selectFeatureRows = useMemo(() => [...SELECT_FEATURE_FLAGS], []);
@@ -382,18 +329,6 @@ export function TenantConfigManagement() {
     setError(null);
     storageTestMutation.mutate();
   };
-  const rotateStorageCredentials = () => {
-    const credentials = byoStorageCredentialsPayload(byoStorageCredentials);
-    if (typeof credentials === "string") {
-      setError(credentials);
-      return;
-    }
-    setError(null);
-    storageCredentialMutation.mutate({
-      credentials,
-      reason: "admin settings update: byo storage credentials",
-    });
-  };
   const requestStorageMigration = () => {
     setError(null);
     try {
@@ -411,9 +346,6 @@ export function TenantConfigManagement() {
       return;
     }
     storageMigrationStatusMutation.mutate(storageMigration.id);
-  };
-  const refreshStorageMigrationJob = (id: string) => {
-    storageMigrationStatusMutation.mutate(id);
   };
   const cutoverStorageMigration = () => {
     if (storageMigration === null) {
@@ -675,85 +607,6 @@ export function TenantConfigManagement() {
               <Activity aria-hidden="true" />
               {storageTestMutation.isPending ? "Testing storage" : "Test storage"}
             </Button>
-            <div className="grid gap-3 border-t border-border/70 pt-3">
-              <SectionHeader icon={<KeyRound aria-hidden="true" />} title="Storage credentials" />
-              <label className="grid gap-1 text-xs text-muted-foreground">
-                <span>Access key ID</span>
-                <Input
-                  autoComplete="off"
-                  disabled={byoStorage.kind === "helix-default"}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    setByoStorageCredentials((current) => ({
-                      ...current,
-                      accessKeyId: value,
-                    }));
-                  }}
-                  type="text"
-                  value={byoStorageCredentials.accessKeyId}
-                />
-              </label>
-              <label className="grid gap-1 text-xs text-muted-foreground">
-                <span>Secret access key</span>
-                <Input
-                  autoComplete="new-password"
-                  disabled={byoStorage.kind === "helix-default"}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    setByoStorageCredentials((current) => ({
-                      ...current,
-                      secretAccessKey: value,
-                    }));
-                  }}
-                  type="password"
-                  value={byoStorageCredentials.secretAccessKey}
-                />
-              </label>
-              <label className="grid gap-1 text-xs text-muted-foreground">
-                <span>Session token</span>
-                <Input
-                  autoComplete="new-password"
-                  disabled={byoStorage.kind === "helix-default"}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    setByoStorageCredentials((current) => ({
-                      ...current,
-                      sessionToken: value,
-                    }));
-                  }}
-                  type="password"
-                  value={byoStorageCredentials.sessionToken}
-                />
-              </label>
-              <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
-                <span>Confirm credential rotation</span>
-                <input
-                  checked={credentialRotationConfirmed}
-                  className="size-4"
-                  disabled={byoStorage.kind === "helix-default"}
-                  onChange={(event) => {
-                    setCredentialRotationConfirmed(event.currentTarget.checked);
-                  }}
-                  type="checkbox"
-                />
-              </label>
-              <Button
-                disabled={!canRotateCredentials}
-                onClick={rotateStorageCredentials}
-                size="sm"
-                type="button"
-              >
-                <KeyRound aria-hidden="true" />
-                {storageCredentialMutation.isPending
-                  ? "Rotating credentials"
-                  : "Rotate credentials"}
-              </Button>
-              {credentialRotationStatus === null ? null : (
-                <p className="text-xs text-muted-foreground" role="status">
-                  {credentialRotationStatus}
-                </p>
-              )}
-            </div>
             {storageHealth === null ? null : (
               <p className="text-xs text-muted-foreground" role="status">
                 {storageHealth.status}: {storageHealth.message}
@@ -853,7 +706,7 @@ export function TenantConfigManagement() {
                       {storageMigration.failures.length === 1 ? "" : "s"}
                     </span>
                   )}
-                  {!storageMigration.dryRun && storageMigration.status === "succeeded" ? (
+                  {storageMigration.dryRun === false && storageMigration.status === "succeeded" ? (
                     <div className="grid gap-2 border-t border-border/70 pt-2">
                       <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
                         <span>Confirm migration cutover</span>
@@ -881,101 +734,6 @@ export function TenantConfigManagement() {
                   ) : null}
                 </div>
               )}
-              <div className="grid gap-2 border-t border-border/70 pt-3">
-                <div className="flex items-center justify-between gap-3">
-                  <SectionHeader
-                    icon={<RefreshCcw aria-hidden="true" />}
-                    title="Migration history"
-                  />
-                  <Button
-                    disabled={storageMigrationHistoryQuery.isFetching}
-                    onClick={() =>
-                      void queryClient.invalidateQueries({
-                        queryKey: tenantConfigQueryKeys.storageMigrations(),
-                      })
-                    }
-                    size="sm"
-                    type="button"
-                  >
-                    <RefreshCcw aria-hidden="true" />
-                    {storageMigrationHistoryQuery.isFetching ? "Loading" : "Refresh history"}
-                  </Button>
-                </div>
-                {storageMigrationHistoryQuery.isError ? (
-                  <p className="text-xs text-muted-foreground" role="status">
-                    Storage migration history unavailable.
-                  </p>
-                ) : storageMigrationHistoryQuery.data === undefined ||
-                  storageMigrationHistoryQuery.data.migrations.length === 0 ? (
-                  <p className="text-xs text-muted-foreground" role="status">
-                    No storage migration jobs yet.
-                  </p>
-                ) : (
-                  <div className="grid gap-2" role="list">
-                    {storageMigrationHistoryQuery.data.migrations.map((migration) => (
-                      <div
-                        className={`grid gap-1 rounded-md border px-3 py-2 text-xs ${
-                          storageMigration?.id === migration.id
-                            ? "border-ring bg-surface-container"
-                            : "border-border/70"
-                        }`}
-                        key={migration.id}
-                        role="listitem"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-medium text-foreground">
-                            {formatMigrationStatus(migration.status)}
-                          </span>
-                          <Button
-                            disabled={!canSave}
-                            onClick={() => {
-                              refreshStorageMigrationJob(migration.id);
-                            }}
-                            size="sm"
-                            type="button"
-                          >
-                            <RefreshCcw aria-hidden="true" />
-                            Refresh job
-                          </Button>
-                        </div>
-                        <span>
-                          Target {formatMigrationTarget(migration.target)}
-                          {migration.dryRun ? " dry run" : " live migration"}
-                        </span>
-                        <span>
-                          Planned {migration.plannedCount}, copied {migration.copiedCount}, verified{" "}
-                          {migration.verifiedCount}
-                        </span>
-                        <span>
-                          Source {migration.sourceStorage?.managedBy ?? "unknown"} to target{" "}
-                          {migration.targetStorage?.managedBy ?? "unknown"}
-                        </span>
-                        <span>
-                          Created {formatTimestamp(migration.createdAt)}
-                          {migration.completedAt === null
-                            ? ""
-                            : `, completed ${formatTimestamp(migration.completedAt)}`}
-                        </span>
-                        {migration.lastError === null ? null : (
-                          <span className="text-destructive">{migration.lastError}</span>
-                        )}
-                        {migration.failures.length === 0 ? null : (
-                          <span className="text-destructive">
-                            {migration.failures.length} object failure
-                            {migration.failures.length === 1 ? "" : "s"}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {storageMigrationHistoryQuery.data?.nextCursor === null ||
-                storageMigrationHistoryQuery.data?.nextCursor === undefined ? null : (
-                  <p className="text-xs text-muted-foreground" role="status">
-                    More migration jobs are available in history.
-                  </p>
-                )}
-              </div>
             </div>
           </form>
         </div>
@@ -1154,25 +912,6 @@ function parseByoStorage(input: ByoStorageState):
   };
 }
 
-function byoStorageCredentialsPayload(
-  input: ByoStorageCredentialsState,
-): RotateByoStorageCredentialsInput["credentials"] | string {
-  const accessKeyId = input.accessKeyId.trim();
-  const secretAccessKey = input.secretAccessKey.trim();
-  const sessionToken = input.sessionToken.trim();
-  if (accessKeyId.length === 0) {
-    return "Access key ID is required.";
-  }
-  if (secretAccessKey.length === 0) {
-    return "Secret access key is required.";
-  }
-  return {
-    accessKeyId,
-    secretAccessKey,
-    ...(sessionToken.length === 0 ? {} : { sessionToken }),
-  };
-}
-
 function formatQuotaValue(value: unknown): string {
   return typeof value === "number" ? new Intl.NumberFormat("en-US").format(value) : "unlimited";
 }
@@ -1188,13 +927,6 @@ function formatMigrationTarget(target: TenantStorageMigrationTarget): string {
   return target === "byo" ? "customer-owned storage" : "Helix default storage";
 }
 
-function formatTimestamp(value: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
 function brandingPlaceholder(key: BrandingKey): string | undefined {
   if (key === "accent_color_hex") {
     return "#2f6fed";
@@ -1205,23 +937,31 @@ function brandingPlaceholder(key: BrandingKey): string | undefined {
   return undefined;
 }
 
-function byoStoragePlaceholder(key: ByoStorageFieldKey, provider: ByoStorageProvider): string {
-  switch (key) {
-    case "endpoint":
-      return provider === "aws-s3"
-        ? "https://s3.amazonaws.com"
-        : "https://account.r2.cloudflarestorage.com";
-    case "region":
-      return "us-east-1";
-    case "bucket":
-      return "acme-helix-data";
-    case "prefix":
-      return "helix/";
-    case "credentials_vault_path":
-      return "tenants/acme/byo-storage/s3";
-    case "sse_kms_key_arn":
-      return "arn:aws:kms:us-east-1:123456789012:key/...";
+function byoStoragePlaceholder(
+  key: ByoStorageFieldKey,
+  provider: ByoStorageProvider,
+): string | undefined {
+  if (key === "endpoint") {
+    return provider === "aws-s3"
+      ? "https://s3.amazonaws.com"
+      : "https://account.r2.cloudflarestorage.com";
   }
+  if (key === "region") {
+    return "us-east-1";
+  }
+  if (key === "bucket") {
+    return "acme-helix-data";
+  }
+  if (key === "prefix") {
+    return "helix/";
+  }
+  if (key === "credentials_vault_path") {
+    return "tenants/acme/byo-storage/s3";
+  }
+  if (key === "sse_kms_key_arn") {
+    return "arn:aws:kms:us-east-1:123456789012:key/...";
+  }
+  return undefined;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {

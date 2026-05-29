@@ -5,15 +5,17 @@ import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { DriveStore } from "./store.js";
 import type {
-  DriveCommentListItem,
-  DriveCommentRecord,
+  DriveAccessGrantRecord,
   DriveEntryRecord,
   DrivePdfFormStateRecord,
+  DriveCommentListItem,
+  DriveCommentRecord,
   DriveSearchHit,
   DriveUploadRecord,
   DriveVersionRecord,
 } from "./types.js";
 import type { DocsStore } from "../docs/store.js";
+import { HELIX_NATIVE_DOCUMENT_ENGINE } from "../docs/native-state.js";
 import type { SheetsStore } from "../sheets/store.js";
 import type { SlidesStore } from "../slides/store.js";
 
@@ -75,6 +77,18 @@ const shareSchema = z
     }
   });
 
+const removeAccessSchema = z.object({
+  objectId: uuidSchema,
+  actorId: uuidSchema,
+});
+
+const updateAccessSchema = z.object({
+  objectId: uuidSchema,
+  actorId: uuidSchema,
+  role: z.enum(["reader", "commenter", "editor"]),
+  expiresAt: z.string().datetime().nullable().optional(),
+});
+
 const moveSchema = z.object({
   objectId: uuidSchema,
   folderId: uuidSchema.nullable().optional(),
@@ -82,6 +96,11 @@ const moveSchema = z.object({
 
 const objectIdSchema = z.object({
   objectId: uuidSchema,
+});
+
+const starSchema = z.object({
+  objectId: uuidSchema,
+  starred: z.boolean(),
 });
 
 const createCommentSchema = z.object({
@@ -218,6 +237,8 @@ export function createDriveToolDefinitions(
               actorId,
               title: input.name,
               folderId,
+              editorEngine: HELIX_NATIVE_DOCUMENT_ENGINE,
+              formatVersion: 1,
             });
             return { id: doc.id, app: "docs" };
           }
@@ -353,7 +374,7 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof shareSchema>, unknown>({
       id: "drive.share",
-      description: "Share a Drive object with actors by id, email, or display name.",
+      description: "Share a Drive object with actors by adding platform permission grants.",
       permission: "drive.write",
       sideEffects: "write",
       confirmationRequired: true,
@@ -381,6 +402,76 @@ export function createDriveToolDefinitions(
         });
       },
     }),
+    defineTool<z.output<typeof objectIdSchema>, unknown>({
+      id: "drive.access.list",
+      description: "List current actor grants for a Drive object.",
+      permission: "drive.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.listAccess === undefined) {
+          throw new Error("drive.access.list requires DriveStore.listAccess.");
+        }
+        return {
+          grants: (
+            await options.store.listAccess({
+              orgId: ctx.actor.orgId,
+              actorId: ctx.actor.id,
+              objectId: input.objectId,
+            })
+          ).map(serializeAccessGrant),
+        };
+      },
+    }),
+    defineTool<z.output<typeof removeAccessSchema>, unknown>({
+      id: "drive.access.remove",
+      description: "Remove an actor's Drive object access grant.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(removeAccessSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.removeAccess === undefined) {
+          throw new Error("drive.access.remove requires DriveStore.removeAccess.");
+        }
+        return {
+          objectId: input.objectId,
+          actorId: input.actorId,
+          removed: await options.store.removeAccess({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            objectId: input.objectId,
+            targetActorId: input.actorId,
+          }),
+        };
+      },
+    }),
+    defineTool<z.output<typeof updateAccessSchema>, unknown>({
+      id: "drive.access.update",
+      description: "Change an actor's Drive object access role.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(updateAccessSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.updateAccess === undefined) {
+          throw new Error("drive.access.update requires DriveStore.updateAccess.");
+        }
+        const grant = await options.store.updateAccess({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.objectId,
+          targetActorId: input.actorId,
+          role: input.role,
+          expiresAt:
+            input.expiresAt === undefined || input.expiresAt === null
+              ? null
+              : new Date(input.expiresAt),
+        });
+        return { objectId: input.objectId, actorId: input.actorId, grant: serializeNullableGrant(grant) };
+      },
+    }),
     defineTool<z.output<typeof moveSchema>, unknown>({
       id: "drive.move",
       description: "Move a Drive file into another folder.",
@@ -397,6 +488,29 @@ export function createDriveToolDefinitions(
         });
         if (entry === null) {
           throw new Error(`Unknown movable Drive object: ${input.objectId}`);
+        }
+        return serializeEntry(entry);
+      },
+    }),
+    defineTool<z.output<typeof starSchema>, unknown>({
+      id: "drive.star.set",
+      description: "Star or unstar a Drive file for filtered Drive and app-list views.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(starSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.setStarred === undefined) {
+          throw new Error("drive.star.set requires DriveStore.setStarred.");
+        }
+        const entry = await options.store.setStarred({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.objectId,
+          starred: input.starred,
+        });
+        if (entry === null) {
+          throw new Error(`Unknown starrable Drive object: ${input.objectId}`);
         }
         return serializeEntry(entry);
       },
@@ -463,8 +577,8 @@ export function createDriveToolDefinitions(
       sideEffects: "read",
       inputSchema: zodToolSchema(searchSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        const hits = (
+      handler: async (input, ctx) => ({
+        hits: (
           await options.store.search({
             orgId: ctx.actor.orgId,
             actorId: ctx.actor.id,
@@ -472,33 +586,8 @@ export function createDriveToolDefinitions(
             folderId: input.folderId ?? null,
             limit: input.limit,
           })
-        ).map(serializeSearchHit);
-        if (options.resolveActorNames === undefined) {
-          return { hits };
-        }
-        const ownerIds = Array.from(
-          new Set(
-            hits
-              .map((hit) => hit.ownerActorId)
-              .filter((id): id is string => typeof id === "string"),
-          ),
-        );
-        if (ownerIds.length === 0) {
-          return { hits };
-        }
-        const names = await options.resolveActorNames(ownerIds);
-        return {
-          hits: hits.map((hit) => {
-            const owner = hit.ownerActorId !== null ? names.get(hit.ownerActorId) : undefined;
-            if (owner === undefined) return hit;
-            return {
-              ...hit,
-              ownerDisplayName: owner.displayName,
-              ...(owner.email === undefined ? {} : { ownerEmail: owner.email }),
-            };
-          }),
-        };
-      },
+        ).map(serializeSearchHit),
+      }),
     }),
     defineTool<z.output<typeof createCommentSchema>, unknown>({
       id: "drive.comment.create",
@@ -755,6 +844,19 @@ function serializeEntry(entry: DriveEntryRecord) {
     createdAt: entry.createdAt.toISOString(),
     updatedAt: entry.updatedAt.toISOString(),
   };
+}
+
+function serializeAccessGrant(grant: DriveAccessGrantRecord) {
+  return {
+    ...grant,
+    expiresAt: grant.expiresAt?.toISOString() ?? null,
+    createdAt: grant.createdAt.toISOString(),
+    updatedAt: grant.updatedAt.toISOString(),
+  };
+}
+
+function serializeNullableGrant(grant: DriveAccessGrantRecord | null) {
+  return grant === null ? null : serializeAccessGrant(grant);
 }
 
 function serializeSearchHit(hit: DriveSearchHit) {

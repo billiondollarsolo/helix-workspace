@@ -1,6 +1,5 @@
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 import { verifyPassword } from "@better-auth/utils/password";
 import type postgres from "postgres";
 import type { StorageClient, StorageObject } from "@helix/sdk-types";
@@ -36,9 +35,6 @@ import { PostgresChatStore } from "../platform/chat/index.js";
 import { PostgresDocsStore } from "../platform/docs/index.js";
 import { PostgresDriveStore } from "../platform/drive/index.js";
 import { PostgresMailStore } from "../platform/mail/index.js";
-import { PostgresMeetStore } from "../platform/meet/index.js";
-import { PostgresSheetsStore } from "../platform/sheets/index.js";
-import { PostgresSlidesStore } from "../platform/slides/index.js";
 import type { SearchEngine } from "../platform/search/index.js";
 
 export interface VerifyLocalDemoOptions {
@@ -53,16 +49,15 @@ export interface VerifyLocalDemoOptions {
 }
 
 export interface LocalDemoVerificationSnapshot {
+  readonly orgCount: number;
   readonly actorCount: number;
+  readonly hasDocsCommentScope: boolean;
   readonly betterAuthUserCount: number;
   readonly betterAuthCredentialCount: number;
   readonly oauthCredentialCount: number;
   readonly mailHitCount: number;
   readonly mailThreadMessageCount: number;
   readonly docsCount: number;
-  readonly sheetsCount: number;
-  readonly slideDeckCount: number;
-  readonly meetMeetingCount: number;
   readonly rootDriveEntryCount: number;
   readonly projectDriveEntryCount: number;
   readonly calendarEventCount: number;
@@ -71,15 +66,11 @@ export interface LocalDemoVerificationSnapshot {
   readonly hasRenovateMail: boolean;
   readonly hasAmazonMailWithAttachment: boolean;
   readonly hasQuarterlyPlanningDoc: boolean;
-  readonly hasLaunchMetricsSheet: boolean;
-  readonly hasMvpReadoutDeck: boolean;
-  readonly hasMvpWalkthroughMeet: boolean;
   readonly hasAiServicesDriveFile: boolean;
   readonly hasProjectsDriveFolder: boolean;
   readonly hasTrainingCourseDriveFile: boolean;
   readonly hasOrderMatchCalendarEvent: boolean;
   readonly hasProductPlanningCalendarEvent: boolean;
-  readonly hasMvpWalkthroughCalendarEvent: boolean;
   readonly hasLaunchChatRoom: boolean;
   readonly hasMailDensityChatMessage: boolean;
   readonly betterAuthPasswordVerified: boolean;
@@ -123,11 +114,9 @@ export async function verifyLocalDemo(
   const driveStore = new PostgresDriveStore(sql);
   const calendarStore = new PostgresCalendarStore(sql);
   const chatStore = new PostgresChatStore(sql);
-  const meetStore = new PostgresMeetStore(sql);
-  const sheetsStore = new PostgresSheetsStore(sql);
-  const slidesStore = new PostgresSlidesStore(sql);
 
   const [
+    orgRows,
     actorRows,
     betterAuthRows,
     betterAuthCredentialRows,
@@ -136,9 +125,6 @@ export async function verifyLocalDemo(
     amazonMailHits,
     mailThread,
     docs,
-    sheets,
-    slideDecks,
-    meetMeetings,
     rootDriveEntries,
     projectDriveEntries,
     trainingDriveHits,
@@ -147,7 +133,13 @@ export async function verifyLocalDemo(
     chatHits,
   ] = await Promise.all([
     sql<{ readonly id: string }[]>`
-        select id from actors
+        select id from orgs
+        where id = ${orgId}
+          and status = 'active'
+        limit 1
+      `,
+    sql<{ readonly id: string; readonly scopes: readonly string[] }[]>`
+        select id, scopes from actors
         where org_id = ${orgId}
           and id = ${actorId}
           and disabled_at is null
@@ -178,9 +170,6 @@ export async function verifyLocalDemo(
     mailStore.search({ orgId, actorId, query: "Amazon", limit: 10 }),
     mailStore.getThread({ orgId, actorId, threadId: LOCAL_DEMO_IDS.mailAmazonThread }),
     docsStore.listDocumentsForActor({ orgId, actorId, query: "Quarterly", limit: 10 }),
-    sheetsStore.listSheets({ orgId, actorId, query: "Launch Metrics", limit: 10, offset: 0 }),
-    slidesStore.listDecksForActor({ orgId, actorId, query: "MVP Readiness", limit: 10, offset: 0 }),
-    meetStore.listMeetingsForActor({ orgId, actorId, limit: 10 }),
     driveStore.list({ orgId, actorId, limit: 25 }),
     driveStore.list({
       orgId,
@@ -193,7 +182,7 @@ export async function verifyLocalDemo(
       orgId,
       actorId,
       startsAt: timeline.at("2026-05-20T00:00:00.000Z"),
-      endsAt: timeline.at("2026-05-27T00:00:00.000Z"),
+      endsAt: timeline.at("2026-05-22T00:00:00.000Z"),
       limit: 10,
     }),
     chatStore.listRooms({ orgId, actorId, query: "Helix launch", limit: 10 }),
@@ -220,16 +209,15 @@ export async function verifyLocalDemo(
   );
 
   const snapshot = {
+    orgCount: orgRows.length,
     actorCount: actorRows.length,
+    hasDocsCommentScope: actorRows.some((actor) => actor.scopes.includes("docs.comment")),
     betterAuthUserCount: betterAuthRows.length,
     betterAuthCredentialCount: betterAuthCredentialRows.length,
     oauthCredentialCount: credentialRows.length,
     mailHitCount: renovateMailHits.length + amazonMailHits.length,
     mailThreadMessageCount: mailThread?.messages.length ?? 0,
     docsCount: docs.length,
-    sheetsCount: sheets.sheets.length,
-    slideDeckCount: slideDecks.decks.length,
-    meetMeetingCount: meetMeetings.length,
     rootDriveEntryCount: rootDriveEntries.length,
     projectDriveEntryCount: projectDriveEntries.length,
     calendarEventCount: calendarEvents.length,
@@ -240,11 +228,6 @@ export async function verifyLocalDemo(
       amazonMailHits.some((hit) => hit.subject.includes("Amazon")) &&
       (mailThread?.messages.some((message) => message.hasAttachment) ?? false),
     hasQuarterlyPlanningDoc: docs.some((doc) => doc.title === "Quarterly Planning Notes"),
-    hasLaunchMetricsSheet: sheets.sheets.some((sheet) => sheet.title === "Launch Metrics Tracker"),
-    hasMvpReadoutDeck: slideDecks.decks.some((deck) => deck.title === "MVP Readiness Readout"),
-    hasMvpWalkthroughMeet: meetMeetings.some(
-      (meeting) => meeting.id === LOCAL_DEMO_IDS.meetMvpWalkthrough,
-    ),
     hasAiServicesDriveFile: rootDriveEntries.some((entry) => entry.name === "AI Services and Keys"),
     hasProjectsDriveFolder: rootDriveEntries.some(
       (entry) => entry.name === "Projects" && entry.type === "folder",
@@ -255,9 +238,6 @@ export async function verifyLocalDemo(
     hasOrderMatchCalendarEvent: calendarEvents.some((event) => event.title === "Order match ball"),
     hasProductPlanningCalendarEvent: calendarEvents.some(
       (event) => event.title === "Product planning review",
-    ),
-    hasMvpWalkthroughCalendarEvent: calendarEvents.some(
-      (event) => event.title === "MVP surface walkthrough",
     ),
     hasLaunchChatRoom: chatRooms.some((room) => room.id === LOCAL_DEMO_IDS.chatRoomLaunch),
     hasMailDensityChatMessage: chatHits.some(
@@ -285,16 +265,15 @@ export async function verifyLocalDemo(
 
 export function assertLocalDemoVerified(snapshot: LocalDemoVerificationSnapshot): void {
   const failures: string[] = [];
+  requireAtLeast(failures, "local demo org", snapshot.orgCount, 1);
   requireAtLeast(failures, "actor", snapshot.actorCount, 1);
+  requireTrue(failures, "Docs comment/suggestion scope", snapshot.hasDocsCommentScope);
   requireAtLeast(failures, "Better Auth user linkage", snapshot.betterAuthUserCount, 1);
   requireAtLeast(failures, "Better Auth credential", snapshot.betterAuthCredentialCount, 1);
   requireAtLeast(failures, "OAuth credential", snapshot.oauthCredentialCount, 1);
   requireAtLeast(failures, "mail search hits", snapshot.mailHitCount, 1);
   requireAtLeast(failures, "mail thread messages", snapshot.mailThreadMessageCount, 1);
   requireAtLeast(failures, "docs list results", snapshot.docsCount, 1);
-  requireAtLeast(failures, "sheets list results", snapshot.sheetsCount, 1);
-  requireAtLeast(failures, "slides list results", snapshot.slideDeckCount, 1);
-  requireAtLeast(failures, "Meet meeting results", snapshot.meetMeetingCount, 1);
   requireAtLeast(failures, "root Drive entries", snapshot.rootDriveEntryCount, 2);
   requireAtLeast(failures, "project Drive entries", snapshot.projectDriveEntryCount, 1);
   requireAtLeast(failures, "calendar events", snapshot.calendarEventCount, 2);
@@ -303,9 +282,6 @@ export function assertLocalDemoVerified(snapshot: LocalDemoVerificationSnapshot)
   requireTrue(failures, "Renovate mail", snapshot.hasRenovateMail);
   requireTrue(failures, "Amazon mail attachment", snapshot.hasAmazonMailWithAttachment);
   requireTrue(failures, "Quarterly Planning Notes doc", snapshot.hasQuarterlyPlanningDoc);
-  requireTrue(failures, "Launch Metrics Tracker sheet", snapshot.hasLaunchMetricsSheet);
-  requireTrue(failures, "MVP Readiness Readout deck", snapshot.hasMvpReadoutDeck);
-  requireTrue(failures, "MVP surface walkthrough Meet room", snapshot.hasMvpWalkthroughMeet);
   requireTrue(failures, "AI Services and Keys Drive file", snapshot.hasAiServicesDriveFile);
   requireTrue(failures, "Projects Drive folder", snapshot.hasProjectsDriveFolder);
   requireTrue(failures, "Training Course Links Drive file", snapshot.hasTrainingCourseDriveFile);
@@ -314,11 +290,6 @@ export function assertLocalDemoVerified(snapshot: LocalDemoVerificationSnapshot)
     failures,
     "Product planning review calendar event",
     snapshot.hasProductPlanningCalendarEvent,
-  );
-  requireTrue(
-    failures,
-    "MVP surface walkthrough calendar event",
-    snapshot.hasMvpWalkthroughCalendarEvent,
   );
   requireTrue(failures, "Helix launch chat room", snapshot.hasLaunchChatRoom);
   requireTrue(failures, "Mail density chat message", snapshot.hasMailDensityChatMessage);
@@ -705,6 +676,10 @@ function parseCsv(value: string): readonly string[] {
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function toUint8Array(body: StorageObject["body"]): Promise<Uint8Array> {

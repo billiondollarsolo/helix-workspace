@@ -1,5 +1,10 @@
 import type postgres from "postgres";
-import type { Actor } from "@helix/sdk-types";
+import {
+  isMeteringRollupMetricKey,
+  meteringRollupMetricKeys,
+  type Actor,
+  type MeteringRollupMetricKey,
+} from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
@@ -60,6 +65,30 @@ export interface InvoiceRecord {
   readonly createdAt: string;
 }
 
+export interface UsageRollupRecord {
+  readonly orgId: string;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly metricKey: MeteringRollupMetricKey;
+  readonly quantity: number;
+  readonly computedAt: string;
+}
+
+export type BillingUsageSummaryAggregation = "sum" | "average" | "max";
+
+export interface BillingUsageSummaryMetric {
+  readonly metricKey: MeteringRollupMetricKey;
+  readonly quantity: number;
+  readonly aggregation: BillingUsageSummaryAggregation;
+  readonly sampleCount: number;
+}
+
+export interface BillingUsageSummary {
+  readonly periodStart: string | null;
+  readonly periodEnd: string | null;
+  readonly metrics: readonly BillingUsageSummaryMetric[];
+}
+
 /**
  * Derived usage meter (a 0..1 fill fraction) so the UI does not recompute
  * ratios. Returned alongside the raw counts in the account response.
@@ -76,6 +105,11 @@ export interface BillingAccountView {
   readonly meters: readonly BillingUsageMeter[];
 }
 
+export interface BillingUsageView {
+  readonly rollups: readonly UsageRollupRecord[];
+  readonly summary: BillingUsageSummary;
+}
+
 // --------------------------------------------------------------------------
 // Store
 // --------------------------------------------------------------------------
@@ -86,10 +120,18 @@ export interface ListInvoicesInput {
   readonly limit: number;
 }
 
+export interface ListUsageRollupsInput {
+  readonly orgId: string;
+  readonly from?: Date | undefined;
+  readonly to?: Date | undefined;
+  readonly metricKey?: MeteringRollupMetricKey | undefined;
+}
+
 export interface BillingStore {
   getAccount(orgId: string): Promise<BillingAccountRecord | null>;
   /** Returns up to `limit + 1` rows so the caller can detect a next page. */
   listInvoices(input: ListInvoicesInput): Promise<readonly InvoiceRecord[]>;
+  listUsageRollups(input: ListUsageRollupsInput): Promise<readonly UsageRollupRecord[]>;
 }
 
 /** Compute the 0..1 fill fraction for a usage meter, guarding divide-by-zero. */
@@ -127,6 +169,47 @@ export function buildBillingAccountView(account: BillingAccountRecord): BillingA
   };
 }
 
+export function buildBillingUsageSummary(
+  rollups: readonly UsageRollupRecord[],
+): BillingUsageSummary {
+  const periodStart = rollups.reduce<string | null>(
+    (current, rollup) =>
+      current === null || rollup.periodStart < current ? rollup.periodStart : current,
+    null,
+  );
+  const periodEnd = rollups.reduce<string | null>(
+    (current, rollup) =>
+      current === null || rollup.periodEnd > current ? rollup.periodEnd : current,
+    null,
+  );
+  const byMetric = new Map<MeteringRollupMetricKey, UsageRollupRecord[]>();
+  for (const rollup of rollups) {
+    byMetric.set(rollup.metricKey, [...(byMetric.get(rollup.metricKey) ?? []), rollup]);
+  }
+  const metrics = [...byMetric.entries()]
+    .map(([metricKey, metricRollups]) => {
+      const aggregation = usageSummaryAggregation(metricKey);
+      const quantity =
+        aggregation === "average"
+          ? average(metricRollups.map((rollup) => rollup.quantity))
+          : aggregation === "max"
+            ? Math.max(...metricRollups.map((rollup) => rollup.quantity))
+            : sum(metricRollups.map((rollup) => rollup.quantity));
+      return {
+        metricKey,
+        quantity,
+        aggregation,
+        sampleCount: metricRollups.length,
+      };
+    })
+    .sort((left, right) => left.metricKey.localeCompare(right.metricKey));
+  return {
+    periodStart,
+    periodEnd,
+    metrics,
+  };
+}
+
 // --------------------------------------------------------------------------
 // Routes
 // --------------------------------------------------------------------------
@@ -134,6 +217,12 @@ export function buildBillingAccountView(account: BillingAccountRecord): BillingA
 const listInvoicesQuery = z.object({
   cursor: cursorQuerySchema,
   limit: limitQuerySchema,
+});
+
+const usageRollupsQuery = z.object({
+  from: z.string().date().optional(),
+  to: z.string().date().optional(),
+  metricKey: z.enum(meteringRollupMetricKeys).optional(),
 });
 
 export interface RegisterAdminBillingRoutesOptions {
@@ -146,6 +235,7 @@ export interface RegisterAdminBillingRoutesOptions {
  *
  *   GET /api/admin/billing/account   — plan + usage meters
  *   GET /api/admin/billing/invoices  — paginated invoice history
+ *   GET /api/admin/billing/usage     — metering rollups for dashboard charts
  */
 export async function registerAdminBillingRoutes(
   app: FastifyInstance,
@@ -194,6 +284,35 @@ export async function registerAdminBillingRoutes(
         : null;
     return { invoices, nextCursor };
   });
+
+  app.get("/api/admin/billing/usage", async (request, reply) => {
+    const actor = await actorFromRequest(request);
+    if (!canReadAdminConsole(actor)) {
+      return sendForbidden(reply, adminConsoleReadScope);
+    }
+    const parsed = usageRollupsQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send(invalidRequest("Invalid usage query.", parsed.error.issues));
+    }
+    const from = parsed.data.from === undefined ? undefined : dateFromIsoDate(parsed.data.from);
+    const to = parsed.data.to === undefined ? undefined : dateFromIsoDate(parsed.data.to);
+    if (from === null || to === null) {
+      return reply.code(400).send(invalidRequest("Invalid usage date range.", []));
+    }
+    if (from !== undefined && to !== undefined && from > to) {
+      return reply.code(400).send(invalidRequest("Invalid usage date range.", []));
+    }
+    const rollups = await store.listUsageRollups({
+      orgId: actor.orgId,
+      ...(from === undefined ? {} : { from }),
+      ...(to === undefined ? {} : { to }),
+      ...(parsed.data.metricKey === undefined ? {} : { metricKey: parsed.data.metricKey }),
+    });
+    return {
+      rollups,
+      summary: buildBillingUsageSummary(rollups),
+    } satisfies BillingUsageView;
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -234,6 +353,15 @@ interface InvoiceRow {
   readonly created_at: Date;
 }
 
+interface UsageRollupRow {
+  readonly org_id: string;
+  readonly period_start: Date | string;
+  readonly period_end: Date | string;
+  readonly metric_key: string;
+  readonly quantity: string | number;
+  readonly computed_at: Date;
+}
+
 export class PostgresBillingStore implements BillingStore {
   constructor(private readonly sql: postgres.Sql) {}
 
@@ -266,6 +394,20 @@ export class PostgresBillingStore implements BillingStore {
       limit ${input.limit}
     `) as unknown as readonly InvoiceRow[];
     return rows.map(mapInvoiceRow);
+  }
+
+  async listUsageRollups(input: ListUsageRollupsInput): Promise<readonly UsageRollupRecord[]> {
+    const rows = (await this.sql`
+      select org_id, period_start, period_end, metric_key, quantity::text as quantity, computed_at
+      from metering_rollups
+      where org_id = ${input.orgId}
+        and (${input.from ?? null}::date is null or period_start >= ${input.from ?? null}::date)
+        and (${input.to ?? null}::date is null or period_start <= ${input.to ?? null}::date)
+        and (${input.metricKey ?? null}::text is null or metric_key = ${input.metricKey ?? null})
+      order by period_start desc, metric_key asc
+      limit 120
+    `) as unknown as readonly UsageRollupRow[];
+    return rows.map(mapUsageRollupRow);
   }
 }
 
@@ -304,6 +446,52 @@ function mapInvoiceRow(row: InvoiceRow): InvoiceRecord {
   };
 }
 
+function mapUsageRollupRow(row: UsageRollupRow): UsageRollupRecord {
+  if (!isMeteringRollupMetricKey(row.metric_key)) {
+    throw new Error(`Unknown metering rollup metric key: ${row.metric_key}`);
+  }
+  return {
+    orgId: row.org_id,
+    periodStart: isoDate(row.period_start),
+    periodEnd: isoDate(row.period_end),
+    metricKey: row.metric_key,
+    quantity: Number(row.quantity),
+    computedAt: row.computed_at.toISOString(),
+  };
+}
+
+function dateFromIsoDate(value: string): Date | null {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isoDate(value: Date | string): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  return value.toISOString().slice(0, 10);
+}
+
+function usageSummaryAggregation(
+  metricKey: MeteringRollupMetricKey,
+): BillingUsageSummaryAggregation {
+  if (metricKey === "storage_avg_bytes") {
+    return "average";
+  }
+  if (metricKey === "seats_max") {
+    return "max";
+  }
+  return "sum";
+}
+
+function sum(values: readonly number[]): number {
+  return values.reduce((total, value) => total + value, 0);
+}
+
+function average(values: readonly number[]): number {
+  return values.length === 0 ? 0 : sum(values) / values.length;
+}
+
 // --------------------------------------------------------------------------
 // In-memory store (tests / offline)
 // --------------------------------------------------------------------------
@@ -332,9 +520,7 @@ export class InMemoryBillingStore implements BillingStore {
     return this.#invoices
       .filter((invoice) => invoice.orgId === input.orgId)
       .sort((a, b) =>
-        a.issuedAt === b.issuedAt
-          ? b.id.localeCompare(a.id)
-          : b.issuedAt.localeCompare(a.issuedAt),
+        a.issuedAt === b.issuedAt ? b.id.localeCompare(a.id) : b.issuedAt.localeCompare(a.issuedAt),
       )
       .filter((invoice) => {
         if (input.cursor === undefined) {
@@ -344,5 +530,29 @@ export class InMemoryBillingStore implements BillingStore {
         return `${invoice.issuedAt}:${invoice.id}` < cursorKey;
       })
       .slice(0, input.limit);
+  }
+
+  async listUsageRollups(input: ListUsageRollupsInput): Promise<readonly UsageRollupRecord[]> {
+    const fromTime = input.from?.getTime() ?? Number.NEGATIVE_INFINITY;
+    const toTime = input.to?.getTime() ?? Number.POSITIVE_INFINITY;
+    return this.#usageRollups
+      .filter((rollup) => rollup.orgId === input.orgId)
+      .filter((rollup) => input.metricKey === undefined || rollup.metricKey === input.metricKey)
+      .filter((rollup) => {
+        const periodTime = new Date(`${rollup.periodStart}T00:00:00.000Z`).getTime();
+        return periodTime >= fromTime && periodTime <= toTime;
+      })
+      .sort((left, right) =>
+        left.periodStart === right.periodStart
+          ? left.metricKey.localeCompare(right.metricKey)
+          : right.periodStart.localeCompare(left.periodStart),
+      )
+      .slice(0, 120);
+  }
+
+  readonly #usageRollups: UsageRollupRecord[] = [];
+
+  addUsageRollup(rollup: UsageRollupRecord): void {
+    this.#usageRollups.push(rollup);
   }
 }

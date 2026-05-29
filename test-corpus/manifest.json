@@ -1,0 +1,134 @@
+{
+  "$schema": "./manifest.schema.json",
+  "version": 1,
+  "sources": [
+    {
+      "id": "apache-tika-microsoft",
+      "label": "Apache Tika MS-Office test documents (docx/xlsx/pptx + legacy)",
+      "license": "Apache-2.0",
+      "homepage": "https://tika.apache.org/",
+      "strategy": "github-tarball-subdir",
+      "repo": "apache/tika",
+      "ref": "main",
+      "subdir": "tika-parsers/tika-parsers-standard/tika-parsers-standard-modules/tika-parser-microsoft-module/src/test/resources/test-documents",
+      "targetDir": "apache-tika/microsoft",
+      "expectedFileCountMin": 300
+    },
+    {
+      "id": "apache-tika-pdf",
+      "label": "Apache Tika PDF test documents",
+      "license": "Apache-2.0",
+      "homepage": "https://tika.apache.org/",
+      "strategy": "github-tarball-subdir",
+      "repo": "apache/tika",
+      "ref": "main",
+      "subdir": "tika-parsers/tika-parsers-standard/tika-parsers-standard-modules/tika-parser-pdf-module/src/test/resources/test-documents",
+      "targetDir": "apache-tika/pdf",
+      "expectedFileCountMin": 50
+    },
+    {
+      "id": "apache-tika-miscoffice",
+      "label": "Apache Tika OpenDocument + RTF + Visio test documents",
+      "license": "Apache-2.0",
+      "homepage": "https://tika.apache.org/",
+      "strategy": "github-tarball-subdir",
+      "repo": "apache/tika",
+      "ref": "main",
+      "subdir": "tika-parsers/tika-parsers-standard/tika-parsers-standard-modules/tika-parser-miscoffice-module/src/test/resources/test-documents",
+      "targetDir": "apache-tika/miscoffice",
+      "expectedFileCountMin": 40
+    },
+    {
+      "id": "apache-tika-image",
+      "label": "Apache Tika image test files",
+      "license": "Apache-2.0",
+      "homepage": "https://tika.apache.org/",
+      "strategy": "github-tarball-subdir",
+      "repo": "apache/tika",
+      "ref": "main",
+      "subdir": "tika-parsers/tika-parsers-standard/tika-parsers-standard-modules/tika-parser-image-module/src/test/resources/test-documents",
+      "targetDir": "apache-tika/image",
+      "expectedFileCountMin": 25
+    },
+    {
+      "id": "apache-tika-html",
+      "label": "Apache Tika HTML test files",
+      "license": "Apache-2.0",
+      "homepage": "https://tika.apache.org/",
+      "strategy": "github-tarball-subdir",
+      "repo": "apache/tika",
+      "ref": "main",
+      "subdir": "tika-parsers/tika-parsers-standard/tika-parsers-standard-modules/tika-parser-html-module/src/test/resources/test-documents",
+      "targetDir": "apache-tika/html",
+      "expectedFileCountMin": 20
+    },
+    {
+      "id": "commonmark-spec",
+      "label": "CommonMark spec examples (split per-example)",
+      "license": "CC0-1.0",
+      "homepage": "https://spec.commonmark.org/",
+      "strategy": "commonmark-spec-split",
+      "specUrl": "https://raw.githubusercontent.com/commonmark/commonmark-spec/master/spec.txt",
+      "targetDir": "commonmark",
+      "expectedFileCountMin": 100
+    },
+    {
+      "id": "libreoffice-samples",
+      "label": "LibreOffice document samples (curated)",
+      "license": "MPL-2.0",
+      "homepage": "https://www.libreoffice.org/",
+      "strategy": "github-tarball-subdir",
+      "repo": "LibreOffice/dev-tools",
+      "ref": "master",
+      "subdir": "test-bugzilla-files",
+      "targetDir": "libreoffice",
+      "expectedFileCountMin": 0,
+      "optional": true
+    },
+    {
+      "id": "picsum",
+      "label": "Lorem Picsum (deterministic seeds 1-100, 1200x800 JPEG)",
+      "license": "Unsplash",
+      "homepage": "https://picsum.photos/",
+      "strategy": "picsum",
+      "seedRange": [1, 100],
+      "width": 1200,
+      "height": 800,
+      "format": "jpg",
+      "targetDir": "picsum",
+      "expectedFileCountMin": 100
+    },
+    {
+      "id": "synthetic-email",
+      "label": "Synthetic .eml corpus (HTML + plain + attachments, deterministic)",
+      "license": "CC0-1.0",
+      "homepage": "https://github.com/helix/helix-workspace",
+      "strategy": "synthetic-email",
+      "targetDir": "generated/email",
+      "expectedFileCountMin": 300,
+      "emailCount": 300
+    },
+    {
+      "id": "synthetic-audio",
+      "label": "Synthetic playable WAV samples (sine waves, deterministic)",
+      "license": "CC0-1.0",
+      "homepage": "https://github.com/helix/helix-workspace",
+      "strategy": "synthetic-audio",
+      "targetDir": "generated/audio",
+      "expectedFileCountMin": 5
+    },
+    {
+      "id": "sample-video",
+      "label": "Blender Foundation Big Buck Bunny sample (public-domain webm, optional)",
+      "license": "CC-BY-3.0",
+      "homepage": "https://peach.blender.org/",
+      "strategy": "url-list",
+      "targetDir": "generated/video",
+      "expectedFileCountMin": 0,
+      "optional": true,
+      "urls": [
+        "https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4"
+      ]
+    }
+  ]
+}

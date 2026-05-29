@@ -32,5 +32,9 @@ data:
   KMS_KEY_ID: {{ .Values.external.kms.keyId | quote }}
   VAULT_ADDR: {{ .Values.external.vault.address | quote }}
   VAULT_NAMESPACE: {{ .Values.external.vault.namespace | quote }}
+  HELIX_VAULT_AUTH_PATH: {{ .Values.external.vault.authPath | quote }}
+  HELIX_VAULT_ROLE: {{ .Values.external.vault.role | quote }}
+  HELIX_BYO_STORAGE_VAULT_MOUNT: {{ default "secret" .Values.external.vault.byoStorageMount | quote }}
+  HELIX_BYO_STORAGE_VAULT_KV_VERSION: {{ default "2" .Values.external.vault.byoStorageKvVersion | quote }}
   SIEM_ENDPOINT: {{ .Values.external.siem.endpoint | quote }}
   SIEM_FORMAT: {{ .Values.external.siem.format | quote }}

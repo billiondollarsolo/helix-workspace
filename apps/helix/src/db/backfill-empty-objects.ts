@@ -72,8 +72,8 @@ async function generatePlaceholder(row: ObjectRow): Promise<Backfilled | null> {
     return { bytes, newMime: OOXML_DOC, newExtension: "docx" };
   }
 
-  // Spreadsheet-shaped: legacy .helix.sheet, legacy XLS, CSV — convert to XLSX
-  // so the OnlyOffice editor can open it natively.
+  // Spreadsheet-shaped: legacy .helix.sheet, legacy XLS, CSV — convert to
+  // XLSX so the native helix-sheets importer can ingest it on first open.
   if (
     mime === "application/vnd.helix.sheet" ||
     mime === "application/vnd.ms-excel" ||

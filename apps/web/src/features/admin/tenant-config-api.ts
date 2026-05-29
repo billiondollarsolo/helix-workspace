@@ -37,13 +37,6 @@ const storageHealthSchema = z.object({
   prefix: z.string().optional(),
 });
 const storageHealthResponseSchema = z.object({ health: storageHealthSchema });
-const storageCredentialsResponseSchema = z.object({
-  credentials: z.object({
-    credentials_vault_path: z.string(),
-    rotated: z.boolean(),
-  }),
-  health: storageHealthSchema,
-});
 const storageMigrationTargetSchema = z.enum(["byo", "helix-default"]);
 const storageMigrationStorageStateSchema = z.object({
   managedBy: storageMigrationTargetSchema,
@@ -74,10 +67,6 @@ const storageMigrationJobSchema = z.object({
   updatedAt: z.string(),
 });
 const storageMigrationResponseSchema = z.object({ migration: storageMigrationJobSchema });
-const storageMigrationListResponseSchema = z.object({
-  migrations: z.array(storageMigrationJobSchema),
-  nextCursor: z.string().nullable(),
-});
 const storageMigrationCutoverResponseSchema = z.object({
   migration: storageMigrationJobSchema,
   tenantConfig: tenantConfigSchema,
@@ -104,36 +93,8 @@ export interface RequestTenantStorageMigrationInput {
   readonly targetStorage?: Record<string, unknown>;
 }
 
-export interface RotateByoStorageCredentialsInput {
-  readonly credentials: {
-    readonly accessKeyId: string;
-    readonly secretAccessKey: string;
-    readonly sessionToken?: string;
-  };
-  readonly reason?: string;
-}
-
-export interface FetchTenantStorageMigrationsInput {
-  readonly cursor?: string;
-  readonly limit?: number;
-}
-
-export interface TenantStorageMigrationsPage {
-  readonly migrations: readonly TenantStorageMigrationJob[];
-  readonly nextCursor: string | null;
-}
-
-export interface RotateByoStorageCredentialsResult {
-  readonly credentials: {
-    readonly credentials_vault_path: string;
-    readonly rotated: boolean;
-  };
-  readonly health: TenantStorageHealthResult;
-}
-
 export const tenantConfigQueryKeys = {
   detail: () => ["admin", "tenant-config"] as const,
-  storageMigrations: () => ["admin", "tenant-config", "storage-migrations"] as const,
 };
 
 export function tenantConfigQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
@@ -142,16 +103,6 @@ export function tenantConfigQueryOptions(fetchImpl: AuthFetch = authenticatedFet
     queryFn: () => fetchTenantConfig(fetchImpl),
     retry: false,
     staleTime: 30_000,
-    throwOnError: false,
-  });
-}
-
-export function tenantStorageMigrationsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
-  return queryOptions({
-    queryKey: tenantConfigQueryKeys.storageMigrations(),
-    queryFn: () => fetchTenantStorageMigrations({ limit: 10 }, fetchImpl),
-    retry: false,
-    staleTime: 15_000,
     throwOnError: false,
   });
 }
@@ -186,22 +137,6 @@ export async function testByoStorage(
   return (await parseResponse(response, "test BYO storage", storageHealthResponseSchema)).health;
 }
 
-export async function rotateByoStorageCredentials(
-  input: RotateByoStorageCredentialsInput,
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<RotateByoStorageCredentialsResult> {
-  const response = await fetchImpl("/api/admin/tenant-config/byo-storage/credentials", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(input),
-  });
-  return parseResponse(
-    response,
-    "rotate BYO storage credentials",
-    storageCredentialsResponseSchema,
-  );
-}
-
 export async function requestTenantStorageMigration(
   input: RequestTenantStorageMigrationInput,
   fetchImpl: AuthFetch = authenticatedFetch,
@@ -218,28 +153,6 @@ export async function requestTenantStorageMigration(
       storageMigrationResponseSchema,
     )
   ).migration;
-}
-
-export async function fetchTenantStorageMigrations(
-  input: FetchTenantStorageMigrationsInput = {},
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<TenantStorageMigrationsPage> {
-  const params = new URLSearchParams();
-  if (input.limit !== undefined) {
-    params.set("limit", String(input.limit));
-  }
-  if (input.cursor !== undefined && input.cursor.trim().length > 0) {
-    params.set("cursor", input.cursor.trim());
-  }
-  const query = params.size === 0 ? "" : `?${params.toString()}`;
-  const response = await fetchImpl(`/api/admin/tenant-config/byo-storage/migrations${query}`, {
-    method: "GET",
-  });
-  return parseResponse(
-    response,
-    "load tenant storage migrations",
-    storageMigrationListResponseSchema,
-  );
 }
 
 export async function fetchTenantStorageMigration(

@@ -41,7 +41,6 @@ export const docsExportFormatDescriptors = {
 export type DocsTimestamp = Date | string;
 export const docsEditorEngines = [
   "legacy-yjs",
-  "onlyoffice-ooxml",
   "helix-native-document",
 ] as const;
 export type DocsEditorEngine = (typeof docsEditorEngines)[number];

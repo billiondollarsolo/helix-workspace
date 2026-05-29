@@ -77,8 +77,7 @@ function createProvider(
     slotId,
     available: async (ctx) => ctx.feature === slotId || ctx.feature.length === 0,
     generate: async function* generate(ctx): AsyncIterable<SuggestionChunk> {
-      const classification =
-        classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
+      const classification = classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
       const response = await options.ai.chat(toChatRequest(slotId, ctx, classification), {
         actor: ctx.actor,
         feature: slotId,
@@ -124,9 +123,7 @@ function toChatRequest(
               type: ctx.resource.type,
               ...(ctx.resource.id === undefined ? {} : { id: ctx.resource.id }),
               ...(ctx.resource.orgId === undefined ? {} : { orgId: ctx.resource.orgId }),
-              ...(ctx.resource.attributes === undefined
-                ? {}
-                : { attributes: ctx.resource.attributes }),
+              ...(ctx.resource.attributes === undefined ? {} : { attributes: ctx.resource.attributes }),
             },
           }),
     },
@@ -150,8 +147,7 @@ function suggestionInputText(slotId: DocsSuggestionSlotId, ctx: SuggestionContex
   const input = ctx.input ?? {};
   const title = stringInput(input, "title");
   const selection = stringInput(input, "selection");
-  const body =
-    stringInput(input, "body") ?? stringInput(input, "markdown") ?? stringInput(input, "text");
+  const body = stringInput(input, "body") ?? stringInput(input, "markdown") ?? stringInput(input, "text");
   const prompt = stringInput(input, "prompt");
   const targetLanguage = stringInput(input, "targetLanguage") ?? stringInput(input, "language");
   const outline = arrayInput(input, "outline").map(formatOutlineItem).filter(hasText).join("\n");
@@ -184,10 +180,7 @@ function formatOutlineItem(value: JsonValue): string {
 
 function classificationFromInput(input: JsonObject | undefined): AIClassification | undefined {
   const value = input?.classification;
-  return value === "public" ||
-    value === "standard" ||
-    value === "confidential" ||
-    value === "restricted"
+  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
     ? value
     : undefined;
 }

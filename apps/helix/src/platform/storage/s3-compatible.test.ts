@@ -321,7 +321,8 @@ describe("S3-compatible storage", () => {
     expect(request.headers).toEqual({
       "content-type": "text/csv",
       "x-amz-server-side-encryption": "aws:kms",
-      "x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:us-east-1:123456789012:key/test",
+      "x-amz-server-side-encryption-aws-kms-key-id":
+        "arn:aws:kms:us-east-1:123456789012:key/test",
     });
   });
 

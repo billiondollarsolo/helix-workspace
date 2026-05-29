@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { JsonValue } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { randomBytes, sha256Hex } from "../crypto/index.js";
 import type { WebhookDeliveryStatus, WebhookDirection } from "./types.js";
@@ -182,28 +183,47 @@ interface WebhookDeliveryRow {
   readonly updated_at: Date;
 }
 
+interface OutboundWebhookQuotaRow {
+  readonly outbound_webhooks_limit: JsonValue | null;
+  readonly active_outbound_webhook_count: string | number;
+}
+
+export class OutboundWebhookQuotaExceededError extends Error {
+  constructor(
+    readonly orgId: string,
+    readonly limit: number,
+    readonly used: number,
+  ) {
+    super(`Tenant outbound webhook quota exceeded: ${String(used)}/${String(limit)} endpoints.`);
+    this.name = "OutboundWebhookQuotaExceededError";
+  }
+}
+
 export class PostgresWebhookStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async createOutbound(input: CreateOutboundWebhookInput): Promise<OutboundWebhookRecord> {
-    const rows = (await this.sql`
-      insert into outbound_webhooks (
-        org_id, name, url, event_subjects, secret_ref, headers, enabled, metadata, created_by_actor_id
-      )
-      values (
-        ${input.orgId},
-        ${input.name},
-        ${input.url},
-        ${this.sql.array([...input.eventSubjects])},
-        ${input.secretRef ?? createInlineSecret()},
-        ${this.sql.json(toSqlJson(input.headers ?? {}))},
-        ${input.enabled ?? true},
-        ${this.sql.json(toSqlJson(input.metadata ?? {}))},
-        ${input.createdByActorId ?? null}
-      )
-      returning *
-    `) as unknown as readonly OutboundWebhookRow[];
-    return mapOutbound(rows[0]);
+    return this.sql.begin(async (tx) => {
+      await assertOutboundWebhookQuotaAvailable(tx, input.orgId);
+      const rows = (await tx`
+        insert into outbound_webhooks (
+          org_id, name, url, event_subjects, secret_ref, headers, enabled, metadata, created_by_actor_id
+        )
+        values (
+          ${input.orgId},
+          ${input.name},
+          ${input.url},
+          ${tx.array([...input.eventSubjects])},
+          ${input.secretRef ?? createInlineSecret()},
+          ${tx.json(toSqlJson(input.headers ?? {}))},
+          ${input.enabled ?? true},
+          ${tx.json(toSqlJson(input.metadata ?? {}))},
+          ${input.createdByActorId ?? null}
+        )
+        returning *
+      `) as unknown as readonly OutboundWebhookRow[];
+      return mapOutbound(rows[0]);
+    });
   }
 
   async updateOutbound(input: {
@@ -524,6 +544,56 @@ function toSqlJson(value: unknown): postgres.JSONValue {
 function createInlineSecret(): string {
   // Webhook signing secret minted via the crypto adapter (PRD §14.4).
   return `inline:${randomBytes(32).toString("base64url")}`;
+}
+
+async function assertOutboundWebhookQuotaAvailable(
+  sql: postgres.Sql | postgres.TransactionSql,
+  orgId: string,
+): Promise<void> {
+  const rows = (await sql`
+    select
+      case
+        when o.quotas ? 'outbound_webhooks_limit' then o.quotas -> 'outbound_webhooks_limit'
+        when p.quotas_default ? 'outbound_webhooks_limit' then p.quotas_default -> 'outbound_webhooks_limit'
+        else '5'::jsonb
+      end as outbound_webhooks_limit,
+      (
+        select count(*)::int
+        from outbound_webhooks wh
+        where wh.org_id = ${orgId}
+          and wh.deleted_at is null
+      ) as active_outbound_webhook_count
+    from orgs o
+    left join plans p on p.id = o.plan_id
+    where o.id = ${orgId}
+    limit 1
+    for update of o
+  `) as unknown as readonly OutboundWebhookQuotaRow[];
+  const row = rows[0];
+  if (row === undefined) {
+    return;
+  }
+
+  const limit = outboundWebhookLimitFromJson(row.outbound_webhooks_limit);
+  if (limit === null) {
+    return;
+  }
+
+  const used = countFromDatabase(row.active_outbound_webhook_count);
+  if (Number.isFinite(used) && used >= limit) {
+    throw new OutboundWebhookQuotaExceededError(orgId, limit, used);
+  }
+}
+
+function outboundWebhookLimitFromJson(value: JsonValue | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 5;
+}
+
+function countFromDatabase(value: string | number): number {
+  return typeof value === "number" ? value : Number.parseInt(value, 10);
 }
 
 function mapOutbound(row: OutboundWebhookRow | undefined): OutboundWebhookRecord {

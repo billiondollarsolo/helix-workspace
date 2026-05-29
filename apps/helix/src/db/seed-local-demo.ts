@@ -12,7 +12,6 @@ import {
   seedLocalOAuth,
   type SeedLocalOAuthResult,
 } from "./seed-local-oauth.js";
-import { createNativeDocumentState } from "../platform/docs/native-state.js";
 import { createS3CompatibleStorage } from "../platform/storage/index.js";
 
 export const LOCAL_DEMO_SOURCE = "local-demo";
@@ -47,9 +46,6 @@ export interface SeedLocalDemoResult {
   readonly mailThreads: number;
   readonly driveEntries: number;
   readonly docs: number;
-  readonly sheets: number;
-  readonly slides: number;
-  readonly meetRooms: number;
   readonly calendarEvents: number;
   readonly chatRooms: number;
   readonly chatMessages: number;
@@ -114,22 +110,11 @@ const demoIds = {
   docsQuarterlyThread: "00000000-0000-4000-8000-000000000402",
   docsRunbook: "00000000-0000-4000-8000-000000000403",
   docsRunbookThread: "00000000-0000-4000-8000-000000000404",
-  sheetLaunchMetrics: "00000000-0000-4000-8000-000000000451",
-  sheetLaunchMetricsSummaryTab: "00000000-0000-4000-8000-000000000452",
-  sheetLaunchMetricsPipelineTab: "00000000-0000-4000-8000-000000000453",
-  slidesMvpReadout: "00000000-0000-4000-8000-000000000471",
-  slidesMvpReadoutTitle: "00000000-0000-4000-8000-000000000472",
-  slidesMvpReadoutStatus: "00000000-0000-4000-8000-000000000473",
-  slidesMvpReadoutNext: "00000000-0000-4000-8000-000000000474",
   calendarPrimary: "00000000-0000-4000-8000-000000000501",
   eventOrderMatch: "00000000-0000-4000-8000-000000000502",
   eventOrderMatchThread: "00000000-0000-4000-8000-000000000503",
   eventPlanning: "00000000-0000-4000-8000-000000000504",
   eventPlanningThread: "00000000-0000-4000-8000-000000000505",
-  eventMvpWalkthrough: "00000000-0000-4000-8000-000000000506",
-  eventMvpWalkthroughThread: "00000000-0000-4000-8000-000000000507",
-  meetMvpWalkthrough: "00000000-0000-4000-8000-000000000551",
-  meetMvpWalkthroughThread: "00000000-0000-4000-8000-000000000552",
   mailAmazonThread: "00000000-0000-4000-8000-000000000601",
   mailAmazonMessage: "00000000-0000-4000-8000-000000000602",
   mailRenovateThread: "00000000-0000-4000-8000-000000000603",
@@ -152,8 +137,6 @@ const demoThreads = [
   demoIds.docsRunbookThread,
   demoIds.eventOrderMatchThread,
   demoIds.eventPlanningThread,
-  demoIds.eventMvpWalkthroughThread,
-  demoIds.meetMvpWalkthroughThread,
   demoIds.mailAmazonThread,
   demoIds.mailRenovateThread,
   demoIds.mailPlanningThread,
@@ -171,14 +154,7 @@ const demoObjects = [
 
 const demoFolders = [demoIds.driveFolderProjects] as const;
 const demoDocuments = [demoIds.docsQuarterly, demoIds.docsRunbook] as const;
-const demoSheets = [demoIds.sheetLaunchMetrics] as const;
-const demoSlideDecks = [demoIds.slidesMvpReadout] as const;
-const demoMeetRooms = [demoIds.meetMvpWalkthrough] as const;
-const demoEvents = [
-  demoIds.eventOrderMatch,
-  demoIds.eventPlanning,
-  demoIds.eventMvpWalkthrough,
-] as const;
+const demoEvents = [demoIds.eventOrderMatch, demoIds.eventPlanning] as const;
 const demoMessages = [
   demoIds.mailAmazonMessage,
   demoIds.mailRenovateMessage,
@@ -210,15 +186,13 @@ export async function seedLocalDemo(
   await storage?.ensureBucket?.();
 
   await sql.begin(async (tx) => {
+    await seedOrg(tx, orgId);
     await seedActors(tx, orgId, actorId, email, displayName);
     await clearDemoContent(tx, orgId);
     await seedBetterAuthUser(tx, actorId, email, displayName, passwordHash);
     await seedDrive(tx, orgId, actorId, storage);
     await seedDocs(tx, orgId, actorId, storage);
-    await seedSheets(tx, orgId, actorId);
-    await seedSlides(tx, orgId, actorId);
     await seedCalendar(tx, orgId, actorId, email, timeline);
-    await seedMeet(tx, orgId, actorId, timeline);
     await seedMail(tx, orgId, actorId, email, storage, timeline);
     if (volumeMailMessages > 0) {
       await seedVolumeMail(tx, orgId, actorId, email, volumeMailMessages, timeline);
@@ -233,16 +207,39 @@ export async function seedLocalDemo(
     mailThreads: 4,
     driveEntries: 3,
     docs: 2,
-    sheets: 1,
-    slides: 1,
-    meetRooms: 1,
-    calendarEvents: 3,
+    calendarEvents: 2,
     chatRooms: 1,
     chatMessages: 3,
     storageObjects: storage === undefined ? 0 : 5,
     volumeMailMessages,
     anchorDate: timeline.anchorDate,
   };
+}
+
+async function seedOrg(sql: SeedSql, orgId: string): Promise<void> {
+  await sql`
+    insert into orgs (id, slug, display_name, status, tier, region, feature_flags, metadata)
+    values (
+      ${orgId},
+      'local-demo',
+      'Local Demo Workspace',
+      'active',
+      'personal',
+      'local',
+      ${json(sql, { b2b_sharing: true })},
+      ${json(sql, { source: LOCAL_DEMO_SOURCE })}
+    )
+    on conflict (id) do update
+    set
+      slug = excluded.slug,
+      display_name = excluded.display_name,
+      status = excluded.status,
+      tier = excluded.tier,
+      region = excluded.region,
+      feature_flags = orgs.feature_flags || excluded.feature_flags,
+      metadata = orgs.metadata || excluded.metadata,
+      updated_at = now()
+  `;
 }
 
 async function seedActors(
@@ -262,37 +259,17 @@ async function seedActors(
         "mail.read",
         "mail.write",
         "mail.send",
-        "mail.external",
         "drive.read",
         "drive.write",
         "docs.read",
         "docs.write",
+        "docs.comment",
         "calendar.read",
         "calendar.write",
         "chat.read",
         "chat.write",
-        "meet.read",
-        "meet.write",
-        "assistant.read",
         "assistant.write",
         "assistant.memory",
-        "sheets.read",
-        "sheets.write",
-        "slides.read",
-        "slides.write",
-        "notifications.read",
-        "notifications.write",
-        "search.read",
-        "admin",
-        "admin.users",
-        "admin.audit",
-        "admin.agents",
-        "admin.plugins",
-        "admin.webhooks",
-        "admin.config.read",
-        "admin.config.write",
-        "admin.console.read",
-        "admin.console.write",
       ],
     },
     {
@@ -330,12 +307,7 @@ async function seedActors(
         display_name = excluded.display_name,
         scopes = excluded.scopes,
         disabled_at = null,
-        metadata = (
-          case
-            when jsonb_typeof(actors.metadata) = 'object' then actors.metadata
-            else '{}'::jsonb
-          end
-        ) || excluded.metadata,
+        metadata = actors.metadata || excluded.metadata,
         updated_at = now()
     `;
   }
@@ -350,9 +322,6 @@ async function clearDemoContent(sql: SeedSql, orgId: string): Promise<void> {
         or (resource_type = 'object' and resource_id = any(${sql.array([...demoObjects])}::uuid[]))
         or (resource_type = 'folder' and resource_id = any(${sql.array([...demoFolders])}::uuid[]))
         or (resource_type = 'document' and resource_id = any(${sql.array([...demoDocuments])}::uuid[]))
-        or (resource_type = 'sheet' and resource_id = any(${sql.array([...demoSheets])}::uuid[]))
-        or (resource_type = 'slide_deck' and resource_id = any(${sql.array([...demoSlideDecks])}::uuid[]))
-        or (resource_type = 'meet_room' and resource_id = any(${sql.array([...demoMeetRooms])}::uuid[]))
         or (resource_type = 'calendar' and resource_id = ${demoIds.calendarPrimary})
         or (resource_type = 'event' and resource_id = any(${sql.array([...demoEvents])}::uuid[]))
       )
@@ -364,255 +333,14 @@ async function clearDemoContent(sql: SeedSql, orgId: string): Promise<void> {
   await sql`delete from docs_comments where document_id = any(${sql.array([...demoDocuments])}::uuid[])`;
   await sql`delete from docs_updates where document_id = any(${sql.array([...demoDocuments])}::uuid[])`;
   await sql`delete from docs_documents where id = any(${sql.array([...demoDocuments])}::uuid[])`;
-  await sql`delete from sheet_cells where sheet_tab_id in (select id from sheet_tabs where sheet_id = any(${sql.array([...demoSheets])}::uuid[]))`;
-  await sql`delete from sheet_tabs where sheet_id = any(${sql.array([...demoSheets])}::uuid[])`;
-  await sql`delete from sheets where id = any(${sql.array([...demoSheets])}::uuid[])`;
-  await sql`delete from slides where deck_id = any(${sql.array([...demoSlideDecks])}::uuid[])`;
-  await sql`delete from slide_decks where id = any(${sql.array([...demoSlideDecks])}::uuid[])`;
   await sql`delete from cal_attendees where event_id = any(${sql.array([...demoEvents])}::uuid[])`;
   await sql`delete from cal_events where id = any(${sql.array([...demoEvents])}::uuid[])`;
   await sql`delete from cal_calendars where id = ${demoIds.calendarPrimary}`;
-  await sql`delete from meet_rooms where id = any(${sql.array([...demoMeetRooms])}::uuid[])`;
   await sql`delete from drive_versions where object_id = any(${sql.array([...demoObjects])}::uuid[])`;
-  await sql`delete from objects where id = any(${sql.array([...demoObjects, ...demoSheets, ...demoSlideDecks])}::uuid[])`;
+  await sql`delete from objects where id = any(${sql.array([...demoObjects])}::uuid[])`;
   await sql`delete from drive_folders where id = any(${sql.array([...demoFolders])}::uuid[])`;
   await sql`delete from threads where id = any(${sql.array([...demoThreads])}::uuid[])`;
   await clearVolumeDemoContent(sql, orgId);
-  await clearSyntheticSmokeContent(sql, orgId);
-}
-
-async function clearSyntheticSmokeContent(sql: SeedSql, orgId: string): Promise<void> {
-  await sql`
-    delete from permissions
-    where org_id = ${orgId}
-      and (
-        (resource_type = 'thread' and resource_id in (
-          select id from threads
-          where org_id = ${orgId}
-            and (
-              subject ilike 'k6 %'
-              or subject ilike '% k6 %'
-              or subject ilike '%helix-live%'
-              or subject ilike 'MVP workflow smoke%'
-              or metadata->>'source' = 'k6'
-            )
-        ))
-        or (resource_type = 'document' and resource_id in (
-          select id from docs_documents
-          where org_id = ${orgId}
-            and (
-              title ilike 'k6 %'
-              or metadata->>'source' = 'k6'
-              or metadata->>'marker' ilike '%k6%'
-            )
-        ))
-        or (resource_type = 'meet_room' and resource_id in (
-          select r.id
-          from meet_rooms r
-          join threads t on t.id = r.thread_id
-          where r.org_id = ${orgId}
-            and (
-              t.subject ilike 'k6 %'
-              or t.subject ilike '% k6 %'
-              or t.metadata->>'source' = 'k6'
-            )
-        ))
-        or (resource_type = 'object' and resource_id in (
-          select id from objects
-          where org_id = ${orgId}
-            and (
-              metadata->>'source' = 'k6'
-              or metadata->>'marker' ilike '%k6%'
-              or metadata->>'name' ilike 'k6 %'
-              or metadata->>'title' ilike 'k6 %'
-              or storage_key ilike '%k6%'
-            )
-        ))
-      )
-  `;
-  await sql`
-    delete from message_attachments
-    where message_id in (
-      select m.id
-      from messages m
-      join threads t on t.id = m.thread_id
-      where m.org_id = ${orgId}
-        and (
-          t.subject ilike 'k6 %'
-          or t.subject ilike '% k6 %'
-          or t.subject ilike '%helix-live%'
-          or t.subject ilike 'MVP workflow smoke%'
-          or t.metadata->>'source' = 'k6'
-          or m.metadata->>'source' = 'k6'
-        )
-    )
-      or object_id in (
-        select id from objects
-        where org_id = ${orgId}
-          and (
-            metadata->>'source' = 'k6'
-            or metadata->>'marker' ilike '%k6%'
-            or metadata->>'name' ilike 'k6 %'
-            or metadata->>'title' ilike 'k6 %'
-            or storage_key ilike '%k6%'
-          )
-      )
-  `;
-  await sql`
-    delete from mail_thread_state
-    where org_id = ${orgId}
-      and thread_id in (
-        select id from threads
-        where org_id = ${orgId}
-          and (
-            subject ilike 'k6 %'
-            or subject ilike '% k6 %'
-            or subject ilike '%helix-live%'
-            or subject ilike 'MVP workflow smoke%'
-            or metadata->>'source' = 'k6'
-          )
-      )
-  `;
-  await sql`
-    delete from pending_actions
-    where org_id = ${orgId}
-      and tool_id = 'mail.send'
-      and input->>'subject' ilike 'MVP workflow smoke%'
-  `;
-  await sql`
-    delete from docs_comments
-    where org_id = ${orgId}
-      and document_id in (
-        select id from docs_documents
-        where org_id = ${orgId}
-          and (
-            title ilike 'k6 %'
-            or metadata->>'source' = 'k6'
-            or metadata->>'marker' ilike '%k6%'
-          )
-      )
-  `;
-  await sql`
-    delete from docs_updates
-    where org_id = ${orgId}
-      and document_id in (
-        select id from docs_documents
-        where org_id = ${orgId}
-          and (
-            title ilike 'k6 %'
-            or metadata->>'source' = 'k6'
-            or metadata->>'marker' ilike '%k6%'
-          )
-      )
-  `;
-  await sql`
-    delete from docs_documents
-    where org_id = ${orgId}
-      and (
-        title ilike 'k6 %'
-        or metadata->>'source' = 'k6'
-        or metadata->>'marker' ilike '%k6%'
-      )
-  `;
-  await sql`
-    delete from drive_versions
-    where org_id = ${orgId}
-      and object_id in (
-        select id from objects
-        where org_id = ${orgId}
-          and (
-            metadata->>'source' = 'k6'
-            or metadata->>'marker' ilike '%k6%'
-            or metadata->>'name' ilike 'k6 %'
-            or metadata->>'title' ilike 'k6 %'
-            or storage_key ilike '%k6%'
-          )
-      )
-  `;
-  await sql`
-    delete from objects
-    where org_id = ${orgId}
-      and (
-        metadata->>'source' = 'k6'
-        or metadata->>'marker' ilike '%k6%'
-        or metadata->>'name' ilike 'k6 %'
-        or metadata->>'title' ilike 'k6 %'
-        or storage_key ilike '%k6%'
-      )
-  `;
-  await sql`
-    delete from meet_rooms
-    where org_id = ${orgId}
-      and (
-        metadata->>'source' = 'k6'
-        or thread_id in (
-          select id from threads
-          where org_id = ${orgId}
-            and (
-              subject ilike 'k6 %'
-              or subject ilike '% k6 %'
-              or metadata->>'source' = 'k6'
-            )
-        )
-      )
-  `;
-  await sql`
-    with doomed_messages as (
-      select m.id
-      from messages m
-      join threads t on t.id = m.thread_id
-      where m.org_id = ${orgId}
-        and (
-          t.subject ilike 'k6 %'
-          or t.subject ilike '% k6 %'
-          or t.subject ilike '%helix-live%'
-          or t.subject ilike 'MVP workflow smoke%'
-          or t.metadata->>'source' = 'k6'
-          or m.metadata->>'source' = 'k6'
-        )
-    ),
-    deleted_outbound_messages as (
-      delete from mail_outbound_messages
-      where org_id = ${orgId}
-        and message_id in (select id from doomed_messages)
-      returning outbox_id
-    )
-    delete from outbox
-    where id in (
-      select outbox_id
-      from deleted_outbound_messages
-      where outbox_id is not null
-    )
-  `;
-  await sql`
-    delete from messages
-    where org_id = ${orgId}
-      and (
-        metadata->>'source' = 'k6'
-        or thread_id in (
-          select id from threads
-          where org_id = ${orgId}
-            and (
-              subject ilike 'k6 %'
-              or subject ilike '% k6 %'
-              or subject ilike '%helix-live%'
-              or subject ilike 'MVP workflow smoke%'
-              or metadata->>'source' = 'k6'
-            )
-        )
-      )
-  `;
-  await sql`
-    delete from threads
-    where org_id = ${orgId}
-      and (
-        subject ilike 'k6 %'
-        or subject ilike '% k6 %'
-        or subject ilike '%helix-live%'
-        or subject ilike 'MVP workflow smoke%'
-        or metadata->>'source' = 'k6'
-      )
-  `;
 }
 
 async function clearVolumeDemoContent(sql: SeedSql, orgId: string): Promise<void> {
@@ -668,24 +396,6 @@ async function seedBetterAuthUser(
     returning id
   `;
   const userId = rows[0]?.id ?? defaultUserId;
-  await sql`
-    delete from actors
-    where lower(email) = ${email.toLowerCase()}
-      and id <> ${actorId}
-      and metadata -> 'betterAuth' ->> 'userId' = ${userId}
-  `;
-  await sql`
-    update actors
-    set
-      metadata = (
-        case
-          when jsonb_typeof(metadata) = 'object' then metadata
-          else '{}'::jsonb
-        end
-      ) || ${json(sql, { betterAuth: { userId, emailVerified: true } })},
-      updated_at = now()
-    where id = ${actorId}
-  `;
   await sql`
     insert into account (
       id,
@@ -862,16 +572,15 @@ async function seedDoc(
   },
 ): Promise<void> {
   const storageKey = `docs/${input.orgId}/${input.documentId}`;
-  const nativeState = createNativeDocumentState(input.markdown);
   await putDemoStorageObject(input.storage, {
     key: storageKey,
-    body: nativeState.state,
+    body: input.markdown,
     contentType: "application/vnd.helix.document",
     metadata: {
       source: LOCAL_DEMO_SOURCE,
       objectId: input.documentId,
       documentId: input.documentId,
-      sha256: shaBuffer(nativeState.state),
+      sha256: sha(input.markdown),
     },
   });
   await sql`
@@ -880,7 +589,7 @@ async function seedDoc(
   `;
   await sql`
     insert into docs_documents (
-      id, org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, ydoc_state_vector, update_seq, metadata
+      id, org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, update_seq, metadata
     )
     values (
       ${input.documentId},
@@ -889,16 +598,9 @@ async function seedDoc(
       ${input.threadId},
       ${input.actorId},
       ${input.actorId},
-      ${nativeState.state},
-      ${nativeState.stateVector},
+      ${Buffer.from(input.markdown, "utf8")},
       0,
-      ${json(sql, {
-        source: LOCAL_DEMO_SOURCE,
-        editorEngine: "helix-native-document",
-        formatVersion: 1,
-        plainText: input.markdown,
-        tags: input.tags,
-      })}
+      ${json(sql, { source: LOCAL_DEMO_SOURCE, plainText: input.markdown, tags: input.tags })}
     )
   `;
   await sql`
@@ -910,8 +612,8 @@ async function seedDoc(
       'file',
       ${storageKey},
       'application/vnd.helix.document',
-      ${nativeState.state.byteLength},
-      ${shaBuffer(nativeState.state)},
+      ${Buffer.byteLength(input.markdown, "utf8")},
+      ${sha(input.markdown)},
       ${json(sql, {
         source: LOCAL_DEMO_SOURCE,
         app: "docs",
@@ -919,8 +621,6 @@ async function seedDoc(
         name: `${input.title}.helixdoc`,
         title: input.title,
         folderId: demoIds.driveFolderProjects,
-        editorEngine: "helix-native-document",
-        formatVersion: 1,
       })}
     )
   `;
@@ -935,195 +635,6 @@ async function seedDoc(
     input.actorId,
   );
   await grant(sql, input.orgId, input.actorId, "object", input.documentId, "owner", input.actorId);
-}
-
-async function seedSheets(sql: SeedSql, orgId: string, actorId: string): Promise<void> {
-  await sql`
-    insert into sheets (id, org_id, owner_actor_id, created_by_actor_id, title, metadata)
-    values (
-      ${demoIds.sheetLaunchMetrics},
-      ${orgId},
-      ${actorId},
-      ${actorId},
-      'Launch Metrics Tracker',
-      ${json(sql, { source: LOCAL_DEMO_SOURCE, app: "sheets" })}
-    )
-  `;
-  await sql`
-    insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
-    values (
-      ${demoIds.sheetLaunchMetrics},
-      ${orgId},
-      ${actorId},
-      'file',
-      ${`sheets/${orgId}/${demoIds.sheetLaunchMetrics}`},
-      'application/vnd.helix.spreadsheet',
-      0,
-      null,
-      ${json(sql, {
-        source: LOCAL_DEMO_SOURCE,
-        app: "sheets",
-        sheetId: demoIds.sheetLaunchMetrics,
-        name: "Launch Metrics Tracker",
-        title: "Launch Metrics Tracker",
-        folderId: null,
-      })}
-    )
-  `;
-
-  const tabs = [
-    {
-      id: demoIds.sheetLaunchMetricsSummaryTab,
-      name: "Summary",
-      rows: [
-        ["Metric", "Target", "Current", "Status"],
-        ["Mail searchable threads", "200", "205", "On track"],
-        ["Drive seeded files", "3", "3", "On track"],
-        ["Docs ready for review", "2", "2", "On track"],
-        ["Open MVP blockers", "0", "3", "Watch"],
-      ],
-    },
-    {
-      id: demoIds.sheetLaunchMetricsPipelineTab,
-      name: "Pipeline",
-      rows: [
-        ["Surface", "Owner", "MVP workflow", "Next check"],
-        ["Mail", "Local Helix Admin", "Search, open, compose", "Today"],
-        ["Drive", "Maya Sharma", "Upload, preview, share", "Today"],
-        ["Calendar", "Local Helix Admin", "Create event, respond", "This week"],
-        ["Assistant", "Local Helix Admin", "Ask, confirm action", "This week"],
-      ],
-    },
-  ] as const;
-
-  for (const [tabIndex, tab] of tabs.entries()) {
-    await sql`
-      insert into sheet_tabs (id, org_id, sheet_id, name, position, metadata)
-      values (
-        ${tab.id},
-        ${orgId},
-        ${demoIds.sheetLaunchMetrics},
-        ${tab.name},
-        ${tabIndex},
-        ${json(sql, { source: LOCAL_DEMO_SOURCE })}
-      )
-    `;
-    for (const [rowIndex, row] of tab.rows.entries()) {
-      for (const [colIndex, value] of row.entries()) {
-        await sql`
-          insert into sheet_cells (id, org_id, sheet_tab_id, row, col, value, format)
-          values (
-            ${demoCellId(tabIndex, rowIndex, colIndex)},
-            ${orgId},
-            ${tab.id},
-            ${rowIndex},
-            ${colIndex},
-            ${value},
-            ${json(sql, rowIndex === 0 ? { bold: true } : {})}
-          )
-        `;
-      }
-    }
-  }
-
-  await grant(sql, orgId, actorId, "sheet", demoIds.sheetLaunchMetrics, "owner", actorId);
-}
-
-async function seedSlides(sql: SeedSql, orgId: string, actorId: string): Promise<void> {
-  await sql`
-    insert into slide_decks (id, org_id, title, owner_actor_id, created_by_actor_id, metadata)
-    values (
-      ${demoIds.slidesMvpReadout},
-      ${orgId},
-      'MVP Readiness Readout',
-      ${actorId},
-      ${actorId},
-      ${json(sql, { source: LOCAL_DEMO_SOURCE, app: "slides" })}
-    )
-  `;
-  await sql`
-    insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
-    values (
-      ${demoIds.slidesMvpReadout},
-      ${orgId},
-      ${actorId},
-      'file',
-      ${`slides/${orgId}/${demoIds.slidesMvpReadout}`},
-      'application/vnd.helix.presentation',
-      0,
-      null,
-      ${json(sql, {
-        source: LOCAL_DEMO_SOURCE,
-        app: "slides",
-        deckId: demoIds.slidesMvpReadout,
-        name: "MVP Readiness Readout",
-        title: "MVP Readiness Readout",
-        slideCount: 3,
-        folderId: null,
-      })}
-    )
-  `;
-
-  const slides = [
-    {
-      id: demoIds.slidesMvpReadoutTitle,
-      layout: "title",
-      content: {
-        layout: "title",
-        eyebrow: "Helix Local Demo",
-        title: "MVP Readiness Readout",
-        subtitle: "A seeded deck for validating native Slides locally.",
-      },
-      notes: "Use this deck to verify list, open, edit, present, and export flows.",
-    },
-    {
-      id: demoIds.slidesMvpReadoutStatus,
-      layout: "stats",
-      content: {
-        layout: "stats",
-        title: "What is live in the demo",
-        subtitle: "Seeded data across the core workspace surfaces",
-        stats: [
-          { value: "205", label: "mail hits", note: "search-indexed" },
-          { value: "3", label: "Drive entries", note: "plus docs, sheets, slides" },
-          { value: "3", label: "calendar events", note: "includes current-week check-in" },
-        ],
-      },
-      notes: "Keep this slide aligned with local demo verification counts.",
-    },
-    {
-      id: demoIds.slidesMvpReadoutNext,
-      layout: "bullets",
-      content: {
-        layout: "bullets",
-        title: "Next feature checks",
-        items: [
-          "Open and edit the seeded spreadsheet.",
-          "Present this deck and test export readiness.",
-          "Create a calendar event from the current week view.",
-          "Ask Helix AI to summarize the launch room.",
-        ],
-      },
-      notes: "These are the next manual MVP checks after shell route verification.",
-    },
-  ] as const;
-
-  for (const [index, slide] of slides.entries()) {
-    await sql`
-      insert into slides (id, org_id, deck_id, position, layout, content, speaker_notes)
-      values (
-        ${slide.id},
-        ${orgId},
-        ${demoIds.slidesMvpReadout},
-        ${index},
-        ${slide.layout},
-        ${json(sql, slide.content)},
-        ${slide.notes}
-      )
-    `;
-  }
-
-  await grant(sql, orgId, actorId, "slide_deck", demoIds.slidesMvpReadout, "owner", actorId);
 }
 
 async function seedCalendar(
@@ -1178,22 +689,6 @@ async function seedCalendar(
     attendees: [
       { actorId: demoIds.colleagueActor, email: "maya@helix.local", displayName: "Maya Sharma" },
       { actorId: demoIds.familyActor, email: "erica@helix.local", displayName: "Erica Johnson" },
-    ],
-  });
-  await seedCalendarEvent(sql, {
-    orgId,
-    actorId,
-    actorEmail,
-    threadId: demoIds.eventMvpWalkthroughThread,
-    eventId: demoIds.eventMvpWalkthrough,
-    uid: "demo-mvp-walkthrough@helix.local",
-    title: "MVP surface walkthrough",
-    description: "Open Mail, Drive, Docs, Sheets, Slides, Calendar, Chat, Meet, and Assistant.",
-    location: "Helix Meet",
-    startsAt: timeline.at("2026-05-26T14:00:00.000Z"),
-    endsAt: timeline.at("2026-05-26T15:00:00.000Z"),
-    attendees: [
-      { actorId: demoIds.colleagueActor, email: "maya@helix.local", displayName: "Maya Sharma" },
     ],
   });
 }
@@ -1283,74 +778,6 @@ async function seedCalendarEvent(
   }
   await grant(sql, input.orgId, input.actorId, "thread", input.threadId, "owner", input.actorId);
   await grant(sql, input.orgId, input.actorId, "event", input.eventId, "owner", input.actorId);
-}
-
-async function seedMeet(
-  sql: SeedSql,
-  orgId: string,
-  actorId: string,
-  timeline: DemoTimeline,
-): Promise<void> {
-  const scheduledStartAt = timeline.at("2026-05-26T14:00:00.000Z");
-  const scheduledEndAt = timeline.at("2026-05-26T15:00:00.000Z");
-  await sql`
-    insert into threads (id, org_id, kind, subject, created_by_actor_id, metadata)
-    values (
-      ${demoIds.meetMvpWalkthroughThread},
-      ${orgId},
-      'call',
-      'MVP surface walkthrough',
-      ${actorId},
-      ${json(sql, {
-        source: LOCAL_DEMO_SOURCE,
-        jitsiDomain: "meet.localhost",
-        roomName: "mvp-surface-walkthrough",
-      })}
-    )
-  `;
-  await sql`
-    insert into meet_rooms (
-      id, org_id, thread_id, room_name, subject, jitsi_domain, created_by_actor_id,
-      started_at, scheduled_start_at, scheduled_end_at, status, metadata
-    )
-    values (
-      ${demoIds.meetMvpWalkthrough},
-      ${orgId},
-      ${demoIds.meetMvpWalkthroughThread},
-      'mvp-surface-walkthrough',
-      'MVP surface walkthrough',
-      'meet.localhost',
-      ${actorId},
-      ${scheduledStartAt},
-      ${scheduledStartAt},
-      ${scheduledEndAt},
-      'active',
-      ${json(sql, {
-        source: LOCAL_DEMO_SOURCE,
-        agenda: ["Mail", "Drive", "Docs", "Sheets", "Slides", "Calendar", "Chat", "Assistant"],
-      })}
-    )
-  `;
-  await grant(sql, orgId, actorId, "thread", demoIds.meetMvpWalkthroughThread, "owner", actorId);
-  await grant(
-    sql,
-    orgId,
-    demoIds.colleagueActor,
-    "thread",
-    demoIds.meetMvpWalkthroughThread,
-    "member",
-    actorId,
-  );
-  await grant(sql, orgId, actorId, "meet_room", demoIds.meetMvpWalkthrough, "owner", actorId);
-  await grant(
-    sql,
-    orgId,
-    demoIds.colleagueActor,
-    "meet_room",
-    demoIds.meetMvpWalkthrough,
-    "member",
-    actorId,
-  );
 }
 
 async function seedMail(
@@ -1780,10 +1207,6 @@ function sha(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function shaBuffer(value: Buffer): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
 function normalizeVolumeMailCount(value: number | undefined): number {
   if (value === undefined) {
     return 0;
@@ -1839,16 +1262,11 @@ function volumeUuid(group: "4100" | "4200", index: number): string {
   return `00000000-0000-${group}-8000-${index.toString().padStart(12, "0")}`;
 }
 
-function demoCellId(tabIndex: number, rowIndex: number, colIndex: number): string {
-  const cellIndex = tabIndex * 100 + rowIndex * 10 + colIndex + 1;
-  return `00000000-0000-4600-8000-${cellIndex.toString().padStart(12, "0")}`;
-}
-
 async function putDemoStorageObject(
   storage: DemoStorageClient | undefined,
   object: {
     readonly key: string;
-    readonly body: string | Buffer;
+    readonly body: string;
     readonly contentType: string;
     readonly metadata: Record<string, string>;
   },
@@ -1858,7 +1276,7 @@ async function putDemoStorageObject(
   }
   await storage.put({
     key: object.key,
-    body: typeof object.body === "string" ? Buffer.from(object.body, "utf8") : object.body,
+    body: Buffer.from(object.body, "utf8"),
     contentType: object.contentType,
     metadata: object.metadata,
   });

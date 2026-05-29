@@ -246,6 +246,7 @@ interface MailSearchRecordRow {
   readonly sent_at: Date;
   readonly updated_at: Date;
   readonly labels: readonly string[] | null;
+  readonly actor_id: string | null;
 }
 
 interface MailThreadAttachmentRow {
@@ -352,11 +353,15 @@ export class PostgresMailStore
         this.options,
       );
 
+      // Pre-generate the outbound id so the outbox payload is correct on first insert
+      // (avoids a race where a worker picks up the outbox row before the follow-up UPDATE).
+      const outboundId = randomUUID();
+
       const outboxRows = (await tx`
         insert into outbox (subject, payload, deliver_after)
         values (
           ${input.outboxSubject},
-          ${tx.json(toSqlJson({ mailOutboundId: "", orgId: input.orgId, actorId: input.actorId }))},
+          ${tx.json(toSqlJson({ mailOutboundId: outboundId, orgId: input.orgId, actorId: input.actorId }))},
           ${input.undoUntil}
         )
         returning id
@@ -365,9 +370,10 @@ export class PostgresMailStore
 
       const outboundRows = (await tx`
         insert into mail_outbound_messages (
-          org_id, actor_id, message_id, thread_id, outbox_id, status, envelope, undo_until
+          id, org_id, actor_id, message_id, thread_id, outbox_id, status, envelope, undo_until
         )
         values (
+          ${outboundId},
           ${input.orgId},
           ${input.actorId},
           ${message.messageId},
@@ -381,13 +387,6 @@ export class PostgresMailStore
       `) as unknown as readonly MailOutboundRow[];
 
       const outbound = mapOutbound(outboundRows[0]);
-      if (outboxId !== null) {
-        await tx`
-          update outbox
-          set payload = ${tx.json(toSqlJson({ mailOutboundId: outbound.id, orgId: input.orgId, actorId: input.actorId }))}
-          where id = ${outboxId}
-        `;
-      }
       return outbound;
     });
   }
@@ -769,6 +768,7 @@ export class PostgresMailStore
         m.metadata,
         m.sent_at,
         m.updated_at,
+        m.actor_id,
         (
           select array_agg(distinct label order by label)
           from mail_thread_state mts
@@ -884,7 +884,10 @@ export class PostgresMailStore
     const limit = clampLimit(input.limit, 50);
     const offset = Math.max(0, Math.trunc(input.offset ?? 0));
     const now = input.now ?? new Date();
-    const query = (input.query ?? "").trim();
+    const rawQuery = (input.query ?? "").trim();
+    // Escape LIKE metacharacters in user-supplied query so '%' / '_' are matched
+    // literally (S8). Falls back to the FTS-backed search indexer for richer queries.
+    const query = escapeMailLike(rawQuery);
     const label = input.label ?? "";
     // The tab filter only applies inside the inbox view; other folders are not
     // category-bucketed.
@@ -970,15 +973,82 @@ export class PostgresMailStore
         thread_id, subject, message_id, body, metadata, sent_at,
         message_count, has_attachment, labels, read_at, starred, category,
         snoozed_until, outbound_status,
-        count(*) over ()::int as total
+        0::int as total
       from filtered
       order by sent_at desc
       limit ${limit} offset ${offset}
     `) as unknown as readonly MailThreadListRow[];
 
+    // Compute total via a separate aggregate query so the count is correct even
+    // when the current page is empty (e.g. offset beyond the result set) (S6).
+    const totalRows = (await this.sql`
+      with latest as (
+        select distinct on (m.thread_id)
+          m.thread_id,
+          m.metadata,
+          m.sent_at,
+          t.archived_at as thread_archived_at,
+          mts.labels,
+          mts.archived_at,
+          mts.deleted_at,
+          mts.snoozed_until,
+          mts.read_at,
+          mts.starred,
+          mts.spam_at,
+          mts.category,
+          t.subject,
+          m.body,
+          (
+            select max((mo.metadata->>'direction'))
+            from messages mo
+            where mo.thread_id = m.thread_id and mo.kind = 'mail' and mo.deleted_at is null
+              and mo.metadata->>'direction' = 'outbound'
+          ) as has_outbound,
+          (
+            select ob.status from mail_outbound_messages ob
+            where ob.thread_id = m.thread_id
+            order by ob.created_at desc
+            limit 1
+          ) as outbound_status
+        from messages m
+        join threads t on t.id = m.thread_id
+        left join mail_thread_state mts on mts.thread_id = m.thread_id and mts.actor_id = ${input.actorId}
+        where m.org_id = ${input.orgId}
+          and m.kind = 'mail'
+          and m.deleted_at is null
+          and t.kind = 'mail'
+        order by m.thread_id, m.sent_at desc, m.id desc
+      )
+      select count(*)::int as total from latest
+      where
+        case ${folder}::text
+          when 'trash' then deleted_at is not null
+          when 'spam' then deleted_at is null and spam_at is not null
+          when 'archive' then deleted_at is null and spam_at is null
+            and coalesce(archived_at, thread_archived_at) is not null
+          when 'starred' then deleted_at is null and starred is true
+          when 'snoozed' then deleted_at is null
+            and snoozed_until is not null and snoozed_until > ${now}
+          when 'sent' then deleted_at is null and has_outbound = 'outbound'
+          when 'drafts' then deleted_at is null and outbound_status = 'queued'
+          else /* inbox */ deleted_at is null
+            and spam_at is null
+            and coalesce(archived_at, thread_archived_at) is null
+            and (snoozed_until is null or snoozed_until <= ${now})
+            and (has_outbound is null or has_outbound <> 'outbound')
+        end
+        and (${tab}::text is null or coalesce(category, 'primary') = ${tab})
+        and (${label}::text = '' or ${label} = any(coalesce(labels, '{}'::text[])))
+        and (
+          ${query} = ''
+          or subject ilike ${`%${query}%`}
+          or body ilike ${`%${query}%`}
+        )
+    `) as unknown as readonly { readonly total: number }[];
+
     return {
       threads: rows.map((row) => mapThreadRow(row, folder)),
-      total: rows[0]?.total ?? 0,
+      total: totalRows[0]?.total ?? 0,
       limit,
       offset,
     };
@@ -1425,6 +1495,7 @@ function mapMailSearchRecord(row: MailSearchRecordRow): MailSearchRecord {
     sentAt: row.sent_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     metadata: row.metadata,
+    ownerActorId: row.actor_id,
   };
 }
 
@@ -1583,6 +1654,14 @@ function mailClassification(value: unknown): MailSearchRecord["classification"] 
     value === "restricted"
     ? value
     : undefined;
+}
+
+/**
+ * Escape LIKE/ILIKE metacharacters so user-supplied search terms are matched
+ * literally. The default backslash escape character is used.
+ */
+function escapeMailLike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
 function toSqlJson(value: unknown): postgres.JSONValue {

@@ -23,16 +23,17 @@ describe("error-envelope", () => {
   it("maps status codes to stable error codes", () => {
     expect(errorCodeForStatus(400)).toBe("bad_request");
     expect(errorCodeForStatus(403)).toBe("forbidden");
+    expect(errorCodeForStatus(410)).toBe("gone");
     expect(errorCodeForStatus(429)).toBe("rate_limited");
     expect(errorCodeForStatus(418)).toBe("error");
   });
 
   it("builds the canonical envelope with a traceId", () => {
-    expect(
-      buildErrorEnvelope({ statusCode: 404, message: "missing", traceId: "trace-1" }),
-    ).toEqual({
-      error: { code: "not_found", message: "missing", traceId: "trace-1" },
-    });
+    expect(buildErrorEnvelope({ statusCode: 404, message: "missing", traceId: "trace-1" })).toEqual(
+      {
+        error: { code: "not_found", message: "missing", traceId: "trace-1" },
+      },
+    );
   });
 
   it("includes rate-limit details for failed tool results", () => {

@@ -45,67 +45,6 @@ export type HelixCommand =
       readonly limit?: number;
       readonly cursor?: string;
     }
-  | { readonly kind: "admin-storage-test" }
-  | {
-      readonly kind: "admin-storage-migration-list";
-      readonly target?: TenantStorageMigrationTarget;
-      readonly status?: TenantStorageMigrationStatus;
-      readonly limit?: number;
-      readonly cursor?: string;
-    }
-  | {
-      readonly kind: "admin-storage-migration-request";
-      readonly target: TenantStorageMigrationTarget;
-      readonly dryRun: boolean;
-      readonly sourceStorage?: Record<string, unknown>;
-      readonly targetStorage?: Record<string, unknown>;
-    }
-  | { readonly kind: "admin-storage-migration-get"; readonly migrationId: string }
-  | { readonly kind: "admin-storage-migration-cutover"; readonly migrationId: string }
-  | {
-      readonly kind: "tenant-export-queue";
-      readonly slug: string;
-      readonly includeObjectBytes: boolean;
-      readonly presignedUrlExpiresSeconds?: number;
-    }
-  | {
-      readonly kind: "tenant-export-list";
-      readonly slug: string;
-      readonly status?: TenantExportJobStatus;
-      readonly limit?: number;
-      readonly cursor?: string;
-    }
-  | { readonly kind: "tenant-export-status"; readonly slug: string; readonly jobId: string }
-  | {
-      readonly kind: "tenant-export-download";
-      readonly slug: string;
-      readonly jobId: string;
-      readonly output: string;
-      readonly force: boolean;
-    }
-  | {
-      readonly kind: "tenant-import-dry-run";
-      readonly slug: string;
-      readonly archive: string;
-      readonly conflictPolicy?: TenantImportDryRunConflictPolicy;
-      readonly remaps?: TenantImportDryRunRemaps;
-    }
-  | {
-      readonly kind: "tenant-import-execute";
-      readonly slug: string;
-      readonly archive: string;
-      readonly confirm: TenantImportExecuteConfirmation;
-      readonly conflictPolicy?: TenantImportDryRunConflictPolicy;
-      readonly remaps?: TenantImportDryRunRemaps;
-    }
-  | {
-      readonly kind: "tenant-import-list";
-      readonly slug: string;
-      readonly status?: TenantImportJobStatus;
-      readonly limit?: number;
-      readonly cursor?: string;
-    }
-  | { readonly kind: "tenant-import-status"; readonly slug: string; readonly jobId: string }
   | { readonly kind: "backup-create" }
   | { readonly kind: "restore-from"; readonly backupId: string; readonly encrypted?: boolean }
   | { readonly kind: "reindex-all" }
@@ -128,30 +67,6 @@ export type SearchType = "mail" | "chat" | "docs" | "drive" | "calendar";
 export type AdminUserType = "user" | "agent" | "service_account" | "system";
 export type SecurityTier = "personal" | "business" | "enterprise" | "sovereign";
 export type PluginLifecycleAction = "enable" | "disable" | "uninstall";
-export type TenantStorageMigrationTarget = "byo" | "helix-default";
-export type TenantStorageMigrationStatus =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "succeeded_with_errors"
-  | "failed"
-  | "dry_run";
-export type TenantExportJobStatus = "queued" | "running" | "succeeded" | "failed";
-export type TenantImportJobStatus = "succeeded" | "failed" | "blocked";
-export type TenantImportExecuteConfirmation = "EXECUTE_INTERNAL_TENANT_IMPORT";
-
-export interface TenantImportDryRunConflictPolicy {
-  readonly rowIdConflicts?: "regenerate" | "preserve" | undefined;
-  readonly principalReferences?: "preserve" | "null" | undefined;
-  readonly resourceReferences?: "require-remap" | "preserve" | undefined;
-  readonly verifiedState?: "regenerate" | "preserve" | undefined;
-  readonly primaryDomain?: "preserve" | "null" | undefined;
-}
-
-export interface TenantImportDryRunRemaps {
-  readonly principals?: Record<string, string | null> | undefined;
-  readonly resources?: Record<string, string> | undefined;
-}
 
 export type JsonArgument =
   | { readonly source: "empty" }
@@ -588,7 +503,8 @@ const mailDeleteUsage = "Usage: helix mail delete [--thread-id <id>] [--json [JS
 const mailThreadGetUsage = "Usage: helix mail thread-get [--thread-id <id>] [--json [JSON]]";
 const mailSnoozeUsage =
   "Usage: helix mail snooze [--thread-id <id>] [--until <iso>] [--json [JSON]]";
-const mailReadSetUsage = "Usage: helix mail read [--thread-id <id>] [--unread] [--json [JSON]]";
+const mailReadSetUsage =
+  "Usage: helix mail read [--thread-id <id>] [--unread] [--json [JSON]]";
 const mailStarSetUsage =
   "Usage: helix mail star [--thread-id <id>] [--starred] [--unstarred] [--json [JSON]]";
 const mailFilterCreateUsage =
@@ -1741,7 +1657,8 @@ function parseAssistantCommand(
   }
 }
 
-const assistantUsage = "Usage: helix assistant <chat|new|forget|approve|cancel> [--json [JSON]]";
+const assistantUsage =
+  "Usage: helix assistant <chat|new|forget|approve|cancel> [--json [JSON]]";
 const assistantConfirmationUsage =
   "Usage: helix assistant <approve|cancel> [--conversation-id <id>] [--pending-id <id>] [--classification <public|standard|confidential|restricted>] [--json [JSON]]";
 
@@ -1858,14 +1775,6 @@ function parseAdminCommand(
     case "audit":
     case "audit-log":
       return parseAdminAuditCommand(action, args);
-    case "storage":
-      return parseAdminStorageCommand(action, args);
-    case "storage-migrations":
-      return parseAdminStorageMigrationsCommand(action, args);
-    case "tenant-exports":
-      return parseAdminTenantExportsCommand(action, args);
-    case "tenant-imports":
-      return parseAdminTenantImportsCommand(action, args);
     default:
       throw new CliUsageError(adminUsage);
   }
@@ -1995,508 +1904,8 @@ function parseAdminAuditCommand(action: string | undefined, args: readonly strin
   return { kind: "admin-audit-list", ...input };
 }
 
-function parseAdminStorageCommand(
-  action: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  if (action !== "test" || args.length > 0) {
-    throw new CliUsageError(adminStorageUsage);
-  }
-  return { kind: "admin-storage-test" };
-}
-
-function parseAdminStorageMigrationsCommand(
-  action: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  switch (action) {
-    case "list":
-      return parseAdminStorageMigrationListCommand(args);
-    case "request":
-      return parseAdminStorageMigrationRequestCommand(args);
-    case "get":
-    case "status":
-      return parseAdminStorageMigrationGetCommand(args);
-    case "cutover":
-      return parseAdminStorageMigrationCutoverCommand(args);
-    default:
-      throw new CliUsageError(adminStorageMigrationsUsage);
-  }
-}
-
-function parseAdminStorageMigrationListCommand(args: readonly string[]): HelixCommand {
-  const input: {
-    target?: TenantStorageMigrationTarget;
-    status?: TenantStorageMigrationStatus;
-    limit?: number;
-    cursor?: string;
-  } = {};
-  parseAdminGetFlags(args, adminStorageMigrationsListUsage, {
-    strings: new Map([["--cursor", "cursor"]]),
-    numbers: new Map([["--limit", "limit"]]),
-    booleans: new Map<string, string>(),
-    enums: new Map<string, ReadonlySet<string>>([
-      ["--target", tenantStorageMigrationTargets],
-      ["--status", tenantStorageMigrationStatuses],
-    ]),
-    enumFields: new Map([
-      ["--target", "target"],
-      ["--status", "status"],
-    ]),
-    input,
-  });
-  return { kind: "admin-storage-migration-list", ...input };
-}
-
-function parseAdminStorageMigrationRequestCommand(args: readonly string[]): HelixCommand {
-  let target: TenantStorageMigrationTarget | undefined;
-  let dryRun = true;
-  let liveRequested = false;
-  let liveConfirmed = false;
-  let sourceStorage: Record<string, unknown> | undefined;
-  let targetStorage: Record<string, unknown> | undefined;
-
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
-    if (flag === undefined) {
-      throw new CliUsageError(adminStorageMigrationsRequestUsage);
-    }
-
-    if (flag === "--dry-run") {
-      dryRun = true;
-      continue;
-    }
-    if (flag === "--live") {
-      dryRun = false;
-      liveRequested = true;
-      continue;
-    }
-
-    const value = args[index + 1];
-    if (value === undefined || value.startsWith("--")) {
-      throw new CliUsageError(adminStorageMigrationsRequestUsage);
-    }
-
-    if (flag === "--target") {
-      if (!isTenantStorageMigrationTarget(value)) {
-        throw new CliUsageError(adminStorageMigrationsRequestUsage);
-      }
-      target = value;
-      index += 1;
-      continue;
-    }
-    if (flag === "--source-storage") {
-      sourceStorage = parseJsonObjectFlag(value, adminStorageMigrationsRequestUsage);
-      index += 1;
-      continue;
-    }
-    if (flag === "--target-storage") {
-      targetStorage = parseJsonObjectFlag(value, adminStorageMigrationsRequestUsage);
-      index += 1;
-      continue;
-    }
-    if (flag === "--confirm") {
-      if (value !== "LIVE") {
-        throw new CliUsageError(adminStorageMigrationsRequestUsage);
-      }
-      liveConfirmed = true;
-      index += 1;
-      continue;
-    }
-
-    throw new CliUsageError(adminStorageMigrationsRequestUsage);
-  }
-
-  if (target === undefined || (liveRequested && !liveConfirmed)) {
-    throw new CliUsageError(adminStorageMigrationsRequestUsage);
-  }
-
-  return {
-    kind: "admin-storage-migration-request",
-    target,
-    dryRun,
-    ...(sourceStorage === undefined ? {} : { sourceStorage }),
-    ...(targetStorage === undefined ? {} : { targetStorage }),
-  };
-}
-
-function parseAdminStorageMigrationGetCommand(args: readonly string[]): HelixCommand {
-  if (args.length !== 1 || args[0] === undefined || args[0].startsWith("-")) {
-    throw new CliUsageError(adminStorageMigrationsGetUsage);
-  }
-  return { kind: "admin-storage-migration-get", migrationId: args[0] };
-}
-
-function parseAdminStorageMigrationCutoverCommand(args: readonly string[]): HelixCommand {
-  if (args.length !== 3 || args[0] === undefined || args[0].startsWith("-")) {
-    throw new CliUsageError(adminStorageMigrationsCutoverUsage);
-  }
-  if (args[1] !== "--confirm" || args[2] !== "CUTOVER") {
-    throw new CliUsageError(adminStorageMigrationsCutoverUsage);
-  }
-  return { kind: "admin-storage-migration-cutover", migrationId: args[0] };
-}
-
-function parseAdminTenantExportsCommand(
-  action: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  switch (action) {
-    case "queue":
-      return parseTenantExportQueueCommand(args[0], args.slice(1));
-    case "list":
-      return parseTenantExportListCommand(args[0], args.slice(1));
-    case "get":
-    case "status":
-      return parseTenantExportStatusCommand(args[0], args.slice(1));
-    case "download":
-      return parseTenantExportDownloadCommand(args[0], args.slice(1));
-    default:
-      throw new CliUsageError(adminTenantExportsUsage);
-  }
-}
-
-function parseTenantExportQueueCommand(
-  slug: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  if (slug === undefined || slug.startsWith("-")) {
-    throw new CliUsageError(adminTenantExportsQueueUsage);
-  }
-  let includeObjectBytes = true;
-  let presignedUrlExpiresSeconds: number | undefined;
-
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
-    if (flag === "--include-object-bytes") {
-      includeObjectBytes = true;
-      continue;
-    }
-    if (flag === "--metadata-only") {
-      includeObjectBytes = false;
-      continue;
-    }
-    if (flag === "--presigned-url-expires-seconds") {
-      const value = args[index + 1];
-      if (value === undefined || value.startsWith("--")) {
-        throw new CliUsageError(adminTenantExportsQueueUsage);
-      }
-      presignedUrlExpiresSeconds = parsePositiveInteger(value, adminTenantExportsQueueUsage);
-      index += 1;
-      continue;
-    }
-    throw new CliUsageError(adminTenantExportsQueueUsage);
-  }
-
-  return {
-    kind: "tenant-export-queue",
-    slug,
-    includeObjectBytes,
-    ...(presignedUrlExpiresSeconds === undefined ? {} : { presignedUrlExpiresSeconds }),
-  };
-}
-
-function parseTenantExportListCommand(
-  slug: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  if (slug === undefined || slug.startsWith("-")) {
-    throw new CliUsageError(adminTenantExportsListUsage);
-  }
-  const input: {
-    status?: TenantExportJobStatus;
-    limit?: number;
-    cursor?: string;
-  } = {};
-  parseAdminGetFlags(args, adminTenantExportsListUsage, {
-    strings: new Map([["--cursor", "cursor"]]),
-    numbers: new Map([["--limit", "limit"]]),
-    booleans: new Map<string, string>(),
-    enums: new Map([["--status", tenantExportJobStatuses]]),
-    enumFields: new Map([["--status", "status"]]),
-    input,
-  });
-  return { kind: "tenant-export-list", slug, ...input };
-}
-
-function parseTenantExportStatusCommand(
-  slug: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  if (slug === undefined || slug.startsWith("-") || args.length !== 1 || args[0] === undefined) {
-    throw new CliUsageError(adminTenantExportsStatusUsage);
-  }
-  return { kind: "tenant-export-status", slug, jobId: args[0] };
-}
-
-function parseTenantExportDownloadCommand(
-  slug: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  const jobId = args[0];
-  if (slug === undefined || slug.startsWith("-") || jobId === undefined || jobId.startsWith("-")) {
-    throw new CliUsageError(adminTenantExportsDownloadUsage);
-  }
-
-  let output: string | undefined;
-  let force = false;
-  for (let index = 1; index < args.length; index += 1) {
-    const flag = args[index];
-    if (flag === "--output") {
-      const value = args[index + 1];
-      if (value === undefined || value.startsWith("--")) {
-        throw new CliUsageError(adminTenantExportsDownloadUsage);
-      }
-      output = value;
-      index += 1;
-      continue;
-    }
-    if (flag === "--force") {
-      force = true;
-      continue;
-    }
-    throw new CliUsageError(adminTenantExportsDownloadUsage);
-  }
-
-  if (output === undefined) {
-    throw new CliUsageError(adminTenantExportsDownloadUsage);
-  }
-  return { kind: "tenant-export-download", slug, jobId, output, force };
-}
-
-const adminTenantExportsUsage =
-  "Usage: helix admin tenant-exports <queue|list|status|download> <slug> [options]";
-const adminTenantExportsQueueUsage =
-  "Usage: helix admin tenant-exports queue <slug> [--include-object-bytes | --metadata-only] [--presigned-url-expires-seconds <seconds>]";
-const adminTenantExportsListUsage =
-  "Usage: helix admin tenant-exports list <slug> [--status <queued|running|succeeded|failed>] [--limit <number>] [--cursor <cursor>]";
-const adminTenantExportsStatusUsage = "Usage: helix admin tenant-exports status <slug> <job-id>";
-const adminTenantExportsDownloadUsage =
-  "Usage: helix admin tenant-exports download <slug> <job-id> --output <path> [--force]";
-
-function parseAdminTenantImportsCommand(
-  action: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  switch (action) {
-    case "dry-run":
-      return parseTenantImportDryRunCommand(args[0], args[1], args.slice(2));
-    case "execute":
-      return parseTenantImportExecuteCommand(args[0], args[1], args.slice(2));
-    case "list":
-      return parseTenantImportListCommand(args[0], args.slice(1));
-    case "status":
-    case "get":
-      return parseTenantImportStatusCommand(args[0], args.slice(1));
-    default:
-      throw new CliUsageError(adminTenantImportsUsage);
-  }
-}
-
-function parseTenantImportListCommand(
-  slug: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  if (slug === undefined || slug.startsWith("-")) {
-    throw new CliUsageError(adminTenantImportsListUsage);
-  }
-  const input: {
-    status?: TenantImportJobStatus;
-    limit?: number;
-    cursor?: string;
-  } = {};
-  parseAdminGetFlags(args, adminTenantImportsListUsage, {
-    strings: new Map([["--cursor", "cursor"]]),
-    numbers: new Map([["--limit", "limit"]]),
-    booleans: new Map<string, string>(),
-    enums: new Map([["--status", tenantImportJobStatuses]]),
-    enumFields: new Map([["--status", "status"]]),
-    input,
-  });
-  return { kind: "tenant-import-list", slug, ...input };
-}
-
-function parseTenantImportStatusCommand(
-  slug: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  if (slug === undefined || slug.startsWith("-") || args.length !== 1 || args[0] === undefined) {
-    throw new CliUsageError(adminTenantImportsStatusUsage);
-  }
-  return { kind: "tenant-import-status", slug, jobId: args[0] };
-}
-
-function parseTenantImportDryRunCommand(
-  slug: string | undefined,
-  archive: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  if (
-    slug === undefined ||
-    slug.startsWith("-") ||
-    archive === undefined ||
-    archive.startsWith("-")
-  ) {
-    throw new CliUsageError(adminTenantImportsDryRunUsage);
-  }
-  const parsed = parseTenantImportUploadOptions(args, adminTenantImportsDryRunUsage, false);
-  return {
-    kind: "tenant-import-dry-run",
-    slug,
-    archive,
-    ...(parsed.conflictPolicy === undefined ? {} : { conflictPolicy: parsed.conflictPolicy }),
-    ...(parsed.remaps === undefined ? {} : { remaps: parsed.remaps }),
-  };
-}
-
-function parseTenantImportExecuteCommand(
-  slug: string | undefined,
-  archive: string | undefined,
-  args: readonly string[],
-): HelixCommand {
-  if (
-    slug === undefined ||
-    slug.startsWith("-") ||
-    archive === undefined ||
-    archive.startsWith("-")
-  ) {
-    throw new CliUsageError(adminTenantImportsExecuteUsage);
-  }
-  const parsed = parseTenantImportUploadOptions(args, adminTenantImportsExecuteUsage, true);
-  if (parsed.confirm !== "EXECUTE_INTERNAL_TENANT_IMPORT") {
-    throw new CliUsageError(adminTenantImportsExecuteUsage);
-  }
-  return {
-    kind: "tenant-import-execute",
-    slug,
-    archive,
-    confirm: parsed.confirm,
-    ...(parsed.conflictPolicy === undefined ? {} : { conflictPolicy: parsed.conflictPolicy }),
-    ...(parsed.remaps === undefined ? {} : { remaps: parsed.remaps }),
-  };
-}
-
-function parseTenantImportUploadOptions(
-  args: readonly string[],
-  usageText: string,
-  allowConfirm: boolean,
-): {
-  readonly confirm?: string;
-  readonly conflictPolicy?: TenantImportDryRunConflictPolicy;
-  readonly remaps?: TenantImportDryRunRemaps;
-} {
-  const conflictPolicy: Partial<Record<keyof TenantImportDryRunConflictPolicy, string>> = {};
-  let remaps: TenantImportDryRunRemaps | undefined;
-  let confirm: string | undefined;
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
-    if (flag === "--confirm") {
-      const value = args[index + 1];
-      if (!allowConfirm || value === undefined || value.startsWith("--") || confirm !== undefined) {
-        throw new CliUsageError(usageText);
-      }
-      confirm = value;
-      index += 1;
-      continue;
-    }
-
-    if (flag === "--remaps") {
-      const value = args[index + 1];
-      if (value === undefined || value.startsWith("--") || remaps !== undefined) {
-        throw new CliUsageError(usageText);
-      }
-      remaps = parseTenantImportDryRunRemaps(value, usageText);
-      index += 1;
-      continue;
-    }
-
-    const field = tenantImportConflictPolicyFlags.get(flag ?? "");
-    const value = args[index + 1];
-    if (
-      field === undefined ||
-      value === undefined ||
-      value.startsWith("--") ||
-      conflictPolicy[field] !== undefined ||
-      !tenantImportConflictPolicyValues[field].has(value)
-    ) {
-      throw new CliUsageError(usageText);
-    }
-    conflictPolicy[field] = value;
-    index += 1;
-  }
-  const parsedConflictPolicy = conflictPolicy as TenantImportDryRunConflictPolicy;
-  return {
-    ...(Object.keys(parsedConflictPolicy).length === 0
-      ? {}
-      : { conflictPolicy: parsedConflictPolicy }),
-    ...(remaps === undefined ? {} : { remaps }),
-    ...(confirm === undefined ? {} : { confirm }),
-  };
-}
-
-const adminTenantImportsUsage =
-  "Usage: helix admin tenant-imports <dry-run|execute|list|status|get> <slug> [options]";
-const adminTenantImportsDryRunUsage =
-  "Usage: helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]";
-const adminTenantImportsExecuteUsage =
-  "Usage: helix admin tenant-imports execute <slug> <archive-path> --confirm EXECUTE_INTERNAL_TENANT_IMPORT [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]";
-const adminTenantImportsListUsage =
-  "Usage: helix admin tenant-imports list <slug> [--status <succeeded|failed|blocked>] [--limit <number>] [--cursor <cursor>]";
-const adminTenantImportsStatusUsage =
-  "Usage: helix admin tenant-imports <status|get> <slug> <job-id>";
-
-const tenantImportConflictPolicyFlags = new Map<string, keyof TenantImportDryRunConflictPolicy>([
-  ["--row-id-conflicts", "rowIdConflicts"],
-  ["--principal-references", "principalReferences"],
-  ["--resource-references", "resourceReferences"],
-  ["--verified-state", "verifiedState"],
-  ["--primary-domain", "primaryDomain"],
-]);
-
-const tenantImportConflictPolicyValues: Record<
-  keyof TenantImportDryRunConflictPolicy,
-  ReadonlySet<string>
-> = {
-  rowIdConflicts: new Set(["regenerate", "preserve"]),
-  principalReferences: new Set(["preserve", "null"]),
-  resourceReferences: new Set(["require-remap", "preserve"]),
-  verifiedState: new Set(["regenerate", "preserve"]),
-  primaryDomain: new Set(["preserve", "null"]),
-};
-
-function parseTenantImportDryRunRemaps(value: string, usageText: string): TenantImportDryRunRemaps {
-  const parsed = parseJsonObjectFlag(value, usageText);
-  let principals: Record<string, string | null> | undefined;
-  let resources: Record<string, string> | undefined;
-
-  for (const key of Object.keys(parsed)) {
-    if (key !== "principals" && key !== "resources") {
-      throw new CliUsageError(usageText);
-    }
-  }
-
-  if (parsed.principals !== undefined) {
-    if (!isUuidToNullableUuidRecord(parsed.principals)) {
-      throw new CliUsageError(usageText);
-    }
-    principals = parsed.principals;
-  }
-
-  if (parsed.resources !== undefined) {
-    if (!isBoundedStringRecord(parsed.resources)) {
-      throw new CliUsageError(usageText);
-    }
-    resources = parsed.resources;
-  }
-
-  return {
-    ...(principals === undefined ? {} : { principals }),
-    ...(resources === undefined ? {} : { resources }),
-  };
-}
-
 const adminUsage =
-  "Usage: helix admin <app-passwords|agent-credentials|users|audit|storage|storage-migrations|tenant-exports|tenant-imports> <command> [--json [JSON]]";
+  "Usage: helix admin <app-passwords|agent-credentials|users|audit> <command> [--json [JSON]]";
 const adminAppPasswordsUsage =
   "Usage: helix admin app-passwords <list|create|revoke> [--json [JSON]]";
 const adminAppPasswordsListUsage =
@@ -2519,17 +1928,6 @@ const adminUsersListUsage = adminUsersUsage;
 const adminAuditUsage =
   "Usage: helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]";
 const adminAuditListUsage = adminAuditUsage;
-const adminStorageUsage = "Usage: helix admin storage test";
-const adminStorageMigrationsUsage =
-  "Usage: helix admin storage-migrations <list|request|get|status|cutover>";
-const adminStorageMigrationsListUsage =
-  "Usage: helix admin storage-migrations list [--target <byo|helix-default>] [--status <queued|running|succeeded|succeeded_with_errors|failed|dry_run>] [--limit <number>] [--cursor <cursor>]";
-const adminStorageMigrationsRequestUsage =
-  "Usage: helix admin storage-migrations request --target <byo|helix-default> [--dry-run | --live --confirm LIVE] [--source-storage <json-object>] [--target-storage <json-object>]";
-const adminStorageMigrationsGetUsage =
-  "Usage: helix admin storage-migrations <get|status> <migration-id>";
-const adminStorageMigrationsCutoverUsage =
-  "Usage: helix admin storage-migrations cutover <migration-id> --confirm CUTOVER";
 
 const adminAppPasswordsListOptions = {
   arrays: new Map<string, string>(),
@@ -2582,25 +1980,6 @@ const adminAgentCredentialsRevokeOptions = {
 
 const adminUserTypes = new Set<AdminUserType>(["user", "agent", "service_account", "system"]);
 const securityTiers = new Set<SecurityTier>(["personal", "business", "enterprise", "sovereign"]);
-const tenantStorageMigrationTargets = new Set<TenantStorageMigrationTarget>([
-  "byo",
-  "helix-default",
-]);
-const tenantStorageMigrationStatuses = new Set<TenantStorageMigrationStatus>([
-  "queued",
-  "running",
-  "succeeded",
-  "succeeded_with_errors",
-  "failed",
-  "dry_run",
-]);
-const tenantExportJobStatuses = new Set<TenantExportJobStatus>([
-  "queued",
-  "running",
-  "succeeded",
-  "failed",
-]);
-const tenantImportJobStatuses = new Set<TenantImportJobStatus>(["succeeded", "failed", "blocked"]);
 
 function parseBackupCommand(
   action: string | undefined,
@@ -2684,10 +2063,6 @@ function parseTierCommand(
 
 function isSecurityTier(value: string): value is SecurityTier {
   return securityTiers.has(value as SecurityTier);
-}
-
-function isTenantStorageMigrationTarget(value: string): value is TenantStorageMigrationTarget {
-  return tenantStorageMigrationTargets.has(value as TenantStorageMigrationTarget);
 }
 
 const tierSetUsage = "Usage: helix tier set <personal|business|enterprise|sovereign>";
@@ -3255,34 +2630,6 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return Object.values(value).every((entry) => typeof entry === "string");
 }
 
-function isUuidToNullableUuidRecord(value: unknown): value is Record<string, string | null> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  return Object.entries(value).every(
-    ([key, entry]) =>
-      isUuid(key) && (entry === null || (typeof entry === "string" && isUuid(entry))),
-  );
-}
-
-function isBoundedStringRecord(value: unknown): value is Record<string, string> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  return Object.entries(value).every(
-    ([key, entry]) =>
-      key.length > 0 &&
-      key.length <= 500 &&
-      typeof entry === "string" &&
-      entry.length > 0 &&
-      entry.length <= 500,
-  );
-}
-
-function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
-}
-
 function parseAuthTokenCommand(
   args: readonly string[],
   commandName: "helix auth token" | "helix login",
@@ -3408,19 +2755,6 @@ export const usage = `Usage:
   helix admin agent-credentials revoke [--client-id <id>] [--json [JSON]]
   helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]
   helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]
-  helix admin storage test
-  helix admin storage-migrations list [--target <byo|helix-default>] [--status <queued|running|succeeded|succeeded_with_errors|failed|dry_run>] [--limit <number>] [--cursor <cursor>]
-  helix admin storage-migrations request --target <byo|helix-default> [--dry-run | --live --confirm LIVE] [--source-storage <json-object>] [--target-storage <json-object>]
-  helix admin storage-migrations get <migration-id>
-  helix admin storage-migrations cutover <migration-id> --confirm CUTOVER
-  helix admin tenant-exports queue <slug> [--include-object-bytes | --metadata-only] [--presigned-url-expires-seconds <seconds>]
-  helix admin tenant-exports list <slug> [--status <queued|running|succeeded|failed>] [--limit <number>] [--cursor <cursor>]
-  helix admin tenant-exports status <slug> <job-id>
-  helix admin tenant-exports download <slug> <job-id> --output <path> [--force]
-  helix admin tenant-imports dry-run <slug> <archive-path> [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]
-  helix admin tenant-imports execute <slug> <archive-path> --confirm EXECUTE_INTERNAL_TENANT_IMPORT [--row-id-conflicts <regenerate|preserve>] [--principal-references <preserve|null>] [--resource-references <require-remap|preserve>] [--verified-state <regenerate|preserve>] [--primary-domain <preserve|null>] [--remaps <json-object>]
-  helix admin tenant-imports list <slug> [--status <succeeded|failed|blocked>] [--limit <number>] [--cursor <cursor>]
-  helix admin tenant-imports <status|get> <slug> <job-id>
   helix backup create
   helix restore --from <backup-id> [--encrypted]
   helix reindex --all

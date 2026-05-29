@@ -13,7 +13,7 @@ import {
 import { exportSlidesDeckToPptx, type SlidesPptxExportResult } from "./export-pptx.js";
 import type { DriveStore } from "../drive/store.js";
 import type { DriveCommentListItem } from "../drive/types.js";
-import type { SlidesStore } from "./store.js";
+import type { SlideDeckVersionRecord, SlidesStore } from "./store.js";
 import type { SlideContent, SlideDeckSummaryRecord, SlideRecord } from "./types.js";
 
 const uuidSchema = z.string().uuid();
@@ -27,6 +27,16 @@ const listDecksSchema = z.object({
 
 const getDeckSchema = z.object({
   deckId: uuidSchema,
+});
+
+const listDeckVersionsSchema = z.object({
+  deckId: uuidSchema,
+  limit: z.number().int().positive().max(100).default(50),
+});
+
+const restoreDeckVersionSchema = z.object({
+  deckId: uuidSchema,
+  versionId: uuidSchema,
 });
 
 const exportDeckSchema = z.object({
@@ -44,6 +54,13 @@ const importPptxSchema = z.object({
 
 const createDeckSchema = z.object({
   title: z.string().min(1).max(255),
+  metadata: metadataSchema,
+});
+
+const copyDeckSchema = z.object({
+  deckId: uuidSchema,
+  title: z.string().min(1).max(255).optional(),
+  folderId: uuidSchema.nullable().optional(),
   metadata: metadataSchema,
 });
 
@@ -161,6 +178,51 @@ export function createSlidesToolDefinitions(
         };
       },
     }),
+    defineTool<z.output<typeof listDeckVersionsSchema>, unknown>({
+      id: "slides.version.list",
+      description: "List saved snapshot versions for a presentation deck.",
+      permission: "slides.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(listDeckVersionsSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const versions = await store.listVersions({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          deckId: input.deckId,
+          limit: input.limit,
+        });
+        await ctx.audit("slides.version.list", { deckId: input.deckId, count: versions.length });
+        return { versions: versions.map(serializeVersion) };
+      },
+    }),
+    defineTool<z.output<typeof restoreDeckVersionSchema>, unknown>({
+      id: "slides.version.restore",
+      description: "Restore a presentation deck from a saved snapshot version.",
+      permission: "slides.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(restoreDeckVersionSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const restored = await store.restoreVersion({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          deckId: input.deckId,
+          versionId: input.versionId,
+        });
+        if (restored === null) {
+          throw new Error(`Unknown Slides version: ${input.versionId}`);
+        }
+        await ctx.audit("slides.version.restore", {
+          deckId: input.deckId,
+          versionId: input.versionId,
+        });
+        return {
+          deck: serializeDeck(restored.deck),
+          slides: restored.slides.map(serializeSlide),
+        };
+      },
+    }),
     defineTool<z.output<typeof exportDeckSchema>, unknown>({
       id: "slides.export",
       description: "Export a native Helix Slides deck to PPTX, PDF, or an SVG image series.",
@@ -217,7 +279,7 @@ export function createSlidesToolDefinitions(
           folderId: input.folderId ?? null,
           metadata: toJsonObject({
             ...input.metadata,
-            originalFormat: "pptx",
+            originalFormat: imported.metadata.sourceFormat,
             import: imported.metadata,
           }),
         });
@@ -262,6 +324,35 @@ export function createSlidesToolDefinitions(
         });
         await ctx.audit("slides.deck.create", { deckId: deck.id, title: deck.title });
         return serializeDeck(deck);
+      },
+    }),
+    defineTool<z.output<typeof copyDeckSchema>, unknown>({
+      id: "slides.deck.copy",
+      description: "Copy a native presentation deck with its slides.",
+      permission: "slides.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(copyDeckSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const result = await store.copyDeck({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          deckId: input.deckId,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+          metadata: toJsonObject(input.metadata),
+        });
+        if (result === null) {
+          throw new Error(`Unknown Slides deck: ${input.deckId}`);
+        }
+        await ctx.audit("slides.deck.copy", {
+          deckId: result.deck.id,
+          copiedFromDeckId: input.deckId,
+        });
+        return {
+          deck: serializeDeck(result.deck),
+          slides: result.slides.map(serializeSlide),
+        };
       },
     }),
     defineTool<z.output<typeof updateDeckSchema>, unknown>({
@@ -445,6 +536,21 @@ function serializeDeck(deck: SlideDeckSummaryRecord) {
   };
 }
 
+function serializeVersion(version: SlideDeckVersionRecord) {
+  return {
+    id: version.id,
+    orgId: version.orgId,
+    deckId: version.deckId,
+    versionNumber: version.versionNumber,
+    mimeType: version.mimeType,
+    byteSize: version.byteSize,
+    sha256: version.sha256,
+    metadata: version.metadata,
+    createdByActorId: version.createdByActorId,
+    createdAt: version.createdAt.toISOString(),
+  };
+}
+
 function serializeSlide(slide: SlideRecord) {
   return {
     id: slide.id,
@@ -454,6 +560,7 @@ function serializeSlide(slide: SlideRecord) {
     layout: slide.layout,
     content: slide.content,
     speakerNotes: slide.speakerNotes,
+    revision: slide.revision,
     createdAt: slide.createdAt.toISOString(),
     updatedAt: slide.updatedAt.toISOString(),
   };

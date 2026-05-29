@@ -1,0 +1,63 @@
+{
+  "uid": "helix-tenant-finops",
+  "title": "Helix Tenant FinOps",
+  "tags": ["helix", "tenant", "finops"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-7d", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "org_id",
+        "type": "textbox",
+        "label": "Tenant org_id",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "AI cost by provider/model/feature",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(helix_llm_cost_usd_micros_total{org_id=\"$org_id\"}[24h])) by (provider, model, feature) / 1000000" }],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "AI token usage",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(helix_metering_events_total{org_id=\"$org_id\",event_type=\"ai.tokens\"}[24h]))" }],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Storage metering events",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(helix_metering_events_total{org_id=\"$org_id\",event_type=~\"storage.*\"}[24h])) by (event_type)" }],
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Seat metering events",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(helix_metering_events_total{org_id=\"$org_id\",event_type=\"seat.delta\"}[24h]))" }],
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Daily rollups by kind",
+      "datasource": { "type": "prometheus", "uid": "helix-prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(helix_metering_rollups_total{org_id=\"$org_id\"}[7d])) by (rollup_kind)", "format": "table", "instant": true }],
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 8 }
+    }
+  ]
+}

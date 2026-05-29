@@ -3,28 +3,28 @@ global:
 
 route:
   receiver: helix-null
-  group_by: ["alertname", "severity", "priority", "service", "operation", "target", "status"]
+  group_by: ["alertname", "severity", "priority", "service", "slo", "tier", "plan_id", "region"]
   group_wait: 10s
   group_interval: 5m
   repeat_interval: 4h
   routes:
-    - receiver: helix-tenant-storage-migration-webhook
+    - receiver: helix-signup-slo-webhook
       matchers:
-        - service="storage"
-        - operation="tenant_storage_migration"
+        - service="signup"
+        - slo="signup_activation"
       continue: true
-    - receiver: helix-tenant-storage-migration-paging
+    - receiver: helix-signup-slo-paging
       matchers:
-        - service="storage"
-        - operation="tenant_storage_migration"
+        - service="signup"
+        - slo="signup_activation"
 
 receivers:
   - name: helix-null
-  - name: helix-tenant-storage-migration-webhook
+  - name: helix-signup-slo-webhook
     webhook_configs:
-      - url: http://host.docker.internal:28463/alertmanager/tenant-storage-migration
+      - url: http://host.docker.internal:28462/alertmanager/signup
         send_resolved: true
-  - name: helix-tenant-storage-migration-paging
+  - name: helix-signup-slo-paging
     webhook_configs:
-      - url_file: /etc/alertmanager/secrets/tenant-storage-migration-paging-webhook-url
+      - url_file: /etc/alertmanager/secrets/signup-slo-paging-webhook-url
         send_resolved: true

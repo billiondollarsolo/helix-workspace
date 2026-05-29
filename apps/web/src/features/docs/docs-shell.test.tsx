@@ -40,6 +40,7 @@ let toolCalls: Array<{ readonly url: string; readonly body: unknown }>;
 let createShouldFail: boolean;
 let importShouldFail: boolean;
 let driveEntries: readonly Record<string, unknown>[];
+let digestSpy: { mockRestore: () => void };
 
 describe("DocsShell", () => {
   beforeEach(() => {
@@ -53,6 +54,7 @@ describe("DocsShell", () => {
     createShouldFail = false;
     importShouldFail = false;
     driveEntries = [];
+    digestSpy = vi.spyOn(crypto.subtle, "digest").mockResolvedValue(new ArrayBuffer(32));
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: {
@@ -91,28 +93,48 @@ describe("DocsShell", () => {
           }),
         );
       }
-      if (url === "/api/tools/docs.import-docx") {
+      if (url === "/api/tools/drive.upload") {
         if (importShouldFail) {
           return Promise.resolve(
-            Response.json({ error: { message: "Invalid DOCX package" } }, { status: 400 }),
+            Response.json({ error: { message: "Drive upload failed" } }, { status: 503 }),
           );
         }
         return Promise.resolve(
           Response.json({
-            id: "33333333-3333-4333-8333-333333333333",
-            title: "Launch plan",
-            threadId: "44444444-4444-4444-8444-444444444444",
+            objectId: "33333333-3333-4333-8333-333333333333",
+            orgId: "org-1",
             ownerActorId: "11111111-1111-4111-8111-111111111111",
-            createdByActorId: "11111111-1111-4111-8111-111111111111",
-            ydocState: btoa("native-state"),
-            ydocStateVector: btoa("native-vector"),
-            updateSeq: 0,
-            editorEngine: "helix-native-document",
-            formatVersion: 1,
-            metadata: { importedFrom: "docx" },
-            deletedAt: null,
+            name: (body as { name?: string }).name ?? "Launch plan.docx",
+            folderId: null,
+            storageKey: "drive/Launch plan.docx",
+            mimeType:
+              (body as { mimeType?: string }).mimeType ??
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            byteSize: (body as { byteSize?: number }).byteSize ?? 3,
+            sha256: "0".repeat(64),
+            status: "prepared",
+            uploadUrl: null,
+            uploadHeaders: {},
+            metadata: {},
             createdAt: "2026-05-20T12:00:00.000Z",
             updatedAt: "2026-05-20T12:00:00.000Z",
+          }),
+        );
+      }
+      if (url === "/api/tools/drive.finalize") {
+        return Promise.resolve(
+          Response.json({
+            id: "version-1",
+            orgId: "org-1",
+            objectId: (body as { objectId?: string }).objectId,
+            versionNumber: 1,
+            storageKey: (body as { storageKey?: string }).storageKey,
+            mimeType: (body as { mimeType?: string }).mimeType,
+            byteSize: (body as { byteSize?: number }).byteSize,
+            sha256: "0".repeat(64),
+            metadata: {},
+            createdByActorId: "11111111-1111-4111-8111-111111111111",
+            createdAt: "2026-05-20T12:00:00.000Z",
           }),
         );
       }
@@ -136,6 +158,23 @@ describe("DocsShell", () => {
           }),
         );
       }
+      if (url === "/api/tools/drive.trash") {
+        return Promise.resolve(Response.json({ id: (body as { objectId?: string }).objectId }));
+      }
+      if (url === "/api/tools/drive.restore") {
+        return Promise.resolve(Response.json({ id: (body as { objectId?: string }).objectId }));
+      }
+      if (url === "/api/tools/drive.delete") {
+        return Promise.resolve(Response.json({ ok: true }));
+      }
+      if (url === "/api/tools/drive.star.set") {
+        return Promise.resolve(
+          Response.json({
+            id: (body as { objectId?: string }).objectId,
+            metadata: { starred: (body as { starred?: boolean }).starred },
+          }),
+        );
+      }
       return Promise.resolve(Response.json({ entries: driveEntries }));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -148,6 +187,7 @@ describe("DocsShell", () => {
     });
     container.remove();
     queryClient.clear();
+    digestSpy.mockRestore();
     vi.unstubAllGlobals();
   });
 
@@ -172,35 +212,68 @@ describe("DocsShell", () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
-  it("imports DOCX files into native documents and opens the created doc", async () => {
+  it("uploads document files as raw Drive objects and opens the copy/preview flow", async () => {
     render();
     await settle();
 
-    dispatchDocxFile("Launch plan.docx", [1, 2, 3]);
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Import document"]');
+    expect(input?.accept).toContain(".docx");
+    expect(input?.accept).toContain(".doc");
+    expect(input?.accept).toContain(".odt");
+    expect(input?.accept).toContain(".rtf");
+    dispatchDocumentFile(
+      "Launch plan.docx",
+      [1, 2, 3],
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
     await settle();
 
-    expect(toolCalls.find((call) => call.url === "/api/tools/docs.import-docx")?.body).toEqual({
-      filename: "Launch plan.docx",
-      title: "Launch plan",
-      contentBase64: "AQID",
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.upload")?.body).toMatchObject({
+      name: "Launch plan.docx",
       folderId: null,
-      metadata: { source: "web.docs-shell.import-docx" },
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      byteSize: 3,
     });
+    expect(toolCalls.some((call) => call.url === "/api/tools/docs.import-docx")).toBe(false);
     expect(navigateMock).toHaveBeenCalledWith({
-      to: "/docs/$documentId",
-      params: { documentId: "33333333-3333-4333-8333-333333333333" },
+      to: "/open/$objectId",
+      params: { objectId: "33333333-3333-4333-8333-333333333333" },
     });
   });
 
-  it("surfaces DOCX import failures without navigating", async () => {
+  it("uploads legacy Word files as raw Drive objects before the open decision", async () => {
+    render();
+    await settle();
+
+    dispatchDocumentFile("Legacy memo.doc", [4, 5, 6], "application/msword");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.upload")?.body).toMatchObject({
+      name: "Legacy memo.doc",
+      folderId: null,
+      mimeType: "application/msword",
+      byteSize: 3,
+    });
+    expect(toolCalls.some((call) => call.url === "/api/tools/docs.import-docx")).toBe(false);
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/open/$objectId",
+      params: { objectId: "33333333-3333-4333-8333-333333333333" },
+    });
+  });
+
+  it("surfaces document upload failures without navigating", async () => {
     importShouldFail = true;
     render();
     await settle();
 
-    dispatchDocxFile("Broken.docx", [9, 9, 9]);
+    dispatchDocumentFile(
+      "Broken.docx",
+      [9, 9, 9],
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
     await settle();
 
-    expect(container.textContent).toContain("DOCX import failed — Invalid DOCX package");
+    expect(container.textContent).toContain("Document import failed — Drive upload failed");
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
@@ -225,10 +298,12 @@ describe("DocsShell", () => {
         updatedAt: "2026-05-20T12:00:00.000Z",
       },
     ];
+    vi.mocked(window.localStorage.getItem).mockReturnValue("list");
     render();
     await settle();
 
     expect(container.textContent).toContain("Legacy plan");
+    clickButton("More actions for Legacy plan");
     clickButton("Migrate");
     await settle();
 
@@ -242,7 +317,7 @@ describe("DocsShell", () => {
     });
   });
 
-  it("opens OOXML Drive rows through the legacy edit route", async () => {
+  it("opens OOXML Drive rows through the universal copy/preview route", async () => {
     driveEntries = [
       {
         id: "55555555-5555-4555-8555-555555555555",
@@ -254,7 +329,6 @@ describe("DocsShell", () => {
         mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         metadata: {
           title: "Vendor contract",
-          editorEngine: "onlyoffice-ooxml",
         },
         deletedAt: null,
         createdAt: "2026-05-20T12:00:00.000Z",
@@ -268,8 +342,111 @@ describe("DocsShell", () => {
     clickButton("Vendor contract");
 
     expect(navigateMock).toHaveBeenCalledWith({
-      to: "/edit/$objectId",
-      params: { objectId: "55555555-5555-4555-8555-555555555555" },
+      to: "/docs/$documentId",
+      params: { documentId: "55555555-5555-4555-8555-555555555555" },
+      search: { open: "office" },
+    });
+  });
+
+  it("loads more document rows through Drive when the first page is full", async () => {
+    driveEntries = Array.from({ length: 101 }, (_, index) =>
+      documentDriveEntry({
+        id: `55555555-5555-4555-8555-${String(index).padStart(12, "0")}`,
+        name: `Document ${String(index).padStart(3, "0")}.docx`,
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    );
+
+    render();
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.list")?.body).toMatchObject({
+      app: "docs",
+      limit: 101,
+    });
+    clickButton("Show more documents");
+    await settle();
+
+    expect(
+      toolCalls.filter((call) => call.url === "/api/tools/drive.list").at(-1)?.body,
+    ).toMatchObject({ app: "docs", limit: 201 });
+  });
+
+  it("moves document list rows to trash through Drive", async () => {
+    const objectId = "66666666-6666-4666-8666-666666666666";
+    driveEntries = [
+      documentDriveEntry({
+        id: objectId,
+        name: "Research brief.docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    ];
+    vi.mocked(window.localStorage.getItem).mockReturnValue("list");
+    render();
+    await settle();
+
+    clickButton("More actions for Research brief.docx");
+    clickButton("Move to trash");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.trash")?.body).toEqual({
+      objectId,
+    });
+    expect(toolCalls.some((call) => call.url.includes("docs.delete"))).toBe(false);
+  });
+
+  it("stars document list rows through Drive", async () => {
+    const objectId = "66666666-6666-4666-8666-666666666666";
+    driveEntries = [
+      documentDriveEntry({
+        id: objectId,
+        name: "Research brief.docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    ];
+    vi.mocked(window.localStorage.getItem).mockReturnValue("list");
+    render();
+    await settle();
+
+    clickButton("More actions for Research brief.docx");
+    clickMenuItem("Star");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.star.set")?.body).toEqual({
+      objectId,
+      starred: true,
+    });
+  });
+
+  it("restores and permanently deletes trashed documents through Drive", async () => {
+    const objectId = "77777777-7777-4777-8777-777777777777";
+    driveEntries = [
+      documentDriveEntry({
+        id: objectId,
+        name: "Deleted brief.docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        deletedAt: "2026-05-22T12:00:00.000Z",
+      }),
+    ];
+    vi.mocked(window.localStorage.getItem).mockReturnValue("list");
+    render();
+    await settle();
+
+    clickButton("Trash");
+    await settle();
+    clickButton("More actions for Deleted brief.docx");
+    clickButton("Restore");
+    await settle();
+    clickButton("More actions for Deleted brief.docx");
+    clickButton("Delete forever");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.restore")?.body).toEqual({
+      objectId,
+      folderId: null,
+    });
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.delete")?.body).toEqual({
+      objectId,
     });
   });
 });
@@ -294,13 +471,11 @@ async function settle() {
   }
 }
 
-function dispatchDocxFile(filename: string, bytes: readonly number[]) {
-  const input = container.querySelector<HTMLInputElement>('input[aria-label="Import DOCX"]');
+function dispatchDocumentFile(filename: string, bytes: readonly number[], mimeType: string) {
+  const input = container.querySelector<HTMLInputElement>('input[aria-label="Import document"]');
   expect(input).not.toBeNull();
   const fileBytes = Uint8Array.from(bytes);
-  const file = new File([fileBytes], filename, {
-    type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  });
+  const file = new File([fileBytes], filename, { type: mimeType });
   Object.defineProperty(file, "arrayBuffer", {
     configurable: true,
     value: () => Promise.resolve(Uint8Array.from(bytes).buffer),
@@ -318,10 +493,10 @@ function dispatchDocxFile(filename: string, bytes: readonly number[]) {
 function clickButton(label: string): void {
   const target =
     Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((candidate) =>
-      candidate.textContent?.includes(label),
+      candidate.textContent?.includes(label) || candidate.getAttribute("aria-label")?.includes(label),
     ) ??
     Array.from(container.querySelectorAll<HTMLElement>('[role="button"]')).find((candidate) =>
-      candidate.textContent?.includes(label),
+      candidate.textContent?.includes(label) || candidate.getAttribute("aria-label")?.includes(label),
     );
   if (target === undefined) {
     throw new Error(`Missing button: ${label}`);
@@ -329,4 +504,38 @@ function clickButton(label: string): void {
   act(() => {
     target.click();
   });
+}
+
+function clickMenuItem(label: string): void {
+  const target = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menu"] button')).find(
+    (candidate) => candidate.textContent?.trim().includes(label),
+  );
+  if (target === undefined) {
+    throw new Error(`Missing menu item: ${label}`);
+  }
+  act(() => {
+    target.click();
+  });
+}
+
+function documentDriveEntry(input: {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly deletedAt?: string | null;
+}) {
+  return {
+    id: input.id,
+    type: "file",
+    name: input.name,
+    folderId: null,
+    ownerActorId: "11111111-1111-4111-8111-111111111111",
+    ownerDisplayName: "You",
+    app: null,
+    mimeType: input.mimeType,
+    metadata: {},
+    deletedAt: input.deletedAt ?? null,
+    createdAt: "2026-05-20T12:00:00.000Z",
+    updatedAt: "2026-05-20T12:00:00.000Z",
+  };
 }

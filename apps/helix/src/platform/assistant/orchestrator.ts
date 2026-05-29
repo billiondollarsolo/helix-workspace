@@ -17,6 +17,7 @@ import type {
 import { isJsonObject } from "@helix/sdk-types";
 import type { MemoryItem, MemoryStore } from "../ai/memory/index.js";
 import type { SearchEngine } from "../search/index.js";
+import { createScopedSearchRequest } from "../search/scope.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import type { ConfirmationGate } from "../tools/registry.js";
 import {
@@ -113,7 +114,7 @@ export class AssistantOrchestrator {
           ? input.content
           : slashCommand.args.trim();
     const [sources, recalledMemory, allVisibleTools, history] = await Promise.all([
-      this.collectSearchContext(searchQuery),
+      this.collectSearchContext(input.actor, searchQuery),
       this.collectMemoryContext(input.actor, conversation, searchQuery),
       this.listVisibleTools(input.actor),
       this.options.store.listMessages({
@@ -283,7 +284,7 @@ export class AssistantOrchestrator {
           ? input.content
           : slashCommand.args.trim();
     const [sources, recalledMemory, allVisibleTools, history] = await Promise.all([
-      this.collectSearchContext(searchQuery),
+      this.collectSearchContext(input.actor, searchQuery),
       this.collectMemoryContext(input.actor, conversation, searchQuery),
       this.listVisibleTools(input.actor),
       this.options.store.listMessages({
@@ -755,12 +756,28 @@ export class AssistantOrchestrator {
     });
   }
 
-  private async collectSearchContext(query: string): Promise<readonly AssistantSource[]> {
+  private async collectSearchContext(
+    actor: Actor,
+    query: string,
+  ): Promise<readonly AssistantSource[]> {
     const trimmed = query.trim();
     if (this.options.search === undefined || trimmed.length === 0) {
       return [];
     }
-    const response = await this.options.search.search({ query: trimmed, limit: this.#searchLimit });
+    // RAG retrieval MUST run through createScopedSearchRequest so the
+    // request carries (a) the org filter so we never cross tenants, and (b)
+    // the authenticated forActorId so the vector store surfaces the actor's
+    // own visibility="private" embeddings on top of every org-shared one.
+    const request = createScopedSearchRequest(actor, {
+      query: trimmed,
+      limit: this.#searchLimit,
+    });
+    if (request === undefined) {
+      // Actor has zero search-readable scopes — return nothing rather than
+      // a wide-open query.
+      return [];
+    }
+    const response = await this.options.search.search(request);
     return response.hits.map(searchHitToAssistantSource);
   }
 

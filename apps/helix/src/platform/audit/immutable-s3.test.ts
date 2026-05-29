@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import type {
+  MeteringClient,
+  MeteringEmitInput,
+  MeteringEvent,
+  TraceContext,
+} from "@helix/sdk";
 import {
   ImmutableS3AuditShipper,
   shipImmutableAuditBatch,
@@ -89,6 +95,81 @@ describe("ImmutableS3AuditShipper", () => {
     expect(sha256Hex(manifestObject.body)).toBe(result.manifestSha256);
   });
 
+  it("emits privacy-safe storage metering after immutable audit objects are written", async () => {
+    const store = new RecordingImmutableAuditStore();
+    const metering = new RecordingMeteringClient();
+
+    await shipImmutableAuditBatch(
+      {
+        store,
+        metering,
+        prefix: "helix-audit",
+        now,
+        batchId: () => "batch-001",
+      },
+      [record("activity-1"), record("activity-2")],
+    );
+
+    const byteDelta = store.objects.reduce((total, object) => total + object.body.byteLength, 0);
+    expect(metering.records).toEqual([
+      {
+        orgId: "org-1",
+        event: {
+          type: "storage.delta",
+          quantity: byteDelta,
+          metadata: {
+            bucket: "audit_immutable_s3",
+            byte_delta: byteDelta,
+          },
+        },
+      },
+    ]);
+
+    const metadataJson = JSON.stringify(metering.records[0]?.event.metadata);
+    expect(metadataJson).not.toContain("helix-audit");
+    expect(metadataJson).not.toContain("batch-001");
+    expect(metadataJson).not.toContain("activity-1");
+    expect(metadataJson).not.toContain("actor-1");
+    expect(metadataJson).not.toContain("document.created");
+    expect(metadataJson).not.toContain("doc-1");
+    expect(metadataJson).not.toContain("127.0.0.1");
+    expect(metadataJson).not.toContain(digest("activity-1"));
+  });
+
+  it("does not emit storage metering for mixed-org batches", async () => {
+    const metering = new RecordingMeteringClient();
+
+    await shipImmutableAuditBatch(
+      {
+        store: new RecordingImmutableAuditStore(),
+        metering,
+        now,
+        batchId: () => "batch-001",
+      },
+      [record("activity-1"), record("activity-2", { orgId: "org-2" })],
+    );
+
+    expect(metering.records).toHaveLength(0);
+  });
+
+  it("does not emit storage metering when immutable object writes fail", async () => {
+    const metering = new RecordingMeteringClient();
+
+    await expect(
+      shipImmutableAuditBatch(
+        {
+          store: new FailingImmutableAuditStore(),
+          metering,
+          now,
+          batchId: () => "batch-001",
+        },
+        [record("activity-1")],
+      ),
+    ).rejects.toThrow("immutable store unavailable");
+
+    expect(metering.records).toHaveLength(0);
+  });
+
   it("buffers records and flushes when batchSize is reached", async () => {
     const store = new RecordingImmutableAuditStore();
     let batchNumber = 0;
@@ -132,6 +213,30 @@ class RecordingImmutableAuditStore implements ImmutableAuditObjectStore {
 
   async putObject(object: ImmutableAuditObject): Promise<void> {
     this.objects.push(object);
+  }
+}
+
+class FailingImmutableAuditStore implements ImmutableAuditObjectStore {
+  async putObject(): Promise<void> {
+    throw new Error("immutable store unavailable");
+  }
+}
+
+class RecordingMeteringClient implements MeteringClient {
+  readonly records: {
+    readonly orgId: string;
+    readonly event: MeteringEvent;
+    readonly trace?: TraceContext | undefined;
+  }[] = [];
+
+  async emit(orgId: string, event: MeteringEvent, trace?: TraceContext): Promise<void> {
+    this.records.push({ orgId, event, ...(trace === undefined ? {} : { trace }) });
+  }
+
+  async emitBatch(events: readonly MeteringEmitInput[]): Promise<void> {
+    for (const input of events) {
+      await this.emit(input.orgId, input.event, input.trace);
+    }
   }
 }
 

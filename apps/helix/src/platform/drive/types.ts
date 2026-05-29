@@ -79,6 +79,7 @@ export interface DriveUploadRecord {
   readonly sha256: string | null;
   readonly status: string;
   readonly uploadUrl: string | null;
+  readonly uploadHeaders: Record<string, string>;
   readonly metadata: JsonObject;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -130,20 +131,26 @@ export interface DriveEntryRecord {
   readonly updatedAt: Date;
 }
 
+export interface DriveAccessGrantRecord {
+  readonly actorId: string;
+  readonly role: string;
+  readonly displayName?: string | undefined;
+  readonly email?: string | undefined;
+  readonly grantedByActorId: string | null;
+  readonly expiresAt: Date | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
 export interface DriveSearchHit {
   readonly objectId: string;
   readonly name: string;
-  readonly ownerActorId: string | null;
-  readonly ownerDisplayName?: string | undefined;
-  readonly ownerEmail?: string | undefined;
-  readonly app: string | null;
   readonly mimeType: string;
   readonly byteSize: number;
   readonly sha256: string | null;
   readonly folderId: string | null;
   readonly preview: string;
   readonly previewMetadata?: DrivePreview | undefined;
-  readonly metadata: JsonObject;
   readonly updatedAt: Date;
 }
 

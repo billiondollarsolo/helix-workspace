@@ -50,6 +50,15 @@ export interface CreateDocsDocumentInput {
   readonly metadata?: JsonObject | undefined;
 }
 
+export interface CopyDocsDocumentInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly documentId: string;
+  readonly title?: string | undefined;
+  readonly folderId?: string | null | undefined;
+  readonly metadata?: JsonObject | undefined;
+}
+
 export interface AppendDocsUpdateInput {
   readonly orgId: string;
   readonly actorId?: string | null | undefined;
@@ -60,6 +69,7 @@ export interface AppendDocsUpdateInput {
 
 export interface DocsStore extends DocsExportStore {
   create(input: CreateDocsDocumentInput): Promise<DocsDocumentRecord>;
+  copy(input: CopyDocsDocumentInput): Promise<DocsDocumentRecord | null>;
   listDocumentsForActor(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -391,6 +401,7 @@ export class PostgresDocsStore
         folderId: input.folderId ?? null,
         editorEngine: input.editorEngine ?? "legacy-yjs",
         formatVersion: input.formatVersion ?? 1,
+        preview: nativeDocumentPreviewMetadata(input.title, documentTextFromStoredState(initialState.state)),
       });
 
       await tx`
@@ -449,6 +460,150 @@ export class PostgresDocsStore
         verb: "docs.document.created",
         documentId: document.id,
         payload: { title: input.title, threadId },
+      });
+
+      return document;
+    });
+  }
+
+  async copy(input: CopyDocsDocumentInput): Promise<DocsDocumentRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const existing = await selectDocumentForActor(
+        tx,
+        input.orgId,
+        input.actorId,
+        input.documentId,
+      );
+      if (existing === null) {
+        return null;
+      }
+
+      const sourceObjectRows = (await tx`
+        select metadata
+        from objects
+        where id = ${input.documentId}
+          and org_id = ${input.orgId}
+          and metadata->>'app' = 'docs'
+        limit 1
+      `) as unknown as readonly { readonly metadata: JsonObject }[];
+      const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata?.folderId);
+      const folderId = input.folderId === undefined ? sourceFolderId : input.folderId;
+      const title = input.title?.trim() || `${existing.title} (Copy)`;
+      const state = existing.ydocState ?? Buffer.from("", "utf8");
+      const stateVector = existing.ydocStateVector;
+      const metadata = {
+        ...existing.metadata,
+        createdFrom: "docs.copy",
+        copiedFromDocumentId: existing.id,
+        ...(input.metadata ?? {}),
+      };
+
+      const threadRows = (await tx`
+        insert into threads (org_id, kind, subject, created_by_actor_id, metadata)
+        values (${input.orgId}, 'doc', ${title}, ${input.actorId}, ${tx.json(
+          toSqlJson({
+            documentTitle: title,
+            copiedFromDocumentId: existing.id,
+          }),
+        )})
+        returning id
+      `) as unknown as readonly { readonly id: string }[];
+      const threadId = threadRows[0]?.id;
+      if (threadId === undefined) {
+        throw new Error("Unable to create docs thread.");
+      }
+
+      const documentRows = (await tx`
+        insert into docs_documents (
+          org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, ydoc_state_vector, update_seq, editor_engine, format_version, metadata
+        )
+        values (
+          ${input.orgId},
+          ${title},
+          ${threadId},
+          ${input.actorId},
+          ${input.actorId},
+          ${state},
+          ${stateVector},
+          0,
+          ${existing.editorEngine},
+          ${existing.formatVersion},
+          ${tx.json(toSqlJson(metadata))}
+        )
+        returning *
+      `) as unknown as readonly DocsDocumentRow[];
+      const document = mapDocument(documentRows[0]);
+      const storageKey = docsDocumentStorageKey(input.orgId, document.id);
+      const stateSha256 = sha256Hex(state);
+      const preview = nativeDocumentPreviewMetadata(title, documentTextFromStoredState(state));
+      const driveMetadata = toSqlJson({
+        ...metadata,
+        app: "docs",
+        docId: document.id,
+        name: `${title}.helixdoc`,
+        title,
+        folderId: folderId ?? null,
+        editorEngine: existing.editorEngine,
+        formatVersion: existing.formatVersion,
+        preview,
+      });
+
+      await tx`
+        insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
+        values (
+          ${document.id},
+          ${input.orgId},
+          ${input.actorId},
+          'file',
+          ${storageKey},
+          ${docsDocumentMimeType},
+          ${state.byteLength},
+          ${stateSha256},
+          ${tx.json(driveMetadata)}
+        )
+        on conflict (id) do update set
+          storage_key = excluded.storage_key,
+          mime_type = excluded.mime_type,
+          byte_size = excluded.byte_size,
+          sha256 = excluded.sha256,
+          metadata = excluded.metadata,
+          updated_at = now()
+      `;
+      await this.persistDocumentState({
+        orgId: input.orgId,
+        documentId: document.id,
+        storageKey,
+        state,
+        sha256: stateSha256,
+      });
+
+      await grantDocumentAccess(tx, {
+        orgId: input.orgId,
+        documentId: document.id,
+        actorId: input.actorId,
+        role: "owner",
+        grantedByActorId: input.actorId,
+      });
+      await grantThreadAccess(tx, {
+        orgId: input.orgId,
+        threadId,
+        actorId: input.actorId,
+        role: "owner",
+        grantedByActorId: input.actorId,
+      });
+      await grantObjectAccess(tx, {
+        orgId: input.orgId,
+        objectId: document.id,
+        actorId: input.actorId,
+        role: "owner",
+        grantedByActorId: input.actorId,
+      });
+      await appendDocsActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "docs.document.copied",
+        documentId: document.id,
+        payload: { title, threadId, copiedFromDocumentId: existing.id },
       });
 
       return document;
@@ -514,11 +669,18 @@ export class PostgresDocsStore
         await tx`
           update objects
           set
-            metadata = jsonb_set(
-              jsonb_set(metadata, '{name}', to_jsonb(${`${input.title}.helixdoc`}::text), true),
+          metadata = jsonb_set(
+              jsonb_set(
+                jsonb_set(metadata, '{name}', to_jsonb(${`${input.title}.helixdoc`}::text), true),
               '{title}',
               to_jsonb(${input.title}::text),
               true
+            ),
+            '{preview}',
+            ${tx.json(
+              toSqlJson(nativeDocumentPreviewMetadata(input.title, documentTextFromStoredState(document.ydocState))),
+            )}::jsonb,
+            true
             ),
             updated_at = now()
           where id = ${input.documentId}
@@ -690,6 +852,7 @@ export class PostgresDocsStore
               editorEngine: HELIX_NATIVE_DOCUMENT_ENGINE,
               formatVersion: 1,
               migratedFromEditorEngine: existing.editorEngine,
+              preview: nativeDocumentPreviewMetadata(migrated.title, text),
             }),
           )}::jsonb,
           updated_at = now()
@@ -1113,9 +1276,8 @@ export class PostgresDocsStore
         return mapSuggestion(existing);
       }
 
-      let appliedState: AppliedSuggestionDocumentState | null = null;
       if (input.status === "accepted") {
-        appliedState = await applySuggestionToDocument(tx, {
+        await applySuggestionToDocument(tx, {
           orgId: input.orgId,
           actorId: input.actorId,
           documentId: existing.document_id,
@@ -1143,9 +1305,6 @@ export class PostgresDocsStore
         documentId: existing.document_id,
         payload: { suggestionId: input.suggestionId },
       });
-      if (appliedState !== null) {
-        await this.persistAcceptedSuggestionState(tx, appliedState);
-      }
       return rows[0] === undefined ? null : mapSuggestion(rows[0]);
     });
   }
@@ -1178,7 +1337,6 @@ export class PostgresDocsStore
 
       const rowById = new Map(existingRows.map((row) => [row.id, row]));
       const resolved: DocsSuggestionRecord[] = [];
-      let latestAppliedState: AppliedSuggestionDocumentState | null = null;
       for (const suggestionId of suggestionIds) {
         const existing = rowById.get(suggestionId);
         if (existing === undefined) {
@@ -1190,7 +1348,7 @@ export class PostgresDocsStore
         }
 
         if (input.status === "accepted") {
-          latestAppliedState = await applySuggestionToDocument(tx, {
+          await applySuggestionToDocument(tx, {
             orgId: input.orgId,
             actorId: input.actorId,
             documentId: existing.document_id,
@@ -1224,9 +1382,6 @@ export class PostgresDocsStore
           return null;
         }
         resolved.push(mapSuggestion(updated));
-      }
-      if (latestAppliedState !== null) {
-        await this.persistAcceptedSuggestionState(tx, latestAppliedState);
       }
       return resolved;
     });
@@ -1652,6 +1807,14 @@ export class PostgresDocsStore
           mime_type = ${docsDocumentMimeType},
           byte_size = ${reconstruction.state.byteLength},
           sha256 = ${stateSha256},
+          metadata = metadata || ${tx.json(
+            toSqlJson({
+              preview: nativeDocumentPreviewMetadata(
+                restoredDocument.title,
+                documentTextFromStoredState(reconstruction.state),
+              ),
+            }),
+          )}::jsonb,
           updated_at = now()
         where id = ${versionRow.document_id}
           and org_id = ${input.orgId}
@@ -1714,6 +1877,14 @@ export class PostgresDocsStore
           mime_type = ${docsDocumentMimeType},
           byte_size = ${input.state.byteLength},
           sha256 = ${stateSha256},
+          metadata = metadata || ${tx.json(
+            toSqlJson({
+              preview: nativeDocumentPreviewMetadata(
+                document.title,
+                documentTextFromStoredState(input.state),
+              ),
+            }),
+          )}::jsonb,
           updated_at = now()
         where id = ${input.documentId}
           and org_id = ${input.orgId}
@@ -1749,37 +1920,41 @@ export class PostgresDocsStore
       },
     });
   }
-
-  private async persistAcceptedSuggestionState(
-    sql: SqlLike,
-    input: AppliedSuggestionDocumentState,
-  ): Promise<void> {
-    const storageKey = docsDocumentStorageKey(input.orgId, input.documentId);
-    const stateSha256 = sha256Hex(input.state);
-    await sql`
-      update objects
-      set
-        storage_key = ${storageKey},
-        mime_type = ${docsDocumentMimeType},
-        byte_size = ${input.state.byteLength},
-        sha256 = ${stateSha256},
-        updated_at = now()
-      where id = ${input.documentId}
-        and org_id = ${input.orgId}
-        and metadata->>'app' = 'docs'
-    `;
-    await this.persistDocumentState({
-      orgId: input.orgId,
-      documentId: input.documentId,
-      storageKey,
-      state: input.state,
-      sha256: stateSha256,
-    });
-  }
 }
 
 function docsDocumentStorageKey(orgId: string, documentId: string): string {
   return `docs/${orgId}/${documentId}`;
+}
+
+function nativeDocumentPreviewMetadata(title: string, text: string): JsonObject {
+  const body = text.trim().length > 0 ? text : title;
+  return {
+    kind: "text",
+    status: "available",
+    mimeType: docsDocumentMimeType,
+    text: previewLines([title, ...body.split(/\r?\n/u)]),
+  };
+}
+
+function jsonStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function previewLines(lines: readonly string[]): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of lines) {
+    const normalized = line.replace(/\s+/gu, " ").trim();
+    if (normalized.length === 0 || seen.has(normalized.toLowerCase())) {
+      continue;
+    }
+    seen.add(normalized.toLowerCase());
+    out.push(normalized);
+    if (out.length >= 16) {
+      break;
+    }
+  }
+  return out.join("\n").slice(0, 2000);
 }
 
 function sha256Hex(bytes: Uint8Array): string {
@@ -2226,12 +2401,6 @@ function mapUpdate(row: DocsUpdateRow | undefined): DocsUpdateRecord {
   };
 }
 
-interface AppliedSuggestionDocumentState {
-  readonly orgId: string;
-  readonly documentId: string;
-  readonly state: Buffer;
-}
-
 async function applySuggestionToDocument(
   sql: SqlLike,
   input: {
@@ -2242,9 +2411,9 @@ async function applySuggestionToDocument(
     readonly afterText: string;
     readonly anchorSelection?: NativeDocumentTextSelection | undefined;
   },
-): Promise<AppliedSuggestionDocumentState | null> {
+): Promise<void> {
   if (input.beforeText.length === 0 || input.beforeText === input.afterText) {
-    return null;
+    return;
   }
   const documentRows = (await sql`
     select ydoc_state
@@ -2290,19 +2459,9 @@ async function applySuggestionToDocument(
       ${input.actorId},
       ${seq},
       ${replacement.update},
-      ${sql.json(
-        toSqlJson({
-          source: "docs.suggestion.accept",
-          stateBase64: replacement.state.toString("base64"),
-        }),
-      )}
+      ${sql.json(toSqlJson({ source: "docs.suggestion.accept" }))}
     )
   `;
-  return {
-    orgId: input.orgId,
-    documentId: input.documentId,
-    state: replacement.state,
-  };
 }
 
 function nativeDocumentSuggestionAnchorSelection(

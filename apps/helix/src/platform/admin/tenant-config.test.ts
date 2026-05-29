@@ -1,20 +1,12 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import type { JsonObject } from "@helix/sdk-types";
 import { actorFromRequest } from "../../api/actor.js";
-import {
-  TenantStorageMigrationWorker,
-  type CreateTenantStorageMigrationJobInput,
-  type TenantStorageMigrationJobRecord,
-  type TenantStorageMigrationJobStore,
-  type TenantStorageMigrationObservabilitySnapshot,
-  type TenantStorageMigrationResult,
-} from "../storage/index.js";
 import type {
-  CutoverTenantStorageConfigInput,
-  OrgRecord,
-  UpdateTenantConfigInput,
-} from "../tenancy/orgs.js";
+  CreateTenantStorageMigrationJobInput,
+  TenantStorageMigrationJobRecord,
+  TenantStorageMigrationJobStore,
+} from "../storage/index.js";
+import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
 import type { PlanRecord, PlanStore } from "../tenancy/plans.js";
 import { registerTenantConfigAdminRoutes, type TenantConfigAdminStore } from "./tenant-config.js";
 
@@ -368,208 +360,6 @@ describe("tenant config admin routes", () => {
     await app.close();
   });
 
-  it("rotates BYO storage credentials through Vault and refresh-probes tenant storage", async () => {
-    const store = new InMemoryTenantConfigAdminStore({
-      byoConfig: {
-        storage: {
-          kind: "byo",
-          provider: "s3-compatible",
-          endpoint: "https://storage.example.com",
-          region: "us-east-1",
-          bucket: "acme-helix-data",
-          prefix: "helix/",
-          credentials_vault_path: "tenants/acme/byo-storage/s3",
-        },
-      },
-      featureFlags: { ai_smart_compose: false, byo_storage: true },
-    });
-    const storage = new RecordingStorageClient();
-    const credentialWriter = new RecordingSecretWriter();
-    const resolverInputs: unknown[] = [];
-    const auditRecords: unknown[] = [];
-    const app = fastify();
-    await registerTenantConfigAdminRoutes(app, {
-      store,
-      actorFromRequest,
-      storageCredentialWriter: credentialWriter,
-      storageResolver: async (input) => {
-        resolverInputs.push(input);
-        return {
-          client: storage,
-          managedBy: "byo",
-          prefix: "helix/",
-        };
-      },
-      auditSink: {
-        async append(record) {
-          auditRecords.push(record);
-          return { id: "audit-storage-credentials", thisHash: "hash-storage-credentials" };
-        },
-      },
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/admin/tenant-config/byo-storage/credentials",
-      headers: headers("admin.console.write"),
-      payload: {
-        credentials: {
-          accessKeyId: "rotated-access-key",
-          secretAccessKey: "rotated-secret-key",
-          sessionToken: "rotated-session-token",
-        },
-        reason: "scheduled credential rotation",
-      },
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(credentialWriter.writes).toEqual([
-      {
-        path: "tenants/acme/byo-storage/s3",
-        secret: {
-          accessKeyId: "rotated-access-key",
-          secretAccessKey: "rotated-secret-key",
-          sessionToken: "rotated-session-token",
-        },
-      },
-    ]);
-    expect(resolverInputs).toEqual([{ orgId, refresh: true }]);
-    expect(storage.calls.map((call) => call.split(":")[0])).toEqual(["put", "get", "delete"]);
-    expect(response.json()).toMatchObject({
-      credentials: {
-        credentials_vault_path: "tenants/acme/byo-storage/s3",
-        rotated: true,
-      },
-      health: {
-        status: "healthy",
-        managedBy: "byo",
-        prefix: "helix/",
-      },
-    });
-    expect(auditRecords).toEqual([
-      expect.objectContaining({
-        verb: "admin.tenant_config.byo_storage_credentials_rotated",
-        objectType: "tenant_config",
-        objectId: orgId,
-        metadata: {
-          credentialsVaultPath: "tenants/acme/byo-storage/s3",
-          status: "healthy",
-          managedBy: "byo",
-        },
-      }),
-    ]);
-    expect(JSON.stringify(auditRecords)).not.toContain("rotated-secret-key");
-    expect(JSON.stringify(store.updates)).not.toContain("rotated-secret-key");
-    await app.close();
-  });
-
-  it("requires a Vault writer before rotating BYO storage credentials", async () => {
-    const app = fastify();
-    await registerTenantConfigAdminRoutes(app, {
-      store: new InMemoryTenantConfigAdminStore({
-        byoConfig: {
-          storage: {
-            kind: "byo",
-            provider: "aws-s3",
-            bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
-          },
-        },
-      }),
-      actorFromRequest,
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/admin/tenant-config/byo-storage/credentials",
-      headers: headers("admin.console.write"),
-      payload: {
-        credentials: {
-          accessKeyId: "rotated-access-key",
-          secretAccessKey: "rotated-secret-key",
-        },
-      },
-    });
-
-    expect(response.statusCode).toBe(503);
-    expect(body(response).error).toBe("BYO storage credential writer is not configured.");
-    await app.close();
-  });
-
-  it("requires configured BYO storage credentials to be scoped to the actor tenant", async () => {
-    const credentialWriter = new RecordingSecretWriter();
-    const app = fastify();
-    await registerTenantConfigAdminRoutes(app, {
-      store: new InMemoryTenantConfigAdminStore({
-        byoConfig: {
-          storage: {
-            kind: "byo",
-            provider: "aws-s3",
-            bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/other/byo-storage/aws",
-          },
-        },
-      }),
-      actorFromRequest,
-      storageCredentialWriter: credentialWriter,
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/admin/tenant-config/byo-storage/credentials",
-      headers: headers("admin.console.write"),
-      payload: {
-        credentials: {
-          accessKeyId: "rotated-access-key",
-          secretAccessKey: "rotated-secret-key",
-        },
-      },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(body(response).error).toBe(
-      "BYO storage credentials path must be scoped to this tenant.",
-    );
-    expect(credentialWriter.writes).toEqual([]);
-    await app.close();
-  });
-
-  it("requires write scope to rotate BYO storage credentials", async () => {
-    const credentialWriter = new RecordingSecretWriter();
-    const app = fastify();
-    await registerTenantConfigAdminRoutes(app, {
-      store: new InMemoryTenantConfigAdminStore({
-        byoConfig: {
-          storage: {
-            kind: "byo",
-            provider: "aws-s3",
-            bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
-          },
-        },
-      }),
-      actorFromRequest,
-      storageCredentialWriter: credentialWriter,
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/admin/tenant-config/byo-storage/credentials",
-      headers: headers("admin.console.read"),
-      payload: {
-        credentials: {
-          accessKeyId: "rotated-access-key",
-          secretAccessKey: "rotated-secret-key",
-        },
-      },
-    });
-
-    expect(response.statusCode).toBe(403);
-    expect(body(response).requiredScope).toBe("admin.console.write");
-    expect(credentialWriter.writes).toEqual([]);
-    await app.close();
-  });
-
   it("returns degraded storage health when tenant storage is unavailable", async () => {
     const app = fastify();
     await registerTenantConfigAdminRoutes(app, {
@@ -702,104 +492,6 @@ describe("tenant config admin routes", () => {
     await app.close();
   });
 
-  it("lists recent tenant storage migration jobs for the actor org", async () => {
-    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore([
-      migrationJob({
-        id: "33333333-3333-4333-8333-333333333333",
-        orgId,
-        target: "byo",
-        status: "running",
-        createdAt: new Date("2026-05-24T10:05:00.000Z"),
-      }),
-      migrationJob({
-        id: "44444444-4444-4444-8444-444444444444",
-        orgId,
-        target: "helix-default",
-        status: "dry_run",
-        dryRun: true,
-        createdAt: new Date("2026-05-24T10:00:00.000Z"),
-      }),
-      migrationJob({
-        id: "22222222-2222-4222-8222-222222222222",
-        orgId,
-        target: "byo",
-        status: "succeeded",
-        createdAt: new Date("2026-05-24T09:55:00.000Z"),
-      }),
-      migrationJob({
-        id: "55555555-5555-4555-8555-555555555555",
-        orgId: "other-org",
-        target: "byo",
-        status: "failed",
-      }),
-    ]);
-    const app = fastify();
-    await registerTenantConfigAdminRoutes(app, {
-      store: new InMemoryTenantConfigAdminStore(),
-      actorFromRequest,
-      storageMigrationJobs,
-    });
-
-    const response = await app.inject({
-      method: "GET",
-      url: "/api/admin/tenant-config/byo-storage/migrations?limit=2",
-      headers: headers("admin.console.read"),
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      migrations: [
-        {
-          id: "33333333-3333-4333-8333-333333333333",
-          orgId,
-          status: "running",
-          target: "byo",
-        },
-        {
-          id: "44444444-4444-4444-8444-444444444444",
-          orgId,
-          status: "dry_run",
-          target: "helix-default",
-          dryRun: true,
-        },
-      ],
-    });
-    const firstPageBody = body(response);
-    const cursor = firstPageBody.nextCursor;
-    if (typeof cursor !== "string") {
-      throw new Error("Expected first migration history page to include a cursor.");
-    }
-    const secondPage = await app.inject({
-      method: "GET",
-      url: `/api/admin/tenant-config/byo-storage/migrations?limit=2&cursor=${encodeURIComponent(cursor)}`,
-      headers: headers("admin.console.read"),
-    });
-
-    expect(secondPage.statusCode).toBe(200);
-    expect(secondPage.json()).toMatchObject({
-      migrations: [
-        {
-          id: "22222222-2222-4222-8222-222222222222",
-          orgId,
-          status: "succeeded",
-        },
-      ],
-      nextCursor: null,
-    });
-    expect(storageMigrationJobs.listInputs).toEqual([
-      { orgId, limit: 3 },
-      {
-        orgId,
-        limit: 3,
-        cursor: {
-          createdAt: new Date("2026-05-24T10:00:00.000Z"),
-          id: "44444444-4444-4444-8444-444444444444",
-        },
-      },
-    ]);
-    await app.close();
-  });
-
   it("captures staged target storage on dry-run migration jobs without changing tenant config", async () => {
     const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore();
     const store = new InMemoryTenantConfigAdminStore();
@@ -850,192 +542,6 @@ describe("tenant config admin routes", () => {
       },
     });
     expect(store.updates).toEqual([]);
-    await app.close();
-  });
-
-  it("runs a tenant storage migration from admin request through worker completion and cutover", async () => {
-    const targetStorage = {
-      kind: "byo",
-      provider: "aws-s3",
-      bucket: "acme-helix-data",
-      credentials_vault_path: "tenants/acme/byo-storage/aws",
-    } as const;
-    const sourceStorageClient = new RecordingStorageClient();
-    const destinationStorageClient = new RecordingStorageClient();
-    await sourceStorageClient.put({
-      key: "drive/report.txt",
-      body: new TextEncoder().encode("launch report"),
-    });
-    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore();
-    const store = new InMemoryTenantConfigAdminStore();
-    const app = fastify();
-    await registerTenantConfigAdminRoutes(app, {
-      store,
-      actorFromRequest,
-      storageMigrationJobs,
-    });
-
-    const dryRun = await app.inject({
-      method: "POST",
-      url: "/api/admin/tenant-config/byo-storage/migrations",
-      headers: headers("admin.console.write"),
-      payload: {
-        target: "byo",
-        dryRun: true,
-        targetStorage,
-      },
-    });
-
-    expect(dryRun.statusCode).toBe(202);
-    expect(dryRun.json()).toMatchObject({
-      migration: {
-        dryRun: true,
-        status: "queued",
-        target: "byo",
-        sourceStorage: { managedBy: "helix-default", storage: null },
-        targetStorage: { managedBy: "byo", storage: targetStorage },
-      },
-    });
-    expect(storageMigrationJobs.creates[0]).toMatchObject({
-      orgId,
-      target: "byo",
-      dryRun: true,
-      requestedByActorId: actorId,
-      sourceStorage: { managedBy: "helix-default", storage: null },
-      targetStorage: { managedBy: "byo", storage: targetStorage },
-    });
-
-    const dryRunWorker = new TenantStorageMigrationWorker({
-      store: storageMigrationJobs,
-      listObjects: () => [{ storageKey: "drive/report.txt" }],
-      resolveStoragePair: () => {
-        throw new Error("dry-run should not resolve storage clients");
-      },
-    });
-    await expect(dryRunWorker.runOnce()).resolves.toEqual({
-      claimed: 1,
-      succeeded: 0,
-      dryRun: 1,
-      failed: 0,
-    });
-    expect(storageMigrationJobs.jobs[0]).toMatchObject({
-      status: "dry_run",
-      plannedCount: 1,
-      copiedCount: 0,
-      verifiedCount: 0,
-    });
-    expect(await destinationStorageClient.get("drive/report.txt")).toBeNull();
-
-    const live = await app.inject({
-      method: "POST",
-      url: "/api/admin/tenant-config/byo-storage/migrations",
-      headers: headers("admin.console.write"),
-      payload: {
-        target: "byo",
-        dryRun: false,
-        targetStorage,
-      },
-    });
-
-    expect(live.statusCode).toBe(202);
-    const liveJobId = storageMigrationJobs.jobs[1]?.id;
-    if (liveJobId === undefined) {
-      throw new Error("Expected live migration request to create a second job.");
-    }
-    expect(live.json()).toMatchObject({
-      migration: {
-        id: liveJobId,
-        dryRun: false,
-        status: "queued",
-        target: "byo",
-        sourceStorage: { managedBy: "helix-default", storage: null },
-        targetStorage: { managedBy: "byo", storage: targetStorage },
-      },
-    });
-    expect(storageMigrationJobs.creates[1]).toMatchObject({
-      orgId,
-      target: "byo",
-      dryRun: false,
-      requestedByActorId: actorId,
-      sourceStorage: { managedBy: "helix-default", storage: null },
-      targetStorage: { managedBy: "byo", storage: targetStorage },
-    });
-
-    const resolvedLiveJobs: TenantStorageMigrationJobRecord[] = [];
-    const liveWorker = new TenantStorageMigrationWorker({
-      store: storageMigrationJobs,
-      listObjects: () => [{ storageKey: "drive/report.txt", byteSize: "launch report".length }],
-      resolveStoragePair: (job) => {
-        resolvedLiveJobs.push(job);
-        return {
-          source: sourceStorageClient,
-          destination: destinationStorageClient,
-        };
-      },
-    });
-    await expect(liveWorker.runOnce()).resolves.toEqual({
-      claimed: 1,
-      succeeded: 1,
-      dryRun: 0,
-      failed: 0,
-    });
-    expect(resolvedLiveJobs).toHaveLength(1);
-    expect(resolvedLiveJobs[0]).toMatchObject({
-      id: liveJobId,
-      orgId,
-      dryRun: false,
-      sourceStorage: { managedBy: "helix-default", storage: null },
-      targetStorage: { managedBy: "byo", storage: targetStorage },
-    });
-    const copied = await destinationStorageClient.get("drive/report.txt");
-    if (copied === null) {
-      throw new Error("Expected live migration to copy drive/report.txt.");
-    }
-    expect(new TextDecoder().decode(copied.body)).toBe("launch report");
-
-    const completed = await app.inject({
-      method: "GET",
-      url: `/api/admin/tenant-config/byo-storage/migrations/${liveJobId}`,
-      headers: headers("admin.console.read"),
-    });
-
-    expect(completed.statusCode).toBe(200);
-    expect(completed.json()).toMatchObject({
-      migration: {
-        id: liveJobId,
-        status: "succeeded",
-        plannedCount: 1,
-        copiedCount: 1,
-        verifiedCount: 1,
-        failures: [],
-      },
-    });
-
-    const cutover = await app.inject({
-      method: "POST",
-      url: `/api/admin/tenant-config/byo-storage/migrations/${liveJobId}/cutover`,
-      headers: headers("admin.console.write"),
-      payload: { confirm: "CUTOVER" },
-    });
-
-    expect(cutover.statusCode).toBe(200);
-    expect(cutover.json()).toMatchObject({
-      migration: { id: liveJobId, status: "succeeded" },
-      tenantConfig: {
-        byo: { storage: targetStorage },
-        features: { ai_smart_compose: false, byo_storage: true },
-      },
-    });
-    expect(store.cutovers).toEqual([
-      {
-        orgId,
-        storageConfig: targetStorage,
-        enableByoStorage: true,
-        expectedCurrentStorage: null,
-        changedByActorId: actorId,
-        reason: `tenant storage migration cutover: ${liveJobId}`,
-      },
-    ]);
     await app.close();
   });
 
@@ -1239,22 +745,9 @@ describe("tenant config admin routes", () => {
       headers: headers("admin.console.write"),
       payload: { target: "byo" },
     });
-    const listForbidden = await app.inject({
-      method: "GET",
-      url: "/api/admin/tenant-config/byo-storage/migrations",
-      headers: headers("tools.invoke"),
-    });
-    const listUnavailable = await app.inject({
-      method: "GET",
-      url: "/api/admin/tenant-config/byo-storage/migrations",
-      headers: headers("admin.console.read"),
-    });
 
     expect(forbidden.statusCode).toBe(403);
     expect(unavailable.statusCode).toBe(503);
-    expect(listForbidden.statusCode).toBe(403);
-    expect(body(listForbidden).requiredScope).toBe("admin.console.read");
-    expect(listUnavailable.statusCode).toBe(503);
     await app.close();
   });
 
@@ -1308,12 +801,11 @@ describe("tenant config admin routes", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(store.cutovers).toEqual([
+    expect(store.updates).toEqual([
       {
         orgId,
-        storageConfig: targetStorage,
-        enableByoStorage: true,
-        expectedCurrentStorage: null,
+        byoConfig: { storage: targetStorage },
+        featureFlags: { ai_smart_compose: false, byo_storage: true },
         changedByActorId: actorId,
         reason: "tenant storage migration cutover: 33333333-3333-4333-8333-333333333333",
       },
@@ -1387,12 +879,10 @@ describe("tenant config admin routes", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(store.cutovers).toEqual([
+    expect(store.updates).toEqual([
       {
         orgId,
-        storageConfig: { kind: "helix-default", prefix: `tenants/${orgId}/` },
-        enableByoStorage: false,
-        expectedCurrentStorage: sourceStorage,
+        byoConfig: { storage: { kind: "helix-default", prefix: `tenants/${orgId}/` } },
         changedByActorId: actorId,
         reason: "tenant storage migration cutover: 33333333-3333-4333-8333-333333333333",
       },
@@ -1491,52 +981,6 @@ describe("tenant config admin routes", () => {
     await app.close();
   });
 
-  it("rejects storage migration cutover when the atomic storage update loses the race", async () => {
-    const targetStorage = {
-      kind: "byo",
-      provider: "aws-s3",
-      bucket: "acme-helix-data",
-      credentials_vault_path: "tenants/acme/byo-storage/aws",
-    } as const;
-    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore([
-      migrationJob({
-        target: "byo",
-        status: "succeeded",
-        dryRun: false,
-        sourceStorage: { managedBy: "helix-default", storage: null },
-        targetStorage: { managedBy: "byo", storage: targetStorage },
-        plannedCount: 1,
-        copiedCount: 1,
-        verifiedCount: 1,
-        completedAt: new Date("2026-05-24T10:05:00.000Z"),
-      }),
-    ]);
-    const store = new InMemoryTenantConfigAdminStore();
-    store.forceStorageMismatch = true;
-    const app = fastify();
-    await registerTenantConfigAdminRoutes(app, {
-      store,
-      actorFromRequest,
-      storageMigrationJobs,
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/admin/tenant-config/byo-storage/migrations/33333333-3333-4333-8333-333333333333/cutover",
-      headers: headers("admin.console.write"),
-      payload: { confirm: "CUTOVER" },
-    });
-
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toMatchObject({
-      code: "conflict",
-      error: "Tenant storage config changed during cutover. Refresh and retry.",
-    });
-    expect(store.cutovers).toHaveLength(1);
-    expect(store.updates).toEqual([]);
-    await app.close();
-  });
-
   it("rejects storage migration cutover when the source snapshot is stale", async () => {
     const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore([
       migrationJob({
@@ -1595,8 +1039,6 @@ describe("tenant config admin routes", () => {
 
 class InMemoryTenantConfigAdminStore implements TenantConfigAdminStore {
   readonly updates: UpdateTenantConfigInput[] = [];
-  readonly cutovers: CutoverTenantStorageConfigInput[] = [];
-  forceStorageMismatch = false;
   #org: OrgRecord | null;
 
   constructor(overrides: Partial<OrgRecord> = {}) {
@@ -1637,35 +1079,6 @@ class InMemoryTenantConfigAdminStore implements TenantConfigAdminStore {
     };
     return this.#org;
   }
-
-  async cutoverTenantStorageConfig(
-    input: CutoverTenantStorageConfigInput,
-  ): Promise<OrgRecord | null> {
-    this.cutovers.push(input);
-    if (this.#org === null || input.orgId !== this.#org.id || this.forceStorageMismatch) {
-      return null;
-    }
-    const currentStorage = rawStorageConfig(this.#org.byoConfig);
-    if (JSON.stringify(currentStorage) !== JSON.stringify(input.expectedCurrentStorage)) {
-      return null;
-    }
-    this.#org = {
-      ...this.#org,
-      byoConfig: { ...this.#org.byoConfig, storage: input.storageConfig },
-      featureFlags:
-        input.enableByoStorage === true
-          ? { ...this.#org.featureFlags, byo_storage: true }
-          : this.#org.featureFlags,
-    };
-    return this.#org;
-  }
-}
-
-function rawStorageConfig(byoConfig: OrgRecord["byoConfig"]): JsonObject | null {
-  const storage = (byoConfig as { readonly storage?: unknown }).storage;
-  return typeof storage === "object" && storage !== null && !Array.isArray(storage)
-    ? (storage as JsonObject)
-    : null;
 }
 
 class InMemoryPlanStore implements Pick<PlanStore, "findById"> {
@@ -1703,17 +1116,11 @@ class RecordingStorageClient {
   }
 }
 
-class RecordingSecretWriter {
-  readonly writes: { readonly path: string; readonly secret: Record<string, string> }[] = [];
-
-  async write(path: string, secret: Record<string, string>): Promise<void> {
-    this.writes.push({ path, secret });
-  }
-}
-
-class InMemoryTenantStorageMigrationJobStore implements TenantStorageMigrationJobStore {
+class InMemoryTenantStorageMigrationJobStore implements Pick<
+  TenantStorageMigrationJobStore,
+  "create" | "findByIdForOrg"
+> {
   readonly creates: CreateTenantStorageMigrationJobInput[] = [];
-  readonly listInputs: Parameters<TenantStorageMigrationJobStore["listForOrg"]>[0][] = [];
   readonly jobs: TenantStorageMigrationJobRecord[];
 
   constructor(jobs: readonly TenantStorageMigrationJobRecord[] = []) {
@@ -1725,7 +1132,7 @@ class InMemoryTenantStorageMigrationJobStore implements TenantStorageMigrationJo
   ): Promise<TenantStorageMigrationJobRecord> {
     this.creates.push(input);
     const job = migrationJob({
-      id: generatedMigrationJobId(this.jobs.length),
+      id: "33333333-3333-4333-8333-333333333333",
       orgId: input.orgId,
       target: input.target,
       dryRun: input.dryRun === true,
@@ -1742,149 +1149,6 @@ class InMemoryTenantStorageMigrationJobStore implements TenantStorageMigrationJo
     readonly orgId: string;
   }): Promise<TenantStorageMigrationJobRecord | null> {
     return this.jobs.find((job) => job.id === input.id && job.orgId === input.orgId) ?? null;
-  }
-
-  async listForOrg(
-    input: Parameters<TenantStorageMigrationJobStore["listForOrg"]>[0],
-  ): Promise<readonly TenantStorageMigrationJobRecord[]> {
-    this.listInputs.push(input);
-    return this.jobs
-      .filter((job) => job.orgId === input.orgId)
-      .filter((job) => input.target === undefined || job.target === input.target)
-      .filter((job) => input.status === undefined || job.status === input.status)
-      .filter((job) => {
-        if (input.cursor === undefined) {
-          return true;
-        }
-        if (job.createdAt.getTime() !== input.cursor.createdAt.getTime()) {
-          return job.createdAt.getTime() < input.cursor.createdAt.getTime();
-        }
-        return job.id < input.cursor.id;
-      })
-      .sort((left, right) => {
-        const createdAtDiff = right.createdAt.getTime() - left.createdAt.getTime();
-        return createdAtDiff === 0 ? right.id.localeCompare(left.id) : createdAtDiff;
-      })
-      .slice(0, input.limit ?? 10);
-  }
-
-  async findLiveWriteTargetForOrg(
-    input: Parameters<TenantStorageMigrationJobStore["findLiveWriteTargetForOrg"]>[0],
-  ): Promise<TenantStorageMigrationJobRecord | null> {
-    return (
-      this.jobs.find(
-        (job) =>
-          job.orgId === input.orgId &&
-          !job.dryRun &&
-          ["queued", "running", "failed", "succeeded"].includes(job.status) &&
-          JSON.stringify(job.sourceStorage) === JSON.stringify(input.currentStorage) &&
-          job.targetStorage !== null,
-      ) ?? null
-    );
-  }
-
-  async claimPending(
-    input: { readonly limit?: number | undefined } = {},
-  ): Promise<readonly TenantStorageMigrationJobRecord[]> {
-    const claimed: TenantStorageMigrationJobRecord[] = [];
-    const limit = input.limit ?? 5;
-    for (const job of this.jobs) {
-      if (claimed.length >= limit) {
-        break;
-      }
-      if (job.status !== "queued" && job.status !== "failed") {
-        continue;
-      }
-      const running = {
-        ...job,
-        status: "running" as const,
-        attemptCount: job.attemptCount + 1,
-        lastError: null,
-        startedAt: job.startedAt ?? new Date("2026-05-24T10:01:00.000Z"),
-        updatedAt: new Date("2026-05-24T10:01:00.000Z"),
-      };
-      this.replaceJob(running);
-      claimed.push(running);
-    }
-    return claimed;
-  }
-
-  async markCompleted(input: {
-    readonly id: string;
-    readonly result: TenantStorageMigrationResult;
-  }): Promise<TenantStorageMigrationJobRecord> {
-    const job = this.requireJob(input.id);
-    const completed = {
-      ...job,
-      status: jobStatusFromMigrationResult(input.result),
-      plannedCount: input.result.plannedCount,
-      copiedCount: input.result.copiedCount,
-      verifiedCount: input.result.verifiedCount,
-      failures: input.result.failures,
-      lastError: null,
-      completedAt: new Date(input.result.completedAt),
-      updatedAt: new Date(input.result.completedAt),
-    };
-    this.replaceJob(completed);
-    return completed;
-  }
-
-  async markFailed(input: {
-    readonly id: string;
-    readonly error: string;
-  }): Promise<TenantStorageMigrationJobRecord> {
-    const job = this.requireJob(input.id);
-    const failed = {
-      ...job,
-      status: "failed" as const,
-      lastError: input.error,
-      completedAt: new Date("2026-05-24T10:02:00.000Z"),
-      updatedAt: new Date("2026-05-24T10:02:00.000Z"),
-    };
-    this.replaceJob(failed);
-    return failed;
-  }
-
-  async getObservabilitySnapshot(): Promise<TenantStorageMigrationObservabilitySnapshot> {
-    return { activeJobs: [], stalledJobs: [] };
-  }
-
-  private requireJob(id: string): TenantStorageMigrationJobRecord {
-    const job = this.jobs.find((candidate) => candidate.id === id);
-    if (job === undefined) {
-      throw new Error(`Tenant storage migration job not found: ${id}`);
-    }
-    return job;
-  }
-
-  private replaceJob(job: TenantStorageMigrationJobRecord): void {
-    const index = this.jobs.findIndex((candidate) => candidate.id === job.id);
-    if (index < 0) {
-      throw new Error(`Tenant storage migration job not found: ${job.id}`);
-    }
-    this.jobs[index] = job;
-  }
-}
-
-function generatedMigrationJobId(index: number): string {
-  const ids = [
-    "33333333-3333-4333-8333-333333333333",
-    "44444444-4444-4444-8444-444444444444",
-    "55555555-5555-4555-8555-555555555555",
-  ];
-  return ids[index] ?? "66666666-6666-4666-8666-666666666666";
-}
-
-function jobStatusFromMigrationResult(
-  result: TenantStorageMigrationResult,
-): TenantStorageMigrationJobRecord["status"] {
-  switch (result.status) {
-    case "completed":
-      return "succeeded";
-    case "completed_with_errors":
-      return "succeeded_with_errors";
-    case "dry_run":
-      return "dry_run";
   }
 }
 

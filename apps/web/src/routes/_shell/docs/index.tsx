@@ -1,15 +1,24 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DocsShell } from "@/features/docs/docs-shell";
 
 /** `?doc=<id>` opens straight into that document's editor (used by Drive's New). */
 interface DocsRouteSearch {
   readonly doc?: string;
+  readonly open?: "office";
+  readonly q?: string;
 }
 
 function validateDocsRouteSearch(search: Record<string, unknown>): DocsRouteSearch {
   const doc =
     typeof search.doc === "string" && search.doc.trim().length > 0 ? search.doc : undefined;
-  return doc === undefined ? {} : { doc };
+  const open = search.open === "office" ? "office" : undefined;
+  const q =
+    typeof search.q === "string" && search.q.trim().length > 0 ? search.q.trim() : undefined;
+  return {
+    ...(doc === undefined ? {} : { doc }),
+    ...(open === undefined ? {} : { open }),
+    ...(q === undefined ? {} : { q }),
+  };
 }
 
 export const Route = createFileRoute("/_shell/docs/")({
@@ -18,6 +27,22 @@ export const Route = createFileRoute("/_shell/docs/")({
 });
 
 function DocsRoute() {
-  const { doc } = Route.useSearch();
-  return <DocsShell initialDocumentId={doc} />;
+  const { doc, open, q } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  return (
+    <DocsShell
+      initialDocumentId={doc}
+      initialOpenMode={open}
+      initialSearchQuery={q ?? ""}
+      onSearchQueryChange={(nextQuery) => {
+        void navigate({
+          replace: true,
+          search: (previous) => ({
+            ...previous,
+            q: nextQuery.trim().length > 0 ? nextQuery : undefined,
+          }),
+        });
+      }}
+    />
+  );
 }

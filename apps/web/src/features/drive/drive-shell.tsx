@@ -1,3 +1,6 @@
+// ponytail: drive-shell.tsx still >400 LOC (sidebar + grid/list + details panel composition);
+// deferred split into features/drive/components/{sidebar,file-grid,details-panel}.tsx.
+
 /* DriveShell — the Drive surface body, fully wired to the backend.
 
    Layout: left sidebar (New/Upload, scopes, storage meter), main pane
@@ -85,6 +88,7 @@ import {
   driveActorQueryOptions,
   driveItemsQueryOptions,
   driveQueryKeys,
+  entryFromSearchHit,
   type DriveScope,
 } from "./queries";
 
@@ -499,20 +503,7 @@ export function DriveShell() {
     if (data.mode === "list") {
       return applyDriveScope(data.entries, scope, actorId);
     }
-    return data.hits.map((hit) => ({
-      id: hit.objectId,
-      type: "file" as const,
-      name: hit.name,
-      folderId: hit.folderId,
-      ownerActorId: null,
-      mimeType: hit.mimeType,
-      byteSize: hit.byteSize,
-      sha256: hit.sha256,
-      ...(hit.previewMetadata === undefined ? {} : { preview: hit.previewMetadata }),
-      deletedAt: null,
-      createdAt: hit.updatedAt,
-      updatedAt: hit.updatedAt,
-    }));
+    return data.hits.map((hit) => entryFromSearchHit(hit));
   }, [itemsQuery.data, scope, actorId]);
 
   const hasMoreEntries =

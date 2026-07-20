@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
-import { registerChatTools } from "./tools.js";
+import { createChatToolDefinitions, registerChatTools } from "./tools.js";
 import type { ChatStore } from "./store.js";
 import type {
   ChatMessageRecord,
+  ChatPinRecord,
   ChatReactionRecord,
   ChatReadReceiptRecord,
   ChatRoomRecord,
@@ -21,18 +22,37 @@ describe("chat tools", () => {
     const registry = createToolRegistry();
     registerChatTools(registry, { store: new FakeChatStore() });
 
-    expect(registry.list().map((tool) => tool.id)).toEqual([
+    expect(registry.list().map((tool) => tool.id).sort()).toEqual([
       "chat.create_room",
       "chat.delete",
       "chat.edit",
       "chat.invite",
       "chat.message.list",
+      "chat.pin",
+      "chat.pins.list",
       "chat.react",
+      "chat.reply_in_thread",
       "chat.room.list",
       "chat.search",
       "chat.send",
+      "chat.thread.list",
+      "chat.unpin",
       "platform.ping",
     ]);
+  });
+
+  it("registers chat.reply_in_thread with chat.post", () => {
+    const tool = createChatToolDefinitions({ store: new FakeChatStore() }).find(
+      (t) => t.id === "chat.reply_in_thread",
+    );
+    expect(tool?.permission).toBe("chat.post");
+  });
+
+  it("registers chat.pin with chat.post", () => {
+    const tool = createChatToolDefinitions({ store: new FakeChatStore() }).find(
+      (t) => t.id === "chat.pin",
+    );
+    expect(tool?.permission).toBe("chat.post");
   });
 
   it("sends messages through the shared store contract", async () => {
@@ -287,6 +307,33 @@ class FakeChatStore implements ChatStore {
 
   async getRoomForActor(): Promise<ChatRoomRecord | null> {
     return this.createRoom();
+  }
+
+  async listThreadReplies(): Promise<readonly ChatMessageRecord[]> {
+    return [messageRecord("reply")];
+  }
+
+  async pinMessage(input: {
+    readonly roomId: string;
+    readonly messageId: string;
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<ChatPinRecord> {
+    return {
+      roomId: input.roomId,
+      messageId: input.messageId,
+      orgId: input.orgId,
+      pinnedByActorId: input.actorId,
+      createdAt: now,
+    };
+  }
+
+  async unpinMessage(): Promise<{ readonly ok: true }> {
+    return { ok: true };
+  }
+
+  async listPins(): Promise<readonly ChatPinRecord[]> {
+    return [];
   }
 }
 

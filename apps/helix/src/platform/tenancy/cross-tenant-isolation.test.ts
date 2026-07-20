@@ -8,7 +8,7 @@
 
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PostgresDriveStore } from "../drive/store.js";
+import { PostgresDriveStore } from "../drive/index.js";
 
 const ACME_ORG_ID = "f9000000-0000-4000-8000-000000000001";
 const ACME_ACTOR_ID = "f9000000-0000-4000-8000-000000000002";

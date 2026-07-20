@@ -1,6 +1,8 @@
+// ponytail: local Office→PDF converter + LibreOffice client share one module; split if either path grows.
 import { randomUUID } from "node:crypto";
 import type { convertToHtml as mammothConvertToHtml } from "mammoth";
 import type { Browser } from "playwright";
+import { DriveForbiddenError } from "./errors.js";
 
 export interface OfficePreviewConversionInput {
   readonly objectId: string;
@@ -25,6 +27,52 @@ export interface LibreOfficePreviewClientOptions {
   readonly fetch?: typeof fetch;
   readonly now?: () => Date;
   readonly timeoutMs?: number;
+  /** When non-empty, only these hostnames may be contacted (SSRF guard). */
+  readonly allowedHosts?: readonly string[];
+}
+
+const BLOCKED_PREVIEW_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "0.0.0.0",
+  "::1",
+  "metadata.google.internal",
+  "169.254.169.254",
+]);
+
+/**
+ * SSRF guard for the office-preview converter URL.
+ * - requires http(s)
+ * - blocks link-local / loopback / cloud-metadata hosts unless explicitly allowlisted
+ * - when `allowedHosts` is non-empty, requires the host to be in the list
+ */
+export function assertPreviewUrlAllowed(
+  url: string,
+  allowedHosts: readonly string[] = [],
+): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new DriveForbiddenError("Office preview URL is not a valid absolute URL.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new DriveForbiddenError("Office preview URL must use http or https.");
+  }
+  const host = parsed.hostname.toLowerCase();
+  const allow = new Set(allowedHosts.map((h) => h.toLowerCase()));
+  const isBlockedHost =
+    BLOCKED_PREVIEW_HOSTS.has(host) ||
+    host.endsWith(".local") ||
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./u.test(host);
+  if (isBlockedHost && !allow.has(host)) {
+    throw new DriveForbiddenError(`Office preview host is not allowed: ${host}`);
+  }
+  if (allow.size > 0 && !allow.has(host)) {
+    throw new DriveForbiddenError(`Office preview host is not allowlisted: ${host}`);
+  }
 }
 
 export interface LocalOfficePreviewConverterOptions {
@@ -66,16 +114,20 @@ class LibreOfficePreviewClient implements OfficePreviewConverter {
   readonly #fetch: typeof fetch;
   readonly #now: () => Date;
   readonly #timeoutMs: number;
+  readonly #allowedHosts: readonly string[];
 
   constructor(options: LibreOfficePreviewClientOptions) {
     this.#endpoint = new URL(options.endpoint);
     this.#fetch = options.fetch ?? fetch;
     this.#now = options.now ?? (() => new Date());
     this.#timeoutMs = options.timeoutMs ?? 10_000;
+    this.#allowedHosts = options.allowedHosts ?? [];
+    assertPreviewUrlAllowed(this.#endpoint.toString(), this.#allowedHosts);
   }
 
   async convert(input: OfficePreviewConversionInput): Promise<OfficePreviewConversionResult> {
     const url = new URL("/convert/office-to-pdf", this.#endpoint);
+    assertPreviewUrlAllowed(url.toString(), this.#allowedHosts);
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       controller.abort();

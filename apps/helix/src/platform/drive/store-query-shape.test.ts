@@ -117,7 +117,28 @@ describe("PostgresDriveStore query shape", () => {
   });
 
   it("updates access roles only for owner-managed object grants in the request org", async () => {
-    const recording = createRecordingSql();
+    const now = new Date("2026-05-20T12:00:00.000Z");
+    // First response: requireObjectAccess (owner path → requireObjectRole passes).
+    // Second response: update CTE returns no rows → null grant.
+    const recording = createRecordingSql([
+      [
+        {
+          id: objectId,
+          org_id: orgId,
+          owner_actor_id: actorId,
+          kind: "file",
+          storage_key: "drive/test/report.pdf",
+          mime_type: "application/pdf",
+          byte_size: 128,
+          sha256: "a".repeat(64),
+          metadata: { name: "report.pdf" },
+          deleted_at: null,
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+      [],
+    ]);
     const store = new PostgresDriveStore(recording.sql);
 
     await expect(

@@ -37,6 +37,7 @@
     "@fastify/swagger": "latest",
     "@fastify/swagger-ui": "latest",
     "@fastify/websocket": "latest",
+    "@helix/contracts": "workspace:*",
     "@helix/editors-core-app": "file:../../../helix-editors/packages/core-app",
     "@helix/sdk": "workspace:*",
     "@helix/sdk-types": "workspace:*",

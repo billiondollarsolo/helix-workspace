@@ -32,6 +32,11 @@ export interface S3CompatiblePresignedPutUpload {
   readonly headers: Record<string, string>;
 }
 
+export interface S3MultipartCompletedPart {
+  readonly partNumber: number;
+  readonly etag: string;
+}
+
 export interface S3CompatibleStorageClient extends StorageClient {
   ensureBucket(): Promise<void>;
   presignGetUrl(key: string, options?: S3CompatiblePresignOptions): Promise<string>;
@@ -40,6 +45,22 @@ export interface S3CompatibleStorageClient extends StorageClient {
     key: string,
     options?: S3CompatiblePresignOptions,
   ): Promise<S3CompatiblePresignedPutUpload>;
+  createMultipartUpload(
+    key: string,
+    options?: S3CompatiblePresignOptions,
+  ): Promise<{ readonly uploadId: string }>;
+  presignUploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    options?: S3CompatiblePresignOptions,
+  ): Promise<string>;
+  completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: readonly S3MultipartCompletedPart[],
+  ): Promise<void>;
+  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
 }
 
 export class S3CompatibleStorageError extends Error {
@@ -148,13 +169,100 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
     };
   }
 
+  async createMultipartUpload(
+    key: string,
+    options: S3CompatiblePresignOptions = {},
+  ): Promise<{ readonly uploadId: string }> {
+    const response = await this.#request(
+      "POST",
+      key,
+      {
+        "x-amz-content-sha256": emptyBodyHash,
+        ...requestContentHeaders(options),
+        ...serverSideEncryptionHeaders(this.#config),
+      },
+      undefined,
+      { uploads: "" },
+    );
+    await expectOk(response, "create multipart upload", key);
+    const text = await response.text();
+    const uploadId = /<UploadId>([^<]+)<\/UploadId>/u.exec(text)?.[1];
+    if (uploadId === undefined || uploadId.length === 0) {
+      throw new S3CompatibleStorageError(
+        `S3-compatible storage create multipart upload missing UploadId for ${key}`,
+        response.status,
+        response.statusText,
+      );
+    }
+    return { uploadId };
+  }
+
+  async presignUploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    options: S3CompatiblePresignOptions = {},
+  ): Promise<string> {
+    if (!Number.isInteger(partNumber) || partNumber < 1) {
+      throw new TypeError("S3 multipart partNumber must be a positive integer");
+    }
+    return this.#presign("PUT", key, options, {
+      partNumber: String(partNumber),
+      uploadId,
+    }).url;
+  }
+
+  async completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: readonly S3MultipartCompletedPart[],
+  ): Promise<void> {
+    const sorted = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+    const bodyXml = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      "<CompleteMultipartUpload>",
+      ...sorted.map(
+        (part) =>
+          `<Part><PartNumber>${String(part.partNumber)}</PartNumber><ETag>${escapeXml(part.etag)}</ETag></Part>`,
+      ),
+      "</CompleteMultipartUpload>",
+    ].join("");
+    const body = new TextEncoder().encode(bodyXml);
+    const response = await this.#request(
+      "POST",
+      key,
+      {
+        "content-type": "application/xml",
+        "x-amz-content-sha256": hashHex(body),
+      },
+      body,
+      { uploadId },
+    );
+    await expectOk(response, "complete multipart upload", key);
+  }
+
+  async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+    const response = await this.#request(
+      "DELETE",
+      key,
+      { "x-amz-content-sha256": emptyBodyHash },
+      undefined,
+      { uploadId },
+    );
+    await expectOk(response, "abort multipart upload", key);
+  }
+
   async #request(
     method: S3Method,
     key: string,
     inputHeaders: Record<string, string>,
     body: Uint8Array | undefined,
+    query: Record<string, string> = {},
   ): Promise<Response> {
     const url = objectUrl(this.#config, key);
+    if (Object.keys(query).length > 0) {
+      url.search = canonicalQueryString(query);
+    }
     const date = this.#config.now();
     const headers = normalizeHeaders({
       ...inputHeaders,
@@ -167,7 +275,7 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
     const canonicalRequest = createCanonicalRequest(
       method,
       url.pathname,
-      "",
+      url.search.startsWith("?") ? url.search.slice(1) : url.search,
       headers,
       headers["x-amz-content-sha256"] ?? emptyBodyHash,
     );
@@ -215,6 +323,7 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
     method: S3Method,
     key: string,
     options: S3CompatiblePresignOptions,
+    extraQuery: Record<string, string> = {},
   ): { readonly url: string; readonly headers: Record<string, string> } {
     const url = objectUrl(this.#config, key);
     const date = this.#config.now();
@@ -227,6 +336,7 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
     const signedHeaders = signedHeaderNames(headers);
     const credential = credentialScope(this.#config, date);
     const queryParams: Record<string, string> = {
+      ...extraQuery,
       "X-Amz-Algorithm": signingAlgorithm,
       "X-Amz-Credential": `${this.#config.credentials.accessKeyId}/${credential}`,
       "X-Amz-Date": amzDate(date),
@@ -250,7 +360,16 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
   }
 }
 
-type S3Method = "DELETE" | "GET" | "PUT";
+type S3Method = "DELETE" | "GET" | "POST" | "PUT";
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
 
 interface NormalizedS3Config {
   readonly endpoint: URL;

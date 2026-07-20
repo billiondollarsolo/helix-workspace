@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { env } from "../config/env.js";
 import { loadEditorsCoreAppModule } from "../platform/editors/core-app.js";
 import type { MigrationSource } from "./migration-runner.js";
 
@@ -20,12 +21,13 @@ export async function resolvePlatformMigrationSources(): Promise<readonly Migrat
 }
 
 async function resolveEditorsMigrationSource(): Promise<MigrationSource | null> {
-  if (process.env.HELIX_EDITORS_MIGRATIONS_ENABLED === "false") {
+  const bootEnv = env();
+  if (bootEnv.HELIX_EDITORS_MIGRATIONS_ENABLED === "false") {
     return null;
   }
   const specifier =
-    process.env.HELIX_EDITORS_CORE_APP_ENTRY ??
-    process.env.HELIX_EDITORS_CORE_APP_MODULE ??
+    bootEnv.HELIX_EDITORS_CORE_APP_ENTRY ??
+    bootEnv.HELIX_EDITORS_CORE_APP_MODULE ??
     "@helix/editors-core-app";
   const module = await loadEditorsCoreAppModule(specifier);
   const source = module?.getEditorsMigrationSource?.();

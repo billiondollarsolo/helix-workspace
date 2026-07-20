@@ -1,5 +1,10 @@
+import type { JsonObject } from "@helix/sdk-types";
 import type { MailMessageInput } from "./types.js";
 import type { MailStore } from "./store.js";
+import {
+  matchesFilterCriteria,
+  shouldSkipVacationResponse,
+} from "./core/thread-projection.js";
 
 export interface MailFilterEvaluationResult {
   readonly matchedFilterIds: readonly string[];
@@ -19,7 +24,7 @@ export async function evaluateInboundMail(store: MailStore, input: {
 
   const matchedFilterIds: string[] = [];
   for (const filter of await store.listFilters(input.message.orgId, actorId)) {
-    if (!filter.enabled || !matchesFilter(input.message, filter.criteria)) {
+    if (!filter.enabled || !matchesFilterCriteria(input.message, filter.criteria)) {
       continue;
     }
     matchedFilterIds.push(filter.id);
@@ -55,7 +60,19 @@ async function maybeQueueVacationResponse(store: MailStore, input: {
   if (vacation === null) {
     return false;
   }
+
   const senderEmail = input.message.from.address.toLowerCase();
+  const metadata = input.message.metadata ?? {};
+  if (
+    shouldSkipVacationResponse({
+      senderEmail,
+      headers: extractHeaders(metadata),
+      isAutoReply: metadata.autoReply === true || metadata.isAutoReply === true,
+    })
+  ) {
+    return false;
+  }
+
   const responseRecorded = await store.recordVacationResponse({
     vacationId: vacation.id,
     orgId: input.message.orgId,
@@ -89,32 +106,27 @@ async function maybeQueueVacationResponse(store: MailStore, input: {
   return true;
 }
 
-function matchesFilter(message: MailMessageInput, criteria: {
-  readonly fromContains?: string;
-  readonly toContains?: string;
-  readonly subjectContains?: string;
-  readonly bodyContains?: string;
-  readonly hasAttachment?: boolean;
-}): boolean {
-  if (criteria.fromContains !== undefined && !message.from.address.toLowerCase().includes(criteria.fromContains.toLowerCase())) {
-    return false;
+function extractHeaders(
+  metadata: JsonObject,
+): Readonly<Record<string, string | undefined>> {
+  const headers = metadata.headers;
+  if (typeof headers !== "object" || headers === null || Array.isArray(headers)) {
+    const precedence =
+      typeof metadata.precedence === "string" ? metadata.precedence : undefined;
+    const autoSubmitted =
+      typeof metadata.autoSubmitted === "string" ? metadata.autoSubmitted : undefined;
+    return {
+      ...(precedence === undefined ? {} : { precedence }),
+      ...(autoSubmitted === undefined ? {} : { "auto-submitted": autoSubmitted }),
+    };
   }
-  if (
-    criteria.toContains !== undefined &&
-    !message.to.some((address) => address.address.toLowerCase().includes(criteria.toContains?.toLowerCase() ?? ""))
-  ) {
-    return false;
+  const result: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (typeof value === "string") {
+      result[key] = value;
+    }
   }
-  if (criteria.subjectContains !== undefined && !message.subject.toLowerCase().includes(criteria.subjectContains.toLowerCase())) {
-    return false;
-  }
-  if (criteria.bodyContains !== undefined && !message.bodyText.toLowerCase().includes(criteria.bodyContains.toLowerCase())) {
-    return false;
-  }
-  if (criteria.hasAttachment !== undefined && (message.attachments?.length ?? 0) > 0 !== criteria.hasAttachment) {
-    return false;
-  }
-  return true;
+  return result;
 }
 
 function firstRecipient(message: MailMessageInput) {

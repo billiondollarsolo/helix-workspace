@@ -52,11 +52,21 @@ export interface ChatMessageRecord {
   readonly bodyFormat: string;
   readonly metadata: JsonObject;
   readonly attachmentObjectIds: readonly string[];
+  readonly parentMessageId?: string | null;
+  readonly clientMessageId?: string | undefined;
   readonly sentAt: Date;
   readonly editedAt: Date | null;
   readonly deletedAt: Date | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+export interface ChatPinRecord {
+  readonly roomId: string;
+  readonly messageId: string;
+  readonly orgId: string;
+  readonly pinnedByActorId: string | null;
+  readonly createdAt: Date;
 }
 
 export interface ChatReactionRecord {

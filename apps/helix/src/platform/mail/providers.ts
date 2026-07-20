@@ -452,7 +452,7 @@ export function createOutboundMailProvider(
  * Resolve the outbound transport for an org: when a default provider is
  * configured in the store, deliver through it; otherwise fall back to the
  * supplied default transport (the env-configured SMTP/SES relay). Secrets are
- * resolved from `process.env` via the named `secret_ref`.
+ * resolved from the injected `env` secret table via the named `secret_ref`.
  */
 export async function resolveOutboundTransport(input: {
   readonly orgId: string;
@@ -460,14 +460,18 @@ export async function resolveOutboundTransport(input: {
     getDefaultProvider(orgId: string): Promise<OutboundProviderConfig | null>;
   };
   readonly fallbackTransport: OutboundMailTransport;
-  readonly env?: NodeJS.ProcessEnv;
+  /**
+   * Secret lookup table (validated env or a test stub). Callers must inject
+   * this — platform/mail never reads process.env directly (G3).
+   */
+  readonly env?: Readonly<Record<string, string | undefined>>;
   readonly fetch?: FetchLike;
 }): Promise<OutboundMailTransport> {
   const config = await input.providerStore.getDefaultProvider(input.orgId);
   if (config === null) {
     return input.fallbackTransport;
   }
-  const env = input.env ?? process.env;
+  const env = input.env ?? {};
   const provider = createOutboundMailProvider(
     config,
     (ref) => (ref === null ? undefined : env[ref]),
@@ -494,7 +498,7 @@ function envelopeToMessage(envelope: MailOutboundEnvelope): OutboundMailMessage 
       ...(attachment.contentType === undefined
         ? {}
         : { contentType: attachment.contentType }),
-      content: new Uint8Array(attachment.content),
+      content: new Uint8Array(attachment.content ?? Buffer.alloc(0)),
     })),
   };
 }

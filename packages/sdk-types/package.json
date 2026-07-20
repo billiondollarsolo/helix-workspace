@@ -31,6 +31,9 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -b"
   },
+  "dependencies": {
+    "@helix/contracts": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

@@ -12,6 +12,7 @@
     "noUncheckedIndexedAccess": true,
     "paths": {
       "@/*": ["./src/*"],
+      "@helix/contracts": ["../../packages/contracts/src/index.ts"],
       "@helix/sdk-web": ["../../packages/sdk-web/src/index.ts"]
     },
     "skipLibCheck": true,

@@ -16,12 +16,12 @@ import type {
   DriveUploadRecord,
   DriveVersionRecord,
 } from "./types.js";
-import type { DocsStore, CreateDocsDocumentInput } from "../docs/store.js";
+import type { DocsStore, CreateDocsDocumentInput } from "../docs/index.js";
 import type { DocsDocumentRecord } from "../docs/types.js";
 import { HELIX_NATIVE_DOCUMENT_ENGINE } from "../docs/native-state.js";
-import type { SheetsStore, CreateSheetInput } from "../sheets/store.js";
+import type { SheetsStore, CreateSheetInput } from "../sheets/index.js";
 import type { SheetWithTabs } from "../sheets/types.js";
-import type { SlidesStore, CreateSlideDeckInput } from "../slides/store.js";
+import type { SlidesStore, CreateSlideDeckInput } from "../slides/index.js";
 import type { SlideDeckSummaryRecord } from "../slides/types.js";
 
 const plainFileId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -46,7 +46,8 @@ describe("drive tools", () => {
       registry
         .list()
         .filter((tool) => tool.id.startsWith("drive."))
-        .map((tool) => tool.id),
+        .map((tool) => tool.id)
+        .sort(),
     ).toEqual([
       "drive.access.list",
       "drive.access.remove",
@@ -60,21 +61,50 @@ describe("drive tools", () => {
       "drive.create",
       "drive.delete",
       "drive.finalize",
+      "drive.link.create",
+      "drive.link.list",
+      "drive.link.revoke",
       "drive.list",
       "drive.move",
       "drive.pdfFormState.clear",
       "drive.pdfFormState.get",
       "drive.pdfFormState.save",
+      "drive.rename",
       "drive.restore",
       "drive.search",
       "drive.share",
       "drive.star.set",
       "drive.trash",
       "drive.upload",
-    ]);
+      "drive.upload.complete",
+      "drive.versions.list",
+      "drive.versions.revert",
+    ].sort());
     expect(registry.list().find((tool) => tool.id === "drive.comment.delete")).toMatchObject({
       confirmationRequired: true,
     });
+  });
+
+  it("no drive tool ships an unknown/passthrough output schema", () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store: new FakeDriveStore() });
+    for (const tool of registry.list().filter((t) => t.id.startsWith("drive."))) {
+      expect(() =>
+        tool.outputSchema.parse({ __definitely_not_a_valid_output__: Symbol() as unknown }),
+      ).toThrow();
+    }
+  });
+
+  it("drive.list output validates against the concrete schema", async () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store: new FakeDriveStore() });
+    const listTool = registry.list().find((t) => t.id === "drive.list");
+    expect(listTool).toBeDefined();
+    const out = await listTool!.handler(
+      { folderId: null, includeTrashed: false, limit: 100 },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["drive.read"] } } as never,
+    );
+    expect(() => listTool!.outputSchema.parse(out)).not.toThrow();
   });
 
   it("prepares and finalizes uploads through the shared store contract", async () => {
@@ -1088,6 +1118,66 @@ class FakeDriveStore implements DriveStore {
     const cleared = this.pdfFormState !== null;
     this.pdfFormState = null;
     return cleared;
+  }
+
+  async rename(input: Parameters<NonNullable<DriveStore["rename"]>>[0]) {
+    return { ...entry(), name: input.name };
+  }
+
+  async listVersions() {
+    return [
+      {
+        id: versionId,
+        orgId,
+        objectId,
+        versionNumber: 1,
+        storageKey: `drive/${orgId}/${objectId}/v1/report.pdf`,
+        mimeType: "application/pdf",
+        byteSize: 128,
+        sha256,
+        metadata: {},
+        createdByActorId: actorId,
+        createdAt: now,
+      },
+    ];
+  }
+
+  async revertToVersion(input: Parameters<NonNullable<DriveStore["revertToVersion"]>>[0]) {
+    return {
+      id: versionId,
+      orgId,
+      objectId: input.objectId,
+      versionNumber: input.versionNumber + 1,
+      storageKey: `drive/${orgId}/${input.objectId}/v1/report.pdf`,
+      mimeType: "application/pdf",
+      byteSize: 128,
+      sha256,
+      metadata: { revertedFromVersion: input.versionNumber },
+      createdByActorId: actorId,
+      createdAt: now,
+    };
+  }
+
+  async createShareLink(input: Parameters<NonNullable<DriveStore["createShareLink"]>>[0]) {
+    return {
+      id: "88888888-8888-4888-8888-888888888888",
+      orgId: input.orgId,
+      objectId: input.objectId,
+      token: "publictoken",
+      role: input.role,
+      expiresAt: input.expiresAt ?? null,
+      createdByActorId: input.actorId,
+      createdAt: now,
+      revokedAt: null,
+    };
+  }
+
+  async listShareLinks() {
+    return [];
+  }
+
+  async revokeShareLink() {
+    return true;
   }
 }
 

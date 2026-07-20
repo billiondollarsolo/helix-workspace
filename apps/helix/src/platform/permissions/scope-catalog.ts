@@ -73,6 +73,11 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
   { scope: "mail.write", description: "Modify mail (labels, state, filters).", surfaces: ["agent", "app_password"] },
   { scope: "mail.delete", description: "Permanently delete mail.", surfaces: ["agent", "app_password"] },
   {
+    scope: "mail.admin",
+    description: "Manage mail aliases and org-level mail routing configuration.",
+    surfaces: ["agent"],
+  },
+  {
     scope: "mail.external",
     description: "Send mail to recipients outside the organization's domains.",
     composite: true,

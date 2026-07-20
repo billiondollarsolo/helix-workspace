@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type CSSProperties } from "react";
 import { Icons } from "@/components/icons";
 import {
+  createDriveShareLink,
+  drivePublicShareUrl,
   listDriveAccess,
   removeDriveAccess,
   shareDrive,
@@ -105,10 +107,25 @@ export function DriveShareDialog({
   };
 
   const copyLink = () => {
-    if (shareUrl === undefined || navigator.clipboard === undefined) {
+    if (navigator.clipboard === undefined) {
       return;
     }
-    void navigator.clipboard.writeText(shareUrl).then(() => setCopied(true));
+    // Prefer an explicit override URL (in-app deep link for tests/callers).
+    // Otherwise create a public share token and copy `/api/drive/share/:token`.
+    void (async () => {
+      try {
+        if (shareUrl !== undefined) {
+          await navigator.clipboard.writeText(shareUrl);
+          setCopied(true);
+          return;
+        }
+        const link = await createDriveShareLink({ objectId, role: "reader" });
+        await navigator.clipboard.writeText(drivePublicShareUrl(link.token));
+        setCopied(true);
+      } catch {
+        // Surface via shareMutation-style error path is heavier; silent fail keeps dialog usable.
+      }
+    })();
   };
 
   const busy =

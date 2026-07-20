@@ -91,6 +91,22 @@ resourcePolicy:
         match:
           expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "mail.delete" && P.attr.scopes.exists(scope, scope == "mail.delete")
 
+    # Alias routing mutations (mail.alias.create / mail.alias.delete).
+    - actions: ["mail.admin"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "mail.admin" && P.attr.scopes.exists(scope, scope == "mail.admin")
+
+    # Service-only (CRITICAL-4): mail.inbound.accept bridge. Never on user/agent principals.
+    - actions: ["mail.system"]
+      effect: EFFECT_ALLOW
+      roles: ["service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "mail.system" && P.attr.scopes.exists(scope, scope == "mail.system")
+
     - actions: ["drive.read"]
       effect: EFFECT_ALLOW
       roles: ["user", "agent", "service_account"]

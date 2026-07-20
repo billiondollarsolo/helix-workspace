@@ -6,6 +6,7 @@ import { InMemoryChatPresenceStore, InMemoryChatRoomBus, roomSubject } from "./r
 import type { ChatStore } from "./store.js";
 import type {
   ChatMessageRecord,
+  ChatPinRecord,
   ChatReadReceiptRecord,
   ChatReactionRecord,
   ChatRoomRecord,
@@ -167,8 +168,60 @@ describe("chat realtime", () => {
     expect(socket.messages).toContainEqual(
       expect.objectContaining({
         type: "error",
-        error: `Unknown or inaccessible chat room: ${roomId}`,
+        code: "forbidden",
+        message: `Unknown or inaccessible chat room: ${roomId}`,
       }),
+    );
+  });
+
+  it("honors presence status busy on touch and lists it", async () => {
+    const presence = new InMemoryChatPresenceStore({ ttlSeconds: 30 });
+    await presence.touch({ roomId, actor, status: "busy" });
+    const roster = await presence.list(roomId);
+    expect(roster).toEqual([
+      expect.objectContaining({ actorId: actor.id, status: "busy" }),
+    ]);
+  });
+
+  it("reports away after the idle threshold and drops after TTL", async () => {
+    let now = 1_000_000;
+    const presence = new InMemoryChatPresenceStore({
+      ttlSeconds: 10,
+      awayThresholdFraction: 0.5,
+      now: () => now,
+    });
+    await presence.touch({
+      roomId,
+      actor,
+      status: "available",
+      at: new Date(now),
+    });
+    now = 1_000_000 + 6_000; // past 50% of 10s
+    expect((await presence.list(roomId))[0]?.status).toBe("away");
+    now = 1_000_000 + 11_000;
+    expect(await presence.list(roomId)).toHaveLength(0);
+  });
+
+  it("rate-limits inbound frames when capacity is exhausted", async () => {
+    const socket = new FakeSocket();
+    await handleChatSocket(socket, {} as FastifyRequest, {
+      store: new FakeChatStore(),
+      actorFromRequest: () => actor,
+      bus: new InMemoryChatRoomBus(),
+      presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
+      rateLimit: { capacity: 2, refillPerSecond: 0 },
+      authGraceMs: 5_000,
+    });
+
+    socket.receive({ type: "subscribe", roomId });
+    await settle();
+    socket.receive({ type: "typing", roomId, isTyping: true });
+    await settle();
+    socket.receive({ type: "typing", roomId, isTyping: true });
+    await settle();
+
+    expect(socket.messages).toContainEqual(
+      expect.objectContaining({ type: "error", code: "rate_limited" }),
     );
   });
 });
@@ -380,6 +433,33 @@ class FakeChatStore implements ChatStore {
       return null;
     }
     return roomRecord();
+  }
+
+  async listThreadReplies(): Promise<readonly ChatMessageRecord[]> {
+    return [];
+  }
+
+  async pinMessage(input: {
+    readonly roomId: string;
+    readonly messageId: string;
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<ChatPinRecord> {
+    return {
+      roomId: input.roomId,
+      messageId: input.messageId,
+      orgId: input.orgId,
+      pinnedByActorId: input.actorId,
+      createdAt: now,
+    };
+  }
+
+  async unpinMessage(): Promise<{ readonly ok: true }> {
+    return { ok: true };
+  }
+
+  async listPins(): Promise<readonly ChatPinRecord[]> {
+    return [];
   }
 }
 

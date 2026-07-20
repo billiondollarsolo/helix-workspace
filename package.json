@@ -24,6 +24,7 @@
     "quality:k6:target": "infra/scripts/validate-k6.sh --no-mock",
     "quality:live-auth-smoke": "infra/scripts/live-auth-smoke.sh",
     "quality:live-demo-data": "bash infra/scripts/live-demo-data-smoke.sh",
+    "quality:boundaries": "node infra/scripts/verify-workspace-boundaries.mjs",
     "quality:editors-boundaries": "node infra/scripts/verify-workspace-editor-boundaries.mjs",
     "quality:editors-boundaries:test": "vitest run infra/scripts/verify-workspace-editor-boundaries.test.mjs",
     "quality:editors-contract": "bash infra/scripts/verify-editors-contract.sh",

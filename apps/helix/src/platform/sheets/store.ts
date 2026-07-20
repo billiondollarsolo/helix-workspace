@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
-import { insertNotification } from "../notifications/store.js";
+import { insertNotification } from "../notifications/index.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import { evaluateSheetFormulas, type SheetFormulaNamedRange } from "./formula.js";
 import type {

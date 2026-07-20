@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  chatRealtimeUrl,
   createChatRealtimeClient,
+  createChatRoom,
   deleteChatMessage,
   editChatMessage,
+  inviteToRoom,
   listChatMessages,
   listChatRooms,
   reactToChatMessage,
@@ -156,6 +159,77 @@ describe("chat API", () => {
     await expect(searchChat({}, fetchImpl)).rejects.toThrow("missing chat scope");
   });
 
+  it("creates rooms and invites through backend tools", async () => {
+    const room = {
+      id: "33333333-3333-4333-8333-333333333333",
+      orgId: "22222222-2222-4222-8222-222222222222",
+      kind: "chat_dm" as const,
+      subject: null,
+      createdByActorId: "11111111-1111-4111-8111-111111111111",
+      metadata: {},
+      members: [],
+      settings: null,
+      createdAt: "2026-05-20T11:00:00.000Z",
+      updatedAt: "2026-05-20T12:00:00.000Z",
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(room))
+      .mockResolvedValueOnce(
+        Response.json({
+          roomId: room.id,
+          invitedActorIds: ["55555555-5555-4555-8555-555555555555"],
+        }),
+      );
+
+    await expect(
+      createChatRoom(
+        {
+          kind: "chat_dm",
+          memberActorIds: ["55555555-5555-4555-8555-555555555555"],
+        },
+        fetchImpl,
+      ),
+    ).resolves.toEqual(room);
+    await expect(
+      inviteToRoom(
+        {
+          roomId: room.id,
+          actorIds: ["55555555-5555-4555-8555-555555555555"],
+        },
+        fetchImpl,
+      ),
+    ).resolves.toEqual({
+      roomId: room.id,
+      invitedActorIds: ["55555555-5555-4555-8555-555555555555"],
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/chat.create_room", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "chat_dm",
+        memberActorIds: ["55555555-5555-4555-8555-555555555555"],
+        isPrivate: false,
+        metadata: {},
+      }),
+    });
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/chat.invite", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        roomId: room.id,
+        actorIds: ["55555555-5555-4555-8555-555555555555"],
+        role: "member",
+      }),
+    });
+  });
+
+  it("builds chat WS URLs without access_token query params", () => {
+    const url = chatRealtimeUrl("ws://localhost/ws/chat");
+    expect(url).not.toContain("access_token");
+  });
+
   it("serializes chat websocket messages and parses realtime events", () => {
     const events: unknown[] = [];
     const client = createChatRealtimeClient({
@@ -217,7 +291,10 @@ class FakeWebSocket {
   readonly #listeners = new Map<string, Set<(event: { readonly data?: string }) => void>>();
   readyState = FakeWebSocket.OPEN;
 
-  constructor(readonly url: string) {
+  constructor(
+    readonly url: string,
+    readonly protocols?: string | string[],
+  ) {
     FakeWebSocket.instances.push(this);
   }
 

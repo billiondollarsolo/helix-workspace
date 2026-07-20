@@ -30,12 +30,17 @@ import type {
   MailThreadListResult,
   MailThreadMessage,
   MailThreadRowRecord,
+  MailAliasRecord,
+  MailDraftRecord,
   MailThreadStatePatch,
   MailVacationRecord,
   StoredMailMessage,
 } from "./types.js";
 import { MAIL_FOLDER_IDS } from "./types.js";
 import { classifyMailCategory, coerceMailCategory } from "./category.js";
+// ponytail: store.ts is the mail IO adapter surface (~1700 LOC). Split list/folder
+// projection into store-threads when next touching listThreads; keep god-file note
+// until that extraction lands fully (G9).
 
 export interface CreateMailFilterInput {
   readonly orgId: string;
@@ -101,6 +106,17 @@ export interface MailStore {
     readonly actorId: string;
     readonly id: string;
   }): Promise<MailOutboundRecord | null>;
+  markOutboundRetry?(input: {
+    readonly id: string;
+    readonly attemptCount: number;
+    readonly nextAttemptAt: Date;
+    readonly lastError: string;
+  }): Promise<MailOutboundRecord | null>;
+  markOutboundDeadLettered?(input: {
+    readonly id: string;
+    readonly lastError: string;
+    readonly deadLetteredAt?: Date;
+  }): Promise<MailOutboundRecord | null>;
   updateThreadState(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -149,6 +165,39 @@ export interface MailStore {
     readonly orgId: string;
     readonly actorId: string;
   }): Promise<readonly MailLabelRecord[]>;
+  saveDraft?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id?: string;
+    readonly threadId?: string | null;
+    readonly envelope: JsonObject;
+  }): Promise<MailDraftRecord>;
+  getDraft?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<MailDraftRecord | null>;
+  listDrafts?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<readonly MailDraftRecord[]>;
+  discardDraft?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<boolean>;
+  listAliases?(orgId: string, actorId?: string): Promise<readonly MailAliasRecord[]>;
+  createAlias?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly email: string;
+    readonly displayName?: string | null;
+    readonly isPrimary?: boolean;
+  }): Promise<MailAliasRecord>;
+  deleteAlias?(input: {
+    readonly orgId: string;
+    readonly id: string;
+  }): Promise<boolean>;
 }
 
 export interface PostgresMailStoreOptions {
@@ -197,6 +246,9 @@ interface MailOutboundRow {
   readonly failed_at: Date | null;
   readonly last_error: string | null;
   readonly provider_message_id: string | null;
+  readonly attempt_count?: number;
+  readonly next_attempt_at?: Date | null;
+  readonly dead_lettered_at?: Date | null;
   readonly delivery_metadata: JsonObject;
   readonly created_at: Date;
   readonly updated_at: Date;
@@ -487,6 +539,46 @@ export class PostgresMailStore
         and id = ${input.id}
         and status = 'queued'
         and undo_until > now()
+      returning *
+    `) as unknown as readonly MailOutboundRow[];
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
+  async markOutboundRetry(input: {
+    readonly id: string;
+    readonly attemptCount: number;
+    readonly nextAttemptAt: Date;
+    readonly lastError: string;
+  }): Promise<MailOutboundRecord | null> {
+    const rows = (await this.sql`
+      update mail_outbound_messages
+      set
+        status = 'queued',
+        attempt_count = ${input.attemptCount},
+        next_attempt_at = ${input.nextAttemptAt},
+        last_error = ${input.lastError},
+        updated_at = now()
+      where id = ${input.id}
+      returning *
+    `) as unknown as readonly MailOutboundRow[];
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
+  async markOutboundDeadLettered(input: {
+    readonly id: string;
+    readonly lastError: string;
+    readonly deadLetteredAt?: Date;
+  }): Promise<MailOutboundRecord | null> {
+    const deadAt = input.deadLetteredAt ?? new Date();
+    const rows = (await this.sql`
+      update mail_outbound_messages
+      set
+        status = 'failed',
+        failed_at = ${deadAt},
+        dead_lettered_at = ${deadAt},
+        last_error = ${input.lastError},
+        updated_at = now()
+      where id = ${input.id}
       returning *
     `) as unknown as readonly MailOutboundRow[];
     return rows[0] === undefined ? null : mapOutbound(rows[0]);
@@ -893,6 +985,19 @@ export class PostgresMailStore
     // category-bucketed.
     const tab = folder === "inbox" ? (input.tab ?? null) : null;
 
+    // True drafts live in mail_drafts (A2.1). Queued outbound (undo window) still
+    // surfaces here until sent/cancelled so the Drafts folder is never empty of
+    // in-progress compose work.
+    if (folder === "drafts") {
+      return this.listDraftFolderThreads({
+        orgId: input.orgId,
+        actorId: input.actorId,
+        query: rawQuery,
+        limit,
+        offset,
+      });
+    }
+
     const rows = (await this.sql`
       with latest as (
         select distinct on (m.thread_id)
@@ -1109,6 +1214,7 @@ export class PostgresMailStore
             case when deleted_at is null and snoozed_until is not null
               and snoozed_until > ${now} then 'snoozed' end,
             case when deleted_at is null and has_outbound is true then 'sent' end,
+            -- Queued outbound still contributes to Drafts totals (undo window).
             case when deleted_at is null and outbound_status = 'queued' then 'drafts' end,
             case when deleted_at is null and spam_at is null
               and coalesce(archived_at, thread_archived_at) is not null then 'archive' end,
@@ -1122,13 +1228,24 @@ export class PostgresMailStore
       group by folder
     `) as unknown as readonly MailFolderCountRow[];
 
+    // First-class mail_drafts rows are not message-backed; fold their count into Drafts.
+    const draftCountRows = (await this.sql`
+      select count(*)::int as total
+      from mail_drafts
+      where org_id = ${input.orgId}
+        and actor_id = ${input.actorId}
+    `) as unknown as readonly { readonly total: number }[];
+    const trueDraftTotal = draftCountRows[0]?.total ?? 0;
+
     const byFolder = new Map(rows.map((row) => [row.folder, row]));
     return MAIL_FOLDER_IDS.map((id) => {
       const row = byFolder.get(id);
+      const baseTotal = row?.total ?? 0;
+      const total = id === "drafts" ? baseTotal + trueDraftTotal : baseTotal;
       return {
         id,
         label: MAIL_FOLDER_LABELS[id],
-        total: row?.total ?? 0,
+        total,
         unread: row?.unread ?? 0,
       };
     });
@@ -1165,6 +1282,296 @@ export class PostgresMailStore
     `) as unknown as readonly MailLabelRow[];
     return rows.map(mapLabel);
   }
+
+  async saveDraft(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id?: string;
+    readonly threadId?: string | null;
+    readonly envelope: JsonObject;
+  }): Promise<MailDraftRecord> {
+    if (input.id !== undefined) {
+      const updated = (await this.sql`
+        update mail_drafts
+        set
+          thread_id = ${input.threadId ?? null},
+          envelope = ${this.sql.json(toSqlJson(input.envelope))},
+          updated_at = now()
+        where id = ${input.id}
+          and org_id = ${input.orgId}
+          and actor_id = ${input.actorId}
+        returning *
+      `) as unknown as readonly MailDraftRow[];
+      if (updated[0] !== undefined) {
+        return mapDraft(updated[0]);
+      }
+    }
+    const rows = (await this.sql`
+      insert into mail_drafts (org_id, actor_id, thread_id, envelope)
+      values (
+        ${input.orgId},
+        ${input.actorId},
+        ${input.threadId ?? null},
+        ${this.sql.json(toSqlJson(input.envelope))}
+      )
+      returning *
+    `) as unknown as readonly MailDraftRow[];
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error("Failed to save mail draft.");
+    }
+    return mapDraft(row);
+  }
+
+  async getDraft(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<MailDraftRecord | null> {
+    const rows = (await this.sql`
+      select * from mail_drafts
+      where id = ${input.id}
+        and org_id = ${input.orgId}
+        and actor_id = ${input.actorId}
+      limit 1
+    `) as unknown as readonly MailDraftRow[];
+    return rows[0] === undefined ? null : mapDraft(rows[0]);
+  }
+
+  async listDrafts(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<readonly MailDraftRecord[]> {
+    const rows = (await this.sql`
+      select * from mail_drafts
+      where org_id = ${input.orgId}
+        and actor_id = ${input.actorId}
+      order by updated_at desc
+    `) as unknown as readonly MailDraftRow[];
+    return rows.map(mapDraft);
+  }
+
+  /**
+   * Drafts folder projection: first-class `mail_drafts` rows plus queued
+   * outbound (undo-send window). Pure message-backed SQL cannot see drafts
+   * that were never sent.
+   */
+  private async listDraftFolderThreads(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly query: string;
+    readonly limit: number;
+    readonly offset: number;
+  }): Promise<MailThreadListResult> {
+    const drafts = await this.listDrafts({
+      orgId: input.orgId,
+      actorId: input.actorId,
+    });
+    const draftRows: MailThreadRowRecord[] = drafts.map((draft) => {
+      const envelope = draft.envelope as {
+        readonly subject?: string;
+        readonly text?: string;
+        readonly html?: string;
+        readonly to?: readonly { readonly address?: string; readonly name?: string }[];
+      };
+      const to = envelope.to?.[0];
+      const subject = envelope.subject ?? "(no subject)";
+      const preview = (envelope.text ?? envelope.html ?? "").slice(0, 240);
+      return {
+        threadId: draft.threadId ?? draft.id,
+        messageId: draft.id,
+        subject,
+        from: "Draft",
+        fromEmail: to?.address ?? "",
+        preview,
+        time: draft.updatedAt.toISOString(),
+        unread: false,
+        starred: false,
+        hasAttachment: false,
+        messageCount: 0,
+        labels: [],
+        category: "primary",
+        folder: "drafts",
+        snoozedUntil: null,
+      };
+    });
+
+    // Queued outbound still appears under Drafts until delivered/cancelled.
+    const queuedRows = (await this.sql`
+      select
+        coalesce(ob.thread_id, ob.id) as thread_id,
+        coalesce(ob.message_id, ob.id) as message_id,
+        coalesce(ob.envelope->>'subject', '(no subject)') as subject,
+        coalesce(ob.envelope->'to'->0->>'address', '') as from_email,
+        coalesce(ob.envelope->>'text', '') as body,
+        ob.updated_at as sent_at
+      from mail_outbound_messages ob
+      where ob.org_id = ${input.orgId}
+        and ob.actor_id = ${input.actorId}
+        and ob.status = 'queued'
+      order by ob.updated_at desc
+    `) as unknown as readonly {
+      readonly thread_id: string;
+      readonly message_id: string;
+      readonly subject: string;
+      readonly from_email: string;
+      readonly body: string;
+      readonly sent_at: Date;
+    }[];
+
+    const outboundRows: MailThreadRowRecord[] = queuedRows.map((row) => ({
+      threadId: row.thread_id,
+      messageId: row.message_id,
+      subject: row.subject,
+      from: "Outbox",
+      fromEmail: row.from_email,
+      preview: row.body.slice(0, 240),
+      time: row.sent_at.toISOString(),
+      unread: false,
+      starred: false,
+      hasAttachment: false,
+      messageCount: 1,
+      labels: [],
+      category: "primary",
+      folder: "drafts",
+      snoozedUntil: null,
+    }));
+
+    const q = input.query.trim().toLowerCase();
+    const merged = [...draftRows, ...outboundRows]
+      .filter((row) => {
+        if (q.length === 0) return true;
+        return (
+          row.subject.toLowerCase().includes(q) ||
+          row.preview.toLowerCase().includes(q) ||
+          row.fromEmail.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
+
+    const total = merged.length;
+    const threads = merged.slice(input.offset, input.offset + input.limit);
+    return { threads, total, limit: input.limit, offset: input.offset };
+  }
+
+  async discardDraft(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<boolean> {
+    const rows = (await this.sql`
+      delete from mail_drafts
+      where id = ${input.id}
+        and org_id = ${input.orgId}
+        and actor_id = ${input.actorId}
+      returning id
+    `) as unknown as readonly { readonly id: string }[];
+    return rows[0] !== undefined;
+  }
+
+  async listAliases(orgId: string, actorId?: string): Promise<readonly MailAliasRecord[]> {
+    const rows =
+      actorId === undefined
+        ? ((await this.sql`
+            select * from mail_aliases
+            where org_id = ${orgId}
+              and disabled_at is null
+            order by is_primary desc, lower(email) asc
+          `) as unknown as readonly MailAliasRow[])
+        : ((await this.sql`
+            select * from mail_aliases
+            where org_id = ${orgId}
+              and actor_id = ${actorId}
+              and disabled_at is null
+            order by is_primary desc, lower(email) asc
+          `) as unknown as readonly MailAliasRow[]);
+    return rows.map(mapAlias);
+  }
+
+  async createAlias(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly email: string;
+    readonly displayName?: string | null;
+    readonly isPrimary?: boolean;
+  }): Promise<MailAliasRecord> {
+    const rows = (await this.sql`
+      insert into mail_aliases (org_id, actor_id, email, display_name, is_primary, enabled)
+      values (
+        ${input.orgId},
+        ${input.actorId},
+        ${input.email},
+        ${input.displayName ?? null},
+        ${input.isPrimary ?? false},
+        true
+      )
+      returning *
+    `) as unknown as readonly MailAliasRow[];
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error("Failed to create mail alias.");
+    }
+    return mapAlias(row);
+  }
+
+  async deleteAlias(input: {
+    readonly orgId: string;
+    readonly id: string;
+  }): Promise<boolean> {
+    const rows = (await this.sql`
+      update mail_aliases
+      set disabled_at = now(), enabled = false, updated_at = now()
+      where id = ${input.id}
+        and org_id = ${input.orgId}
+        and disabled_at is null
+      returning id
+    `) as unknown as readonly { readonly id: string }[];
+    return rows[0] !== undefined;
+  }
+}
+
+interface MailDraftRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly actor_id: string;
+  readonly thread_id: string | null;
+  readonly envelope: JsonObject;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+}
+
+interface MailAliasRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly actor_id: string;
+  readonly email: string;
+  readonly display_name: string | null;
+  readonly is_primary: boolean;
+  readonly created_at: Date;
+}
+
+function mapDraft(row: MailDraftRow): MailDraftRecord {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    actorId: row.actor_id,
+    threadId: row.thread_id,
+    envelope: row.envelope,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapAlias(row: MailAliasRow): MailAliasRecord {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    actorId: row.actor_id,
+    email: row.email,
+    displayName: row.display_name,
+    isPrimary: row.is_primary,
+    createdAt: row.created_at,
+  };
 }
 
 const MAIL_FOLDER_LABELS: Readonly<Record<MailFolderId, string>> = {
@@ -1241,8 +1648,14 @@ async function insertMailMessage(
       ? undefined
       : (await options.storageResolver?.({ orgId: input.orgId }))?.client;
   for (const attachment of input.attachments ?? []) {
+    const content = attachment.content;
+    if (content === undefined) {
+      throw new Error(
+        `Mail attachment ${attachment.filename ?? "unnamed"} is missing content bytes.`,
+      );
+    }
     const storageKey = `mail/${messageId}/${attachment.filename ?? randomUUID()}`;
-    const sha256 = createHash("sha256").update(attachment.content).digest("hex");
+    const sha256 = createHash("sha256").update(content).digest("hex");
     const objectRows = (await sql`
       insert into objects (org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
       values (
@@ -1251,7 +1664,7 @@ async function insertMailMessage(
         'mail_attachment',
         ${storageKey},
         ${attachment.mimeType},
-        ${attachment.content.byteLength},
+        ${content.byteLength},
         ${sha256},
         ${sql.json(
           toSqlJson({
@@ -1266,7 +1679,7 @@ async function insertMailMessage(
     if (objectId !== undefined) {
       await storage?.put({
         key: storageKey,
-        body: attachment.content,
+        body: content,
         contentType: attachment.mimeType,
         metadata: {
           objectId,
@@ -1381,6 +1794,9 @@ function mapOutbound(row: MailOutboundRow | undefined): MailOutboundRecord {
     deliveryMetadata: row.delivery_metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    attemptCount: row.attempt_count ?? 0,
+    nextAttemptAt: row.next_attempt_at ?? null,
+    deadLetteredAt: row.dead_lettered_at ?? null,
   };
 }
 

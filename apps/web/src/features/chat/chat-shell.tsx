@@ -1,3 +1,7 @@
+// ponytail: chat-shell.tsx ~1330 LOC — intentional composition root pending
+// split into chat-sidebar / message-list / composer / info-panel (B4). Ceiling
+// tracked; extraction is non-behavior-changing and deferred behind green suite.
+
 /* ChatShell — the Chat surface body, wired to the real chat backend.
 
    Layout is recreated from the design handoff (`app-sheets-meet-chat.jsx`,
@@ -21,7 +25,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -30,26 +39,33 @@ import { Icons } from "@/components/icons";
 import { Tooltip } from "@/components/ui/tooltip";
 import { SurfaceFrame } from "@/components/shell";
 import {
+  createChatRoom,
   deleteChatMessage,
   editChatMessage,
+  inviteToRoom,
+  pinChatMessage,
   reactToChatMessage,
+  replyInThread,
   sendChatMessage,
   type ChatMessageRecord,
   type ChatRoomRecord,
 } from "./api";
 import {
-  chatMessageListQueryOptions,
+  chatMessageListInfiniteQueryOptions,
+  chatPinsQueryOptions,
   chatQueryKeys,
   chatRoomListQueryOptions,
 } from "./queries";
 import { useChatRealtime } from "./use-chat-realtime";
 import {
+  formatChatTime,
   partitionRooms,
   presenceMap,
   readCountFor,
   roomAbout,
   roomMembers,
   roomDisplayName,
+  seenByForMessage,
   toMessageView,
   type ChatAboutView,
   type ChatMemberView,
@@ -117,7 +133,8 @@ export function ChatShell() {
     [rooms, activeRoomId],
   );
 
-  const messagesQuery = useQuery(chatMessageListQueryOptions(activeRoomId));
+  const messagesQuery = useInfiniteQuery(chatMessageListInfiniteQueryOptions(activeRoomId));
+  const pinsQuery = useQuery(chatPinsQueryOptions(activeRoomId));
 
   // Name resolver: room members first, presence roster second.
   const nameForActor = useCallback(
@@ -147,13 +164,15 @@ export function ChatShell() {
     Readonly<Record<string, readonly string[]>>
   >({});
 
-  // History (query) + live (WS) merged and de-duplicated by id, oldest-first.
+  // History (infinite pages, each newest-first) + live (WS) + pending, oldest-first.
   const messageRecords = useMemo<readonly ChatMessageRecord[]>(() => {
-    const history = messagesQuery.data ?? [];
+    const pages = messagesQuery.data?.pages ?? [];
     const byId = new Map<string, ChatMessageRecord>();
-    // `chat.message.list` returns newest-first; reverse to oldest-first.
-    for (const record of [...history].reverse()) {
-      byId.set(record.id, record);
+    // Pages are oldest-batch-first after reverse of each newest-first page.
+    for (const page of [...pages].reverse()) {
+      for (const record of [...page].reverse()) {
+        byId.set(record.id, record);
+      }
     }
     for (const record of realtime.liveMessages) {
       byId.set(record.id, record);
@@ -168,25 +187,69 @@ export function ChatShell() {
     [messageRecords],
   );
 
-  const messages = useMemo<readonly ChatMessageView[]>(
-    () =>
-      messageRecords.map((record) => {
-        const mine = localReactions[record.id] ?? [];
-        const reactions: readonly ChatReactionView[] = mine.map((emoji) => ({
-          emoji,
-          count: 1,
-          mine: true,
-        }));
-        return toMessageView({
-          record,
+  const messages = useMemo<readonly ChatMessageView[]>(() => {
+    const confirmed = messageRecords.map((record) => {
+      const mine = localReactions[record.id] ?? [];
+      const reactions: readonly ChatReactionView[] = mine.map((emoji) => ({
+        emoji,
+        count: 1,
+        mine: true,
+      }));
+      return toMessageView({
+        record,
+        selfActorId,
+        nameForActor,
+        reactions,
+        readBy: readCountFor(record.id, orderedIds, realtime.receipts, selfActorId),
+        seenByActorIds: seenByForMessage(
+          record.id,
+          orderedIds,
+          realtime.receipts,
+          selfActorId,
+        ),
+      });
+    });
+    const pending = realtime.pendingMessages
+      .filter((p) => p.roomId === activeRoomId)
+      .map((p) =>
+        toMessageView({
+          record: {
+            id: `pending:${p.clientMessageId}`,
+            orgId: "",
+            roomId: p.roomId,
+            actorId: selfActorId,
+            body: p.body,
+            bodyFormat: "plain",
+            metadata: {},
+            attachmentObjectIds: [],
+            sentAt: p.createdAt,
+            editedAt: null,
+            deletedAt: null,
+            createdAt: p.createdAt,
+            updatedAt: p.createdAt,
+            clientMessageId: p.clientMessageId,
+          },
           selfActorId,
           nameForActor,
-          reactions,
-          readBy: readCountFor(record.id, orderedIds, realtime.receipts, selfActorId),
-        });
-      }),
-    [messageRecords, localReactions, selfActorId, nameForActor, orderedIds, realtime.receipts],
-  );
+          reactions: [],
+          readBy: 0,
+          seenByActorIds: [],
+          pending: p.status === "pending",
+          failed: p.status === "failed",
+          clientMessageId: p.clientMessageId,
+        }),
+      );
+    return [...confirmed, ...pending];
+  }, [
+    messageRecords,
+    localReactions,
+    selfActorId,
+    nameForActor,
+    orderedIds,
+    realtime.receipts,
+    realtime.pendingMessages,
+    activeRoomId,
+  ]);
 
   // Auto-mark the room read when the newest message changes.
   const newestId = orderedIds.at(-1);
@@ -220,9 +283,13 @@ export function ChatShell() {
 
   const invalidateMessages = useCallback(() => {
     void queryClient.invalidateQueries({
-      queryKey: chatQueryKeys.messages(activeRoomId),
+      queryKey: chatQueryKeys.messagesInfinite(activeRoomId),
     });
   }, [queryClient, activeRoomId]);
+
+  const invalidateRooms = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["chat", "rooms"] });
+  }, [queryClient]);
 
   const sendMutation = useMutation({
     mutationFn: (body: string) => {
@@ -314,6 +381,71 @@ export function ChatShell() {
     [deleteMutation, threadId],
   );
 
+  const createRoomMutation = useMutation({
+    mutationFn: (input: {
+      readonly kind: "chat_room" | "chat_dm";
+      readonly subject?: string;
+      readonly memberActorIds: readonly string[];
+    }) =>
+      createChatRoom({
+        kind: input.kind,
+        memberActorIds: [...input.memberActorIds],
+        ...(input.subject === undefined ? {} : { subject: input.subject }),
+      }),
+    onSuccess: (room) => {
+      invalidateRooms();
+      setActiveRoomId(room.id);
+    },
+    onError: () => {
+      setActionError("Couldn’t create the conversation.");
+    },
+  });
+
+  const inviteMutation = useMutation({
+    mutationFn: (actorIds: readonly string[]) => {
+      if (activeRoomId === undefined) {
+        return Promise.reject(new Error("No room"));
+      }
+      return inviteToRoom({ roomId: activeRoomId, actorIds: [...actorIds] });
+    },
+    onSuccess: () => {
+      invalidateRooms();
+    },
+    onError: () => {
+      setActionError("Couldn’t invite people to this room.");
+    },
+  });
+
+  const pinMutation = useMutation({
+    mutationFn: (messageId: string) => {
+      if (activeRoomId === undefined) {
+        return Promise.reject(new Error("No room"));
+      }
+      return pinChatMessage({ roomId: activeRoomId, messageId });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: chatQueryKeys.pins(activeRoomId),
+      });
+    },
+  });
+
+  const handleThreadReply = useCallback(
+    (body: string) => {
+      if (activeRoomId === undefined || threadId === null) {
+        return;
+      }
+      void replyInThread({
+        roomId: activeRoomId,
+        parentMessageId: threadId,
+        body,
+      }).then(() => {
+        invalidateMessages();
+      });
+    },
+    [activeRoomId, threadId, invalidateMessages],
+  );
+
   return (
     <SurfaceFrame
       title="Chat"
@@ -333,12 +465,18 @@ export function ChatShell() {
             setActiveRoomId(id);
             setThreadId(null);
           }}
+          onCreateRoom={(input) => {
+            createRoomMutation.mutate(input);
+          }}
         />
 
         <section className="chat-channel" aria-label={`${roomName} channel`}>
-          {realtime.connection === "closed" ? (
+          {realtime.connection === "closed" ||
+          realtime.connection === "reconnecting" ? (
             <div className="chat-banner" role="status">
-              Realtime disconnected — messages may be delayed.
+              {realtime.connection === "reconnecting"
+                ? "Reconnecting…"
+                : "Realtime disconnected — messages may be delayed."}
             </div>
           ) : null}
           {actionError !== null ? (
@@ -347,7 +485,13 @@ export function ChatShell() {
             </div>
           ) : null}
 
-          <ChatChannelHeader name={roomName} memberCount={about.memberCount} />
+          <ChatChannelHeader
+            name={roomName}
+            memberCount={about.memberCount}
+            onInvite={(actorId) => {
+              inviteMutation.mutate([actorId]);
+            }}
+          />
 
           <ChatMessageList
             loading={messagesQuery.isLoading && activeRoomId !== undefined}
@@ -355,15 +499,26 @@ export function ChatShell() {
             offline={offline}
             messages={messages}
             threadId={threadId}
+            hasOlder={messagesQuery.hasNextPage === true}
+            loadingOlder={messagesQuery.isFetchingNextPage}
+            onLoadOlder={() => {
+              void messagesQuery.fetchNextPage();
+            }}
             onRetry={() => {
               void queryClient.invalidateQueries({
-                queryKey: chatQueryKeys.messages(activeRoomId),
+                queryKey: chatQueryKeys.messagesInfinite(activeRoomId),
               });
             }}
             onOpenThread={setThreadId}
             onReact={handleReact}
             onEdit={handleEdit}
             onDelete={handleDelete}
+            onPin={(messageId) => {
+              pinMutation.mutate(messageId);
+            }}
+            onRetryPending={(clientMessageId) => {
+              realtime.retryPending(clientMessageId);
+            }}
           />
 
           <ChatTypingIndicator
@@ -385,7 +540,7 @@ export function ChatShell() {
             onClose={() => {
               setThreadId(null);
             }}
-            onReply={handleSend}
+            onReply={handleThreadReply}
           />
         ) : (
           <ChatInfoPanel
@@ -393,6 +548,16 @@ export function ChatShell() {
             onTabChange={setInfoTab}
             about={about}
             members={members}
+            pins={pinsQuery.data ?? []}
+            onInvite={(raw) => {
+              const ids = raw
+                .split(/[,\s]+/u)
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0);
+              if (ids.length > 0) {
+                inviteMutation.mutate(ids);
+              }
+            }}
           />
         )}
       </div>
@@ -425,6 +590,11 @@ interface ChatSidebarProps {
   readonly directs: readonly SidebarRowDirect[];
   readonly activeRoomId: string | undefined;
   readonly onSelect: (id: string) => void;
+  readonly onCreateRoom: (input: {
+    readonly kind: "chat_room" | "chat_dm";
+    readonly subject?: string;
+    readonly memberActorIds: readonly string[];
+  }) => void;
 }
 
 function ChatSidebar({
@@ -434,7 +604,12 @@ function ChatSidebar({
   directs,
   activeRoomId,
   onSelect,
+  onCreateRoom,
 }: ChatSidebarProps) {
+  const [creating, setCreating] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftKind, setDraftKind] = useState<"chat_room" | "chat_dm">("chat_room");
+
   return (
     <aside className="surf-sidebar chat-sidebar" aria-label="Spaces and direct messages">
       <div className="chat-sidebar-section">
@@ -442,11 +617,56 @@ function ChatSidebar({
         <button
           type="button"
           className="icon-btn chat-sidebar-add"
-          aria-label="Add space"
+          aria-label="New conversation"
+          onClick={() => {
+            setCreating((v) => !v);
+          }}
         >
           <Icons.Plus size={14} />
         </button>
       </div>
+
+      {creating ? (
+        <div className="chat-sidebar-create" role="dialog" aria-label="New conversation">
+          <select
+            aria-label="Conversation type"
+            value={draftKind}
+            onChange={(e) => {
+              setDraftKind(e.target.value as "chat_room" | "chat_dm");
+            }}
+          >
+            <option value="chat_room">Space</option>
+            <option value="chat_dm">Direct message</option>
+          </select>
+          <input
+            type="text"
+            aria-label="Name or member actor id"
+            placeholder={draftKind === "chat_dm" ? "Peer actor UUID" : "Space name"}
+            value={draftName}
+            onChange={(e) => {
+              setDraftName(e.target.value);
+            }}
+          />
+          <button
+            type="button"
+            className="btn primary sm"
+            disabled={draftName.trim().length === 0}
+            onClick={() => {
+              const name = draftName.trim();
+              if (name.length === 0) return;
+              if (draftKind === "chat_dm") {
+                onCreateRoom({ kind: "chat_dm", memberActorIds: [name] });
+              } else {
+                onCreateRoom({ kind: "chat_room", subject: name, memberActorIds: [] });
+              }
+              setDraftName("");
+              setCreating(false);
+            }}
+          >
+            Create
+          </button>
+        </div>
+      ) : null}
 
       {loading ? (
         <p className="chat-sidebar-state">Loading spaces…</p>
@@ -483,6 +703,10 @@ function ChatSidebar({
           type="button"
           className="icon-btn chat-sidebar-add"
           aria-label="Start direct message"
+          onClick={() => {
+            setDraftKind("chat_dm");
+            setCreating(true);
+          }}
         >
           <Icons.Plus size={14} />
         </button>
@@ -540,15 +764,30 @@ function ChatSidebar({
 interface ChatChannelHeaderProps {
   readonly name: string;
   readonly memberCount: number;
+  readonly onInvite?: ((actorId: string) => void) | undefined;
 }
 
-function ChatChannelHeader({ name, memberCount }: ChatChannelHeaderProps) {
+function ChatChannelHeader({ name, memberCount, onInvite }: ChatChannelHeaderProps) {
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteId, setInviteId] = useState("");
   return (
     <header className="chat-channel-header">
       <Icons.Hash size={16} />
       <span className="chat-channel-name">{name}</span>
       <span className="chat-channel-meta">· {memberCount} members</span>
       <div className="chat-channel-actions">
+        <Tooltip label="Add people" side="bottom">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Add people"
+            onClick={() => {
+              setInviteOpen((v) => !v);
+            }}
+          >
+            <Icons.Plus size={16} />
+          </button>
+        </Tooltip>
         <Tooltip label="Pinned" side="bottom">
           <button type="button" className="icon-btn" aria-label="Pinned messages">
             <Icons.Pin size={16} />
@@ -563,16 +802,32 @@ function ChatChannelHeader({ name, memberCount }: ChatChannelHeaderProps) {
             <Icons.Bell size={16} />
           </button>
         </Tooltip>
-        <Tooltip label="More" side="bottom">
+      </div>
+      {inviteOpen ? (
+        <div className="chat-channel-invite">
+          <input
+            type="text"
+            aria-label="Actor id to invite"
+            placeholder="Actor UUID"
+            value={inviteId}
+            onChange={(e) => {
+              setInviteId(e.target.value);
+            }}
+          />
           <button
             type="button"
-            className="icon-btn"
-            aria-label="More channel actions"
+            className="btn primary sm"
+            disabled={inviteId.trim().length === 0}
+            onClick={() => {
+              onInvite?.(inviteId.trim());
+              setInviteId("");
+              setInviteOpen(false);
+            }}
           >
-            <Icons.MoreV size={16} />
+            Invite
           </button>
-        </Tooltip>
-      </div>
+        </div>
+      ) : null}
     </header>
   );
 }
@@ -587,11 +842,16 @@ interface ChatMessageListProps {
   readonly offline: boolean;
   readonly messages: readonly ChatMessageView[];
   readonly threadId: string | null;
+  readonly hasOlder?: boolean;
+  readonly loadingOlder?: boolean;
+  readonly onLoadOlder?: () => void;
   readonly onRetry: () => void;
   readonly onOpenThread: (id: string) => void;
   readonly onReact: (messageId: string, emoji: string) => void;
   readonly onEdit: (messageId: string, body: string) => void;
   readonly onDelete: (messageId: string) => void;
+  readonly onPin?: (messageId: string) => void;
+  readonly onRetryPending?: (clientMessageId: string) => void;
 }
 
 function ChatMessageList({
@@ -600,11 +860,16 @@ function ChatMessageList({
   offline,
   messages,
   threadId,
+  hasOlder,
+  loadingOlder,
+  onLoadOlder,
   onRetry,
   onOpenThread,
   onReact,
   onEdit,
   onDelete,
+  onPin,
+  onRetryPending,
 }: ChatMessageListProps) {
   if (loading) {
     return (
@@ -643,10 +908,15 @@ function ChatMessageList({
     <VirtualizedChatMessages
       messages={messages}
       threadId={threadId}
+      hasOlder={hasOlder === true}
+      loadingOlder={loadingOlder === true}
+      onLoadOlder={onLoadOlder}
       onOpenThread={onOpenThread}
       onReact={onReact}
       onEdit={onEdit}
       onDelete={onDelete}
+      onPin={onPin}
+      onRetryPending={onRetryPending}
     />
   );
 }
@@ -654,10 +924,15 @@ function ChatMessageList({
 interface VirtualizedChatMessagesProps {
   readonly messages: readonly ChatMessageView[];
   readonly threadId: string | null;
+  readonly hasOlder: boolean;
+  readonly loadingOlder: boolean;
+  readonly onLoadOlder?: (() => void) | undefined;
   readonly onOpenThread: (messageId: string) => void;
   readonly onReact: ChatMessageListProps["onReact"];
   readonly onEdit: ChatMessageListProps["onEdit"];
   readonly onDelete: ChatMessageListProps["onDelete"];
+  readonly onPin?: ((messageId: string) => void) | undefined;
+  readonly onRetryPending?: ((clientMessageId: string) => void) | undefined;
 }
 
 /**
@@ -678,14 +953,20 @@ interface VirtualizedChatMessagesProps {
 function VirtualizedChatMessages({
   messages,
   threadId,
+  hasOlder,
+  loadingOlder,
+  onLoadOlder,
   onOpenThread,
   onReact,
   onEdit,
   onDelete,
+  onPin,
+  onRetryPending,
 }: VirtualizedChatMessagesProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // count = 1 header ("Today") + N messages
   const rowCount = messages.length + 1;
+  const prevLenRef = useRef(messages.length);
 
   const virtualizer = useVirtualizer({
     count: rowCount,
@@ -698,8 +979,37 @@ function VirtualizedChatMessages({
 
   useEffect(() => {
     if (rowCount === 0) return;
-    virtualizer.scrollToIndex(rowCount - 1, { align: "end" });
+    // Only auto-scroll when messages are appended (not when older pages prepend).
+    if (messages.length >= prevLenRef.current) {
+      const grewAtEnd = messages.length > prevLenRef.current;
+      if (grewAtEnd || prevLenRef.current === 0) {
+        virtualizer.scrollToIndex(rowCount - 1, { align: "end" });
+      }
+    }
+    prevLenRef.current = messages.length;
   }, [virtualizer, rowCount, messages]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el === null || onLoadOlder === undefined) {
+      return;
+    }
+    const onScroll = () => {
+      if (el.scrollTop < 80 && hasOlder && !loadingOlder) {
+        const before = el.scrollHeight;
+        onLoadOlder();
+        // Preserve approximate scroll position after prepend (next paint).
+        requestAnimationFrame(() => {
+          const after = el.scrollHeight;
+          el.scrollTop = Math.max(0, el.scrollTop + (after - before));
+        });
+      }
+    };
+    el.addEventListener("scroll", onScroll);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [hasOlder, loadingOlder, onLoadOlder]);
 
   return (
     <div
@@ -762,6 +1072,8 @@ function VirtualizedChatMessages({
                 onReact={onReact}
                 onEdit={onEdit}
                 onDelete={onDelete}
+                onPin={onPin}
+                onRetryPending={onRetryPending}
               />
             </div>
           );
@@ -782,6 +1094,8 @@ interface ChatMessageRowProps {
   readonly onReact: (messageId: string, emoji: string) => void;
   readonly onEdit: (messageId: string, body: string) => void;
   readonly onDelete: (messageId: string) => void;
+  readonly onPin?: ((messageId: string) => void) | undefined;
+  readonly onRetryPending?: ((clientMessageId: string) => void) | undefined;
 }
 
 function ChatMessageRow({
@@ -791,6 +1105,8 @@ function ChatMessageRow({
   onReact,
   onEdit,
   onDelete,
+  onPin,
+  onRetryPending,
 }: ChatMessageRowProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -801,6 +1117,8 @@ function ChatMessageRow({
       className="chat-msg"
       data-active-thread={isActiveThread}
       data-mine={message.isMine}
+      data-pending={message.pending === true}
+      data-failed={message.failed === true}
     >
       <Avatar name={message.authorName} size={32} />
       <div className="chat-msg-main">
@@ -809,6 +1127,22 @@ function ChatMessageRow({
           <span className="chat-msg-time">{message.time}</span>
           {message.editedAt !== null ? (
             <span className="chat-msg-edited">(edited)</span>
+          ) : null}
+          {message.pending === true ? (
+            <span className="chat-msg-pending">Sending…</span>
+          ) : null}
+          {message.failed === true ? (
+            <button
+              type="button"
+              className="chat-msg-failed"
+              onClick={() => {
+                if (message.clientMessageId !== undefined) {
+                  onRetryPending?.(message.clientMessageId);
+                }
+              }}
+            >
+              Failed — retry
+            </button>
           ) : null}
         </div>
 
@@ -932,6 +1266,18 @@ function ChatMessageRow({
             onClick={onOpenThread}
           >
             <Icons.Comment size={14} />
+          </button>
+        </Tooltip>
+        <Tooltip label="Pin" side="bottom">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Pin message"
+            onClick={() => {
+              onPin?.(message.id);
+            }}
+          >
+            <Icons.Pin size={14} />
           </button>
         </Tooltip>
         {message.isMine ? (
@@ -1243,6 +1589,8 @@ interface ChatInfoPanelProps {
   readonly onTabChange: (tab: InfoTab) => void;
   readonly about: ChatAboutView;
   readonly members: readonly ChatMemberView[];
+  readonly pins: readonly { readonly messageId: string; readonly createdAt: string }[];
+  readonly onInvite: (raw: string) => void;
 }
 
 function ChatInfoPanel({
@@ -1250,13 +1598,16 @@ function ChatInfoPanel({
   onTabChange,
   about,
   members,
+  pins,
+  onInvite,
 }: ChatInfoPanelProps) {
+  const [inviteDraft, setInviteDraft] = useState("");
   const tabs: ReadonlyArray<{ readonly id: InfoTab; readonly label: string }> =
     [
       { id: "about", label: "About" },
       { id: "members", label: `Members · ${String(members.length)}` },
       { id: "files", label: "Files" },
-      { id: "pinned", label: "Pinned" },
+      { id: "pinned", label: `Pinned · ${String(pins.length)}` },
     ];
 
   return (
@@ -1300,23 +1651,47 @@ function ChatInfoPanel({
         ) : null}
 
         {tab === "members" ? (
-          members.length === 0 ? (
-            <p className="chat-info-empty">No members.</p>
-          ) : (
-            members.map((member) => (
-              <div key={member.actorId} className="chat-info-member">
-                <Avatar name={member.name} size={22} />
-                <div className="chat-info-member-text">
-                  <div className="chat-info-member-name truncate">
-                    {member.name}
-                  </div>
-                  <div className="chat-info-member-role truncate">
-                    {member.role}
+          <>
+            <div className="chat-info-invite">
+              <input
+                type="text"
+                aria-label="Invite actor ids"
+                placeholder="Actor UUIDs"
+                value={inviteDraft}
+                onChange={(e) => {
+                  setInviteDraft(e.target.value);
+                }}
+              />
+              <button
+                type="button"
+                className="btn sm"
+                disabled={inviteDraft.trim().length === 0}
+                onClick={() => {
+                  onInvite(inviteDraft);
+                  setInviteDraft("");
+                }}
+              >
+                Add people
+              </button>
+            </div>
+            {members.length === 0 ? (
+              <p className="chat-info-empty">No members.</p>
+            ) : (
+              members.map((member) => (
+                <div key={member.actorId} className="chat-info-member">
+                  <Avatar name={member.name} size={22} />
+                  <div className="chat-info-member-text">
+                    <div className="chat-info-member-name truncate">
+                      {member.name}
+                    </div>
+                    <div className="chat-info-member-role truncate">
+                      {member.role}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
-          )
+              ))
+            )}
+          </>
         ) : null}
 
         {tab === "files" ? (
@@ -1324,7 +1699,19 @@ function ChatInfoPanel({
         ) : null}
 
         {tab === "pinned" ? (
-          <p className="chat-info-empty">No pinned messages yet.</p>
+          pins.length === 0 ? (
+            <p className="chat-info-empty">No pinned messages yet.</p>
+          ) : (
+            pins.map((pin) => (
+              <div key={pin.messageId} className="chat-info-pin">
+                <Icons.Pin size={12} />
+                <span className="truncate">{pin.messageId.slice(0, 8)}…</span>
+                <span className="chat-info-pin-time">
+                  {formatChatTime(pin.createdAt)}
+                </span>
+              </div>
+            ))
+          )
         ) : null}
       </div>
     </aside>

@@ -250,7 +250,13 @@ export function parseSpamdResponse(response: string): ParsedSpamdResponse {
  *   MAIL_SPAMD_THRESHOLD  routing threshold (default 5.0)
  *   MAIL_SPAMD_TIMEOUT_MS per-scan socket timeout (default 10000)
  */
-export function getSpamdScannerConfig(env: NodeJS.ProcessEnv): SpamdScannerOptions | undefined {
+/**
+ * @deprecated Prefer `mailConfig(env).spamd` from `./config.js` (G3).
+ * Kept for unit tests that pass a plain env record.
+ */
+export function getSpamdScannerConfig(
+  env: Readonly<Record<string, string | undefined>>,
+): SpamdScannerOptions | undefined {
   if (!envFlag(env.MAIL_SPAMD_ENABLED)) {
     return undefined;
   }

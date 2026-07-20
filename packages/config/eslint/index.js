@@ -2,6 +2,8 @@ import js from "@eslint/js";
 import process from "node:process";
 import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
+import { noCrossDomainImportRule } from "./rules/no-cross-domain-import.js";
+import { noRawProcessEnvRule } from "./rules/no-raw-process-env.js";
 
 function parseDirective(value) {
   const directiveMatch = /\s-{2,}\s/u.exec(value);
@@ -557,8 +559,10 @@ export const helixBrowserPlugin = {
     "direct-drizzle-tenant-query": directDrizzleTenantQueryRule,
     "internal-link": internalAnchorRule,
     "mutation-discipline": mutationDisciplineRule,
+    "no-cross-domain-import": noCrossDomainImportRule,
     "no-native-popup": nativePopupRule,
     "native-popup-disable": nativePopupDisableRule,
+    "no-raw-process-env": noRawProcessEnvRule,
     "pacer-discipline": pacerDisciplineRule,
     "query-refresh-discipline": queryRefreshDisciplineRule,
     "use-query-options": queryOptionsUseQueryRule,
@@ -569,8 +573,10 @@ export const helixBrowserRules = {
   "helix/direct-drizzle-tenant-query": "error",
   "helix/internal-link": "error",
   "helix/mutation-discipline": "error",
+  "helix/no-cross-domain-import": "error",
   "helix/no-native-popup": "error",
   "helix/native-popup-disable": "error",
+  "helix/no-raw-process-env": "error",
   "helix/pacer-discipline": "error",
   "helix/query-refresh-discipline": "error",
   "helix/use-query-options": "error",

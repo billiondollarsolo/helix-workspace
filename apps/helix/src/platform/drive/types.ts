@@ -1,11 +1,19 @@
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
+import type {
+  DriveItemKind as ContractDriveItemKind,
+  DrivePreview as ContractDrivePreview,
+  DrivePreviewKind as ContractDrivePreviewKind,
+  DriveRole,
+} from "@helix/contracts";
 
 export const drivePluginId = "com.helix.core.drive";
 
-export type DriveItemKind = "file" | "folder";
-export type DriveShareRole = "viewer" | "commenter" | "editor" | "owner";
-export type DrivePreviewKind = "text" | "image" | "pdf" | "office" | "unsupported";
-export type DrivePreviewStatus = "available" | "unsupported";
+export type DriveItemKind = ContractDriveItemKind;
+/** Wire role enum from contracts. Legacy `"viewer"` is normalized to `"reader"` at the store boundary. */
+export type DriveShareRole = DriveRole | "viewer";
+export type DrivePreviewKind = ContractDrivePreviewKind;
+export type DrivePreviewStatus = ContractDrivePreview["status"];
+export type { DriveRole };
 
 export type DriveActor = JsonObject & {
   readonly id: string;
@@ -67,6 +75,13 @@ export type DriveActivityPayload = JsonObject & {
   readonly fileId?: string | undefined;
 };
 
+export interface DriveMultipartUploadInfo {
+  readonly uploadId: string;
+  readonly partSize: number;
+  readonly partCount: number;
+  readonly partUrls: readonly string[];
+}
+
 export interface DriveUploadRecord {
   readonly objectId: string;
   readonly orgId: string;
@@ -83,6 +98,8 @@ export interface DriveUploadRecord {
   readonly metadata: JsonObject;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+  /** Present when the server prepared an S3 multipart upload for large files. */
+  readonly multipart?: DriveMultipartUploadInfo | undefined;
 }
 
 export interface DriveVersionRecord {
@@ -186,16 +203,4 @@ export interface DrivePdfFormStateRecord {
   readonly updatedAt: Date;
 }
 
-export interface DrivePreview {
-  readonly kind: DrivePreviewKind;
-  readonly status: DrivePreviewStatus;
-  readonly mimeType: string;
-  readonly text?: string | undefined;
-  readonly url?: string | undefined;
-  readonly storageKey?: string | undefined;
-  readonly pageCount?: number | undefined;
-  readonly width?: number | undefined;
-  readonly height?: number | undefined;
-  readonly blocker?: string | undefined;
-  readonly generatedAt?: string | undefined;
-}
+export type DrivePreview = ContractDrivePreview;

@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { env } from "../../config/env.js";
 
 const execFileAsync = promisify(execFile);
 const adminConfigWriteScope = "admin.config.write";
@@ -191,7 +192,7 @@ function shouldExecute(value: boolean | undefined): boolean {
   if (value !== undefined) {
     return value;
   }
-  const raw = process.env.HELIX_ADMIN_BACKUP_EXECUTE;
+  const raw = env().HELIX_ADMIN_BACKUP_EXECUTE;
   return raw === "1" || raw?.toLowerCase() === "true" || raw?.toLowerCase() === "yes";
 }
 

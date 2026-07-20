@@ -6,7 +6,7 @@ import type {
 import { recurrenceExceptionDates } from "./recurrence.js";
 import { MailSendService } from "../mail/outbound.js";
 import type { MailOutboundRecord } from "../mail/types.js";
-import type { MailStore } from "../mail/store.js";
+import type { MailStore } from "../mail/index.js";
 
 export interface CalendarInvitationSender {
   sendInvitation(input: {

@@ -1152,7 +1152,9 @@ export const driveFolders = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     orgId: uuid("org_id").notNull(),
     name: text("name").notNull(),
-    parentFolderId: uuid("parent_folder_id"),
+    parentFolderId: uuid("parent_folder_id").references((): AnyPgColumn => driveFolders.id, {
+      onDelete: "set null",
+    }),
     ownerActorId: uuid("owner_actor_id").references(() => actors.id),
     createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
     metadata: jsonb("metadata").default({}).notNull(),
@@ -1225,6 +1227,80 @@ export const drivePdfFormStates = pgTable(
       table.orgId,
       table.objectId,
       table.updatedAt,
+    ),
+  }),
+);
+
+export const driveShareLinks = pgTable(
+  "drive_share_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    token: text("token").notNull(),
+    objectId: uuid("object_id")
+      .references(() => objects.id, { onDelete: "cascade" })
+      .notNull(),
+    role: text("role").default("reader").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => ({
+    tokenIdx: uniqueIndex("drive_share_links_token_idx").on(table.token),
+    objectIdx: index("drive_share_links_object_idx").on(table.orgId, table.objectId),
+  }),
+);
+
+/** Content-addressed blobs (optional dedup path; migration 0074). */
+export const driveBlobs = pgTable(
+  "drive_blobs",
+  {
+    orgId: uuid("org_id").notNull(),
+    sha256: text("sha256").notNull(),
+    storageKey: text("storage_key").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    refcount: integer("refcount").default(1).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.orgId, table.sha256] }),
+    storageKeyIdx: index("drive_blobs_storage_key_idx").on(table.storageKey),
+  }),
+);
+
+// ponytail: 0047 owns the self-ref FK + status CHECK + partial index; Drizzle can't express them.
+export const driveComments = pgTable(
+  "drive_comments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    objectId: uuid("object_id")
+      .references(() => objects.id, { onDelete: "cascade" })
+      .notNull(),
+    parentCommentId: uuid("parent_comment_id"),
+    actorId: uuid("actor_id").references(() => actors.id, { onDelete: "set null" }),
+    anchor: jsonb("anchor").default({}).notNull(),
+    body: text("body").notNull(),
+    status: text("status").default("open").notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
+  },
+  (table) => ({
+    objectStatusCreatedIdx: index("drive_comments_object_status_created_idx").on(
+      table.orgId,
+      table.objectId,
+      table.status,
+      table.createdAt,
+    ),
+    parentCreatedIdx: index("drive_comments_parent_created_idx").on(
+      table.parentCommentId,
+      table.createdAt,
     ),
   }),
 );

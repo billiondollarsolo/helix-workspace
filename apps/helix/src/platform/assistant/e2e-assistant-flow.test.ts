@@ -17,16 +17,17 @@ import {
 } from "../ai/costs/index.js";
 import type { ForgetCriteria, MemoryInput, MemoryItem, MemoryStore } from "../ai/memory/index.js";
 import { AIRouter } from "../ai/routing.js";
-import type { ChatStore } from "../chat/store.js";
+import type { ChatStore } from "../chat/index.js";
 import type {
   ChatMessageRecord,
+  ChatPinRecord,
   ChatReactionRecord,
   ChatReadReceiptRecord,
   ChatRoomRecord,
   ChatSearchHit,
 } from "../chat/types.js";
 import { registerChatTools } from "../chat/tools.js";
-import type { DriveStore } from "../drive/store.js";
+import type { DriveStore } from "../drive/index.js";
 import type {
   DriveEntryRecord,
   DriveSearchHit,
@@ -1025,6 +1026,33 @@ class FakeChatStore implements ChatStore {
 
   async getRoomForActor(): Promise<ChatRoomRecord | null> {
     return null;
+  }
+
+  async listThreadReplies(): Promise<readonly ChatMessageRecord[]> {
+    return [];
+  }
+
+  async pinMessage(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+    readonly messageId: string;
+  }): Promise<ChatPinRecord> {
+    return {
+      roomId: input.roomId,
+      messageId: input.messageId,
+      orgId: input.orgId,
+      pinnedByActorId: input.actorId,
+      createdAt: new Date(),
+    };
+  }
+
+  async unpinMessage(): Promise<{ readonly ok: true }> {
+    return { ok: true };
+  }
+
+  async listPins(): Promise<readonly never[]> {
+    return [];
   }
 }
 

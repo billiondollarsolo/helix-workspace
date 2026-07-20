@@ -161,6 +161,7 @@ let fetchMock = makeFetch();
 vi.mock("@/lib/auth", () => ({
   authenticatedFetch: (input: RequestInfo | URL, init?: RequestInit) => fetchMock(input, init),
   addAccessTokenSearchParam: (url: string) => url,
+  getStoredAccessToken: () => null,
   sessionQueryKeys: { current: ["auth", "session"] },
   sessionUserQueryOptions: () => ({
     queryKey: ["auth", "session"],

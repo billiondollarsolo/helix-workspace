@@ -12,6 +12,7 @@ function makeEntry(overrides: Partial<DriveApiEntry> & Pick<DriveApiEntry, "id" 
     name: `entry-${overrides.id}`,
     folderId: null,
     ownerActorId: "Alex Park",
+    metadata: {},
     deletedAt: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",

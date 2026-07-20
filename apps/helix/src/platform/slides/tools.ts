@@ -11,7 +11,7 @@ import {
   type SlidesPdfExportResult,
 } from "./export-assets.js";
 import { exportSlidesDeckToPptx, type SlidesPptxExportResult } from "./export-pptx.js";
-import type { DriveStore } from "../drive/store.js";
+import type { DriveStore } from "../drive/index.js";
 import type { DriveCommentListItem } from "../drive/types.js";
 import type { SlideDeckVersionRecord, SlidesStore } from "./store.js";
 import type { SlideContent, SlideDeckSummaryRecord, SlideRecord } from "./types.js";

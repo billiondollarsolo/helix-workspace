@@ -1,6 +1,8 @@
+// ponytail: WebDAV bodies stay plain-text per RFC 4918; not the JSON error envelope. File still >400 LOC with PROPFIND XML.
 import { createHash, randomUUID } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { ApiError, NotFoundError } from "../../api/api-error.js";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
 import type {
   DriveFileReadInput,
@@ -9,6 +11,7 @@ import type {
   DriveStore,
 } from "./store.js";
 import type { DriveEntryRecord } from "./types.js";
+import { sendBytesWithRangeSupport } from "./range-response.js";
 
 export interface WebDavDriveStore extends DriveStore {
   createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord>;
@@ -25,7 +28,64 @@ export interface RegisterDriveRoutesOptions {
   readonly appPasswords: AppPasswordAuthenticator;
 }
 
+export interface RegisterDriveShareLinkRouteOptions {
+  readonly store: Pick<DriveStore, "readFileByShareToken">;
+}
+
 type WebDavMethod = "PROPFIND" | "GET" | "PUT" | "DELETE" | "MKCOL" | "LOCK" | "UNLOCK";
+
+/**
+ * Unauthenticated public share-link resolver. The token is the credential;
+ * no session cookie or scope is required. Streams bytes with Range support
+ * when content is available; otherwise returns JSON metadata for the object.
+ */
+export async function registerDriveShareLinkRoute(
+  app: FastifyInstance,
+  options: RegisterDriveShareLinkRouteOptions,
+): Promise<void> {
+  app.get<{ Params: { token: string } }>(
+    "/api/drive/share/:token",
+    async (request, reply) => {
+      const token = request.params.token?.trim() ?? "";
+      if (token.length === 0) {
+        throw new NotFoundError("Share link not found.");
+      }
+      if (options.store.readFileByShareToken === undefined) {
+        // No dedicated not_implemented code in the envelope taxonomy; 500 is honest.
+        throw new ApiError("internal_error", "Share links are not configured.");
+      }
+      const file = await options.store.readFileByShareToken(token);
+      if (file === null) {
+        throw new NotFoundError("Share link not found.");
+      }
+
+      const filename = file.entry.name;
+      const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
+      const utf8Encoded = encodeURIComponent(filename);
+      const download = (request.query as { download?: string }).download === "1";
+      const disposition = `${download ? "attachment" : "inline"}; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+
+      if (file.content !== null) {
+        return sendBytesWithRangeSupport({
+          reply,
+          request,
+          bytes: Buffer.from(file.content),
+          mimeType: file.entry.mimeType ?? "application/octet-stream",
+          disposition,
+        });
+      }
+
+      // Content unavailable (no blob yet / storage miss) — return metadata only.
+      return reply.code(200).send({
+        objectId: file.entry.id,
+        name: file.entry.name,
+        mimeType: file.entry.mimeType ?? "application/octet-stream",
+        byteSize: file.entry.byteSize ?? 0,
+        contentAvailable: false,
+      });
+    },
+  );
+}
 
 export async function registerDriveRoutes(
   app: FastifyInstance,
@@ -104,11 +164,15 @@ export async function registerDriveRoutes(
         if (file?.content === null || file === null) {
           return reply.code(404).send("WebDAV file content is not available.");
         }
-        return reply
-          .header("ETag", entryEtag(file.entry))
-          .header("Content-Length", String(file.content.byteLength))
-          .type(file.entry.mimeType ?? "application/octet-stream")
-          .send(Buffer.from(file.content));
+        reply.header("ETag", entryEtag(file.entry));
+        const fileName = file.entry.name.replaceAll('"', "");
+        return sendBytesWithRangeSupport({
+          reply,
+          request,
+          bytes: Buffer.from(file.content),
+          mimeType: file.entry.mimeType ?? "application/octet-stream",
+          disposition: `inline; filename="${fileName}"`,
+        });
       }
 
       if (method === "DELETE") {

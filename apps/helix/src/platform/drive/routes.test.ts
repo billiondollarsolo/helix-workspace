@@ -1,9 +1,27 @@
 import { createHash } from "node:crypto";
-import fastify, { type InjectOptions } from "fastify";
+import fastify, { type FastifyInstance, type InjectOptions } from "fastify";
 import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
+import { ApiError } from "../../api/api-error.js";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
-import { registerDriveRoutes, type WebDavDriveStore } from "./routes.js";
+import {
+  registerDriveRoutes,
+  registerDriveShareLinkRoute,
+  type WebDavDriveStore,
+} from "./routes.js";
+
+/** Minimal envelope handler so isolated route tests match production G4 rendering. */
+function withApiErrorHandler(app: FastifyInstance): FastifyInstance {
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ApiError) {
+      return reply.code(error.statusCode).send({
+        error: { code: error.code, message: error.message },
+      });
+    }
+    throw error;
+  });
+  return app;
+}
 import type {
   DriveFileReadInput,
   DriveFileReadResult,
@@ -535,6 +553,113 @@ describe("Drive WebDAV routes", () => {
   });
 });
 
+describe("Drive public share-link route", () => {
+  it("streams content for a valid token without session auth", async () => {
+    const app = withApiErrorHandler(fastify());
+    await registerDriveShareLinkRoute(app, {
+      store: {
+        readFileByShareToken: async (token) => {
+          if (token !== "goodtoken") {
+            return null;
+          }
+          return {
+            entry: fileEntry({
+              id: reportId,
+              name: "shared-report.txt",
+              content: "public bytes",
+            }),
+            content: Buffer.from("public bytes"),
+          };
+        },
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/drive/share/goodtoken",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/plain");
+    expect(response.body).toBe("public bytes");
+    expect(String(response.headers["content-disposition"] ?? "")).toContain("shared-report.txt");
+  });
+
+  it("supports Range requests on share-link content", async () => {
+    const app = withApiErrorHandler(fastify());
+    await registerDriveShareLinkRoute(app, {
+      store: {
+        readFileByShareToken: async () => ({
+          entry: fileEntry({
+            id: reportId,
+            name: "shared-report.txt",
+            content: "public bytes",
+          }),
+          content: Buffer.from("public bytes"),
+        }),
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/drive/share/goodtoken",
+      headers: { range: "bytes=0-5" },
+    });
+
+    expect(response.statusCode).toBe(206);
+    expect(response.headers["content-range"]).toBe("bytes 0-5/12");
+    expect(response.body).toBe("public");
+  });
+
+  it("returns 404 for unknown/revoked/expired tokens", async () => {
+    const app = withApiErrorHandler(fastify());
+    await registerDriveShareLinkRoute(app, {
+      store: {
+        readFileByShareToken: async () => null,
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/drive/share/missing-token",
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      error: { code: "not_found", message: "Share link not found." },
+    });
+  });
+
+  it("returns metadata when content bytes are unavailable", async () => {
+    const app = withApiErrorHandler(fastify());
+    await registerDriveShareLinkRoute(app, {
+      store: {
+        readFileByShareToken: async () => ({
+          entry: fileEntry({
+            id: reportId,
+            name: "pending.bin",
+            content: "",
+            mimeType: "application/octet-stream",
+          }),
+          content: null,
+        }),
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/drive/share/pending-token",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      objectId: reportId,
+      name: "pending.bin",
+      contentAvailable: false,
+    });
+  });
+});
+
 class FakeAppPasswordAuthenticator implements AppPasswordAuthenticator {
   async authenticateAppPassword(input: {
     readonly username: string;
@@ -797,6 +922,7 @@ function fileEntry(input: {
   readonly folderId?: string | null;
   readonly byteSize?: number;
   readonly sha256?: string | null;
+  readonly mimeType?: string;
 }): DriveEntryRecord {
   const content = Buffer.from(input.content);
   return {
@@ -806,7 +932,7 @@ function fileEntry(input: {
     folderId: input.folderId ?? null,
     ownerActorId: actorId,
     app: null,
-    mimeType: "text/plain",
+    mimeType: input.mimeType ?? "text/plain",
     byteSize: input.byteSize ?? content.byteLength,
     sha256: input.sha256 ?? createHash("sha256").update(content).digest("hex"),
     storageKey: `drive/${orgId}/${input.id}/v1/${input.name}`,

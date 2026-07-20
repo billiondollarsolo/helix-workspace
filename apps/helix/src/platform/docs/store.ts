@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
-import { insertNotification } from "../notifications/store.js";
+import { insertNotification } from "../notifications/index.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import type { TenantStorageResolver } from "../storage/index.js";
 import { exportDocsDocument } from "./export/index.js";

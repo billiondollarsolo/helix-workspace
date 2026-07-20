@@ -337,4 +337,46 @@ describe("S3-compatible storage", () => {
       statusText: "Forbidden",
     } satisfies Partial<S3CompatibleStorageError>);
   });
+
+  it("createMultipartUpload POSTs ?uploads and parses UploadId", async () => {
+    const fetchStub = createFetchStub(
+      () =>
+        new Response(
+          '<?xml version="1.0"?><InitiateMultipartUploadResult><UploadId>abc-123</UploadId></InitiateMultipartUploadResult>',
+          { status: 200 },
+        ),
+    );
+    const result = await storage(fetchStub.fetch).createMultipartUpload("drive/o/x.bin", {
+      contentType: "application/octet-stream",
+    });
+    expect(result).toEqual({ uploadId: "abc-123" });
+    const [url, init] = firstUrlCall(fetchStub);
+    expect(init.method).toBe("POST");
+    expect(url.searchParams.has("uploads")).toBe(true);
+  });
+
+  it("presignUploadPart signs partNumber and uploadId", async () => {
+    const fetchStub = createFetchStub();
+    const url = await storage(fetchStub.fetch).presignUploadPart("drive/o/x.bin", "up-1", 2);
+    expect(fetchStub.calls).toHaveLength(0);
+    const parsed = new URL(url);
+    expect(parsed.searchParams.get("partNumber")).toBe("2");
+    expect(parsed.searchParams.get("uploadId")).toBe("up-1");
+    expect(parsed.searchParams.get("X-Amz-Signature")).toBeTruthy();
+  });
+
+  it("completeMultipartUpload POSTs CompleteMultipartUpload XML", async () => {
+    const fetchStub = createFetchStub();
+    await storage(fetchStub.fetch).completeMultipartUpload("drive/o/x.bin", "up-1", [
+      { partNumber: 1, etag: '"etag1"' },
+      { partNumber: 2, etag: '"etag2"' },
+    ]);
+    const [url, init] = firstUrlCall(fetchStub);
+    expect(init.method).toBe("POST");
+    expect(url.searchParams.get("uploadId")).toBe("up-1");
+    const body = typeof init.body === "string" ? init.body : new TextDecoder().decode(init.body as Uint8Array);
+    expect(body).toContain("<CompleteMultipartUpload>");
+    expect(body).toContain("<PartNumber>1</PartNumber>");
+    expect(body).toContain("<ETag>&quot;etag1&quot;</ETag>");
+  });
 });

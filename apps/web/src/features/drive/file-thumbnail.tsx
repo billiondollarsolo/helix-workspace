@@ -1,3 +1,6 @@
+// ponytail: file-thumbnail.tsx still >400 LOC (preview renderers for image/pdf/office/text);
+// deferred split into features/drive/components/thumbnails/{image,pdf,office,text}-thumbnail.tsx.
+
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icons } from "@/components/icons";
 import { authenticatedFetch } from "@/lib/auth";

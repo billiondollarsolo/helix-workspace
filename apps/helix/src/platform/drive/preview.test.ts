@@ -2,11 +2,33 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import {
+  assertPreviewUrlAllowed,
   createLibreOfficePreviewClient,
   createLocalOfficePreviewConverter,
   officePreviewStorageKey,
   type OfficePreviewConversionResult,
 } from "./preview.js";
+import { DriveForbiddenError } from "./errors.js";
+
+describe("assertPreviewUrlAllowed", () => {
+  it("rejects a link-local metadata host", () => {
+    expect(() =>
+      assertPreviewUrlAllowed("http://169.254.169.254/latest/meta-data", ["office.internal"]),
+    ).toThrow(DriveForbiddenError);
+  });
+
+  it("permits an allowlisted office host", () => {
+    expect(() =>
+      assertPreviewUrlAllowed("http://office.internal:8080/convert", ["office.internal"]),
+    ).not.toThrow();
+  });
+
+  it("rejects a non-allowlisted host when allowlist is non-empty", () => {
+    expect(() =>
+      assertPreviewUrlAllowed("http://evil.example/convert", ["office.internal"]),
+    ).toThrow(/not allowlisted/i);
+  });
+});
 
 describe("LibreOffice Drive preview client", () => {
   it("posts Office bytes and parses the converted PDF response", async () => {

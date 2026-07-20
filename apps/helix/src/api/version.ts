@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { env } from "../config/env.js";
 
 /**
  * Canonical API/server version. Sourced from the app `package.json` so the
@@ -17,7 +18,7 @@ function resolvePackageVersion(): string {
   } catch {
     // Fall through to the env/default below.
   }
-  const envVersion = process.env.HELIX_APP_VERSION;
+  const envVersion = env().HELIX_APP_VERSION;
   return envVersion !== undefined && envVersion.trim().length > 0
     ? envVersion.trim()
     : "0.0.0-dev";

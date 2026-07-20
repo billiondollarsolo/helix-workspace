@@ -1,10 +1,13 @@
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import { memberHandleResolver, parseMentions } from "./core/mentions.js";
+import { ChatMessageNotFoundError, ChatRoomAccessError } from "./errors.js";
 import type {
   ChatEnrichmentProjectionStore,
   ChatEnrichmentRecord,
   ChatEnrichmentWrite,
   ChatMessageRecord,
+  ChatPinRecord,
   ChatReactionOperation,
   ChatReactionRecord,
   ChatReadReceiptRecord,
@@ -36,6 +39,8 @@ export interface SendChatMessageInput {
   readonly bodyFormat?: string | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly attachmentObjectIds?: readonly string[] | undefined;
+  readonly parentMessageId?: string | undefined;
+  readonly clientMessageId?: string | undefined;
 }
 
 export interface ChatStore {
@@ -54,6 +59,31 @@ export interface ChatStore {
     readonly role?: string | undefined;
   }): Promise<{ readonly roomId: string; readonly invitedActorIds: readonly string[] }>;
   sendMessage(input: SendChatMessageInput): Promise<ChatMessageRecord>;
+  listThreadReplies(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+    readonly parentMessageId: string;
+    readonly before?: Date | undefined;
+    readonly limit?: number | undefined;
+  }): Promise<readonly ChatMessageRecord[]>;
+  pinMessage(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+    readonly messageId: string;
+  }): Promise<ChatPinRecord>;
+  unpinMessage(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+    readonly messageId: string;
+  }): Promise<{ readonly ok: true }>;
+  listPins(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+  }): Promise<readonly ChatPinRecord[]>;
   react(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -132,11 +162,20 @@ interface ChatMessageRow {
   readonly body_format: string;
   readonly metadata: JsonObject;
   readonly attachment_object_ids: readonly string[] | null;
+  readonly parent_message_id?: string | null;
   readonly sent_at: Date;
   readonly edited_at: Date | null;
   readonly deleted_at: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
+}
+
+interface ChatPinRow {
+  readonly thread_id: string;
+  readonly message_id: string;
+  readonly org_id: string;
+  readonly pinned_by_actor_id: string | null;
+  readonly created_at: Date;
 }
 
 interface ChatReactionRow {
@@ -326,9 +365,50 @@ export class PostgresChatStore
 
   async sendMessage(input: SendChatMessageInput): Promise<ChatMessageRecord> {
     return this.sql.begin(async (tx) => {
-      await requireRoomAccess(tx, input.orgId, input.actorId, input.roomId);
+      const room = await selectRoomForActor(tx, input.orgId, input.actorId, input.roomId);
+      if (room === null) {
+        throw new ChatRoomAccessError(input.roomId);
+      }
+
+      if (input.parentMessageId !== undefined) {
+        const parent = await selectMessage(tx, input.orgId, input.parentMessageId);
+        if (parent === null || parent.roomId !== input.roomId) {
+          throw new ChatMessageNotFoundError(input.parentMessageId);
+        }
+      }
+
+      const mentionIds = parseMentions(
+        input.body,
+        memberHandleResolver(room.members),
+      );
+      const baseMetadata = {
+        ...(input.metadata ?? {}),
+        ...(mentionIds.length === 0
+          ? {}
+          : {
+              mentions: mentionIds.map((id) =>
+                id.startsWith("@")
+                  ? { id, sentinel: id }
+                  : {
+                      id,
+                      ...(room.members.find((m) => m.actorId === id)?.displayName
+                        ? {
+                            displayName: room.members.find((m) => m.actorId === id)
+                              ?.displayName,
+                          }
+                        : {}),
+                    },
+              ),
+            }),
+        ...(input.clientMessageId === undefined
+          ? {}
+          : { clientMessageId: input.clientMessageId }),
+      } as JsonObject;
+
       const messageRows = (await tx`
-        insert into messages (org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
+        insert into messages (
+          org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at, parent_message_id
+        )
         values (
           ${input.orgId},
           ${input.roomId},
@@ -336,8 +416,9 @@ export class PostgresChatStore
           'chat',
           ${input.body},
           ${input.bodyFormat ?? "plain"},
-          ${tx.json(toSqlJson(input.metadata ?? {}))},
-          now()
+          ${tx.json(toSqlJson(baseMetadata))},
+          now(),
+          ${input.parentMessageId ?? null}
         )
         returning id
       `) as unknown as readonly { readonly id: string }[];
@@ -371,16 +452,148 @@ export class PostgresChatStore
             messageId,
             id: messageId,
             attachmentObjectIds: input.attachmentObjectIds ?? [],
+            ...(input.parentMessageId === undefined
+              ? {}
+              : { parentMessageId: input.parentMessageId }),
+            ...(input.clientMessageId === undefined
+              ? {}
+              : { clientMessageId: input.clientMessageId }),
           }),
         )})
       `;
+
+      for (const mentioned of mentionIds) {
+        if (mentioned.startsWith("@")) {
+          continue;
+        }
+        await tx`
+          insert into outbox (subject, payload)
+          values (${"activity.chat.mention"}, ${tx.json(
+            toSqlJson({
+              orgId: input.orgId,
+              actorId: input.actorId,
+              roomId: input.roomId,
+              messageId,
+              mentionedActorId: mentioned,
+            }),
+          )})
+        `;
+      }
 
       const message = await selectMessage(tx, input.orgId, messageId);
       if (message === null) {
         throw new Error("Unable to load inserted chat message.");
       }
-      return message;
+      return {
+        ...message,
+        ...(input.clientMessageId === undefined
+          ? {}
+          : { clientMessageId: input.clientMessageId }),
+      };
     });
+  }
+
+  async listThreadReplies(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+    readonly parentMessageId: string;
+    readonly before?: Date | undefined;
+    readonly limit?: number | undefined;
+  }): Promise<readonly ChatMessageRecord[]> {
+    await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
+    const rows = (await this.sql`
+      select
+        m.*,
+        (select array_agg(ma.object_id::text order by ma.object_id::text) from message_attachments ma where ma.message_id = m.id) as attachment_object_ids
+      from messages m
+      where m.org_id = ${input.orgId}
+        and m.thread_id = ${input.roomId}
+        and m.kind = 'chat'
+        and m.deleted_at is null
+        and m.parent_message_id = ${input.parentMessageId}
+        and (${input.before ?? null}::timestamptz is null or m.sent_at < ${input.before ?? null})
+      order by m.sent_at asc
+      limit ${input.limit ?? 50}
+    `) as unknown as readonly ChatMessageRow[];
+    return rows.map(mapMessage);
+  }
+
+  async pinMessage(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+    readonly messageId: string;
+  }): Promise<ChatPinRecord> {
+    await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
+    const message = await selectMessage(this.sql, input.orgId, input.messageId);
+    if (message === null || message.roomId !== input.roomId) {
+      throw new ChatMessageNotFoundError(input.messageId);
+    }
+    const rows = (await this.sql`
+      insert into chat_pins (message_id, thread_id, org_id, pinned_by_actor_id)
+      values (${input.messageId}, ${input.roomId}, ${input.orgId}, ${input.actorId})
+      on conflict (thread_id, message_id) do update
+      set pinned_by_actor_id = excluded.pinned_by_actor_id
+      returning *
+    `) as unknown as readonly ChatPinRow[];
+    await this.touchRoom(input.roomId);
+    await this.sql`
+      insert into outbox (subject, payload)
+      values (${"activity.chat.message.pinned"}, ${this.sql.json(
+        toSqlJson({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          roomId: input.roomId,
+          messageId: input.messageId,
+        }),
+      )})
+    `;
+    return mapPin(rows[0]);
+  }
+
+  async unpinMessage(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+    readonly messageId: string;
+  }): Promise<{ readonly ok: true }> {
+    await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
+    await this.sql`
+      delete from chat_pins
+      where thread_id = ${input.roomId}
+        and message_id = ${input.messageId}
+        and org_id = ${input.orgId}
+    `;
+    await this.touchRoom(input.roomId);
+    await this.sql`
+      insert into outbox (subject, payload)
+      values (${"activity.chat.message.unpinned"}, ${this.sql.json(
+        toSqlJson({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          roomId: input.roomId,
+          messageId: input.messageId,
+        }),
+      )})
+    `;
+    return { ok: true };
+  }
+
+  async listPins(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+  }): Promise<readonly ChatPinRecord[]> {
+    await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
+    const rows = (await this.sql`
+      select *
+      from chat_pins
+      where org_id = ${input.orgId}
+        and thread_id = ${input.roomId}
+      order by created_at desc
+    `) as unknown as readonly ChatPinRow[];
+    return rows.map(mapPin);
   }
 
   async react(input: {
@@ -664,7 +877,7 @@ export class PostgresChatStore
     `) as unknown as readonly { readonly thread_id: string }[];
     const roomId = rows[0]?.thread_id;
     if (roomId === undefined) {
-      throw new Error(`Unknown chat message: ${messageId}`);
+      throw new ChatMessageNotFoundError(messageId);
     }
     await this.requireRoomAccess(orgId, actorId, roomId);
     return roomId;
@@ -739,7 +952,7 @@ async function requireRoomAccess(
 ): Promise<void> {
   const room = await selectRoomForActor(sql, orgId, actorId, roomId);
   if (room === null) {
-    throw new Error(`Unknown or inaccessible chat room: ${roomId}`);
+    throw new ChatRoomAccessError(roomId);
   }
 }
 
@@ -836,6 +1049,10 @@ function chatRoomMembers(value: unknown): ChatRoomRecord["members"] {
 }
 
 function mapMessage(row: ChatMessageRow): ChatMessageRecord {
+  const clientMessageId =
+    typeof row.metadata.clientMessageId === "string"
+      ? row.metadata.clientMessageId
+      : undefined;
   return {
     id: row.id,
     orgId: row.org_id,
@@ -845,11 +1062,26 @@ function mapMessage(row: ChatMessageRow): ChatMessageRecord {
     bodyFormat: row.body_format,
     metadata: row.metadata,
     attachmentObjectIds: row.attachment_object_ids ?? [],
+    parentMessageId: row.parent_message_id ?? null,
+    ...(clientMessageId === undefined ? {} : { clientMessageId }),
     sentAt: row.sent_at,
     editedAt: row.edited_at,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapPin(row: ChatPinRow | undefined): ChatPinRecord {
+  if (row === undefined) {
+    throw new Error("Expected chat pin row.");
+  }
+  return {
+    roomId: row.thread_id,
+    messageId: row.message_id,
+    orgId: row.org_id,
+    pinnedByActorId: row.pinned_by_actor_id,
+    createdAt: row.created_at,
   };
 }
 

@@ -22,6 +22,7 @@
     "@fontsource/roboto": "^5.2.10",
     "@helix/editors-format-loader": "file:../../../helix-editors/packages/format-loader",
     "@helix/editors-ui": "file:../../../helix-editors/packages/ui-kit",
+    "@helix/contracts": "workspace:*",
     "@helix/sdk-types": "workspace:*",
     "@helix/sdk-web": "workspace:*",
     "@tanstack/react-form": "^1.32.0",

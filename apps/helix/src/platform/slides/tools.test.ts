@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DriveStore } from "../drive/store.js";
+import type { DriveStore } from "../drive/index.js";
 import type { DriveCommentListItem } from "../drive/types.js";
 import { createToolRegistry } from "../tool-registry.js";
 import { InMemorySlidesStore } from "./store.js";

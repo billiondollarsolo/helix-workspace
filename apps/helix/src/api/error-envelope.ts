@@ -3,40 +3,24 @@ import type {
   ToolQuotaLimitMetadata,
   ToolRateLimitMetadata,
 } from "../platform/tool-registry.js";
+import {
+  ERROR_CODES,
+  errorCodeForStatus as contractErrorCodeForStatus,
+  statusForErrorCode,
+  type ErrorCode,
+  type ErrorEnvelope,
+} from "@helix/contracts";
 
-/**
- * The single canonical error response shape returned across every REST and
- * tool-invocation surface (P1-10). A unified envelope means clients can parse
- * one shape, and every error carries a `traceId` for support correlation.
- */
-export interface HelixErrorEnvelope {
-  readonly error: {
-    /** Stable machine-readable error code, e.g. `tool_not_found`. */
-    readonly code: string;
-    /** Human-readable message. */
-    readonly message: string;
-    /** Trace identifier for correlating logs/spans with this failure. */
+export { ERROR_CODES, statusForErrorCode, type ErrorCode };
+export type HelixErrorEnvelope = ErrorEnvelope & {
+  readonly error: ErrorEnvelope["error"] & {
     readonly traceId: string;
-    /** Optional structured detail (rate-limit metadata, retry hints, …). */
-    readonly details?: Record<string, unknown>;
   };
-}
-
-const statusCodeToErrorCode: Record<number, string> = {
-  400: "bad_request",
-  401: "unauthenticated",
-  403: "forbidden",
-  404: "not_found",
-  405: "method_not_allowed",
-  409: "conflict",
-  410: "gone",
-  429: "rate_limited",
-  500: "internal_error",
 };
 
 /** Maps an HTTP status code to a stable error code token. */
 export function errorCodeForStatus(statusCode: number): string {
-  return statusCodeToErrorCode[statusCode] ?? "error";
+  return contractErrorCodeForStatus(statusCode);
 }
 
 /** Builds the canonical error envelope. */
@@ -47,9 +31,10 @@ export function buildErrorEnvelope(input: {
   readonly code?: string;
   readonly details?: Record<string, unknown>;
 }): HelixErrorEnvelope {
+  const code = (input.code ?? errorCodeForStatus(input.statusCode)) as ErrorCode;
   return {
     error: {
-      code: input.code ?? errorCodeForStatus(input.statusCode),
+      code,
       message: input.message,
       traceId: input.traceId,
       ...(input.details === undefined ? {} : { details: input.details }),

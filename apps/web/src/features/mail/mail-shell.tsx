@@ -1,3 +1,6 @@
+// ponytail: mail-shell.tsx is the full mail UI composition root (~2700 LOC).
+// Extract thread-list / thread-view / compose / mail-sidebar when next
+// changing a single region (Part A3.1); keep green until that split lands (G9).
 /* Helix Mail — production surface.
    Recreated from the design handoff (app-mail.jsx): folder/label sidebar,
    category tab bar, ThreadRow list with live operator search, thread view
@@ -29,9 +32,11 @@ import { SurfaceFrame } from "@/components/shell";
 import {
   applyMailLabels,
   archiveMailThread,
+  cancelOutboundMail,
   createMailFilter,
   deleteMailThread,
   replyToMail,
+  saveMailDraft,
   sendMail,
   setMailThreadRead,
   setMailThreadStarred,
@@ -42,6 +47,7 @@ import {
   type MailFolderSummary,
   type MailLabelSummary,
   type MailSendInput,
+  type MailSendResult,
   type MailThreadDetail,
   type MailThreadRow,
 } from "./api";
@@ -56,6 +62,7 @@ import {
   mailThreadQueryOptions,
   mailThreadsQueryOptions,
 } from "./queries";
+import { useMailRealtime } from "./use-mail-realtime";
 
 function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -1782,6 +1789,11 @@ function Compose({ onClose, onSent }: ComposeProps) {
   const [scheduling, setScheduling] = useState(false);
   const [sendFailed, setSendFailed] = useState(false);
   const [attachments, setAttachments] = useState<readonly MailAttachment[]>([]);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [undo, setUndo] = useState<{
+    readonly outboundId: string;
+    readonly untilMs: number;
+  } | null>(null);
   /** Drag-enter depth counter — incremented on dragenter, decremented on
    *  dragleave.  The overlay shows while > 0, which prevents flickering when
    *  the cursor moves over child elements (each child fires its own enter/leave
@@ -1798,11 +1810,59 @@ function Compose({ onClose, onSent }: ComposeProps) {
     onError: () => {
       setSendFailed(true);
     },
-    onSuccess: () => {
+    onSuccess: (result: MailSendResult) => {
       onSent();
+      const undoUntil = result.undoUntil;
+      const outboundId = result.id ?? result.outboundId;
+      if (
+        typeof undoUntil === "string" &&
+        typeof outboundId === "string" &&
+        outboundId.length > 0
+      ) {
+        const untilMs = Date.parse(undoUntil);
+        if (Number.isFinite(untilMs) && untilMs > Date.now()) {
+          setUndo({ outboundId, untilMs });
+          return;
+        }
+      }
       onClose();
     },
   });
+
+  const cancelMutation = useMutation({
+    mutationFn: (outboundId: string) => cancelOutboundMail(outboundId),
+    onSuccess: () => {
+      setUndo(null);
+      onSent();
+    },
+  });
+
+  const saveDraft = useCallback(() => {
+    if (to.trim().length === 0 && subject.trim().length === 0 && body.trim().length === 0) {
+      return;
+    }
+    void saveMailDraft({
+      ...(draftId === null ? {} : { id: draftId }),
+      envelope: {
+        to: parseRecipients(to),
+        cc: parseRecipients(cc),
+        bcc: parseRecipients(bcc),
+        subject,
+        text: body,
+      },
+    }).then((saved) => {
+      const id =
+        typeof saved === "object" &&
+        saved !== null &&
+        "id" in saved &&
+        typeof (saved as { id: unknown }).id === "string"
+          ? (saved as { id: string }).id
+          : null;
+      if (id !== null) {
+        setDraftId(id);
+      }
+    });
+  }, [bcc, body, cc, draftId, subject, to]);
 
   const recipients = parseRecipients(to);
   const canSend = recipients.length > 0 && !sendMutation.isPending;
@@ -2034,6 +2094,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
             onChange={(event) => {
               setSubject(event.target.value);
             }}
+            onBlur={saveDraft}
             placeholder="Subject"
             aria-label="Subject"
             style={{
@@ -2052,6 +2113,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
         onChange={(event) => {
           setBody(event.target.value);
         }}
+        onBlur={saveDraft}
         placeholder="Write your message…"
         aria-label="Message body"
         style={{
@@ -2084,6 +2146,33 @@ function Compose({ onClose, onSent }: ComposeProps) {
               </button>
             </div>
           ))}
+        </div>
+      )}
+      {undo !== null && Date.now() < undo.untilMs && (
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            margin: "0 14px 8px",
+            padding: "8px 12px",
+            borderRadius: 8,
+            background: "var(--surface-2)",
+            fontSize: "var(--text-body-sm)",
+          }}
+        >
+          <span>Message queued — you can undo send for a few seconds.</span>
+          <button
+            type="button"
+            onClick={() => {
+              cancelMutation.mutate(undo.outboundId);
+            }}
+            disabled={cancelMutation.isPending}
+          >
+            Undo
+          </button>
         </div>
       )}
       {sendFailed && (
@@ -2195,6 +2284,8 @@ const PAGE_SIZE = 50;
 export function MailShell() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  // Push-driven inbox: SSE invalidates mail queries on activity.mail.* events.
+  useMailRealtime(true);
   // URL-hydrated initial values — back button restores the prior view.
   const urlSearch: Partial<{ folder: string; tab: MailTabId; thread: string; q: string; label: string }> =
     useSearch({ strict: false });

@@ -1,10 +1,15 @@
 import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
+import type {
+  MailAddress,
+  MailAttachmentInput,
+  MailFilter,
+  MailOutboundRecord,
+  MailThreadRow as MailThreadRowContract,
+  MailThreadsListResult as MailThreadsListResultContract,
+} from "@helix/contracts";
 
-export interface MailApiAddress {
-  readonly address: string;
-  readonly name?: string;
-}
+export type MailApiAddress = MailAddress;
 
 export type MailFolderKey =
   | "inbox"
@@ -18,23 +23,10 @@ export type MailFolderKey =
 
 export type MailCategoryTab = "primary" | "updates" | "promotions" | "social";
 
-export interface MailThreadRow {
-  readonly threadId: string;
-  readonly messageId: string;
-  readonly subject: string;
-  readonly from: string;
-  readonly fromEmail: string;
-  readonly preview: string;
-  readonly time: string;
-  readonly unread: boolean;
-  readonly starred: boolean;
-  readonly hasAttachment: boolean;
-  readonly messageCount: number;
-  readonly labels: readonly string[];
+export type MailThreadRow = MailThreadRowContract & {
   readonly category: MailCategoryTab;
   readonly folder: MailFolderKey;
-  readonly snoozedUntil: string | null;
-}
+};
 
 export interface MailThreadsListInput {
   readonly folder: MailFolderKey;
@@ -45,9 +37,8 @@ export interface MailThreadsListInput {
   readonly offset?: number;
 }
 
-export interface MailThreadsListResult {
+export type MailThreadsListResult = Omit<MailThreadsListResultContract, "threads"> & {
   readonly threads: readonly MailThreadRow[];
-  readonly total: number;
   readonly limit: number;
   readonly offset: number;
 }
@@ -109,14 +100,13 @@ export interface MailThreadDetail {
   readonly direction: "inbound" | "outbound" | "mixed";
 }
 
-export interface MailAttachment {
-  /** Original filename shown to the recipient. */
-  readonly filename: string;
-  /** MIME type, e.g. "image/png". */
-  readonly contentType: string;
-  /** Base-64 encoded file content. */
-  readonly content: string;
-}
+/** Prefer Drive `objectId` for large files; base64 `content` remains for small inline attachments. */
+export type MailAttachment = MailAttachmentInput & {
+  readonly filename?: string;
+  readonly contentType?: string;
+  readonly content?: string;
+  readonly objectId?: string;
+};
 
 export interface MailSendInput {
   readonly to: readonly MailApiAddress[];
@@ -133,6 +123,7 @@ export interface MailReplyInput extends MailSendInput {
 
 export interface MailSendResult {
   readonly id?: string;
+  readonly outboundId?: string;
   readonly messageId?: string;
   readonly threadId?: string;
   readonly status?: string;
@@ -155,16 +146,7 @@ export interface MailFilterActions {
   readonly snoozeUntil?: string;
 }
 
-export interface MailFilterRecord {
-  readonly id: string;
-  readonly name: string;
-  readonly enabled: boolean;
-  readonly priority: number;
-  readonly criteria: MailFilterCriteria;
-  readonly actions: MailFilterActions;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+export type MailFilterRecord = MailFilter;
 
 export interface MailFilterCreateInput {
   readonly name: string;
@@ -331,7 +313,49 @@ export async function spamMailThread(
   threadId: string,
   fetchImpl: MailApiFetch = authenticatedFetch,
 ): Promise<void> {
-  await callMailTool("mail.spam", { threadId }, fetchImpl);
+  await callMailTool("mail.spam", { threadId, spam: true }, fetchImpl);
+}
+
+export async function cancelOutboundMail(
+  outboundId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<MailOutboundRecord | null> {
+  const output = await callMailTool<{ readonly outbound?: MailOutboundRecord | null }>(
+    "mail.outbound.cancel",
+    { outboundId },
+    fetchImpl,
+  );
+  return output.outbound ?? null;
+}
+
+export async function listMailDrafts(
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<readonly unknown[]> {
+  const output = await callMailTool<{ readonly drafts?: readonly unknown[] }>(
+    "mail.draft.list",
+    {},
+    fetchImpl,
+  );
+  return output.drafts ?? [];
+}
+
+export async function saveMailDraft(
+  input: Record<string, unknown>,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<unknown> {
+  return callMailTool("mail.draft.save", input, fetchImpl);
+}
+
+export async function discardMailDraft(
+  id: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<boolean> {
+  const output = await callMailTool<{ readonly deleted?: boolean }>(
+    "mail.draft.discard",
+    { id },
+    fetchImpl,
+  );
+  return output.deleted ?? false;
 }
 
 export async function snoozeMailThread(

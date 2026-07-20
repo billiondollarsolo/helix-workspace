@@ -1,4 +1,5 @@
 import { assertNoPendingStartupMigrations } from "./db/startup-migration-check.js";
+import { env } from "./config/env.js";
 import { createHelixServer } from "./server.js";
 import { initTelemetry } from "./telemetry.js";
 
@@ -6,8 +7,9 @@ initTelemetry();
 
 await assertNoPendingStartupMigrations();
 const server = await createHelixServer();
-const port = Number.parseInt(process.env.PORT ?? "3000", 10);
-const host = process.env.HOST ?? "0.0.0.0";
+const bootEnv = env();
+const port = bootEnv.PORT;
+const host = bootEnv.HOST;
 
 /**
  * P0-2: graceful shutdown.
@@ -22,7 +24,7 @@ const host = process.env.HOST ?? "0.0.0.0";
  * sleep; `SHUTDOWN_TIMEOUT_MS` (default 50s, comfortably inside the grace
  * period) bounds the drain so a stuck worker cannot block termination forever.
  */
-const shutdownTimeoutMs = Number.parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? "50000", 10);
+const shutdownTimeoutMs = bootEnv.SHUTDOWN_TIMEOUT_MS;
 let shuttingDown = false;
 
 async function shutdown(signal: NodeJS.Signals): Promise<void> {

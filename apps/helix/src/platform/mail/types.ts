@@ -121,7 +121,10 @@ export interface MailAttachmentInput {
   readonly filename?: string | undefined;
   readonly mimeType: string;
   readonly contentType?: string | undefined;
-  readonly content: Buffer;
+  /** Inline bytes (legacy small attachments). Optional when `objectId` is set. */
+  readonly content?: Buffer | undefined;
+  /** Drive object reference — resolved to a stream/buffer at dispatch time. */
+  readonly objectId?: string | undefined;
   readonly path?: string | undefined;
   readonly contentId?: string | undefined;
   readonly disposition?: string | undefined;
@@ -237,6 +240,31 @@ export interface MailOutboundRecord {
   readonly deliveryMetadata: JsonObject;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+  /** Delivery attempt count (retry/dead-letter). */
+  readonly attemptCount?: number;
+  readonly nextAttemptAt?: Date | null;
+  readonly deadLetteredAt?: Date | null;
+}
+
+/** Persisted draft envelope (first-class drafts, not undo-window outbox rows). */
+export interface MailDraftRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly threadId: string | null;
+  readonly envelope: JsonObject;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface MailAliasRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly email: string;
+  readonly displayName: string | null;
+  readonly isPrimary: boolean;
+  readonly createdAt: Date;
 }
 
 export interface MailOutboundDeliveryResult {

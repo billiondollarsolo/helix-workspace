@@ -1,82 +1,38 @@
 import { authenticatedFetch } from "@/lib/auth";
+import type {
+  DriveAccessGrant,
+  DriveEntry,
+  DriveItemKind,
+  DrivePreview,
+  DriveRenameInput,
+  DriveRole,
+  DriveSearchHit,
+  DriveShareLink,
+  DriveUploadResult as DriveUploadResultContract,
+  DriveVersion,
+} from "@helix/contracts";
 
 export type DriveApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-export type DriveApiEntryType = "file" | "folder";
-export type DriveApiPreviewKind = "text" | "image" | "pdf" | "office" | "unsupported";
-export type DriveApiPreviewStatus = "available" | "unsupported";
-
-export interface DriveApiPreview {
-  readonly kind: DriveApiPreviewKind;
-  readonly status: DriveApiPreviewStatus;
-  readonly mimeType: string;
-  readonly text?: string;
-  readonly url?: string;
-  readonly storageKey?: string;
-  readonly pageCount?: number;
-  readonly width?: number;
-  readonly height?: number;
-  readonly blocker?: string;
-  readonly generatedAt?: string;
-}
-
-export interface DriveApiEntry {
-  readonly id: string;
-  readonly type: DriveApiEntryType;
-  readonly name: string;
-  readonly folderId: string | null;
-  readonly ownerActorId: string | null;
-  /** Owner's display name, resolved server-side via `actors.display_name`.
-   *  When present, the UI should show this instead of the raw owner UUID. */
-  readonly ownerDisplayName?: string;
-  /** Owner's email, when known. */
-  readonly ownerEmail?: string;
-  /** Editor app that owns this file: "docs" | "sheets" | "slides" | null (plain upload). */
-  readonly app?: string | null;
-  readonly mimeType?: string;
-  readonly byteSize?: number;
-  readonly sha256?: string | null;
-  readonly storageKey?: string;
-  readonly versionNumber?: number;
-  readonly preview?: DriveApiPreview;
-  readonly metadata?: Record<string, unknown>;
-  readonly deletedAt: string | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
-
-export interface DriveApiSearchHit {
-  readonly objectId: string;
-  readonly name: string;
-  readonly mimeType: string;
-  readonly byteSize: number;
-  readonly sha256: string | null;
-  readonly folderId: string | null;
-  readonly preview: string;
-  readonly previewMetadata?: DriveApiPreview;
-  readonly updatedAt: string;
-}
+export type DriveApiEntryType = DriveItemKind;
+export type DriveApiPreviewKind = DrivePreview["kind"];
+export type DriveApiPreviewStatus = DrivePreview["status"];
+export type DriveApiPreview = DrivePreview;
+/** Wire DTO for a Drive list/detail entry — sourced from @helix/contracts. */
+export type DriveApiEntry = DriveEntry;
+export type DriveApiSearchHit = DriveSearchHit;
+export type { DriveAccessGrant, DriveShareLink, DriveVersion };
+export type DriveVersionResult = DriveVersion;
 
 export interface DriveShareInput {
   readonly objectId: string;
   readonly actorIds?: readonly string[];
   readonly actorRefs?: readonly string[];
-  readonly role?: "reader" | "commenter" | "editor" | "owner";
+  readonly role?: DriveRole;
   readonly expiresAt?: string | null;
 }
 
-export interface DriveAccessGrant {
-  readonly actorId: string;
-  readonly role: string;
-  readonly displayName?: string;
-  readonly email?: string;
-  readonly grantedByActorId: string | null;
-  readonly expiresAt: string | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
-
-export type DriveAccessRole = "reader" | "commenter" | "editor";
+export type DriveAccessRole = Exclude<DriveRole, "owner">;
 
 export interface DriveUploadInput {
   readonly name: string;
@@ -87,23 +43,7 @@ export interface DriveUploadInput {
   readonly metadata?: Record<string, unknown>;
 }
 
-export interface DriveUploadResult {
-  readonly objectId: string;
-  readonly orgId: string;
-  readonly ownerActorId: string;
-  readonly name: string;
-  readonly folderId: string | null;
-  readonly storageKey: string;
-  readonly mimeType: string;
-  readonly byteSize: number;
-  readonly sha256: string | null;
-  readonly status: string;
-  readonly uploadUrl: string | null;
-  readonly uploadHeaders?: Record<string, string>;
-  readonly metadata: Record<string, unknown>;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+export type DriveUploadResult = DriveUploadResultContract;
 
 export interface DriveFinalizeInput {
   readonly objectId: string;
@@ -115,18 +55,10 @@ export interface DriveFinalizeInput {
   readonly metadata?: Record<string, unknown>;
 }
 
-export interface DriveVersionResult {
-  readonly id: string;
-  readonly orgId: string;
+export interface DriveShareLinkCreateInput {
   readonly objectId: string;
-  readonly versionNumber: number;
-  readonly storageKey: string;
-  readonly mimeType: string;
-  readonly byteSize: number;
-  readonly sha256: string;
-  readonly metadata: Record<string, unknown>;
-  readonly createdByActorId: string | null;
-  readonly createdAt: string;
+  readonly role?: DriveAccessRole;
+  readonly expiresAt?: string | null;
 }
 
 export async function prepareDriveUpload(
@@ -192,6 +124,25 @@ export async function uploadDriveFile(
     fetchImpl,
   );
 
+  // Large-file path: server returned multipart part URLs — PUT each slice, then complete.
+  if (prepared.multipart !== undefined) {
+    const parts = await uploadMultipartParts(buffer, prepared.multipart, mimeType);
+    await callDriveTool(
+      "drive.upload.complete",
+      {
+        objectId: prepared.objectId,
+        uploadId: prepared.multipart.uploadId,
+        parts,
+        byteSize: buffer.byteLength,
+        sha256,
+        mimeType,
+        metadata: { source: "web-shell" },
+      },
+      fetchImpl,
+    );
+    return prepared;
+  }
+
   // Direct-to-storage when the server returned a presigned PUT URL (RustFS /
   // S3-compatible backends). Matches Google Drive / OneDrive / Dropbox: bytes
   // go straight to object storage, never through the API server. If the
@@ -229,6 +180,41 @@ export async function uploadDriveFile(
   }
 
   return prepared;
+}
+
+async function uploadMultipartParts(
+  buffer: ArrayBuffer,
+  multipart: NonNullable<DriveUploadResult["multipart"]>,
+  mimeType: string,
+): Promise<readonly { readonly partNumber: number; readonly etag: string }[]> {
+  const bytes = new Uint8Array(buffer);
+  const completed: { partNumber: number; etag: string }[] = [];
+  // Bounded concurrency of 3 part PUTs.
+  const concurrency = 3;
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < multipart.partUrls.length) {
+      const index = next;
+      next += 1;
+      const url = multipart.partUrls[index];
+      if (url === undefined) continue;
+      const start = index * multipart.partSize;
+      const end = Math.min(start + multipart.partSize, bytes.byteLength);
+      const slice = bytes.subarray(start, end);
+      const putRes = await fetch(url, {
+        method: "PUT",
+        headers: { "content-type": mimeType },
+        body: slice,
+      });
+      if (!putRes.ok) {
+        throw new Error(`Multipart part ${String(index + 1)} failed: HTTP ${String(putRes.status)}`);
+      }
+      const etag = putRes.headers.get("etag") ?? putRes.headers.get("ETag") ?? `"part-${String(index + 1)}"`;
+      completed.push({ partNumber: index + 1, etag });
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, multipart.partUrls.length) }, () => worker()));
+  return completed.sort((a, b) => a.partNumber - b.partNumber);
 }
 
 async function finalizeDriveUploadWithContent(
@@ -515,6 +501,81 @@ export async function deleteDriveObject(
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<void> {
   await callDriveTool("drive.delete", { objectId }, fetchImpl);
+}
+
+export async function renameDriveObject(
+  input: DriveRenameInput,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<DriveApiEntry> {
+  return callDriveTool<DriveApiEntry>(
+    "drive.rename",
+    { objectId: input.objectId, name: input.name },
+    fetchImpl,
+  );
+}
+
+export async function listDriveVersions(
+  objectId: string,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<readonly DriveVersion[]> {
+  const output = await callDriveTool<{ readonly versions?: readonly DriveVersion[] }>(
+    "drive.versions.list",
+    { objectId },
+    fetchImpl,
+  );
+  return output.versions ?? [];
+}
+
+export async function revertDriveVersion(
+  objectId: string,
+  versionNumber: number,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<DriveVersion> {
+  return callDriveTool<DriveVersion>(
+    "drive.versions.revert",
+    { objectId, versionNumber },
+    fetchImpl,
+  );
+}
+
+export async function createDriveShareLink(
+  input: DriveShareLinkCreateInput,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<DriveShareLink> {
+  return callDriveTool<DriveShareLink>(
+    "drive.link.create",
+    {
+      objectId: input.objectId,
+      role: input.role ?? "reader",
+      expiresAt: input.expiresAt ?? null,
+    },
+    fetchImpl,
+  );
+}
+
+export async function listDriveShareLinks(
+  objectId: string,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<readonly DriveShareLink[]> {
+  const output = await callDriveTool<{ readonly links?: readonly DriveShareLink[] }>(
+    "drive.link.list",
+    { objectId },
+    fetchImpl,
+  );
+  return output.links ?? [];
+}
+
+export async function revokeDriveShareLink(
+  linkId: string,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<{ readonly id: string; readonly revoked: boolean }> {
+  return callDriveTool("drive.link.revoke", { linkId }, fetchImpl);
+}
+
+/** Public unauthenticated URL for a share-link token. */
+export function drivePublicShareUrl(token: string, origin: string = globalThis.location?.origin ?? ""): string {
+  const base = origin.replace(/\/$/u, "");
+  return `${base}/api/drive/share/${encodeURIComponent(token)}`;
 }
 
 async function callDriveTool<Output = unknown>(

@@ -53,6 +53,17 @@ export interface ChatMessageView {
   readonly editedAt: string | null;
   readonly reactions: readonly ChatReactionView[];
   readonly readBy: number;
+  /** Actor ids (others) who have read through this message. */
+  readonly seenByActorIds: readonly string[];
+  readonly pending?: boolean;
+  readonly failed?: boolean;
+  readonly clientMessageId?: string;
+}
+
+/** Boundary marker: "seen by …" after a message id. */
+export interface ChatSeenMarker {
+  readonly afterMessageId: string;
+  readonly actorIds: readonly string[];
 }
 
 /** A member row for the info panel's Members tab. */
@@ -199,6 +210,10 @@ export function toMessageView(input: {
   readonly nameForActor: (actorId: string | null) => string;
   readonly reactions: readonly ChatReactionView[];
   readonly readBy: number;
+  readonly seenByActorIds?: readonly string[];
+  readonly pending?: boolean;
+  readonly failed?: boolean;
+  readonly clientMessageId?: string;
 }): ChatMessageView {
   const { record, selfActorId, nameForActor, reactions, readBy } = input;
   return {
@@ -211,7 +226,67 @@ export function toMessageView(input: {
     editedAt: record.editedAt,
     reactions,
     readBy,
+    seenByActorIds: input.seenByActorIds ?? [],
+    ...(input.pending === undefined ? {} : { pending: input.pending }),
+    ...(input.failed === undefined ? {} : { failed: input.failed }),
+    ...(input.clientMessageId === undefined
+      ? {}
+      : { clientMessageId: input.clientMessageId }),
   };
+}
+
+/**
+ * For each message, list other actors whose last-read marker is at-or-after it.
+ * Self receipts are excluded (never "seen by me").
+ */
+export function seenByForMessage(
+  messageId: string,
+  orderedIds: readonly string[],
+  receipts: readonly ChatReadReceiptRecord[],
+  selfActorId: string | null,
+): readonly string[] {
+  const messageIndex = orderedIds.indexOf(messageId);
+  if (messageIndex < 0) {
+    return [];
+  }
+  const seen: string[] = [];
+  for (const receipt of receipts) {
+    if (receipt.actorId === selfActorId || receipt.lastReadMessageId === null) {
+      continue;
+    }
+    const receiptIndex = orderedIds.indexOf(receipt.lastReadMessageId);
+    if (receiptIndex >= messageIndex) {
+      seen.push(receipt.actorId);
+    }
+  }
+  return seen;
+}
+
+/**
+ * Collapse read receipts into markers placed after the farthest message each
+ * non-self actor has read. Multiple actors on the same message share a marker.
+ */
+export function seenMarkers(
+  orderedIds: readonly string[],
+  receipts: readonly ChatReadReceiptRecord[],
+  selfActorId: string | null,
+): readonly ChatSeenMarker[] {
+  const byMessage = new Map<string, string[]>();
+  for (const receipt of receipts) {
+    if (receipt.actorId === selfActorId || receipt.lastReadMessageId === null) {
+      continue;
+    }
+    if (!orderedIds.includes(receipt.lastReadMessageId)) {
+      continue;
+    }
+    const list = byMessage.get(receipt.lastReadMessageId) ?? [];
+    list.push(receipt.actorId);
+    byMessage.set(receipt.lastReadMessageId, list);
+  }
+  return [...byMessage.entries()].map(([afterMessageId, actorIds]) => ({
+    afterMessageId,
+    actorIds,
+  }));
 }
 
 /**

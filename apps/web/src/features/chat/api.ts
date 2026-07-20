@@ -1,46 +1,30 @@
-import { addAccessTokenSearchParam, authenticatedFetch } from "@/lib/auth";
+import type {
+  ChatCreateRoomInput,
+  ChatInviteInput,
+  ChatMessage,
+  ChatPresenceStatus,
+  ChatReadReceipt,
+  ChatRoom,
+  ChatSearchHit,
+} from "@helix/contracts";
+import { authenticatedFetch, getStoredAccessToken } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
 
-export interface ChatSearchHit {
-  readonly roomId: string;
-  readonly messageId: string;
-  readonly actorId: string | null;
-  readonly subject: string;
-  readonly preview: string;
-  readonly sentAt: string;
-}
+/** @deprecated Prefer ChatSearchHit from @helix/contracts */
+export type { ChatSearchHit };
 
-export interface ChatMessageRecord {
-  readonly id: string;
-  readonly orgId?: string;
-  readonly roomId: string;
-  readonly actorId: string | null;
-  readonly body: string;
-  readonly bodyFormat: string;
-  readonly metadata?: Record<string, unknown>;
+export type ChatMessageRecord = ChatMessage & {
   readonly attachmentObjectIds: readonly string[];
-  readonly sentAt: string;
-  readonly editedAt: string | null;
-  readonly deletedAt: string | null;
-  readonly createdAt?: string;
-  readonly updatedAt?: string;
-}
+};
 
-export interface ChatRoomMemberRecord {
+export type ChatRoomMemberRecord = {
   readonly actorId: string;
   readonly role: string;
   readonly displayName: string | null;
   readonly email: string | null;
-}
+};
 
-export interface ChatRoomRecord {
-  readonly id: string;
-  readonly orgId?: string;
-  readonly kind: "chat_room" | "chat_dm";
-  readonly subject: string | null;
-  readonly createdByActorId: string | null;
-  readonly metadata?: Record<string, unknown>;
-  readonly members?: readonly ChatRoomMemberRecord[];
+export type ChatRoomRecord = ChatRoom & {
   readonly settings: {
     readonly threadId: string;
     readonly orgId?: string;
@@ -51,27 +35,18 @@ export interface ChatRoomRecord {
     readonly createdAt?: string;
     readonly updatedAt?: string;
   } | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+};
 
 export interface ChatPresenceEntry {
   readonly actorId: string;
   readonly orgId: string;
   readonly displayName?: string;
   readonly email?: string;
-  readonly status: "online";
+  readonly status: ChatPresenceStatus | "online";
   readonly seenAt: string;
 }
 
-export interface ChatReadReceiptRecord {
-  readonly roomId: string;
-  readonly actorId: string;
-  readonly orgId: string;
-  readonly lastReadMessageId: string | null;
-  readonly lastReadAt: string;
-  readonly updatedAt: string;
-}
+export type ChatReadReceiptRecord = ChatReadReceipt;
 
 export interface ChatReactionRecord {
   readonly messageId: string;
@@ -81,12 +56,22 @@ export interface ChatReactionRecord {
   readonly createdAt: string;
 }
 
+export interface ChatPinRecord {
+  readonly roomId: string;
+  readonly messageId: string;
+  readonly orgId: string;
+  readonly pinnedByActorId: string | null;
+  readonly createdAt: string;
+}
+
 export interface ChatSendInput {
   readonly roomId: string;
   readonly body: string;
   readonly bodyFormat?: "plain" | "markdown";
   readonly attachmentObjectIds?: readonly string[];
   readonly metadata?: Record<string, unknown>;
+  readonly clientMessageId?: string;
+  readonly parentMessageId?: string;
 }
 
 export interface ChatReactInput {
@@ -114,8 +99,9 @@ export type ChatRealtimeEvent =
       readonly type: "presence.joined";
       readonly roomId: string;
       readonly actorId: string;
-      readonly entry: ChatPresenceEntry;
+      readonly entry?: ChatPresenceEntry;
       readonly roster?: readonly ChatPresenceEntry[];
+      readonly status?: ChatPresenceStatus;
     }
   | { readonly type: "presence.left"; readonly roomId: string; readonly actorId: string }
   | {
@@ -132,16 +118,18 @@ export type ChatRealtimeEvent =
   | {
       readonly type: "message.created";
       readonly roomId: string;
-      readonly actorId: string;
+      readonly actorId?: string;
       readonly message: ChatMessageRecord;
     }
   | {
       readonly type: "read";
       readonly roomId: string;
       readonly actorId: string;
+      readonly messageId?: string;
       readonly receipt: ChatReadReceiptRecord;
     }
-  | { readonly type: "error"; readonly error: string };
+  | { readonly type: "reconnect"; readonly reason: string }
+  | { readonly type: "error"; readonly code?: string; readonly message?: string; readonly error?: string };
 
 export interface ChatRealtimeClient {
   subscribe(roomId: string): void;
@@ -149,6 +137,7 @@ export interface ChatRealtimeClient {
   setTyping(roomId: string, isTyping: boolean): void;
   markRead(roomId: string, messageId?: string): void;
   requestPresence(roomId: string): void;
+  setPresence(status: ChatPresenceStatus): void;
   isOpen(): boolean;
   close(): void;
 }
@@ -156,9 +145,10 @@ export interface ChatRealtimeClient {
 interface ChatRealtimeClientOptions {
   readonly url?: string;
   readonly WebSocketImpl?: typeof WebSocket;
+  readonly protocols?: string | string[];
   readonly onEvent: (event: ChatRealtimeEvent) => void;
   readonly onOpen?: (() => void) | undefined;
-  readonly onClose?: (() => void) | undefined;
+  readonly onClose?: ((event?: CloseEvent) => void) | undefined;
   readonly onError?: ((error: Event) => void) | undefined;
 }
 
@@ -223,6 +213,105 @@ export async function listChatMessages(
   return output.messages ?? [];
 }
 
+/** Caller-facing create input — defaults applied by the server schema. */
+export type CreateChatRoomRequest = {
+  readonly subject?: string;
+  readonly kind?: "chat_room" | "chat_dm";
+  readonly memberActorIds?: readonly string[];
+  readonly topic?: string;
+  readonly isPrivate?: boolean;
+  readonly metadata?: Record<string, unknown>;
+};
+
+export type InviteToRoomRequest = {
+  readonly roomId: string;
+  readonly actorIds: readonly string[];
+  readonly role?: string;
+};
+
+export async function createChatRoom(
+  input: CreateChatRoomRequest,
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<ChatRoomRecord> {
+  const payload: ChatCreateRoomInput = {
+    kind: input.kind ?? "chat_room",
+    memberActorIds: [...(input.memberActorIds ?? [])],
+    isPrivate: input.isPrivate ?? false,
+    metadata: input.metadata ?? {},
+    ...(input.subject === undefined ? {} : { subject: input.subject }),
+    ...(input.topic === undefined ? {} : { topic: input.topic }),
+  };
+  return callChatTool<ChatRoomRecord>("chat.create_room", payload, fetchImpl);
+}
+
+export async function inviteToRoom(
+  input: InviteToRoomRequest,
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<{ readonly roomId: string; readonly invitedActorIds: readonly string[] }> {
+  const payload: ChatInviteInput = {
+    roomId: input.roomId,
+    actorIds: [...input.actorIds],
+    role: input.role ?? "member",
+  };
+  return callChatTool("chat.invite", payload, fetchImpl);
+}
+
+export async function listThreadReplies(
+  input: {
+    readonly roomId: string;
+    readonly parentMessageId: string;
+    readonly before?: string;
+    readonly limit?: number;
+  },
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<readonly ChatMessageRecord[]> {
+  const output = await callChatTool<{ readonly messages?: readonly ChatMessageRecord[] }>(
+    "chat.thread.list",
+    input,
+    fetchImpl,
+  );
+  return output.messages ?? [];
+}
+
+export async function replyInThread(
+  input: {
+    readonly roomId: string;
+    readonly parentMessageId: string;
+    readonly body: string;
+    readonly bodyFormat?: "plain" | "markdown";
+    readonly clientMessageId?: string;
+  },
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<ChatMessageRecord> {
+  return callChatTool("chat.reply_in_thread", input, fetchImpl);
+}
+
+export async function pinChatMessage(
+  input: { readonly roomId: string; readonly messageId: string },
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<ChatPinRecord> {
+  return callChatTool("chat.pin", input, fetchImpl);
+}
+
+export async function unpinChatMessage(
+  input: { readonly roomId: string; readonly messageId: string },
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<{ readonly ok: true }> {
+  return callChatTool("chat.unpin", input, fetchImpl);
+}
+
+export async function listChatPins(
+  input: { readonly roomId: string },
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<readonly ChatPinRecord[]> {
+  const output = await callChatTool<{ readonly pins?: readonly ChatPinRecord[] }>(
+    "chat.pins.list",
+    input,
+    fetchImpl,
+  );
+  return output.pins ?? [];
+}
+
 export async function sendChatMessage(
   input: ChatSendInput,
   fetchImpl: ChatApiFetch = authenticatedFetch,
@@ -235,6 +324,12 @@ export async function sendChatMessage(
       bodyFormat: input.bodyFormat ?? "plain",
       attachmentObjectIds: input.attachmentObjectIds ?? [],
       metadata: input.metadata ?? {},
+      ...(input.clientMessageId === undefined
+        ? {}
+        : { clientMessageId: input.clientMessageId }),
+      ...(input.parentMessageId === undefined
+        ? {}
+        : { parentMessageId: input.parentMessageId }),
     },
     fetchImpl,
   );
@@ -270,6 +365,7 @@ export async function deleteChatMessage(
   return callChatTool<ChatMessageRecord>("chat.delete", { messageId }, fetchImpl);
 }
 
+/** Chat WS URL without embedding the access token in the query string (G6). */
 export function chatRealtimeUrl(path = "/ws/chat"): string {
   if (typeof window === "undefined") {
     return path;
@@ -277,15 +373,29 @@ export function chatRealtimeUrl(path = "/ws/chat"): string {
 
   const url = new URL(path, window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return addAccessTokenSearchParam(url.toString());
+  return url.toString();
+}
+
+/** Subprotocol list: `helix-bearer` + token when a stored bearer exists. */
+export function chatRealtimeProtocols(): string[] | undefined {
+  const token = getStoredAccessToken();
+  if (token === null) {
+    return undefined;
+  }
+  return ["helix-bearer", token];
 }
 
 export function createChatRealtimeClient(options: ChatRealtimeClientOptions): ChatRealtimeClient {
   const WebSocketImpl = options.WebSocketImpl ?? globalThis.WebSocket;
-  const socket = new WebSocketImpl(options.url ?? chatRealtimeUrl());
+  const protocols =
+    options.protocols ?? chatRealtimeProtocols();
+  const socket =
+    protocols === undefined
+      ? new WebSocketImpl(options.url ?? chatRealtimeUrl())
+      : new WebSocketImpl(options.url ?? chatRealtimeUrl(), protocols);
 
   socket.addEventListener("open", () => options.onOpen?.());
-  socket.addEventListener("close", () => options.onClose?.());
+  socket.addEventListener("close", (event) => options.onClose?.(event));
   socket.addEventListener("error", (event) => options.onError?.(event));
   socket.addEventListener("message", (event) => {
     const parsed = parseChatRealtimeEvent(event.data);
@@ -307,10 +417,17 @@ export function createChatRealtimeClient(options: ChatRealtimeClientOptions): Ch
         body: input.body,
         bodyFormat: input.bodyFormat ?? "plain",
         attachmentObjectIds: input.attachmentObjectIds ?? [],
+        ...(input.clientMessageId === undefined
+          ? {}
+          : { clientMessageId: input.clientMessageId }),
+        ...(input.parentMessageId === undefined
+          ? {}
+          : { parentMessageId: input.parentMessageId }),
       }),
     setTyping: (roomId, isTyping) => send({ type: "typing", roomId, isTyping }),
     markRead: (roomId, messageId) => send({ type: "read", roomId, messageId }),
     requestPresence: (roomId) => send({ type: "presence", roomId }),
+    setPresence: (status) => send({ type: "presence.set", status }),
     isOpen: () => socket.readyState === WebSocketImpl.OPEN,
     close: () => socket.close(),
   };
@@ -321,9 +438,6 @@ async function callChatTool<Output>(
   input: unknown,
   fetchImpl: ChatApiFetch,
 ): Promise<Output> {
-  // Routes through the shared callTool helper so confirmation-gated tools
-  // (e.g. chat.message.delete) auto-approve their pending_confirmation
-  // instead of silently no-op'ing.
   return callTool<Output>(toolId, input, { fetchImpl });
 }
 

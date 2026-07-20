@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CreateOutboundMailInput, MailStore } from "../mail/store.js";
+import type { CreateOutboundMailInput, MailStore } from "../mail/index.js";
 import type { MailOutboundRecord } from "../mail/types.js";
 import { createIcsCalendar, createMailCalendarInvitationSender, createReplyIcs } from "./ics.js";
 import type { CalendarEventRecord } from "./types.js";
@@ -79,7 +79,7 @@ describe("calendar ICS mail invitations", () => {
       contentType: "text/calendar; method=REQUEST; charset=utf-8",
       disposition: "attachment",
     });
-    const ics = attachment?.content.toString("utf8") ?? "";
+    const ics = attachment?.content?.toString("utf8") ?? "";
     expect(ics).toContain("BEGIN:VCALENDAR");
     expect(ics).toContain("METHOD:REQUEST");
     expect(ics).toContain("SUMMARY:Launch review");
@@ -129,7 +129,7 @@ describe("calendar ICS mail invitations", () => {
       filename: "reply.ics",
       contentType: "text/calendar; method=REPLY; charset=utf-8",
     });
-    expect(attachment?.content.toString("utf8")).toContain("METHOD:REPLY");
+    expect(attachment?.content?.toString("utf8")).toContain("METHOD:REPLY");
   });
 });
 

@@ -2,6 +2,7 @@ import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentation
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { env } from "./config/env.js";
 import {
   applyOpenTelemetryEnvironment,
   loadObservabilityConfigFromEnv,
@@ -12,10 +13,11 @@ let sdk: NodeSDK | null = null;
 
 export function initTelemetry(): void {
   const config = loadObservabilityConfigFromEnv();
-  if (sdk !== null || process.env.OTEL_SDK_DISABLED === "true" || !config.enabled) {
+  if (sdk !== null || env().OTEL_SDK_DISABLED === "true" || !config.enabled) {
     return;
   }
 
+  // OTEL SDK mutates process.env for auto-instrumentation bootstrap.
   applyOpenTelemetryEnvironment(process.env, config);
 
   const exporterOptions: ConstructorParameters<typeof OTLPTraceExporter>[0] =

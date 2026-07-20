@@ -1,14 +1,14 @@
 import type postgres from "postgres";
 import { calendarRecordToIndexDocument } from "../calendar/search/indexer.js";
-import { PostgresCalendarStore } from "../calendar/store.js";
+import { PostgresCalendarStore } from "../calendar/index.js";
 import { chatRecordToIndexDocument } from "../chat/search/indexer.js";
-import { PostgresChatStore } from "../chat/store.js";
+import { PostgresChatStore } from "../chat/index.js";
 import { docsRecordToIndexDocument } from "../docs/search/indexer.js";
-import { PostgresDocsStore } from "../docs/store.js";
+import { PostgresDocsStore } from "../docs/index.js";
 import { driveRecordToIndexDocument } from "../drive/search/indexer.js";
-import { PostgresDriveStore } from "../drive/store.js";
+import { PostgresDriveStore } from "../drive/index.js";
 import { mailRecordToIndexDocument } from "../mail/search/indexer.js";
-import { PostgresMailStore } from "../mail/store.js";
+import { PostgresMailStore } from "../mail/index.js";
 import type { IndexDocument, SearchEngine } from "./types.js";
 
 export const searchReindexTypes = ["mail", "chat", "docs", "drive", "calendar"] as const;

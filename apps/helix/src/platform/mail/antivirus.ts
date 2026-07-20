@@ -198,7 +198,13 @@ export function parseClamavResponse(response: string): ClamavVerdict {
  *   MAIL_CLAMAV_PORT       clamd port (default 3310)
  *   MAIL_CLAMAV_TIMEOUT_MS per-scan socket timeout (default 30000)
  */
-export function getClamavScannerConfig(env: NodeJS.ProcessEnv): ClamavScannerOptions | undefined {
+/**
+ * @deprecated Prefer `mailConfig(env).clamav` from `./config.js` (G3).
+ * Kept for unit tests that pass a plain env record.
+ */
+export function getClamavScannerConfig(
+  env: Readonly<Record<string, string | undefined>>,
+): ClamavScannerOptions | undefined {
   if (!envFlag(env.MAIL_CLAMAV_ENABLED)) {
     return undefined;
   }

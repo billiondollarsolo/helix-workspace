@@ -3,11 +3,13 @@ import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { EventBus, EventEnvelope, JsonObject, Unsubscribe } from "@helix/sdk-types";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import type {
+  MailAttachmentInput,
   MailOutboundDeliveryResult,
   MailOutboundEnvelope,
   MailOutboundRecord,
 } from "./types.js";
 import type { MailStore } from "./store.js";
+import { MailOutboundPayloadError, MailProviderError } from "./errors.js";
 
 export interface OutboundMailConfig {
   readonly host: string;
@@ -20,6 +22,12 @@ export interface OutboundMailConfig {
 export interface OutboundMailTransport {
   send(envelope: MailOutboundEnvelope): Promise<MailOutboundDeliveryResult>;
 }
+
+/** Resolve Drive objectId attachments to bytes before SMTP send. */
+export type AttachmentObjectResolver = (
+  objectId: string,
+  context: { readonly orgId: string; readonly actorId: string },
+) => Promise<Buffer>;
 
 export interface MailSendServiceOptions {
   readonly store: MailStore;
@@ -43,6 +51,18 @@ export interface QueueMailInput {
   readonly envelope: MailOutboundEnvelope;
   readonly now?: Date;
 }
+
+export interface OutboundDispatchOptions {
+  readonly maxAttempts?: number;
+  readonly baseDelayMs?: number;
+  readonly maxDelayMs?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
+  readonly resolveAttachment?: AttachmentObjectResolver;
+}
+
+const DEFAULT_MAX_ATTEMPTS = 5;
+const DEFAULT_BASE_DELAY_MS = 1_000;
+const DEFAULT_MAX_DELAY_MS = 60_000;
 
 export class NodemailerMailTransport implements OutboundMailTransport {
   private readonly transporter: Transporter<SMTPTransport.SentMessageInfo>;
@@ -90,6 +110,9 @@ export class NodemailerMailTransport implements OutboundMailTransport {
 }
 
 function attachmentContent(value: unknown): Buffer {
+  if (value === undefined || value === null) {
+    return Buffer.alloc(0);
+  }
   if (Buffer.isBuffer(value)) {
     return value;
   }
@@ -110,6 +133,42 @@ function isSerializedBuffer(value: unknown): value is { readonly data: readonly 
     (value as { readonly type?: unknown }).type === "Buffer" &&
     Array.isArray((value as { readonly data?: unknown }).data)
   );
+}
+
+/**
+ * Resolve any `objectId` attachments via the Drive storage resolver while
+ * preserving inline base64/buffer content (back-compat).
+ */
+export async function resolveOutboundAttachments(
+  envelope: MailOutboundEnvelope,
+  resolveObject?: AttachmentObjectResolver,
+  context?: { readonly orgId: string; readonly actorId: string },
+): Promise<MailOutboundEnvelope> {
+  if (envelope.attachments.length === 0) {
+    return envelope;
+  }
+  const attachments: MailAttachmentInput[] = [];
+  for (const attachment of envelope.attachments) {
+    if (attachment.objectId !== undefined && attachment.objectId.length > 0) {
+      if (resolveObject === undefined || context === undefined) {
+        throw new MailProviderError(
+          `Attachment objectId ${attachment.objectId} requires a Drive resolver.`,
+          new Error("missing_attachment_resolver"),
+        );
+      }
+      const content = await resolveObject(attachment.objectId, context);
+      attachments.push({
+        ...attachment,
+        content,
+      });
+      continue;
+    }
+    attachments.push({
+      ...attachment,
+      content: attachment.content ?? Buffer.alloc(0),
+    });
+  }
+  return { ...envelope, attachments };
 }
 
 export class MailSendService {
@@ -145,10 +204,27 @@ export class MailSendService {
 }
 
 export class OutboundMailDispatcher {
+  private readonly maxAttempts: number;
+  private readonly baseDelayMs: number;
+  private readonly maxDelayMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly resolveAttachment: AttachmentObjectResolver | undefined;
+
   constructor(
     private readonly store: MailStore,
     private readonly transport: OutboundMailTransport,
-  ) {}
+    options: OutboundDispatchOptions = {},
+  ) {
+    this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    this.baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+    this.maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
+    this.sleep =
+      options.sleep ??
+      ((ms) => new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }));
+    this.resolveAttachment = options.resolveAttachment;
+  }
 
   async dispatch(outboundId: string): Promise<MailOutboundRecord | null> {
     // P2-6: an `smtp.send` span covers the SMTP delivery of one queued message.
@@ -163,23 +239,65 @@ export class OutboundMailDispatcher {
             return null;
           }
 
-          try {
-            const delivery = await this.transport.send(outbound.envelope);
-            span.setAttribute("helix.mail.delivery_status", "sent");
-            return await this.store.markOutboundSent({
-              id: outbound.id,
-              providerMessageId: delivery.providerMessageId,
-              deliveryMetadata: delivery.deliveryMetadata,
-            });
-          } catch (error) {
-            span.setAttribute("helix.mail.delivery_status", "failed");
-            span.recordException(error instanceof Error ? error : new Error(String(error)));
-            span.setStatus({ code: SpanStatusCode.ERROR });
-            return await this.store.markOutboundFailed(
-              outbound.id,
-              error instanceof Error ? error.message : String(error),
-            );
+          let attempt = outbound.attemptCount ?? 0;
+          let lastError: unknown;
+
+          while (attempt < this.maxAttempts) {
+            attempt += 1;
+            span.setAttribute("helix.mail.attempt", attempt);
+            try {
+              const resolved = await resolveOutboundAttachments(
+                outbound.envelope,
+                this.resolveAttachment,
+                { orgId: outbound.orgId, actorId: outbound.actorId },
+              );
+              const delivery = await this.transport.send(resolved);
+              span.setAttribute("helix.mail.delivery_status", "sent");
+              return await this.store.markOutboundSent({
+                id: outbound.id,
+                providerMessageId: delivery.providerMessageId,
+                deliveryMetadata: delivery.deliveryMetadata,
+              });
+            } catch (error) {
+              lastError = error;
+              span.recordException(error instanceof Error ? error : new Error(String(error)));
+              const message = error instanceof Error ? error.message : String(error);
+
+              if (attempt >= this.maxAttempts) {
+                span.setAttribute("helix.mail.delivery_status", "dead_lettered");
+                span.setStatus({ code: SpanStatusCode.ERROR });
+                const wrapped = new MailProviderError(message, error);
+                if (this.store.markOutboundDeadLettered !== undefined) {
+                  return await this.store.markOutboundDeadLettered({
+                    id: outbound.id,
+                    lastError: wrapped.message,
+                  });
+                }
+                return await this.store.markOutboundFailed(outbound.id, wrapped.message);
+              }
+
+              const delay = computeBackoffMs(attempt, this.baseDelayMs, this.maxDelayMs);
+              span.setAttribute("helix.mail.delivery_status", "retry");
+              span.setAttribute("helix.mail.next_delay_ms", delay);
+              if (this.store.markOutboundRetry !== undefined) {
+                await this.store.markOutboundRetry({
+                  id: outbound.id,
+                  attemptCount: attempt,
+                  nextAttemptAt: new Date(Date.now() + delay),
+                  lastError: message,
+                });
+              } else {
+                await this.store.markOutboundFailed(outbound.id, message);
+              }
+              await this.sleep(delay);
+            }
           }
+
+          const message =
+            lastError instanceof Error ? lastError.message : String(lastError ?? "unknown");
+          span.setAttribute("helix.mail.delivery_status", "failed");
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          return await this.store.markOutboundFailed(outbound.id, message);
         } finally {
           span.end();
         }
@@ -191,6 +309,16 @@ export class OutboundMailDispatcher {
     const parsed = mailOutboxPayloadSchema(payload);
     return this.dispatch(parsed.mailOutboundId);
   }
+}
+
+/** Exponential backoff with full jitter, capped at maxDelayMs. */
+export function computeBackoffMs(
+  attempt: number,
+  baseDelayMs: number,
+  maxDelayMs: number,
+): number {
+  const exp = Math.min(maxDelayMs, baseDelayMs * 2 ** Math.max(0, attempt - 1));
+  return Math.floor(Math.random() * exp);
 }
 
 export class OutboundMailWorker {
@@ -269,5 +397,5 @@ function mailOutboxPayloadSchema(value: unknown): { readonly mailOutboundId: str
   ) {
     return { mailOutboundId: value.mailOutboundId };
   }
-  throw new Error("Invalid mail.send outbox payload.");
+  throw new MailOutboundPayloadError();
 }

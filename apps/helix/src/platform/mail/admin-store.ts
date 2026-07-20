@@ -1,3 +1,5 @@
+// ponytail: admin-store.ts bundles providers/domains/dkim/dmarc/routing (~1290 LOC).
+// Split into admin/*-store.ts when next touching a single domain store (G9).
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";

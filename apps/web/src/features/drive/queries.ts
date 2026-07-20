@@ -162,6 +162,7 @@ export function entryFromSearchHit(hit: DriveApiSearchHit): DriveApiEntry {
     byteSize: hit.byteSize,
     sha256: hit.sha256,
     ...(hit.previewMetadata === undefined ? {} : { preview: hit.previewMetadata }),
+    metadata: {},
     deletedAt: null,
     createdAt: hit.updatedAt,
     updatedAt: hit.updatedAt,

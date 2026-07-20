@@ -16,7 +16,8 @@ import type { Browser } from "playwright";
 import { Redis } from "ioredis";
 import { fromNodeHeaders } from "better-auth/node";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
-import { z } from "zod";
+import { ZodError, z } from "zod";
+import { ContractValidationError } from "@helix/contracts";
 import { createMeteringClient } from "@helix/sdk";
 import {
   actorFromRequestWithAccessTokenAndSession,
@@ -24,6 +25,8 @@ import {
   systemActor,
   type SessionActorResolver,
 } from "./api/actor.js";
+import { ApiError, NotFoundError } from "./api/api-error.js";
+import { requireActorScope } from "./api/scopes.js";
 import { buildAsyncApiDocument } from "./api/asyncapi.js";
 import { formatSseEvent, handleMcpJsonRpcRequest, handleMcpStreamingRequest } from "./api/mcp.js";
 import { createStoreBackedMcpResourceProvider } from "./api/mcp-resources.js";
@@ -48,6 +51,7 @@ import { projectToolListItem } from "./api/tool-projection.js";
 import { createResourceClassifier } from "./api/classify-resource.js";
 import { createHelixTRPCRouter } from "./api/trpc.js";
 import { createSqlClient } from "./db/client.js";
+import { env } from "./config/env.js";
 import { OAuthClientManager, OAuthTokenService } from "./platform/auth/oauth.js";
 import { PostgresAdminServiceStatusStore } from "./platform/admin/service-status.js";
 import { AdminServicesCatalog, registerAdminServicesRoutes } from "./platform/admin/services.js";
@@ -159,9 +163,11 @@ import {
   registerDriveEnrichments,
   registerDriveIndexer,
   registerDriveRoutes,
+  registerDriveShareLinkRoute,
   registerDriveTools,
   sendBytesWithRangeSupport,
 } from "./platform/drive/index.js";
+import { loadDriveConfig } from "./platform/drive/config.js";
 import { InMemoryEventBus } from "./platform/events/in-memory-event-bus.js";
 import { NatsEventBus } from "./platform/events/nats-event-bus.js";
 import { registerEventRoutes } from "./platform/events/routes.js";
@@ -186,8 +192,6 @@ import type { SiemAuditFormat } from "./platform/audit/siem-format.js";
 import type { SiemSyslogTransport } from "./platform/audit/siem-syslog.js";
 import {
   ClamavScanner,
-  getClamavScannerConfig,
-  getSpamdScannerConfig,
   NodemailerMailTransport,
   OutboundMailDispatcher,
   OutboundMailWorker,
@@ -202,12 +206,14 @@ import {
   registerMailDeliveryAdminRoutes,
   registerMailEnrichments,
   registerMailIndexer,
+  registerMailStreamRoutes,
   registerMailTools,
   resolveOutboundTransport,
   SmtpMailReceiver,
   SpamdScanner,
   type SmtpReceiverOptions,
 } from "./platform/mail/index.js";
+import { mailConfig } from "./platform/mail/config.js";
 import {
   PostgresMeetStore,
   registerMeetRoutes,
@@ -923,9 +929,10 @@ export async function verifyDefaultOrgAtBoot(input: {
 }
 
 export async function createHelixServer(): Promise<FastifyInstance> {
+  const bootEnv = env();
   const app = fastify({
     logger: {
-      level: process.env.LOG_LEVEL ?? "info",
+      level: bootEnv.LOG_LEVEL,
       redact: ["req.headers.authorization", "password", "secret", "token"],
     },
     // P1-10: API versioning. `/v1/...` requests are rewritten to the canonical
@@ -939,7 +946,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     // upload without hitting the default ceiling. Override via
     // `HELIX_BODY_LIMIT_BYTES` for production hosts that need different
     // ingress sizing.
-    bodyLimit: Number.parseInt(process.env.HELIX_BODY_LIMIT_BYTES ?? "134217728", 10),
+    bodyLimit: bootEnv.HELIX_BODY_LIMIT_BYTES,
     // Tool routes carry signed pending-action ids and other long path
     // segments; Fastify's default `maxParamLength` of 100 silently 404s
     // anything longer. 2 KB matches the URL-segment ceiling most reverse
@@ -957,10 +964,65 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   });
   // PRD §9.2: a presented-but-rejected API-key / mTLS credential surfaces as a
   // CredentialAuthError; map it to the carried 401/403 canonical error
-  // envelope rather than a generic 500.
+  // envelope rather than a generic 500. ApiError / ContractValidationError /
+  // ZodError share the same envelope path (G4).
   app.setErrorHandler((error, request, reply) => {
+    const traceId = traceIdForRequest(request);
+
+    if (error instanceof ApiError) {
+      if (error.retryAfterSeconds !== undefined) {
+        reply.header("retry-after", String(error.retryAfterSeconds));
+      }
+      const details =
+        error.details !== undefined &&
+        typeof error.details === "object" &&
+        error.details !== null &&
+        !Array.isArray(error.details)
+          ? (error.details as Record<string, unknown>)
+          : error.details !== undefined
+            ? { value: error.details }
+            : undefined;
+      return reply.code(error.statusCode).send(
+        buildErrorEnvelope({
+          statusCode: error.statusCode,
+          code: error.code,
+          message: error.message,
+          traceId,
+          ...(details === undefined ? {} : { details }),
+        }),
+      );
+    }
+
+    if (error instanceof ContractValidationError) {
+      return reply.code(400).send(
+        buildErrorEnvelope({
+          statusCode: 400,
+          code: "bad_request",
+          message: error.message,
+          traceId,
+          details: { issues: error.issues },
+        }),
+      );
+    }
+
+    if (error instanceof ZodError) {
+      return reply.code(400).send(
+        buildErrorEnvelope({
+          statusCode: 400,
+          code: "bad_request",
+          message: "Request validation failed",
+          traceId,
+          details: {
+            issues: error.issues.map((i) => ({
+              path: i.path,
+              message: i.message,
+            })),
+          },
+        }),
+      );
+    }
+
     if (error instanceof CredentialAuthError) {
-      const traceId = traceIdForRequest(request);
       return reply.code(error.statusCode).send(
         buildErrorEnvelope({
           statusCode: error.statusCode,
@@ -971,7 +1033,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       );
     }
     if (error instanceof TenantResolutionError) {
-      const traceId = traceIdForRequest(request);
       return reply.code(error.statusCode).send(
         buildErrorEnvelope({
           statusCode: error.statusCode,
@@ -982,7 +1043,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       );
     }
     if (error instanceof TenantActorMismatchError) {
-      const traceId = traceIdForRequest(request);
       return reply.code(error.statusCode).send(
         buildErrorEnvelope({
           statusCode: error.statusCode,
@@ -994,10 +1054,21 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     }
     throw error;
   });
+  app.setNotFoundHandler((request, reply) => {
+    const traceId = traceIdForRequest(request);
+    return reply.code(404).send(
+      buildErrorEnvelope({
+        statusCode: 404,
+        code: "not_found",
+        message: `Route ${request.method} ${request.url} not found`,
+        traceId,
+      }),
+    );
+  });
   // P1-10: process-local idempotency store for mutating tool calls.
   const idempotencyStore: IdempotencyStore = new InMemoryIdempotencyStore();
   const sql = createSqlClient();
-  const redis = process.env.REDIS_URL === undefined ? undefined : new Redis(process.env.REDIS_URL);
+  const redis = bootEnv.REDIS_URL === undefined ? undefined : new Redis(bootEnv.REDIS_URL);
   const tenantApiRpsLimiter: TenantApiRpsLimiter =
     redis === undefined ? new InMemoryTenantApiRpsLimiter() : new RedisTenantApiRpsLimiter(redis);
   const tenantHourlyQuotaLimiter: TenantHourlyQuotaLimiter =
@@ -1027,7 +1098,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         });
   const tenantRoleProvisioner = envFlag("HELIX_TENANT_POSTGRES_ROLES_ENABLED", false)
     ? new PostgresTenantRoleProvisioner(sql, {
-        appRole: process.env.HELIX_POSTGRES_APP_ROLE ?? "helix_app_role",
+        appRole: bootEnv.HELIX_POSTGRES_APP_ROLE,
       })
     : undefined;
   const orgStore = new PostgresOrgStore(sql, {
@@ -1047,15 +1118,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const signupPasswordScreener = new DefaultSignupPasswordScreener({
     pwnedPasswords: envFlag("HELIX_SIGNUP_HIBP_PASSWORD_CHECK_ENABLED", true)
       ? new HaveIBeenPwnedPasswordChecker({
-          userAgent: process.env.HELIX_SIGNUP_HIBP_USER_AGENT ?? "helix-signup-password-screening",
+          userAgent: bootEnv.HELIX_SIGNUP_HIBP_USER_AGENT,
         })
       : undefined,
   });
   const signupAbuseOptions = {
-    maxSignupsPerWindow: positiveIntegerEnv(process.env.HELIX_SIGNUP_RATE_LIMIT_PER_HOUR, 5),
+    maxSignupsPerWindow: bootEnv.HELIX_SIGNUP_RATE_LIMIT_PER_HOUR,
     windowMs: 60 * 60 * 1000,
     blockedEmailDomains: parseBlockedSignupEmailDomains(
-      process.env.HELIX_SIGNUP_BLOCKED_EMAIL_DOMAINS,
+      bootEnv.HELIX_SIGNUP_BLOCKED_EMAIL_DOMAINS,
     ),
   };
   const signupAbuseProtector =
@@ -1064,17 +1135,16 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       : new RedisSignupAbuseProtector(ioredisSignupRateLimitClient(redis), signupAbuseOptions);
   const signupRiskReviewer = new ConfiguredCountrySignupRiskReviewer({
     manualReviewCountries: parseSignupManualReviewCountries(
-      process.env.HELIX_SIGNUP_MANUAL_REVIEW_COUNTRIES,
+      bootEnv.HELIX_SIGNUP_MANUAL_REVIEW_COUNTRIES,
     ),
   });
   const signupRecaptchaVerifier =
-    process.env.HELIX_SIGNUP_RECAPTCHA_SECRET === undefined ||
-    process.env.HELIX_SIGNUP_RECAPTCHA_SECRET.trim().length === 0
+    bootEnv.HELIX_SIGNUP_RECAPTCHA_SECRET === undefined
       ? undefined
       : new GoogleRecaptchaVerifier({
-          secret: process.env.HELIX_SIGNUP_RECAPTCHA_SECRET,
-          minScore: numberEnv(process.env.HELIX_SIGNUP_RECAPTCHA_MIN_SCORE, 0.5),
-          expectedAction: process.env.HELIX_SIGNUP_RECAPTCHA_ACTION ?? "signup",
+          secret: bootEnv.HELIX_SIGNUP_RECAPTCHA_SECRET,
+          minScore: bootEnv.HELIX_SIGNUP_RECAPTCHA_MIN_SCORE,
+          expectedAction: bootEnv.HELIX_SIGNUP_RECAPTCHA_ACTION,
         });
   const tenantProvisioningSteps: TenantProvisioningStep[] = [
     ...(tenantRoleProvisioner === undefined
@@ -1117,8 +1187,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ? new TenantProvisioningWorker({
         store: tenantProvisioningStore,
         steps: tenantProvisioningSteps,
-        batchSize: Number.parseInt(process.env.TENANT_PROVISIONING_BATCH_SIZE ?? "10", 10),
-        intervalMs: Number.parseInt(process.env.TENANT_PROVISIONING_INTERVAL_MS ?? "5000", 10),
+        batchSize: bootEnv.TENANT_PROVISIONING_BATCH_SIZE,
+        intervalMs: bootEnv.TENANT_PROVISIONING_INTERVAL_MS,
         onResult: (result) => {
           if (result.claimed > 0) {
             app.log.info(result, "Tenant provisioning worker run completed");
@@ -1142,9 +1212,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ? new TenantHardDeleteWorker({
         store: orgStore,
         steps: [],
-        gracePeriodDays: Number.parseInt(process.env.TENANT_HARD_DELETE_RETENTION_DAYS ?? "30", 10),
-        batchSize: Number.parseInt(process.env.TENANT_HARD_DELETE_BATCH_SIZE ?? "10", 10),
-        intervalMs: Number.parseInt(process.env.TENANT_HARD_DELETE_INTERVAL_MS ?? "86400000", 10),
+        gracePeriodDays: bootEnv.TENANT_HARD_DELETE_RETENTION_DAYS,
+        batchSize: bootEnv.TENANT_HARD_DELETE_BATCH_SIZE,
+        intervalMs: bootEnv.TENANT_HARD_DELETE_INTERVAL_MS,
         onHardDeleted: async ({ previous, updated }) => {
           await auditStore.append({
             orgId: updated.id,
@@ -1179,13 +1249,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const outboxStore = new PostgresOutboxStore(sql);
   const pluginLifecycleStore = new PostgresPluginLifecycleStore(sql);
   const eventBus =
-    process.env.NATS_URL === undefined
+    bootEnv.NATS_URL === undefined
       ? new InMemoryEventBus({
           onError: (error) => {
             app.log.error({ error }, "In-memory event bus subscriber error");
           },
         })
-      : await NatsEventBus.connect({ servers: process.env.NATS_URL }, { subjectPrefix: "helix" });
+      : await NatsEventBus.connect({ servers: bootEnv.NATS_URL }, { subjectPrefix: "helix" });
   const meteringEventStore = new PostgresMeteringEventStore(sql);
   const meteringRollupStore = new PostgresMeteringRollupStore(sql);
   const meteringClient = createMeteringClient(eventBus);
@@ -1217,14 +1287,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ? new MeteringRollupWorker({
         store: meteringRollupStore,
         intervalMs: Number.parseInt(
-          process.env.HELIX_METERING_ROLLUP_INTERVAL_MS ??
-            process.env.METERING_ROLLUP_INTERVAL_MS ??
+          bootEnv.HELIX_METERING_ROLLUP_INTERVAL_MS ??
+            bootEnv.METERING_ROLLUP_INTERVAL_MS ??
             "86400000",
           10,
         ),
         periodBatchSize: Number.parseInt(
-          process.env.HELIX_METERING_ROLLUP_PERIOD_BATCH_SIZE ??
-            process.env.METERING_ROLLUP_PERIOD_BATCH_SIZE ??
+          bootEnv.HELIX_METERING_ROLLUP_PERIOD_BATCH_SIZE ??
+            bootEnv.METERING_ROLLUP_PERIOD_BATCH_SIZE ??
             "250",
           10,
         ),
@@ -1339,8 +1409,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // not registered or served at all.
   const coreApps = new CoreAppRegistrationPlan({
     ...(runtimeConfig.modules === undefined ? {} : { modules: runtimeConfig.modules }),
-    ...(process.env.HELIX_ROLE === undefined ? {} : { role: process.env.HELIX_ROLE }),
-    ...(process.env.HELIX_APPS === undefined ? {} : { apps: process.env.HELIX_APPS }),
+    ...(bootEnv.HELIX_ROLE === undefined ? {} : { role: bootEnv.HELIX_ROLE }),
+    ...(bootEnv.HELIX_APPS === undefined ? {} : { apps: bootEnv.HELIX_APPS }),
   });
   app.log.info(
     {
@@ -1440,11 +1510,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     },
     ...(runtimeConfig.ai === undefined ? {} : { aiConfig: runtimeConfig.ai }),
   });
-  const rustfsEndpoint =
-    process.env.RUSTFS_ENDPOINT ??
-    (process.env.RUSTFS_API_PORT === undefined
-      ? undefined
-      : `http://localhost:${process.env.RUSTFS_API_PORT}`);
+  const driveConfig = loadDriveConfig(bootEnv);
+  const rustfsEndpoint = driveConfig.storage.endpoint;
   if (rustfsEndpoint === undefined) {
     app.log.warn(
       "RUSTFS_ENDPOINT (and RUSTFS_API_PORT) unset; tenant storage writes (docs/sheets/slides/drive) will fail. Set RUSTFS_ENDPOINT=http://localhost:28437 or run docker-compose up rustfs.",
@@ -1455,20 +1522,20 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       ? undefined
       : createS3CompatibleStorage({
           endpoint: rustfsEndpoint,
-          region: process.env.RUSTFS_REGION ?? "us-east-1",
-          bucket: process.env.RUSTFS_BUCKET ?? "helix-objects",
+          region: driveConfig.storage.region,
+          bucket: driveConfig.storage.bucket,
           credentials: {
-            accessKeyId: process.env.RUSTFS_ACCESS_KEY ?? "helixrustfs",
-            secretAccessKey: process.env.RUSTFS_SECRET_KEY ?? "helix_rustfs_dev_secret",
+            accessKeyId: driveConfig.storage.accessKeyId,
+            secretAccessKey: driveConfig.storage.secretAccessKey,
           },
-          ...(process.env.RUSTFS_SERVER_SIDE_ENCRYPTION === undefined
+          ...(driveConfig.storage.serverSideEncryption === undefined
             ? {}
             : {
                 serverSideEncryption: parseS3ServerSideEncryption(
-                  process.env.RUSTFS_SERVER_SIDE_ENCRYPTION,
+                  driveConfig.storage.serverSideEncryption,
                 ),
               }),
-          forcePathStyle: true,
+          forcePathStyle: driveConfig.storage.forcePathStyle,
         });
   const tenantStorageSecretReader = createVaultTenantStorageSecretReaderFromEnv(process.env);
   const driveStorageResolver = createTenantStorageResolver({
@@ -1497,14 +1564,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
               secretReader: tenantStorageSecretReader,
             }),
         }),
-        intervalMs: Number.parseInt(
-          process.env.HELIX_TENANT_STORAGE_MIGRATION_INTERVAL_MS ?? "15000",
-          10,
-        ),
-        batchSize: Number.parseInt(
-          process.env.HELIX_TENANT_STORAGE_MIGRATION_BATCH_SIZE ?? "2",
-          10,
-        ),
+        intervalMs: bootEnv.HELIX_TENANT_STORAGE_MIGRATION_INTERVAL_MS,
+        batchSize: bootEnv.HELIX_TENANT_STORAGE_MIGRATION_BATCH_SIZE,
         onResult: (result) => {
           if (result.claimed > 0) {
             app.log.info(result, "Tenant storage migration worker completed");
@@ -1519,14 +1580,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ? new ByoStorageHealthWorker({
         store: orgStore,
         storageResolver: driveStorageResolver,
-        intervalMs: Number.parseInt(
-          process.env.HELIX_BYO_STORAGE_HEALTH_REFRESH_INTERVAL_MS ?? "3600000",
-          10,
-        ),
-        batchSize: Number.parseInt(
-          process.env.HELIX_BYO_STORAGE_HEALTH_REFRESH_BATCH_SIZE ?? "100",
-          10,
-        ),
+        intervalMs: bootEnv.HELIX_BYO_STORAGE_HEALTH_REFRESH_INTERVAL_MS,
+        batchSize: bootEnv.HELIX_BYO_STORAGE_HEALTH_REFRESH_BATCH_SIZE,
         onResult: (result) => {
           if (result.checkedCount > 0) {
             app.log.info(result, "BYO storage health refresh completed");
@@ -1541,36 +1596,40 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     storageResolver: driveStorageResolver,
   });
   const docsPdfRenderer =
-    process.env.HELIX_DOCS_PDF_RENDERER === "deterministic"
+    bootEnv.HELIX_DOCS_PDF_RENDERER === "deterministic"
       ? undefined
       : createHeadlessChromiumPdfRenderer({
-          ...(process.env.HELIX_CHROMIUM_PATH === undefined
+          ...(bootEnv.HELIX_CHROMIUM_PATH === undefined
             ? {}
-            : { executablePath: process.env.HELIX_CHROMIUM_PATH }),
-          timeoutMs: Number(process.env.HELIX_DOCS_PDF_RENDER_TIMEOUT_MS ?? 15_000),
+            : { executablePath: bootEnv.HELIX_CHROMIUM_PATH }),
+          timeoutMs: bootEnv.HELIX_DOCS_PDF_RENDER_TIMEOUT_MS,
         });
   const mailStore = new PostgresMailStore(sql, {
     storageResolver: driveStorageResolver,
   });
   const officePreviewConverter =
-    process.env.HELIX_DRIVE_OFFICE_PREVIEW_URL === undefined
-      ? envFlag("HELIX_DRIVE_LOCAL_OFFICE_PREVIEW", process.env.NODE_ENV !== "production")
+    driveConfig.officePreview.url === undefined
+      ? driveConfig.officePreview.localFallback
         ? createLocalOfficePreviewConverter({
-            ...(process.env.HELIX_CHROMIUM_PATH === undefined
+            ...(driveConfig.chromiumPath === undefined
               ? {}
-              : { executablePath: process.env.HELIX_CHROMIUM_PATH }),
-            timeoutMs: Number(process.env.HELIX_DRIVE_OFFICE_PREVIEW_TIMEOUT_MS ?? 15_000),
+              : { executablePath: driveConfig.chromiumPath }),
+            timeoutMs: driveConfig.officePreview.timeoutMs,
           })
         : undefined
       : createLibreOfficePreviewClient({
-          endpoint: process.env.HELIX_DRIVE_OFFICE_PREVIEW_URL,
-          timeoutMs: Number(process.env.HELIX_DRIVE_OFFICE_PREVIEW_TIMEOUT_MS ?? 10_000),
+          endpoint: driveConfig.officePreview.url,
+          timeoutMs: driveConfig.officePreview.timeoutMs,
+          allowedHosts: driveConfig.officePreview.allowedHosts,
         });
   const driveStore = new PostgresDriveStore(sql, driveStorage, {
     ...(officePreviewConverter === undefined ? {} : { officePreviewConverter }),
     storageResolver: driveStorageResolver,
     metering: meteringClient,
     events: eventBus,
+    contentAddressedDedup: driveConfig.contentAddressedDedup,
+    multipartThresholdBytes: driveConfig.multipartThresholdBytes,
+    multipartPartSizeBytes: driveConfig.multipartPartSizeBytes,
     onMeteringError: (error: unknown) => {
       app.log.error({ error }, "Drive storage metering emission failed");
     },
@@ -1597,7 +1656,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       : new SearchEventIndexer({
           events: eventBus,
           engine: runtimeSearchEngine,
-          subject: process.env.SEARCH_EVENT_SUBJECT ?? ">",
+          subject: bootEnv.SEARCH_EVENT_SUBJECT,
           onError: (error) => {
             app.log.error({ error }, "Search event indexer error");
           },
@@ -1623,7 +1682,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   }
   const enrichmentWorker = new EnrichmentWorker({
     events: eventBus,
-    subject: process.env.ENRICHMENT_EVENT_SUBJECT ?? ">",
+    subject: bootEnv.ENRICHMENT_EVENT_SUBJECT,
     onResult: (result, event) => {
       app.log.debug({ result, subject: event.subject }, "AI enrichment applied");
     },
@@ -1662,14 +1721,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     registerDriveEnrichments(enrichmentWorker, {
       store: driveStore,
       ai: assistantAi,
-      autoTag: envFlag("DRIVE_AUTO_TAG_ENRICHMENT", true),
+      autoTag: driveConfig.autoTagEnrichment,
     });
   }
   const outboxWorker = new OutboxWorker({
     store: outboxStore,
     events: eventBus,
-    batchSize: Number.parseInt(process.env.OUTBOX_BATCH_SIZE ?? "100", 10),
-    intervalMs: Number.parseInt(process.env.OUTBOX_POLL_INTERVAL_MS ?? "1000", 10),
+    batchSize: bootEnv.OUTBOX_BATCH_SIZE,
+    intervalMs: bootEnv.OUTBOX_POLL_INTERVAL_MS,
     onError: (error) => {
       app.log.error({ error }, "Outbox worker error");
     },
@@ -1677,11 +1736,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // Mail background workers run only when the mail app is registered in this
   // process (enabled org-wide AND in the booting role's app set).
   const mailAppRegistered = coreApps.shouldRegister("mail");
-  const outboundMailConfig = mailAppRegistered ? getOutboundMailConfig(process.env) : undefined;
+  const mailCfg = mailConfig(bootEnv);
+  const outboundMailConfig = mailAppRegistered ? mailCfg.outbound : undefined;
   // Resolve the org's configured outbound provider (SES/Mailgun/SMTP/Postmark)
   // when one is set; otherwise fall back to the env-configured SMTP relay.
-  const outboundMailOrgId =
-    process.env.HELIX_DEFAULT_ORG_ID ?? "00000000-0000-0000-0000-000000000000";
+  const outboundMailOrgId = mailCfg.defaultOrgId;
   const outboundMailTransport =
     outboundMailConfig === undefined
       ? undefined
@@ -1689,29 +1748,43 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           orgId: outboundMailOrgId,
           providerStore: new PostgresOutboundProviderStore(sql),
           fallbackTransport: new NodemailerMailTransport(outboundMailConfig),
+          // Pass validated env as the secret lookup table (no process.env in mail/*).
+          env: bootEnv as unknown as Record<string, string | undefined>,
         });
   const outboundMailWorker =
     outboundMailTransport === undefined
       ? undefined
       : new OutboundMailWorker({
           events: eventBus,
-          dispatcher: new OutboundMailDispatcher(mailStore, outboundMailTransport),
+          dispatcher: new OutboundMailDispatcher(mailStore, outboundMailTransport, {
+            // Stream/large attachments referenced by Drive objectId (G8 / Mail A2.5).
+            resolveAttachment: async (objectId, context) => {
+              const file = await driveStore.readFile({
+                orgId: context.orgId,
+                actorId: context.actorId,
+                objectId,
+              });
+              if (file?.content == null) {
+                throw new Error(`Drive attachment ${objectId} is unavailable.`);
+              }
+              return Buffer.from(file.content);
+            },
+          }),
           onError: (error) => {
             app.log.error({ error }, "Outbound mail dispatch error");
           },
         });
+  const signupFromAddress = {
+    address: mailCfg.signupFrom.address,
+    name: mailCfg.signupFrom.name,
+  };
   const signupVerificationEmailWorker =
     outboundMailTransport === undefined
       ? undefined
       : new SignupVerificationEmailWorker({
           events: eventBus,
           transport: outboundMailTransport,
-          from: {
-            address:
-              process.env.HELIX_SIGNUP_EMAIL_FROM ??
-              `no-reply@${process.env.MAIL_FROM_DOMAIN ?? "localhost"}`,
-            name: process.env.HELIX_SIGNUP_EMAIL_FROM_NAME ?? "Helix",
-          },
+          from: signupFromAddress,
           onError: (error) => {
             app.log.error({ error }, "Signup verification email delivery error");
           },
@@ -1722,22 +1795,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       : new SignupOnboardingInviteEmailWorker({
           events: eventBus,
           transport: outboundMailTransport,
-          from: {
-            address:
-              process.env.HELIX_SIGNUP_EMAIL_FROM ??
-              `no-reply@${process.env.MAIL_FROM_DOMAIN ?? "localhost"}`,
-            name: process.env.HELIX_SIGNUP_EMAIL_FROM_NAME ?? "Helix",
-          },
+          from: signupFromAddress,
           onError: (error) => {
             app.log.error({ error }, "Signup onboarding invite email delivery error");
           },
         });
-  const smtpMailReceiverConfig = mailAppRegistered
-    ? getSmtpMailReceiverConfig(process.env)
-    : undefined;
+  const smtpMailReceiverConfig = mailAppRegistered ? mailCfg.receiver : undefined;
   // Config-gated inbound content scanners: spamd (SpamAssassin) and ClamAV.
-  const spamdScannerConfig = getSpamdScannerConfig(process.env);
-  const clamavScannerConfig = getClamavScannerConfig(process.env);
+  const spamdScannerConfig = mailCfg.spamd;
+  const clamavScannerConfig = mailCfg.clamav;
   const smtpMailReceiver =
     smtpMailReceiverConfig === undefined
       ? undefined
@@ -1753,9 +1819,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const outboundWebhookWorker = new OutboundWebhookWorker({
     store: webhookStore,
     events: eventBus,
-    subject: process.env.WEBHOOK_EVENT_SUBJECT ?? ">",
-    retryBatchSize: Number.parseInt(process.env.WEBHOOK_RETRY_BATCH_SIZE ?? "100", 10),
-    retryIntervalMs: Number.parseInt(process.env.WEBHOOK_RETRY_INTERVAL_MS ?? "1000", 10),
+    subject: bootEnv.WEBHOOK_EVENT_SUBJECT,
+    retryBatchSize: bootEnv.WEBHOOK_RETRY_BATCH_SIZE,
+    retryIntervalMs: bootEnv.WEBHOOK_RETRY_INTERVAL_MS,
     onError: (error) => {
       app.log.error({ error }, "Outbound webhook worker error");
     },
@@ -1763,7 +1829,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const auditVerifierWorker = envFlag("AUDIT_VERIFIER_ENABLED", true)
     ? new AuditVerifierWorker({
         store: auditStore,
-        intervalMs: Number.parseInt(process.env.AUDIT_VERIFIER_INTERVAL_MS ?? "86400000", 10),
+        intervalMs: bootEnv.AUDIT_VERIFIER_INTERVAL_MS,
         ...(envFlag("AUDIT_VERIFIER_LEADER_LEASE", false)
           ? { lease: new PostgresAuditVerifierLease(sql) }
           : {}),
@@ -1930,8 +1996,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // actions to `expired` once their per-tier timeout elapses.
   const pendingActionExpiryWorker = new PendingActionExpiryWorker({
     store: pendingActionStore,
-    intervalMs: Number.parseInt(process.env.PENDING_ACTION_EXPIRY_INTERVAL_MS ?? "60000", 10),
-    batchSize: Number.parseInt(process.env.PENDING_ACTION_EXPIRY_BATCH_SIZE ?? "500", 10),
+    intervalMs: bootEnv.PENDING_ACTION_EXPIRY_INTERVAL_MS,
+    batchSize: bootEnv.PENDING_ACTION_EXPIRY_BATCH_SIZE,
     onResult: (result) => {
       if (result.expiredCount > 0) {
         app.log.info({ expiredCount: result.expiredCount }, "Expired stale pending tool actions");
@@ -1945,20 +2011,20 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     redis === undefined ? new InMemoryAgentRateCostLimiter() : new RedisAgentRateCostLimiter(redis);
   const agentLimitBudgetOverride = agentLimitBudgetOverrideFromEnv(process.env);
   const toolAccessPolicy =
-    process.env.CERBOS_HTTP_URL === undefined
+    bootEnv.CERBOS_HTTP_URL === undefined
       ? new ObservedToolAccessPolicy(new ScopeToolAccessPolicy(), {
           metrics,
           policyId: "scope",
         })
       : new ObservedToolAccessPolicy(
-          new CerbosToolAccessPolicy({ endpoint: process.env.CERBOS_HTTP_URL }),
+          new CerbosToolAccessPolicy({ endpoint: bootEnv.CERBOS_HTTP_URL }),
           {
             metrics,
             policyId: "cerbos",
           },
         );
   const featureFlags = new TenantConfigFeatureFlagProvider({
-    environment: process.env.NODE_ENV ?? "production",
+    environment: bootEnv.NODE_ENV,
     loadTenantConfig: async ({ orgId }) => {
       const org = await orgStore.findById(orgId);
       if (org === null) {
@@ -2014,8 +2080,18 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (coreApps.shouldRegister("mail")) {
     registerMailTools(tools, {
       store: mailStore,
-      defaultFromDomain: process.env.MAIL_FROM_DOMAIN ?? "localhost",
+      defaultFromDomain: mailCfg.fromDomain,
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
+    });
+    registerMailStreamRoutes(app, {
+      events: eventBus,
+      resolveActor: async (request) => {
+        const actor = await actorFromAuthenticatedRequest(request);
+        if (actor === null) {
+          return null;
+        }
+        return { id: actor.id, orgId: actor.orgId };
+      },
     });
   }
   if (coreApps.shouldRegister("chat")) {
@@ -2131,31 +2207,31 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   }
   const calendarInvitationSender = createMailCalendarInvitationSender({
     store: mailStore,
-    defaultFromDomain: process.env.MAIL_FROM_DOMAIN ?? "localhost",
+    defaultFromDomain: bootEnv.MAIL_FROM_DOMAIN,
   });
   if (coreApps.shouldRegister("calendar")) {
     registerCalendarTools(tools, {
       store: calendarStore,
       invitationSender: calendarInvitationSender,
-      rsvpBaseUrl: process.env.PUBLIC_BASE_URL ?? "http://localhost:3000",
+      rsvpBaseUrl: bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
     });
   }
   if (coreApps.shouldRegister("meet")) {
     registerMeetTools(tools, {
       store: meetStore,
       jwtSecret:
-        process.env.MEET_JITSI_JWT_SECRET ??
-        process.env.JITSI_JWT_SECRET ??
+        bootEnv.MEET_JITSI_JWT_SECRET ??
+        bootEnv.JITSI_JWT_SECRET ??
         "helix_jitsi_dev_secret",
-      jwtAppId: process.env.MEET_JITSI_JWT_APP_ID ?? process.env.JITSI_JWT_APP_ID ?? "helix",
-      jwtIssuer: process.env.MEET_JITSI_JWT_ISSUER ?? process.env.JITSI_JWT_ISSUER ?? "helix",
-      jwtAudience: process.env.MEET_JITSI_JWT_AUDIENCE ?? "jitsi",
-      jwtSubject: process.env.MEET_JITSI_DOMAIN,
-      publicBaseUrl: process.env.PUBLIC_BASE_URL ?? "http://localhost:3000",
+      jwtAppId: bootEnv.MEET_JITSI_JWT_APP_ID ?? bootEnv.JITSI_JWT_APP_ID ?? "helix",
+      jwtIssuer: bootEnv.MEET_JITSI_JWT_ISSUER ?? bootEnv.JITSI_JWT_ISSUER ?? "helix",
+      jwtAudience: bootEnv.MEET_JITSI_JWT_AUDIENCE ?? "jitsi",
+      jwtSubject: bootEnv.MEET_JITSI_DOMAIN,
+      publicBaseUrl: bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
       // Full Jitsi origin (with port). Without this, joinUrls drop the
       // port and break in dev (Jitsi runs on :28452 via docker compose
       // --profile meet, not on the default :443).
-      jitsiPublicUrl: process.env.MEET_JITSI_PUBLIC_URL,
+      jitsiPublicUrl: bootEnv.MEET_JITSI_PUBLIC_URL,
     });
     // Dev-only stand-in for Jibri on hosts where snd-aloop can't be
     // loaded (Docker-for-Mac). Same attachRecording flow.
@@ -2163,7 +2239,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       meetStore,
       storageResolver: driveStorageResolver,
       ...(driveStorage === undefined ? {} : { storage: driveStorage }),
-      bucket: process.env.RUSTFS_BUCKET ?? "helix-objects",
+      bucket: bootEnv.RUSTFS_BUCKET,
     });
   }
   if (runtimeSearchEngine !== undefined) {
@@ -2198,7 +2274,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   });
   registerPluginTools(tools, {
     pluginsDir:
-      process.env.HELIX_PLUGINS_DIR ?? fileURLToPath(new URL("../../../plugins", import.meta.url)),
+      bootEnv.HELIX_PLUGINS_DIR ?? fileURLToPath(new URL("../../../plugins", import.meta.url)),
     discovery: {
       tierDefaults: tierDefaults[securityTier],
     },
@@ -2355,16 +2431,16 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     orgs: orgStore,
     idpConfigs: tenantIdpConfigStore,
     publicBaseUrl:
-      process.env.BETTER_AUTH_URL ??
-      process.env.HELIX_PUBLIC_URL ??
-      process.env.PUBLIC_BASE_URL ??
+      bootEnv.BETTER_AUTH_URL ??
+      bootEnv.HELIX_PUBLIC_URL ??
+      bootEnv.PUBLIC_BASE_URL ??
       "http://localhost:3000",
   });
   await registerTenantScimRoutes(app, {
     orgs: orgStore,
     credentials: tenantScimCredentialStore,
     auditSink: auditStore,
-    documentationUri: process.env.HELIX_SCIM_DOCS_URL ?? "https://docs.helix.example/scim",
+    documentationUri: bootEnv.HELIX_SCIM_DOCS_URL ?? "https://docs.helix.example/scim",
   });
   await registerAdminIdentityRoutes(app, {
     idpConfigs: tenantIdpConfigStore,
@@ -2372,9 +2448,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
     publicBaseUrl:
-      process.env.BETTER_AUTH_URL ??
-      process.env.HELIX_PUBLIC_URL ??
-      process.env.PUBLIC_BASE_URL ??
+      bootEnv.BETTER_AUTH_URL ??
+      bootEnv.HELIX_PUBLIC_URL ??
+      bootEnv.PUBLIC_BASE_URL ??
       "http://localhost:3000",
   });
   await registerPlatformConfigAdminRoutes(app, {
@@ -2509,9 +2585,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       app.log.error({ error }, "Signup seat metering emission failed");
     },
     publicBaseUrl:
-      process.env.BETTER_AUTH_URL ??
-      process.env.HELIX_PUBLIC_URL ??
-      process.env.PUBLIC_BASE_URL ??
+      bootEnv.BETTER_AUTH_URL ??
+      bootEnv.HELIX_PUBLIC_URL ??
+      bootEnv.PUBLIC_BASE_URL ??
       "http://localhost:3000",
   });
   if (isSaas(runtimeConfig)) {
@@ -2527,18 +2603,18 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   });
   await registerBackupAdminRoutes(app, {
     service: new ScriptedBackupAdminService({
-      ...(process.env.HELIX_BACKUP_DIR === undefined
+      ...(bootEnv.HELIX_BACKUP_DIR === undefined
         ? {}
-        : { backupDir: process.env.HELIX_BACKUP_DIR }),
-      ...(process.env.HELIX_SECURITY_TIER === undefined
+        : { backupDir: bootEnv.HELIX_BACKUP_DIR }),
+      ...(bootEnv.HELIX_SECURITY_TIER === undefined
         ? {}
-        : { tier: process.env.HELIX_SECURITY_TIER }),
-      ...(process.env.HELIX_BACKUP_SCRIPT === undefined
+        : { tier: bootEnv.HELIX_SECURITY_TIER }),
+      ...(bootEnv.HELIX_BACKUP_SCRIPT === undefined
         ? {}
-        : { backupScript: process.env.HELIX_BACKUP_SCRIPT }),
-      ...(process.env.HELIX_RESTORE_SCRIPT === undefined
+        : { backupScript: bootEnv.HELIX_BACKUP_SCRIPT }),
+      ...(bootEnv.HELIX_RESTORE_SCRIPT === undefined
         ? {}
-        : { restoreScript: process.env.HELIX_RESTORE_SCRIPT }),
+        : { restoreScript: bootEnv.HELIX_RESTORE_SCRIPT }),
     }),
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
@@ -2547,7 +2623,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       service: new SearchReindexService({
         engine: runtimeSearchEngine,
         sources: createPostgresSearchReindexSources(sql),
-        batchSize: Number.parseInt(process.env.SEARCH_REINDEX_BATCH_SIZE ?? "100", 10),
+        batchSize: bootEnv.SEARCH_REINDEX_BATCH_SIZE,
       }),
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     });
@@ -2571,11 +2647,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
         bus: new EventBusChatRoomBus(eventBus, { subjectPrefix: "chat.room" }),
         metrics,
+        rateLimit: {
+          capacity: bootEnv.CHAT_WS_RATE_LIMIT_CAPACITY,
+          refillPerSecond: bootEnv.CHAT_WS_RATE_LIMIT_REFILL_PER_SECOND,
+        },
         ...(redis === undefined
           ? {}
           : {
               presence: new RedisChatPresenceStore(redis, {
-                ttlSeconds: Number.parseInt(process.env.CHAT_PRESENCE_TTL_SECONDS ?? "45", 10),
+                ttlSeconds: bootEnv.CHAT_PRESENCE_TTL_SECONDS,
               }),
             }),
         onError: (error) => {
@@ -2634,6 +2714,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       store: driveStore,
       appPasswords: appPasswordStore,
     });
+    await registerDriveShareLinkRoute(app, { store: driveStore });
 
     // Session-cookie-authenticated content stream for the Web UI. The /dav/*
     // routes registered above require app-password Basic Auth (the WebDAV
@@ -2644,16 +2725,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       "/api/drive/objects/:objectId/content",
       async (request, reply) => {
         const actor = await actorFromAuthenticatedRequest(request);
-        if (actor.id === "anonymous") {
-          return reply.code(401).send({ error: "Authentication required." });
-        }
+        // G6: defense-in-depth scope gate on top of per-object ACL.
+        requireActorScope(actor, "drive.read");
         const file = await driveStore.readFile({
           orgId: actor.orgId,
           actorId: actor.id,
           objectId: request.params.objectId,
         });
         if (file === null) {
-          return reply.code(404).send({ error: "File not found." });
+          throw new NotFoundError("File not found.");
         }
         const inline = (request.query as { download?: string }).download !== "1";
         const filename = file.entry.name;
@@ -2689,7 +2769,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           });
         }
 
-        return reply.code(404).send({ error: "File content unavailable." });
+        throw new NotFoundError("File content unavailable.");
       },
     );
 
@@ -2716,16 +2796,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       "/api/drive/objects/:objectId/preview",
       async (request, reply) => {
         const actor = await actorFromAuthenticatedRequest(request);
-        if (actor.id === "anonymous") {
-          return reply.code(401).send({ error: "Authentication required." });
-        }
+        // G6: defense-in-depth scope gate on top of per-object ACL.
+        requireActorScope(actor, "drive.read");
         const file = await driveStore.readFile({
           orgId: actor.orgId,
           actorId: actor.id,
           objectId: request.params.objectId,
         });
         if (file === null) {
-          return reply.code(404).send({ error: "File not found." });
+          throw new NotFoundError("File not found.");
         }
         if (isAvailablePdfPreview(file.entry.preview) && file.previewContent != null) {
           return sendBytesWithRangeSupport({
@@ -2741,7 +2820,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         const bytes =
           file.content !== null ? Buffer.from(file.content) : (inlineFallback?.body ?? null);
         if (bytes === null) {
-          return reply.code(404).send({ error: "File content unavailable." });
+          throw new NotFoundError("File content unavailable.");
         }
         const mime = file.entry.mimeType ?? inlineFallback?.mime ?? "";
         const filename = file.entry.name;
@@ -2880,10 +2959,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     await registerMeetRoutes(app, {
       store: meetStore,
       webhookSecret:
-        process.env.MEET_JITSI_WEBHOOK_SHARED_SECRET ??
-        process.env.JITSI_WEBHOOK_SECRET ??
+        bootEnv.MEET_JITSI_WEBHOOK_SHARED_SECRET ??
+        bootEnv.JITSI_WEBHOOK_SECRET ??
         "helix_dev_jitsi_webhook_secret_change_me",
-      defaultOrgId: process.env.HELIX_DEFAULT_ORG_ID ?? "00000000-0000-0000-0000-000000000000",
+      defaultOrgId: bootEnv.HELIX_DEFAULT_ORG_ID,
       storageResolver: driveStorageResolver,
       requirePreparedRecordingUpload:
         envFlag("HELIX_JITSI_PREPARE_REQUIRED", false) ||
@@ -2983,10 +3062,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     worker: pendingActionExpiryWorker,
   });
 
-  const workerRetryIntervalMs = Number.parseInt(
-    process.env.LEADER_ELECTION_RETRY_INTERVAL_MS ?? "15000",
-    10,
-  );
+  const workerRetryIntervalMs = bootEnv.LEADER_ELECTION_RETRY_INTERVAL_MS;
   const workerSupervisors = leaderGatedWorkers.map(
     ({ name, worker }) =>
       new SingletonWorkerSupervisor({
@@ -3024,7 +3100,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // are logged and skipped; one bad connector never blocks startup.
   const connectorResult = await loadConnectors({
     pluginsDir:
-      process.env.HELIX_PLUGINS_DIR ?? fileURLToPath(new URL("../../../plugins", import.meta.url)),
+      bootEnv.HELIX_PLUGINS_DIR ?? fileURLToPath(new URL("../../../plugins", import.meta.url)),
     tierDefaults: tierDefaults[securityTier],
     onConnectorLoaded: (manifest) => {
       app.log.info(
@@ -3509,7 +3585,7 @@ function createAssistantAIRouter(
   },
 ): AIRouter {
   const defaultProviderId =
-    process.env.ASSISTANT_AI_PROVIDER_ID ?? process.env.AI_DEFAULT_PROVIDER_ID;
+    env().ASSISTANT_AI_PROVIDER_ID ?? env().AI_DEFAULT_PROVIDER_ID;
   const configuredRouting = aiRoutingPolicyFromConfig(options.aiConfig);
   const featureRoutes =
     defaultProviderId === undefined
@@ -3555,19 +3631,20 @@ function createAssistantAIRouter(
 }
 
 async function createSearchEngine(): Promise<MeilisearchSearchEngine | undefined> {
-  const baseUrl = process.env.MEILI_URL ?? process.env.MEILISEARCH_URL ?? process.env.MEILI_HOST;
+  const searchEnv = env();
+  const baseUrl = searchEnv.MEILI_URL ?? searchEnv.MEILISEARCH_URL ?? searchEnv.MEILI_HOST;
   if (baseUrl === undefined) {
     return undefined;
   }
   const apiKey =
-    process.env.MEILI_MASTER_KEY ?? process.env.MEILI_API_KEY ?? process.env.MEILISEARCH_API_KEY;
+    searchEnv.MEILI_MASTER_KEY ?? searchEnv.MEILI_API_KEY ?? searchEnv.MEILISEARCH_API_KEY;
   const engine = new MeilisearchSearchEngine(
     createMeilisearchHttpClient({
       baseUrl,
       ...(apiKey === undefined ? {} : { apiKey }),
     }),
     {
-      indexUid: process.env.MEILI_INDEX_UID ?? process.env.MEILISEARCH_INDEX_UID ?? "helix_search",
+      indexUid: searchEnv.MEILI_INDEX_UID ?? searchEnv.MEILISEARCH_INDEX_UID ?? "helix_search",
     },
   );
   await engine.ensureIndex();
@@ -3800,16 +3877,19 @@ function parseSiemAuditFormat(value: string): SiemAuditFormat {
   return value;
 }
 
-export function getOutboundMailConfig(env: NodeJS.ProcessEnv) {
-  const host = env.MAIL_SMTP_HOST ?? env.SES_SMTP_HOST;
+/** @deprecated Prefer mailConfig(loadEnv(...)).outbound — kept for server.test.ts. */
+export function getOutboundMailConfig(source: NodeJS.ProcessEnv | Record<string, string | undefined>) {
+  // Delegate through loadEnv-compatible mailConfig when keys match Env;
+  // fall back to the historical open-record reader for partial test stubs.
+  const host = source.MAIL_SMTP_HOST ?? source.SES_SMTP_HOST;
   if (host === undefined || host.length === 0) {
     return undefined;
   }
 
-  const port = env.MAIL_SMTP_PORT ?? env.SES_SMTP_PORT;
-  const secure = env.MAIL_SMTP_SECURE ?? env.SES_SMTP_SECURE;
-  const user = env.MAIL_SMTP_USER ?? env.SES_SMTP_USER;
-  const pass = env.MAIL_SMTP_PASS ?? env.SES_SMTP_PASS;
+  const port = source.MAIL_SMTP_PORT ?? source.SES_SMTP_PORT;
+  const secure = source.MAIL_SMTP_SECURE ?? source.SES_SMTP_SECURE;
+  const user = source.MAIL_SMTP_USER ?? source.SES_SMTP_USER;
+  const pass = source.MAIL_SMTP_PASS ?? source.SES_SMTP_PASS;
 
   return {
     host,
@@ -3820,24 +3900,29 @@ export function getOutboundMailConfig(env: NodeJS.ProcessEnv) {
   };
 }
 
+/** @deprecated Prefer mailConfig(loadEnv(...)).receiver — kept for server.test.ts. */
 export function getSmtpMailReceiverConfig(
-  env: NodeJS.ProcessEnv,
+  source: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ):
   | { readonly orgId: SmtpReceiverOptions["orgId"]; readonly port: number; readonly host?: string }
   | undefined {
-  if (!envValueFlag(env.MAIL_SMTP_RECEIVER_ENABLED ?? "", false)) {
+  if (!envValueFlag(source.MAIL_SMTP_RECEIVER_ENABLED ?? "", false)) {
     return undefined;
   }
 
-  const host = env.MAIL_SMTP_RECEIVER_HOST;
+  const host = source.MAIL_SMTP_RECEIVER_HOST;
   return {
-    orgId: env.HELIX_DEFAULT_ORG_ID ?? "00000000-0000-0000-0000-000000000000",
-    port: Number.parseInt(env.MAIL_SMTP_RECEIVER_PORT ?? "2525", 10),
+    orgId: source.HELIX_DEFAULT_ORG_ID ?? "00000000-0000-0000-0000-000000000000",
+    port: Number.parseInt(source.MAIL_SMTP_RECEIVER_PORT ?? "2525", 10),
     ...(host === undefined || host.length === 0 ? {} : { host }),
   };
 }
 
 function envFlag(name: string, defaultValue: boolean): boolean {
+  // Dynamic flag lookup for keys not all present on Env (e.g. worker toggles).
+  // Prefer env() field access for known operational keys; keep process.env only
+  // for open-ended HELIX_* feature switches until they are added to the schema.
+  // eslint-disable-next-line helix/no-raw-process-env -- dynamic feature-flag names
   const value = process.env[name];
   if (value === undefined) {
     return defaultValue;
@@ -3850,22 +3935,6 @@ function envValueFlag(value: string, defaultValue: boolean): boolean {
     return defaultValue;
   }
   return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
-}
-
-function positiveIntegerEnv(value: string | undefined, defaultValue: number): number {
-  if (value === undefined || value.trim().length === 0) {
-    return defaultValue;
-  }
-  const parsed = Number.parseInt(value, 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
-}
-
-function numberEnv(value: string | undefined, defaultValue: number): number {
-  if (value === undefined || value.trim().length === 0) {
-    return defaultValue;
-  }
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 
 /**
@@ -3908,51 +3977,51 @@ export function createAssistantProviders(
   aiConfig: AiConfig | undefined,
 ): readonly LLMProviderCapability[] {
   const providers: LLMProviderCapability[] = [];
+  const aiEnv = env();
   if (aiConfig?.enabled !== false) {
     for (const provider of aiConfig?.providers ?? []) {
       if (provider.enabled === false) {
         continue;
       }
+      // Injectable ProcessEnv readers stay on process.env (legacy provider config adapters).
       const configured = createConfiguredAssistantProvider(provider, process.env);
       if (configured !== undefined) {
         providers.push(configured);
       }
     }
   }
-  if (process.env.OLLAMA_BASE_URL !== undefined) {
+  if (aiEnv.OLLAMA_BASE_URL !== undefined) {
     pushProvider(
       providers,
       createOpenAICompatibleProvider({
         id: "ollama.local",
-        baseUrl: process.env.OLLAMA_BASE_URL,
+        baseUrl: aiEnv.OLLAMA_BASE_URL,
         models: [
           {
-            id: process.env.OLLAMA_MODEL ?? "llama3.1",
-            displayName: process.env.OLLAMA_MODEL ?? "Local Ollama",
+            id: aiEnv.OLLAMA_MODEL ?? "llama3.1",
+            displayName: aiEnv.OLLAMA_MODEL ?? "Local Ollama",
             supportsTools: true,
           },
         ],
-        defaultModel: process.env.OLLAMA_MODEL ?? "llama3.1",
+        defaultModel: aiEnv.OLLAMA_MODEL ?? "llama3.1",
       }),
     );
   }
-  if (process.env.OPENAI_API_KEY !== undefined) {
+  if (aiEnv.OPENAI_API_KEY !== undefined) {
     pushProvider(
       providers,
       createOpenAICompatibleProvider({
         id: "openai-compatible.default",
-        apiKey: process.env.OPENAI_API_KEY,
-        ...(process.env.OPENAI_BASE_URL === undefined
-          ? {}
-          : { baseUrl: process.env.OPENAI_BASE_URL }),
+        apiKey: aiEnv.OPENAI_API_KEY,
+        ...(aiEnv.OPENAI_BASE_URL === undefined ? {} : { baseUrl: aiEnv.OPENAI_BASE_URL }),
         models: [
           {
-            id: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
-            displayName: process.env.OPENAI_MODEL ?? "OpenAI compatible",
+            id: aiEnv.OPENAI_MODEL ?? "gpt-4.1-mini",
+            displayName: aiEnv.OPENAI_MODEL ?? "OpenAI compatible",
             supportsTools: true,
           },
         ],
-        defaultModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+        defaultModel: aiEnv.OPENAI_MODEL ?? "gpt-4.1-mini",
       }),
     );
   }

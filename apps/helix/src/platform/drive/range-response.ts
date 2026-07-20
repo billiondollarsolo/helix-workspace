@@ -40,10 +40,8 @@ export function sendBytesWithRangeSupport(opts: SendBytesWithRangeOptions): Fast
 
   const parsed = parseRangeHeader(rangeHeader, total);
   if (parsed === "invalid") {
-    return reply
-      .code(416)
-      .header("content-range", `bytes */${total}`)
-      .send({ error: "Requested range not satisfiable." });
+    // Empty body: Content-Range header is the contract for 416.
+    return reply.code(416).header("content-range", `bytes */${total}`).send();
   }
   if (parsed === "unsupported") {
     // Multi-range or syntactically valid but not a simple "bytes=N-M". Fall

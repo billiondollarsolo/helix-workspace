@@ -559,7 +559,12 @@ async function tenantConfigView(
     quotas: org.quotas,
     branding: org.branding,
     plan: planView(plan),
-    effective,
+    effective: {
+      byo: effective.byo as JsonObject,
+      features: effective.features as JsonObject,
+      quotas: effective.quotas as JsonObject,
+      branding: effective.branding as JsonObject,
+    },
   };
 }
 

@@ -1,4 +1,5 @@
 import type { Actor, EventBus, JsonObject, JsonValue, Unsubscribe } from "@helix/sdk-types";
+import type { ChatPresenceStatus } from "./types.js";
 
 export type ChatRoomEvent = JsonObject & {
   readonly type: string;
@@ -16,12 +17,19 @@ export type PresenceEntry = JsonObject & {
   readonly orgId: string;
   readonly displayName?: string;
   readonly email?: string;
-  readonly status: "online";
+  readonly status: ChatPresenceStatus;
   readonly seenAt: string;
 };
 
+export interface ChatPresenceTouchInput {
+  readonly roomId: string;
+  readonly actor: Actor;
+  readonly at?: Date;
+  readonly status?: ChatPresenceStatus;
+}
+
 export interface ChatPresenceStore {
-  touch(input: { readonly roomId: string; readonly actor: Actor; readonly at?: Date }): Promise<PresenceEntry>;
+  touch(input: ChatPresenceTouchInput): Promise<PresenceEntry>;
   remove(input: { readonly roomId: string; readonly actorId: string }): Promise<void>;
   list(roomId: string): Promise<readonly PresenceEntry[]>;
 }
@@ -39,6 +47,13 @@ export interface RedisPresenceClient {
 export interface ChatPresenceOptions {
   readonly keyPrefix?: string;
   readonly ttlSeconds?: number;
+  /**
+   * Fraction of TTL after which an idle (not refreshed) entry is reported as
+   * `away` rather than its declared status. Default 0.5.
+   */
+  readonly awayThresholdFraction?: number;
+  /** Injectable clock for tests. */
+  readonly now?: () => number;
 }
 
 export class EventBusChatRoomBus implements ChatRoomBus {
@@ -84,6 +99,8 @@ export class InMemoryChatRoomBus implements ChatRoomBus {
 export class RedisChatPresenceStore implements ChatPresenceStore {
   readonly #keyPrefix: string;
   readonly #ttlSeconds: number;
+  readonly #awayThresholdMs: number;
+  readonly #now: () => number;
 
   constructor(
     private readonly redis: RedisPresenceClient,
@@ -91,10 +108,13 @@ export class RedisChatPresenceStore implements ChatPresenceStore {
   ) {
     this.#keyPrefix = options.keyPrefix ?? "helix:chat:presence";
     this.#ttlSeconds = options.ttlSeconds ?? 45;
+    this.#awayThresholdMs =
+      this.#ttlSeconds * 1000 * (options.awayThresholdFraction ?? 0.5);
+    this.#now = options.now ?? Date.now;
   }
 
-  async touch(input: { readonly roomId: string; readonly actor: Actor; readonly at?: Date }): Promise<PresenceEntry> {
-    const entry = presenceEntry(input.actor, input.at ?? new Date());
+  async touch(input: ChatPresenceTouchInput): Promise<PresenceEntry> {
+    const entry = presenceEntry(input.actor, input.at ?? new Date(), input.status ?? "available");
     await this.redis.set(this.#actorKey(input.roomId, input.actor.id), JSON.stringify(entry), "EX", this.#ttlSeconds);
     await this.redis.sadd(this.#roomKey(input.roomId), input.actor.id);
     await this.redis.expire(this.#roomKey(input.roomId), this.#ttlSeconds * 2);
@@ -109,6 +129,7 @@ export class RedisChatPresenceStore implements ChatPresenceStore {
   async list(roomId: string): Promise<readonly PresenceEntry[]> {
     const actorIds = await this.redis.smembers(this.#roomKey(roomId));
     const entries: PresenceEntry[] = [];
+    const now = this.#now();
     await Promise.all(actorIds.map(async (actorId) => {
       const raw = await this.redis.get(this.#actorKey(roomId, actorId));
       if (raw === null) {
@@ -117,7 +138,7 @@ export class RedisChatPresenceStore implements ChatPresenceStore {
       }
       const parsed = safePresenceEntry(raw);
       if (parsed !== null) {
-        entries.push(parsed);
+        entries.push(applyAwayThreshold(parsed, now, this.#awayThresholdMs));
       }
     }));
     return entries.sort((left, right) => left.actorId.localeCompare(right.actorId));
@@ -134,14 +155,18 @@ export class RedisChatPresenceStore implements ChatPresenceStore {
 
 export class InMemoryChatPresenceStore implements ChatPresenceStore {
   readonly #ttlMs: number;
+  readonly #awayThresholdMs: number;
+  readonly #now: () => number;
   readonly #entries = new Map<string, PresenceEntry>();
 
   constructor(options: ChatPresenceOptions = {}) {
     this.#ttlMs = (options.ttlSeconds ?? 45) * 1000;
+    this.#awayThresholdMs = this.#ttlMs * (options.awayThresholdFraction ?? 0.5);
+    this.#now = options.now ?? Date.now;
   }
 
-  async touch(input: { readonly roomId: string; readonly actor: Actor; readonly at?: Date }): Promise<PresenceEntry> {
-    const entry = presenceEntry(input.actor, input.at ?? new Date());
+  async touch(input: ChatPresenceTouchInput): Promise<PresenceEntry> {
+    const entry = presenceEntry(input.actor, input.at ?? new Date(), input.status ?? "available");
     this.#entries.set(memoryKey(input.roomId, input.actor.id), entry);
     return entry;
   }
@@ -151,7 +176,7 @@ export class InMemoryChatPresenceStore implements ChatPresenceStore {
   }
 
   async list(roomId: string): Promise<readonly PresenceEntry[]> {
-    const now = Date.now();
+    const now = this.#now();
     const entries: PresenceEntry[] = [];
     for (const [key, entry] of this.#entries.entries()) {
       if (!key.startsWith(`${roomId}:`)) {
@@ -161,7 +186,7 @@ export class InMemoryChatPresenceStore implements ChatPresenceStore {
         this.#entries.delete(key);
         continue;
       }
-      entries.push(entry);
+      entries.push(applyAwayThreshold(entry, now, this.#awayThresholdMs));
     }
     return entries.sort((left, right) => left.actorId.localeCompare(right.actorId));
   }
@@ -171,16 +196,45 @@ export function roomSubject(roomId: string, prefix = "chat.room"): string {
   return `${prefix}.${keyPart(roomId)}.events`;
 }
 
-function presenceEntry(actor: Actor, at: Date): PresenceEntry {
+function presenceEntry(
+  actor: Actor,
+  at: Date,
+  status: ChatPresenceStatus,
+): PresenceEntry {
+  const effective: ChatPresenceStatus = status === "offline" ? "available" : status;
   return {
     actorId: actor.id,
     orgId: actor.orgId,
     ...(actor.displayName === undefined ? {} : { displayName: actor.displayName }),
     ...(actor.email === undefined ? {} : { email: actor.email }),
-    status: "online",
+    status: effective,
     seenAt: at.toISOString(),
   };
 }
+
+/**
+ * Idle (not refreshed past away threshold) non-busy entries report `away`.
+ * Explicit `busy` is honored until TTL expiry.
+ */
+function applyAwayThreshold(
+  entry: PresenceEntry,
+  nowMs: number,
+  awayThresholdMs: number,
+): PresenceEntry {
+  if (entry.status === "busy" || entry.status === "offline") {
+    return entry;
+  }
+  const seenMs = Date.parse(entry.seenAt);
+  if (!Number.isFinite(seenMs)) {
+    return entry;
+  }
+  if (nowMs - seenMs >= awayThresholdMs) {
+    return { ...entry, status: "away" };
+  }
+  return entry;
+}
+
+const PRESENCE_STATUSES = new Set<string>(["available", "away", "busy", "offline", "online"]);
 
 function safePresenceEntry(raw: string): PresenceEntry | null {
   try {
@@ -191,10 +245,20 @@ function safePresenceEntry(raw: string): PresenceEntry | null {
       !Array.isArray(parsed) &&
       typeof (parsed as { readonly actorId?: unknown }).actorId === "string" &&
       typeof (parsed as { readonly orgId?: unknown }).orgId === "string" &&
-      (parsed as { readonly status?: unknown }).status === "online" &&
+      typeof (parsed as { readonly status?: unknown }).status === "string" &&
+      PRESENCE_STATUSES.has((parsed as { readonly status: string }).status) &&
       typeof (parsed as { readonly seenAt?: unknown }).seenAt === "string"
     ) {
-      return parsed as PresenceEntry;
+      const status = (parsed as { readonly status: string }).status;
+      // Legacy "online" → available
+      const normalized: ChatPresenceStatus =
+        status === "online"
+          ? "available"
+          : (status as ChatPresenceStatus);
+      return {
+        ...(parsed as PresenceEntry),
+        status: normalized,
+      };
     }
   } catch {
     return null;

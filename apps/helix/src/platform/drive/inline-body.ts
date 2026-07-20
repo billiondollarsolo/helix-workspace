@@ -1,3 +1,5 @@
+import { env as loadValidatedEnv } from "../../config/env.js";
+
 export interface InlineBodyFallbackEnv {
   readonly NODE_ENV?: string | undefined;
 }
@@ -7,9 +9,13 @@ export interface InlineBodyFallback {
   readonly mime?: string | undefined;
 }
 
+function defaultInlineBodyEnv(): InlineBodyFallbackEnv {
+  return { NODE_ENV: loadValidatedEnv().NODE_ENV };
+}
+
 export function readInlineBodyFallback(
   metadata: Record<string, unknown>,
-  env: InlineBodyFallbackEnv = process.env,
+  env: InlineBodyFallbackEnv = defaultInlineBodyEnv(),
 ): InlineBodyFallback | null {
   const inlineBody = metadata.inlineBody;
   if (typeof inlineBody !== "string" || !allowInlineBodyFallback(metadata, env)) {
@@ -23,7 +29,7 @@ export function readInlineBodyFallback(
 
 export function allowInlineBodyFallback(
   metadata: Record<string, unknown>,
-  env: InlineBodyFallbackEnv = process.env,
+  env: InlineBodyFallbackEnv = defaultInlineBodyEnv(),
 ): boolean {
   if (env.NODE_ENV === "production") {
     return false;

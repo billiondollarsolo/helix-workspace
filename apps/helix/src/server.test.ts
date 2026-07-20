@@ -555,6 +555,7 @@ describe("tool REST routes", () => {
         limit: 5,
         offset: 2,
         filter: 'attributes.orgId = "org-get"',
+        forActorId: "actor-get",
       },
     ]);
     await app.close();
@@ -599,6 +600,7 @@ describe("tool REST routes", () => {
         limit: 3,
         offset: 0,
         filter: 'attributes.orgId = "org-post"',
+        forActorId: "actor-post",
       },
     ]);
     await app.close();

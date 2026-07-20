@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createDriveShareLink,
   deleteDriveObject,
   driveDownloadResult,
+  drivePublicShareUrl,
   finalizeDriveUpload,
   listDrive,
   listDriveAccess,
+  listDriveShareLinks,
+  listDriveVersions,
   prepareDriveUpload,
   removeDriveAccess,
+  renameDriveObject,
+  revertDriveVersion,
+  revokeDriveShareLink,
   searchDrive,
   shareDrive,
   trashDriveObject,
@@ -443,6 +450,78 @@ describe("drive API", () => {
     await expect(listDrive({}, fetchImpl)).rejects.toThrow("missing drive scope");
   });
 
+  it("renames, lists versions, reverts, and manages share links via tools", async () => {
+    const objectId = "33333333-3333-4333-8333-333333333333";
+    const version = {
+      id: "44444444-4444-4444-8444-444444444444",
+      orgId: "11111111-1111-4111-8111-111111111111",
+      objectId,
+      versionNumber: 2,
+      storageKey: "drive/111/report.pdf",
+      mimeType: "application/pdf",
+      byteSize: 128,
+      sha256: "a".repeat(64),
+      metadata: {},
+      createdByActorId: "22222222-2222-4222-8222-222222222222",
+      createdAt: "2026-05-20T12:01:00.000Z",
+    };
+    const link = {
+      id: "55555555-5555-4555-8555-555555555555",
+      orgId: "11111111-1111-4111-8111-111111111111",
+      objectId,
+      token: "pubtoken123",
+      role: "reader",
+      expiresAt: null,
+      createdByActorId: "22222222-2222-4222-8222-222222222222",
+      createdAt: "2026-05-20T12:02:00.000Z",
+      revokedAt: null,
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: objectId,
+          type: "file",
+          name: "renamed.pdf",
+          folderId: null,
+          ownerActorId: "22222222-2222-4222-8222-222222222222",
+          metadata: {},
+          deletedAt: null,
+          createdAt: "2026-05-20T12:00:00.000Z",
+          updatedAt: "2026-05-20T12:03:00.000Z",
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ versions: [version] }))
+      .mockResolvedValueOnce(Response.json(version))
+      .mockResolvedValueOnce(Response.json(link))
+      .mockResolvedValueOnce(Response.json({ links: [link] }))
+      .mockResolvedValueOnce(Response.json({ id: link.id, revoked: true }));
+
+    await expect(renameDriveObject({ objectId, name: "renamed.pdf" }, fetchImpl)).resolves.toMatchObject({
+      name: "renamed.pdf",
+    });
+    await expect(listDriveVersions(objectId, fetchImpl)).resolves.toEqual([version]);
+    await expect(revertDriveVersion(objectId, 2, fetchImpl)).resolves.toMatchObject({ versionNumber: 2 });
+    await expect(createDriveShareLink({ objectId, role: "reader" }, fetchImpl)).resolves.toMatchObject({
+      token: "pubtoken123",
+    });
+    await expect(listDriveShareLinks(objectId, fetchImpl)).resolves.toEqual([link]);
+    await expect(revokeDriveShareLink(link.id, fetchImpl)).resolves.toEqual({
+      id: link.id,
+      revoked: true,
+    });
+    expect(drivePublicShareUrl("pubtoken123", "https://app.example")).toBe(
+      "https://app.example/api/drive/share/pubtoken123",
+    );
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/drive.rename", expect.anything());
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/drive.versions.list", expect.anything());
+    expect(fetchImpl).toHaveBeenNthCalledWith(3, "/api/tools/drive.versions.revert", expect.anything());
+    expect(fetchImpl).toHaveBeenNthCalledWith(4, "/api/tools/drive.link.create", expect.anything());
+    expect(fetchImpl).toHaveBeenNthCalledWith(5, "/api/tools/drive.link.list", expect.anything());
+    expect(fetchImpl).toHaveBeenNthCalledWith(6, "/api/tools/drive.link.revoke", expect.anything());
+  });
+
   it("resolves PDFs to the native viewer and other raw files to preview URLs", () => {
     const pdf: DriveApiEntry = {
       id: "obj-1",
@@ -451,6 +530,7 @@ describe("drive API", () => {
       folderId: null,
       ownerActorId: null,
       mimeType: "application/pdf",
+      metadata: {},
       deletedAt: null,
       createdAt: "2026-05-20T12:00:00.000Z",
       updatedAt: "2026-05-20T12:00:00.000Z",

@@ -7,6 +7,7 @@ import {
   deleteMailThread,
   getMailVacation,
   getMailThread,
+  listMailFilters,
   replyToMail,
   searchMail,
   sendMail,
@@ -14,6 +15,7 @@ import {
   setMailThreadRead,
   setMailThreadStarred,
   snoozeMailThread,
+  spamMailThread,
   updateMailFilter,
 } from "./api";
 import {
@@ -148,6 +150,50 @@ describe("mail API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ threadId: "thread-1" }),
+    });
+  });
+
+  it("marks spam and lists filters via the registered tools (no 404)", async () => {
+    const fetchImpl = vi.fn((url: RequestInfo | URL) => {
+      if (String(url).includes("mail.spam")) {
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            threadId: "thread-1",
+            spamAt: "2026-05-20T12:00:00.000Z",
+          }),
+        );
+      }
+      return Promise.resolve(
+        Response.json({
+          filters: [
+            {
+              id: "f1",
+              name: "News",
+              enabled: true,
+              priority: 100,
+              criteria: {},
+              actions: {},
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        }),
+      );
+    });
+
+    await spamMailThread("thread-1", fetchImpl);
+    const filters = await listMailFilters(fetchImpl);
+    expect(filters).toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/mail.spam", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: "thread-1", spam: true }),
+    });
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/mail.filter.list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
     });
   });
 

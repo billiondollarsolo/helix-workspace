@@ -1,10 +1,35 @@
 import { randomUUID } from "node:crypto";
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
+import {
+  mailAliasCreateInputSchema,
+  mailAliasDeleteInputSchema,
+  mailAliasListResultSchema,
+  mailAliasSchema,
+  mailDraftDiscardInputSchema,
+  mailDraftDiscardResultSchema,
+  mailDraftGetInputSchema,
+  mailDraftListResultSchema,
+  mailDraftSaveInputSchema,
+  mailDraftSchema,
+  mailFilterSchema,
+  mailFiltersListResultSchema,
+  mailOutboundCancelInputSchema,
+  mailOutboundCancelResultSchema,
+  mailOutboundRecordSchema,
+  mailSpamInputSchema,
+  mailSpamResultSchema,
+  mailThreadsListResultSchema,
+} from "@helix/contracts";
 import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
+import { BadRequestError } from "../../api/api-error.js";
 import type { MailStore } from "./store.js";
+import {
+  MailFilterNotFoundError,
+  MailInboundActorForbiddenError,
+} from "./errors.js";
 import {
   ingestRawMail,
   MailauthAuthenticator,
@@ -23,6 +48,9 @@ import type {
 } from "./types.js";
 import { MAIL_FOLDER_IDS } from "./types.js";
 
+// ponytail: tools.ts is the mail tool surface (~1100 LOC). Split draft/alias
+// tool groups into tools-drafts.ts / tools-aliases.ts when next expanding (G9).
+
 const uuidSchema = z.string().uuid();
 const emailSchema = z.string().email();
 
@@ -38,6 +66,7 @@ const attachmentSchema = z.object({
   filename: z.string().min(1).optional(),
   contentType: z.string().min(1).optional(),
   content: z.string().min(1).optional(),
+  objectId: z.string().uuid().optional(),
   path: z.string().min(1).optional(),
 });
 
@@ -101,6 +130,8 @@ const starStateSchema = z.object({
   threadId: uuidSchema,
   starred: z.boolean(),
 });
+
+const spamSchema = mailSpamInputSchema;
 
 const filterCriteriaSchema = z.object({
   fromContains: z.string().min(1).optional(),
@@ -175,6 +206,66 @@ const genericObjectJsonSchema = {
   type: "object",
   additionalProperties: true,
 } as const;
+
+const mailOkThreadSchema = z.object({
+  ok: z.literal(true),
+  threadId: z.string(),
+});
+const mailOkThreadUnreadSchema = mailOkThreadSchema.extend({
+  unread: z.boolean(),
+});
+const mailOkThreadStarredSchema = mailOkThreadSchema.extend({
+  starred: z.boolean(),
+});
+const mailOkThreadSnoozedSchema = mailOkThreadSchema.extend({
+  snoozedUntil: z.string(),
+});
+const mailJsonObjectSchema = z.object({}).passthrough();
+const mailThreadGetOutputSchema = z.object({
+  thread: mailJsonObjectSchema.nullable(),
+});
+const mailSearchHitsOutputSchema = z.object({
+  hits: z.array(mailJsonObjectSchema),
+});
+const mailFoldersListOutputSchema = z.object({
+  folders: z.array(mailJsonObjectSchema),
+});
+const mailLabelsListOutputSchema = z.object({
+  labels: z.array(mailJsonObjectSchema),
+});
+const mailVacationOutputSchema = mailJsonObjectSchema.nullable();
+const mailOutboundGetOutputSchema = z.object({
+  outbound: mailJsonObjectSchema.nullable(),
+});
+const mailSendOutputSchema = z.object({
+  id: z.string().optional(),
+  messageId: z.string().optional(),
+  threadId: z.string().optional(),
+  status: z.string().optional(),
+  undoUntil: z.string().optional(),
+  queuedAt: z.string().optional(),
+});
+const mailFilterDeleteOutputSchema = z.object({
+  id: z.string(),
+  deleted: z.boolean(),
+});
+const mailInboundAcceptOutputSchema = z.object({
+  ok: z.literal(true),
+  threadId: z.string(),
+  messageId: z.string(),
+  attachmentObjectIds: z.array(z.string()),
+  subject: z.string(),
+  receivedAt: z.string(),
+  auth: mailJsonObjectSchema,
+  filterResult: mailJsonObjectSchema.optional(),
+});
+const mailLabelApplyOutputSchema = z.object({
+  ok: z.literal(true),
+  threadId: z.string(),
+});
+const mailAliasDeleteOutputSchema = z.object({
+  deleted: z.boolean(),
+});
 
 export interface CreateMailToolDefinitionsOptions {
   readonly store: MailStore;
@@ -269,7 +360,7 @@ export function createMailToolDefinitions(
       scopeComposition: { conditionalScopes: [externalRecipientScope] },
       rateLimit: { perActor: { perHour: 60, perDay: 200 } },
       inputSchema: zodToolSchema(sendSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         const outbound = await new MailSendService({
           store: options.store,
@@ -296,7 +387,7 @@ export function createMailToolDefinitions(
       confirmationRequired: true,
       scopeComposition: { conditionalScopes: [externalRecipientScope] },
       inputSchema: zodToolSchema(replySchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         const outbound = await sendService.queue({
           orgId: ctx.actor.orgId,
@@ -341,15 +432,13 @@ export function createMailToolDefinitions(
       sideEffects: "write",
       confirmationRequired: false,
       inputSchema: zodToolSchema(inboundAcceptSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailInboundAcceptOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         // Defence-in-depth: the `mail.system` scope is itself service-only,
         // but a misconfigured token granted to a user actor MUST still be
         // rejected. SPF/DKIM/DMARC fakery is no longer possible — see below.
         if (ctx.actor.type !== "service_account" && ctx.actor.type !== "system") {
-          throw new Error(
-            `mail.inbound.accept requires a service-account or system actor; got ${ctx.actor.type}.`,
-          );
+          throw new MailInboundActorForbiddenError(ctx.actor.type);
         }
         const receivedAt = input.receivedAt === undefined ? new Date() : new Date(input.receivedAt);
         const raw = structuredInboundInputToRfc822(input, receivedAt);
@@ -388,7 +477,7 @@ export function createMailToolDefinitions(
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(labelApplySchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailLabelApplyOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
@@ -422,13 +511,35 @@ export function createMailToolDefinitions(
         return { ok: true, threadId: input.threadId };
       },
     ),
+    defineTool<z.output<typeof spamSchema>, z.output<typeof mailSpamResultSchema>>({
+      id: "mail.spam",
+      description: "Mark or unmark a mail thread as spam.",
+      permission: "mail.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(spamSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailSpamResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const spamAt = input.spam ? new Date() : null;
+        await options.store.updateThreadState({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          threadId: input.threadId,
+          patch: { spamAt },
+        });
+        return {
+          ok: true as const,
+          threadId: input.threadId,
+          spamAt: spamAt === null ? null : spamAt.toISOString(),
+        };
+      },
+    }),
     defineTool<z.output<typeof threadIdSchema>, unknown>({
       id: "mail.thread.get",
       description: "Fetch one visible mail thread with its message stack.",
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(threadIdSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailThreadGetOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         const thread = await options.store.getThread({
           orgId: ctx.actor.orgId,
@@ -444,7 +555,7 @@ export function createMailToolDefinitions(
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(readStateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailOkThreadUnreadSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
@@ -461,7 +572,7 @@ export function createMailToolDefinitions(
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(starStateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailOkThreadStarredSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
@@ -478,7 +589,7 @@ export function createMailToolDefinitions(
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(snoozeSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailOkThreadSnoozedSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
@@ -489,13 +600,25 @@ export function createMailToolDefinitions(
         return { ok: true, threadId: input.threadId, snoozedUntil: input.until };
       },
     }),
-    defineTool<z.output<typeof filterCreateSchema>, unknown>({
+    defineTool<Record<string, never>, z.output<typeof mailFiltersListResultSchema>>({
+      id: "mail.filter.list",
+      description: "List mail filters for the current actor.",
+      permission: "mail.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(z.object({}).default({}), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailFiltersListResultSchema, genericObjectJsonSchema),
+      handler: async (_input, ctx) => {
+        const filters = await options.store.listFilters(ctx.actor.orgId, ctx.actor.id);
+        return { filters: filters.map(serializeFilter) };
+      },
+    }),
+    defineTool<z.output<typeof filterCreateSchema>, z.output<typeof mailFilterSchema>>({
       id: "mail.filter.create",
       description: "Create a mail filter.",
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(filterCreateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailFilterSchema, genericObjectJsonSchema),
       handler: async (input, ctx) =>
         serializeFilter(
           await options.store.createFilter({
@@ -509,13 +632,13 @@ export function createMailToolDefinitions(
           }),
         ),
     }),
-    defineTool<z.output<typeof filterUpdateSchema>, unknown>({
+    defineTool<z.output<typeof filterUpdateSchema>, z.output<typeof mailFilterSchema>>({
       id: "mail.filter.update",
       description: "Update a mail filter.",
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(filterUpdateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailFilterSchema, genericObjectJsonSchema),
       handler: async ({ id, ...patch }, ctx) => {
         const filter = await options.store.updateFilter({
           orgId: ctx.actor.orgId,
@@ -524,7 +647,7 @@ export function createMailToolDefinitions(
           patch: normalizeFilterPatch(patch),
         });
         if (filter === null) {
-          throw new Error(`Unknown mail filter: ${id}`);
+          throw new MailFilterNotFoundError(id);
         }
         return serializeFilter(filter);
       },
@@ -535,7 +658,7 @@ export function createMailToolDefinitions(
       permission: "mail.write",
       sideEffects: "destructive",
       inputSchema: zodToolSchema(filterDeleteSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailFilterDeleteOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => ({
         deleted: await options.store.deleteFilter({
           orgId: ctx.actor.orgId,
@@ -550,7 +673,7 @@ export function createMailToolDefinitions(
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(vacationGetSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailVacationOutputSchema, genericObjectJsonSchema),
       handler: async (_input, ctx) => {
         const vacation = await options.store.getVacation(ctx.actor.orgId, ctx.actor.id);
         return { vacation: vacation === null ? null : serializeVacation(vacation) };
@@ -562,7 +685,7 @@ export function createMailToolDefinitions(
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(vacationSetSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailVacationOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => ({
         vacation: serializeVacation(
           await options.store.setVacation({
@@ -584,7 +707,7 @@ export function createMailToolDefinitions(
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(searchSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailSearchHitsOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => ({
         hits: (
           await options.store.search({
@@ -607,7 +730,7 @@ export function createMailToolDefinitions(
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(threadsListSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailThreadsListResultSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         const result = await options.store.listThreads({
           orgId: ctx.actor.orgId,
@@ -634,7 +757,7 @@ export function createMailToolDefinitions(
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(foldersListSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailFoldersListOutputSchema, genericObjectJsonSchema),
       handler: async (_input, ctx) => ({
         folders: (
           await options.store.listFolders({
@@ -651,7 +774,7 @@ export function createMailToolDefinitions(
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(labelsListSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailLabelsListOutputSchema, genericObjectJsonSchema),
       handler: async (_input, ctx) => ({
         labels: (
           await options.store.listLabels({
@@ -667,7 +790,9 @@ export function createMailToolDefinitions(
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(outboundGetSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailOutboundGetOutputSchema,
+        genericObjectJsonSchema,
+      ),
       handler: async (input, ctx) => {
         const outbound = await options.store.getOutbound(input.id);
         if (
@@ -678,6 +803,174 @@ export function createMailToolDefinitions(
           return { outbound: null };
         }
         return { outbound: serializeOutboundDetail(outbound) };
+      },
+    }),
+    defineTool<
+      z.output<typeof mailOutboundCancelInputSchema>,
+      z.output<typeof mailOutboundCancelResultSchema>
+    >({
+      id: "mail.outbound.cancel",
+      description: "Cancel a queued outbound mail message during its undo-send window.",
+      permission: "mail.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(mailOutboundCancelInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailOutboundCancelResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const cancelled = await sendService.cancel({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          id: input.outboundId,
+        });
+        return {
+          outbound: cancelled === null ? null : serializeOutboundDetail(cancelled),
+        };
+      },
+    }),
+    defineTool<z.output<typeof mailDraftSaveInputSchema>, z.output<typeof mailDraftSchema>>({
+      id: "mail.draft.save",
+      description: "Create or update a mail draft for the current actor.",
+      permission: "mail.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(mailDraftSaveInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailDraftSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.saveDraft === undefined) {
+          throw new BadRequestError("Draft persistence is not available.");
+        }
+        const draft = await options.store.saveDraft({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          ...(input.id === undefined ? {} : { id: input.id }),
+          ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+          envelope: {
+            to: input.to,
+            cc: input.cc,
+            bcc: input.bcc,
+            subject: input.subject,
+            bodyText: input.bodyText,
+            ...(input.bodyHtml === undefined ? {} : { bodyHtml: input.bodyHtml }),
+            attachments: input.attachments,
+          } as JsonObject,
+        });
+        return serializeDraft(draft, input);
+      },
+    }),
+    defineTool<z.output<typeof mailDraftGetInputSchema>, unknown>({
+      id: "mail.draft.get",
+      description: "Fetch one mail draft owned by the current actor.",
+      permission: "mail.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(mailDraftGetInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(
+        z.object({ draft: mailDraftSchema.nullable() }),
+        genericObjectJsonSchema,
+      ),
+      handler: async (input, ctx) => {
+        if (options.store.getDraft === undefined) {
+          return { draft: null };
+        }
+        const draft = await options.store.getDraft({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          id: input.id,
+        });
+        return { draft: draft === null ? null : serializeDraft(draft) };
+      },
+    }),
+    defineTool<Record<string, never>, z.output<typeof mailDraftListResultSchema>>({
+      id: "mail.draft.list",
+      description: "List mail drafts for the current actor (newest first).",
+      permission: "mail.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(z.object({}), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailDraftListResultSchema, genericObjectJsonSchema),
+      handler: async (_input, ctx) => {
+        if (options.store.listDrafts === undefined) {
+          return { drafts: [] };
+        }
+        const drafts = await options.store.listDrafts({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+        });
+        return { drafts: drafts.map((d) => serializeDraft(d)) };
+      },
+    }),
+    defineTool<
+      z.output<typeof mailDraftDiscardInputSchema>,
+      z.output<typeof mailDraftDiscardResultSchema>
+    >({
+      id: "mail.draft.discard",
+      description: "Discard a mail draft owned by the current actor.",
+      permission: "mail.write",
+      sideEffects: "destructive",
+      inputSchema: zodToolSchema(mailDraftDiscardInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailDraftDiscardResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.discardDraft === undefined) {
+          return { deleted: false };
+        }
+        return {
+          deleted: await options.store.discardDraft({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            id: input.id,
+          }),
+        };
+      },
+    }),
+    defineTool<Record<string, never>, z.output<typeof mailAliasListResultSchema>>({
+      id: "mail.alias.list",
+      description: "List mail aliases for the current actor.",
+      permission: "mail.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(z.object({}), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailAliasListResultSchema, genericObjectJsonSchema),
+      handler: async (_input, ctx) => {
+        if (options.store.listAliases === undefined) {
+          return { aliases: [] };
+        }
+        const aliases = await options.store.listAliases(ctx.actor.orgId, ctx.actor.id);
+        return { aliases: aliases.map(serializeAlias) };
+      },
+    }),
+    defineTool<z.output<typeof mailAliasCreateInputSchema>, z.output<typeof mailAliasSchema>>({
+      id: "mail.alias.create",
+      description: "Create a mail alias (admin routing mutation).",
+      permission: "mail.admin",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(mailAliasCreateInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailAliasSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.createAlias === undefined) {
+          throw new BadRequestError("Alias management is not available.");
+        }
+        const alias = await options.store.createAlias({
+          orgId: ctx.actor.orgId,
+          actorId: input.targetActorId,
+          email: input.address,
+          ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+          isPrimary: input.isPrimary,
+        });
+        return serializeAlias(alias);
+      },
+    }),
+    defineTool<z.output<typeof mailAliasDeleteInputSchema>, unknown>({
+      id: "mail.alias.delete",
+      description: "Disable a mail alias (admin routing mutation).",
+      permission: "mail.admin",
+      sideEffects: "destructive",
+      inputSchema: zodToolSchema(mailAliasDeleteInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.object({ deleted: z.boolean() }), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.deleteAlias === undefined) {
+          return { deleted: false };
+        }
+        return {
+          deleted: await options.store.deleteAlias({
+            orgId: ctx.actor.orgId,
+            id: input.id,
+          }),
+        };
       },
     }),
   ];
@@ -704,7 +997,7 @@ function threadStateTool(
     permission,
     sideEffects: id === "mail.delete" ? "destructive" : "write",
     inputSchema: zodToolSchema(threadIdSchema, genericObjectJsonSchema),
-    outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+    outputSchema: zodToolSchema(mailOkThreadSchema, genericObjectJsonSchema),
     handler,
   };
 }
@@ -716,33 +1009,41 @@ function defineTool<Input, Output>(
 }
 
 function toEnvelope(
-  input: z.output<typeof sendSchema>,
+  input: z.output<typeof sendSchema> | z.output<typeof replySchema>,
   defaultFrom: MailOutboundEnvelope["from"],
 ): MailOutboundEnvelope {
+  const from =
+    "from" in input && input.from !== undefined
+      ? normalizeAddress(input.from)
+      : defaultFrom;
   return {
-    from: normalizeAddress(input.from ?? defaultFrom),
+    from,
     to: input.to.map(normalizeAddress),
     cc: input.cc.map(normalizeAddress),
     bcc: input.bcc.map(normalizeAddress),
-    subject: input.subject,
+    subject: "subject" in input && input.subject !== undefined ? input.subject : "Re:",
     text: input.bodyText,
     ...(input.bodyHtml === undefined ? {} : { html: input.bodyHtml }),
     attachments: input.attachments.map((attachment) => ({
       ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
       mimeType: attachment.contentType ?? "application/octet-stream",
-      content: Buffer.from(attachment.content ?? "", "base64"),
+      ...(attachment.content === undefined
+        ? { content: Buffer.alloc(0) }
+        : { content: Buffer.from(attachment.content, "base64") }),
       ...(attachment.contentType === undefined ? {} : { contentType: attachment.contentType }),
       ...(attachment.path === undefined ? {} : { path: attachment.path }),
+      ...(attachment.objectId === undefined ? {} : { objectId: attachment.objectId }),
     })),
   };
 }
 
-function normalizeAddress(
-  address: z.output<typeof addressSchema> | MailOutboundEnvelope["from"],
-): MailOutboundEnvelope["from"] {
+function normalizeAddress(address: {
+  readonly address: string;
+  readonly name?: string | undefined;
+}): MailOutboundEnvelope["from"] {
   return {
     address: address.address,
-    ...(!("name" in address) || address.name === undefined ? {} : { name: address.name }),
+    ...(address.name === undefined ? {} : { name: address.name }),
   };
 }
 
@@ -866,9 +1167,14 @@ function serializeFilter(filter: {
   readonly actions: unknown;
   readonly createdAt: Date;
   readonly updatedAt: Date;
-}) {
+}): z.output<typeof mailFilterSchema> {
   return {
-    ...filter,
+    id: filter.id,
+    name: filter.name,
+    enabled: filter.enabled,
+    priority: filter.priority,
+    criteria: filter.criteria as z.output<typeof mailFilterSchema>["criteria"],
+    actions: filter.actions as z.output<typeof mailFilterSchema>["actions"],
     createdAt: filter.createdAt.toISOString(),
     updatedAt: filter.updatedAt.toISOString(),
   };
@@ -938,6 +1244,72 @@ function serializeLabel(label: MailLabelRecord) {
     shared: label.ownerActorId === null,
     createdAt: label.createdAt.toISOString(),
     updatedAt: label.updatedAt.toISOString(),
+  };
+}
+
+function serializeDraft(
+  draft: {
+    readonly id: string;
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly threadId: string | null;
+    readonly envelope: JsonObject;
+    readonly createdAt: Date;
+    readonly updatedAt: Date;
+  },
+  fallback?: z.output<typeof mailDraftSaveInputSchema>,
+) {
+  const env = draft.envelope;
+  const to = Array.isArray(env.to) ? env.to : (fallback?.to ?? []);
+  const cc = Array.isArray(env.cc) ? env.cc : (fallback?.cc ?? []);
+  const bcc = Array.isArray(env.bcc) ? env.bcc : (fallback?.bcc ?? []);
+  const subject =
+    typeof env.subject === "string" ? env.subject : (fallback?.subject ?? "");
+  const bodyText =
+    typeof env.bodyText === "string" ? env.bodyText : (fallback?.bodyText ?? "");
+  const bodyHtml =
+    typeof env.bodyHtml === "string"
+      ? env.bodyHtml
+      : fallback?.bodyHtml === undefined
+        ? undefined
+        : fallback.bodyHtml;
+  const attachments = Array.isArray(env.attachments)
+    ? env.attachments
+    : (fallback?.attachments ?? []);
+  return {
+    id: draft.id,
+    orgId: draft.orgId,
+    actorId: draft.actorId,
+    threadId: draft.threadId,
+    to: to as z.output<typeof mailDraftSchema>["to"],
+    cc: cc as z.output<typeof mailDraftSchema>["cc"],
+    bcc: bcc as z.output<typeof mailDraftSchema>["bcc"],
+    subject,
+    bodyText,
+    ...(bodyHtml === undefined ? {} : { bodyHtml }),
+    attachments: attachments as z.output<typeof mailDraftSchema>["attachments"],
+    createdAt: draft.createdAt.toISOString(),
+    updatedAt: draft.updatedAt.toISOString(),
+  };
+}
+
+function serializeAlias(alias: {
+  readonly id: string;
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly email: string;
+  readonly displayName: string | null;
+  readonly isPrimary: boolean;
+  readonly createdAt: Date;
+}) {
+  return {
+    id: alias.id,
+    orgId: alias.orgId,
+    actorId: alias.actorId,
+    address: alias.email,
+    displayName: alias.displayName,
+    isPrimary: alias.isPrimary,
+    createdAt: alias.createdAt.toISOString(),
   };
 }
 

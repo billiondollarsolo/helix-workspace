@@ -223,6 +223,8 @@ services:
         install -m 0644 -o postgres -g postgres /run/secrets/postgres_ca /var/run/postgresql/tls/ca.pem
         install -m 0644 -o postgres -g postgres /run/secrets/postgres_server_cert /var/run/postgresql/tls/server.pem
         install -m 0600 -o postgres -g postgres /run/secrets/postgres_server_key /var/run/postgresql/tls/server-key.pem
+        install -m 0600 -o postgres -g postgres /run/secrets/postgres_app_password /var/run/postgresql/tls/app-password
+        install -m 0600 -o postgres -g postgres /run/secrets/postgres_migration_password /var/run/postgresql/tls/migration-password
         {
           echo 'local all all trust'
           echo 'hostssl all all 0.0.0.0/0 scram-sha-256'
@@ -307,7 +309,7 @@ services:
           *[!A-Za-z0-9_-]*|'') echo "NATS password must be a non-empty base64url value." >&2; exit 1 ;;
         esac
         export HELIX_NATS_PASSWORD
-        exec /nats-server --config /etc/nats/nats-server.production.conf
+        exec nats-server --config /etc/nats/nats-server.production.conf
     command: !reset []
     volumes: !override
       - nats-data:/data
@@ -559,9 +561,9 @@ services:
 
 networks:
   edge:
-    name: helix-production-edge
+    name: ${HELIX_COMPOSE_PROJECT_NAME:-helix-production}-edge
   data-plane:
-    name: helix-production-data-plane
+    name: ${HELIX_COMPOSE_PROJECT_NAME:-helix-production}-data-plane
     internal: true
 
 secrets:

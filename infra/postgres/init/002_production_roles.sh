@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-app_password_file=/run/secrets/postgres_app_password
-migration_password_file=/run/secrets/postgres_migration_password
+app_password_file=${POSTGRES_APP_PASSWORD_FILE:-/var/run/postgresql/tls/app-password}
+migration_password_file=${POSTGRES_MIGRATION_PASSWORD_FILE:-/var/run/postgresql/tls/migration-password}
 
 # Local development does not mount production role secrets.
 if [ ! -r "$app_password_file" ] && [ ! -r "$migration_password_file" ]; then
@@ -15,8 +15,14 @@ fi
 
 app_password="$(tr -d '\r\n' < "$app_password_file")"
 migration_password="$(tr -d '\r\n' < "$migration_password_file")"
-case "$app_password:$migration_password" in
-  *[!A-Za-z0-9_-]* | :* | *:)
+case "$app_password" in
+  *[!A-Za-z0-9_-]* | "")
+    echo "PostgreSQL role passwords must be non-empty base64url values." >&2
+    exit 1
+    ;;
+esac
+case "$migration_password" in
+  *[!A-Za-z0-9_-]* | "")
     echo "PostgreSQL role passwords must be non-empty base64url values." >&2
     exit 1
     ;;

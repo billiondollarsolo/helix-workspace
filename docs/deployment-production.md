@@ -183,6 +183,20 @@ Then run the static production Compose regression test:
 pnpm exec vitest run infra/scripts/production-compose.test.mjs
 ```
 
+Run the disposable live data-plane drill on a Docker host before promotion:
+
+```sh
+node infra/scripts/data-plane-live-evidence.mjs --local
+```
+
+The drill generates isolated one-day test certificates and credentials, creates a uniquely named
+Compose project, and removes its containers, network, volumes, and temporary secrets afterward. It
+proves PostgreSQL rejects plaintext connections and separates schema migration from application
+data privileges; Redis rejects plaintext and unauthenticated clients; NATS requires both mutual
+TLS and application authentication and rejects subjects outside `helix.>`; and all three services
+recover after a complete CA/server/client certificate rotation. Use `--static` only to validate the
+evidence contract—it deliberately records every live scenario as `not_run`.
+
 Retain the redacted resolved-config digest and encryption/scanner evidence in the release-readiness
 artifact packet.
 

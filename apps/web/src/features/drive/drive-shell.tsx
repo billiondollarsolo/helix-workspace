@@ -34,6 +34,7 @@ import "./drive-shell.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
+import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { detectFormat } from "@/features/_open/format-detection";
 import { setHelixDriveItemDragData } from "./drag-payload";
 import { FileNameText } from "./file-name-text";
@@ -574,15 +575,19 @@ export function DriveShell() {
 
   const onOpenFile = (id: string) => {
     const entry = entryById.get(id);
-    if (entry?.app != null) {
+    if (entry === undefined) {
+      return;
+    }
+    if (CORE_WORKSPACE_STORAGE_ONLY) {
+      setSelectedFileId(id);
+      return;
+    }
+    if (entry.app != null) {
       const destination = editorDestinationFor(entry.app, id);
       if (destination !== null) {
         navigateToEditor(destination);
         return;
       }
-    }
-    if (entry === undefined) {
-      return;
     }
     if (requestEditableCopy(entry)) {
       return;
@@ -597,6 +602,10 @@ export function DriveShell() {
 
   const onSelectFile = (id: string) => {
     const entry = entryById.get(id);
+    if (CORE_WORKSPACE_STORAGE_ONLY) {
+      setSelectedFileId(entry === undefined ? null : id);
+      return;
+    }
     if (entry?.app != null) {
       const destination = editorDestinationFor(entry.app, id);
       if (destination !== null) {
@@ -1137,36 +1146,40 @@ function DriveSidebar({
                 <Icons.Folder />
                 New folder
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleMenuItem(() => onNewItem("document"))}
-              >
-                <Icons.Doc />
-                Document
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleMenuItem(() => onNewItem("spreadsheet"))}
-              >
-                <Icons.Sheet />
-                Spreadsheet
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleMenuItem(() => onNewItem("presentation"))}
-              >
-                <Icons.Image />
-                Presentation
-              </button>
+              {CORE_WORKSPACE_STORAGE_ONLY ? null : (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="btn"
+                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                    onClick={() => handleMenuItem(() => onNewItem("document"))}
+                  >
+                    <Icons.Doc />
+                    Document
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="btn"
+                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                    onClick={() => handleMenuItem(() => onNewItem("spreadsheet"))}
+                  >
+                    <Icons.Sheet />
+                    Spreadsheet
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="btn"
+                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                    onClick={() => handleMenuItem(() => onNewItem("presentation"))}
+                  >
+                    <Icons.Image />
+                    Presentation
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 role="menuitem"
@@ -1559,36 +1572,40 @@ function DriveMain({
                 <Icons.Folder />
                 New folder
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleFabMenuItem(() => onNewItem("document"))}
-              >
-                <Icons.Doc />
-                Document
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleFabMenuItem(() => onNewItem("spreadsheet"))}
-              >
-                <Icons.Sheet />
-                Spreadsheet
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleFabMenuItem(() => onNewItem("presentation"))}
-              >
-                <Icons.Image />
-                Presentation
-              </button>
+              {CORE_WORKSPACE_STORAGE_ONLY ? null : (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="btn"
+                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                    onClick={() => handleFabMenuItem(() => onNewItem("document"))}
+                  >
+                    <Icons.Doc />
+                    Document
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="btn"
+                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                    onClick={() => handleFabMenuItem(() => onNewItem("spreadsheet"))}
+                  >
+                    <Icons.Sheet />
+                    Spreadsheet
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="btn"
+                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
+                    onClick={() => handleFabMenuItem(() => onNewItem("presentation"))}
+                  >
+                    <Icons.Image />
+                    Presentation
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 role="menuitem"

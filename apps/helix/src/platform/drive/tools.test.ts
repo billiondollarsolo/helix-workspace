@@ -748,6 +748,27 @@ describe("drive tools", () => {
     expect(toolIds).toContain("drive.create");
   });
 
+  it("does not advertise native authoring kinds when editor stores are disabled", async () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store: new FakeDriveStore() });
+    const create = registry.list().find((tool) => tool.id === "drive.create");
+    if (create === undefined) throw new Error("Missing drive.create tool");
+
+    expect(() =>
+      create.inputSchema.parse({
+        kind: "document",
+        name: "Native document",
+      }),
+    ).toThrow();
+    expect(() =>
+      create.inputSchema.parse({
+        kind: "folder",
+        name: "Storage folder",
+      }),
+    ).not.toThrow();
+    expect(create.description).toBe("Create a new Drive folder.");
+  });
+
   it("drive.list returns app field on each entry and supports app filter", async () => {
     const registry = createToolRegistry();
     registerDriveTools(registry, { store: new AppFilterFakeDriveStore() });

@@ -7,7 +7,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePlatformSnapshot, type CommandItem, type WebPlatformHost } from "@helix/sdk-web";
 import { Icons, type IconName } from "@/components/icons";
-import { APPS } from "@/components/apps";
+import { APPS, CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
 
 interface PaletteItem {
@@ -28,6 +28,10 @@ export interface CommandPaletteProps {
   onClose: () => void;
   openSettings: () => void;
 }
+
+const searchLabel = CORE_WORKSPACE_STORAGE_ONLY
+  ? "Search apps, files, people, actions"
+  : "Search apps, docs, people, actions";
 
 export function CommandPalette({ open, onClose, openSettings }: CommandPaletteProps) {
   const navigate = useNavigate();
@@ -51,50 +55,68 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
         title: `Go to ${app.name}`,
         icon: app.icon,
         keywords: [app.name, app.route],
-        action: () => goto(app.route),
+        action: () => {
+          goto(app.route);
+        },
       })),
       {
         id: "new-email",
         group: "Actions",
         title: "New email",
         icon: "EditPen",
-        action: () => goto("/mail"),
+        action: () => {
+          goto("/mail");
+        },
       },
-      {
-        id: "new-doc",
-        group: "Actions",
-        title: "New doc",
-        icon: "Doc",
-        action: () => goto("/docs"),
-      },
-      {
-        id: "new-sheet",
-        group: "Actions",
-        title: "New sheet",
-        icon: "Sheet",
-        action: () => goto("/sheets"),
-      },
-      {
-        id: "new-slide-deck",
-        group: "Actions",
-        title: "New slide deck",
-        icon: "Image",
-        action: () => goto("/slides"),
-      },
-      {
-        id: "schedule-meeting",
-        group: "Actions",
-        title: "Schedule meeting",
-        icon: "Calendar",
-        action: () => goto("/calendar"),
-      },
-      {
-        id: "start-meet-call",
-        group: "Actions",
-        title: "Start a Helix Meet call",
-        icon: "Video",
-        action: () => goto("/meet"),
-      },
+      ...(CORE_WORKSPACE_STORAGE_ONLY
+        ? []
+        : [
+            {
+              id: "new-doc",
+              group: "Actions",
+              title: "New doc",
+              icon: "Doc" as const,
+              action: () => {
+                goto("/docs");
+              },
+            },
+            {
+              id: "new-sheet",
+              group: "Actions",
+              title: "New sheet",
+              icon: "Sheet" as const,
+              action: () => {
+                goto("/sheets");
+              },
+            },
+            {
+              id: "new-slide-deck",
+              group: "Actions",
+              title: "New slide deck",
+              icon: "Image" as const,
+              action: () => {
+                goto("/slides");
+              },
+            },
+            {
+              id: "schedule-meeting",
+              group: "Actions",
+              title: "Schedule meeting",
+              icon: "Calendar" as const,
+              action: () => {
+                goto("/calendar");
+              },
+            },
+            {
+              id: "start-meet-call",
+              group: "Actions",
+              title: "Start a Helix Meet call",
+              icon: "Video" as const,
+              action: () => {
+                goto("/meet");
+              },
+            },
+          ]),
       {
         id: "account-settings",
         group: "Settings",
@@ -107,7 +129,9 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
         group: "Settings",
         title: "Admin console",
         icon: "Shield",
-        action: () => goto("/admin"),
+        action: () => {
+          goto("/admin");
+        },
       },
       ...registeredCommands.map(commandPaletteItemFromPlatformCommand),
     ];
@@ -149,7 +173,9 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
       }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [open, index, items, onClose]);
 
   if (!open) {
@@ -181,7 +207,9 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
       onClick={onClose}
     >
       <div
-        onClick={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+        }}
         role="dialog"
         aria-label="Command palette"
         style={{
@@ -210,9 +238,11 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
           <input
             autoFocus
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search apps, docs, people, actions…"
-            aria-label="Search apps, docs, people, actions"
+            onChange={(event) => {
+              setQuery(event.target.value);
+            }}
+            placeholder={`${searchLabel}…`}
+            aria-label={searchLabel}
             style={{
               flex: 1,
               border: "none",
@@ -246,7 +276,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                 const disabled = item.disabledReason !== undefined;
                 return (
                   <button
-                    key={`${item.group}-${item.title}-${myIndex}`}
+                    key={`${item.group}-${item.title}-${String(myIndex)}`}
                     type="button"
                     disabled={disabled}
                     title={item.disabledReason}
@@ -257,7 +287,9 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                       void item.action();
                       onClose();
                     }}
-                    onMouseEnter={() => setIndex(myIndex)}
+                    onMouseEnter={() => {
+                      setIndex(myIndex);
+                    }}
                     style={{
                       width: "100%",
                       display: "flex",

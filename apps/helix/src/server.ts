@@ -2344,9 +2344,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     registerDriveTools(tools, {
       store: driveStore,
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
-      docsStore: docsStore,
-      sheetsStore: sheetsStore,
-      slidesStore: slidesStore,
+      ...(coreApps.shouldRegister("docs") ? { docsStore } : {}),
+      ...(coreApps.shouldRegister("editors") ? { sheetsStore, slidesStore } : {}),
       // Owner-display resolver for drive.list responses. Batches actor
       // id → display_name + email lookups against the actors table so
       // the UI shows "Avery Park" / "leo@helix.local" instead of raw
@@ -2450,13 +2449,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (runtimeSearchEngine !== undefined) {
     registerSearchTools(tools, { engine: runtimeSearchEngine });
   }
-  // Register the Sheets and Slides domain tools using the stores instantiated above.
-  registerSheets({
-    registry: tools,
-    store: sheetsStore,
-    ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
-  });
-  registerSlides(tools, { store: slidesStore, driveStore });
+  if (coreApps.shouldRegister("editors")) {
+    registerSheets({
+      registry: tools,
+      store: sheetsStore,
+      ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
+    });
+    registerSlides(tools, { store: slidesStore, driveStore });
+  }
   const assistantOrchestrator = new AssistantOrchestrator({
     store: assistantStore,
     ai: assistantAi,

@@ -17,6 +17,7 @@ import {
   type CoreAppAdminEntry,
   type CoreAppId,
 } from "./core-apps-api";
+import { APPS, CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 
 interface CoreAppsRouteQueryClient {
   ensureQueryData(options: ReturnType<typeof coreAppsAdminQueryOptions>): Promise<unknown>;
@@ -90,7 +91,12 @@ export function CoreAppsManagement() {
     },
   });
 
-  const apps = statusQuery.data?.apps ?? [];
+  const apps = useMemo(() => {
+    const configuredApps = statusQuery.data?.apps ?? [];
+    return CORE_WORKSPACE_STORAGE_ONLY
+      ? configuredApps.filter((app) => APPS.some((workspaceApp) => workspaceApp.id === app.id))
+      : configuredApps;
+  }, [statusQuery.data?.apps]);
   const role = statusQuery.data?.role ?? "all";
   const enabledCount = useMemo(() => apps.filter((a) => a.enabled).length, [apps]);
 
@@ -102,8 +108,8 @@ export function CoreAppsManagement() {
             Core apps
           </h2>
           <p className="mt-1 text-sm text-[var(--text-2)] max-w-2xl">
-            Turn workspace apps on or off for everyone in your organization. Disabled apps
-            disappear from the launcher, rail, and search. This deployment boots with the{" "}
+            Turn workspace apps on or off for everyone in your organization. Disabled apps disappear
+            from the launcher, rail, and search. This deployment boots with the{" "}
             <code className="text-[var(--text-2)] bg-[var(--surface-2)] px-1 py-0.5 rounded text-xs">
               {role}
             </code>{" "}
@@ -250,7 +256,9 @@ function AppToggle({
       aria-checked={enabled}
       aria-label={ariaLabel}
       disabled={busy}
-      onClick={() => onChange(!enabled)}
+      onClick={() => {
+        onChange(!enabled);
+      }}
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
         enabled ? "bg-[var(--accent)]" : "bg-[var(--surface-2)] border border-[var(--border)]"
       }`}

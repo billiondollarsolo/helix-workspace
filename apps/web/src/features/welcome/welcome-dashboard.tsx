@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { Icons } from "@/components/icons";
+import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { SurfaceFrame } from "@/components/shell";
 import {
   sendWelcomeActivationEvent,
@@ -10,7 +11,7 @@ import {
   type WelcomeActivationAction,
 } from "./api";
 
-const actions = [
+const fullWorkspaceActions = [
   {
     id: "try_editor",
     title: "Try the editor",
@@ -46,6 +47,38 @@ const actions = [
   readonly to: string;
   readonly icon: ReactNode;
 }>;
+
+const storageOnlyActions = [
+  {
+    id: "view_docs",
+    title: "Upload and share files",
+    body: "Store, organize, scan, download, and share team files from Drive.",
+    to: "/drive",
+    icon: <Icons.Drive />,
+  },
+  {
+    id: "invite_team",
+    title: "Connect with your team",
+    body: "Invite teammates into Mail, Drive, and secure organization Chat.",
+    to: "/chat",
+    icon: <Icons.Users />,
+  },
+  {
+    id: "install_integration",
+    title: "Configure your workspace",
+    body: "Review identity, agents, and workspace settings from the admin console.",
+    to: "/admin",
+    icon: <Icons.Grid />,
+  },
+] satisfies ReadonlyArray<{
+  readonly id: WelcomeActivationAction;
+  readonly title: string;
+  readonly body: string;
+  readonly to: string;
+  readonly icon: ReactNode;
+}>;
+
+const actions = CORE_WORKSPACE_STORAGE_ONLY ? storageOnlyActions : fullWorkspaceActions;
 
 export interface WelcomeDashboardProps {
   readonly sendEvent?: SendWelcomeActivationEvent;

@@ -9,6 +9,7 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
+import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { fetchDriveBlob } from "@/features/_open/drive-fetcher";
 import type { LoaderResult } from "@/features/_open/universal-loader";
 import type { ConvertedTarget } from "@/features/_open/converters";
@@ -145,16 +146,14 @@ export function OpenObjectRouteContent({
   }
   if (loadQuery.isError) {
     return (
-      <CenteredMessage isError>
-        Failed to load file: {loadQuery.error.message ?? String(loadQuery.error)}
-      </CenteredMessage>
+      <CenteredMessage isError>Failed to load file: {loadQuery.error.message}</CenteredMessage>
     );
   }
   if (importMutation.isError) {
     const err = importMutation.error;
     const message = isConverterNotAvailableError(err)
       ? `${err.message} Preview or download the original instead.`
-      : `Failed to import file into helix: ${err.message ?? String(err)}`;
+      : `Failed to import file into helix: ${err.message}`;
     return <CenteredMessage isError>{message}</CenteredMessage>;
   }
 
@@ -185,7 +184,9 @@ export function OpenObjectRouteContent({
         parsed={result.parsed}
         fileName={result.blob.name}
         objectId={objectId}
-        onPreviewOnly={() => setDecision("preview")}
+        onPreviewOnly={() => {
+          setDecision("preview");
+        }}
         onCreateCopy={() => {
           setDecision("import");
           importMutation.mutate();
@@ -210,12 +211,13 @@ function openObjectQueryOptions(objectId: string) {
         new Promise<never>((_resolve, reject) => {
           timeout.addEventListener(
             "abort",
-            () =>
+            () => {
               reject(
                 new Error(
                   "Format detection / parse timed out after 30s. The file may be password-protected, corrupt, or an unsupported variant.",
                 ),
-              ),
+              );
+            },
             { once: true },
           );
         }),
@@ -285,7 +287,7 @@ function OpenConversionChoice({
   readonly onPreviewOnly: () => void;
   readonly onCreateCopy: () => void;
 }) {
-  const canCreateCopy = canCreateEditableCopy(parsed);
+  const canCreateCopy = !CORE_WORKSPACE_STORAGE_ONLY && canCreateEditableCopy(parsed);
   return (
     <div
       style={{

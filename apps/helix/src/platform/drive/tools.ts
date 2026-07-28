@@ -212,11 +212,7 @@ const searchSchema = z.object({
   limit: z.number().int().positive().max(100).default(50),
 });
 
-const createSchema = z.object({
-  kind: z.enum(["folder", "document", "spreadsheet", "presentation"]),
-  folderId: uuidSchema.nullable().optional(),
-  name: z.string().min(1).max(255),
-});
+type DriveCreateKind = "folder" | "document" | "spreadsheet" | "presentation";
 
 const genericObjectJsonSchema = {
   type: "object",
@@ -271,10 +267,24 @@ export interface CreateDriveToolDefinitionsOptions {
 export function createDriveToolDefinitions(
   options: CreateDriveToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
+  const allowedCreateKinds: [DriveCreateKind, ...DriveCreateKind[]] = [
+    "folder",
+    ...(options.docsStore === undefined ? [] : (["document"] as const)),
+    ...(options.sheetsStore === undefined ? [] : (["spreadsheet"] as const)),
+    ...(options.slidesStore === undefined ? [] : (["presentation"] as const)),
+  ];
+  const createSchema = z.object({
+    kind: z.enum(allowedCreateKinds),
+    folderId: uuidSchema.nullable().optional(),
+    name: z.string().min(1).max(255),
+  });
   return [
     defineTool<z.output<typeof createSchema>, unknown>({
       id: "drive.create",
-      description: "Create a new Drive folder, document, spreadsheet, or presentation.",
+      description:
+        allowedCreateKinds.length === 1
+          ? "Create a new Drive folder."
+          : `Create a new Drive ${allowedCreateKinds.join(", ")}.`,
       permission: "drive.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(createSchema, genericObjectJsonSchema),

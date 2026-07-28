@@ -1,5 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { SheetsShell } from "@/features/sheets/sheets-shell";
+import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 
 /** `?sheet=<id>` opens straight into that spreadsheet's editor (used by Drive's New). */
 interface SheetsRouteSearch {
@@ -22,6 +23,13 @@ function validateSheetsRouteSearch(search: Record<string, unknown>): SheetsRoute
 }
 
 export const Route = createFileRoute("/_shell/sheets/")({
+  beforeLoad: () => {
+    if (CORE_WORKSPACE_STORAGE_ONLY) {
+      // TanStack Router signals navigation by throwing a redirect.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw redirect({ to: "/drive" });
+    }
+  },
   validateSearch: (search): SheetsRouteSearch => validateSheetsRouteSearch(search),
   component: SheetsRoute,
 });

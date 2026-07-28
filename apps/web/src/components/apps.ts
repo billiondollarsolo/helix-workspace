@@ -18,7 +18,7 @@ export interface HelixApp {
   readonly route: string;
 }
 
-export const APPS: readonly HelixApp[] = [
+const allApps: readonly HelixApp[] = [
   { id: "mail", name: "Mail", icon: "Mail", color: "#dc2626", route: "/mail" },
   { id: "calendar", name: "Calendar", icon: "Calendar", color: "#ea580c", route: "/calendar" },
   { id: "drive", name: "Drive", icon: "Drive", color: "#7c3aed", route: "/drive" },
@@ -31,9 +31,22 @@ export const APPS: readonly HelixApp[] = [
   { id: "admin", name: "Admin", icon: "Shield", color: "#475569", route: "/admin" },
 ];
 
+const coreWorkspaceMvpAppIds = new Set(["mail", "drive", "chat", "assistant", "admin"]);
+
+export const CORE_WORKSPACE_STORAGE_ONLY = import.meta.env.VITE_HELIX_MVP_ONLY === "true";
+
+/**
+ * Production MVP packaging deliberately exposes Mail, file storage, secure
+ * Chat, Assistant, and Admin only. The existing editor routes remain available
+ * to development/future builds but are not advertised by the production shell.
+ */
+export const APPS: readonly HelixApp[] = workspaceAppsForBuild(CORE_WORKSPACE_STORAGE_ONLY);
+
+export function workspaceAppsForBuild(mvpOnly: boolean): readonly HelixApp[] {
+  return mvpOnly ? allApps.filter((app) => coreWorkspaceMvpAppIds.has(app.id)) : allApps;
+}
+
 /** Look up an app by its route path (exact or prefix match). */
 export function appForRoute(pathname: string): HelixApp | undefined {
-  return APPS.find(
-    (app) => pathname === app.route || pathname.startsWith(`${app.route}/`),
-  );
+  return APPS.find((app) => pathname === app.route || pathname.startsWith(`${app.route}/`));
 }

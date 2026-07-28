@@ -48,6 +48,8 @@ describe("release-readiness manifest", () => {
         "2026-07-28T20:00:00.000Z",
         "--image-digest",
         `sha256:${"a".repeat(64)}`,
+        "--web-image-digest",
+        `sha256:${"b".repeat(64)}`,
       ],
       fixture.root,
       {
@@ -70,7 +72,10 @@ describe("release-readiness manifest", () => {
       mode: "single-tenant",
       securityTier: "business",
       enabledApps: ["chat", "drive", "mail"],
-      imageDigest: `sha256:${"a".repeat(64)}`,
+      images: {
+        application: `sha256:${"a".repeat(64)}`,
+        web: `sha256:${"b".repeat(64)}`,
+      },
     });
     expect(first.evidence.files).toEqual([
       {
@@ -96,6 +101,8 @@ describe("release-readiness manifest", () => {
             dirtyFixture.evidence,
             "--image-digest",
             `sha256:${"b".repeat(64)}`,
+            "--web-image-digest",
+            `sha256:${"c".repeat(64)}`,
           ],
           dirtyFixture.root,
           {},
@@ -118,6 +125,8 @@ describe("release-readiness manifest", () => {
             "restore/report.json",
             "--image-digest",
             `sha256:${"c".repeat(64)}`,
+            "--web-image-digest",
+            `sha256:${"d".repeat(64)}`,
           ],
           missingFixture.root,
           {},
@@ -138,12 +147,46 @@ describe("release-readiness manifest", () => {
     ];
     await expect(
       buildReleaseReadinessManifest(parseArgs(baseArgs, fixture.root, {})),
-    ).rejects.toThrow("--image-digest or HELIX_IMAGE_DIGEST is required");
+    ).rejects.toThrow("--application-image-digest");
     await expect(
       buildReleaseReadinessManifest(
-        parseArgs([...baseArgs, "--image-digest", "latest"], fixture.root, {}),
+        parseArgs(
+          [
+            ...baseArgs,
+            "--image-digest",
+            "latest",
+            "--web-image-digest",
+            `sha256:${"a".repeat(64)}`,
+          ],
+          fixture.root,
+          {},
+        ),
       ),
-    ).rejects.toThrow("image digest must be an OCI sha256 digest");
+    ).rejects.toThrow("application image digest must be an OCI sha256 digest");
+    await expect(
+      buildReleaseReadinessManifest(
+        parseArgs(
+          [...baseArgs, "--application-image-digest", `sha256:${"a".repeat(64)}`],
+          fixture.root,
+          {},
+        ),
+      ),
+    ).rejects.toThrow("--web-image-digest or HELIX_WEB_IMAGE_DIGEST is required");
+    await expect(
+      buildReleaseReadinessManifest(
+        parseArgs(
+          [
+            ...baseArgs,
+            "--application-image-digest",
+            `sha256:${"a".repeat(64)}`,
+            "--web-image-digest",
+            "latest",
+          ],
+          fixture.root,
+          {},
+        ),
+      ),
+    ).rejects.toThrow("web image digest must be an OCI sha256 digest");
   });
 });
 

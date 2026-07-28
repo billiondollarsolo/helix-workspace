@@ -18,7 +18,10 @@ Options:
   --editors-dir <path>         Default: ../helix-editors
   --evidence-dir <path>        Required unless HELIX_RELEASE_EVIDENCE_DIR is set
   --require-evidence <path>    Required relative evidence path; repeatable
-  --image-digest <digest>      Optional image digest
+  --image-digest <digest>      Application image digest (legacy option name)
+  --application-image-digest <digest>
+                               Application image digest
+  --web-image-digest <digest>  Web edge image digest
   --output <path>              Write JSON to this file as well as stdout
   --timestamp <ISO-8601>       Explicit timestamp for reproducible automation/tests
   --help                       Show this help
@@ -27,6 +30,8 @@ Environment:
   HELIX_RELEASE_EVIDENCE_DIR
   HELIX_EDITORS_DIR
   HELIX_IMAGE_DIGEST
+  HELIX_APPLICATION_IMAGE_DIGEST
+  HELIX_WEB_IMAGE_DIGEST
   HELIX_MODE
   HELIX_SECURITY_TIER
   HELIX_ENABLED_APPS           Comma-separated stable app IDs
@@ -59,11 +64,19 @@ async function main() {
 }
 
 export async function buildReleaseReadinessManifest(options) {
-  if (options.imageDigest === undefined) {
-    throw new Error("--image-digest or HELIX_IMAGE_DIGEST is required");
+  if (options.applicationImageDigest === undefined) {
+    throw new Error(
+      "--application-image-digest, --image-digest, HELIX_APPLICATION_IMAGE_DIGEST, or HELIX_IMAGE_DIGEST is required",
+    );
   }
-  if (!/^sha256:[a-f0-9]{64}$/u.test(options.imageDigest)) {
-    throw new Error("image digest must be an OCI sha256 digest");
+  if (options.webImageDigest === undefined) {
+    throw new Error("--web-image-digest or HELIX_WEB_IMAGE_DIGEST is required");
+  }
+  if (!/^sha256:[a-f0-9]{64}$/u.test(options.applicationImageDigest)) {
+    throw new Error("application image digest must be an OCI sha256 digest");
+  }
+  if (!/^sha256:[a-f0-9]{64}$/u.test(options.webImageDigest)) {
+    throw new Error("web image digest must be an OCI sha256 digest");
   }
   const workspace = collectRepository(options.workspaceDir, "helix-workspace");
   const editors = collectRepository(options.editorsDir, "helix-editors");
@@ -88,7 +101,7 @@ export async function buildReleaseReadinessManifest(options) {
 
   const timestamp = canonicalTimestamp(options.timestamp);
   const raw = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: timestamp,
     repositories: { workspace, editors },
     runtime: {
@@ -100,7 +113,10 @@ export async function buildReleaseReadinessManifest(options) {
       securityTier: options.environment.HELIX_SECURITY_TIER ?? "personal",
       enabledApps: csvList(options.environment.HELIX_ENABLED_APPS),
       enabledFeatures: csvList(options.environment.HELIX_ENABLED_FEATURES),
-      imageDigest: options.imageDigest,
+      images: {
+        application: options.applicationImageDigest,
+        web: options.webImageDigest,
+      },
     },
     database: {
       migrationHead: await discoverMigrationHead(options.workspaceDir),
@@ -123,7 +139,9 @@ export function parseArgs(args, cwd, environment = process.env) {
         ? undefined
         : resolve(cwd, environment.HELIX_RELEASE_EVIDENCE_DIR),
     requiredEvidence: [],
-    imageDigest: environment.HELIX_IMAGE_DIGEST,
+    applicationImageDigest:
+      environment.HELIX_APPLICATION_IMAGE_DIGEST ?? environment.HELIX_IMAGE_DIGEST,
+    webImageDigest: environment.HELIX_WEB_IMAGE_DIGEST,
     output: undefined,
     timestamp: undefined,
     environment,
@@ -154,7 +172,11 @@ export function parseArgs(args, cwd, environment = process.env) {
         options.requiredEvidence.push(normalizeRelativePath(value));
         break;
       case "--image-digest":
-        options.imageDigest = value;
+      case "--application-image-digest":
+        options.applicationImageDigest = value;
+        break;
+      case "--web-image-digest":
+        options.webImageDigest = value;
         break;
       case "--output":
         options.output = resolve(cwd, value);

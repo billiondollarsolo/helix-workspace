@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { EventBus, EventEnvelope, JsonValue, Unsubscribe } from "@helix/sdk-types";
+import type { EventBus, EventEnvelope, Unsubscribe } from "@helix/sdk-types";
 import { ForbiddenError, UnauthorizedError } from "../../api/api-error.js";
 
 const MAIL_ACTIVITY_SUBJECTS = ["activity.mail.received", "activity.mail.sent"] as const;
@@ -23,7 +23,9 @@ export interface RegisterMailStreamOptions {
    * Resolve the authenticated actor for the SSE connection. Return null to
    * reject with 401.
    */
-  readonly resolveActor: (request: FastifyRequest) => Promise<MailStreamActor | null> | MailStreamActor | null;
+  readonly resolveActor: (
+    request: FastifyRequest,
+  ) => Promise<MailStreamActor | null> | MailStreamActor | null;
 }
 
 /**
@@ -116,7 +118,7 @@ export function registerMailStreamRoutes(
     try {
       for (const subject of MAIL_ACTIVITY_SUBJECTS) {
         const unsub = await options.events.subscribe(subject, async (event) => {
-          writeFrame(event as EventEnvelope<JsonValue>);
+          writeFrame(event);
         });
         unsubscribers.push(unsub);
       }

@@ -89,8 +89,8 @@ describe("resolveOutboundAttachments", () => {
       actorId: "a1",
     });
     const resolvedContent = resolved.attachments[0]?.content;
-    expect(resolvedContent).toBeDefined();
-    expect(Buffer.from(resolvedContent!).toString()).toBe("from-drive");
+    if (resolvedContent === undefined) throw new Error("Expected resolved attachment content");
+    expect(Buffer.from(resolvedContent).toString()).toBe("from-drive");
   });
 });
 
@@ -107,6 +107,13 @@ describe("OutboundMailDispatcher retry + dead-letter", () => {
       }),
     };
     const record = baseOutbound({ status: "sending", attemptCount: 0 });
+    const markOutboundRetry = vi
+      .fn()
+      .mockImplementation(async (input: { attemptCount: number }) => ({
+        ...record,
+        status: "queued",
+        attemptCount: input.attemptCount,
+      }));
     const store = {
       markOutboundSending: vi.fn().mockResolvedValue(record),
       markOutboundSent: vi.fn().mockImplementation(async () => ({
@@ -120,11 +127,7 @@ describe("OutboundMailDispatcher retry + dead-letter", () => {
         lastError: error,
         attemptCount: attempts,
       })),
-      markOutboundRetry: vi.fn().mockImplementation(async (input: { attemptCount: number }) => ({
-        ...record,
-        status: "queued",
-        attemptCount: input.attemptCount,
-      })),
+      markOutboundRetry,
       markOutboundDeadLettered: vi.fn(),
     } as unknown as MailStore;
 
@@ -137,7 +140,7 @@ describe("OutboundMailDispatcher retry + dead-letter", () => {
     const result = await dispatcher.dispatch("out-1");
     expect(result?.status).toBe("sent");
     expect(attempts).toBe(3);
-    expect(store.markOutboundRetry).toHaveBeenCalled();
+    expect(markOutboundRetry).toHaveBeenCalled();
   });
 
   it("dead-letters after the attempt cap and wraps MailProviderError", async () => {
@@ -147,6 +150,12 @@ describe("OutboundMailDispatcher retry + dead-letter", () => {
       }),
     };
     const record = baseOutbound({ status: "sending", attemptCount: 0 });
+    const markOutboundDeadLettered = vi.fn().mockImplementation(async () => ({
+      ...record,
+      status: "failed",
+      deadLetteredAt: now,
+      lastError: "always fail",
+    }));
     const store = {
       markOutboundSending: vi.fn().mockResolvedValue(record),
       markOutboundSent: vi.fn(),
@@ -160,12 +169,7 @@ describe("OutboundMailDispatcher retry + dead-letter", () => {
         status: "queued",
         attemptCount: input.attemptCount,
       })),
-      markOutboundDeadLettered: vi.fn().mockImplementation(async () => ({
-        ...record,
-        status: "failed",
-        deadLetteredAt: now,
-        lastError: "always fail",
-      })),
+      markOutboundDeadLettered,
     } as unknown as MailStore;
 
     const dispatcher = new OutboundMailDispatcher(store, transport, {
@@ -176,17 +180,16 @@ describe("OutboundMailDispatcher retry + dead-letter", () => {
     });
     const result = await dispatcher.dispatch("out-1");
     expect(result?.deadLetteredAt).toBeTruthy();
-    expect(store.markOutboundDeadLettered).toHaveBeenCalled();
+    expect(markOutboundDeadLettered).toHaveBeenCalled();
     await expect(
       Promise.reject(new MailProviderError("always fail", new Error("always fail"))),
     ).rejects.toBeInstanceOf(MailProviderError);
   });
 
   it("rejects invalid outbox payloads with MailOutboundPayloadError", async () => {
-    const dispatcher = new OutboundMailDispatcher(
-      {} as MailStore,
-      { send: async () => ({ providerMessageId: "x", deliveryMetadata: {} }) },
-    );
+    const dispatcher = new OutboundMailDispatcher({} as MailStore, {
+      send: async () => ({ providerMessageId: "x", deliveryMetadata: {} }),
+    });
     await expect(dispatcher.dispatchOutboxPayload({})).rejects.toBeInstanceOf(
       MailOutboundPayloadError,
     );
@@ -195,12 +198,13 @@ describe("OutboundMailDispatcher retry + dead-letter", () => {
 
 describe("MailSendService.cancel", () => {
   it("delegates to store.cancelOutbound", async () => {
+    const cancelOutbound = vi.fn().mockResolvedValue(baseOutbound({ status: "cancelled" }));
     const store = {
-      cancelOutbound: vi.fn().mockResolvedValue(baseOutbound({ status: "cancelled" })),
+      cancelOutbound,
     } as unknown as MailStore;
     const service = new MailSendService({ store });
     await service.cancel({ orgId: "o1", actorId: "a1", id: "out-1" });
-    expect(store.cancelOutbound).toHaveBeenCalledWith({
+    expect(cancelOutbound).toHaveBeenCalledWith({
       orgId: "o1",
       actorId: "a1",
       id: "out-1",

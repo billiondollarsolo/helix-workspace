@@ -1,6 +1,6 @@
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import { slideContentSchema } from "./content.js";
 import type { SlidesStore, SlideSyncOperation } from "./store.js";
 import type { SlideDeckSummaryRecord, SlideRecord } from "./types.js";

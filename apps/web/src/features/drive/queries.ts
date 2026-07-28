@@ -1,7 +1,21 @@
 import { queryOptions } from "@tanstack/react-query";
-import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
-import { listDrive, searchDrive, type DriveApiEntry, type DriveApiSearchHit } from "./api";
+import {
+  listDrive,
+  listDriveAccess,
+  searchDrive,
+  type DriveApiEntry,
+  type DriveApiSearchHit,
+} from "./api";
+import {
+  DRIVE_SCOPE_IDS,
+  validateDriveRouteSearch,
+  type DriveRouteSearch,
+  type DriveScope,
+} from "./route-search";
+
+export { DRIVE_SCOPE_IDS, validateDriveRouteSearch };
+export type { DriveRouteSearch, DriveScope };
 
 export interface DriveSuggestions {
   readonly folders: readonly DriveApiEntry[];
@@ -28,9 +42,7 @@ export function deriveDriveSuggestions(entries: readonly DriveApiEntry[]): Drive
  * the backend suggestions query is unavailable (offline) so the Suggested
  * folders / Suggested files sections still render real content.
  */
-export function fallbackDriveSuggestions(
-  entries: readonly DriveApiEntry[],
-): DriveSuggestions {
+export function fallbackDriveSuggestions(entries: readonly DriveApiEntry[]): DriveSuggestions {
   return deriveDriveSuggestions(entries);
 }
 
@@ -45,31 +57,11 @@ export function driveSuggestionsQueryOptions() {
   });
 }
 
-/** Drive listing scopes that drive the left sidebar. */
-export type DriveScope = "my" | "shared" | "recent" | "starred" | "recordings" | "trash";
-
-export const DRIVE_SCOPE_IDS: readonly DriveScope[] = [
-  "my",
-  "shared",
-  "recent",
-  "starred",
-  "recordings",
-  "trash",
-];
-
 export interface DriveItemsQueryInput {
   readonly folderId?: string | null;
   readonly includeTrashed?: boolean;
   readonly query?: string;
   readonly limit?: number;
-  readonly scope?: DriveScope;
-}
-
-export interface DriveRouteSearch {
-  readonly file?: string;
-  readonly folder?: string;
-  readonly includeTrashed?: boolean;
-  readonly q?: string;
   readonly scope?: DriveScope;
 }
 
@@ -92,6 +84,7 @@ export const defaultDriveItemsInput = {
 } as const satisfies DriveItemsQueryInput;
 
 export const driveQueryKeys = {
+  access: (objectId: string) => ["drive", "access", objectId] as const,
   items: (input: DriveItemsQueryInput = defaultDriveItemsInput) =>
     [
       "drive",
@@ -105,36 +98,13 @@ export const driveQueryKeys = {
   all: ["drive"] as const,
 };
 
-const nonEmptyStringParam = z.string().trim().min(1).optional().catch(undefined);
-
-const driveRouteSearchSchema = z
-  .object({
-    file: nonEmptyStringParam,
-    folder: nonEmptyStringParam,
-    id: nonEmptyStringParam,
-    includeTrashed: z
-      .union([z.literal(true), z.literal("true"), z.literal("1")])
-      .optional()
-      .catch(undefined),
-    q: nonEmptyStringParam,
-    scope: z
-      .enum(["my", "shared", "recent", "starred", "recordings", "trash"])
-      .optional()
-      .catch(undefined),
-  })
-  .catch({});
-
-export function validateDriveRouteSearch(search: Record<string, unknown>): DriveRouteSearch {
-  const parsed = driveRouteSearchSchema.parse(search);
-  const folder = parsed.folder;
-
-  return {
-    file: parsed.file ?? parsed.id,
-    folder: folder === "root" ? undefined : folder,
-    includeTrashed: parsed.includeTrashed === undefined ? undefined : true,
-    q: parsed.q,
-    scope: parsed.includeTrashed === undefined ? parsed.scope : undefined,
-  };
+export function driveAccessQueryOptions(objectId: string, enabled = true) {
+  return queryOptions({
+    queryKey: driveQueryKeys.access(objectId),
+    queryFn: () => listDriveAccess(objectId),
+    enabled,
+    throwOnError: false,
+  });
 }
 
 export function driveItemsInputFromRouteSearch(search: DriveRouteSearch): DriveItemsQueryInput {

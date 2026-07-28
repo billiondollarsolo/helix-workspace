@@ -15,7 +15,7 @@ import {
   chatSearchInputSchema,
   chatSendInputSchema,
 } from "@helix/contracts";
-import { z } from "zod";
+import { z } from "zod3";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";

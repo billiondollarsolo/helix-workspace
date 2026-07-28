@@ -25,14 +25,30 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      helix_editors_ref:
+        description: Optional helix-editors branch, tag, or SHA to test.
+        required: false
+        type: string
 
 jobs:
   e2e-mocked:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -44,9 +60,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
 
       - name: Typecheck E2E specs
         run: pnpm --filter @helix/web typecheck:e2e
@@ -71,6 +93,9 @@ jobs:
   e2e-live:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     env:
       # docker-compose published ports (see docker-compose.yml defaults).
       DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:28432/helix
@@ -82,8 +107,16 @@ jobs:
       HELIX_E2E_MAILPIT_SMTP_PORT: "28457"
       HELIX_E2E_MAILPIT_API_BASE_URL: http://127.0.0.1:28458
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -95,9 +128,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
 
       - name: Install Playwright browsers
         run: pnpm --filter @helix/web exec playwright install --with-deps chromium
@@ -119,6 +158,11 @@ jobs:
           echo "Postgres did not become ready" >&2
           exit 1
 
+      - name: Prepare database
+        run: |
+          pnpm --filter @helix/app db:migrate
+          pnpm --filter @helix/app db:seed:oauth
+
       - name: Start Helix API from source
         env:
           HOST: 0.0.0.0
@@ -130,6 +174,8 @@ jobs:
           BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:28431,http://127.0.0.1:4173
           HELIX_PUBLIC_URL: http://127.0.0.1:28431
           HELIX_DEFAULT_ORG_ID: 00000000-0000-4000-8000-000000000100
+          HELIX_DEFAULT_ORG_SLUG: local-e2e
+          HELIX_DEFAULT_ORG_NAME: Local E2E Workspace
           REDIS_URL: redis://127.0.0.1:28433
           NATS_URL: nats://127.0.0.1:28434
           MEILI_HOST: http://127.0.0.1:28436

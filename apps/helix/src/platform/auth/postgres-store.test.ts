@@ -22,6 +22,7 @@ describe("Postgres OAuth stores", () => {
           actor_id: "actor-1",
           org_id: "org-1",
           scopes: ["tools:read"],
+          redirect_uris: null,
           expires_at: expiresAt,
           revoked_at: null,
         },
@@ -81,7 +82,7 @@ describe("Postgres OAuth stores", () => {
       expiresAt,
     });
 
-    expect(client?.redirectUris).toEqual(["https://app.example.com/callback"]);
+    expect(client.redirectUris).toEqual(["https://app.example.com/callback"]);
     expect(recording.calls[0]?.text).toContain("redirect_uris");
   });
 
@@ -142,6 +143,7 @@ describe("Postgres OAuth stores", () => {
           actor_id: "actor-1",
           org_id: "org-1",
           scopes: ["tools:read", "tools:write"],
+          redirect_uris: null,
           expires_at: null,
           revoked_at: revokedAt,
         },
@@ -171,6 +173,7 @@ describe("Postgres OAuth stores", () => {
           actor_id: "actor-1",
           org_id: "org-1",
           scopes: ["mail.read"],
+          redirect_uris: null,
           expires_at: null,
           revoked_at: revokedAt,
         },

@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "@helix/sdk-types";
-import { z } from "zod";
+import { z } from "zod3";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { createScopedSearchRequest, globalSearchTypes } from "./scope.js";

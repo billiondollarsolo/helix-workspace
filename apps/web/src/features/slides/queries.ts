@@ -17,20 +17,10 @@ import {
   type SlidesCommentStatus,
 } from "./api";
 import { formatModified } from "./mapping";
+import { slidesQueryKeys } from "./query-keys";
 import type { SlideDeck } from "./seed";
 
-/** Query-key factory for every Slides query. */
-export const slidesQueryKeys = {
-  all: ["slides"] as const,
-  deckLists: ["slides", "decks"] as const,
-  deckDetails: ["slides", "deck"] as const,
-  deckDetail: (deckId: string) => ["slides", "deck", deckId] as const,
-  deckVersions: (deckId: string) => ["slides", "deck", deckId, "versions"] as const,
-  deckComments: (deckId: string) => ["slides", "deck", deckId, "comments"] as const,
-  deckCommentsByStatus: (deckId: string, status: SlidesCommentStatus) =>
-    ["slides", "deck", deckId, "comments", status] as const,
-  mentionPeople: ["slides", "mention-people"] as const,
-};
+export { slidesQueryKeys } from "./query-keys";
 
 /** Editor query: a single deck with its ordered slides. */
 export function slidesDeckDetailQueryOptions(

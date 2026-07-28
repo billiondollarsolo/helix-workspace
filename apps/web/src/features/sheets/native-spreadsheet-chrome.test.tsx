@@ -86,6 +86,7 @@ function makeContext(overrides: Partial<SheetsChromeContext> = {}): SheetsChrome
     onExportOds: vi.fn(),
     onAnalyzeRange: vi.fn(),
     onCopyLink: vi.fn(),
+    onOpenKeyboardShortcuts: vi.fn(),
     openSidePanelTab: vi.fn(),
     ...overrides,
   };

@@ -128,7 +128,10 @@ function createDedupSql(state: {
     // drive_blobs upsert
     if (text.includes("insert into drive_blobs")) {
       const sha = values.find((v) => typeof v === "string" && v.length === 64) as string;
-      const key = values.find((v) => typeof v === "string" && String(v).includes("/blobs/")) as string;
+      const key = values.find(
+        (value): value is string => typeof value === "string" && value.includes("/blobs/"),
+      );
+      if (key === undefined) throw new Error("Expected a blob storage key");
       const existing = state.blobs.get(sha);
       if (existing === undefined) {
         state.blobs.set(sha, {
@@ -145,9 +148,9 @@ function createDedupSql(state: {
 
     // drive_blobs decrement
     if (text.includes("update drive_blobs") && text.includes("refcount = refcount - 1")) {
-      const key = values.find((v) => typeof v === "string" && String(v).includes("/blobs/")) as
-        | string
-        | undefined;
+      const key = values.find(
+        (value): value is string => typeof value === "string" && value.includes("/blobs/"),
+      );
       if (key === undefined) return Promise.resolve([]);
       for (const blob of state.blobs.values()) {
         if (blob.storageKey === key) {
@@ -160,9 +163,9 @@ function createDedupSql(state: {
 
     // drive_blobs delete at zero
     if (text.includes("delete from drive_blobs")) {
-      const key = values.find((v) => typeof v === "string" && String(v).includes("/blobs/")) as
-        | string
-        | undefined;
+      const key = values.find(
+        (value): value is string => typeof value === "string" && value.includes("/blobs/"),
+      );
       if (key !== undefined) {
         for (const [sha, blob] of state.blobs) {
           if (blob.storageKey === key && blob.refcount <= 0) {
@@ -179,8 +182,9 @@ function createDedupSql(state: {
         (v) => typeof v === "string" && (v === objectIdA || v === objectIdB),
       ) as string;
       const storageKey = values.find(
-        (v) => typeof v === "string" && String(v).startsWith("drive/"),
-      ) as string;
+        (value): value is string => typeof value === "string" && value.startsWith("drive/"),
+      );
+      if (storageKey === undefined) throw new Error("Expected a version storage key");
       const ver = versionRow(objectId, storageKey, state.versions.length + 1);
       state.versions.push(ver);
       return Promise.resolve([ver]);
@@ -192,8 +196,8 @@ function createDedupSql(state: {
         (v) => typeof v === "string" && (v === objectIdA || v === objectIdB),
       ) as string | undefined;
       const storageKey = values.find(
-        (v) => typeof v === "string" && String(v).includes("/blobs/"),
-      ) as string | undefined;
+        (value): value is string => typeof value === "string" && value.includes("/blobs/"),
+      );
       if (objectId !== undefined && storageKey !== undefined) {
         const prev = state.objects.get(objectId);
         if (prev !== undefined) {
@@ -339,10 +343,7 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         ],
       ]),
       blobs: new Map([
-        [
-          sha256,
-          { sha256, storageKey: blobKey, refcount: 2, byteSize: content.byteLength },
-        ],
+        [sha256, { sha256, storageKey: blobKey, refcount: 2, byteSize: content.byteLength }],
       ]),
       versions: [versionRow(objectIdA, blobKey, 1), versionRow(objectIdB, blobKey, 1)],
     };
@@ -388,7 +389,9 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     });
     expect(version.storageKey).toBe(blobKey);
     expect(storage.puts).toHaveLength(1);
-    expect(storage.puts[0]?.key).toBe(blobKey);
-    expect(Buffer.from(storage.puts[0]!.body).equals(Buffer.from(content))).toBe(true);
+    const firstPut = storage.puts[0];
+    if (firstPut === undefined) throw new Error("Expected one storage write");
+    expect(firstPut.key).toBe(blobKey);
+    expect(Buffer.from(firstPut.body).equals(Buffer.from(content))).toBe(true);
   });
 });

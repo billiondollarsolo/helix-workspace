@@ -12,7 +12,7 @@
  * — all without a working video pipeline. */
 
 import { createHash } from "node:crypto";
-import { z } from "zod";
+import { z } from "zod3";
 import type { ToolDefinition } from "@helix/sdk-types";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";

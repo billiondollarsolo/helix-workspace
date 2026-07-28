@@ -26,6 +26,10 @@ function isAllowlisted(filename) {
     return true;
   }
 
+  if (/(?:^|\/)tests?\//u.test(path)) {
+    return true;
+  }
+
   // Seed / demo / smoke scripts intentionally read raw env for operator CLIs.
   if (
     /\/db\/(?:seed[^/]*|verify-local-demo|prepare-local-demo|index-local-demo|reseed|fetch-corpus|generate-corpus)\./u.test(
@@ -47,7 +51,11 @@ function envKeyLabel(node) {
   if (!node.computed && node.property.type === "Identifier") {
     return node.property.name;
   }
-  if (node.computed && node.property.type === "Literal" && typeof node.property.value === "string") {
+  if (
+    node.computed &&
+    node.property.type === "Literal" &&
+    typeof node.property.value === "string"
+  ) {
     return node.property.value;
   }
   if (node.computed) {
@@ -60,8 +68,7 @@ export const noRawProcessEnvRule = {
   meta: {
     type: "problem",
     docs: {
-      description:
-        "Disallow raw process.env property access outside the validated env module",
+      description: "Disallow raw process.env property access outside the validated env module",
     },
     messages: {
       noRawProcessEnv:

@@ -64,6 +64,34 @@ function makeCtx(overrides: Partial<SlidesChromeContext> = {}): SlidesChromeCont
     onChangeShapeTextAlign: vi.fn(),
     onChangeShapeTextColor: vi.fn(),
     onChangeShapeHighlightColor: vi.fn(),
+    onCutShape: vi.fn(),
+    onCopyShape: vi.fn(),
+    onPasteShape: vi.fn(),
+    onToggleGrid: vi.fn(),
+    onToggleRulers: vi.fn(),
+    onToggleSnapToGuides: vi.fn(),
+    onZoomIn: vi.fn(),
+    onZoomOut: vi.fn(),
+    onZoomFit: vi.fn(),
+    onInsertTextBox: vi.fn(),
+    onInsertShape: vi.fn(),
+    onInsertImage: vi.fn(),
+    onInsertMedia: vi.fn(),
+    onShapeBringForward: vi.fn(),
+    onShapeSendBackward: vi.fn(),
+    onShapeBringToFront: vi.fn(),
+    onShapeSendToBack: vi.fn(),
+    onOpenComments: vi.fn(),
+    onOpenVersionHistory: vi.fn(),
+    onShareDeck: vi.fn(),
+    onCopyDeckLink: vi.fn(),
+    onOpenHelp: vi.fn(),
+    onOpenAi: vi.fn(),
+    onOpenTransitions: vi.fn(),
+    onOpenAnimations: vi.fn(),
+    onSuggestLayout: vi.fn(),
+    onRewriteBullets: vi.fn(),
+    onDraftSpeakerNotes: vi.fn(),
     ...overrides,
   };
 }
@@ -168,10 +196,11 @@ describe("buildSlidesMenus", () => {
   });
 
   it("disables Cut and Copy without a selected shape and Paste without clipboard data", () => {
-    const edit = buildSlidesMenus(
-      makeCtx({ activeShape: null, canPasteShape: false }),
-    ).find((m) => m.id === "edit");
-    const item = (id: string) => edit?.items.find((candidate) => "id" in candidate && candidate.id === id);
+    const edit = buildSlidesMenus(makeCtx({ activeShape: null, canPasteShape: false })).find(
+      (m) => m.id === "edit",
+    );
+    const item = (id: string) =>
+      edit?.items.find((candidate) => "id" in candidate && candidate.id === id);
 
     expect(item("edit:cut")).toMatchObject({ disabled: true });
     expect(item("edit:copy")).toMatchObject({ disabled: true });
@@ -288,7 +317,8 @@ describe("buildSlidesMenus", () => {
         zoomPercent: 50,
       }),
     ).find((m) => m.id === "view");
-    const item = (id: string) => view?.items.find((candidate) => "id" in candidate && candidate.id === id);
+    const item = (id: string) =>
+      view?.items.find((candidate) => "id" in candidate && candidate.id === id);
 
     expect(item("view:grid")).toMatchObject({ label: "Show grid" });
     expect(item("view:rulers")).toMatchObject({ label: "Show rulers" });
@@ -341,6 +371,35 @@ describe("buildSlidesMenus", () => {
     expect(onChangeShapeBold).toHaveBeenCalledWith(true);
     expect(onChangeShapeTextAlign).toHaveBeenCalledWith("right");
   });
+
+  it("dispatches transitions, animations, help, and AI commands to live editor callbacks", () => {
+    const ctx = makeCtx();
+    const menus = buildSlidesMenus(ctx);
+    const command = (menuId: string, itemId: string) => {
+      const menu = menus.find((candidate) => candidate.id === menuId);
+      const item = menu?.items.find((candidate) => "id" in candidate && candidate.id === itemId);
+      if (item === undefined || !("onSelect" in item)) {
+        throw new Error(`missing ${itemId}`);
+      }
+      item.onSelect();
+    };
+
+    command("tools", "tools:transitions");
+    command("tools", "tools:animations");
+    command("help", "help:keyboard");
+    command("ai", "ai:assistant");
+    command("ai", "ai:suggest-layout");
+    command("ai", "ai:rewrite");
+    command("ai", "ai:draft-notes");
+
+    expect(ctx.onOpenTransitions).toHaveBeenCalledTimes(1);
+    expect(ctx.onOpenAnimations).toHaveBeenCalledTimes(1);
+    expect(ctx.onOpenHelp).toHaveBeenCalledTimes(1);
+    expect(ctx.onOpenAi).toHaveBeenCalledTimes(1);
+    expect(ctx.onSuggestLayout).toHaveBeenCalledTimes(1);
+    expect(ctx.onRewriteBullets).toHaveBeenCalledTimes(1);
+    expect(ctx.onDraftSpeakerNotes).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("buildSlidesRibbon", () => {
@@ -374,7 +433,7 @@ describe("buildSlidesRibbon", () => {
     );
   }
 
-  it("renders ribbon groups for undo/font/text/list/align/insert/arrange/slide", () => {
+  it("renders supported ribbon groups for undo/font/text/align/insert/arrange/slide", () => {
     mountWithCtx();
     const toolbar = container.querySelector('[role="toolbar"]');
     expect(toolbar).not.toBeNull();
@@ -386,8 +445,6 @@ describe("buildSlidesRibbon", () => {
       "Font size",
       "Bold",
       "Italic",
-      "Bulleted list",
-      "Numbered list",
       "Align center",
       "Justify",
       "Insert text box",

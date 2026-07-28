@@ -1,10 +1,6 @@
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
-import type {
-  ListNotificationsInput,
-  NotificationInsert,
-  NotificationRecord,
-} from "./types.js";
+import type { ListNotificationsInput, NotificationInsert, NotificationRecord } from "./types.js";
 
 interface NotificationRow {
   readonly id: string;
@@ -50,7 +46,7 @@ export async function insertNotification(
       ${input.objectId ?? null},
       ${input.summary},
       ${input.body ?? null},
-      ${sql.json((input.payload ?? {}) as JsonObject)}
+      ${sql.json(input.payload ?? {})}
     )
     returning *
   `) as unknown as readonly NotificationRow[];
@@ -68,9 +64,7 @@ export class PostgresNotificationStore implements NotificationStore {
     return insertNotification(this.sql, input);
   }
 
-  async insertMany(
-    inputs: readonly NotificationInsert[],
-  ): Promise<readonly NotificationRecord[]> {
+  async insertMany(inputs: readonly NotificationInsert[]): Promise<readonly NotificationRecord[]> {
     if (inputs.length === 0) {
       return [];
     }
@@ -108,11 +102,7 @@ export class PostgresNotificationStore implements NotificationStore {
     return rows[0]?.c ?? 0;
   }
 
-  async markRead(
-    orgId: string,
-    actorId: string,
-    ids: readonly string[],
-  ): Promise<number> {
+  async markRead(orgId: string, actorId: string, ids: readonly string[]): Promise<number> {
     if (ids.length === 0) {
       return 0;
     }
@@ -120,7 +110,7 @@ export class PostgresNotificationStore implements NotificationStore {
       update notifications
       set read_at = now()
       where org_id = ${orgId} and actor_id = ${actorId} and read_at is null
-        and id in ${this.sql(ids as readonly string[])}
+        and id in ${this.sql(ids)}
       returning id
     `) as unknown as readonly { readonly id: string }[];
     return rows.length;

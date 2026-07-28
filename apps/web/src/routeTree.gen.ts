@@ -9,33 +9,37 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SignupRouteImport } from './routes/signup'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as SignupVerifyEmailRouteImport } from './routes/signup_.verify-email'
-import { Route as SignupInviteRouteImport } from './routes/signup_.invite'
+import { Route as ShellRouteImport } from './routes/_shell'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as SignupRouteImport } from './routes/signup'
 import { Route as OauthConsentRouteImport } from './routes/oauth.consent'
-import { Route as ShellWelcomeIndexRouteImport } from './routes/_shell/welcome/index'
-import { Route as ShellSlidesIndexRouteImport } from './routes/_shell/slides/index'
-import { Route as ShellSheetsIndexRouteImport } from './routes/_shell/sheets/index'
-import { Route as ShellOnboardingIndexRouteImport } from './routes/_shell/onboarding/index'
-import { Route as ShellMeetIndexRouteImport } from './routes/_shell/meet/index'
-import { Route as ShellMailIndexRouteImport } from './routes/_shell/mail/index'
-import { Route as ShellDriveIndexRouteImport } from './routes/_shell/drive/index'
-import { Route as ShellDocsIndexRouteImport } from './routes/_shell/docs/index'
-import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
-import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar/index'
-import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
+import { Route as SignupInviteRouteImport } from './routes/signup_.invite'
+import { Route as SignupVerifyEmailRouteImport } from './routes/signup_.verify-email'
 import { Route as ShellAdminIndexRouteImport } from './routes/_shell/admin/index'
-import { Route as ShellPdfObjectIdRouteImport } from './routes/_shell/pdf/$objectId'
-import { Route as ShellOpenObjectIdRouteImport } from './routes/_shell/open/$objectId'
-import { Route as ShellMediaObjectIdRouteImport } from './routes/_shell/media/$objectId'
+import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
+import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar/index'
+import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
+import { Route as ShellDocsIndexRouteImport } from './routes/_shell/docs/index'
 import { Route as ShellDocsDocumentIdRouteImport } from './routes/_shell/docs/$documentId'
+import { Route as ShellDriveIndexRouteImport } from './routes/_shell/drive/index'
+import { Route as ShellMailIndexRouteImport } from './routes/_shell/mail/index'
+import { Route as ShellMediaObjectIdRouteImport } from './routes/_shell/media/$objectId'
+import { Route as ShellMeetIndexRouteImport } from './routes/_shell/meet/index'
+import { Route as ShellOnboardingIndexRouteImport } from './routes/_shell/onboarding/index'
+import { Route as ShellOpenObjectIdRouteImport } from './routes/_shell/open/$objectId'
+import { Route as ShellPdfObjectIdRouteImport } from './routes/_shell/pdf/$objectId'
+import { Route as ShellSheetsIndexRouteImport } from './routes/_shell/sheets/index'
+import { Route as ShellSlidesIndexRouteImport } from './routes/_shell/slides/index'
+import { Route as ShellWelcomeIndexRouteImport } from './routes/_shell/welcome/index'
 
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShellRoute = ShellRouteImport.update({
+  id: '/_shell',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -43,23 +47,9 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ShellRoute = ShellRouteImport.update({
-  id: '/_shell',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignupVerifyEmailRoute = SignupVerifyEmailRouteImport.update({
-  id: '/signup_/verify-email',
-  path: '/signup/verify-email',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignupInviteRoute = SignupInviteRouteImport.update({
-  id: '/signup_/invite',
-  path: '/signup/invite',
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OauthConsentRoute = OauthConsentRouteImport.update({
@@ -67,54 +57,19 @@ const OauthConsentRoute = OauthConsentRouteImport.update({
   path: '/oauth/consent',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ShellWelcomeIndexRoute = ShellWelcomeIndexRouteImport.update({
-  id: '/welcome/',
-  path: '/welcome/',
-  getParentRoute: () => ShellRoute,
+const SignupInviteRoute = SignupInviteRouteImport.update({
+  id: '/signup_/invite',
+  path: '/signup/invite',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const ShellSlidesIndexRoute = ShellSlidesIndexRouteImport.update({
-  id: '/slides/',
-  path: '/slides/',
-  getParentRoute: () => ShellRoute,
+const SignupVerifyEmailRoute = SignupVerifyEmailRouteImport.update({
+  id: '/signup_/verify-email',
+  path: '/signup/verify-email',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const ShellSheetsIndexRoute = ShellSheetsIndexRouteImport.update({
-  id: '/sheets/',
-  path: '/sheets/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellOnboardingIndexRoute = ShellOnboardingIndexRouteImport.update({
-  id: '/onboarding/',
-  path: '/onboarding/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellMeetIndexRoute = ShellMeetIndexRouteImport.update({
-  id: '/meet/',
-  path: '/meet/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellMailIndexRoute = ShellMailIndexRouteImport.update({
-  id: '/mail/',
-  path: '/mail/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellDriveIndexRoute = ShellDriveIndexRouteImport.update({
-  id: '/drive/',
-  path: '/drive/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellDocsIndexRoute = ShellDocsIndexRouteImport.update({
-  id: '/docs/',
-  path: '/docs/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellChatIndexRoute = ShellChatIndexRouteImport.update({
-  id: '/chat/',
-  path: '/chat/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellCalendarIndexRoute = ShellCalendarIndexRouteImport.update({
-  id: '/calendar/',
-  path: '/calendar/',
+const ShellAdminIndexRoute = ShellAdminIndexRouteImport.update({
+  id: '/admin/',
+  path: '/admin/',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellAssistantIndexRoute = ShellAssistantIndexRouteImport.update({
@@ -122,19 +77,34 @@ const ShellAssistantIndexRoute = ShellAssistantIndexRouteImport.update({
   path: '/assistant/',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellAdminIndexRoute = ShellAdminIndexRouteImport.update({
-  id: '/admin/',
-  path: '/admin/',
+const ShellCalendarIndexRoute = ShellCalendarIndexRouteImport.update({
+  id: '/calendar/',
+  path: '/calendar/',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellPdfObjectIdRoute = ShellPdfObjectIdRouteImport.update({
-  id: '/pdf/$objectId',
-  path: '/pdf/$objectId',
+const ShellChatIndexRoute = ShellChatIndexRouteImport.update({
+  id: '/chat/',
+  path: '/chat/',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellOpenObjectIdRoute = ShellOpenObjectIdRouteImport.update({
-  id: '/open/$objectId',
-  path: '/open/$objectId',
+const ShellDocsIndexRoute = ShellDocsIndexRouteImport.update({
+  id: '/docs/',
+  path: '/docs/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellDocsDocumentIdRoute = ShellDocsDocumentIdRouteImport.update({
+  id: '/docs/$documentId',
+  path: '/docs/$documentId',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellDriveIndexRoute = ShellDriveIndexRouteImport.update({
+  id: '/drive/',
+  path: '/drive/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellMailIndexRoute = ShellMailIndexRouteImport.update({
+  id: '/mail/',
+  path: '/mail/',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellMediaObjectIdRoute = ShellMediaObjectIdRouteImport.update({
@@ -142,9 +112,39 @@ const ShellMediaObjectIdRoute = ShellMediaObjectIdRouteImport.update({
   path: '/media/$objectId',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellDocsDocumentIdRoute = ShellDocsDocumentIdRouteImport.update({
-  id: '/docs/$documentId',
-  path: '/docs/$documentId',
+const ShellMeetIndexRoute = ShellMeetIndexRouteImport.update({
+  id: '/meet/',
+  path: '/meet/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellOnboardingIndexRoute = ShellOnboardingIndexRouteImport.update({
+  id: '/onboarding/',
+  path: '/onboarding/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellOpenObjectIdRoute = ShellOpenObjectIdRouteImport.update({
+  id: '/open/$objectId',
+  path: '/open/$objectId',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellPdfObjectIdRoute = ShellPdfObjectIdRouteImport.update({
+  id: '/pdf/$objectId',
+  path: '/pdf/$objectId',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellSheetsIndexRoute = ShellSheetsIndexRouteImport.update({
+  id: '/sheets/',
+  path: '/sheets/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellSlidesIndexRoute = ShellSlidesIndexRouteImport.update({
+  id: '/slides/',
+  path: '/slides/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellWelcomeIndexRoute = ShellWelcomeIndexRouteImport.update({
+  id: '/welcome/',
+  path: '/welcome/',
   getParentRoute: () => ShellRoute,
 } as any)
 
@@ -310,18 +310,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_shell': {
@@ -331,25 +324,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/signup_/verify-email': {
-      id: '/signup_/verify-email'
-      path: '/signup/verify-email'
-      fullPath: '/signup/verify-email'
-      preLoaderRoute: typeof SignupVerifyEmailRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/signup_/invite': {
-      id: '/signup_/invite'
-      path: '/signup/invite'
-      fullPath: '/signup/invite'
-      preLoaderRoute: typeof SignupInviteRouteImport
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/oauth/consent': {
@@ -359,74 +345,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OauthConsentRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_shell/welcome/': {
-      id: '/_shell/welcome/'
-      path: '/welcome'
-      fullPath: '/welcome/'
-      preLoaderRoute: typeof ShellWelcomeIndexRouteImport
-      parentRoute: typeof ShellRoute
+    '/signup_/invite': {
+      id: '/signup_/invite'
+      path: '/signup/invite'
+      fullPath: '/signup/invite'
+      preLoaderRoute: typeof SignupInviteRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_shell/slides/': {
-      id: '/_shell/slides/'
-      path: '/slides'
-      fullPath: '/slides/'
-      preLoaderRoute: typeof ShellSlidesIndexRouteImport
-      parentRoute: typeof ShellRoute
+    '/signup_/verify-email': {
+      id: '/signup_/verify-email'
+      path: '/signup/verify-email'
+      fullPath: '/signup/verify-email'
+      preLoaderRoute: typeof SignupVerifyEmailRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_shell/sheets/': {
-      id: '/_shell/sheets/'
-      path: '/sheets'
-      fullPath: '/sheets/'
-      preLoaderRoute: typeof ShellSheetsIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/onboarding/': {
-      id: '/_shell/onboarding/'
-      path: '/onboarding'
-      fullPath: '/onboarding/'
-      preLoaderRoute: typeof ShellOnboardingIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/meet/': {
-      id: '/_shell/meet/'
-      path: '/meet'
-      fullPath: '/meet/'
-      preLoaderRoute: typeof ShellMeetIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/mail/': {
-      id: '/_shell/mail/'
-      path: '/mail'
-      fullPath: '/mail/'
-      preLoaderRoute: typeof ShellMailIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/drive/': {
-      id: '/_shell/drive/'
-      path: '/drive'
-      fullPath: '/drive/'
-      preLoaderRoute: typeof ShellDriveIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/docs/': {
-      id: '/_shell/docs/'
-      path: '/docs'
-      fullPath: '/docs/'
-      preLoaderRoute: typeof ShellDocsIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/chat/': {
-      id: '/_shell/chat/'
-      path: '/chat'
-      fullPath: '/chat/'
-      preLoaderRoute: typeof ShellChatIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/calendar/': {
-      id: '/_shell/calendar/'
-      path: '/calendar'
-      fullPath: '/calendar/'
-      preLoaderRoute: typeof ShellCalendarIndexRouteImport
+    '/_shell/admin/': {
+      id: '/_shell/admin/'
+      path: '/admin'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof ShellAdminIndexRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/assistant/': {
@@ -436,25 +373,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellAssistantIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/admin/': {
-      id: '/_shell/admin/'
-      path: '/admin'
-      fullPath: '/admin/'
-      preLoaderRoute: typeof ShellAdminIndexRouteImport
+    '/_shell/calendar/': {
+      id: '/_shell/calendar/'
+      path: '/calendar'
+      fullPath: '/calendar/'
+      preLoaderRoute: typeof ShellCalendarIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/pdf/$objectId': {
-      id: '/_shell/pdf/$objectId'
-      path: '/pdf/$objectId'
-      fullPath: '/pdf/$objectId'
-      preLoaderRoute: typeof ShellPdfObjectIdRouteImport
+    '/_shell/chat/': {
+      id: '/_shell/chat/'
+      path: '/chat'
+      fullPath: '/chat/'
+      preLoaderRoute: typeof ShellChatIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/open/$objectId': {
-      id: '/_shell/open/$objectId'
-      path: '/open/$objectId'
-      fullPath: '/open/$objectId'
-      preLoaderRoute: typeof ShellOpenObjectIdRouteImport
+    '/_shell/docs/': {
+      id: '/_shell/docs/'
+      path: '/docs'
+      fullPath: '/docs/'
+      preLoaderRoute: typeof ShellDocsIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/docs/$documentId': {
+      id: '/_shell/docs/$documentId'
+      path: '/docs/$documentId'
+      fullPath: '/docs/$documentId'
+      preLoaderRoute: typeof ShellDocsDocumentIdRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/drive/': {
+      id: '/_shell/drive/'
+      path: '/drive'
+      fullPath: '/drive/'
+      preLoaderRoute: typeof ShellDriveIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/mail/': {
+      id: '/_shell/mail/'
+      path: '/mail'
+      fullPath: '/mail/'
+      preLoaderRoute: typeof ShellMailIndexRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/media/$objectId': {
@@ -464,11 +422,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellMediaObjectIdRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/docs/$documentId': {
-      id: '/_shell/docs/$documentId'
-      path: '/docs/$documentId'
-      fullPath: '/docs/$documentId'
-      preLoaderRoute: typeof ShellDocsDocumentIdRouteImport
+    '/_shell/meet/': {
+      id: '/_shell/meet/'
+      path: '/meet'
+      fullPath: '/meet/'
+      preLoaderRoute: typeof ShellMeetIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/onboarding/': {
+      id: '/_shell/onboarding/'
+      path: '/onboarding'
+      fullPath: '/onboarding/'
+      preLoaderRoute: typeof ShellOnboardingIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/open/$objectId': {
+      id: '/_shell/open/$objectId'
+      path: '/open/$objectId'
+      fullPath: '/open/$objectId'
+      preLoaderRoute: typeof ShellOpenObjectIdRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/pdf/$objectId': {
+      id: '/_shell/pdf/$objectId'
+      path: '/pdf/$objectId'
+      fullPath: '/pdf/$objectId'
+      preLoaderRoute: typeof ShellPdfObjectIdRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/sheets/': {
+      id: '/_shell/sheets/'
+      path: '/sheets'
+      fullPath: '/sheets/'
+      preLoaderRoute: typeof ShellSheetsIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/slides/': {
+      id: '/_shell/slides/'
+      path: '/slides'
+      fullPath: '/slides/'
+      preLoaderRoute: typeof ShellSlidesIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/welcome/': {
+      id: '/_shell/welcome/'
+      path: '/welcome'
+      fullPath: '/welcome/'
+      preLoaderRoute: typeof ShellWelcomeIndexRouteImport
       parentRoute: typeof ShellRoute
     }
   }

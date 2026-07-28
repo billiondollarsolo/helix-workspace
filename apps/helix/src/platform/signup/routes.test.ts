@@ -40,19 +40,11 @@ describe("signup route mode gate", () => {
     await singleTenantApp.close();
 
     const saasApp = fastify();
-    await registerSignupRoutesForMode(saasApp, { config: { mode: "multi-tenant-saas" } });
-    const saasResponse = await saasApp.inject({
-      method: "POST",
-      url: "/api/signup",
-      payload: validSignupBody(),
-    });
-    expect(saasResponse.statusCode).toBe(501);
-    expect(saasResponse.json()).toMatchObject({
-      error: {
-        code: "signup_not_implemented",
-        details: { route: "/api/signup" },
-      },
-    });
+    await expect(
+      registerSignupRoutesForMode(saasApp, { config: { mode: "multi-tenant-saas" } }),
+    ).rejects.toThrow(
+      "SaaS signup cannot start without required dependencies: orgs, provisioning, verificationTokens, identities, outbox, abuse, ownerEmails, passwordScreener, riskReviewer, actorFromRequest, onboarding, onboardingInvites",
+    );
     await saasApp.close();
   });
 });

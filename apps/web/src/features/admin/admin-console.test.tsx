@@ -23,6 +23,14 @@ vi.mock("@/lib/auth", async () => {
   };
 });
 
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-router")>();
+  return {
+    ...actual,
+    useRouter: () => ({ invalidate: () => Promise.resolve() }),
+  };
+});
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
@@ -200,23 +208,23 @@ function setSelectValue(select: HTMLSelectElement, value: string): void {
   select.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const tick = () => {
-      try {
-        assertion();
-        resolve();
-      } catch (error) {
-        if (Date.now() - start > timeout) {
-          reject(error instanceof Error ? error : new Error(String(error)));
-          return;
-        }
-        setTimeout(tick, 10);
-      }
-    };
-    tick();
-  });
+async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
+  const start = Date.now();
+  let lastError: unknown;
+
+  while (Date.now() - start <= timeout) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function mockJsonResponse(

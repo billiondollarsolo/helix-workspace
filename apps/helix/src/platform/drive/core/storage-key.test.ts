@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DriveInvalidStorageKeyError } from "../errors.js";
-import {
-  assertFinalizeStorageKey,
-  driveBlobKey,
-  driveStorageKey,
-} from "./storage-key.js";
+import { assertFinalizeStorageKey, driveBlobKey, driveStorageKey } from "./storage-key.js";
 
 describe("driveStorageKey", () => {
   it("builds the versioned key with a sanitized name", () => {
@@ -26,12 +22,14 @@ describe("driveBlobKey", () => {
 
 describe("assertFinalizeStorageKey", () => {
   it("accepts the exact reserved key", () => {
-    expect(() => assertFinalizeStorageKey("drive/o/x/v1/f", "drive/o/x/v1/f")).not.toThrow();
+    expect(() => {
+      assertFinalizeStorageKey("drive/o/x/v1/f", "drive/o/x/v1/f");
+    }).not.toThrow();
   });
 
   it("rejects a traversal / mismatched key", () => {
-    expect(() => assertFinalizeStorageKey("drive/o/../etc/passwd", "drive/o/x/v1/f")).toThrow(
-      DriveInvalidStorageKeyError,
-    );
+    expect(() => {
+      assertFinalizeStorageKey("drive/o/../etc/passwd", "drive/o/x/v1/f");
+    }).toThrow(DriveInvalidStorageKeyError);
   });
 });

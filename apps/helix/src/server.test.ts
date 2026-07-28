@@ -178,6 +178,27 @@ describe("default org boot verification", () => {
 });
 
 describe("tenant API RPS limiting", () => {
+  it("leaves authentication endpoints to the auth service rate limiter", async () => {
+    const app = fastify();
+    installTenantContextHook(app, {
+      async resolveTenantContext() {
+        return tenantContext({ orgId: "org-rps", apiRpsLimit: 1 });
+      },
+    });
+    installTenantApiRpsLimitHook(app, {
+      limiter: new InMemoryTenantApiRpsLimiter(),
+    });
+    app.get("/api/auth/get-session", async () => ({ authenticated: true }));
+
+    const first = await app.inject({ method: "GET", url: "/api/auth/get-session" });
+    const second = await app.inject({ method: "GET", url: "/api/auth/get-session?fresh=true" });
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(first.headers["x-helix-quota-api-rps-limit"]).toBeUndefined();
+    expect(second.headers["x-helix-quota-api-rps-limit"]).toBeUndefined();
+  });
+
   it("returns quota headers and a canonical 429 when api_rps_limit is exceeded", async () => {
     const app = fastify();
     const events = new RecordingEventBus();

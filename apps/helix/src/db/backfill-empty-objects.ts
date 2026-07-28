@@ -21,7 +21,6 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import type postgres from "postgres";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { createSqlClient } from "./client.js";
 
@@ -68,7 +67,10 @@ async function generatePlaceholder(row: ObjectRow): Promise<Backfilled | null> {
     mime.startsWith("text/plain") ||
     mime === OOXML_DOC
   ) {
-    const bytes = await renderDocx(namedTitle, stringMeta(row.metadata, "plainText") ?? `Placeholder content for ${namedTitle}.`);
+    const bytes = await renderDocx(
+      namedTitle,
+      stringMeta(row.metadata, "plainText") ?? `Placeholder content for ${namedTitle}.`,
+    );
     return { bytes, newMime: OOXML_DOC, newExtension: "docx" };
   }
 
@@ -115,12 +117,19 @@ async function generatePlaceholder(row: ObjectRow): Promise<Backfilled | null> {
   // Anything else — fall back to a small text blob so the file at least
   // opens with SOMETHING when downloaded.
   const text = `Placeholder content for "${namedTitle}".\n\nThis file was created by a seed without binary content; the\nbackfill script populated this stub so the preview endpoint resolves.\n`;
-  return { bytes: Buffer.from(text, "utf8"), newMime: "text/plain; charset=utf-8", newExtension: "txt" };
+  return {
+    bytes: Buffer.from(text, "utf8"),
+    newMime: "text/plain; charset=utf-8",
+    newExtension: "txt",
+  };
 }
 
 async function renderDocx(title: string, body: string): Promise<Buffer> {
   const paragraphs: Paragraph[] = [
-    new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: title, bold: true })] }),
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [new TextRun({ text: title, bold: true })],
+    }),
     new Paragraph({}),
     ...body.split(/\r?\n/).map((line) => new Paragraph({ children: [new TextRun(line)] })),
   ];
@@ -140,7 +149,13 @@ async function renderPptx(title: string): Promise<Buffer> {
   pres.title = title;
   const slide = pres.addSlide();
   slide.addText(title, { x: 0.5, y: 1.5, w: 9, h: 1.5, fontSize: 36, bold: true });
-  slide.addText("Placeholder slide content", { x: 0.5, y: 5.5, w: 9, fontSize: 14, color: "888888" });
+  slide.addText("Placeholder slide content", {
+    x: 0.5,
+    y: 5.5,
+    w: 9,
+    fontSize: 14,
+    color: "888888",
+  });
   return pres.write({ outputType: "nodebuffer" });
 }
 
@@ -160,9 +175,9 @@ function makeMinimalPdf(title: string): Buffer {
   ];
   let body = "%PDF-1.4\n";
   const offsets: number[] = [];
-  for (let i = 0; i < objects.length; i += 1) {
+  for (const [index, object] of objects.entries()) {
     offsets.push(Buffer.byteLength(body, "utf8"));
-    body += `${String(i + 1)} 0 obj\n${objects[i]}\nendobj\n`;
+    body += `${String(index + 1)} 0 obj\n${object}\nendobj\n`;
   }
   const xrefStart = Buffer.byteLength(body, "utf8");
   body += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
@@ -201,21 +216,24 @@ async function main(): Promise<void> {
         const result = await generatePlaceholder(row);
         if (result === null) {
           stats.skipped += 1;
-          process.stdout.write(`  · ${row.id.slice(0, 8)}… mime=${row.mime_type} (skipped: no generator)\n`);
+          process.stdout.write(
+            `  · ${row.id.slice(0, 8)}… mime=${row.mime_type} (skipped: no generator)\n`,
+          );
           continue;
         }
         const sha = createHash("sha256").update(result.bytes).digest("hex");
         const existingName =
-          typeof row.metadata.name === "string" ? row.metadata.name : `${row.id}.${result.newExtension}`;
+          typeof row.metadata.name === "string"
+            ? row.metadata.name
+            : `${row.id}.${result.newExtension}`;
         // Strip ALL trailing extensions (handles cases like
         // "foo.helixdoc.docx" coming from a prior partial run) before
         // appending the new one. Loop until the name stops changing.
         let stem = existingName;
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const stripped = stem.replace(/\.(helixdoc|helixsheet|helixdeck|docx|xlsx|pptx|pdf|txt|md|csv|png|jpg|jpeg|gif|svg|mp4|html|json|zip|rtf|odt)$/i, "");
-          if (stripped === stem) break;
+        let stripped = stripTrailingSupportedExtension(stem);
+        while (stripped !== stem) {
           stem = stripped;
+          stripped = stripTrailingSupportedExtension(stem);
         }
         const renamedName = `${stem.trim()}.${result.newExtension}`;
         await sql`
@@ -235,7 +253,9 @@ async function main(): Promise<void> {
           where id = ${row.id}
         `;
         stats.backfilled += 1;
-        process.stdout.write(`  ✓ ${row.id.slice(0, 8)}… → ${result.newExtension.toUpperCase()} (${String(result.bytes.byteLength)} bytes)\n`);
+        process.stdout.write(
+          `  ✓ ${row.id.slice(0, 8)}… → ${result.newExtension.toUpperCase()} (${String(result.bytes.byteLength)} bytes)\n`,
+        );
       } catch (error) {
         stats.failed += 1;
         const message = error instanceof Error ? error.message : String(error);
@@ -251,9 +271,18 @@ async function main(): Promise<void> {
   }
 }
 
+function stripTrailingSupportedExtension(name: string): string {
+  return name.replace(
+    /\.(helixdoc|helixsheet|helixdeck|docx|xlsx|pptx|pdf|txt|md|csv|png|jpg|jpeg|gif|svg|mp4|html|json|zip|rtf|odt)$/iu,
+    "",
+  );
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   void main().catch((error: unknown) => {
-    process.stderr.write(`backfill-empty-objects FAILED: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(
+      `backfill-empty-objects FAILED: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
     process.exit(1);
   });
 }

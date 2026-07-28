@@ -1,0 +1,30 @@
+name: Prepare paired helix-editors
+description: Install and build the editor packages consumed through Phase 0 file links.
+
+runs:
+  using: composite
+  steps:
+    - name: Build workspace SDK contract
+      shell: bash
+      working-directory: helix-all/helix-workspace
+      run: pnpm --filter @helix/sdk-types... build
+
+    - name: Install helix-editors dependencies
+      shell: bash
+      working-directory: helix-all/helix-editors
+      run: pnpm install --frozen-lockfile
+
+    - name: Build public helix-editors packages
+      shell: bash
+      working-directory: helix-all/helix-editors
+      run: >-
+        pnpm
+        --filter @helix/editors-core-app...
+        --filter @helix/editors-format-loader
+        --filter @helix/editors-ui
+        build
+
+    - name: Refresh workspace file-linked packages
+      shell: bash
+      working-directory: helix-all/helix-workspace
+      run: pnpm install --frozen-lockfile

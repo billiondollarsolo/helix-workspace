@@ -40,6 +40,9 @@ export function notificationsListQueryOptions(unreadOnly = false) {
         limit: 50,
       }),
     staleTime: 30_000,
+    // Notifications are optional shell chrome. A policy-service outage should
+    // render the panel's local error state, not trip the route error boundary.
+    throwOnError: false,
   });
 }
 
@@ -51,6 +54,9 @@ export function unreadCountQueryOptions() {
     // without a websocket. Replace with SSE / push later.
     refetchInterval: 30_000,
     staleTime: 15_000,
+    // The badge is non-critical: keep the workspace usable when notification
+    // authorization or its backing service is temporarily unavailable.
+    throwOnError: false,
   });
 }
 

@@ -72,6 +72,9 @@ export function advisoryLockKey(name: string): bigint {
 export class PostgresAdvisoryLockClient implements AdvisoryLockClient {
   private readonly reserved: boolean;
   private connection: postgres.ReservedSql | undefined;
+  private connectionPromise: Promise<postgres.ReservedSql> | undefined;
+  private readonly heldLockKeys = new Set<string>();
+  private activeOperations = 0;
 
   constructor(
     private readonly sql: postgres.Sql,
@@ -81,28 +84,32 @@ export class PostgresAdvisoryLockClient implements AdvisoryLockClient {
   }
 
   async tryAdvisoryLock(lockKey: bigint): Promise<boolean> {
-    const sql = await this.acquireConnection();
+    this.activeOperations += 1;
     try {
+      const sql = await this.acquireConnection();
       const rows = await sql<{ readonly acquired: boolean }[]>`
         select pg_try_advisory_lock(${lockKey.toString()}::bigint) as acquired
       `;
       const acquired = rows[0]?.acquired ?? false;
-      if (!acquired) {
-        this.releaseConnection();
+      if (acquired && this.reserved) {
+        this.heldLockKeys.add(lockKey.toString());
       }
       return acquired;
-    } catch (error) {
-      this.releaseConnection();
-      throw error;
+    } finally {
+      this.activeOperations -= 1;
+      this.releaseConnectionIfIdle();
     }
   }
 
   async releaseAdvisoryLock(lockKey: bigint): Promise<void> {
-    const sql = this.connection ?? this.sql;
+    this.activeOperations += 1;
     try {
+      const sql = this.connection ?? (await this.acquireConnection());
       await sql`select pg_advisory_unlock(${lockKey.toString()}::bigint)`;
     } finally {
-      this.releaseConnection();
+      this.heldLockKeys.delete(lockKey.toString());
+      this.activeOperations -= 1;
+      this.releaseConnectionIfIdle();
     }
   }
 
@@ -111,13 +118,22 @@ export class PostgresAdvisoryLockClient implements AdvisoryLockClient {
       return this.sql;
     }
     if (this.connection === undefined) {
-      this.connection = await this.sql.reserve();
+      this.connectionPromise ??= this.sql.reserve();
+      try {
+        this.connection = await this.connectionPromise;
+      } finally {
+        this.connectionPromise = undefined;
+      }
     }
     return this.connection;
   }
 
-  private releaseConnection(): void {
-    if (this.connection !== undefined) {
+  private releaseConnectionIfIdle(): void {
+    if (
+      this.connection !== undefined &&
+      this.activeOperations === 0 &&
+      this.heldLockKeys.size === 0
+    ) {
       this.connection.release();
       this.connection = undefined;
     }

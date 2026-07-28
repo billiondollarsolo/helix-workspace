@@ -118,7 +118,7 @@ describe("RuntimeToolRegistry", () => {
     let enabled = false;
     const registry = createToolRegistry({
       featureFlags: {
-        get: <T>() => enabled as T,
+        get: (_key, _defaultValue) => enabled as typeof _defaultValue,
         async getAsync<T>(key: string, defaultValue: T, context?: unknown) {
           evaluations.push({ key, defaultValue, context });
           return enabled as T;

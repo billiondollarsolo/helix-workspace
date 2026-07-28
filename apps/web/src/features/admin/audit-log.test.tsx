@@ -129,11 +129,7 @@ describe("AuditLogList admin UI", () => {
   function renderAuditLog() {
     act(() => {
       root.render(
-        createElement(
-          QueryClientProvider,
-          { client: queryClient },
-          createElement(AuditLogList),
-        ),
+        createElement(QueryClientProvider, { client: queryClient }, createElement(AuditLogList)),
       );
     });
   }
@@ -172,7 +168,6 @@ describe("AuditLogList admin UI", () => {
       throw new Error(`Input not found: ${label}`);
     }
     act(() => {
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")
         ?.set as ((this: HTMLInputElement, value: string) => void) | undefined;
       valueSetter?.call(input, value);

@@ -41,7 +41,10 @@ export function sendBytesWithRangeSupport(opts: SendBytesWithRangeOptions): Fast
   const parsed = parseRangeHeader(rangeHeader, total);
   if (parsed === "invalid") {
     // Empty body: Content-Range header is the contract for 416.
-    return reply.code(416).header("content-range", `bytes */${total}`).send();
+    return reply
+      .code(416)
+      .header("content-range", `bytes */${String(total)}`)
+      .send();
   }
   if (parsed === "unsupported") {
     // Multi-range or syntactically valid but not a simple "bytes=N-M". Fall
@@ -52,15 +55,12 @@ export function sendBytesWithRangeSupport(opts: SendBytesWithRangeOptions): Fast
 
   const { start, end } = parsed;
   const slice = bytes.subarray(start, end + 1);
-  reply.header("content-range", `bytes ${start}-${end}/${total}`);
+  reply.header("content-range", `bytes ${String(start)}-${String(end)}/${String(total)}`);
   reply.header("content-length", String(slice.byteLength));
   return reply.code(206).send(slice);
 }
 
-type ParsedRange =
-  | { readonly start: number; readonly end: number }
-  | "invalid"
-  | "unsupported";
+type ParsedRange = { readonly start: number; readonly end: number } | "invalid" | "unsupported";
 
 const BYTES_PREFIX_RE = /^bytes=(.+)$/u;
 
@@ -70,9 +70,8 @@ const BYTES_PREFIX_RE = /^bytes=(.+)$/u;
 export function parseRangeHeader(header: string, total: number): ParsedRange {
   if (total === 0) return "invalid";
   const trimmed = header.trim();
-  const matched = BYTES_PREFIX_RE.test(trimmed) ? trimmed.match(BYTES_PREFIX_RE) : null;
-  if (matched === null) return "invalid";
-  const spec = matched[1]!;
+  const spec = BYTES_PREFIX_RE.exec(trimmed)?.[1];
+  if (spec === undefined) return "invalid";
   if (spec.includes(",")) return "unsupported";
 
   const dash = spec.indexOf("-");

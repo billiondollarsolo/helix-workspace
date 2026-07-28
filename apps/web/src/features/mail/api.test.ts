@@ -155,7 +155,8 @@ describe("mail API", () => {
 
   it("marks spam and lists filters via the registered tools (no 404)", async () => {
     const fetchImpl = vi.fn((url: RequestInfo | URL) => {
-      if (String(url).includes("mail.spam")) {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (href.includes("mail.spam")) {
         return Promise.resolve(
           Response.json({
             ok: true,

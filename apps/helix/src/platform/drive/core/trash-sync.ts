@@ -5,7 +5,7 @@
 
 export interface TrashSyncSql {
   // Minimal surface: template-tag style executor (postgres.js compatible).
-  (strings: TemplateStringsArray, ...values: unknown[]): PromiseLike<unknown> | unknown;
+  (strings: TemplateStringsArray, ...values: unknown[]): unknown;
 }
 
 export interface TrashSyncInput {

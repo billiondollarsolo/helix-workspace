@@ -416,7 +416,7 @@ export class PostgresSlidesStore implements SlidesStore {
           and metadata->>'app' = 'slides'
         limit 1
       `) as unknown as readonly { readonly metadata: JsonObject }[];
-      const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata?.folderId);
+      const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata.folderId);
       const folderId = input.folderId === undefined ? sourceFolderId : input.folderId;
       const title = input.title?.trim() || `${source.title} (Copy)`;
       const metadata = {
@@ -1797,7 +1797,12 @@ function nativeSlidesPreviewText(deck: SlideDeckRecord, slides: readonly SlideRe
 function slideContentPreviewLines(content: SlideContent): readonly string[] {
   switch (content.layout) {
     case "title":
-      return [content.title, content.eyebrow ?? "", content.subtitle ?? "", ...shapePreviewLines(content)];
+      return [
+        content.title,
+        content.eyebrow ?? "",
+        content.subtitle ?? "",
+        ...shapePreviewLines(content),
+      ];
     case "agenda":
     case "bullets":
       return [content.title, ...content.items, ...shapePreviewLines(content)];
@@ -1812,7 +1817,9 @@ function slideContentPreviewLines(content: SlideContent): readonly string[] {
       return [
         content.title,
         content.left,
-        ...(Array.isArray(content.rightContent) ? content.rightContent : [content.rightContent]),
+        ...(typeof content.rightContent === "string"
+          ? [content.rightContent]
+          : content.rightContent),
         content.quoteWho ?? "",
         ...shapePreviewLines(content),
       ];

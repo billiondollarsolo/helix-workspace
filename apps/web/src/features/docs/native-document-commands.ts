@@ -4,6 +4,7 @@ export type NativeDocumentSmartChipKind = "person" | "doc" | "file" | "event";
 
 export type NativeDocumentCommandEventDetail =
   | { readonly command: "find" }
+  | { readonly command: "smart-compose" }
   | { readonly command: "cut" }
   | { readonly command: "copy" }
   | { readonly command: "paste" }

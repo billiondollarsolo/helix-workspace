@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
 import type { EventBus, EventEnvelope, JsonObject, Unsubscribe } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import type { SheetOperation, SheetsStore } from "./store.js";
 import type { WebsocketConnectionMetrics } from "../websocket-metrics.js";
 import { trackWebsocketConnection } from "../websocket-metrics.js";

@@ -13,7 +13,8 @@ describe("mail SSE stream", () => {
       actorOrgId: "o1",
     });
     expect(frame).toEqual({ type: "mail.received", threadId: "t1", orgId: "o1" });
-    expect(formatMailSseEvent(frame!)).toContain('data: {"type":"mail.received"');
+    if (frame === null) throw new Error("Expected a mail activity frame");
+    expect(formatMailSseEvent(frame)).toContain('data: {"type":"mail.received"');
   });
 
   it("frames activity.mail.sent", () => {

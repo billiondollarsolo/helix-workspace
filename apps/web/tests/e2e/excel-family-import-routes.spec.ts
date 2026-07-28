@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
@@ -29,6 +29,11 @@ const spreadsheetFixtures = [
 ] as const;
 
 test.describe("Excel-family workbook import routes", () => {
+  test.skip(
+    spreadsheetFixtures.some((fixture) => !existsSync(new URL(fixture.corpusPath, import.meta.url))),
+    "Apache Tika workbook corpus is not available in this checkout",
+  );
+
   for (const fixture of spreadsheetFixtures) {
     test(`opens ${fixture.name} through the editable-copy flow`, async ({ page }) => {
       const importCalls: ImportCall[] = [];

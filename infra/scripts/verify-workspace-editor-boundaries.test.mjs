@@ -8,23 +8,67 @@ const workspaceRoot = resolve(new URL("../..", import.meta.url).pathname);
 const verifier = join(workspaceRoot, "infra/scripts/verify-workspace-editor-boundaries.mjs");
 
 describe("verify-workspace-editor-boundaries", () => {
-  it("allows the published editors core-app package contract", async () => {
+  it("allows the three public editor package contracts", async () => {
     const root = await fixtureWorkspace({
       "apps/helix/src/editors.ts": [
         'import("@helix/editors-core-app");',
+        'import { EditorAppBar } from "@helix/editors-ui";',
+        'import { detectFormat } from "@helix/editors-format-loader";',
+        "void EditorAppBar;",
+        "void detectFormat;",
         "export const ok = true;",
       ].join("\n"),
       "package.json": JSON.stringify({
         dependencies: {
           "@helix/editors-core-app": "workspace:*",
+          "@helix/editors-format-loader": "^1.0.0",
+          "@helix/editors-ui": "^1.0.0",
         },
       }),
     });
 
     const result = runVerifier(root);
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
+  });
+
+  it("allows exact local sibling links for public editor packages", async () => {
+    const siblingPackages = "file:/repo/" + ["helix-editors", "packages"].join("/");
+    const root = await fixtureWorkspace({
+      "apps/web/package.json": JSON.stringify({
+        dependencies: {
+          "@helix/editors-format-loader": `${siblingPackages}/format-loader`,
+          "@helix/editors-ui": `${siblingPackages}/ui-kit`,
+        },
+      }),
+      "apps/helix/package.json": JSON.stringify({
+        dependencies: {
+          "@helix/editors-core-app": `${siblingPackages}/core-app`,
+        },
+      }),
+    });
+
+    const result = runVerifier(root);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects public package names linked to the wrong sibling package", async () => {
+    const siblingPackages = "file:/repo/" + ["helix-editors", "packages"].join("/");
+    const root = await fixtureWorkspace({
+      "apps/web/package.json": JSON.stringify({
+        dependencies: {
+          "@helix/editors-ui": `${siblingPackages}/engine-core`,
+        },
+      }),
+    });
+
+    const result = runVerifier(root);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("public editor package points to an unexpected sibling path");
   });
 
   it("rejects raw string literals that point into the sibling package tree", async () => {

@@ -11,7 +11,6 @@
 
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import Underline from "@tiptap/extension-underline";
 import type { ImportedDoc } from "../parsers/types.js";
 
 export interface ImportedDocumentRendererProps {
@@ -26,7 +25,7 @@ export function ImportedDocumentRenderer({
   fileName,
 }: ImportedDocumentRendererProps) {
   const editor = useEditor({
-    extensions: [StarterKit, Underline],
+    extensions: [StarterKit],
     content: doc.tiptapDoc as never,
     editable: doc.readOnly !== true,
   });
@@ -84,16 +83,14 @@ function ImportedDocumentBanner({
       }}
     >
       <div style={{ flex: 1, minWidth: 240 }}>
-        <strong style={{ fontSize: "var(--text-body)" }}>
-          Imported from {doc.format.label}
-        </strong>
+        <strong style={{ fontSize: "var(--text-body)" }}>Imported from {doc.format.label}</strong>
         {fileName !== undefined ? (
           <span style={{ marginLeft: 8, color: "var(--text-2)", fontSize: "var(--text-caption)" }}>
             <code>{fileName}</code>
           </span>
         ) : null}
         {doc.warnings.length > 0 ? (
-          <p
+          <div
             style={{
               margin: "4px 0 0 0",
               fontSize: "var(--text-caption)",
@@ -101,10 +98,10 @@ function ImportedDocumentBanner({
               lineHeight: 1.4,
             }}
           >
-            {doc.warnings[0]}
+            <span>{doc.warnings[0]}</span>
             {doc.warnings.length > 1 ? (
-              <details style={{ display: "inline", marginLeft: 8 }}>
-                <summary style={{ cursor: "pointer", display: "inline" }}>
+              <details style={{ marginTop: 4 }}>
+                <summary style={{ cursor: "pointer" }}>
                   +{doc.warnings.length - 1} more
                 </summary>
                 <ul
@@ -120,7 +117,7 @@ function ImportedDocumentBanner({
                 </ul>
               </details>
             ) : null}
-          </p>
+          </div>
         ) : null}
       </div>
       <a

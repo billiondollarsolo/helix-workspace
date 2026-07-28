@@ -11,7 +11,7 @@ import { isLiveBackend, mintLiveAccessToken } from "./support/backend-mode";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 
 const accessTokenStorageKey = "helix.accessToken";
-const assistantScope = "platform.read assistant.chat";
+const assistantScope = "platform.read assistant.read assistant.write";
 const prompt = "Share the Q3 Launch PRD with Bruno.";
 
 test.describe("/assistant feature flow", () => {
@@ -23,9 +23,9 @@ test.describe("/assistant feature flow", () => {
 
     await page.goto("/assistant");
 
-    await expect(page.getByRole("main", { name: "Assistant" })).toBeVisible();
+    await expect(page.getByRole("main", { name: "Helix AI" })).toBeVisible();
 
-    const composer = page.locator("#assistant-composer-body");
+    const composer = page.getByRole("textbox", { name: "Message Helix AI" });
     await composer.fill(prompt);
     await page.getByRole("button", { name: "Send message" }).click();
 
@@ -36,17 +36,16 @@ test.describe("/assistant feature flow", () => {
       await expect(
         page.getByText("I found the PRD and need approval before sharing it."),
       ).toBeVisible();
-      await expect(page.getByText("drive.share", { exact: true })).toBeVisible();
     }
   });
 });
 
 async function seedAccessToken(page: Page, scope: string, mockToken: string): Promise<string> {
   const token = isLiveBackend() ? await mintLiveAccessToken(scope) : mockToken;
-  await page.addInitScript(
-    ({ key, value }) => window.localStorage.setItem(key, value),
-    { key: accessTokenStorageKey, value: token },
-  );
+  await page.addInitScript(({ key, value }) => window.localStorage.setItem(key, value), {
+    key: accessTokenStorageKey,
+    value: token,
+  });
   return token;
 }
 

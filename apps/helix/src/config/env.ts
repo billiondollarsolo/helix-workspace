@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod3";
 
 /**
  * Optional URL that accepts empty string as undefined (common for unset docker env).

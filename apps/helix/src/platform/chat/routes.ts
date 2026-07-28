@@ -142,7 +142,10 @@ export async function handleChatSocket(
         return;
       }
       options.connections?.delete(socket);
-      sendErrorFrame(socket, new ApiError("unauthenticated", "Chat WebSocket authentication required"));
+      sendErrorFrame(
+        socket,
+        new ApiError("unauthenticated", "Chat WebSocket authentication required"),
+      );
       socket.close(CHAT_AUTH_CLOSE_CODE, "auth required");
     }, authGraceMs);
   }
@@ -268,7 +271,7 @@ async function resolveActorFromToken(
  *   - `helix-bearer.<token>`
  */
 export function bearerTokenFromSecWebSocketProtocol(request: FastifyRequest): string | null {
-  const raw = request.headers?.["sec-websocket-protocol"];
+  const raw = request.headers["sec-websocket-protocol"];
   if (raw === undefined) {
     return null;
   }
@@ -304,7 +307,7 @@ function stripAccessTokenQuery(request: FastifyRequest): FastifyRequest {
     return request;
   }
   const { access_token: _ignored, ...rest } = request.query as Record<string, unknown>;
-  return { ...request, query: rest } as FastifyRequest;
+  return { ...request, query: rest };
 }
 
 function isUnauthenticated(actor: Actor): boolean {

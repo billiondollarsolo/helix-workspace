@@ -13,33 +13,59 @@
  * editors" guarantee from "best effort" to "structurally enforced."
  */
 
-import { useEffect, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { docsDocumentQueryOptions } from "@/features/docs/queries";
+import { docsQueryKeys } from "@/features/docs/query-keys";
 import type { EditorSurface } from "../format-detection.js";
-import { loadDriveObjectForEditor } from "../universal-loader.js";
-import {
-  convertImportedDeckToNative,
-  convertImportedDocToNative,
-  convertImportedSheetToNative,
-  ConverterNotAvailableError,
-  type ConvertedTarget,
-} from "../converters.js";
+import type { ConvertedTarget } from "../converters.js";
 import {
   canCreateEditableCopy,
   editableCopyUnavailableMessage,
 } from "../conversion-capabilities.js";
 import { fetchDriveBlob } from "../drive-fetcher.js";
-import { ImportedAudioRenderer } from "./ImportedAudioRenderer.js";
-import { ImportedDeckRenderer } from "./ImportedDeckRenderer.js";
-import { ImportedDocumentRenderer } from "./ImportedDocumentRenderer.js";
-import { ImportedEbookRenderer } from "./ImportedEbookRenderer.js";
-import { ImportedImageRenderer } from "./ImportedImageRenderer.js";
-import { ImportedPdfRenderer } from "./ImportedPdfRenderer.js";
-import { ImportedSheetRenderer } from "./ImportedSheetRenderer.js";
-import { ImportedVideoRenderer } from "./ImportedVideoRenderer.js";
 import { UnsupportedFormatPlaceholder } from "./UnsupportedFormatPlaceholder.js";
+
+const LazyImportedAudioRenderer = lazy(() =>
+  import("./ImportedAudioRenderer.js").then((module) => ({
+    default: module.ImportedAudioRenderer,
+  })),
+);
+const LazyImportedDeckRenderer = lazy(() =>
+  import("./ImportedDeckRenderer.js").then((module) => ({
+    default: module.ImportedDeckRenderer,
+  })),
+);
+const LazyImportedDocumentRenderer = lazy(() =>
+  import("./ImportedDocumentRenderer.js").then((module) => ({
+    default: module.ImportedDocumentRenderer,
+  })),
+);
+const LazyImportedEbookRenderer = lazy(() =>
+  import("./ImportedEbookRenderer.js").then((module) => ({
+    default: module.ImportedEbookRenderer,
+  })),
+);
+const LazyImportedImageRenderer = lazy(() =>
+  import("./ImportedImageRenderer.js").then((module) => ({
+    default: module.ImportedImageRenderer,
+  })),
+);
+const LazyImportedPdfRenderer = lazy(() =>
+  import("./ImportedPdfRenderer.js").then((module) => ({
+    default: module.ImportedPdfRenderer,
+  })),
+);
+const LazyImportedSheetRenderer = lazy(() =>
+  import("./ImportedSheetRenderer.js").then((module) => ({
+    default: module.ImportedSheetRenderer,
+  })),
+);
+const LazyImportedVideoRenderer = lazy(() =>
+  import("./ImportedVideoRenderer.js").then((module) => ({
+    default: module.ImportedVideoRenderer,
+  })),
+);
 
 /** The native-fetch query handle the router needs — caller-owned via useQuery. */
 export interface NativeFetchHandle<TNative> {
@@ -82,12 +108,7 @@ export function UniversalEditorRouter<TNative>({
     nativeQuery.isError ||
     (nativeQuery.isSuccess && (nativeQuery.data === null || nativeQuery.data === undefined));
 
-  const universalQuery = useQuery({
-    queryKey: ["universal-open", objectId, surface],
-    queryFn: () => loadDriveObjectForEditor(objectId, { expectedSurface: surface }),
-    enabled: nativeMissing,
-    throwOnError: false,
-  });
+  const universalQuery = useQuery(universalEditorQueryOptions(objectId, surface, nativeMissing));
 
   if (!nativeDisabled && nativeQuery.isLoading) {
     return <CenteredMessage>Loading…</CenteredMessage>;
@@ -111,9 +132,7 @@ export function UniversalEditorRouter<TNative>({
       return <EditorsDisabledStorageOnly objectId={objectId} />;
     }
     return (
-      <CenteredMessage isError>
-        Failed to load file: {universalQuery.error.message}
-      </CenteredMessage>
+      <CenteredMessage isError>Failed to load file: {universalQuery.error.message}</CenteredMessage>
     );
   }
 
@@ -154,15 +173,15 @@ export function UniversalEditorRouter<TNative>({
         />
       );
     case "pdf":
-      return <ImportedPdfRenderer pdf={parsed} objectId={objectId} />;
+      return withRendererFallback(<LazyImportedPdfRenderer pdf={parsed} objectId={objectId} />);
     case "image":
-      return <ImportedImageRenderer image={parsed} objectId={objectId} />;
+      return withRendererFallback(<LazyImportedImageRenderer image={parsed} objectId={objectId} />);
     case "audio":
-      return <ImportedAudioRenderer audio={parsed} objectId={objectId} />;
+      return withRendererFallback(<LazyImportedAudioRenderer audio={parsed} objectId={objectId} />);
     case "video":
-      return <ImportedVideoRenderer video={parsed} objectId={objectId} />;
+      return withRendererFallback(<LazyImportedVideoRenderer video={parsed} objectId={objectId} />);
     case "ebook":
-      return <ImportedEbookRenderer ebook={parsed} objectId={objectId} />;
+      return withRendererFallback(<LazyImportedEbookRenderer ebook={parsed} objectId={objectId} />);
     case "unsupported":
       return <UnsupportedFormatPlaceholder result={parsed} objectId={objectId} />;
   }
@@ -190,6 +209,11 @@ function ConvertAndRedirect({
   useEffect(() => {
     let cancelled = false;
     const promise = getOrStartImport(importKey(objectId, parsed), async () => {
+      const {
+        convertImportedDeckToNative,
+        convertImportedDocToNative,
+        convertImportedSheetToNative,
+      } = await import("../converters.js");
       // Re-fetch the blob to ensure the converter has the original bytes (the
       // parsed result holds bytes for pdf/image but not necessarily for doc /
       // sheet / deck shapes).
@@ -213,7 +237,7 @@ function ConvertAndRedirect({
         // route's own internal fetches replace it with real data shortly after.
         const sentinel = { id: target.id, __freshlyImported: true } as never;
         if (target.surface === "docs") {
-          queryClient.setQueryData(docsDocumentQueryOptions(target.id).queryKey, sentinel);
+          queryClient.setQueryData(docsQueryKeys.document(target.id), sentinel);
         }
         switch (target.surface) {
           case "docs":
@@ -240,16 +264,22 @@ function ConvertAndRedirect({
 
   if (importError !== null) {
     const err = importError;
-    if (err instanceof ConverterNotAvailableError) {
+    if (isConverterNotAvailableError(err)) {
       // Fall back to the read-only viewer for formats whose server-side
       // import tool isn't built yet (e.g. ODP today).
       switch (parsed.kind) {
         case "doc":
-          return <ImportedDocumentRenderer doc={parsed} objectId={objectId} />;
+          return withRendererFallback(
+            <LazyImportedDocumentRenderer doc={parsed} objectId={objectId} />,
+          );
         case "sheet":
-          return <ImportedSheetRenderer sheet={parsed} objectId={objectId} />;
+          return withRendererFallback(
+            <LazyImportedSheetRenderer sheet={parsed} objectId={objectId} />,
+          );
         case "deck":
-          return <ImportedDeckRenderer deck={parsed} objectId={objectId} />;
+          return withRendererFallback(
+            <LazyImportedDeckRenderer deck={parsed} objectId={objectId} />,
+          );
       }
     }
     return (
@@ -291,14 +321,30 @@ function getOrStartImport(
     return current;
   }
   const next = start().finally(() => {
-    window.setTimeout(() => {
-      if (inFlightImports.get(key) === next) {
-        inFlightImports.delete(key);
-      }
-    }, 5_000);
+    AbortSignal.timeout(5_000).addEventListener(
+      "abort",
+      () => {
+        if (inFlightImports.get(key) === next) {
+          inFlightImports.delete(key);
+        }
+      },
+      { once: true },
+    );
   });
   inFlightImports.set(key, next);
   return next;
+}
+
+function universalEditorQueryOptions(objectId: string, surface: EditorSurface, enabled: boolean) {
+  return queryOptions({
+    queryKey: ["universal-open", objectId, surface],
+    queryFn: async () => {
+      const { loadDriveObjectForEditor } = await import("../universal-loader.js");
+      return loadDriveObjectForEditor(objectId, { expectedSurface: surface });
+    },
+    enabled,
+    throwOnError: false,
+  });
 }
 
 function universalEditorInFlightImports(): Map<string, Promise<ConvertedTarget>> {
@@ -329,11 +375,17 @@ function ImportDecision({
   if (decision === "preview") {
     switch (parsed.kind) {
       case "doc":
-        return <ImportedDocumentRenderer doc={parsed} objectId={objectId} fileName={fileName} />;
+        return withRendererFallback(
+          <LazyImportedDocumentRenderer doc={parsed} objectId={objectId} fileName={fileName} />,
+        );
       case "sheet":
-        return <ImportedSheetRenderer sheet={parsed} objectId={objectId} fileName={fileName} />;
+        return withRendererFallback(
+          <LazyImportedSheetRenderer sheet={parsed} objectId={objectId} fileName={fileName} />,
+        );
       case "deck":
-        return <ImportedDeckRenderer deck={parsed} objectId={objectId} fileName={fileName} />;
+        return withRendererFallback(
+          <LazyImportedDeckRenderer deck={parsed} objectId={objectId} fileName={fileName} />,
+        );
     }
   }
 
@@ -460,9 +512,7 @@ function EditorsDisabledStorageOnly({ objectId }: { readonly objectId: string })
         >
           Editors alpha disabled
         </div>
-        <h1 style={{ margin: 0, fontSize: "var(--text-h2)", fontWeight: 650 }}>
-          Stored in Drive
-        </h1>
+        <h1 style={{ margin: 0, fontSize: "var(--text-h2)", fontWeight: 650 }}>Stored in Drive</h1>
         <p style={{ color: "var(--text-2)", lineHeight: 1.55, marginTop: 12 }}>
           Native editing is turned off for this organization. The file remains available through
           Drive storage and sharing; admins can enable Editors alpha from Admin &gt; Core apps.
@@ -515,4 +565,14 @@ function CenteredMessage({
       {children}
     </div>
   );
+}
+
+function withRendererFallback(content: ReactNode): ReactNode {
+  return (
+    <Suspense fallback={<CenteredMessage>Loading preview…</CenteredMessage>}>{content}</Suspense>
+  );
+}
+
+function isConverterNotAvailableError(error: Error): boolean {
+  return error.name === "ConverterNotAvailableError";
 }

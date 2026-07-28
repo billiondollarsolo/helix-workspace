@@ -1,10 +1,8 @@
 import fastify from "fastify";
+import type { FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
 import { registerTenantScimRoutes, type ScimAuthAuditSink } from "./scim-routes.js";
-import {
-  InMemoryTenantScimCredentialStore,
-  hashScimBearerToken,
-} from "./scim-credentials.js";
+import { InMemoryTenantScimCredentialStore, hashScimBearerToken } from "./scim-credentials.js";
 import type { OrgRecord, OrgStore } from "../tenancy/orgs.js";
 
 const VALID_TOKEN = "scim-test-token-AcMe-0123456789";
@@ -12,7 +10,7 @@ const OTHER_TENANT_TOKEN = "scim-test-token-other-tenant-9876";
 const ORG_ID = "11111111-1111-1111-1111-111111111111";
 
 interface Harness {
-  readonly app: ReturnType<typeof fastify>;
+  readonly app: FastifyInstance;
   readonly credentials: InMemoryTenantScimCredentialStore;
   readonly audit: RecordingAuditSink;
 }
@@ -66,9 +64,9 @@ describe("tenant SCIM auth gating", () => {
     expect(audit.records).toContainEqual(
       expect.objectContaining({
         verb: "scim.auth.failed",
-        metadata: expect.objectContaining({ reason: "missing_bearer" }),
       }),
     );
+    expect(audit.records.at(-1)?.metadata).toMatchObject({ reason: "missing_bearer" });
     await app.close();
   });
 
@@ -178,10 +176,10 @@ describe("tenant SCIM auth gating", () => {
     expect(audit.records.at(-1)).toMatchObject({
       verb: "scim.auth.failed",
       objectType: "scim_endpoint",
-      metadata: expect.objectContaining({
-        reason: "invalid_bearer",
-        method: "GET",
-      }),
+    });
+    expect(audit.records.at(-1)?.metadata).toMatchObject({
+      reason: "invalid_bearer",
+      method: "GET",
     });
     // Token bytes must never appear in audit metadata.
     const flatJson = JSON.stringify(audit.records);

@@ -40,38 +40,80 @@ function stableUserIdForEmail(email: string): string {
  *  plus admin tooling. Mirrors `ADMIN_SCOPES` from seed-login-accounts. */
 const ADMIN_SCOPES = [
   "platform.read",
-  "mail.read","mail.write","mail.send","mail.external","mail.admin",
-  "drive.read","drive.write","drive.delete",
-  "docs.read","docs.write","docs.comment",
-  "calendar.read","calendar.write","calendar.external",
-  "chat.read","chat.write","chat.post","chat.create",
-  "meet.read","meet.write",
-  "assistant.read","assistant.write","assistant.memory",
-  "sheets.read","sheets.write",
-  "slides.read","slides.write",
-  "notifications.read","notifications.write",
+  "mail.read",
+  "mail.write",
+  "mail.send",
+  "mail.external",
+  "mail.admin",
+  "drive.read",
+  "drive.write",
+  "drive.delete",
+  "docs.read",
+  "docs.write",
+  "docs.comment",
+  "calendar.read",
+  "calendar.write",
+  "calendar.external",
+  "chat.read",
+  "chat.write",
+  "chat.post",
+  "chat.create",
+  "meet.read",
+  "meet.write",
+  "assistant.read",
+  "assistant.write",
+  "assistant.memory",
+  "sheets.read",
+  "sheets.write",
+  "slides.read",
+  "slides.write",
+  "notifications.read",
+  "notifications.write",
   "search.read",
-  "tools:read","tools:write",
-  "webhooks.read","webhooks.write",
-  "admin","admin.users","admin.audit","admin.agents","admin.plugins",
-  "admin.webhooks","admin.config.read","admin.config.write",
-  "admin.console.read","admin.console.write","admin.ai",
+  "tools:read",
+  "tools:write",
+  "webhooks.read",
+  "webhooks.write",
+  "admin",
+  "admin.users",
+  "admin.audit",
+  "admin.agents",
+  "admin.plugins",
+  "admin.webhooks",
+  "admin.config.read",
+  "admin.config.write",
+  "admin.console.read",
+  "admin.console.write",
+  "admin.ai",
 ] as const;
 
 /** Scopes for non-admin principals — read/write on every app surface
  *  but no admin tooling. */
 const USER_SCOPES = [
   "platform.read",
-  "mail.read","mail.write","mail.send",
-  "drive.read","drive.write",
-  "docs.read","docs.write","docs.comment",
-  "calendar.read","calendar.write",
-  "chat.read","chat.write",
-  "meet.read","meet.write",
-  "assistant.read","assistant.write","assistant.memory",
-  "sheets.read","sheets.write",
-  "slides.read","slides.write",
-  "notifications.read","notifications.write",
+  "mail.read",
+  "mail.write",
+  "mail.send",
+  "drive.read",
+  "drive.write",
+  "docs.read",
+  "docs.write",
+  "docs.comment",
+  "calendar.read",
+  "calendar.write",
+  "chat.read",
+  "chat.write",
+  "meet.read",
+  "meet.write",
+  "assistant.read",
+  "assistant.write",
+  "assistant.memory",
+  "sheets.read",
+  "sheets.write",
+  "slides.read",
+  "slides.write",
+  "notifications.read",
+  "notifications.write",
   "search.read",
 ] as const;
 
@@ -94,15 +136,61 @@ interface PrincipalSpec {
  *  testing (e.g. `morgan-pass` signs in `morgan@helix.local`). The two
  *  primary accounts (`admin@`, `user@`) keep their well-known passwords. */
 const PRINCIPALS: readonly PrincipalSpec[] = [
-  { email: "admin@helix.local", displayName: "Avery Park",    title: "Workspace admin", admin: true, password: "helix-admin-password" },
-  { email: "user@helix.local",  displayName: "Riley Chen",    title: "Customer success",            password: "helix-user-password" },
-  { email: "morgan@helix.local",displayName: "Morgan Diaz",   title: "Head of Product",              password: "morgan-pass" },
-  { email: "sasha@helix.local", displayName: "Sasha Okafor",  title: "Engineering Lead",             password: "sasha-pass" },
-  { email: "priya@helix.local", displayName: "Priya Raman",   title: "Product Designer",             password: "priya-pass" },
-  { email: "leo@helix.local",   displayName: "Leo Whitfield", title: "Senior Engineer",              password: "leo-pass" },
-  { email: "nadia@helix.local", displayName: "Nadia Korhonen",title: "Security Lead",                password: "nadia-pass" },
-  { email: "maya@helix.local",  displayName: "Maya Sharma",   title: "Research Analyst",             password: "maya-pass" },
-  { email: "erica@helix.local", displayName: "Erica Johnson", title: "Finance Lead",                 password: "erica-pass" },
+  {
+    email: "admin@helix.local",
+    displayName: "Avery Park",
+    title: "Workspace admin",
+    admin: true,
+    password: "helix-admin-password",
+  },
+  {
+    email: "user@helix.local",
+    displayName: "Riley Chen",
+    title: "Customer success",
+    password: "helix-user-password",
+  },
+  {
+    email: "morgan@helix.local",
+    displayName: "Morgan Diaz",
+    title: "Head of Product",
+    password: "morgan-pass",
+  },
+  {
+    email: "sasha@helix.local",
+    displayName: "Sasha Okafor",
+    title: "Engineering Lead",
+    password: "sasha-pass",
+  },
+  {
+    email: "priya@helix.local",
+    displayName: "Priya Raman",
+    title: "Product Designer",
+    password: "priya-pass",
+  },
+  {
+    email: "leo@helix.local",
+    displayName: "Leo Whitfield",
+    title: "Senior Engineer",
+    password: "leo-pass",
+  },
+  {
+    email: "nadia@helix.local",
+    displayName: "Nadia Korhonen",
+    title: "Security Lead",
+    password: "nadia-pass",
+  },
+  {
+    email: "maya@helix.local",
+    displayName: "Maya Sharma",
+    title: "Research Analyst",
+    password: "maya-pass",
+  },
+  {
+    email: "erica@helix.local",
+    displayName: "Erica Johnson",
+    title: "Finance Lead",
+    password: "erica-pass",
+  },
 ];
 
 async function wipe(sql: postgres.Sql): Promise<void> {
@@ -223,12 +311,18 @@ async function ensureOrg(sql: postgres.Sql): Promise<string> {
     order by n desc
     limit 1
   `) as unknown as readonly { readonly org_id: string; readonly n: string | number }[];
-  if (rows.length > 0) return rows[0]!.org_id;
+  const mostCommonOrg = rows[0];
+  if (mostCommonOrg !== undefined) return mostCommonOrg.org_id;
   return randomUUID();
 }
 
-async function reseedActors(sql: postgres.Sql, orgId: string): Promise<ReadonlyMap<string, string>> {
-  process.stdout.write(`Creating ${String(PRINCIPALS.length)} principals with random UUIDs + login mappings…\n`);
+async function reseedActors(
+  sql: postgres.Sql,
+  orgId: string,
+): Promise<ReadonlyMap<string, string>> {
+  process.stdout.write(
+    `Creating ${String(PRINCIPALS.length)} principals with random UUIDs + login mappings…\n`,
+  );
   const emailToActorId = new Map<string, string>();
   for (const principal of PRINCIPALS) {
     const actorId = randomUUID();
@@ -244,7 +338,9 @@ async function reseedActors(sql: postgres.Sql, orgId: string): Promise<ReadonlyM
           ${sql.json({ source: "reseed", title: principal.title ?? null })}
         )
       `;
-      process.stdout.write(`  ${actorId.slice(0, 8)}… ${principal.email.padEnd(28)} ${principal.displayName}  (no login)\n`);
+      process.stdout.write(
+        `  ${actorId.slice(0, 8)}… ${principal.email.padEnd(28)} ${principal.displayName}  (no login)\n`,
+      );
       continue;
     }
 
@@ -288,7 +384,9 @@ async function reseedActors(sql: postgres.Sql, orgId: string): Promise<ReadonlyM
         ${passwordHash}, now(), now()
       )
     `;
-    process.stdout.write(`  ${actorId.slice(0, 8)}… ${principal.email.padEnd(28)} ${principal.displayName}  (pw=${principal.password})\n`);
+    process.stdout.write(
+      `  ${actorId.slice(0, 8)}… ${principal.email.padEnd(28)} ${principal.displayName}  (pw=${principal.password})\n`,
+    );
   }
   return emailToActorId;
 }
@@ -296,11 +394,10 @@ async function reseedActors(sql: postgres.Sql, orgId: string): Promise<ReadonlyM
 /** Run a child seed/backfill script and stream its output through. */
 function runScript(scriptName: string): void {
   process.stdout.write(`\n→ ${scriptName}\n`);
-  const result = spawnSync(
-    "pnpm",
-    [scriptName],
-    { stdio: "inherit", cwd: resolve(import.meta.dirname, "..", "..") },
-  );
+  const result = spawnSync("pnpm", [scriptName], {
+    stdio: "inherit",
+    cwd: resolve(import.meta.dirname, "..", ".."),
+  });
   if (result.status !== 0) {
     throw new Error(`${scriptName} exited with status ${String(result.status)}`);
   }
@@ -333,7 +430,9 @@ async function main(): Promise<void> {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   void main().catch((error: unknown) => {
-    process.stderr.write(`reseed FAILED: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(
+      `reseed FAILED: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
     process.exit(1);
   });
 }

@@ -1,6 +1,6 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import { searchReindexTypes, type SearchReindexRequest, type SearchReindexRunner } from "./reindex.js";
 
 const adminConfigWriteScope = "admin.config.write";

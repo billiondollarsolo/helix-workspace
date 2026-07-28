@@ -1,13 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { z } from "zod";
 import { SignupInviteShell } from "@/features/signup/invite-shell";
-
-const inviteSearchSchema = z.object({
-  token: z.string().optional().default(""),
-});
+import { stringSearchParam } from "@/lib/search-params";
 
 export const Route = createFileRoute("/signup_/invite")({
-  validateSearch: (search) => inviteSearchSchema.parse(search),
+  validateSearch: (search) => ({ token: stringSearchParam(search.token) }),
   component: SignupInviteRoute,
 });
 

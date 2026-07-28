@@ -1,6 +1,6 @@
 import type { Actor, EventBus, MeteringClient, TraceContext } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import {
   adminWildcardScope,
   auditAdminAction,

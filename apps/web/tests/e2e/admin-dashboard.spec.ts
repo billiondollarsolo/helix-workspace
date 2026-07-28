@@ -28,18 +28,19 @@ test.describe("/admin dashboard", () => {
 
     await page.goto("/admin");
 
-    await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible();
+    await page.getByRole("button", { name: "Audit log", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Audit log" })).toBeVisible();
     await expect(page.getByRole("table", { name: "Audit log" })).toContainText("tool.invoked");
     await expect(page.getByRole("table", { name: "Audit log" })).toContainText(
       "source: playwright",
     );
 
-    await expect(page.getByRole("heading", { name: "User directory" })).toBeVisible();
-    await expect(page.getByRole("table", { name: "Admin users" })).toContainText("E2E Admin");
-    await expect(page.getByRole("table", { name: "Admin users" })).toContainText(
-      "admin-e2e@example.test",
-    );
+    await page.getByRole("button", { name: "Users", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await expect(page.getByText("E2E Admin", { exact: true })).toBeVisible();
+    await expect(page.getByText("admin-e2e@example.test", { exact: true })).toBeVisible();
 
+    await page.getByRole("button", { name: "Agent credentials", exact: true }).click();
     await expect(page.getByRole("heading", { name: "OAuth client credentials" })).toBeVisible();
     await expect(page.getByRole("table", { name: "Agent credentials" })).toContainText(
       "agent-client-e2e",
@@ -48,12 +49,14 @@ test.describe("/admin dashboard", () => {
       "admin.agents",
     );
 
+    await page.getByRole("button", { name: "App passwords", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Scoped app access" })).toBeVisible();
     await expect(page.getByRole("table", { name: "App passwords" })).toContainText(
       "Calendar sync e2e",
     );
     await expect(page.getByRole("table", { name: "App passwords" })).toContainText("caldav");
 
+    await page.getByRole("button", { name: "Tier readiness", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Security tier readiness" })).toBeVisible();
     await expect(page.getByText("Live platform config connected").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "Business platform state" })).toBeVisible();
@@ -62,9 +65,13 @@ test.describe("/admin dashboard", () => {
     await expect(page.getByRole("table", { name: "Plugin catalog" })).toContainText(
       "Evidence Plugin",
     );
+
+    await page.getByRole("button", { name: "AI observability", exact: true }).click();
     await expect(page.getByRole("heading", { name: "AI observability" })).toBeVisible();
     await expect(page.getByText("30 day retention").first()).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Services overview" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Services", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Admin services" })).toBeVisible();
     await expect(page.getByRole("table", { name: "Admin services" })).toContainText("Mail");
     await expect(page.getByRole("table", { name: "Admin services" })).toContainText(
       "com.helix.core.mail",
@@ -76,11 +83,7 @@ test.describe("/admin dashboard", () => {
         expect.objectContaining({ method: "GET", pathname: "/api/admin/users" }),
         expect.objectContaining({ method: "GET", pathname: "/api/admin/platform-config" }),
         expect.objectContaining({ method: "GET", pathname: "/api/admin/services" }),
-        expect.objectContaining({ method: "GET", pathname: "/api/admin/mail/config" }),
         expect.objectContaining({ method: "POST", pathname: "/api/tools/plugin.list" }),
-        expect.objectContaining({ method: "POST", pathname: "/api/tools/webhook.outbound.list" }),
-        expect.objectContaining({ method: "POST", pathname: "/api/tools/webhook.inbound.list" }),
-        expect.objectContaining({ method: "POST", pathname: "/api/tools/webhook.delivery.list" }),
         expect.objectContaining({
           body: { includeRevoked: false },
           method: "POST",
@@ -93,7 +96,11 @@ test.describe("/admin dashboard", () => {
         }),
       ]),
     );
-    expect(backendCalls.every((call) => call.authorization === expectedAuthorization)).toBe(true);
+    expect(
+      backendCalls
+        .filter((call) => call.pathname !== "/api/auth/get-session")
+        .every((call) => call.authorization === expectedAuthorization),
+    ).toBe(true);
   });
 });
 

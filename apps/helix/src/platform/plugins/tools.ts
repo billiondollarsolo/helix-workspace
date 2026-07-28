@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { z } from "zod";
+import { z } from "zod3";
 import type postgres from "postgres";
 import type {
   JsonObject,

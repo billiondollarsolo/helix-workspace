@@ -28,6 +28,10 @@ const otherActor: Actor = {
 };
 const roomId = "33333333-3333-4333-8333-333333333333";
 const messageId = "44444444-4444-4444-8444-444444444444";
+const emptyWebSocketRequest = {
+  headers: {},
+  query: {},
+} as unknown as FastifyRequest;
 
 describe("chat realtime", () => {
   it("builds stable per-room subjects for the NATS abstraction", () => {
@@ -41,7 +45,7 @@ describe("chat realtime", () => {
     const presence = new InMemoryChatPresenceStore({ ttlSeconds: 30 });
     const store = new FakeChatStore();
 
-    await handleChatSocket(socket, {} as FastifyRequest, {
+    await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => actor,
       bus,
@@ -74,7 +78,7 @@ describe("chat realtime", () => {
     const bus = new PresenceRecordingRoomBus(presence);
     const store = new FakeChatStore();
 
-    await handleChatSocket(receiverSocket, {} as FastifyRequest, {
+    await handleChatSocket(receiverSocket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => otherActor,
       bus,
@@ -84,7 +88,7 @@ describe("chat realtime", () => {
     await settle();
     receiverSocket.messages.length = 0;
 
-    await handleChatSocket(senderSocket, {} as FastifyRequest, {
+    await handleChatSocket(senderSocket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => actor,
       bus,
@@ -133,7 +137,7 @@ describe("chat realtime", () => {
     await store.markRead({ orgId: actor.orgId, actorId: otherActor.id, roomId, messageId });
 
     const socket = new FakeSocket();
-    await handleChatSocket(socket, {} as FastifyRequest, {
+    await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => actor,
       bus: new InMemoryChatRoomBus(),
@@ -154,7 +158,7 @@ describe("chat realtime", () => {
     const socket = new FakeSocket();
     const store = new FakeChatStore({ inaccessibleRoomIds: [roomId] });
 
-    await handleChatSocket(socket, {} as FastifyRequest, {
+    await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => actor,
       bus: new InMemoryChatRoomBus(),
@@ -178,9 +182,7 @@ describe("chat realtime", () => {
     const presence = new InMemoryChatPresenceStore({ ttlSeconds: 30 });
     await presence.touch({ roomId, actor, status: "busy" });
     const roster = await presence.list(roomId);
-    expect(roster).toEqual([
-      expect.objectContaining({ actorId: actor.id, status: "busy" }),
-    ]);
+    expect(roster).toEqual([expect.objectContaining({ actorId: actor.id, status: "busy" })]);
   });
 
   it("reports away after the idle threshold and drops after TTL", async () => {
@@ -204,7 +206,7 @@ describe("chat realtime", () => {
 
   it("rate-limits inbound frames when capacity is exhausted", async () => {
     const socket = new FakeSocket();
-    await handleChatSocket(socket, {} as FastifyRequest, {
+    await handleChatSocket(socket, emptyWebSocketRequest, {
       store: new FakeChatStore(),
       actorFromRequest: () => actor,
       bus: new InMemoryChatRoomBus(),
@@ -235,9 +237,7 @@ function captureWebsocketApp(): {
   readonly app: FastifyInstance;
   readonly connect: (socket: FakeSocket, request: FastifyRequest) => Promise<void>;
 } {
-  let handler:
-    | ((socket: unknown, request: FastifyRequest) => Promise<void>)
-    | undefined;
+  let handler: ((socket: unknown, request: FastifyRequest) => Promise<void>) | undefined;
   const app = {
     get: (_path: string, _opts: unknown, registered: typeof handler) => {
       handler = registered;
@@ -266,8 +266,8 @@ describe("chat graceful-shutdown broadcast (PRD §16.3 step 5)", () => {
 
     const first = new FakeSocket();
     const second = new FakeSocket();
-    await connect(first, {} as FastifyRequest);
-    await connect(second, {} as FastifyRequest);
+    await connect(first, emptyWebSocketRequest);
+    await connect(second, emptyWebSocketRequest);
 
     handle.broadcastShutdown();
 
@@ -290,7 +290,7 @@ describe("chat graceful-shutdown broadcast (PRD §16.3 step 5)", () => {
     });
 
     const socket = new FakeSocket();
-    await connect(socket, {} as FastifyRequest);
+    await connect(socket, emptyWebSocketRequest);
     await settle();
     socket.close();
     socket.closed = null;

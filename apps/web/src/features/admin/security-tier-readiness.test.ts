@@ -510,7 +510,6 @@ describe("SecurityTierReadiness admin UI", () => {
       throw new Error(`Select not found: ${label}`);
     }
     act(() => {
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
         ?.set as ((this: HTMLSelectElement, value: string) => void) | undefined;
       if (valueSetter !== undefined) {

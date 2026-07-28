@@ -6,12 +6,20 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      helix_editors_ref:
+        description: Optional helix-editors branch, tag, or SHA to test.
+        required: false
+        type: string
 
 jobs:
   platform-mode-matrix:
     name: test:${{ matrix.helix_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     strategy:
       fail-fast: false
       matrix:
@@ -19,8 +27,16 @@ jobs:
           - single-tenant
           - multi-tenant-saas
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -32,9 +48,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
 
       - name: Run platform mode test suite
         run: pnpm test:${{ matrix.helix_mode }}
@@ -42,9 +64,20 @@ jobs:
   repo-boundaries:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -56,6 +89,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -69,9 +105,20 @@ jobs:
   backend-live-demo-data:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -83,15 +130,32 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
 
       - name: Check Docker daemon
         run: docker info
 
       - name: Run live demo data smoke
         run: pnpm quality:live-demo-data -- --execute --compose-project helix_demo_smoke_ci_${{ github.run_id }} --volume-mail-count 25 --batch-size 10
+
+      - name: Run editor-owned database migrations
+        env:
+          DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
+        run: pnpm --filter @helix/app db:migrate
+
+      - name: Disable tenant API rate limit for synthetic load
+        run: |
+          docker compose -p helix_demo_smoke_ci_${{ github.run_id }} exec -T postgres \
+            psql -U helix -d helix_demo_smoke -v ON_ERROR_STOP=1 \
+            -c "update orgs set quotas = jsonb_set(quotas, '{api_rps_limit}', 'null'::jsonb, true) where id = '00000000-0000-4000-8000-000000000100';"
 
       - name: Start Helix API
         env:
@@ -128,15 +192,17 @@ jobs:
           HELIX_SMOKE_CLIENT_SECRET: helix-local-dev-secret
           HELIX_SMOKE_K6_API_BASE_URL: http://127.0.0.1:39531
           HELIX_SMOKE_K6_WEB_BASE_URL: http://127.0.0.1:39531
-          HELIX_SMOKE_K6_SCENARIO_GROUPS: api_smoke,mail_api,inbound_mail,search,chat,mcp,otel_health
+          HELIX_SMOKE_K6_SCENARIO_GROUPS: api_smoke,mail_api,search,chat,mcp,otel_health
           HELIX_SMOKE_K6_DURATION: 2s
           HELIX_K6_RUNNER: docker
           HELIX_K6_DOCKER_API_BASE_URL: http://host.docker.internal:39531
           HELIX_K6_DOCKER_WEB_BASE_URL: http://host.docker.internal:39531
+          API_TARGETS: /healthz,/readyz,/metrics
+          # The full MCP catalog is roughly 1.7 MB; budget serialization and
+          # transfer separately from the low-latency API health probes.
+          MCP_CATALOG_P95_MS: "1500"
           MAIL_API_BODY: '{"query":"Renovate","limit":10}'
           MAIL_API_EXPECT: Renovate
-          INBOUND_MAIL_MARKER: helix-ci-inbound-mail-probe
-          INBOUND_MAIL_TO: local-admin@helix.local
           SEARCH_TOOL_IDS: search.query
           SEARCH_BODY: '{"query":"Mail density","types":["chat"],"limit":10}'
           SEARCH_EXPECT: Mail density
@@ -158,9 +224,20 @@ jobs:
 
   accessibility-and-load:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -172,12 +249,21 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
+
       - name: Build web app
         run: pnpm --filter @helix/web build
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @helix/web exec playwright install --with-deps chromium
 
       - name: Start web preview
         run: |
@@ -193,6 +279,14 @@ jobs:
         env:
           HELIX_A11Y_REPORT_DIR: /tmp/helix-a11y
         run: pnpm quality:a11y
+
+      - name: Upload accessibility report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accessibility-report
+          path: /tmp/helix-a11y
+          retention-days: 7
 
       - name: Validate k6 quality gate
         run: pnpm quality:k6

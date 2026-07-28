@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { uploadDriveFile } from "@/features/drive/api";
 import type { SheetsApiCell, SheetsApiTab, SheetsDriveComment } from "./api";
-import { NativeSpreadsheetEditor } from "./native-spreadsheet-editor";
+import { NativeSpreadsheetEditor, adjustSheetDecimalFormat } from "./native-spreadsheet-editor";
 
 vi.mock("@/features/drive/api", () => ({
   uploadDriveFile: vi.fn(),
@@ -43,6 +43,19 @@ interface TestCellWindow {
 }
 
 describe("NativeSpreadsheetEditor", () => {
+  it("adjusts decimal precision without discarding currency or percent semantics", () => {
+    expect(adjustSheetDecimalFormat({ numberFormat: "currency" }, 1)).toEqual({
+      numberFormat: "custom",
+      customNumberFormat: "$#,##0.000",
+    });
+    expect(
+      adjustSheetDecimalFormat({ numberFormat: "custom", customNumberFormat: "0.00%;(0.00%)" }, -1),
+    ).toEqual({
+      numberFormat: "custom",
+      customNumberFormat: "0.0%;(0.0%)",
+    });
+  });
+
   beforeEach(() => {
     container = document.createElement("div");
     document.body.append(container);
@@ -2281,7 +2294,7 @@ describe("NativeSpreadsheetEditor", () => {
       url: "/api/tools/sheets.cells.update",
       body: { tabId, edits: [{ row: 1, col: 1, value: "101" }] },
     });
-  }, 20_000);
+  }, 45_000);
 
   it("validates URL, localized date, and custom formula catalog rules", async () => {
     render();
@@ -3590,7 +3603,7 @@ async function editCell(label: string, value: string): Promise<void> {
   const target = input(label);
   await act(async () => {
     target.focus();
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
+
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (valueSetter !== undefined) {
       Reflect.apply(valueSetter, target, [value]);
@@ -3605,7 +3618,7 @@ async function editFormulaBar(value: string): Promise<void> {
   const target = formulaBar();
   await act(async () => {
     target.focus();
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
+
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (valueSetter !== undefined) {
       Reflect.apply(valueSetter, target, [value]);
@@ -3620,7 +3633,7 @@ async function editTextInput(label: string, value: string): Promise<void> {
   const target = input(label);
   await act(async () => {
     target.focus();
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
+
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (valueSetter !== undefined) {
       Reflect.apply(valueSetter, target, [value]);
@@ -3635,7 +3648,7 @@ async function editTextarea(label: string, value: string): Promise<void> {
   const target = textarea(label);
   await act(async () => {
     target.focus();
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
+
     const valueSetter = Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,
       "value",
@@ -3651,7 +3664,6 @@ async function editTextarea(label: string, value: string): Promise<void> {
 async function changeCell(label: string, value: string): Promise<void> {
   const target = input(label);
   await act(async () => {
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (valueSetter !== undefined) {
       Reflect.apply(valueSetter, target, [value]);

@@ -14,7 +14,7 @@ import {
 import { slidesDeckDetailQueryOptions } from "./queries";
 import { SlidesList } from "./slides-list";
 import type { SlideDeck } from "./seed";
-import { UniversalEditorRouter } from "@/features/_open/ui";
+import { UniversalEditorRouter } from "@/features/_open/ui/UniversalEditorRouter";
 
 export interface SlidesViewRouteState {
   readonly deckId: string | null;

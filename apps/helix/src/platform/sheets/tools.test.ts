@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { Actor } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
@@ -7,6 +7,7 @@ import { registerSheetsTools } from "./tools.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
+const corpusIt = existsSync("../../test-corpus/apache-tika") ? it : it.skip;
 
 function readerActor(): Actor {
   return { id: actorId, orgId, type: "user", scopes: ["sheets.read"] };
@@ -159,7 +160,12 @@ describe("sheets tools", () => {
     const copiedTabId = copied.ok ? (copied.output.tabs[0]?.id ?? "") : "";
     expect(copiedTabId).not.toBe(tabId);
     const copiedCells = await registry.invoke<{
-      readonly cells: readonly { readonly row: number; readonly col: number; readonly value: string; readonly format: Record<string, unknown> }[];
+      readonly cells: readonly {
+        readonly row: number;
+        readonly col: number;
+        readonly value: string;
+        readonly format: Record<string, unknown>;
+      }[];
     }>("sheets.tab.get", { tabId: copiedTabId }, { actor });
     expect(copiedCells.ok ? copiedCells.output.cells : []).toContainEqual(
       expect.objectContaining({ row: 1, col: 1, value: "ARR", format: { bold: true } }),
@@ -430,7 +436,7 @@ describe("sheets tools", () => {
     }
   });
 
-  it("sanitizes corpus XLSB workbook tab names before storing them", async () => {
+  corpusIt("sanitizes corpus XLSB workbook tab names before storing them", async () => {
     const { registry } = setup();
     const actor = writerActor();
     const buffer = readFileSync("../../test-corpus/apache-tika/microsoft/testEXCEL.xlsb");

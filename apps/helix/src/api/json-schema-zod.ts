@@ -1,4 +1,4 @@
-import { z, type ZodTypeAny } from "zod";
+import { z, type ZodTypeAny } from "zod3";
 import type { JsonObject } from "@helix/sdk-types";
 
 /**

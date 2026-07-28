@@ -23,6 +23,10 @@ describe("helix/no-raw-process-env", () => {
         },
         {
           code: "const x = process.env.FOO;",
+          filename: "/repo/apps/web/tests/e2e/support/backend-mode.ts",
+        },
+        {
+          code: "const x = process.env.FOO;",
           filename: "/repo/apps/helix/src/db/seed-local-demo.ts",
         },
         {

@@ -52,7 +52,8 @@ export class PostgresTenantScimCredentialStore implements TenantScimCredentialSt
       limit 1
     `;
     const rows = selectedRows as unknown as readonly TenantScimCredentialRow[];
-    return rows.length === 0 ? null : mapRow(rows[0]!);
+    const row = rows[0];
+    return row === undefined ? null : mapRow(row);
   }
 
   async upsert(input: UpsertTenantScimCredentialInput): Promise<TenantScimCredentialRecord> {
@@ -76,7 +77,11 @@ export class PostgresTenantScimCredentialStore implements TenantScimCredentialSt
                 created_at, updated_at
     `;
     const rows = insertedRows as unknown as readonly TenantScimCredentialRow[];
-    return mapRow(rows[0]!);
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error(`Failed to upsert SCIM credential for org ${input.orgId}`);
+    }
+    return mapRow(row);
   }
 
   async delete(orgId: string): Promise<TenantScimCredentialRecord | null> {
@@ -87,7 +92,8 @@ export class PostgresTenantScimCredentialStore implements TenantScimCredentialSt
                 created_at, updated_at
     `;
     const rows = deletedRows as unknown as readonly TenantScimCredentialRow[];
-    return rows.length === 0 ? null : mapRow(rows[0]!);
+    const row = rows[0];
+    return row === undefined ? null : mapRow(row);
   }
 }
 

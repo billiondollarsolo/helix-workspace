@@ -7,7 +7,7 @@ import { Link, useLocation } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { APPS, appForRoute } from "@/components/apps";
 import { HelixLogo } from "@/components/shell/helix-logo";
-import { useEnabledApps, type AppId } from "@/features/apps/use-enabled-apps";
+import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 
 export interface RailProps {
   /** Open the app launcher popover. */
@@ -31,7 +31,7 @@ export function Rail({ onOpenLauncher }: RailProps) {
         <HelixLogo size={22} />
       </button>
       <div className="rail-divider" />
-      {APPS.filter((app) => enabled.isEnabled(app.id as AppId)).map((app) => {
+      {APPS.filter((app) => enabled.isEnabled(app.id)).map((app) => {
         const Icon = Icons[app.icon];
         const active = activeApp?.id === app.id;
         return (

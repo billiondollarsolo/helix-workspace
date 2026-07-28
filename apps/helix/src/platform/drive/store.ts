@@ -35,16 +35,8 @@ import {
   DriveNotFoundError,
   DriveStorageQuotaExceededError,
 } from "./errors.js";
-import {
-  type DriveRole,
-  driveRoleRank,
-  hasRoleAtLeast,
-  normalizeDriveRole,
-} from "./core/roles.js";
-import {
-  assertProvidedFinalizeStorageKey,
-  driveStorageKey,
-} from "./core/storage-key.js";
+import { type DriveRole, driveRoleRank, hasRoleAtLeast, normalizeDriveRole } from "./core/roles.js";
+import { assertProvidedFinalizeStorageKey, driveStorageKey } from "./core/storage-key.js";
 import {
   isDriveBlobStorageKey,
   resolveBlobByteSource,
@@ -60,15 +52,8 @@ import {
   validateCompletedParts,
 } from "./multipart.js";
 import { distinctStoredBytes, projectQuota } from "./core/quota.js";
-import {
-  mentionedActorIds,
-  mentionTokensForComment,
-} from "./core/mentions.js";
-import {
-  createDefaultTrashSyncRegistry,
-  type TrashSyncRegistry,
-  type TrashSyncSql,
-} from "./core/trash-sync.js";
+import { mentionedActorIds, mentionTokensForComment } from "./core/mentions.js";
+import { createDefaultTrashSyncRegistry, type TrashSyncRegistry } from "./core/trash-sync.js";
 import {
   bytesFromDatabase,
   mapDriveAccessGrant as mapDriveAccessGrantCore,
@@ -630,19 +615,12 @@ export class PostgresDriveStore
     });
   }
 
-  async completeMultipartUpload(
-    input: CompleteMultipartUploadInput,
-  ): Promise<DriveVersionRecord> {
+  async completeMultipartUpload(input: CompleteMultipartUploadInput): Promise<DriveVersionRecord> {
     const storage = await this.storageForOrg(input.orgId);
     if (storage?.completeMultipartUpload === undefined) {
       throw new Error("Drive multipart upload is not configured for this storage client.");
     }
-    const object = await requireObjectAccess(
-      this.sql,
-      input.orgId,
-      input.actorId,
-      input.objectId,
-    );
+    const object = await requireObjectAccess(this.sql, input.orgId, input.actorId, input.objectId);
     const expectedParts = planMultipartParts(
       input.byteSize,
       this.options.multipartPartSizeBytes ?? DEFAULT_MULTIPART_PART_SIZE,
@@ -1667,7 +1645,13 @@ export class PostgresDriveStore
   }): Promise<boolean> {
     let storageDelta = 0;
     const deletedObject = await this.sql.begin(async (tx) => {
-      const object = await requireObjectRole(tx, input.orgId, input.actorId, input.objectId, "owner");
+      const object = await requireObjectRole(
+        tx,
+        input.orgId,
+        input.actorId,
+        input.objectId,
+        "owner",
+      );
       const versionRows = (await tx`
         select storage_key, byte_size from drive_versions
         where object_id = ${input.objectId} and org_id = ${input.orgId}
@@ -2679,7 +2663,7 @@ async function syncTargetDeletedAt(
   `) as unknown as readonly { readonly app: string | null }[];
   const app = rows[0]?.app ?? null;
   await trashSync.run(app, {
-    sql: sql as unknown as TrashSyncSql,
+    sql: sql,
     orgId,
     objectId,
     deletedAt,
@@ -3059,8 +3043,6 @@ function mapDriveSearchRecord(row: DriveSearchProjectionRow): DriveSearchRecord 
   };
 }
 
-
-
 function driveObjectMetadata(value: JsonObject): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
@@ -3125,22 +3107,6 @@ function metadataClassificationProperty(
     value === "restricted"
     ? { classification: value }
     : {};
-}
-
-function drivePreviewProperty(
-  mimeType: string,
-  metadata: JsonObject,
-): Pick<DriveEntryRecord, "preview"> {
-  const preview = drivePreviewFromMetadata(mimeType, metadata);
-  return preview === undefined ? {} : { preview };
-}
-
-function driveSearchPreviewProperty(
-  mimeType: string,
-  metadata: JsonObject,
-): Pick<DriveSearchHit, "previewMetadata"> {
-  const preview = drivePreviewFromMetadata(mimeType, metadata);
-  return preview === undefined ? {} : { previewMetadata: preview };
 }
 
 function drivePreviewFromMetadata(

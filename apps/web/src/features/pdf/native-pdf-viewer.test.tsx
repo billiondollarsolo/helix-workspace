@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/require-await, @typescript-eslint/unbound-method -- PDF viewer tests use jsdom/pdf-lib mocks and React act wrappers. */
+/* eslint-disable @typescript-eslint/require-await -- PDF viewer tests use jsdom/pdf-lib mocks and React act wrappers. */
 
 import { act } from "react";
 import { QueryClient } from "@tanstack/react-query";

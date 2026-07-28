@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod3";
 import { getCryptoProvider } from "../crypto/index.js";
 import type postgres from "postgres";
 import type { Actor, JsonObject, ToolDefinition } from "@helix/sdk-types";

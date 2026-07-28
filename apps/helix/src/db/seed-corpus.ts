@@ -112,7 +112,9 @@ interface CachedMetadata {
   readonly extension: string;
 }
 
-async function loadCachedContent(manifestId: string): Promise<{ body: Buffer; hash: string; extension: string }> {
+async function loadCachedContent(
+  manifestId: string,
+): Promise<{ body: Buffer; hash: string; extension: string }> {
   const metaPath = resolve(CACHE_ROOT, manifestId, "metadata.json");
   const meta = JSON.parse(await readFile(metaPath, "utf8")) as CachedMetadata;
   const contentPath = resolve(CACHE_ROOT, manifestId, `content.${meta.extension}`);
@@ -135,7 +137,10 @@ interface Actor {
   readonly displayName: string;
 }
 
-async function resolveActors(sql: SeedSql, emails: readonly string[]): Promise<ReadonlyMap<string, Actor>> {
+async function resolveActors(
+  sql: SeedSql,
+  emails: readonly string[],
+): Promise<ReadonlyMap<string, Actor>> {
   if (emails.length === 0) {
     return new Map();
   }
@@ -264,7 +269,12 @@ async function lookupRegistration(
 
 async function recordRegistration(
   sql: SeedSql,
-  reg: ManifestRegistration & { orgId: string; ownerActorId: string; sourceUrl?: string; driveObjectId?: string },
+  reg: ManifestRegistration & {
+    orgId: string;
+    ownerActorId: string;
+    sourceUrl?: string;
+    driveObjectId?: string;
+  },
 ): Promise<void> {
   await sql`
     insert into seed_corpus_assets (
@@ -302,7 +312,15 @@ async function createFolder(
       ${sql.json({ source: "corpus", manifestId: spec.manifestId })}
     )
   `;
-  await grant(sql, ownerActor.orgId, ownerActor.id, "drive_folder", folderId, "owner", ownerActor.id);
+  await grant(
+    sql,
+    ownerActor.orgId,
+    ownerActor.id,
+    "drive_folder",
+    folderId,
+    "owner",
+    ownerActor.id,
+  );
   if (spec.share.kind === "private") {
     // Private folder stays private — only the owner gets a grant. The
     // contents would also be private unless explicitly shared.
@@ -321,7 +339,15 @@ async function createFolder(
     await grant(sql, ownerActor.orgId, memberId, "drive_folder", folderId, "viewer", ownerActor.id);
   }
   for (const target of shareTargets) {
-    await grant(sql, ownerActor.orgId, target.actorId, "drive_folder", folderId, "viewer", ownerActor.id);
+    await grant(
+      sql,
+      ownerActor.orgId,
+      target.actorId,
+      "drive_folder",
+      folderId,
+      "viewer",
+      ownerActor.id,
+    );
   }
   return folderId;
 }
@@ -399,8 +425,24 @@ async function createDocFromMarkdown(
   // edit/comment/review permission bits + view/edit mode.
   for (const target of shareTargets) {
     await grant(sql, ownerActor.orgId, target.actorId, "thread", threadId, "member", ownerActor.id);
-    await grant(sql, ownerActor.orgId, target.actorId, "document", documentId, target.role, ownerActor.id);
-    await grant(sql, ownerActor.orgId, target.actorId, "object", objectId, target.role, ownerActor.id);
+    await grant(
+      sql,
+      ownerActor.orgId,
+      target.actorId,
+      "document",
+      documentId,
+      target.role,
+      ownerActor.id,
+    );
+    await grant(
+      sql,
+      ownerActor.orgId,
+      target.actorId,
+      "object",
+      objectId,
+      target.role,
+      ownerActor.id,
+    );
   }
 
   return { documentId, objectId };
@@ -447,7 +489,15 @@ async function createDriveFile(
 
   await grant(sql, ownerActor.orgId, ownerActor.id, "object", objectId, "owner", ownerActor.id);
   for (const target of shareTargets) {
-    await grant(sql, ownerActor.orgId, target.actorId, "object", objectId, target.role, ownerActor.id);
+    await grant(
+      sql,
+      ownerActor.orgId,
+      target.actorId,
+      "object",
+      objectId,
+      target.role,
+      ownerActor.id,
+    );
   }
   return { objectId };
 }
@@ -545,7 +595,8 @@ async function seedCorpus(sql: postgres.Sql): Promise<CorpusStats> {
       continue;
     }
 
-    const folderId = existing?.entityId ?? (await createFolder(sql, spec, owner, parentId, targets));
+    const folderId =
+      existing?.entityId ?? (await createFolder(sql, spec, owner, parentId, targets));
     if (existing) {
       stats.folders.updated += 1;
     } else {
@@ -574,11 +625,12 @@ async function seedCorpus(sql: postgres.Sql): Promise<CorpusStats> {
     }
     // null/omitted folder → file lives at the drive root. Otherwise look
     // up the corpus folder id; an unknown folder ref is a manifest typo.
-    const folderId: string | null = item.folder === undefined || item.folder === null
-      ? null
-      : (folderIdByManifestId.get(item.folder) ?? null);
+    const folderId: string | null =
+      item.folder === undefined || item.folder === null
+        ? null
+        : (folderIdByManifestId.get(item.folder) ?? null);
     if (item.folder !== undefined && item.folder !== null && folderId === null) {
-      throw new Error(`item ${item.manifestId}: unknown folder ${String(item.folder)}`);
+      throw new Error(`item ${item.manifestId}: unknown folder ${item.folder}`);
     }
 
     let cached;
@@ -666,11 +718,12 @@ async function seedCorpus(sql: postgres.Sql): Promise<CorpusStats> {
     }
     // null/omitted folder → file lives at the drive root. Otherwise look
     // up the corpus folder id; an unknown folder ref is a manifest typo.
-    const folderId: string | null = item.folder === undefined || item.folder === null
-      ? null
-      : (folderIdByManifestId.get(item.folder) ?? null);
+    const folderId: string | null =
+      item.folder === undefined || item.folder === null
+        ? null
+        : (folderIdByManifestId.get(item.folder) ?? null);
     if (item.folder !== undefined && item.folder !== null && folderId === null) {
-      throw new Error(`item ${item.manifestId}: unknown folder ${String(item.folder)}`);
+      throw new Error(`item ${item.manifestId}: unknown folder ${item.folder}`);
     }
 
     let cached;
@@ -727,7 +780,14 @@ async function seedCorpus(sql: postgres.Sql): Promise<CorpusStats> {
         driveObjectId: existing.entityId,
       });
     } else {
-      const { documentId, objectId } = await createDocFromMarkdown(sql, item, owner, folderId, markdown, targets);
+      const { documentId, objectId } = await createDocFromMarkdown(
+        sql,
+        item,
+        owner,
+        folderId,
+        markdown,
+        targets,
+      );
       stats.docs.created += 1;
       await recordRegistration(sql, {
         manifestId: item.manifestId,
@@ -757,7 +817,10 @@ function orderFolders(folders: readonly FolderSpec[]): readonly FolderSpec[] {
         `seed-corpus: folder cycle or unknown parent reference among: ${remaining.map((f) => f.manifestId).join(", ")}`,
       );
     }
-    const spec = remaining.splice(idx, 1)[0]!;
+    const [spec] = remaining.splice(idx, 1);
+    if (spec === undefined) {
+      throw new Error("seed-corpus: folder ordering invariant failed");
+    }
     ordered.push(spec);
     placed.add(spec.manifestId);
   }
@@ -787,7 +850,9 @@ async function main(): Promise<void> {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   void main().catch((error: unknown) => {
-    process.stderr.write(`seed-corpus FAILED: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(
+      `seed-corpus FAILED: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
     process.exit(1);
   });
 }

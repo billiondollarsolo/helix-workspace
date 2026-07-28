@@ -8,8 +8,6 @@
  * Decorative for v1 (margin drags not wired yet).
  */
 
-import type { CSSProperties } from "react";
-
 const PX_PER_INCH = 96;
 
 export interface NativeDocumentRulerProps {
@@ -34,8 +32,7 @@ export function NativeDocumentRuler({ pageWidth, sidePadding }: NativeDocumentRu
         fontSize: 10,
         fontFamily: "system-ui",
         userSelect: "none",
-        background:
-          `linear-gradient(to right, var(--surface-2) 0, var(--surface-2) ${sidePadding}px, var(--surface) ${sidePadding}px, var(--surface) calc(100% - ${sidePadding}px), var(--surface-2) calc(100% - ${sidePadding}px), var(--surface-2) 100%)`,
+        background: `linear-gradient(to right, var(--surface-2) 0, var(--surface-2) ${sidePadding}px, var(--surface) ${sidePadding}px, var(--surface) calc(100% - ${sidePadding}px), var(--surface-2) calc(100% - ${sidePadding}px), var(--surface-2) 100%)`,
         borderInline: "1px solid var(--border)",
       }}
     >

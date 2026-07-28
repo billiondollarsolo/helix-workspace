@@ -556,7 +556,10 @@ export const vectorItems = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.orgId, table.collectionName, table.id] }),
-    orgCollectionIdx: index("vector_items_org_collection_idx").on(table.orgId, table.collectionName),
+    orgCollectionIdx: index("vector_items_org_collection_idx").on(
+      table.orgId,
+      table.collectionName,
+    ),
     metadataIdx: index("vector_items_metadata_idx").using("gin", table.metadata),
   }),
 );
@@ -1596,7 +1599,9 @@ export const sheetOpLog = pgTable(
   "sheet_op_log",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
+    orgId: uuid("org_id")
+      .references(() => orgs.id, { onDelete: "cascade" })
+      .notNull(),
     sheetId: uuid("sheet_id")
       .references(() => sheets.id, { onDelete: "cascade" })
       .notNull(),

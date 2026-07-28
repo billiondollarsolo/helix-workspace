@@ -1,13 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { z } from "zod";
 import { VerifyEmailShell } from "@/features/signup/verify-email-shell";
-
-const verifyEmailSearchSchema = z.object({
-  token: z.string().optional().default(""),
-});
+import { stringSearchParam } from "@/lib/search-params";
 
 export const Route = createFileRoute("/signup_/verify-email")({
-  validateSearch: (search) => verifyEmailSearchSchema.parse(search),
+  validateSearch: (search) => ({ token: stringSearchParam(search.token) }),
   component: VerifyEmailRoute,
 });
 
@@ -15,4 +11,3 @@ function VerifyEmailRoute() {
   const search = Route.useSearch();
   return <VerifyEmailShell token={search.token} />;
 }
-

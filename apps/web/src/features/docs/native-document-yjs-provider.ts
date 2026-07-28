@@ -1,3 +1,4 @@
+import { Debouncer } from "@tanstack/pacer";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as awarenessProtocol from "y-protocols/awareness";
@@ -44,7 +45,7 @@ export class NativeDocumentYjsProvider {
   private status: NativeDocumentProviderStatus = "offline";
   private listening = false;
   private reconnectAttempts = 0;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly reconnectDebouncer: Debouncer<() => void>;
 
   constructor(input: NativeDocumentYjsProviderInput) {
     this.url = input.url;
@@ -57,10 +58,16 @@ export class NativeDocumentYjsProvider {
     this.reconnect = input.reconnect ?? true;
     this.reconnectDelayMs = input.reconnectDelayMs ?? defaultReconnectDelayMs;
     this.maxReconnectAttempts = input.maxReconnectAttempts ?? defaultMaxReconnectAttempts;
+    this.reconnectDebouncer = new Debouncer(
+      () => {
+        this.connect();
+      },
+      { wait: this.reconnectDelayMs },
+    );
   }
 
   connect(): void {
-    this.clearReconnectTimer();
+    this.reconnectDebouncer.cancel();
     if (this.socket !== null || this.WebSocketCtor === undefined) {
       this.setStatus("offline");
       return;
@@ -78,7 +85,7 @@ export class NativeDocumentYjsProvider {
 
   disconnect(options: NativeDocumentYjsProviderDisconnectOptions = {}): void {
     const notify = options.notify ?? true;
-    this.clearReconnectTimer();
+    this.reconnectDebouncer.cancel();
     this.reconnectAttempts = 0;
     const socket = this.socket;
     this.detachLocalListeners();
@@ -258,24 +265,13 @@ export class NativeDocumentYjsProvider {
       !this.reconnect ||
       this.WebSocketCtor === undefined ||
       this.socket !== null ||
-      this.reconnectTimer !== null ||
+      this.reconnectDebouncer.store.state.isPending ||
       this.reconnectAttempts >= this.maxReconnectAttempts
     ) {
       return;
     }
     this.reconnectAttempts += 1;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, this.reconnectDelayMs);
-  }
-
-  private clearReconnectTimer(): void {
-    if (this.reconnectTimer === null) {
-      return;
-    }
-    clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
+    this.reconnectDebouncer.maybeExecute();
   }
 
   private setStatus(status: NativeDocumentProviderStatus): void {

@@ -10,7 +10,7 @@ describe("trash-sync registry", () => {
     const docs = vi.fn(async (_input: TrashSyncInput) => undefined);
     const registry = createTrashSyncRegistry({ docs });
     const input: TrashSyncInput = {
-      sql: (() => Promise.resolve([])) as TrashSyncInput["sql"],
+      sql: () => Promise.resolve([]),
       orgId: "org",
       objectId: "obj",
       deletedAt: new Date("2026-07-18T00:00:00.000Z"),
@@ -24,7 +24,7 @@ describe("trash-sync registry", () => {
     const docs = vi.fn(async () => undefined);
     const registry = createTrashSyncRegistry({ docs });
     await registry.run("unknown", {
-      sql: (() => Promise.resolve([])) as TrashSyncInput["sql"],
+      sql: () => Promise.resolve([]),
       orgId: "org",
       objectId: "obj",
       deletedAt: new Date(),
@@ -40,14 +40,14 @@ describe("trash-sync registry", () => {
       },
     });
     await registry.run("sheets", {
-      sql: (() => Promise.resolve([])) as TrashSyncInput["sql"],
+      sql: () => Promise.resolve([]),
       orgId: "o",
       objectId: "x",
       deletedAt: null,
     });
     const trashAt = new Date("2026-01-01T00:00:00.000Z");
     await registry.run("sheets", {
-      sql: (() => Promise.resolve([])) as TrashSyncInput["sql"],
+      sql: () => Promise.resolve([]),
       orgId: "o",
       objectId: "x",
       deletedAt: trashAt,

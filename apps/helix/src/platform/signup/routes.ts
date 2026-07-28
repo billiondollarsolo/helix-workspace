@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import type { Actor, HelixConfig, MeteringClient } from "@helix/sdk-types";
 import { unauthenticatedActor } from "../../api/actor.js";
 import { buildErrorEnvelope } from "../../api/error-envelope.js";
@@ -216,6 +216,21 @@ export function shouldRegisterSignupRoutes(config: Pick<HelixConfig, "mode">): b
   return isSaas(config);
 }
 
+const REQUIRED_SAAS_SIGNUP_DEPENDENCIES = [
+  "orgs",
+  "provisioning",
+  "verificationTokens",
+  "identities",
+  "outbox",
+  "abuse",
+  "ownerEmails",
+  "passwordScreener",
+  "riskReviewer",
+  "actorFromRequest",
+  "onboarding",
+  "onboardingInvites",
+] as const;
+
 export async function registerSignupRoutesForMode(
   app: FastifyInstance,
   options: {
@@ -242,6 +257,14 @@ export async function registerSignupRoutesForMode(
 ): Promise<void> {
   if (!shouldRegisterSignupRoutes(options.config)) {
     return;
+  }
+  const missingDependencies = REQUIRED_SAAS_SIGNUP_DEPENDENCIES.filter(
+    (dependency) => options[dependency] === undefined,
+  );
+  if (missingDependencies.length > 0) {
+    throw new Error(
+      `SaaS signup cannot start without required dependencies: ${missingDependencies.join(", ")}`,
+    );
   }
   await registerSignupRoutes(app, {
     ...(options.orgs === undefined ? {} : { orgs: options.orgs }),
@@ -848,7 +871,10 @@ export async function registerSignupRoutes(
       return invalidOnboardingIdentityChoice(reply, request);
     }
 
-    if (options.actorFromRequest === undefined || options.onboarding?.persistProgress === undefined) {
+    if (
+      options.actorFromRequest === undefined ||
+      options.onboarding?.persistProgress === undefined
+    ) {
       return reply.code(501).send(
         buildErrorEnvelope({
           statusCode: 501,
@@ -1532,7 +1558,10 @@ async function enqueueSignupActivationSloObserved(input: {
   readonly request: FastifyRequest;
 }): Promise<void> {
   const completedAt = input.succeededProvisioning.completedAt ?? new Date();
-  const durationSeconds = signupActivationDurationSeconds(input.provisioning.createdAt, completedAt);
+  const durationSeconds = signupActivationDurationSeconds(
+    input.provisioning.createdAt,
+    completedAt,
+  );
   await input.outbox?.insert({
     subject: signupActivationSloObservedSubject,
     payload: {
@@ -1550,7 +1579,7 @@ async function enqueueSignupActivationSloObserved(input: {
       completedAt: completedAt.toISOString(),
       completedStepCount: input.succeededProvisioning.completedSteps.length,
     },
-      ...traceForOutbox(input.request),
+    ...traceForOutbox(input.request),
   });
   input.metrics?.recordSignupActivationSlo({
     tier: input.org.tier,

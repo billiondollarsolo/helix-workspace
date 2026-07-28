@@ -65,7 +65,7 @@ export function SurfaceFrame({
         searchValue={searchValue}
         onSearchChange={onSearchChange}
       />
-      <div className="workspace-body">
+      <main className="workspace-body" aria-label={title}>
         {children}
         <SidePanel activeTool={sideTool} onClose={() => setSideTool(null)} />
         <SidePanelRail
@@ -74,7 +74,7 @@ export function SurfaceFrame({
             setSideTool((current) => (current === tool ? null : tool))
           }
         />
-      </div>
+      </main>
     </div>
   );
 }

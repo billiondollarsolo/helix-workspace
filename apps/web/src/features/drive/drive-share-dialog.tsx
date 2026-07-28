@@ -4,14 +4,13 @@ import { Icons } from "@/components/icons";
 import {
   createDriveShareLink,
   drivePublicShareUrl,
-  listDriveAccess,
   removeDriveAccess,
   shareDrive,
   updateDriveAccessRole,
   type DriveAccessGrant,
   type DriveAccessRole,
 } from "./api";
-import { driveActorQueryOptions, driveQueryKeys } from "./queries";
+import { driveAccessQueryOptions, driveActorQueryOptions, driveQueryKeys } from "./queries";
 
 interface DriveShareDialogProps {
   readonly objectId: string;
@@ -36,14 +35,9 @@ export function DriveShareDialog({
   const [shareInput, setShareInput] = useState("");
   const [shareRole, setShareRole] = useState<DriveAccessRole>("reader");
   const [copied, setCopied] = useState(false);
-  const accessQueryKey = ["drive", "access", objectId] as const;
+  const accessQueryKey = driveQueryKeys.access(objectId);
 
-  const accessQuery = useQuery({
-    queryKey: accessQueryKey,
-    queryFn: () => listDriveAccess(objectId),
-    enabled: false,
-    throwOnError: false,
-  });
+  const accessQuery = useQuery(driveAccessQueryOptions(objectId, false));
   const { refetch: refetchAccess } = accessQuery;
 
   useEffect(() => {
@@ -61,6 +55,8 @@ export function DriveShareDialog({
   };
 
   const shareMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
     mutationFn: (input: {
       readonly targets: readonly string[];
       readonly role: DriveAccessRole;
@@ -81,11 +77,15 @@ export function DriveShareDialog({
   });
 
   const removeAccessMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
     mutationFn: (actorId: string) => removeDriveAccess(objectId, actorId),
     onSuccess: invalidateAccess,
   });
 
   const updateAccessMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
     mutationFn: (input: { readonly actorId: string; readonly role: DriveAccessRole }) =>
       updateDriveAccessRole(objectId, input.actorId, input.role),
     onSuccess: invalidateAccess,
@@ -135,12 +135,7 @@ export function DriveShareDialog({
 
   return (
     <div style={overlayStyle}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Share ${objectName}`}
-        style={dialogStyle}
-      >
+      <div role="dialog" aria-modal="true" aria-label={`Share ${objectName}`} style={dialogStyle}>
         <div style={headerStyle}>
           <div style={{ minWidth: 0 }}>
             <h2 style={titleStyle}>Share</h2>
@@ -320,8 +315,7 @@ function Avatar({ name }: { readonly name: string }) {
   );
 }
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function driveShareTargetsFromInput(targets: readonly string[]): {
   readonly actorIds: readonly string[];

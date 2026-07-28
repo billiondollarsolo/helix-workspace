@@ -9,7 +9,7 @@ import type {
   Style,
   Worksheet,
 } from "exceljs";
-import { z } from "zod";
+import { z } from "zod3";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";

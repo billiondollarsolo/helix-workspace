@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { installCoreAppsRoutes } from "./support/api-fixtures";
 
+const accessTokenStorageKey = "helix.accessToken";
+const adminToken = "e2e-platform-config-token";
+
 type TierId = "personal" | "business" | "enterprise" | "sovereign";
 
 interface PlatformConfigPatch {
@@ -15,10 +18,11 @@ interface PlatformConfigPatchRequest {
   readonly pathname: string;
 }
 
-test.describe("/settings/admin platform config", () => {
+test.describe("/admin platform config", () => {
   test("sends the typed PATCH body and reflects a successful tier update", async ({ page }) => {
     const patchRequests: PlatformConfigPatchRequest[] = [];
 
+    await seedAdminToken(page);
     await mockPlatformConfig(page, {
       initialTier: "business",
       patchRequests,
@@ -26,7 +30,8 @@ test.describe("/settings/admin platform config", () => {
       patchedTier: "enterprise",
     });
 
-    await page.goto("/settings/admin");
+    await page.goto("/admin");
+    await page.getByRole("button", { name: "Tier readiness", exact: true }).click();
     await expect(page.getByText("Live platform config connected")).toBeVisible();
 
     await page.getByRole("button", { name: /Enterprise/ }).click();
@@ -46,6 +51,7 @@ test.describe("/settings/admin platform config", () => {
   test("sends the typed PATCH body and shows the mutation error state", async ({ page }) => {
     const patchRequests: PlatformConfigPatchRequest[] = [];
 
+    await seedAdminToken(page);
     await mockPlatformConfig(page, {
       initialTier: "business",
       patchRequests,
@@ -53,7 +59,8 @@ test.describe("/settings/admin platform config", () => {
       patchedTier: "business",
     });
 
-    await page.goto("/settings/admin");
+    await page.goto("/admin");
+    await page.getByRole("button", { name: "Tier readiness", exact: true }).click();
     await expect(page.getByText("Live platform config connected")).toBeVisible();
 
     await page.getByRole("button", { name: /Enterprise/ }).click();
@@ -76,6 +83,13 @@ test.describe("/settings/admin platform config", () => {
     ]);
   });
 });
+
+async function seedAdminToken(page: Page): Promise<void> {
+  await page.addInitScript(
+    ({ key, token }) => window.localStorage.setItem(key, token),
+    { key: accessTokenStorageKey, token: adminToken },
+  );
+}
 
 async function mockPlatformConfig(
   page: Page,

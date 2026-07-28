@@ -23,6 +23,7 @@ import { AICostLimitsManagement } from "@/features/admin/ai-cost-limits-manageme
 import { AIObservabilityDashboard } from "@/features/admin/ai-observability";
 import { CoreAppsManagement } from "@/features/admin/core-apps-management";
 import { IdentityManagement } from "@/features/admin/identity-management";
+import { SecurityTierReadiness } from "@/features/admin/security-tier-readiness";
 import { TenantConfigManagement } from "@/features/admin/tenant-config-management";
 import { AuditLogList } from "@/features/admin/audit-log";
 import { WebhookManagement } from "@/features/webhooks/webhook-management";
@@ -2306,6 +2307,7 @@ const SECTION_CONTENT: Record<AdminSectionId, () => ReactNode> = {
   users: AdminUsers,
   groups: AdminGroups,
   security: AdminSecurity,
+  "tier-readiness": withPageScroll(SecurityTierReadiness),
   identity: withPageScroll(IdentityManagement),
   apps: AdminApps,
   "core-apps": withPageScroll(CoreAppsManagement),

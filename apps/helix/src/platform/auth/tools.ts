@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod3";
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";

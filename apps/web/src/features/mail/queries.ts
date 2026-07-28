@@ -1,5 +1,9 @@
 import { queryOptions } from "@tanstack/react-query";
-import { z } from "zod";
+import {
+  optionalBooleanSearchParam,
+  optionalEnumSearchParam,
+  optionalStringSearchParam,
+} from "@/lib/search-params";
 import {
   getMailThread,
   getMailVacation,
@@ -109,31 +113,6 @@ export function mailLabelsQueryOptions() {
   });
 }
 
-const nonEmptyStringParam = z
-  .string()
-  .trim()
-  .min(1)
-  .optional()
-  .catch(undefined);
-
-const booleanRouteParam = z
-  .union([z.literal(true), z.literal("true"), z.literal("1")])
-  .optional()
-  .catch(undefined);
-
-const mailRouteSearchSchema = z
-  .object({
-    thread: nonEmptyStringParam,
-    message: nonEmptyStringParam,
-    q: nonEmptyStringParam,
-    label: z.enum(mailRouteLabels).optional().catch(undefined),
-    mailbox: z.enum(mailRouteMailboxes).optional().catch(undefined),
-    unread: booleanRouteParam,
-    priority: booleanRouteParam,
-    attachments: booleanRouteParam,
-  })
-  .catch({});
-
 export function mailSearchQueryOptions(input: MailSearchQueryInput = defaultMailSearchInput) {
   return queryOptions({
     queryKey: mailQueryKeys.search(input),
@@ -143,17 +122,15 @@ export function mailSearchQueryOptions(input: MailSearchQueryInput = defaultMail
 }
 
 export function validateMailRouteSearch(search: Record<string, unknown>): MailRouteSearch {
-  const parsed = mailRouteSearchSchema.parse(search);
-
   return {
-    thread: parsed.thread,
-    message: parsed.message,
-    q: parsed.q,
-    label: parsed.label,
-    mailbox: parsed.mailbox,
-    unread: parsed.unread === undefined ? undefined : true,
-    priority: parsed.priority === undefined ? undefined : true,
-    attachments: parsed.attachments === undefined ? undefined : true,
+    thread: optionalStringSearchParam(search.thread),
+    message: optionalStringSearchParam(search.message),
+    q: optionalStringSearchParam(search.q),
+    label: optionalEnumSearchParam(search.label, mailRouteLabels),
+    mailbox: optionalEnumSearchParam(search.mailbox, mailRouteMailboxes),
+    unread: optionalBooleanSearchParam(search.unread),
+    priority: optionalBooleanSearchParam(search.priority),
+    attachments: optionalBooleanSearchParam(search.attachments),
   };
 }
 

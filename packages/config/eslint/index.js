@@ -582,6 +582,18 @@ export const helixBrowserRules = {
   "helix/use-query-options": "error",
 };
 
+export const helixTestRules = {
+  "helix/pacer-discipline": "off",
+  // Test doubles and matcher helpers intentionally expose partial and
+  // dynamically typed values. Production code keeps the strict rules.
+  "@typescript-eslint/no-unsafe-argument": "off",
+  "@typescript-eslint/no-unsafe-assignment": "off",
+  "@typescript-eslint/no-unsafe-call": "off",
+  "@typescript-eslint/no-unsafe-member-access": "off",
+  "@typescript-eslint/no-unsafe-return": "off",
+  "@typescript-eslint/unbound-method": "off",
+};
+
 export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
@@ -605,6 +617,15 @@ export default tseslint.config(
       ...helixBrowserRules,
       "@typescript-eslint/no-deprecated": "off",
       "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+        },
+      ],
       "@typescript-eslint/require-await": "off",
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],
     },
@@ -618,12 +639,10 @@ export default tseslint.config(
       "**/tests/**/*.ts",
       "**/tests/**/*.tsx",
     ],
-    rules: {
-      "helix/pacer-discipline": "off",
-    },
+    rules: helixTestRules,
   },
   {
-    files: ["**/*.js"],
+    files: ["**/*.{js,mjs,cjs}"],
     ...tseslint.configs.disableTypeChecked,
   },
 );

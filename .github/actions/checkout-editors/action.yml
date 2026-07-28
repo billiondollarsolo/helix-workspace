@@ -1,0 +1,47 @@
+name: Checkout paired helix-editors
+description: Check out helix-editors beside helix-workspace and select a coordinated ref.
+
+inputs:
+  requested-ref:
+    description: Explicit helix-editors ref requested by workflow_dispatch.
+    required: false
+    default: ""
+  candidate-ref:
+    description: Same-named branch to use when it exists in helix-editors.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout helix-editors main
+      uses: actions/checkout@v4
+      with:
+        repository: billiondollarsolo/helix-editors
+        ref: main
+        path: helix-all/helix-editors
+
+    - name: Select coordinated helix-editors ref
+      shell: bash
+      working-directory: helix-all/helix-editors
+      env:
+        REQUESTED_REF: ${{ inputs.requested-ref }}
+        CANDIDATE_REF: ${{ inputs.candidate-ref }}
+      run: |
+        set -euo pipefail
+
+        if [[ -n "$REQUESTED_REF" ]]; then
+          git fetch --depth=1 origin "$REQUESTED_REF"
+          git checkout --detach FETCH_HEAD
+          echo "Using explicitly requested helix-editors ref: $REQUESTED_REF"
+        elif [[ -n "$CANDIDATE_REF" ]] &&
+          git ls-remote --exit-code --heads origin "refs/heads/$CANDIDATE_REF" >/dev/null; then
+          git fetch --depth=1 origin "refs/heads/$CANDIDATE_REF"
+          git checkout --detach FETCH_HEAD
+          echo "Using paired helix-editors branch: $CANDIDATE_REF"
+        else
+          echo "No paired helix-editors branch found; using main."
+        fi
+
+        printf 'helix-editors SHA: '
+        git rev-parse HEAD

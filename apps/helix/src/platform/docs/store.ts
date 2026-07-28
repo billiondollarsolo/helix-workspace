@@ -401,7 +401,10 @@ export class PostgresDocsStore
         folderId: input.folderId ?? null,
         editorEngine: input.editorEngine ?? "legacy-yjs",
         formatVersion: input.formatVersion ?? 1,
-        preview: nativeDocumentPreviewMetadata(input.title, documentTextFromStoredState(initialState.state)),
+        preview: nativeDocumentPreviewMetadata(
+          input.title,
+          documentTextFromStoredState(initialState.state),
+        ),
       });
 
       await tx`
@@ -486,7 +489,7 @@ export class PostgresDocsStore
           and metadata->>'app' = 'docs'
         limit 1
       `) as unknown as readonly { readonly metadata: JsonObject }[];
-      const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata?.folderId);
+      const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata.folderId);
       const folderId = input.folderId === undefined ? sourceFolderId : input.folderId;
       const title = input.title?.trim() || `${existing.title} (Copy)`;
       const state = existing.ydocState ?? Buffer.from("", "utf8");
@@ -678,7 +681,12 @@ export class PostgresDocsStore
             ),
             '{preview}',
             ${tx.json(
-              toSqlJson(nativeDocumentPreviewMetadata(input.title, documentTextFromStoredState(document.ydocState))),
+              toSqlJson(
+                nativeDocumentPreviewMetadata(
+                  input.title,
+                  documentTextFromStoredState(document.ydocState),
+                ),
+              ),
             )}::jsonb,
             true
             ),

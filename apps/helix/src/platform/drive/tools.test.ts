@@ -48,38 +48,40 @@ describe("drive tools", () => {
         .filter((tool) => tool.id.startsWith("drive."))
         .map((tool) => tool.id)
         .sort(),
-    ).toEqual([
-      "drive.access.list",
-      "drive.access.remove",
-      "drive.access.update",
-      "drive.comment.create",
-      "drive.comment.delete",
-      "drive.comment.list",
-      "drive.comment.reopen",
-      "drive.comment.resolve",
-      "drive.comment.update",
-      "drive.create",
-      "drive.delete",
-      "drive.finalize",
-      "drive.link.create",
-      "drive.link.list",
-      "drive.link.revoke",
-      "drive.list",
-      "drive.move",
-      "drive.pdfFormState.clear",
-      "drive.pdfFormState.get",
-      "drive.pdfFormState.save",
-      "drive.rename",
-      "drive.restore",
-      "drive.search",
-      "drive.share",
-      "drive.star.set",
-      "drive.trash",
-      "drive.upload",
-      "drive.upload.complete",
-      "drive.versions.list",
-      "drive.versions.revert",
-    ].sort());
+    ).toEqual(
+      [
+        "drive.access.list",
+        "drive.access.remove",
+        "drive.access.update",
+        "drive.comment.create",
+        "drive.comment.delete",
+        "drive.comment.list",
+        "drive.comment.reopen",
+        "drive.comment.resolve",
+        "drive.comment.update",
+        "drive.create",
+        "drive.delete",
+        "drive.finalize",
+        "drive.link.create",
+        "drive.link.list",
+        "drive.link.revoke",
+        "drive.list",
+        "drive.move",
+        "drive.pdfFormState.clear",
+        "drive.pdfFormState.get",
+        "drive.pdfFormState.save",
+        "drive.rename",
+        "drive.restore",
+        "drive.search",
+        "drive.share",
+        "drive.star.set",
+        "drive.trash",
+        "drive.upload",
+        "drive.upload.complete",
+        "drive.versions.list",
+        "drive.versions.revert",
+      ].sort(),
+    );
     expect(registry.list().find((tool) => tool.id === "drive.comment.delete")).toMatchObject({
       confirmationRequired: true,
     });
@@ -99,12 +101,11 @@ describe("drive tools", () => {
     const registry = createToolRegistry();
     registerDriveTools(registry, { store: new FakeDriveStore() });
     const listTool = registry.list().find((t) => t.id === "drive.list");
-    expect(listTool).toBeDefined();
-    const out = await listTool!.handler(
-      { folderId: null, includeTrashed: false, limit: 100 },
-      { actor: { id: actorId, orgId, type: "user", scopes: ["drive.read"] } } as never,
-    );
-    expect(() => listTool!.outputSchema.parse(out)).not.toThrow();
+    if (listTool === undefined) throw new Error("Missing drive.list tool");
+    const out = await listTool.handler({ folderId: null, includeTrashed: false, limit: 100 }, {
+      actor: { id: actorId, orgId, type: "user", scopes: ["drive.read"] },
+    } as never);
+    expect(() => listTool.outputSchema.parse(out)).not.toThrow();
   });
 
   it("prepares and finalizes uploads through the shared store contract", async () => {

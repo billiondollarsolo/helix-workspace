@@ -251,54 +251,40 @@ describe("observability plugin assets", () => {
         "region",
       ]),
     );
-    expect(alertmanager.route?.routes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          receiver: "helix-signup-slo-webhook",
-          matchers: expect.arrayContaining(['service="signup"', 'slo="signup_activation"']),
-        }),
-      ]),
+    const signupRoute = alertmanager.route?.routes?.find(
+      (route) => route.receiver === "helix-signup-slo-webhook",
     );
-    expect(alertmanager.receivers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "helix-signup-slo-webhook",
-          webhook_configs: expect.arrayContaining([
-            expect.objectContaining({
-              url: "http://host.docker.internal:28462/alertmanager/signup",
-              send_resolved: true,
-            }),
-          ]),
-        }),
-      ]),
+    expect(signupRoute?.matchers).toEqual(
+      expect.arrayContaining(['service="signup"', 'slo="signup_activation"']),
     );
+    const signupReceiver = alertmanager.receivers?.find(
+      (receiver) => receiver.name === "helix-signup-slo-webhook",
+    );
+    expect(signupReceiver?.webhook_configs).toContainEqual({
+      url: "http://host.docker.internal:28462/alertmanager/signup",
+      send_resolved: true,
+    });
     expect(JSON.stringify(alertmanager)).not.toContain("helix-signup-slo-paging");
-    expect(productionAlertmanager.route?.routes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          receiver: "helix-signup-slo-webhook",
-          matchers: expect.arrayContaining(['service="signup"', 'slo="signup_activation"']),
-          continue: true,
-        }),
-        expect.objectContaining({
-          receiver: "helix-signup-slo-paging",
-          matchers: expect.arrayContaining(['service="signup"', 'slo="signup_activation"']),
-        }),
-      ]),
+    const productionSignupRoute = productionAlertmanager.route?.routes?.find(
+      (route) => route.receiver === "helix-signup-slo-webhook",
     );
-    expect(productionAlertmanager.receivers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "helix-signup-slo-paging",
-          webhook_configs: expect.arrayContaining([
-            expect.objectContaining({
-              url_file: "/etc/alertmanager/secrets/signup-slo-paging-webhook-url",
-              send_resolved: true,
-            }),
-          ]),
-        }),
-      ]),
+    expect(productionSignupRoute?.matchers).toEqual(
+      expect.arrayContaining(['service="signup"', 'slo="signup_activation"']),
     );
+    expect(productionSignupRoute?.continue).toBe(true);
+    const productionPagingRoute = productionAlertmanager.route?.routes?.find(
+      (route) => route.receiver === "helix-signup-slo-paging",
+    );
+    expect(productionPagingRoute?.matchers).toEqual(
+      expect.arrayContaining(['service="signup"', 'slo="signup_activation"']),
+    );
+    const productionPagingReceiver = productionAlertmanager.receivers?.find(
+      (receiver) => receiver.name === "helix-signup-slo-paging",
+    );
+    expect(productionPagingReceiver?.webhook_configs).toContainEqual({
+      url_file: "/etc/alertmanager/secrets/signup-slo-paging-webhook-url",
+      send_resolved: true,
+    });
 
     const alertmanagerText = `${JSON.stringify(alertmanager)}\n${JSON.stringify(productionAlertmanager)}`;
     for (const forbidden of ["org_id", "actor_id", "email", "token", "user_agent", "ip_address"]) {

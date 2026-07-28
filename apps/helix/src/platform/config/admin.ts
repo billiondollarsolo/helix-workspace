@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type postgres from "postgres";
-import { z } from "zod";
+import { z } from "zod3";
 import type {
   Actor,
   EventBus,

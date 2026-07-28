@@ -35,12 +35,14 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint src vitest.config.mjs"
   },
   "dependencies": {
     "zod": "^3.23.8"

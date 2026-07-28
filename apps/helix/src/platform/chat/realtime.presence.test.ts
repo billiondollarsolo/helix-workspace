@@ -25,7 +25,7 @@ describe("presence TTL expiry", () => {
 
   it("RedisChatPresenceStore treats missing actor keys as offline", async () => {
     const redis = new FakeRedis();
-    let now = 1_000;
+    const now = 1_000;
     const store = new RedisChatPresenceStore(redis, {
       ttlSeconds: 10,
       now: () => now,

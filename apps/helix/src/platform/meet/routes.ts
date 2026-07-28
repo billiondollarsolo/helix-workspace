@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { JsonObject } from "@helix/sdk-types";
-import { z } from "zod";
+import { z } from "zod3";
 import type { TenantStorageClient, TenantStorageResolver } from "../storage/tenant-resolver.js";
 import type { MeetStore } from "./store.js";
 

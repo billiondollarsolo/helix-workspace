@@ -2,7 +2,26 @@
 
 ARG BUILD_BASE=node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
 ARG RUNTIME_BASE=node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
-ARG CADDY_BASE=caddy:2.10.0-alpine@sha256:ae4458638da8e1a91aafffb231c5f8778e964bca650c8a8cb23a7e8ac557aa3c
+ARG GO_BUILD_BASE=golang:1.26.5-alpine3.23@sha256:622e56dbc11a8cfe87cafa2331e9a201877271cbff918af53d3be315f3da88cc
+ARG WEB_RUNTIME_BASE=alpine:3.23.5@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+
+# Build the stock Caddy command with patched transitive modules and a patched Go
+# toolchain. The upstream binary image can lag fixed Go/library releases even
+# when its tag is current, so the vulnerability gate scans this exact binary.
+FROM ${GO_BUILD_BASE} AS caddy-build
+
+WORKDIR /src
+
+RUN go mod init helix.invalid/caddy-build \
+    && go get github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.4 \
+    && go get golang.org/x/text@v0.39.0 google.golang.org/grpc@v1.82.1
+
+RUN mkdir -p /out \
+    && CGO_ENABLED=0 go build \
+      -trimpath \
+      -ldflags="-s -w -buildid= -X github.com/caddyserver/caddy/v2.CustomVersion=v2.11.4-helix" \
+      -o /out/caddy \
+      github.com/caddyserver/caddy/v2/cmd/caddy
 
 FROM ${BUILD_BASE} AS editors-build
 
@@ -111,7 +130,7 @@ COPY apps/web/ apps/web/
 
 RUN pnpm --filter @helix/web... run build
 
-FROM ${CADDY_BASE} AS web-runtime
+FROM ${WEB_RUNTIME_BASE} AS web-runtime
 
 LABEL org.opencontainers.image.title="helix-workspace-web" \
       org.opencontainers.image.description="Helix Workspace web client and production edge" \
@@ -120,8 +139,10 @@ LABEL org.opencontainers.image.title="helix-workspace-web" \
 
 RUN addgroup -g 10001 -S helix \
     && adduser -u 10001 -S -D -G helix helix \
+    && mkdir -p /config /data /srv \
     && chown -R 10001:10001 /config /data /srv
 
+COPY --from=caddy-build /out/caddy /usr/bin/caddy
 COPY --chown=10001:10001 infra/caddy/Caddyfile.production /etc/caddy/Caddyfile
 COPY --from=web-build --chown=10001:10001 /app/apps/web/dist/ /srv/
 
@@ -131,3 +152,6 @@ EXPOSE 80 443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["wget", "--spider", "-q", "http://127.0.0.1/healthz"]
+
+ENTRYPOINT ["caddy"]
+CMD ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

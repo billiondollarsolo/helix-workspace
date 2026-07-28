@@ -11,7 +11,7 @@ import { isLiveBackend, mintLiveAccessToken } from "./support/backend-mode";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 
 const accessTokenStorageKey = "helix.accessToken";
-const assistantScope = "platform.read assistant.chat";
+const assistantScope = "platform.read assistant.write";
 const prompt = "Share the Q3 Launch PRD with Bruno.";
 
 test.describe("/assistant feature flow", () => {

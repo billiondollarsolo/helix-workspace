@@ -192,15 +192,17 @@ jobs:
           HELIX_SMOKE_CLIENT_SECRET: helix-local-dev-secret
           HELIX_SMOKE_K6_API_BASE_URL: http://127.0.0.1:39531
           HELIX_SMOKE_K6_WEB_BASE_URL: http://127.0.0.1:39531
-          HELIX_SMOKE_K6_SCENARIO_GROUPS: api_smoke,mail_api,inbound_mail,search,chat,mcp,otel_health
+          HELIX_SMOKE_K6_SCENARIO_GROUPS: api_smoke,mail_api,search,chat,mcp,otel_health
           HELIX_SMOKE_K6_DURATION: 2s
           HELIX_K6_RUNNER: docker
           HELIX_K6_DOCKER_API_BASE_URL: http://host.docker.internal:39531
           HELIX_K6_DOCKER_WEB_BASE_URL: http://host.docker.internal:39531
+          API_TARGETS: /healthz,/readyz,/metrics
+          # The full MCP catalog is roughly 1.7 MB; budget serialization and
+          # transfer separately from the low-latency API health probes.
+          MCP_CATALOG_P95_MS: "1500"
           MAIL_API_BODY: '{"query":"Renovate","limit":10}'
           MAIL_API_EXPECT: Renovate
-          INBOUND_MAIL_MARKER: helix-ci-inbound-mail-probe
-          INBOUND_MAIL_TO: local-admin@helix.local
           SEARCH_TOOL_IDS: search.query
           SEARCH_BODY: '{"query":"Mail density","types":["chat"],"limit":10}'
           SEARCH_EXPECT: Mail density

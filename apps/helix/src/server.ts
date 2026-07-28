@@ -19,9 +19,8 @@ import { ZodError, z } from "zod3";
 import { ContractValidationError } from "@helix/contracts";
 import { createMeteringClient } from "@helix/sdk";
 import {
-  actorFromRequestWithAccessTokenAndSession,
-  resolveCredentialAuthenticatedActor,
   systemActor,
+  toolInvocationPrincipalFromRequest,
   type SessionActorResolver,
 } from "./api/actor.js";
 import { ApiError, NotFoundError } from "./api/api-error.js";
@@ -80,6 +79,10 @@ import {
   agentCredentialScopeCatalog,
   registerAgentCredentialTools,
 } from "./platform/auth/tools.js";
+import {
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "./platform/auth/tool-invocation-principal.js";
 import {
   PostgresAdminUsersStore,
   registerAdminUsersRoutes,
@@ -448,37 +451,23 @@ export class CredentialAuthError extends Error {
  * (PRD §9.2) and falling back to bearer access tokens and sessions. Shared by
  * the tool REST routes so credential enforcement is live on every surface.
  */
-async function resolveRequestActor(
+async function resolveRequestPrincipal(
   request: FastifyRequest,
   tokenStore: AccessTokenStore,
   sessionResolver: SessionActorResolver | undefined,
   credentialStore: AgentCredentialStore | undefined,
-) {
-  if (credentialStore !== undefined) {
-    const credentialResolution = await resolveCredentialAuthenticatedActor(
-      request,
-      credentialStore,
-    );
-    if (credentialResolution !== null) {
-      if (!credentialResolution.ok) {
-        throw new CredentialAuthError(
-          credentialResolution.statusCode,
-          credentialResolution.code,
-          credentialResolution.message,
-        );
-      }
-      const actor = credentialResolution.actor;
-      assertActorMatchesRequestTenant(request, actor);
-      return actor;
-    }
-  }
-  const actor = await actorFromRequestWithAccessTokenAndSession(
+): Promise<ToolInvocationPrincipal> {
+  const resolution = await toolInvocationPrincipalFromRequest(
     request,
     tokenStore,
     sessionResolver,
+    credentialStore,
   );
-  assertActorMatchesRequestTenant(request, actor);
-  return actor;
+  if (!resolution.ok) {
+    throw new CredentialAuthError(resolution.statusCode, resolution.code, resolution.message);
+  }
+  assertActorMatchesRequestTenant(request, resolution.principal.actor);
+  return resolution.principal;
 }
 
 export interface ToolRestRoutesOptions {
@@ -601,6 +590,8 @@ export interface ActionStatusRoutesOptions {
   readonly credentialStore?: AgentCredentialStore;
 }
 
+export type PendingActionMutationRoutesOptions = ActionStatusRoutesOptions;
+
 type ToolRestRouteMethod = "GET" | "POST";
 
 export function registerToolRestRoutes(
@@ -613,6 +604,12 @@ export function registerToolRestRoutes(
       const params = toolParamsSchema.parse(request.params);
       const traceId = traceIdForRequest(request);
       const tool = options.tools.get(params.toolId);
+      const principal = await resolveRequestPrincipal(
+        request,
+        options.tokenStore,
+        options.sessionResolver,
+        options.credentialStore,
+      );
 
       // P1-10: Idempotency-Key replay for mutating (non-read) tool calls. Read
       // tools are naturally idempotent so the key is ignored for them.
@@ -626,17 +623,11 @@ export function registerToolRestRoutes(
         tool !== undefined &&
         tool.sideEffects !== "read"
           ? await (async () => {
-              const actor = await resolveRequestActor(
-                request,
-                options.tokenStore,
-                options.sessionResolver,
-                options.credentialStore,
-              );
               return {
                 store: idempotencyStore,
                 key: idempotencyStorageKey({
-                  orgId: actor.orgId,
-                  actorId: actor.id,
+                  orgId: principal.actor.orgId,
+                  actorId: principal.actor.id,
                   toolId: params.toolId,
                   idempotencyKey,
                 }),
@@ -676,9 +667,7 @@ export function registerToolRestRoutes(
 
       const result = await invokeTool(
         options.tools,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
+        principal,
         params.toolId,
         request.body,
         request,
@@ -740,9 +729,12 @@ export function registerToolRestRoutes(
 
       const result = await invokeTool(
         options.tools,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
+        await resolveRequestPrincipal(
+          request,
+          options.tokenStore,
+          options.sessionResolver,
+          options.credentialStore,
+        ),
         params.toolId,
         request.query,
         request,
@@ -764,13 +756,14 @@ export function registerActionStatusRoutes(
 ): void {
   const actionStatusHandler = async (request: FastifyRequest, reply: FastifyReply) => {
     const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
     const result = await options.tools.getPendingAction(params.pendingId, {
-      actor: await resolveRequestActor(
-        request,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
-      ),
+      actor: principal.actor,
     });
     if (!result.ok) {
       return sendToolInvokeError(reply, result, traceIdForRequest(request));
@@ -780,6 +773,49 @@ export function registerActionStatusRoutes(
 
   app.get("/actions/:pendingId", actionStatusHandler);
   app.get("/api/actions/:pendingId", actionStatusHandler);
+}
+
+/** Register authenticated approval/cancellation routes with fresh credential policy resolution. */
+export function registerPendingActionMutationRoutes(
+  app: FastifyInstance,
+  options: PendingActionMutationRoutesOptions,
+): void {
+  app.post("/api/tools/pending/:pendingId/approve", async (request, reply) => {
+    const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
+    const result = await options.tools.approvePending(params.pendingId, {
+      ...toolInvocationOptions(principal, createRequestContext(request)),
+    });
+    if (!result.ok) {
+      return sendToolInvokeError(reply, result, traceIdForRequest(request));
+    }
+    if (result.status === "pending_confirmation") {
+      return reply.code(202).send({ status: result.status, pending: result.pending });
+    }
+    return { status: "executed", output: result.output };
+  });
+
+  app.post("/api/tools/pending/:pendingId/cancel", async (request, reply) => {
+    const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
+    const result = await options.tools.cancelPending(params.pendingId, {
+      ...toolInvocationOptions(principal, createRequestContext(request)),
+    });
+    if (!result.ok) {
+      return sendToolInvokeError(reply, result, traceIdForRequest(request));
+    }
+    return { status: result.status, pending: result.pending };
+  });
 }
 
 const assistantChatStreamBodySchema = z.object({
@@ -826,9 +862,12 @@ export function registerAssistantStreamRoute(
       const traceId = traceIdForRequest(request);
       const result = await invokeTool(
         options.tools,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
+        await resolveRequestPrincipal(
+          request,
+          options.tokenStore,
+          options.sessionResolver,
+          options.credentialStore,
+        ),
         "assistant.chat",
         request.body,
         request,
@@ -859,7 +898,7 @@ export function registerAssistantStreamRoute(
       );
     }
     const body = parsedBody.data;
-    const actor = await resolveRequestActor(
+    const principal = await resolveRequestPrincipal(
       request,
       options.tokenStore,
       options.sessionResolver,
@@ -874,7 +913,8 @@ export function registerAssistantStreamRoute(
     });
     try {
       const stream = options.orchestrator.sendMessageStream({
-        actor,
+        actor: principal.actor,
+        principal,
         content: body.message,
         request: createRequestContext(request),
         ...(body.conversationId === undefined ? {} : { conversationId: body.conversationId }),
@@ -1377,30 +1417,21 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // surface. A presented-but-rejected credential raises `CredentialAuthError`,
   // which the error handler maps to the appropriate 401/403 response. When no
   // credential is presented, falls back to bearer access tokens and sessions.
-  const actorFromAuthenticatedRequest = async (request: FastifyRequest) => {
-    const credentialResolution = await resolveCredentialAuthenticatedActor(
-      request,
-      agentCredentialStore,
-    );
-    if (credentialResolution !== null) {
-      if (!credentialResolution.ok) {
-        throw new CredentialAuthError(
-          credentialResolution.statusCode,
-          credentialResolution.code,
-          credentialResolution.message,
-        );
-      }
-      assertActorMatchesRequestTenant(request, credentialResolution.actor);
-      return credentialResolution.actor;
-    }
-    const actor = await actorFromRequestWithAccessTokenAndSession(
+  const principalFromAuthenticatedRequest = async (request: FastifyRequest) => {
+    const resolution = await toolInvocationPrincipalFromRequest(
       request,
       oauthStore,
       sessionActorResolver,
+      agentCredentialStore,
     );
-    assertActorMatchesRequestTenant(request, actor);
-    return actor;
+    if (!resolution.ok) {
+      throw new CredentialAuthError(resolution.statusCode, resolution.code, resolution.message);
+    }
+    assertActorMatchesRequestTenant(request, resolution.principal.actor);
+    return resolution.principal;
   };
+  const actorFromAuthenticatedRequest = async (request: FastifyRequest) =>
+    (await principalFromAuthenticatedRequest(request)).actor;
 
   // Confirmed Helix architecture model: core apps (mail, chat, drive, docs,
   // calendar, meet, assistant) are toggleable platform modules — not plugins.
@@ -2412,7 +2443,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       router: trpcRouter,
       createContext: async ({ req }: CreateFastifyContextOptions) => ({
         request: createRequestContext(req),
-        actor: await actorFromAuthenticatedRequest(req),
+        principal: await principalFromAuthenticatedRequest(req),
       }),
     },
   });
@@ -3246,30 +3277,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ...(sessionActorResolver === undefined ? {} : { sessionResolver: sessionActorResolver }),
   });
 
-  app.post("/api/tools/pending/:pendingId/approve", async (request, reply) => {
-    const params = pendingActionParamsSchema.parse(request.params);
-    const result = await tools.approvePending(params.pendingId, {
-      actor: await actorFromAuthenticatedRequest(request),
-      request: createRequestContext(request),
-    });
-    if (!result.ok) {
-      return sendToolInvokeError(reply, result, traceIdForRequest(request));
-    }
-    if (result.status === "pending_confirmation") {
-      return reply.code(202).send({ status: result.status, pending: result.pending });
-    }
-    return { status: "executed", output: result.output };
-  });
-
-  app.post("/api/tools/pending/:pendingId/cancel", async (request, reply) => {
-    const params = pendingActionParamsSchema.parse(request.params);
-    const result = await tools.cancelPending(params.pendingId, {
-      actor: await actorFromAuthenticatedRequest(request),
-    });
-    if (!result.ok) {
-      return sendToolInvokeError(reply, result, traceIdForRequest(request));
-    }
-    return { status: result.status, pending: result.pending };
+  registerPendingActionMutationRoutes(app, {
+    tools,
+    tokenStore: oauthStore,
+    credentialStore: agentCredentialStore,
+    ...(sessionActorResolver === undefined ? {} : { sessionResolver: sessionActorResolver }),
   });
 
   registerToolRestRoutes(
@@ -3315,7 +3327,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     });
 
   app.post("/mcp", async (request, reply) => {
-    const actor = await actorFromAuthenticatedRequest(request);
+    const principal = await principalFromAuthenticatedRequest(request);
+    const requestContext = createRequestContext(request);
     // PRD §9.5: when the client negotiates SSE, stream the JSON-RPC response
     // over text/event-stream so long-running tool calls keep the connection
     // warm; otherwise fall back to a plain JSON-RPC POST response.
@@ -3328,7 +3341,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       });
       for await (const event of handleMcpStreamingRequest({
         tools,
-        actor,
+        principal,
+        request: requestContext,
         body: request.body,
         resources: mcpResourceProvider(request),
       })) {
@@ -3339,7 +3353,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     }
     return handleMcpJsonRpcRequest({
       tools,
-      actor,
+      principal,
+      request: requestContext,
       body: request.body,
       resources: mcpResourceProvider(request),
     });
@@ -3553,16 +3568,13 @@ function assignLimitOverride(
 
 async function invokeTool(
   tools: RuntimeToolRegistry,
-  tokenStore: AccessTokenStore,
-  sessionResolver: SessionActorResolver | undefined,
-  credentialStore: AgentCredentialStore | undefined,
+  principal: ToolInvocationPrincipal,
   toolId: string,
   input: unknown,
   request: FastifyRequest,
 ) {
   const result = await tools.invoke(toolId, input, {
-    request: createRequestContext(request),
-    actor: await resolveRequestActor(request, tokenStore, sessionResolver, credentialStore),
+    ...toolInvocationOptions(principal, createRequestContext(request)),
     enforceConfirmation: true,
   });
   return result;

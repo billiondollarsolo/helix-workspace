@@ -44,6 +44,8 @@ import type {
 } from "../search/index.js";
 import { createToolRegistry } from "../tool-registry.js";
 import { InMemoryConfirmationGate } from "../tools/registry.js";
+import { EMPTY_CREDENTIAL_POLICY } from "../auth/credentials.js";
+import { credentialToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 import { AssistantOrchestrator } from "./orchestrator.js";
 import { InMemoryAssistantStore } from "./store.js";
 import { registerAssistantTools } from "./tools.js";
@@ -555,6 +557,68 @@ describe("AssistantOrchestrator", () => {
       });
     }
   });
+
+  it.each([
+    {
+      override: "always" as const,
+      sideEffects: "write" as const,
+      expected: "pending_confirmation" as const,
+    },
+    {
+      override: "never" as const,
+      sideEffects: "destructive" as const,
+      expected: "pending_confirmation" as const,
+    },
+  ])(
+    "propagates confirmationOverride=$override through Assistant tool calls",
+    async ({ override, sideEffects, expected }) => {
+      const actor: Actor = {
+        id: "00000000-0000-4000-8000-000000000091",
+        orgId: "00000000-0000-4000-8000-000000000092",
+        type: "agent",
+        scopes: ["policy.invoke"],
+      };
+      const store = new InMemoryAssistantStore();
+      const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+      const confirmationGate = new InMemoryConfirmationGate();
+      let executions = 0;
+      tools.register(
+        readTool({
+          id: "policy.invoke",
+          description: "Exercise Assistant credential policy.",
+          permission: "policy.invoke",
+          sideEffects,
+          handler: async () => {
+            executions += 1;
+            return { executed: true };
+          },
+        }),
+      );
+      const assistant = new AssistantOrchestrator({
+        store,
+        ai: new PolicyToolAI(),
+        tools,
+        confirmationGate,
+      });
+      const principal = credentialToolInvocationPrincipal({
+        actor,
+        credentialId: "00000000-0000-4000-8000-000000000093",
+        credentialPolicy: {
+          ...EMPTY_CREDENTIAL_POLICY,
+          confirmationOverride: override,
+        },
+      });
+
+      const turn = await assistant.sendMessage({
+        actor,
+        principal,
+        content: "Run the policy tool.",
+      });
+
+      expect(turn.toolCalls[0]?.status).toBe(expected);
+      expect(executions).toBe(0);
+    },
+  );
 });
 
 class ShareFlowAI implements AICapability {
@@ -670,6 +734,26 @@ class CancelFlowAI implements AICapability {
       model: "fake-model",
       message: "Cancelled the delete request. I did not delete the launch note.",
     };
+  }
+}
+
+class PolicyToolAI implements AICapability {
+  #calls = 0;
+
+  async chat(): Promise<ChatResponse> {
+    this.#calls += 1;
+    return this.#calls === 1
+      ? {
+          providerId: "fake",
+          model: "fake-model",
+          message: "I will run the policy tool.",
+          toolCalls: [{ id: "policy.invoke", input: {} }],
+        }
+      : {
+          providerId: "fake",
+          model: "fake-model",
+          message: "The policy tool completed.",
+        };
   }
 }
 

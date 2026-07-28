@@ -1147,7 +1147,7 @@ describe("RuntimeToolRegistry", () => {
 });
 
 describe("per-credential policy overrides (PRD §9.2)", () => {
-  it("forces confirmation when the credential override is 'always'", async () => {
+  it("keeps agent writes confirmation-gated with or without an 'always' override", async () => {
     const confirmationGate = new InMemoryConfirmationGate();
     const registry = createToolRegistry({
       confirmationGate,
@@ -1163,12 +1163,13 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
       }),
     );
 
-    // Without an override a non-destructive write executes immediately.
+    // RD-5 gates every agent write even on a tier whose human-session default
+    // would allow this non-destructive mutation.
     await expect(
       registry.invoke("notes.write", {}, { actor, enforceConfirmation: true }),
-    ).resolves.toMatchObject({ ok: true, output: { ok: true } });
+    ).resolves.toMatchObject({ ok: true, status: "pending_confirmation" });
 
-    // With an "always" override the same call is queued for confirmation.
+    // An explicit "always" override remains fail-closed.
     const pending = await registry.invoke(
       "notes.write",
       {},
@@ -1181,7 +1182,7 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
     expect(pending).toMatchObject({ ok: true, status: "pending_confirmation" });
   });
 
-  it("bypasses confirmation when the credential override is 'never'", async () => {
+  it("fails closed for an agent mutation when the legacy override is 'never'", async () => {
     const confirmationGate = new InMemoryConfirmationGate();
     const registry = createToolRegistry({
       confirmationGate,
@@ -1209,8 +1210,8 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
         credentialPolicy: { confirmationOverride: "never" },
       },
     );
-    expect(result).toMatchObject({ ok: true, output: { purged: true } });
-    expect(calls).toEqual([{ id: "x" }]);
+    expect(result).toMatchObject({ ok: true, status: "pending_confirmation" });
+    expect(calls).toEqual([]);
   });
 
   it("tightens the rate limit via a per-credential override", async () => {
@@ -1244,6 +1245,59 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
       expect(blocked.statusCode).toBe(429);
       expect(blocked.rateLimit?.reason).toBe("requests_per_minute");
     }
+  });
+
+  it("re-applies the current credential rate policy to approved execution", async () => {
+    const confirmationGate = new InMemoryConfirmationGate();
+    const registry = createToolRegistry({
+      confirmationGate,
+      confirmationDefaults: tierDefaults.personal,
+      agentRateCostLimiter: new InMemoryAgentRateCostLimiter(),
+      agentLimitTier: "business",
+      agentLimitBudget: {
+        requestsPerMinute: 1_000,
+        requestsPerDay: 1_000,
+        costPerDayUsdMicros: null,
+        costWarningThresholdRatio: 0.8,
+      },
+    });
+    let executions = 0;
+    registry.register(
+      tool({
+        id: "pending.policy",
+        permission: "platform.read",
+        sideEffects: "write",
+        handler: async () => {
+          executions += 1;
+          return { ok: true };
+        },
+      }),
+    );
+    const credentialPolicy = {
+      confirmationOverride: "always" as const,
+      rateLimitOverrides: { requestsPerMinute: 1 },
+    };
+    const queued = await registry.invoke(
+      "pending.policy",
+      {},
+      { actor, enforceConfirmation: true, credentialPolicy },
+    );
+    if (!queued.ok || queued.status !== "pending_confirmation") {
+      throw new Error("Expected a pending action.");
+    }
+
+    const approved = await registry.approvePending(queued.pending.id, {
+      actor,
+      credentialId: "credential-1",
+      credentialPolicy,
+    });
+
+    expect(approved).toMatchObject({
+      ok: false,
+      statusCode: 429,
+      rateLimit: { reason: "requests_per_minute" },
+    });
+    expect(executions).toBe(0);
   });
 
   it("relaxes a tier rate limit when the override removes the cap", async () => {

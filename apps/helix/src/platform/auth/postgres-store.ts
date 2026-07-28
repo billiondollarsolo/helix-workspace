@@ -552,6 +552,18 @@ export class PostgresAgentCredentialStore implements AgentCredentialStore {
     `) as unknown as readonly AgentCredentialRow[];
     return rowToCredential(rows[0]);
   }
+
+  async findByClientId(clientId: string): Promise<AgentCredentialRecord | null> {
+    const rows = (await this.sql`
+      select ${this.sql.unsafe(AGENT_CREDENTIAL_COLUMNS)}
+      from agent_credentials c
+      join actors a on a.id = c.actor_id
+      where c.client_id = ${clientId}
+        and c.credential_type = 'oauth_client'
+      limit 1
+    `) as unknown as readonly AgentCredentialRow[];
+    return rowToCredential(rows[0]);
+  }
 }
 
 function rowToCredential(row: AgentCredentialRow | undefined): AgentCredentialRecord | null {

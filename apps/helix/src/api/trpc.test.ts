@@ -9,7 +9,7 @@ import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js
 const requestContext = { requestId: "req-trpc" };
 
 function context(actor: Actor = systemActor) {
-  return { request: requestContext, actor };
+  return { request: requestContext, principal: { actor } };
 }
 
 const schema = {

@@ -1,6 +1,6 @@
 import { TRPCError, initTRPC } from "@trpc/server";
 import { z, type ZodTypeAny } from "zod3";
-import type { Actor, RequestContext, ToolDefinition } from "@helix/sdk-types";
+import type { RequestContext, ToolDefinition } from "@helix/sdk-types";
 import type { PlatformMetrics } from "./metrics.js";
 import {
   canReadPlatformConfig,
@@ -12,15 +12,19 @@ import {
 import { projectToolListItem } from "./tool-projection.js";
 import { jsonSchemaToZod } from "./json-schema-zod.js";
 import type { RuntimeToolRegistry, ToolInvokeResult } from "../platform/tool-registry.js";
+import {
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "../platform/auth/tool-invocation-principal.js";
 
 export interface HelixTRPCContext {
   readonly request: RequestContext;
-  readonly actor: Actor;
+  readonly principal: ToolInvocationPrincipal;
 }
 
 const trpc = initTRPC.context<HelixTRPCContext>().create();
 const adminConfigReadProcedure = trpc.procedure.use(({ ctx, next }) => {
-  if (!canReadPlatformConfig(ctx.actor)) {
+  if (!canReadPlatformConfig(ctx.principal.actor)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: `Missing required scope: ${platformConfigAdminScopes.read}`,
@@ -29,7 +33,7 @@ const adminConfigReadProcedure = trpc.procedure.use(({ ctx, next }) => {
   return next();
 });
 const adminConfigWriteProcedure = trpc.procedure.use(({ ctx, next }) => {
-  if (!canWritePlatformConfig(ctx.actor)) {
+  if (!canWritePlatformConfig(ctx.principal.actor)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: `Missing required scope: ${platformConfigAdminScopes.write}`,
@@ -57,8 +61,7 @@ function buildToolProcedure(tools: RuntimeToolRegistry, tool: ToolDefinition) {
   const outputSchema: ZodTypeAny = jsonSchemaToZod(tool.outputSchema.toJsonSchema());
   const resolve = async ({ ctx, input }: { ctx: HelixTRPCContext; input: unknown }) => {
     const result = await tools.invoke(tool.id, input, {
-      request: ctx.request,
-      actor: ctx.actor,
+      ...toolInvocationOptions(ctx.principal, ctx.request),
       enforceConfirmation: true,
     });
     return unwrapToolResult(result);
@@ -133,23 +136,22 @@ export function createHelixTRPCRouter(input: {
                 message: "Platform config service is not configured.",
               });
             }
-            return input.platformConfig.update(update, ctx.actor);
+            return input.platformConfig.update(update, ctx.principal.actor);
           }),
       }),
     }),
     tools: trpc.router({
       list: trpc.procedure.query(async ({ ctx }) => ({
-        tools: (await input.tools.listVisible(ctx.actor)).map(projectToolListItem),
+        tools: (await input.tools.listVisible(ctx.principal.actor)).map(projectToolListItem),
       })),
       visible: trpc.procedure.query(async ({ ctx }) => ({
-        tools: (await input.tools.listVisible(ctx.actor)).map(projectToolListItem),
+        tools: (await input.tools.listVisible(ctx.principal.actor)).map(projectToolListItem),
       })),
       // Generic back-compat procedure — kept so untyped callers and dynamic
       // tooling keep working alongside the per-tool projection below.
       invoke: trpc.procedure.input(toolCallSchema).mutation(async ({ ctx, input: call }) => {
         const result = await input.tools.invoke(call.toolId, call.input, {
-          request: ctx.request,
-          actor: ctx.actor,
+          ...toolInvocationOptions(ctx.principal, ctx.request),
           enforceConfirmation: true,
         });
         return unwrapToolResult(result);

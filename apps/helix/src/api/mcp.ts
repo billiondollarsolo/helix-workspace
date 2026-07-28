@@ -1,6 +1,10 @@
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import type { Actor } from "@helix/sdk-types";
+import type { Actor, RequestContext } from "@helix/sdk-types";
 import type { RuntimeToolRegistry } from "../platform/tool-registry.js";
+import {
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "../platform/auth/tool-invocation-principal.js";
 import { createScopedSearchRequest, type GlobalSearchType } from "../platform/search/scope.js";
 import type { SearchEngine, SearchHit } from "../platform/search/types.js";
 import { HELIX_SERVER_VERSION, MCP_PROTOCOL_VERSION } from "./version.js";
@@ -53,11 +57,7 @@ export interface McpPromptResult {
 
 export interface McpPromptProvider {
   list(actor: Actor): Promise<readonly McpPrompt[]>;
-  get(
-    actor: Actor,
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<McpPromptResult | null>;
+  get(actor: Actor, name: string, args: Record<string, unknown>): Promise<McpPromptResult | null>;
 }
 
 /**
@@ -69,7 +69,8 @@ export interface McpPromptProvider {
  */
 export async function handleMcpJsonRpcRequest(input: {
   readonly tools: RuntimeToolRegistry;
-  readonly actor: Actor;
+  readonly principal: ToolInvocationPrincipal;
+  readonly request?: RequestContext;
   readonly body: unknown;
   readonly resources?: McpResourceProvider;
   readonly prompts?: McpPromptProvider;
@@ -81,7 +82,7 @@ export async function handleMcpJsonRpcRequest(input: {
     {
       attributes: {
         "helix.mcp.method": method,
-        "helix.mcp.actor_type": input.actor.type,
+        "helix.mcp.actor_type": input.principal.actor.type,
       },
     },
     async (span) => {
@@ -107,7 +108,8 @@ async function dispatchMcpJsonRpcRequest(
   request: JsonRpcRequest,
   input: {
     readonly tools: RuntimeToolRegistry;
-    readonly actor: Actor;
+    readonly principal: ToolInvocationPrincipal;
+    readonly request?: RequestContext;
     readonly body: unknown;
     readonly resources?: McpResourceProvider;
     readonly prompts?: McpPromptProvider;
@@ -135,7 +137,7 @@ async function dispatchMcpJsonRpcRequest(
       return jsonRpcResult(request.id, {});
     case "tools/list":
       return jsonRpcResult(request.id, {
-        tools: (await input.tools.listVisible(input.actor)).map((tool) => ({
+        tools: (await input.tools.listVisible(input.principal.actor)).map((tool) => ({
           name: tool.id,
           description: tool.description,
           inputSchema: tool.inputSchema.toJsonSchema(),
@@ -155,7 +157,7 @@ async function dispatchMcpJsonRpcRequest(
         return jsonRpcError(request.id, -32602, "tools/call requires params.name.");
       }
       const result = await input.tools.invoke(params.name, params.arguments ?? {}, {
-        actor: input.actor,
+        ...toolInvocationOptions(input.principal, input.request),
         enforceConfirmation: true,
       });
       if (!result.ok) {
@@ -185,7 +187,7 @@ async function dispatchMcpJsonRpcRequest(
     case "resources/list": {
       const provider = input.resources ?? emptyResourceProvider;
       return jsonRpcResult(request.id, {
-        resources: await provider.list(input.actor),
+        resources: await provider.list(input.principal.actor),
       });
     }
     case "resources/read": {
@@ -196,7 +198,7 @@ async function dispatchMcpJsonRpcRequest(
       const provider = input.resources ?? emptyResourceProvider;
       let resource: McpResourceContent | null;
       try {
-        resource = await provider.read(input.actor, params.uri);
+        resource = await provider.read(input.principal.actor, params.uri);
       } catch (error) {
         const httpError = mcpHttpError(error);
         if (httpError !== null) {
@@ -218,7 +220,7 @@ async function dispatchMcpJsonRpcRequest(
     case "prompts/list": {
       const provider = input.prompts ?? createToolPromptProvider(input.tools);
       return jsonRpcResult(request.id, {
-        prompts: await provider.list(input.actor),
+        prompts: await provider.list(input.principal.actor),
       });
     }
     case "prompts/get": {
@@ -227,7 +229,7 @@ async function dispatchMcpJsonRpcRequest(
         return jsonRpcError(request.id, -32602, "prompts/get requires params.name.");
       }
       const provider = input.prompts ?? createToolPromptProvider(input.tools);
-      const prompt = await provider.get(input.actor, params.name, params.arguments ?? {});
+      const prompt = await provider.get(input.principal.actor, params.name, params.arguments ?? {});
       if (prompt === null) {
         return jsonRpcError(request.id, -32004, `Prompt not found: ${params.name}`);
       }
@@ -268,8 +270,7 @@ export function createToolPromptProvider(tools: RuntimeToolRegistry): McpPromptP
       if (tool === undefined) {
         return null;
       }
-      const inputText =
-        args.input === undefined ? "{}" : JSON.stringify(args.input, null, 2);
+      const inputText = args.input === undefined ? "{}" : JSON.stringify(args.input, null, 2);
       return {
         description: `Invoke the ${tool.id} tool.`,
         messages: [
@@ -308,7 +309,8 @@ export interface McpStreamEvent {
  */
 export async function* handleMcpStreamingRequest(input: {
   readonly tools: RuntimeToolRegistry;
-  readonly actor: Actor;
+  readonly principal: ToolInvocationPrincipal;
+  readonly request?: RequestContext;
   readonly body: unknown;
   readonly resources?: McpResourceProvider;
   readonly prompts?: McpPromptProvider;
@@ -522,7 +524,9 @@ function hitToMarkdown(hit: SearchHit): string {
     ...(hit.updatedAt === undefined ? [] : [`Updated: ${hit.updatedAt}`]),
     "",
     hit.body ?? "",
-  ].join("\n").trimEnd();
+  ]
+    .join("\n")
+    .trimEnd();
 }
 
 function resourceUri(type: string, id: string): string {

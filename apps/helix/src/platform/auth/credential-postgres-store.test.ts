@@ -1,9 +1,6 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import {
-  PostgresAgentCredentialStore,
-  PostgresAuthorizationCodeStore,
-} from "./postgres-store.js";
+import { PostgresAgentCredentialStore, PostgresAuthorizationCodeStore } from "./postgres-store.js";
 import { hashApiKey } from "./credentials.js";
 
 interface RecordedQuery {
@@ -96,6 +93,41 @@ describe("PostgresAgentCredentialStore", () => {
     expect(credential?.policy.ipAllowlist).toEqual([]);
     expect(credential?.policy.confirmationOverride).toBe("inherit");
     expect(recording.calls[0]?.text).toContain("credential_type = 'mtls_cert'");
+  });
+
+  it("resolves a revoked OAuth credential so issued tokens can be denied immediately", async () => {
+    const revokedAt = new Date("2026-07-28T12:00:00.000Z");
+    const recording = createRecordingSql([
+      [
+        {
+          id: "cred-oauth",
+          credential_type: "oauth_client",
+          actor_id: "actor-agent",
+          org_id: "org-1",
+          scopes: ["drive.read"],
+          client_id: "client-agent",
+          secret_hash: "redacted-hash",
+          api_key_hash: null,
+          cert_fingerprint: null,
+          label: null,
+          ip_allowlist: null,
+          allowed_hours: null,
+          confirmation_override: "inherit",
+          rate_limit_overrides: {},
+          expires_at: null,
+          revoked_at: revokedAt,
+        },
+      ],
+    ]);
+    const store = new PostgresAgentCredentialStore(recording.sql);
+
+    await expect(store.findByClientId("client-agent")).resolves.toMatchObject({
+      id: "cred-oauth",
+      credentialType: "oauth_client",
+      revokedAt,
+    });
+    expect(recording.calls[0]?.text).toContain("credential_type = 'oauth_client'");
+    expect(recording.calls[0]?.text).not.toContain("revoked_at is null");
   });
 
   it("returns null when no credential matches", async () => {

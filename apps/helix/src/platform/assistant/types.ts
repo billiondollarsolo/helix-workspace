@@ -10,6 +10,7 @@ import type {
 } from "@helix/sdk-types";
 import type { ForgetCriteria, MemoryItem } from "../ai/memory/index.js";
 import type { SearchHit } from "../search/index.js";
+import type { ToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 
 export type AssistantMessageRole = "system" | "user" | "assistant" | "tool";
 
@@ -112,9 +113,7 @@ export interface AssistantStore {
    * List the actor's non-archived conversations for the UI thread list, ordered
    * pinned-first then by recency, with optional search and keyset pagination.
    */
-  listConversations(
-    input: AssistantListConversationsInput,
-  ): Promise<AssistantConversationListPage>;
+  listConversations(input: AssistantListConversationsInput): Promise<AssistantConversationListPage>;
   /** Pin (`pinned: true`) or unpin a conversation; returns null when not found. */
   setConversationPinned(input: {
     readonly orgId: string;
@@ -206,6 +205,8 @@ export type AssistantStreamEvent =
 
 export interface AssistantSendMessageInput {
   readonly actor: Actor;
+  /** Server-internal invocation policy; never persisted in conversation data. */
+  readonly principal?: ToolInvocationPrincipal;
   readonly content: string;
   readonly conversationId?: string;
   readonly title?: string;
@@ -217,6 +218,7 @@ export interface AssistantSendMessageInput {
 
 export interface AssistantApprovePendingToolInput {
   readonly actor: Actor;
+  readonly principal?: ToolInvocationPrincipal;
   readonly conversationId: string;
   readonly pendingId: string;
   readonly classification?: AIClassification;
@@ -226,6 +228,7 @@ export interface AssistantApprovePendingToolInput {
 
 export interface AssistantCancelPendingToolInput {
   readonly actor: Actor;
+  readonly principal?: ToolInvocationPrincipal;
   readonly conversationId: string;
   readonly pendingId: string;
   readonly classification?: AIClassification;

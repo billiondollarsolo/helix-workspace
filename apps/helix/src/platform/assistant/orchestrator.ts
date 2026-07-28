@@ -21,6 +21,11 @@ import { createScopedSearchRequest } from "../search/scope.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import type { ConfirmationGate } from "../tools/registry.js";
 import {
+  actorToolInvocationPrincipal,
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "../auth/tool-invocation-principal.js";
+import {
   parseAssistantSlashCommand,
   resolveDefaultAssistantSlashCommand,
   type AssistantSlashCommandHooks,
@@ -116,7 +121,7 @@ export class AssistantOrchestrator {
     const [sources, recalledMemory, allVisibleTools, history] = await Promise.all([
       this.collectSearchContext(input.actor, searchQuery),
       this.collectMemoryContext(input.actor, conversation, searchQuery),
-      this.listVisibleTools(input.actor),
+      this.listVisibleTools(input.actor, input.principal),
       this.options.store.listMessages({
         orgId: input.actor.orgId,
         conversationId: conversation.id,
@@ -179,6 +184,7 @@ export class AssistantOrchestrator {
         aiResponse.toolCalls.map((toolCall) =>
           this.invokeToolCall({
             actor: input.actor,
+            principal: principalForAssistantInput(input),
             visibleTools,
             toolCallId: randomUUID(),
             toolId: toolCall.id,
@@ -236,9 +242,7 @@ export class AssistantOrchestrator {
    * the complete {@link AssistantTurnResponse}. Tool invocation, confirmation
    * gating, memory, and persistence behave exactly as in {@link sendMessage}.
    */
-  async *sendMessageStream(
-    input: AssistantSendMessageInput,
-  ): AsyncGenerator<AssistantStreamEvent> {
+  async *sendMessageStream(input: AssistantSendMessageInput): AsyncGenerator<AssistantStreamEvent> {
     let conversation = await this.getOrCreateConversation(input);
     if (input.memoryOptIn !== undefined) {
       await this.options.store.setMemoryPreference({
@@ -286,7 +290,7 @@ export class AssistantOrchestrator {
     const [sources, recalledMemory, allVisibleTools, history] = await Promise.all([
       this.collectSearchContext(input.actor, searchQuery),
       this.collectMemoryContext(input.actor, conversation, searchQuery),
-      this.listVisibleTools(input.actor),
+      this.listVisibleTools(input.actor, input.principal),
       this.options.store.listMessages({
         orgId: input.actor.orgId,
         conversationId: conversation.id,
@@ -350,6 +354,7 @@ export class AssistantOrchestrator {
         aiResponse.toolCalls.map((toolCall) =>
           this.invokeToolCall({
             actor: input.actor,
+            principal: principalForAssistantInput(input),
             visibleTools,
             toolCallId: randomUUID(),
             toolId: toolCall.id,
@@ -485,8 +490,7 @@ export class AssistantOrchestrator {
 
     const toolInput = jsonObjectFromValue(approved.input);
     const execution = await this.options.tools.invoke(approved.toolId, toolInput, {
-      actor: input.actor,
-      ...(input.request === undefined ? {} : { request: input.request }),
+      ...toolInvocationOptions(principalForAssistantInput(input), input.request),
     });
     await this.options.confirmationGate.recordExecution({
       id: approved.id,
@@ -521,7 +525,7 @@ export class AssistantOrchestrator {
         ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
       }),
     });
-    const visibleTools = await this.listVisibleTools(input.actor);
+    const visibleTools = await this.listVisibleTools(input.actor, input.principal);
     const history = await this.options.store.listMessages({
       orgId: input.actor.orgId,
       conversationId: conversation.id,
@@ -623,7 +627,7 @@ export class AssistantOrchestrator {
         ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
       }),
     });
-    const visibleTools = await this.listVisibleTools(input.actor);
+    const visibleTools = await this.listVisibleTools(input.actor, input.principal);
     const history = await this.options.store.listMessages({
       orgId: input.actor.orgId,
       conversationId: conversation.id,
@@ -796,20 +800,24 @@ export class AssistantOrchestrator {
     return this.options.memory.recall(actor, query, this.#memoryLimit);
   }
 
-  private async listVisibleTools(actor: Actor): Promise<readonly AssistantVisibleTool[]> {
+  private async listVisibleTools(
+    actor: Actor,
+    principal?: ToolInvocationPrincipal,
+  ): Promise<readonly AssistantVisibleTool[]> {
     const tools = await this.options.tools.listVisible(actor);
     return tools.map((tool) => ({
       id: tool.id,
       description: tool.description,
       permission: tool.permission,
       sideEffects: tool.sideEffects,
-      confirmationRequired: requiresAssistantConfirmation(tool),
+      confirmationRequired: requiresAssistantConfirmation(tool, principal),
       inputSchema: tool.inputSchema.toJsonSchema(),
     }));
   }
 
   private async invokeToolCall(input: {
     readonly actor: Actor;
+    readonly principal: ToolInvocationPrincipal;
     readonly request?: RequestContext;
     readonly visibleTools: readonly AssistantVisibleTool[];
     readonly toolCallId: string;
@@ -828,7 +836,7 @@ export class AssistantOrchestrator {
       };
     }
 
-    if (requiresAssistantConfirmation(tool)) {
+    if (requiresAssistantConfirmation(tool, input.principal)) {
       const pending =
         this.options.confirmationGate === undefined
           ? syntheticPendingConfirmation(input.actor, tool.id, input.input, input.request)
@@ -849,8 +857,7 @@ export class AssistantOrchestrator {
     }
 
     const result = await this.options.tools.invoke(input.toolId, input.input, {
-      actor: input.actor,
-      ...(input.request === undefined ? {} : { request: input.request }),
+      ...toolInvocationOptions(input.principal, input.request),
     });
     if (!result.ok) {
       return {
@@ -946,12 +953,32 @@ function aiCallContext(actor: Actor, request: RequestContext | undefined): Parti
   };
 }
 
-function requiresAssistantConfirmation(tool: ToolDefinition): boolean {
+function requiresAssistantConfirmation(
+  tool: ToolDefinition,
+  principal?: ToolInvocationPrincipal,
+): boolean {
+  if (principal?.actor.type === "agent") {
+    return tool.sideEffects !== "read";
+  }
+  const confirmationOverride = principal?.credentialPolicy?.confirmationOverride;
+  if (confirmationOverride === "always") {
+    return true;
+  }
+  if (confirmationOverride === "never") {
+    return false;
+  }
   return (
     tool.confirmationRequired === true ||
     tool.sideEffects === "destructive" ||
     tool.sideEffects === "external_communication"
   );
+}
+
+function principalForAssistantInput(input: {
+  readonly actor: Actor;
+  readonly principal?: ToolInvocationPrincipal;
+}): ToolInvocationPrincipal {
+  return input.principal ?? actorToolInvocationPrincipal(input.actor);
 }
 
 function syntheticPendingConfirmation(

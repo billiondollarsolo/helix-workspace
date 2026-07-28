@@ -124,6 +124,7 @@ export interface PendingToolActionOptions {
   readonly actor: Actor;
   readonly request?: RequestContext;
   readonly credentialId?: string;
+  readonly credentialPolicy?: CredentialPolicyOverrides;
   readonly idempotencyFingerprint?: string;
 }
 
@@ -397,6 +398,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           confirmationGate !== undefined &&
           shouldQueueConfirmation(
             tool,
+            actor,
             confirmationDefaults,
             invokeOptions.skipConfirmation,
             invokeOptions.credentialPolicy?.confirmationOverride,
@@ -567,6 +569,9 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         ...(approvalOptions.credentialId === undefined
           ? {}
           : { credentialId: approvalOptions.credentialId }),
+        ...(approvalOptions.credentialPolicy === undefined
+          ? {}
+          : { credentialPolicy: approvalOptions.credentialPolicy }),
         ...(approvalOptions.idempotencyFingerprint === undefined
           ? {}
           : { idempotencyFingerprint: approvalOptions.idempotencyFingerprint }),
@@ -1098,6 +1103,7 @@ class PermissionDeniedError extends Error {
 
 function shouldQueueConfirmation(
   tool: ToolDefinition,
+  actor: Actor,
   defaults: TierSecurityDefaults,
   skipConfirmation: boolean | undefined,
   confirmationOverride: CredentialPolicyOverrides["confirmationOverride"],
@@ -1105,13 +1111,19 @@ function shouldQueueConfirmation(
   if (skipConfirmation === true) {
     return false;
   }
+  // RD-5: reads are immediate for agents, while every agent-originated
+  // mutation is confirmation-gated unless a separately validated, bounded
+  // automation policy authorizes this exact action. The legacy credential-wide
+  // "never" value is not sufficiently narrow and therefore fails closed.
+  if (actor.type === "agent") {
+    return tool.sideEffects !== "read";
+  }
   const tierDecision = confirmationRequiredForSideEffect(
     tool.sideEffects,
     defaults,
     tool.confirmationRequired,
   );
-  // A per-credential confirmation override (PRD §9.2) takes precedence over
-  // the tier default. `"always"` forces a confirmation; `"never"` bypasses it.
+  // Human session behavior retains the configured tier/override semantics.
   switch (confirmationOverride) {
     case "always":
       return true;

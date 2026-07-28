@@ -4,11 +4,17 @@ import type { AccessTokenStore } from "../platform/auth/oauth.js";
 import {
   authenticateApiKey,
   authenticateMtlsCertificate,
+  enforceCredentialPolicy,
   isApiKey,
   type AgentCredentialPolicy,
   type AgentCredentialStore,
   type CredentialRequestContext,
 } from "../platform/auth/credentials.js";
+import {
+  actorToolInvocationPrincipal,
+  credentialToolInvocationPrincipal,
+  type ToolInvocationPrincipal,
+} from "../platform/auth/tool-invocation-principal.js";
 
 export interface SessionActorResolver {
   resolve(request: FastifyRequest): Promise<Actor | null>;
@@ -20,17 +26,34 @@ export interface SessionActorResolver {
  * {@link credentialPolicyOf} to read the policy and feed its
  * `confirmationOverride` / `rateLimitOverrides` into the tool registry.
  */
-const credentialPolicyByActor = new WeakMap<Actor, AgentCredentialPolicy>();
-
 /** Read the credential policy attached to a resolved actor, if any. */
 export function credentialPolicyOf(actor: Actor): AgentCredentialPolicy | undefined {
-  return credentialPolicyByActor.get(actor);
+  return actorToolInvocationPrincipal(actor).credentialPolicy;
 }
 
 /** Result of API-key / mTLS authentication on the request path. */
 export type CredentialResolution =
+  | { readonly ok: true; readonly principal: ToolInvocationPrincipal }
+  | {
+      readonly ok: false;
+      readonly statusCode: number;
+      readonly code: string;
+      readonly message: string;
+    };
+
+export type CredentialActorResolution =
   | { readonly ok: true; readonly actor: Actor }
-  | { readonly ok: false; readonly statusCode: number; readonly code: string; readonly message: string };
+  | Exclude<CredentialResolution, { readonly ok: true }>;
+
+/** Result of resolving any supported request authentication mechanism. */
+export type ToolInvocationPrincipalResolution =
+  | { readonly ok: true; readonly principal: ToolInvocationPrincipal }
+  | {
+      readonly ok: false;
+      readonly statusCode: number;
+      readonly code: string;
+      readonly message: string;
+    };
 
 export const systemActor: Actor = {
   id: "system",
@@ -95,7 +118,9 @@ export async function actorFromRequestWithAccessTokenAndSession(
           ? { ...actor, displayName: accessToken.actorDisplayName }
           : { ...actor, displayName: accessToken.actorDisplayName, email: accessToken.actorEmail };
       }
-      return accessToken.actorEmail === undefined ? actor : { ...actor, email: accessToken.actorEmail };
+      return accessToken.actorEmail === undefined
+        ? actor
+        : { ...actor, email: accessToken.actorEmail };
     }
   }
 
@@ -105,6 +130,89 @@ export async function actorFromRequestWithAccessTokenAndSession(
   }
 
   return actorFromRequest(request);
+}
+
+/**
+ * Resolve the complete tool principal for an HTTP request.
+ *
+ * API keys and mTLS credentials are authenticated directly. OAuth access
+ * tokens are also joined back to their policy-bearing credential so a client
+ * revocation or policy change takes effect immediately. Human sessions and the
+ * trusted-header development fallback intentionally produce actor-only
+ * principals.
+ */
+export async function toolInvocationPrincipalFromRequest(
+  request: FastifyRequest,
+  tokenStore: AccessTokenStore,
+  sessionResolver?: SessionActorResolver,
+  credentialStore?: AgentCredentialStore,
+): Promise<ToolInvocationPrincipalResolution> {
+  if (credentialStore !== undefined) {
+    const credentialResolution = await resolveCredentialAuthenticatedPrincipal(
+      request,
+      credentialStore,
+    );
+    if (credentialResolution !== null) {
+      return credentialResolution;
+    }
+  }
+
+  const token = bearerTokenFromRequest(request);
+  if (token !== undefined) {
+    const accessToken = await tokenStore.findToken(token);
+    if (accessToken !== null) {
+      const actor = actorFromAccessToken(accessToken);
+      if (actor.type === "agent" && credentialStore?.findByClientId !== undefined) {
+        const credential = await credentialStore.findByClientId(accessToken.clientId);
+        if (
+          credential === null ||
+          credential.credentialType !== "oauth_client" ||
+          credential.clientId !== accessToken.clientId ||
+          credential.actorId !== actor.id ||
+          credential.orgId !== actor.orgId ||
+          !accessToken.scopes.every((scope) => credential.scopes.includes(scope))
+        ) {
+          return {
+            ok: false,
+            statusCode: 403,
+            code: "credential_revoked",
+            message: "Credential has been revoked or no longer matches this access token.",
+          };
+        }
+        const enforcement = enforceCredentialPolicy(credential, credentialRequestContext(request));
+        if (!enforcement.ok) {
+          return {
+            ok: false,
+            statusCode: 403,
+            code: enforcement.code,
+            message: enforcement.message,
+          };
+        }
+        return {
+          ok: true,
+          principal: credentialToolInvocationPrincipal({
+            actor,
+            credentialId: credential.id,
+            credentialPolicy: credential.policy,
+          }),
+        };
+      }
+      return { ok: true, principal: actorToolInvocationPrincipal(actor) };
+    }
+  }
+
+  const sessionActor = await sessionResolver?.resolve(request);
+  if (sessionActor !== undefined && sessionActor !== null) {
+    return {
+      ok: true,
+      principal: actorToolInvocationPrincipal(sessionActor),
+    };
+  }
+
+  return {
+    ok: true,
+    principal: actorToolInvocationPrincipal(actorFromRequest(request)),
+  };
 }
 
 /**
@@ -121,10 +229,21 @@ export async function actorFromRequestWithAccessTokenAndSession(
 export async function resolveCredentialAuthenticatedActor(
   request: FastifyRequest,
   credentialStore: AgentCredentialStore,
+): Promise<CredentialActorResolution | null> {
+  const resolution = await resolveCredentialAuthenticatedPrincipal(request, credentialStore);
+  return resolution?.ok === true ? { ok: true, actor: resolution.principal.actor } : resolution;
+}
+
+/**
+ * Authenticate an API-key or mTLS request and return its complete invocation
+ * principal. The legacy actor-named export preserves its actor-only result for
+ * non-tool callers.
+ */
+export async function resolveCredentialAuthenticatedPrincipal(
+  request: FastifyRequest,
+  credentialStore: AgentCredentialStore,
 ): Promise<CredentialResolution | null> {
-  const context: CredentialRequestContext = {
-    ...(typeof request.ip === "string" && request.ip.length > 0 ? { ip: request.ip } : {}),
-  };
+  const context = credentialRequestContext(request);
 
   const apiKey = apiKeyFromRequest(request);
   if (apiKey !== undefined) {
@@ -137,7 +256,7 @@ export async function resolveCredentialAuthenticatedActor(
         message: result.message,
       };
     }
-    return { ok: true, actor: credentialActor(result.credential) };
+    return { ok: true, principal: credentialPrincipal(result.credential) };
   }
 
   const fingerprint = clientCertFingerprintFromRequest(request);
@@ -151,26 +270,56 @@ export async function resolveCredentialAuthenticatedActor(
         message: result.message,
       };
     }
-    return { ok: true, actor: credentialActor(result.credential) };
+    return { ok: true, principal: credentialPrincipal(result.credential) };
   }
 
   return null;
 }
 
-function credentialActor(credential: {
+function credentialPrincipal(credential: {
+  readonly id: string;
   readonly actorId: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
   readonly policy: AgentCredentialPolicy;
-}): Actor {
+}): ToolInvocationPrincipal {
   const actor: Actor = {
     id: credential.actorId,
     orgId: credential.orgId,
     type: "agent",
     scopes: credential.scopes,
   };
-  credentialPolicyByActor.set(actor, credential.policy);
-  return actor;
+  return credentialToolInvocationPrincipal({
+    actor,
+    credentialId: credential.id,
+    credentialPolicy: credential.policy,
+  });
+}
+
+function credentialRequestContext(request: FastifyRequest): CredentialRequestContext {
+  return {
+    ...(typeof request.ip === "string" && request.ip.length > 0 ? { ip: request.ip } : {}),
+  };
+}
+
+function actorFromAccessToken(accessToken: {
+  readonly actorId: string;
+  readonly orgId: string;
+  readonly actorType?: "user" | "agent" | "service_account" | "system";
+  readonly actorDisplayName?: string;
+  readonly actorEmail?: string;
+  readonly scopes: readonly string[];
+}): Actor {
+  return {
+    id: accessToken.actorId,
+    orgId: accessToken.orgId,
+    type: accessToken.actorType ?? "agent",
+    scopes: accessToken.scopes,
+    ...(accessToken.actorDisplayName === undefined
+      ? {}
+      : { displayName: accessToken.actorDisplayName }),
+    ...(accessToken.actorEmail === undefined ? {} : { email: accessToken.actorEmail }),
+  };
 }
 
 function apiKeyFromRequest(request: FastifyRequest): string | undefined {

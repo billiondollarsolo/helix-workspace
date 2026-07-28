@@ -4,6 +4,7 @@ import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { AssistantOrchestrator } from "./orchestrator.js";
 import type { AssistantStore } from "./types.js";
+import { actorToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.unknown()).default({});
@@ -204,6 +205,7 @@ export function createAssistantToolDefinitions(
       handler: async (input, ctx) =>
         options.orchestrator.sendMessage({
           actor: ctx.actor,
+          principal: actorToolInvocationPrincipal(ctx.actor),
           content: input.message,
           ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
           ...(input.title === undefined ? {} : { title: input.title }),
@@ -245,6 +247,7 @@ export function createAssistantToolDefinitions(
       handler: async (input, ctx) =>
         options.orchestrator.approvePendingTool({
           actor: ctx.actor,
+          principal: actorToolInvocationPrincipal(ctx.actor),
           conversationId: input.conversationId,
           pendingId: input.pendingId,
           classification: input.classification,
@@ -263,6 +266,7 @@ export function createAssistantToolDefinitions(
       handler: async (input, ctx) =>
         options.orchestrator.cancelPendingTool({
           actor: ctx.actor,
+          principal: actorToolInvocationPrincipal(ctx.actor),
           conversationId: input.conversationId,
           pendingId: input.pendingId,
           classification: input.classification,

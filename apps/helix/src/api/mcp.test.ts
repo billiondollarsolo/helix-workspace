@@ -26,7 +26,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
       }),
     ).resolves.toMatchObject({
@@ -53,7 +53,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: { jsonrpc: "2.0", id: "init", method: "initialize" },
       }),
     ).resolves.toMatchObject({
@@ -72,7 +72,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const response = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: {
         jsonrpc: "2.0",
         id: "call-1",
@@ -106,7 +106,7 @@ describe("handleMcpJsonRpcRequest", () => {
 
     const response = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
     });
 
@@ -153,7 +153,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         body: {
           jsonrpc: "2.0",
           id: "first",
@@ -172,7 +172,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         body: {
           jsonrpc: "2.0",
           id: "blocked",
@@ -222,7 +222,7 @@ describe("handleMcpJsonRpcRequest", () => {
 
     const listResponse = await handleMcpJsonRpcRequest({
       tools,
-      actor: agentActor,
+      principal: { actor: agentActor },
       resources,
       body: { jsonrpc: "2.0", id: "resources", method: "resources/list" },
     });
@@ -249,7 +249,7 @@ describe("handleMcpJsonRpcRequest", () => {
 
     const readResponse = await handleMcpJsonRpcRequest({
       tools,
-      actor: agentActor,
+      principal: { actor: agentActor },
       resources,
       body: {
         jsonrpc: "2.0",
@@ -286,7 +286,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const response = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: { jsonrpc: "2.0", id: "init", method: "initialize" },
     });
 
@@ -305,7 +305,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const listResponse = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: { jsonrpc: "2.0", id: "prompts", method: "prompts/list" },
     });
     expect(listResponse).toMatchObject({
@@ -316,7 +316,7 @@ describe("handleMcpJsonRpcRequest", () => {
 
     const getResponse = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: {
         jsonrpc: "2.0",
         id: "prompt-get",
@@ -336,7 +336,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: {
           jsonrpc: "2.0",
           id: "missing-prompt",
@@ -354,7 +354,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const events: McpStreamEvent[] = [];
     for await (const event of handleMcpStreamingRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: {
         jsonrpc: "2.0",
         id: "stream-call",
@@ -379,7 +379,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const events: McpStreamEvent[] = [];
     for await (const event of handleMcpStreamingRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: { jsonrpc: "2.0", id: "stream-list", method: "tools/list" },
     })) {
       events.push(event);
@@ -394,7 +394,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         resources,
         body: { jsonrpc: "2.0", id: "bad", method: "resources/read", params: {} },
       }),
@@ -410,7 +410,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         resources,
         body: {
           jsonrpc: "2.0",
@@ -443,7 +443,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         resources,
         body: {
           jsonrpc: "2.0",
@@ -563,20 +563,16 @@ function tool(
 
 describe("MCP method span coverage (P2-6)", () => {
   it("emits an mcp.<method> span for each JSON-RPC request", async () => {
-    const { installSpanCapture } = await import(
-      "../platform/observability/span-testing.js"
-    );
+    const { installSpanCapture } = await import("../platform/observability/span-testing.js");
     const harness = installSpanCapture();
     try {
       const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
       await handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: { jsonrpc: "2.0", id: 7, method: "tools/list" },
       });
-      const span = harness
-        .spans()
-        .find((candidate) => candidate.name === "mcp.tools/list");
+      const span = harness.spans().find((candidate) => candidate.name === "mcp.tools/list");
       expect(span).toBeDefined();
       expect(span?.attributes["helix.mcp.method"]).toBe("tools/list");
     } finally {
@@ -585,20 +581,16 @@ describe("MCP method span coverage (P2-6)", () => {
   });
 
   it("marks the span as errored for an unsupported method", async () => {
-    const { installSpanCapture } = await import(
-      "../platform/observability/span-testing.js"
-    );
+    const { installSpanCapture } = await import("../platform/observability/span-testing.js");
     const harness = installSpanCapture();
     try {
       const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
       await handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: { jsonrpc: "2.0", id: 8, method: "does/not-exist" },
       });
-      const span = harness
-        .spans()
-        .find((candidate) => candidate.name === "mcp.does/not-exist");
+      const span = harness.spans().find((candidate) => candidate.name === "mcp.does/not-exist");
       expect(span?.status.code).toBe(2 /* SpanStatusCode.ERROR */);
     } finally {
       await harness.dispose();

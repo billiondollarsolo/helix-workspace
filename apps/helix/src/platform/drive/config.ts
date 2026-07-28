@@ -12,6 +12,17 @@ export interface DriveStorageConfig {
 
 export interface DriveConfig {
   readonly storage: DriveStorageConfig;
+  readonly malwareScanner:
+    | {
+        readonly kind: "clamav";
+        readonly host: string;
+        readonly port: number;
+        readonly timeoutMs?: number;
+        readonly maxBytes?: number;
+        readonly chunkSizeBytes?: number;
+        readonly scannerVersion?: string;
+      }
+    | undefined;
   readonly officePreview: {
     readonly url?: string;
     readonly localFallback: boolean;
@@ -58,6 +69,14 @@ function parseServerSideEncryption(value: string | undefined): "AES256" | "aws:k
   return undefined;
 }
 
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 /** Pure derivation of Drive operational config from the validated env module. */
 export function loadDriveConfig(e: Env = env()): DriveConfig {
   const isProduction = e.NODE_ENV === "production";
@@ -65,6 +84,10 @@ export function loadDriveConfig(e: Env = env()): DriveConfig {
     e.RUSTFS_ENDPOINT ??
     (e.RUSTFS_API_PORT === undefined ? undefined : `http://localhost:${e.RUSTFS_API_PORT}`);
   const serverSideEncryption = parseServerSideEncryption(e.RUSTFS_SERVER_SIDE_ENCRYPTION);
+  const scannerEnabled = coerceBool(e.DRIVE_CLAMAV_ENABLED, false);
+  const scannerTimeoutMs = parsePositiveInteger(e.DRIVE_CLAMAV_TIMEOUT_MS);
+  const scannerMaxBytes = parsePositiveInteger(e.DRIVE_CLAMAV_MAX_BYTES);
+  const scannerChunkSizeBytes = parsePositiveInteger(e.DRIVE_CLAMAV_CHUNK_SIZE_BYTES);
   return {
     storage: {
       ...(endpoint === undefined ? {} : { endpoint }),
@@ -75,6 +98,19 @@ export function loadDriveConfig(e: Env = env()): DriveConfig {
       ...(serverSideEncryption === undefined ? {} : { serverSideEncryption }),
       forcePathStyle: true,
     },
+    malwareScanner: scannerEnabled
+      ? {
+          kind: "clamav",
+          host: e.DRIVE_CLAMAV_HOST ?? "clamav",
+          port: parsePositiveInteger(e.DRIVE_CLAMAV_PORT) ?? 3310,
+          ...(scannerTimeoutMs === undefined ? {} : { timeoutMs: scannerTimeoutMs }),
+          ...(scannerMaxBytes === undefined ? {} : { maxBytes: scannerMaxBytes }),
+          ...(scannerChunkSizeBytes === undefined ? {} : { chunkSizeBytes: scannerChunkSizeBytes }),
+          ...(e.DRIVE_CLAMAV_SCANNER_VERSION === undefined
+            ? {}
+            : { scannerVersion: e.DRIVE_CLAMAV_SCANNER_VERSION }),
+        }
+      : undefined,
     officePreview: {
       ...(e.HELIX_DRIVE_OFFICE_PREVIEW_URL === undefined
         ? {}

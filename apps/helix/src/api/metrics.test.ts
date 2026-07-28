@@ -178,4 +178,34 @@ describe("platform metrics", () => {
     expect(output).toContain("helix_storage_pool_size 1");
     expect(output).toContain("helix_storage_pool_evictions_total 2");
   });
+
+  it("records privacy-safe malware scanner health, result, backlog, and quarantine metrics", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordSecurityScan({
+      scannerName: "clamav",
+      state: "scan_failed",
+      durationSeconds: 0.25,
+      byteSize: 4096,
+    });
+    metrics.setSecurityScannerAvailable({ scannerName: "clamav", available: false });
+    metrics.setSecurityScanBacklog({ scannerName: "clamav", pendingItems: 3 });
+    metrics.recordSecurityQuarantinedBytes({ scannerName: "clamav", byteSize: 4096 });
+
+    const output = await metrics.registry.metrics();
+
+    expect(output).toContain('helix_security_scans_total{scanner="clamav",state="scan_failed"} 1');
+    expect(output).toContain(
+      'helix_security_scan_duration_seconds_count{scanner="clamav",state="scan_failed"} 1',
+    );
+    expect(output).toContain(
+      'helix_security_scanned_bytes_total{scanner="clamav",state="scan_failed"} 4096',
+    );
+    expect(output).toContain('helix_security_scanner_available{scanner="clamav"} 0');
+    expect(output).toContain('helix_security_scan_backlog_items{scanner="clamav"} 3');
+    expect(output).toContain('helix_security_quarantined_bytes_total{scanner="clamav"} 4096');
+    expect(output).not.toContain("filename");
+    expect(output).not.toContain("org_id");
+    expect(output).not.toContain("actor_id");
+  });
 });

@@ -10,6 +10,7 @@ import {
   MAIL_LIVE_SCENARIOS,
   validateMailLiveEvidence,
 } from "./mail-live-evidence-smoke.mjs";
+import { AGENT_LIVE_SCENARIOS, validateAgentLiveEvidence } from "./agent-live-evidence-smoke.mjs";
 
 const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|cookie|key|credential)/iu;
 
@@ -24,6 +25,7 @@ Options:
   --evidence-dir <path>        Required unless HELIX_RELEASE_EVIDENCE_DIR is set
   --require-evidence <path>    Required relative evidence path; repeatable
   --mail-live-evidence <path>  Validate and require passed local M7 Mail evidence
+  --agent-live-evidence <path> Validate and require passed A7 Agent evidence
   --require-external-mail-evidence
                                Also require passed provider/Gmail/Microsoft evidence
   --image-digest <digest>      Application image digest (legacy option name)
@@ -107,6 +109,7 @@ export async function buildReleaseReadinessManifest(options) {
     throw new Error(`evidence directory contains no files: ${options.evidenceDir}`);
   }
   const mailEvidence = await validateRequiredMailEvidence(options, evidencePaths);
+  const agentEvidence = await validateRequiredAgentEvidence(options, evidencePaths);
 
   const timestamp = canonicalTimestamp(options.timestamp);
   const raw = {
@@ -135,6 +138,7 @@ export async function buildReleaseReadinessManifest(options) {
       required: [...options.requiredEvidence].sort(),
       files: evidence,
       ...(mailEvidence === undefined ? {} : { mail: mailEvidence }),
+      ...(agentEvidence === undefined ? {} : { agent: agentEvidence }),
     },
   };
   return redactSensitive(raw);
@@ -150,6 +154,7 @@ export function parseArgs(args, cwd, environment = process.env) {
         : resolve(cwd, environment.HELIX_RELEASE_EVIDENCE_DIR),
     requiredEvidence: [],
     mailLiveEvidence: undefined,
+    agentLiveEvidence: undefined,
     requireExternalMailEvidence: false,
     applicationImageDigest:
       environment.HELIX_APPLICATION_IMAGE_DIGEST ?? environment.HELIX_IMAGE_DIGEST,
@@ -190,6 +195,9 @@ export function parseArgs(args, cwd, environment = process.env) {
       case "--mail-live-evidence":
         options.mailLiveEvidence = normalizeRelativePath(value);
         break;
+      case "--agent-live-evidence":
+        options.agentLiveEvidence = normalizeRelativePath(value);
+        break;
       case "--image-digest":
       case "--application-image-digest":
         options.applicationImageDigest = value;
@@ -214,6 +222,38 @@ export function parseArgs(args, cwd, environment = process.env) {
     throw new Error("--require-external-mail-evidence requires --mail-live-evidence");
   }
   return options;
+}
+
+async function validateRequiredAgentEvidence(options, evidencePaths) {
+  if (options.agentLiveEvidence === undefined) return undefined;
+  if (!evidencePaths.has(options.agentLiveEvidence)) {
+    throw new Error(`required Agent live evidence missing: ${options.agentLiveEvidence}`);
+  }
+  const path = resolve(options.evidenceDir, options.agentLiveEvidence);
+  let evidence;
+  try {
+    evidence = validateAgentLiveEvidence(JSON.parse(await readFile(path, "utf8")));
+  } catch (error) {
+    throw new Error(
+      `invalid Agent live evidence: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const incomplete = AGENT_LIVE_SCENARIOS.filter(
+    (scenario) => evidence.scenarios[scenario].status !== "passed",
+  );
+  if (evidence.status !== "passed" || incomplete.length > 0) {
+    throw new Error(
+      `Agent live evidence is incomplete: ${incomplete.join(", ") || evidence.status}`,
+    );
+  }
+  return {
+    path: options.agentLiveEvidence,
+    status: evidence.status,
+    scenarios: AGENT_LIVE_SCENARIOS.map((scenario) => ({
+      name: scenario,
+      status: evidence.scenarios[scenario].status,
+    })),
+  };
 }
 
 async function validateRequiredMailEvidence(options, evidencePaths) {

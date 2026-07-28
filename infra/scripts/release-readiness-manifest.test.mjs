@@ -9,6 +9,7 @@ import {
   redactSensitive,
 } from "./release-readiness-manifest.mjs";
 import { MAIL_LIVE_SCENARIOS, createEvidenceSkeleton } from "./mail-live-evidence-smoke.mjs";
+import { AGENT_LIVE_SCENARIOS, createAgentEvidenceSkeleton } from "./agent-live-evidence-smoke.mjs";
 
 describe("release-readiness manifest", () => {
   it("redacts sensitive keys recursively and case-insensitively", () => {
@@ -237,7 +238,139 @@ describe("release-readiness manifest", () => {
       "external Mail evidence is incomplete: provider_sandbox, gmail, microsoft365",
     );
   });
+
+  it("fails closed unless every required Agent live scenario passed", async () => {
+    const fixture = await createFixture();
+    const evidence = createAgentEvidenceSkeleton(new Date("2026-07-28T20:00:00.000Z"));
+    await writeFile(
+      resolve(fixture.evidence, "agent-live-evidence.json"),
+      `${JSON.stringify(evidence)}\n`,
+      "utf8",
+    );
+    const args = [
+      "--workspace-dir",
+      fixture.workspace,
+      "--editors-dir",
+      fixture.editors,
+      "--evidence-dir",
+      fixture.evidence,
+      "--agent-live-evidence",
+      "agent-live-evidence.json",
+      "--image-digest",
+      `sha256:${"a".repeat(64)}`,
+      "--web-image-digest",
+      `sha256:${"b".repeat(64)}`,
+    ];
+
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "Agent live evidence is incomplete",
+    );
+
+    evidence.mode = "live";
+    evidence.status = "passed";
+    for (const scenario of AGENT_LIVE_SCENARIOS) {
+      evidence.scenarios[scenario] = passedAgentResult(scenario);
+    }
+    await writeFile(
+      resolve(fixture.evidence, "agent-live-evidence.json"),
+      `${JSON.stringify(evidence)}\n`,
+      "utf8",
+    );
+    const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
+    expect(manifest.evidence.agent).toMatchObject({
+      path: "agent-live-evidence.json",
+      status: "passed",
+      scenarios: AGENT_LIVE_SCENARIOS.map((scenario) => ({
+        name: scenario,
+        status: "passed",
+      })),
+    });
+  });
 });
+
+function passedAgentResult(scenario) {
+  const hash = "a".repeat(20);
+  const resources = Object.fromEntries(
+    ["mail", "drive", "chat"].map((kind) => [kind, { resourceHash: hash, byteSize: 10 }]),
+  );
+  switch (scenario) {
+    case "oauth_least_privilege":
+      return {
+        status: "passed",
+        grant: "client_credentials",
+        exactScopes: true,
+        scopes: ["mail.read", "drive.read", "chat.read", "chat.post"],
+        clientHash: hash,
+      };
+    case "mcp_permitted_resources":
+      return { status: "passed", listedCount: 3, reads: resources };
+    case "mcp_forbidden_resources":
+      return {
+        status: "passed",
+        allDenied: true,
+        guesses: [1, 2, 3].map(() => ({ resourceHash: hash, errorCode: -32004 })),
+      };
+    case "chat_send_approval_once":
+      return {
+        status: "passed",
+        pendingHash: hash,
+        markerHash: hash,
+        separateHumanApproval: true,
+        duplicateApprovalDenied: true,
+        observedMessageCount: 1,
+      };
+    case "mail_send_denied":
+      return {
+        status: "passed",
+        absentFromEnumeration: true,
+        directCallDenied: true,
+        outboundQueueRecordsCreated: 0,
+        errorCode: -32003,
+      };
+    case "prompt_injection_resistance":
+      return {
+        status: "passed",
+        fixtures: Object.fromEntries(
+          ["mail", "drive", "chat"].map((kind) => [
+            kind,
+            { fixtureHash: hash, fixtureBytes: 10, forbiddenMutationDenied: true },
+          ]),
+        ),
+        toolVisibilityUnchanged: true,
+        forbiddenMutationDenied: true,
+      };
+    case "credential_revoked_pending_action":
+      return {
+        status: "passed",
+        pendingHash: hash,
+        clientHash: hash,
+        revokeExecuted: true,
+        approvalDenied: true,
+        errorStatus: 403,
+      };
+    case "audit_correlation_redaction":
+      return {
+        status: "passed",
+        recordCount: 4,
+        records: [1, 2, 3, 4].map(() => ({
+          recordHash: hash,
+          verb: "tool.invocation.denied",
+          objectType: "tool_invocation",
+          traceHash: hash,
+        })),
+        contentLeakageObserved: false,
+        pendingActionsCorrelated: true,
+        requiredVerbsObserved: [
+          "tool.invocation.pending",
+          "tool.invocation.executed",
+          "tool.invocation.denied",
+          "agent.credential.revoked",
+        ],
+      };
+    default:
+      throw new Error(`unknown Agent scenario ${scenario}`);
+  }
+}
 
 function passedLocalResult(scenario) {
   const hash = "a".repeat(20);

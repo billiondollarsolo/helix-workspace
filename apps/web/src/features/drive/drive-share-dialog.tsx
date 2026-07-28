@@ -120,6 +120,9 @@ export function DriveShareDialog({
           return;
         }
         const link = await createDriveShareLink({ objectId, role: "reader" });
+        if (link.token === null) {
+          return;
+        }
         await navigator.clipboard.writeText(drivePublicShareUrl(link.token));
         setCopied(true);
       } catch {

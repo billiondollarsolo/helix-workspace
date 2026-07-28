@@ -1,7 +1,31 @@
-node_modules
-dist
-.turbo
-.tanstack
-coverage
-data
-.github/CODEOWNERS
+# Dependencies, generated output, and local artifacts.
+**/node_modules/
+**/dist/
+**/build/
+**/out/
+**/.turbo/
+**/.tanstack/
+**/.vite/
+**/.cache/
+**/coverage/
+**/test-results/
+**/playwright-report/
+**/.playwright/
+**/reports/a11y/
+**/*.tsbuildinfo
+/data/
+/artifacts/
+/.tmp/
+/.codex-artifacts/
+/test-corpus/generated/
+/test-corpus/.cache/
+/test-corpus/_state.json
+
+# Generated source. This file explicitly instructs formatters not to edit it.
+/apps/web/src/routeTree.gen.ts
+
+# Raw Go-template YAML is validated after rendering by the Helm-specific gate.
+/infra/helm/helix/templates/**
+
+# Non-source metadata with no Prettier parser.
+/.github/CODEOWNERS

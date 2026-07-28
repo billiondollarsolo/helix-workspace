@@ -13,6 +13,59 @@ on:
         type: string
 
 jobs:
+  source-and-helm-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
+    steps:
+      - name: Checkout helix-workspace
+        uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check source formatting
+        run: pnpm format:check
+
+      - name: Validate Helm chart
+        run: pnpm infra:helm:validate
+
+      - name: Prove quality gates fail closed
+        run: pnpm quality:gates-contract:test
+
+      - name: Test launch documentation contract
+        run: pnpm quality:launch-docs:test
+
+      - name: Verify launch documentation claims
+        run: pnpm quality:launch-docs
+
   platform-mode-matrix:
     name: test:${{ matrix.helix_mode }}
     runs-on: ubuntu-latest

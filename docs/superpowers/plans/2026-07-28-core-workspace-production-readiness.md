@@ -439,12 +439,12 @@ exist only as uncommitted changes.
 
 **Steps:**
 
-- [ ] Create an ADR index if none exists.
-- [ ] Record context, decision, alternatives, consequences, and reversal triggers.
-- [ ] State explicitly that pilot chat is not E2EE.
-- [ ] State explicitly that production outbound mail requires a provider.
-- [ ] State explicitly that IMAP is not part of the launch.
-- [ ] Remove or qualify stale documentation that claims an unenforced control is complete.
+- [x] Create an ADR index if none exists.
+- [x] Record context, decision, alternatives, consequences, and reversal triggers.
+- [x] State explicitly that pilot chat is not E2EE.
+- [x] State explicitly that production outbound mail requires a provider.
+- [x] State explicitly that IMAP is not part of the launch.
+- [x] Remove or qualify stale documentation that claims an unenforced control is complete.
 
 **Tests:**
 
@@ -497,13 +497,13 @@ tries to parse Helm templates as ordinary files. A required gate that cannot pas
 
 **Steps:**
 
-- [ ] Enumerate files intended for Prettier.
-- [ ] Exclude generated output, artifacts, vendored files, and raw Helm templates from generic
+- [x] Enumerate files intended for Prettier.
+- [x] Exclude generated output, artifacts, vendored files, and raw Helm templates from generic
       Prettier parsing.
-- [ ] Validate Helm templates with Helm-specific tooling instead.
-- [ ] Format the source backlog in one mechanical commit with no semantic edits, or establish a
+- [x] Validate Helm templates with Helm-specific tooling instead.
+- [x] Format the source backlog in one mechanical commit with no semantic edits, or establish a
       reviewed baseline file if a one-time rewrite is too disruptive.
-- [ ] Make local and CI formatting commands identical.
+- [x] Make local and CI formatting commands identical.
 
 **Acceptance:**
 

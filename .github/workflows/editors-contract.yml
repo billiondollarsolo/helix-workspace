@@ -10,6 +10,7 @@ on:
       - "infra/scripts/verify-workspace-editor-boundaries.mjs"
       - "infra/scripts/verify-workspace-editor-boundaries.test.mjs"
       - "infra/scripts/verify-editors-contract.sh"
+      - ".github/actions/checkout-editors/action.yml"
       - ".github/workflows/editors-contract.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -34,12 +35,12 @@ jobs:
         with:
           path: helix-all/helix-workspace
 
-      - name: Checkout helix-editors
-        uses: actions/checkout@v4
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
         with:
-          repository: mjtechguy/helix-editors
-          ref: ${{ inputs.helix_editors_ref || 'main' }}
-          path: helix-all/helix-editors
+          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

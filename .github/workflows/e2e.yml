@@ -25,14 +25,31 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      helix_editors_ref:
+        description: Optional helix-editors branch, tag, or SHA to test.
+        required: false
+        type: string
 
 jobs:
   e2e-mocked:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -44,6 +61,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -71,6 +91,9 @@ jobs:
   e2e-live:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     env:
       # docker-compose published ports (see docker-compose.yml defaults).
       DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:28432/helix
@@ -82,8 +105,17 @@ jobs:
       HELIX_E2E_MAILPIT_SMTP_PORT: "28457"
       HELIX_E2E_MAILPIT_API_BASE_URL: http://127.0.0.1:28458
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -95,6 +127,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

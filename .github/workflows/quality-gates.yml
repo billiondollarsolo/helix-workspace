@@ -6,12 +6,20 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      helix_editors_ref:
+        description: Optional helix-editors branch, tag, or SHA to test.
+        required: false
+        type: string
 
 jobs:
   platform-mode-matrix:
     name: test:${{ matrix.helix_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     strategy:
       fail-fast: false
       matrix:
@@ -19,8 +27,17 @@ jobs:
           - single-tenant
           - multi-tenant-saas
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -32,6 +49,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -42,9 +62,21 @@ jobs:
   repo-boundaries:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -56,6 +88,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -69,9 +104,21 @@ jobs:
   backend-live-demo-data:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -83,6 +130,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -158,9 +208,21 @@ jobs:
 
   accessibility-and-load:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
     steps:
-      - name: Checkout
+      - name: Checkout helix-workspace
         uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -172,6 +234,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

@@ -7,6 +7,7 @@ import process from "node:process";
 import { clearTimeout, setTimeout } from "node:timers";
 import { pathToFileURL } from "node:url";
 import {
+  assertFailureRecoveryEvidenceContainsNoSecrets,
   createLiveFailureRecoveryEvidence,
   createStaticFailureRecoveryEvidence,
   FAILURE_RECOVERY_SCENARIOS,
@@ -59,7 +60,9 @@ export async function runFailureRecoveryEvidence(options, dependencies = {}) {
         timeoutMs: config.timeoutMs,
         environment: config.environment,
       });
-      report.scenarios[contract.id] = validateFailureRecoveryScenario(observation, contract);
+      const validated = validateFailureRecoveryScenario(observation, contract);
+      assertFailureRecoveryEvidenceContainsNoSecrets(validated);
+      report.scenarios[contract.id] = validated;
     } catch {
       report.scenarios[contract.id] = {
         status: "failed",

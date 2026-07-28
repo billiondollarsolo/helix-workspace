@@ -181,7 +181,7 @@ describe("opt-in V4 failure/recovery runner", () => {
   it("records a safe failed result instead of promoting invalid harness output", async () => {
     const runHarness = vi.fn(async ({ contract }) =>
       contract.id === FAILURE_RECOVERY_SCENARIOS[3].id
-        ? { status: "passed" }
+        ? { ...passedObservation(contract), accessToken: "must-never-enter-evidence" }
         : passedObservation(contract),
     );
     const report = await runFailureRecoveryEvidence(

@@ -58,6 +58,9 @@ jobs:
       - name: Install helix-workspace dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace SDK contract
+        run: pnpm --filter @helix/sdk-types... build
+
       - name: Install helix-editors dependencies
         working-directory: helix-all/helix-editors
         run: pnpm install --frozen-lockfile

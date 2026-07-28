@@ -7,7 +7,7 @@ runs:
     - name: Build workspace SDK contract
       shell: bash
       working-directory: helix-all/helix-workspace
-      run: pnpm --filter @helix/sdk-types build
+      run: pnpm --filter @helix/sdk-types... build
 
     - name: Install helix-editors dependencies
       shell: bash
@@ -23,3 +23,8 @@ runs:
         --filter @helix/editors-format-loader
         --filter @helix/editors-ui
         build
+
+    - name: Refresh workspace file-linked packages
+      shell: bash
+      working-directory: helix-all/helix-workspace
+      run: pnpm install --frozen-lockfile

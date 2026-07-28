@@ -15,7 +15,7 @@ runs:
   using: composite
   steps:
     - name: Checkout helix-editors main
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d2dfd7550a76b50e8157d1e0e3c1b38a4f4d4d # v4
       with:
         repository: billiondollarsolo/helix-editors
         ref: main

@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d2dfd7550a76b50e8157d1e0e3c1b38a4f4d4d # v4
 
       - name: Validate shell syntax
         run: bash -n infra/scripts/common.sh infra/scripts/backup.sh infra/scripts/restore.sh infra/scripts/restore-drill.sh
@@ -42,7 +42,7 @@ jobs:
 
       - name: Upload truthful static evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: restore-drill-static-evidence
           path: /tmp/helix-restore-evidence/restore-drill-evidence.json

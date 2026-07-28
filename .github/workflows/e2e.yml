@@ -40,7 +40,7 @@ jobs:
         working-directory: helix-all/helix-workspace
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d2dfd7550a76b50e8157d1e0e3c1b38a4f4d4d # v4
         with:
           path: helix-all/helix-workspace
 
@@ -51,12 +51,12 @@ jobs:
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -84,7 +84,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report-mocked
           path: apps/web/playwright-report
@@ -108,7 +108,7 @@ jobs:
       HELIX_E2E_MAILPIT_API_BASE_URL: http://127.0.0.1:28458
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d2dfd7550a76b50e8157d1e0e3c1b38a4f4d4d # v4
         with:
           path: helix-all/helix-workspace
 
@@ -119,12 +119,12 @@ jobs:
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -222,7 +222,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report-live
           path: apps/web/playwright-report

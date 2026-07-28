@@ -1,0 +1,69 @@
+name: Supply Chain Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-dependency-advisories:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
+    steps:
+      - name: Checkout helix-workspace
+        uses: actions/checkout@11d2dfd7550a76b50e8157d1e0e3c1b38a4f4d4d # v4
+        with:
+          path: helix-all/helix-workspace
+          persist-credentials: false
+
+      - name: Checkout paired package boundary
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Set up pinned pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.15.9
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.21.1
+
+      - name: Audit production dependency lockfile
+        run: pnpm quality:production-dependency-audit
+
+  committed-secret-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@11d2dfd7550a76b50e8157d1e0e3c1b38a4f4d4d # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan committed history for secrets
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo"
+          -w /repo
+          --entrypoint /bin/sh
+          ghcr.io/gitleaks/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
+          -ec
+          'git config --global --add safe.directory /repo &&
+          test "$(git rev-parse --is-inside-work-tree)" = true &&
+          test -n "$(git rev-list -1 --all)" &&
+          gitleaks git . --redact --no-banner --exit-code 1'

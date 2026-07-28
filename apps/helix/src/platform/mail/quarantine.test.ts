@@ -92,6 +92,34 @@ describe("mail quarantine admin flow", () => {
     });
   });
 
+  it("returns a clean message to quarantine when delivery fails", async () => {
+    const store = new InMemoryMailQuarantineStore();
+    const record = await seed(store);
+    const service = new MailQuarantineService({
+      store,
+      scanner: {
+        rescan: vi.fn().mockResolvedValue({ clean: true, evidence: { state: "clean" } }),
+      },
+      deliver: vi.fn().mockRejectedValue(new Error("mailbox disabled")),
+      auditSink: { append: vi.fn() },
+    });
+
+    await expect(
+      service.release({
+        orgId: orgA,
+        actorId: adminA.id,
+        id: record.id,
+        confirmed: true,
+        reason: "Try release.",
+      }),
+    ).resolves.toBeNull();
+    expect((await store.list(orgA))[0]).toMatchObject({
+      status: "quarantined",
+      reasons: expect.arrayContaining(["release_delivery_failed"]),
+      rawMessage: record.rawMessage,
+    });
+  });
+
   it("requires admin scope and cannot release across organizations", async () => {
     const store = new InMemoryMailQuarantineStore();
     const record = await seed(store);

@@ -367,7 +367,17 @@ export class MailQuarantineService {
       });
       return null;
     }
-    await this.options.deliver(record, record.rawMessage);
+    try {
+      await this.options.deliver(record, record.rawMessage);
+    } catch {
+      await this.options.store.restoreAfterFailedRescan({
+        orgId: input.orgId,
+        id: input.id,
+        scanEvidence: verdict.evidence,
+        reason: "release_delivery_failed",
+      });
+      return null;
+    }
     const released = await this.options.store.markReleased({
       orgId: input.orgId,
       id: input.id,

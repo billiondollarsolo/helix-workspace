@@ -205,7 +205,7 @@ import {
   ClamavScanner,
   createDispatchAuthorizedAttachmentResolver,
   DispatchTimeTransportResolver,
-  ingestRawMail,
+  ingestResolvedRawMail,
   MailQuarantineService,
   MailDeliveryAlertMonitor,
   NodemailerMailTransport,
@@ -1902,6 +1902,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // Config-gated inbound content scanners: spamd (SpamAssassin) and ClamAV.
   const spamdScannerConfig = mailCfg.spamd;
   const clamavScannerConfig = mailCfg.clamav;
+  const smtpRecipientResolver = createSmtpRecipientResolver({
+    receivingDomains: new PostgresReceivingDomainStore(sql),
+  });
   const mailAntivirusScanner =
     clamavScannerConfig === undefined
       ? undefined
@@ -1915,9 +1918,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       ? undefined
       : new SmtpMailReceiver({
           store: mailStore,
-          recipientResolver: createSmtpRecipientResolver({
-            receivingDomains: new PostgresReceivingDomainStore(sql),
-          }),
+          recipientResolver: smtpRecipientResolver,
           transportSecurity: smtpMailReceiverConfig.transportSecurity,
           limits: smtpMailReceiverConfig.limits,
           logger: app.log,
@@ -1935,12 +1936,21 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           store: mailQuarantineStore,
           scanner: quarantineReleaseScannerFromAntivirus(mailAntivirusScanner),
           deliver: async (record, rawMessage) => {
-            await ingestRawMail({
+            const recipients = await Promise.all(
+              record.envelopeTo.map((address) => smtpRecipientResolver.resolveRecipient(address)),
+            );
+            if (
+              recipients.some((recipient) => recipient === null || recipient.orgId !== record.orgId)
+            ) {
+              throw new Error(
+                "One or more quarantined recipients are no longer active in the organization.",
+              );
+            }
+            await ingestResolvedRawMail({
               store: mailStore,
               input: {
-                orgId: record.orgId,
                 raw: rawMessage,
-                envelopeTo: record.envelopeTo,
+                recipients: recipients.filter((recipient) => recipient !== null),
                 ...(record.envelopeFrom === null ? {} : { envelopeFrom: record.envelopeFrom }),
               },
             });

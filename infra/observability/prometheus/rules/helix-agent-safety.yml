@@ -7,6 +7,9 @@ groups:
         labels:
           severity: warning
         annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: service:agent-controls
+          trace_query: '{ resource.service.name = "helix" && helix.policy.decision = "deny" }'
           summary: Emergency agent controls are denying sustained tool traffic
 
       - alert: HelixPendingApprovalVolumeHigh
@@ -15,6 +18,9 @@ groups:
         labels:
           severity: warning
         annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: queue:agent-approvals
+          trace_query: '{ resource.service.name = "helix" && name = "tool.pending" }'
           summary: Pending approval volume is unusually high
 
       - alert: HelixAgentCostSpike
@@ -23,6 +29,9 @@ groups:
         labels:
           severity: warning
         annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: service:agent-runtime
+          trace_query: '{ resource.service.name = "helix" && name = "assistant.chat" }'
           summary: Agent and assistant model cost has spiked
 
       - alert: HelixExternalSendSpike
@@ -31,6 +40,9 @@ groups:
         labels:
           severity: critical
         annotations:
+          runbook_url: docs/runbooks/mail-bounce-complaint-spike.md
+          resource_id: service:mail-outbound
+          trace_query: '{ resource.service.name = "helix" && name = "smtp.send" }'
           summary: External mail send volume has spiked
 
       - alert: HelixPromptInjectionPolicyDenials
@@ -39,6 +51,9 @@ groups:
         labels:
           severity: warning
         annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: service:agent-tools
+          trace_query: '{ resource.service.name = "helix" && helix.policy.decision = "deny" }'
           summary: Untrusted-context high-risk tool attempts are being blocked
 
       - alert: HelixAuditIntegrityFailure
@@ -47,4 +62,7 @@ groups:
         labels:
           severity: critical
         annotations:
+          runbook_url: docs/runbooks/audit-integrity-shipping-failure.md
+          resource_id: resource:audit-chain
+          trace_query: '{ resource.service.name = "helix" && name = "audit.verify" }'
           summary: Audit hash-chain verification failed

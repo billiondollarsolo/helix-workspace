@@ -1,5 +1,26 @@
 # Helix Runbook
 
+## Workspace incident runbooks
+
+The [Workspace observability contract](observability.md) defines the dashboard,
+alerts, safe labels, and required telemetry. Start with the alert's
+`resource_id` and `trace_query`; never paste message content, filenames,
+prompts, tokens, or personal data into an incident channel or ticket.
+
+- [Platform or dependency outage](runbooks/platform-dependency-outage.md)
+- [Signup activation SLO breach](specs/05-operations/runbooks/signup-activation-slo-breach.md)
+- [Outbox or worker backlog](runbooks/outbox-worker-backlog.md)
+- [Mail provider outage or backlog](runbooks/mail-provider-outage.md)
+- [Mail bounce, complaint, or sender compromise](runbooks/mail-bounce-complaint-spike.md)
+- [Inbound mail spam or malware surge](runbooks/mail-inbound-malware-surge.md)
+- [Drive scanner outage or quarantine backlog](runbooks/drive-scanner-outage.md)
+- [Object-store outage or data mismatch](runbooks/object-store-data-mismatch.md)
+- [Chat, NATS, or Redis outage](runbooks/chat-nats-redis-outage.md)
+- [Agent credential or prompt-injection incident](runbooks/agent-security-incident.md)
+- [Audit integrity or shipping failure](runbooks/audit-integrity-shipping-failure.md)
+- [Secret, certificate, or key rotation](runbooks/secret-certificate-rotation.md)
+- [Backup restore or total deployment recovery](runbooks/backup-restore-recovery.md)
+
 ## Backup
 
 1. Confirm Compose can see the target stack:

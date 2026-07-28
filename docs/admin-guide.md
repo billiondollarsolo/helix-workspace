@@ -460,6 +460,19 @@ Local route delivery proof remains:
 pnpm quality:alertmanager-signup-routing
 ```
 
+## Workspace incident operations
+
+The provisioned `Helix Workspace Operations` dashboard covers the production
+signals for HTTP, auth, dependencies, workers, Mail, Drive, Chat, agents, audit,
+and recovery. The metric and safe-label contract is documented in
+[Workspace observability](observability.md).
+
+When an alert fires, page the owning service operator, open the alert's linked
+runbook, and use only its opaque `resource_id` and `trace_query` to correlate
+evidence. Do not copy user content or secrets into the incident record. The
+[incident runbook index](RUNBOOK.md#workspace-incident-runbooks) lists all
+supported failure procedures.
+
 ## Release Hold Criteria
 
 Hold release when:

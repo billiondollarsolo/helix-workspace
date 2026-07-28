@@ -42,6 +42,9 @@ on:
 
 permissions:
   contents: read
+  packages: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-sbom-scan:
@@ -122,6 +125,49 @@ jobs:
           exit-code: "1"
           ignore-unfixed: false
           severity: HIGH,CRITICAL
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push immutable reviewed images
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: push-images
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          app_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/helix-workspace:${GITHUB_SHA}"
+          web_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/helix-workspace-web:${GITHUB_SHA}"
+          docker tag helix/workspace:ci "$app_image"
+          docker tag helix/workspace-web:ci "$web_image"
+          docker push "$app_image"
+          docker push "$web_image"
+          app_digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$app_image" | sed -n "s|^ghcr.io/${GITHUB_REPOSITORY_OWNER}/helix-workspace@||p" | head -n 1)"
+          web_digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$web_image" | sed -n "s|^ghcr.io/${GITHUB_REPOSITORY_OWNER}/helix-workspace-web@||p" | head -n 1)"
+          [[ "$app_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$web_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "app_digest=$app_digest" >> "$GITHUB_OUTPUT"
+          echo "web_digest=$web_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Sign application image build provenance
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/helix-workspace
+          subject-digest: ${{ steps.push-images.outputs.app_digest }}
+          push-to-registry: true
+
+      - name: Sign web image build provenance
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/helix-workspace-web
+          subject-digest: ${{ steps.push-images.outputs.web_digest }}
+          push-to-registry: true
 
       - name: Upload image SBOMs
         if: always()

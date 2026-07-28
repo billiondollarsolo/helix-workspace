@@ -71,6 +71,12 @@ export const mailOutboundProviderKind = pgEnum("mail_outbound_provider_kind", [
   "postmark",
 ]);
 export const mailDkimKeyStatus = pgEnum("mail_dkim_key_status", ["active", "retiring", "retired"]);
+export const mailReceivingDomainStatus = pgEnum("mail_receiving_domain_status", [
+  "pending",
+  "verified",
+  "active",
+  "disabled",
+]);
 export const mailRoutingActionKind = pgEnum("mail_routing_action_kind", [
   "forward",
   "alias",
@@ -1038,6 +1044,42 @@ export const mailSendingDomains = pgTable(
     orgDefaultIdx: uniqueIndex("mail_sending_domains_org_default_idx")
       .on(table.orgId)
       .where(sql`${table.isDefault}`),
+  }),
+);
+
+export const mailReceivingDomains = pgTable(
+  "mail_receiving_domains",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    domain: text("domain").notNull(),
+    status: mailReceivingDomainStatus("status").default("pending").notNull(),
+    verificationTokenHash: text("verification_token_hash").notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    catchAllActorId: uuid("catch_all_actor_id").references(() => actors.id, {
+      onDelete: "set null",
+    }),
+    createdBy: uuid("created_by").references(() => actors.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (table) => ({
+    orgDomainIdx: uniqueIndex("mail_receiving_domains_org_domain_idx").on(
+      table.orgId,
+      table.domain,
+    ),
+    activeDomainIdx: uniqueIndex("mail_receiving_domains_active_domain_idx")
+      .on(table.domain)
+      .where(sql`${table.status} = 'active'`),
+    tokenHashIdx: uniqueIndex("mail_receiving_domains_token_hash_idx").on(
+      table.verificationTokenHash,
+    ),
+    orgStatusIdx: index("mail_receiving_domains_org_status_idx").on(
+      table.orgId,
+      table.status,
+      table.createdAt,
+    ),
   }),
 );
 

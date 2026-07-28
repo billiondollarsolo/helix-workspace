@@ -227,6 +227,53 @@ export const mailAliasListResultSchema = z.object({
   aliases: z.array(mailAliasSchema),
 });
 
+export const mailReceivingDomainStatusSchema = z.enum([
+  "pending",
+  "verified",
+  "active",
+  "disabled",
+]);
+export type MailReceivingDomainStatus = z.infer<typeof mailReceivingDomainStatusSchema>;
+
+/** Public admin projection. The persisted verification token hash is never serialized. */
+export const mailReceivingDomainSchema = z.object({
+  id: z.string().uuid(),
+  orgId: z.string().uuid(),
+  domain: z.string().min(1).max(253),
+  status: mailReceivingDomainStatusSchema,
+  verifiedAt: z.string().datetime().nullable(),
+  catchAllActorId: z.string().uuid().nullable(),
+  createdBy: z.string().uuid().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type MailReceivingDomain = z.infer<typeof mailReceivingDomainSchema>;
+
+export const mailReceivingDomainCreateInputSchema = z
+  .object({
+    domain: z.string().min(1).max(253),
+    catchAllActorId: z.string().uuid().nullable().default(null),
+  })
+  .strict();
+export type MailReceivingDomainCreateInput = z.infer<typeof mailReceivingDomainCreateInputSchema>;
+
+export const mailReceivingDomainChallengeSchema = z.object({
+  dnsName: z.string().min(1).max(300),
+  dnsValue: z.string().min(1).max(400),
+});
+export type MailReceivingDomainChallenge = z.infer<typeof mailReceivingDomainChallengeSchema>;
+
+export const mailReceivingDomainCreateResultSchema = z.object({
+  domain: mailReceivingDomainSchema,
+  verification: mailReceivingDomainChallengeSchema,
+});
+export const mailReceivingDomainListResultSchema = z.object({
+  domains: z.array(mailReceivingDomainSchema),
+});
+export const mailReceivingDomainResultSchema = z.object({
+  domain: mailReceivingDomainSchema,
+});
+
 export const mailOutboundCancelInputSchema = z.object({
   outboundId: z.string().uuid(),
 });

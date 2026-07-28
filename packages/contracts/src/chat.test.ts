@@ -4,6 +4,7 @@ import {
   CHAT_MAX_ATTACHMENTS,
   CHAT_METADATA_MAX_BYTES,
   chatInboundFrameSchema,
+  chatExportInputSchema,
   chatOutboundFrameSchema,
   chatSendInputSchema,
 } from "./chat.js";
@@ -96,5 +97,15 @@ describe("chat contracts", () => {
       message: "no access",
     });
     expect(err.type).toBe("error");
+  });
+
+  it("bounds organization exports and rejects inverted date ranges", () => {
+    expect(
+      chatExportInputSchema.safeParse({
+        from: "2026-07-29T00:00:00.000Z",
+        to: "2026-07-28T00:00:00.000Z",
+      }).success,
+    ).toBe(false);
+    expect(chatExportInputSchema.safeParse({ limit: 10001 }).success).toBe(false);
   });
 });

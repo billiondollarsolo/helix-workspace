@@ -88,6 +88,35 @@ export interface ChatReadReceiptRecord {
   readonly updatedAt: Date;
 }
 
+export interface ChatRetentionPolicyRecord {
+  readonly orgId: string;
+  readonly roomId: string | null;
+  readonly retentionDays: number;
+  readonly editWindowSeconds: number;
+  readonly deleteWindowSeconds: number;
+  readonly legalHold: boolean;
+  readonly updatedAt: Date;
+}
+
+export interface ChatExportMessageRecord {
+  readonly id: string;
+  readonly roomId: string;
+  readonly actorId: string | null;
+  readonly body: string | null;
+  readonly bodyFormat: "plain" | "markdown";
+  readonly sentAt: Date;
+  readonly editedAt: Date | null;
+  readonly deletedAt: Date | null;
+}
+
+export interface ChatOrganizationExportRecord {
+  readonly exportId: string;
+  readonly orgId: string;
+  readonly generatedAt: Date;
+  readonly messages: readonly ChatExportMessageRecord[];
+  readonly truncated: boolean;
+}
+
 export interface ChatSearchRequest {
   readonly orgId: string;
   readonly actorId: string;

@@ -1,6 +1,8 @@
 import type postgres from "postgres";
 import { chatBodyFormatSchema, chatMetadataSchema, type ChatBodyFormat } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
+import { ConflictError } from "../../api/api-error.js";
+import { appendChatAudit } from "./audit.js";
 import {
   requireActiveChatAttachments,
   requireChatActorInOrg,
@@ -10,6 +12,7 @@ import {
   type ChatSql,
 } from "./authorization.js";
 import { normalizeChatContent, renderChatBodyHtml } from "./content-safety.js";
+import { chatMutationAllowed } from "./compliance-policy.js";
 import { memberHandleResolver, parseMentions } from "./core/mentions.js";
 import { ChatMemberAccessError, ChatMessageNotFoundError, ChatRoomAccessError } from "./errors.js";
 import type {
@@ -17,10 +20,12 @@ import type {
   ChatEnrichmentRecord,
   ChatEnrichmentWrite,
   ChatMessageRecord,
+  ChatOrganizationExportRecord,
   ChatPinRecord,
   ChatReactionOperation,
   ChatReactionRecord,
   ChatReadReceiptRecord,
+  ChatRetentionPolicyRecord,
   ChatRoomKind,
   ChatRoomRecord,
   ChatSearchHit,
@@ -148,6 +153,34 @@ export interface ChatStore {
     readonly actorId: string;
     readonly roomId: string;
   }): Promise<ChatRoomRecord | null>;
+  setRetentionPolicy?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId?: string | undefined;
+    readonly retentionDays: number;
+    readonly editWindowSeconds: number;
+    readonly deleteWindowSeconds: number;
+  }): Promise<ChatRetentionPolicyRecord>;
+  setLegalHold?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId?: string | undefined;
+    readonly enabled: boolean;
+  }): Promise<ChatRetentionPolicyRecord>;
+  exportOrganization?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomIds?: readonly string[] | undefined;
+    readonly from?: Date | undefined;
+    readonly to?: Date | undefined;
+    readonly limit: number;
+  }): Promise<ChatOrganizationExportRecord>;
+  applyRetention?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly now?: Date | undefined;
+    readonly limit?: number | undefined;
+  }): Promise<{ readonly tombstonedMessageIds: readonly string[] }>;
 }
 
 interface ChatRoomRow {
@@ -210,6 +243,27 @@ interface ChatReadReceiptRow {
   readonly last_read_message_id: string | null;
   readonly last_read_at: Date;
   readonly updated_at: Date;
+}
+
+interface ChatRetentionPolicyRow {
+  readonly org_id: string;
+  readonly thread_id: string | null;
+  readonly retention_days: number;
+  readonly edit_window_seconds: number;
+  readonly delete_window_seconds: number;
+  readonly legal_hold: boolean;
+  readonly updated_at: Date;
+}
+
+interface ChatExportMessageRow {
+  readonly id: string;
+  readonly thread_id: string;
+  readonly actor_id: string | null;
+  readonly body: string | null;
+  readonly body_format: string;
+  readonly sent_at: Date;
+  readonly edited_at: Date | null;
+  readonly deleted_at: Date | null;
 }
 
 interface ChatSearchRow {
@@ -298,6 +352,18 @@ export class PostgresChatStore
           grantedByActorId: input.actorId,
         });
       }
+      await appendChatAudit(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "chat.room.created",
+        objectType: "chat.room",
+        objectId: roomId,
+        metadata: {
+          roomId,
+          kind: input.kind ?? "chat_room",
+          memberCount: memberActorIds.length + 1,
+        },
+      });
 
       return expectRoom(await selectRoomForActor(tx, input.orgId, input.actorId, roomId), roomId);
     });
@@ -332,6 +398,18 @@ export class PostgresChatStore
           grantedByActorId: input.actorId,
         });
       }
+      await appendChatAudit(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "chat.room.members_invited",
+        objectType: "chat.room",
+        objectId: input.roomId,
+        metadata: {
+          roomId: input.roomId,
+          invitedActorIds,
+          role: input.role ?? "member",
+        },
+      });
     });
     return { roomId: input.roomId, invitedActorIds };
   }
@@ -380,6 +458,14 @@ export class PostgresChatStore
           and resource_id = ${input.roomId}
           and actor_id = ${input.removedActorId}
       `;
+      await appendChatAudit(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "chat.room.member_removed",
+        objectType: "chat.room",
+        objectId: input.roomId,
+        metadata: { roomId: input.roomId, removedActorId: input.removedActorId },
+      });
       await tx`
         insert into outbox (subject, payload)
         values (${"activity.chat.member.removed"}, ${tx.json(
@@ -505,6 +591,20 @@ export class PostgresChatStore
         ...(input.clientMessageId === undefined ? {} : { clientMessageId: input.clientMessageId }),
       } as JsonObject;
       const validatedMetadata = chatMetadataSchema.parse(baseMetadata) as JsonObject;
+      if (input.clientMessageId !== undefined) {
+        const existing = await selectClientMessage(tx, {
+          orgId: input.orgId,
+          roomId: input.roomId,
+          actorId: input.actorId,
+          clientMessageId: input.clientMessageId,
+        });
+        if (existing !== null) {
+          const hydrated = await hydrateMessagesForActor(tx, input.orgId, input.actorId, [
+            existing,
+          ]);
+          return hydrated[0] ?? mapMessage(existing);
+        }
+      }
 
       const messageRows = (await tx`
         insert into messages (
@@ -521,9 +621,22 @@ export class PostgresChatStore
           now(),
           ${input.parentMessageId ?? null}
         )
+        on conflict do nothing
         returning id
       `) as unknown as readonly { readonly id: string }[];
       const messageId = messageRows[0]?.id;
+      if (messageId === undefined && input.clientMessageId !== undefined) {
+        const raced = await selectClientMessage(tx, {
+          orgId: input.orgId,
+          roomId: input.roomId,
+          actorId: input.actorId,
+          clientMessageId: input.clientMessageId,
+        });
+        if (raced !== null) {
+          const hydrated = await hydrateMessagesForActor(tx, input.orgId, input.actorId, [raced]);
+          return hydrated[0] ?? mapMessage(raced);
+        }
+      }
       if (messageId === undefined) {
         throw new Error("Unable to insert chat message.");
       }
@@ -581,6 +694,21 @@ export class PostgresChatStore
           )})
         `;
       }
+      await appendChatAudit(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "chat.message.sent",
+        objectType: "chat.message",
+        objectId: messageId,
+        metadata: {
+          roomId: input.roomId,
+          messageId,
+          attachmentObjectIds,
+          ...(input.parentMessageId === undefined
+            ? {}
+            : { parentMessageId: input.parentMessageId }),
+        },
+      });
 
       const message = await selectMessage(tx, input.orgId, messageId);
       if (message === null) {
@@ -751,6 +879,7 @@ export class PostgresChatStore
         roomId: existing.roomId,
         lock: true,
       });
+      await requireChatMutationAllowed(tx, existing, "edit");
       const content = normalizeChatContent({
         body: input.body,
         bodyFormat: input.bodyFormat ?? existing.bodyFormat,
@@ -772,6 +901,14 @@ export class PostgresChatStore
         returning messages.*, null::text[] as attachment_object_ids
       `) as unknown as readonly ChatMessageRow[];
       await touchRoom(tx, input.orgId, existing.roomId);
+      await appendChatAudit(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "chat.message.edited",
+        objectType: "chat.message",
+        objectId: input.messageId,
+        metadata: { roomId: existing.roomId, messageId: input.messageId },
+      });
       const hydrated = await hydrateMessagesForActor(tx, input.orgId, input.actorId, rows);
       return hydrated[0] ?? null;
     });
@@ -791,9 +928,15 @@ export class PostgresChatStore
         roomId: existing.roomId,
         lock: true,
       });
+      await requireChatMutationAllowed(tx, existing, "delete");
+      await tx`delete from message_attachments where message_id = ${input.messageId}`;
       const rows = (await tx`
       update messages
-      set deleted_at = now(), updated_at = now()
+      set
+        deleted_at = now(),
+        tombstoned_at = now(),
+        tombstone_reason = 'user_delete',
+        updated_at = now()
       where id = ${input.messageId}
         and org_id = ${input.orgId}
         and actor_id = ${input.actorId}
@@ -804,6 +947,14 @@ export class PostgresChatStore
       const message = rows[0] === undefined ? null : mapMessage(rows[0]);
       if (message !== null) {
         await touchRoom(tx, input.orgId, message.roomId);
+        await appendChatAudit(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "chat.message.deleted",
+          objectType: "chat.message",
+          objectId: input.messageId,
+          metadata: { roomId: message.roomId, messageId: input.messageId, reason: "user_delete" },
+        });
       }
       return message;
     });
@@ -913,6 +1064,260 @@ export class PostgresChatStore
       limit ${input.limit ?? 50}
     `) as unknown as readonly ChatSearchRow[];
     return rows.map(mapSearchHit);
+  }
+
+  async setRetentionPolicy(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId?: string | undefined;
+    readonly retentionDays: number;
+    readonly editWindowSeconds: number;
+    readonly deleteWindowSeconds: number;
+  }): Promise<ChatRetentionPolicyRecord> {
+    return this.sql.begin(async (tx) => {
+      await requireChatActorInOrg(tx, input.orgId, input.actorId);
+      await lockChatCompliance(tx, input.orgId);
+      if (input.roomId !== undefined) {
+        await requireChatRoomExistsInOrg(tx, input.orgId, input.roomId);
+      }
+      const rows =
+        input.roomId === undefined
+          ? ((await tx`
+              insert into chat_retention_policies (
+                org_id, thread_id, retention_days, edit_window_seconds,
+                delete_window_seconds, changed_by_actor_id
+              )
+              values (
+                ${input.orgId}, null, ${input.retentionDays}, ${input.editWindowSeconds},
+                ${input.deleteWindowSeconds}, ${input.actorId}
+              )
+              on conflict (org_id) where thread_id is null do update set
+                retention_days = excluded.retention_days,
+                edit_window_seconds = excluded.edit_window_seconds,
+                delete_window_seconds = excluded.delete_window_seconds,
+                changed_by_actor_id = excluded.changed_by_actor_id,
+                updated_at = now()
+              returning *
+            `) as unknown as readonly ChatRetentionPolicyRow[])
+          : ((await tx`
+              insert into chat_retention_policies (
+                org_id, thread_id, retention_days, edit_window_seconds,
+                delete_window_seconds, changed_by_actor_id
+              )
+              values (
+                ${input.orgId}, ${input.roomId}, ${input.retentionDays},
+                ${input.editWindowSeconds}, ${input.deleteWindowSeconds}, ${input.actorId}
+              )
+              on conflict (org_id, thread_id) where thread_id is not null do update set
+                retention_days = excluded.retention_days,
+                edit_window_seconds = excluded.edit_window_seconds,
+                delete_window_seconds = excluded.delete_window_seconds,
+                changed_by_actor_id = excluded.changed_by_actor_id,
+                updated_at = now()
+              returning *
+            `) as unknown as readonly ChatRetentionPolicyRow[]);
+      const policy = mapRetentionPolicy(expectRetentionPolicy(rows[0]));
+      await appendChatAudit(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "chat.retention.changed",
+        objectType: "chat.room",
+        objectId: input.roomId ?? input.orgId,
+        metadata: {
+          ...(input.roomId === undefined ? {} : { roomId: input.roomId }),
+          retentionDays: input.retentionDays,
+          editWindowSeconds: input.editWindowSeconds,
+          deleteWindowSeconds: input.deleteWindowSeconds,
+        },
+      });
+      return policy;
+    });
+  }
+
+  async setLegalHold(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId?: string | undefined;
+    readonly enabled: boolean;
+  }): Promise<ChatRetentionPolicyRecord> {
+    return this.sql.begin(async (tx) => {
+      await requireChatActorInOrg(tx, input.orgId, input.actorId);
+      await lockChatCompliance(tx, input.orgId);
+      if (input.roomId !== undefined) {
+        await requireChatRoomExistsInOrg(tx, input.orgId, input.roomId);
+      }
+      const rows =
+        input.roomId === undefined
+          ? ((await tx`
+              insert into chat_retention_policies (
+                org_id, thread_id, legal_hold, changed_by_actor_id
+              )
+              values (${input.orgId}, null, ${input.enabled}, ${input.actorId})
+              on conflict (org_id) where thread_id is null do update set
+                legal_hold = excluded.legal_hold,
+                changed_by_actor_id = excluded.changed_by_actor_id,
+                updated_at = now()
+              returning *
+            `) as unknown as readonly ChatRetentionPolicyRow[])
+          : ((await tx`
+              insert into chat_retention_policies (
+                org_id, thread_id, legal_hold, changed_by_actor_id
+              )
+              values (${input.orgId}, ${input.roomId}, ${input.enabled}, ${input.actorId})
+              on conflict (org_id, thread_id) where thread_id is not null do update set
+                legal_hold = excluded.legal_hold,
+                changed_by_actor_id = excluded.changed_by_actor_id,
+                updated_at = now()
+              returning *
+            `) as unknown as readonly ChatRetentionPolicyRow[]);
+      const policy = mapRetentionPolicy(expectRetentionPolicy(rows[0]));
+      await appendChatAudit(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "chat.legal_hold.changed",
+        objectType: "chat.room",
+        objectId: input.roomId ?? input.orgId,
+        metadata: {
+          ...(input.roomId === undefined ? {} : { roomId: input.roomId }),
+          legalHold: input.enabled,
+        },
+      });
+      return policy;
+    });
+  }
+
+  async exportOrganization(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomIds?: readonly string[] | undefined;
+    readonly from?: Date | undefined;
+    readonly to?: Date | undefined;
+    readonly limit: number;
+  }): Promise<ChatOrganizationExportRecord> {
+    return this.sql.begin(async (tx) => {
+      await requireChatActorInOrg(tx, input.orgId, input.actorId);
+      const roomIds = [...new Set(input.roomIds ?? [])];
+      if (roomIds.length > 0) {
+        const roomRows = (await tx`
+          select id from threads
+          where org_id = ${input.orgId}
+            and kind in ('chat_room', 'chat_dm')
+            and id = any(${tx.array(roomIds)}::uuid[])
+        `) as unknown as readonly { readonly id: string }[];
+        if (roomRows.length !== roomIds.length) throw new ChatRoomAccessError();
+      }
+      const idRows = (await tx`select gen_random_uuid()::text as id`) as unknown as readonly {
+        readonly id: string;
+      }[];
+      const exportId = idRows[0]?.id;
+      if (exportId === undefined) throw new Error("Unable to allocate Chat export ID.");
+      const rows = (await tx`
+        select
+          m.id, m.thread_id, m.actor_id,
+          case when m.deleted_at is null then m.body else null end as body,
+          case when m.deleted_at is null then m.body_format else 'plain' end as body_format,
+          m.sent_at, m.edited_at, m.deleted_at
+        from messages m
+        join threads t on t.id = m.thread_id and t.org_id = m.org_id
+        where m.org_id = ${input.orgId}
+          and m.kind = 'chat'
+          and (${roomIds.length === 0} or m.thread_id = any(${tx.array(roomIds)}::uuid[]))
+          and (${input.from ?? null}::timestamptz is null or m.sent_at >= ${input.from ?? null})
+          and (${input.to ?? null}::timestamptz is null or m.sent_at <= ${input.to ?? null})
+        order by m.sent_at, m.id
+        limit ${input.limit + 1}
+      `) as unknown as readonly ChatExportMessageRow[];
+      const truncated = rows.length > input.limit;
+      const messages = rows.slice(0, input.limit).map(mapExportMessage);
+      await appendChatAudit(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "chat.export.created",
+        objectType: "chat.export",
+        objectId: exportId,
+        metadata: {
+          exportId,
+          roomIds,
+          messageCount: messages.length,
+          truncated,
+          ...(input.from === undefined ? {} : { from: input.from.toISOString() }),
+          ...(input.to === undefined ? {} : { to: input.to.toISOString() }),
+        },
+      });
+      return {
+        exportId,
+        orgId: input.orgId,
+        generatedAt: new Date(),
+        messages,
+        truncated,
+      };
+    });
+  }
+
+  async applyRetention(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly now?: Date | undefined;
+    readonly limit?: number | undefined;
+  }): Promise<{ readonly tombstonedMessageIds: readonly string[] }> {
+    return this.sql.begin(async (tx) => {
+      await requireChatActorInOrg(tx, input.orgId, input.actorId);
+      await lockChatCompliance(tx, input.orgId);
+      const now = input.now ?? new Date();
+      const candidates = (await tx`
+        select m.id, m.thread_id
+        from messages m
+        where m.org_id = ${input.orgId}
+          and m.kind = 'chat'
+          and m.deleted_at is null
+          and not coalesce(
+            (select legal_hold from chat_retention_policies
+             where org_id = m.org_id and thread_id = m.thread_id),
+            (select legal_hold from chat_retention_policies
+             where org_id = m.org_id and thread_id is null),
+            false
+          )
+          and m.sent_at < ${now} - make_interval(days => coalesce(
+            (select retention_days from chat_retention_policies
+             where org_id = m.org_id and thread_id = m.thread_id),
+            (select retention_days from chat_retention_policies
+             where org_id = m.org_id and thread_id is null),
+            2555
+          ))
+        order by m.sent_at, m.id
+        limit ${input.limit ?? 500}
+        for update skip locked
+      `) as unknown as readonly { readonly id: string; readonly thread_id: string }[];
+      const ids = candidates.map((candidate) => candidate.id);
+      if (ids.length > 0) {
+        await tx`delete from message_attachments where message_id = any(${tx.array(ids)}::uuid[])`;
+        await tx`
+          update messages
+          set
+            deleted_at = ${now},
+            tombstoned_at = ${now},
+            tombstone_reason = 'retention',
+            updated_at = ${now}
+          where org_id = ${input.orgId}
+            and id = any(${tx.array(ids)}::uuid[])
+        `;
+        for (const candidate of candidates) {
+          await appendChatAudit(tx, {
+            orgId: input.orgId,
+            actorId: input.actorId,
+            verb: "chat.message.retention_deleted",
+            objectType: "chat.message",
+            objectId: candidate.id,
+            metadata: {
+              roomId: candidate.thread_id,
+              messageId: candidate.id,
+              reason: "retention",
+            },
+          });
+        }
+      }
+      return { tombstonedMessageIds: ids };
+    });
   }
 
   async getChatSearchRecord(messageId: string): Promise<ChatSearchRecord | null> {
@@ -1096,6 +1501,28 @@ async function selectMessage(
   return rows[0] === undefined ? null : mapMessage(rows[0]);
 }
 
+async function selectClientMessage(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly roomId: string;
+    readonly actorId: string;
+    readonly clientMessageId: string;
+  },
+): Promise<ChatMessageRow | null> {
+  const rows = (await sql`
+    select m.*, null::text[] as attachment_object_ids
+    from messages m
+    where m.org_id = ${input.orgId}
+      and m.thread_id = ${input.roomId}
+      and m.actor_id = ${input.actorId}
+      and m.kind = 'chat'
+      and m.metadata->>'clientMessageId' = ${input.clientMessageId}
+    limit 1
+  `) as unknown as readonly ChatMessageRow[];
+  return rows[0] ?? null;
+}
+
 async function selectOwnedMessage(
   sql: SqlLike,
   orgId: string,
@@ -1165,6 +1592,110 @@ async function touchRoom(sql: SqlLike, orgId: string, roomId: string): Promise<v
     where id = ${roomId}
       and org_id = ${orgId}
   `;
+}
+
+async function lockChatCompliance(sql: SqlLike, orgId: string): Promise<void> {
+  await sql`select pg_advisory_xact_lock(hashtextextended(${orgId}, 77332))`;
+}
+
+async function requireChatRoomExistsInOrg(
+  sql: SqlLike,
+  orgId: string,
+  roomId: string,
+): Promise<void> {
+  const rows = (await sql`
+    select 1
+    from threads
+    where id = ${roomId}
+      and org_id = ${orgId}
+      and kind in ('chat_room', 'chat_dm')
+    limit 1
+  `) as unknown as readonly unknown[];
+  if (rows.length !== 1) throw new ChatRoomAccessError();
+}
+
+async function requireChatMutationAllowed(
+  sql: SqlLike,
+  message: ChatMessageRecord,
+  operation: "edit" | "delete",
+): Promise<void> {
+  await lockChatCompliance(sql, message.orgId);
+  const rows = (await sql`
+    select
+      coalesce(room_policy.legal_hold, org_policy.legal_hold, false) as legal_hold,
+      coalesce(
+        room_policy.edit_window_seconds,
+        org_policy.edit_window_seconds,
+        86400
+      ) as edit_window_seconds,
+      coalesce(
+        room_policy.delete_window_seconds,
+        org_policy.delete_window_seconds,
+        86400
+      ) as delete_window_seconds
+    from (values (1)) as seed(value)
+    left join chat_retention_policies room_policy
+      on room_policy.org_id = ${message.orgId}
+     and room_policy.thread_id = ${message.roomId}
+    left join chat_retention_policies org_policy
+      on org_policy.org_id = ${message.orgId}
+     and org_policy.thread_id is null
+  `) as unknown as readonly {
+    readonly legal_hold: boolean;
+    readonly edit_window_seconds: number;
+    readonly delete_window_seconds: number;
+  }[];
+  const policy = rows[0] ?? {
+    legal_hold: false,
+    edit_window_seconds: 86400,
+    delete_window_seconds: 86400,
+  };
+  const windowSeconds =
+    operation === "edit" ? policy.edit_window_seconds : policy.delete_window_seconds;
+  if (
+    !chatMutationAllowed({
+      legalHold: policy.legal_hold,
+      windowSeconds,
+      sentAt: message.sentAt,
+      now: new Date(),
+    })
+  ) {
+    const action = operation === "edit" ? "edited" : "deleted";
+    throw new ConflictError(`Chat message cannot be ${action} under its retention policy.`);
+  }
+}
+
+function expectRetentionPolicy(row: ChatRetentionPolicyRow | undefined): ChatRetentionPolicyRow {
+  if (row === undefined) throw new Error("Expected Chat retention policy row.");
+  return row;
+}
+
+function mapRetentionPolicy(row: ChatRetentionPolicyRow): ChatRetentionPolicyRecord {
+  return {
+    orgId: row.org_id,
+    roomId: row.thread_id,
+    retentionDays: row.retention_days,
+    editWindowSeconds: row.edit_window_seconds,
+    deleteWindowSeconds: row.delete_window_seconds,
+    legalHold: row.legal_hold,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapExportMessage(
+  row: ChatExportMessageRow,
+): ChatOrganizationExportRecord["messages"][number] {
+  const parsedFormat = chatBodyFormatSchema.safeParse(row.body_format);
+  return {
+    id: row.id,
+    roomId: row.thread_id,
+    actorId: row.actor_id,
+    body: row.body,
+    bodyFormat: parsedFormat.success ? parsedFormat.data : "plain",
+    sentAt: row.sent_at,
+    editedAt: row.edited_at,
+    deletedAt: row.deleted_at,
+  };
 }
 
 function expectRoom(room: ChatRoomRecord | null, roomId: string): ChatRoomRecord {

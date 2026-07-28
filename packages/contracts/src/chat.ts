@@ -120,6 +120,41 @@ export const chatRemoveMemberInputSchema = z.object({
 });
 export type ChatRemoveMemberInput = z.infer<typeof chatRemoveMemberInputSchema>;
 
+export const chatRetentionPolicyInputSchema = z.object({
+  roomId: uuidSchema.optional(),
+  retentionDays: z.number().int().min(1).max(36500),
+  editWindowSeconds: z.number().int().min(0).max(31536000).default(86400),
+  deleteWindowSeconds: z.number().int().min(0).max(31536000).default(86400),
+});
+export type ChatRetentionPolicyInput = z.infer<typeof chatRetentionPolicyInputSchema>;
+
+export const chatLegalHoldInputSchema = z.object({
+  roomId: uuidSchema.optional(),
+  enabled: z.boolean(),
+});
+export type ChatLegalHoldInput = z.infer<typeof chatLegalHoldInputSchema>;
+
+export const chatExportInputSchema = z
+  .object({
+    roomIds: z.array(uuidSchema).max(100).default([]),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+    limit: z.number().int().min(1).max(10000).default(10000),
+  })
+  .superRefine((value, context) => {
+    if (
+      value.from !== undefined &&
+      value.to !== undefined &&
+      Date.parse(value.from) > Date.parse(value.to)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Export start must not be after export end.",
+      });
+    }
+  });
+export type ChatExportInput = z.infer<typeof chatExportInputSchema>;
+
 export const chatPinInputSchema = z.object({
   roomId: uuidSchema,
   messageId: uuidSchema,

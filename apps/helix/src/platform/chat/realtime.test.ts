@@ -41,8 +41,10 @@ const emptyWebSocketRequest = {
 
 describe("chat realtime", () => {
   it("builds stable per-room subjects for the NATS abstraction", () => {
-    expect(roomSubject(roomId)).toBe(`chat.room.${roomId}.events`);
-    expect(roomSubject("room.with.dots")).toBe("chat.room.room_with_dots.events");
+    expect(roomSubject(actor.orgId, roomId)).toBe(`chat.org.${actor.orgId}.room.${roomId}.events`);
+    expect(roomSubject("org.with.dots", "room.with.dots")).toBe(
+      "chat.org.org_with_dots.room.room_with_dots.events",
+    );
   });
 
   it("handles subscribe, typing, send, and read websocket messages", async () => {
@@ -206,8 +208,10 @@ describe("chat realtime", () => {
     socket.messages.length = 0;
 
     store.denyRoom(roomId);
-    await bus.publish(roomId, {
+    await bus.publish(actor.orgId, roomId, {
       type: "typing",
+      eventId: "revoked-event",
+      orgId: actor.orgId,
       roomId,
       actorId: otherActor.id,
       isTyping: true,
@@ -215,6 +219,33 @@ describe("chat realtime", () => {
     await settle();
 
     expect(socket.messages).toEqual([]);
+    expect(await presence.list(roomId)).toEqual([]);
+  });
+
+  it("closes and unsubscribes a slow socket before its buffer grows without bound", async () => {
+    const socket = new FakeSocket();
+    const bus = new InMemoryChatRoomBus();
+    const presence = new InMemoryChatPresenceStore({ ttlSeconds: 30 });
+    await handleChatSocket(socket, emptyWebSocketRequest, {
+      store: new FakeChatStore(),
+      actorFromRequest: () => actor,
+      trustedOrigins,
+      bus,
+      presence,
+    });
+    socket.receive({ type: "subscribe", roomId });
+    await settle();
+    socket.bufferedAmount = 2 * 1024 * 1024;
+    await bus.publish(actor.orgId, roomId, {
+      type: "typing",
+      eventId: "slow-event",
+      orgId: actor.orgId,
+      roomId,
+      actorId: otherActor.id,
+      isTyping: true,
+    });
+    await settle();
+    expect(socket.closed).toEqual({ code: 1013, reason: "slow consumer" });
     expect(await presence.list(roomId)).toEqual([]);
   });
 
@@ -489,6 +520,7 @@ describe("chat graceful-shutdown broadcast (PRD §16.3 step 5)", () => {
 
 class FakeSocket {
   readonly messages: Record<string, unknown>[] = [];
+  bufferedAmount = 0;
   closed: { readonly code?: number; readonly reason?: string } | null = null;
   #messageHandlers: ((data: string) => void)[] = [];
   #closeHandlers: (() => void)[] = [];
@@ -660,13 +692,14 @@ class PresenceRecordingRoomBus extends InMemoryChatRoomBus {
   }
 
   override async publish(
+    orgId: string,
     roomId: string,
-    event: Parameters<InMemoryChatRoomBus["publish"]>[1],
+    event: Parameters<InMemoryChatRoomBus["publish"]>[2],
   ): Promise<void> {
     if (event.type === "read") {
       this.readRostersAtPublish.push([...(await this.presence.list(roomId))]);
     }
-    await super.publish(roomId, event);
+    await super.publish(orgId, roomId, event);
   }
 }
 

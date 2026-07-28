@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Actor, JsonValue } from "@helix/sdk-types";
 import {
   chatInboundFrameSchema,
@@ -32,6 +33,8 @@ const CHAT_WS_ROUTE = "/ws/chat";
 
 /** Close code sent to chat clients when the host is shutting down. */
 const CHAT_SHUTDOWN_CLOSE_CODE = 1001;
+const CHAT_SLOW_CONSUMER_CLOSE_CODE = 1013;
+const CHAT_MAX_BUFFERED_BYTES = 1024 * 1024;
 
 /** Close code when auth is missing / invalid. */
 const CHAT_AUTH_CLOSE_CODE = 4401;
@@ -49,6 +52,7 @@ const CHAT_MAX_BEARER_TOKEN_LENGTH = 4_096;
 const CHAT_MAX_AUTH_FRAME_BYTES = CHAT_MAX_BEARER_TOKEN_LENGTH + 256;
 
 interface ChatSocket {
+  readonly bufferedAmount?: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
   on(event: "message", handler: (data: Buffer | ArrayBuffer | string) => void): void;
@@ -193,8 +197,10 @@ export async function handleChatSocket(
     void Promise.allSettled([
       ...[...subscriptions.entries()].map(async ([roomId, unsubscribe]) => {
         await options.presence.remove({ roomId, actorId: resolved.id });
-        await options.bus.publish(roomId, {
+        await options.bus.publish(resolved.orgId, roomId, {
           type: "presence.left",
+          eventId: randomUUID(),
+          orgId: resolved.orgId,
           roomId,
           actorId: resolved.id,
         });
@@ -415,8 +421,10 @@ async function handleInboundMessage(input: {
           actor: input.actor,
           status: message.status,
         });
-        await input.options.bus.publish(roomId, {
+        await input.options.bus.publish(input.actor.orgId, roomId, {
           type: "presence.joined",
+          eventId: randomUUID(),
+          orgId: input.actor.orgId,
           roomId,
           actorId: input.actor.id,
           status: message.status,
@@ -431,18 +439,24 @@ async function handleInboundMessage(input: {
   if (message.type === "subscribe") {
     const room = await requireSocketRoomAccess(input.options.store, input.actor, message.roomId);
     if (!input.subscriptions.has(message.roomId)) {
-      const unsubscribe = await input.options.bus.subscribe(message.roomId, async (event) => {
-        const currentRoom = await input.options.store.getRoomForActor({
-          orgId: input.actor.orgId,
-          actorId: input.actor.id,
-          roomId: message.roomId,
-        });
-        if (currentRoom === null) {
-          await dropSocketRoom(input, message.roomId);
-          return;
-        }
-        sendSocket(input.socket, event);
-      });
+      const unsubscribe = await input.options.bus.subscribe(
+        input.actor.orgId,
+        message.roomId,
+        async (event) => {
+          const currentRoom = await input.options.store.getRoomForActor({
+            orgId: input.actor.orgId,
+            actorId: input.actor.id,
+            roomId: message.roomId,
+          });
+          if (currentRoom === null) {
+            await dropSocketRoom(input, message.roomId);
+            return;
+          }
+          if (!sendSocket(input.socket, event)) {
+            await dropSocketRoom(input, message.roomId);
+          }
+        },
+      );
       input.subscriptions.set(message.roomId, unsubscribe);
     }
     const entry = await input.options.presence.touch({
@@ -451,8 +465,10 @@ async function handleInboundMessage(input: {
       status: input.getPresenceStatus(),
     });
     const roster = filterRoomPresence(room, await input.options.presence.list(message.roomId));
-    await input.options.bus.publish(message.roomId, {
+    await input.options.bus.publish(input.actor.orgId, message.roomId, {
       type: "presence.joined",
+      eventId: randomUUID(),
+      orgId: input.actor.orgId,
       roomId: message.roomId,
       actorId: input.actor.id,
       status: entry.status,
@@ -498,8 +514,10 @@ async function handleInboundMessage(input: {
         derivation: { content: message.body, scanContent: true },
       });
     }
-    await input.options.bus.publish(message.roomId, {
+    await input.options.bus.publish(input.actor.orgId, message.roomId, {
       type: "message.created",
+      eventId: randomUUID(),
+      orgId: input.actor.orgId,
       roomId: message.roomId,
       actorId: input.actor.id,
       message: {
@@ -527,8 +545,10 @@ async function handleInboundMessage(input: {
       actor: input.actor,
       status: input.getPresenceStatus(),
     });
-    await input.options.bus.publish(message.roomId, {
+    await input.options.bus.publish(input.actor.orgId, message.roomId, {
       type: "typing",
+      eventId: randomUUID(),
+      orgId: input.actor.orgId,
       roomId: message.roomId,
       actorId: input.actor.id,
       isTyping: message.isTyping,
@@ -549,8 +569,10 @@ async function handleInboundMessage(input: {
       actor: input.actor,
       status: input.getPresenceStatus(),
     });
-    await input.options.bus.publish(message.roomId, {
+    await input.options.bus.publish(input.actor.orgId, message.roomId, {
       type: "read",
+      eventId: randomUUID(),
+      orgId: input.actor.orgId,
       roomId: message.roomId,
       actorId: input.actor.id,
       ...(message.messageId === undefined ? {} : { messageId: message.messageId }),
@@ -639,8 +661,13 @@ function sendErrorFrame(socket: ChatSocket, error: unknown): void {
   });
 }
 
-function sendSocket(socket: ChatSocket, payload: ChatRoomEvent | Record<string, unknown>): void {
+function sendSocket(socket: ChatSocket, payload: ChatRoomEvent | Record<string, unknown>): boolean {
+  if ((socket.bufferedAmount ?? 0) > CHAT_MAX_BUFFERED_BYTES) {
+    socket.close(CHAT_SLOW_CONSUMER_CLOSE_CODE, "slow consumer");
+    return false;
+  }
   socket.send(JSON.stringify(payload));
+  return true;
 }
 
 function rawToString(raw: Buffer | ArrayBuffer | string): string {

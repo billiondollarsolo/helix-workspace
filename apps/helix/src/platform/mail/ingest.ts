@@ -2,7 +2,7 @@ import { SMTPServer, type SMTPServerDataStream, type SMTPServerSession } from "s
 import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
 import { authenticate, type AuthStatus, type AuthenticateResult } from "mailauth";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import type { JsonObject, JsonValue } from "@helix/sdk-types";
+import type { JsonObject, JsonValue, SecurityTier } from "@helix/sdk-types";
 import type {
   MailAddress,
   MailAttachmentInput,
@@ -27,6 +27,12 @@ import {
   smtpTransportSecurityOptions,
   type SmtpTransportSecurity,
 } from "./smtp-transport-security.js";
+import {
+  inspectInboundAttachments,
+  sanitizeMailHeaderDisplayValue,
+  sanitizeMailHtml,
+} from "./content-safety.js";
+import type { MailQuarantineRecord, MailQuarantineStore } from "./quarantine.js";
 
 export interface MailAuthenticationSummary {
   readonly spf: string;
@@ -57,7 +63,9 @@ export interface InboundScanResult {
   readonly routedToSpam: boolean;
   /** True when malware policy withheld the message because no clean verdict exists. */
   readonly quarantined: boolean;
-  readonly spamReason: "spam-score" | "virus" | "scanner-policy" | null;
+  readonly spamReason: "spam-score" | "virus" | "scanner-policy" | "auth-failure" | null;
+  readonly quarantineReasons?: readonly string[];
+  readonly scannerUnavailable?: boolean;
 }
 
 export interface IngestRawMailResult {
@@ -81,17 +89,18 @@ export interface IngestResolvedRawMailResult {
   readonly deliveries: readonly ResolvedInboundDeliveryResult[];
   readonly auth: MailAuthenticationSummary;
   readonly scan: InboundScanResult;
+  readonly quarantines?: readonly MailQuarantineRecord[];
 }
 
 /**
- * Optional inbound content scanners. Config-gated in `server.ts`: when the
- * spamd / clamd hooks are disabled the scanner is `undefined` and ingest
- * records a no-op {@link InboundScanResult}. A scanner outage never fails
- * ingest — the error is recorded on the message metadata as "unscanned".
+ * Optional inbound content scanners. Personal mode may record an unavailable
+ * scanner as unscanned. Business and higher tiers fail closed into quarantine.
  */
 export interface InboundMailScanners {
   readonly spam?: SpamScanner | undefined;
   readonly antivirus?: AntivirusScanner | undefined;
+  /** Business and higher tiers fail closed when no clean antivirus verdict exists. */
+  readonly tier?: SecurityTier;
 }
 
 export interface MailAuthenticator {
@@ -106,6 +115,7 @@ export interface SmtpReceiverOptions {
   readonly logger?: { error(error: unknown, message?: string): void };
   /** Optional inbound spam + antivirus scanners (config-gated in server.ts). */
   readonly scanners?: InboundMailScanners | undefined;
+  readonly quarantineStore?: MailQuarantineStore | undefined;
   readonly transportSecurity: SmtpTransportSecurity;
   readonly limits?: Partial<SmtpReceiverLimits> | undefined;
   readonly rateLimitStore?: SmtpRateLimitStore | undefined;
@@ -331,6 +341,9 @@ export class SmtpMailReceiver {
         ? {}
         : { authenticator: this.options.authenticator }),
       ...(this.options.scanners === undefined ? {} : { scanners: this.options.scanners }),
+      ...(this.options.quarantineStore === undefined
+        ? {}
+        : { quarantineStore: this.options.quarantineStore }),
       input: {
         raw,
         recipients: [...state.recipients.values()],
@@ -392,6 +405,7 @@ export async function ingestResolvedRawMail(input: {
   };
   readonly authenticator?: MailAuthenticator;
   readonly scanners?: InboundMailScanners;
+  readonly quarantineStore?: MailQuarantineStore;
 }): Promise<IngestResolvedRawMailResult> {
   if (input.input.recipients.length === 0) {
     throw new TypeError("Resolved mail ingest requires at least one recipient.");
@@ -418,12 +432,13 @@ export async function ingestResolvedRawMail(input: {
         ...(input.input.helo === undefined ? {} : { helo: input.input.helo }),
         receivedAt,
       };
-      const [auth, parsed, scan] = await Promise.all([
+      const [auth, parsed, baseScan] = await Promise.all([
         authenticator.authenticate(authInput),
         simpleParser(input.input.raw),
         scanInboundMail(input.scanners, input.input.raw),
       ]);
       assertParsedInboundMessage(parsed);
+      const scan = applyInboundSecurityPolicy(baseScan, auth, parsed);
       const groups = groupRecipientsByOrg(input.input.recipients);
       span.setAttribute("helix.mail.recipient_org_count", groups.size);
       span.setAttribute("helix.mail.recipient_count", input.input.recipients.length);
@@ -432,6 +447,40 @@ export async function ingestResolvedRawMail(input: {
       span.setAttribute("helix.mail.spam_routed", scan.routedToSpam);
 
       const deliveries: ResolvedInboundDeliveryResult[] = [];
+      if (scan.quarantined) {
+        if (input.quarantineStore === undefined) {
+          throw new MailQuarantinePersistenceRequiredError();
+        }
+        const quarantines: MailQuarantineRecord[] = [];
+        for (const [orgId, recipients] of groups) {
+          const dedup = createInboundDeliveryDedup({
+            orgId,
+            raw: input.input.raw,
+            messageId: parsed.messageId,
+            ...(input.input.envelopeFrom === undefined
+              ? {}
+              : { envelopeFrom: input.input.envelopeFrom }),
+            envelopeTo: recipients.map((recipient) => recipient.normalizedAddress),
+            receivedAt,
+          });
+          const result = await input.quarantineStore.quarantine({
+            orgId,
+            dedupKey: dedup.key,
+            envelopeFrom: input.input.envelopeFrom ?? null,
+            envelopeTo: recipients.map((recipient) => recipient.normalizedAddress),
+            subject: sanitizeMailHeaderDisplayValue(parsed.subject ?? ""),
+            reasons: scan.quarantineReasons ?? ["scanner_policy"],
+            authEvidence: authenticationEvidence(auth),
+            scanEvidence: scanEvidence(scan),
+            rawMessage: Buffer.isBuffer(input.input.raw)
+              ? input.input.raw
+              : Buffer.from(input.input.raw),
+          });
+          quarantines.push(result.record);
+        }
+        span.setAttribute("helix.mail.quarantined", true);
+        return { deliveries, auth, scan, quarantines };
+      }
       for (const [orgId, recipients] of groups) {
         const dedup = createInboundDeliveryDedup({
           orgId,
@@ -520,6 +569,7 @@ export async function ingestRawMail(input: {
   readonly input: IngestRawMailInput;
   readonly authenticator?: MailAuthenticator;
   readonly scanners?: InboundMailScanners;
+  readonly quarantineStore?: MailQuarantineStore;
 }): Promise<IngestRawMailResult> {
   // P2-6: an `smtp.receive` span covers authentication, parsing, persistence,
   // inbound-filter evaluation, and spam/antivirus scanning for one message.
@@ -531,11 +581,39 @@ export async function ingestRawMail(input: {
       async (span) => {
         try {
           const authenticator = input.authenticator ?? new MailauthAuthenticator();
-          const [auth, parsed, scan] = await Promise.all([
+          const [auth, parsed, baseScan] = await Promise.all([
             authenticator.authenticate(input.input),
             simpleParser(input.input.raw),
             scanInboundMail(input.scanners, input.input.raw),
           ]);
+          const scan = applyInboundSecurityPolicy(baseScan, auth, parsed);
+          if (scan.quarantined) {
+            if (input.quarantineStore === undefined) {
+              throw new MailQuarantinePersistenceRequiredError();
+            }
+            const dedup = createInboundDeliveryDedup({
+              orgId: input.input.orgId,
+              raw: input.input.raw,
+              messageId: parsed.messageId,
+              envelopeFrom: input.input.envelopeFrom,
+              envelopeTo: input.input.envelopeTo,
+              receivedAt: input.input.receivedAt ?? new Date(),
+            });
+            const quarantined = await input.quarantineStore.quarantine({
+              orgId: input.input.orgId,
+              dedupKey: dedup.key,
+              envelopeFrom: input.input.envelopeFrom ?? null,
+              envelopeTo: input.input.envelopeTo,
+              subject: sanitizeMailHeaderDisplayValue(parsed.subject ?? ""),
+              reasons: scan.quarantineReasons ?? ["scanner_policy"],
+              authEvidence: authenticationEvidence(auth),
+              scanEvidence: scanEvidence(scan),
+              rawMessage: Buffer.isBuffer(input.input.raw)
+                ? input.input.raw
+                : Buffer.from(input.input.raw),
+            });
+            throw new MailInboundQuarantinedError(quarantined.record.id);
+          }
           const message = withScanMetadata(
             await parsedMailToMessage(input.store, input.input, parsed, auth),
             scan,
@@ -595,7 +673,7 @@ function parsedMailToResolvedMessage(input: {
   return {
     orgId: input.orgId,
     actorId: primaryRecipient.actorId,
-    from: addressObjectToList(input.parsed.from)[0] ?? {
+    from: sanitizeMailAddress(addressObjectToList(input.parsed.from)[0]) ?? {
       address: input.envelopeFrom ?? "unknown@localhost",
     },
     // Deliberately project only this tenant's accepted envelope recipients.
@@ -603,9 +681,11 @@ function parsedMailToResolvedMessage(input: {
     to: tenantAddresses,
     cc: [],
     bcc: [],
-    subject: input.parsed.subject ?? "",
+    subject: sanitizeMailHeaderDisplayValue(input.parsed.subject ?? ""),
     bodyText: input.parsed.text ?? "",
-    ...(typeof input.parsed.html === "string" ? { bodyHtml: input.parsed.html } : {}),
+    ...(typeof input.parsed.html === "string"
+      ? { bodyHtml: sanitizeMailHtml(input.parsed.html).html }
+      : {}),
     messageId: input.parsed.messageId,
     inReplyTo: input.parsed.inReplyTo,
     references: Array.isArray(input.parsed.references)
@@ -631,6 +711,10 @@ function parsedMailToResolvedMessage(input: {
       recipientActorIds: [...new Set(input.recipients.map((recipient) => recipient.actorId))],
       inboundDedupKey: input.dedupKey,
       quarantined: input.scan.quarantined,
+      remoteImagesBlocked:
+        typeof input.parsed.html === "string"
+          ? sanitizeMailHtml(input.parsed.html).remoteImagesBlocked
+          : 0,
     },
   };
 }
@@ -665,15 +749,15 @@ async function parsedMailToMessage(
   return {
     orgId: input.orgId,
     actorId: actor?.actorId ?? null,
-    from: addressObjectToList(parsed.from)[0] ?? {
+    from: sanitizeMailAddress(addressObjectToList(parsed.from)[0]) ?? {
       address: input.envelopeFrom ?? "unknown@localhost",
     },
     to,
     cc: addressObjectToList(parsed.cc),
     bcc: [],
-    subject: parsed.subject ?? "",
+    subject: sanitizeMailHeaderDisplayValue(parsed.subject ?? ""),
     bodyText: parsed.text ?? "",
-    ...(typeof parsed.html === "string" ? { bodyHtml: parsed.html } : {}),
+    ...(typeof parsed.html === "string" ? { bodyHtml: sanitizeMailHtml(parsed.html).html } : {}),
     messageId: parsed.messageId,
     inReplyTo: parsed.inReplyTo,
     references: Array.isArray(parsed.references)
@@ -703,15 +787,14 @@ async function parsedMailToMessage(
 /**
  * Run the configured inbound spam + antivirus scanners over the raw message.
  *
- * Scanning is best-effort: a daemon outage / timeout is caught here and
- * recorded as an "unscanned" verdict rather than failing ingest. A message is
- * routed to Spam when the spam scanner reports `isSpam`, or when the antivirus
- * scanner reports an infected verdict.
+ * Scanner failures become an explicit unavailable outcome. Personal may allow
+ * that outcome; Business and higher tiers quarantine it.
  */
 export async function scanInboundMail(
   scanners: InboundMailScanners | undefined,
   raw: Buffer | string,
 ): Promise<InboundScanResult> {
+  const tier = scanners?.tier ?? "personal";
   if (scanners === undefined) {
     return {
       spam: null,
@@ -721,18 +804,29 @@ export async function scanInboundMail(
       spamReason: null,
     };
   }
-  const [spam, antivirus] = await Promise.all([
+  const [spamOutcome, antivirusOutcome] = await Promise.all([
     runScan(scanners.spam, raw),
     runScan(scanners.antivirus, raw),
   ]);
+  const spam = spamOutcome.result;
+  const antivirus = antivirusOutcome.result;
   const virusRouted = antivirus !== null && antivirus.infected;
-  const policyQuarantined = antivirus?.disposition === "quarantine";
+  const scannerUnavailable =
+    scanners.antivirus === undefined || antivirusOutcome.failed || antivirus?.scanned === false;
+  const policyQuarantined =
+    virusRouted ||
+    antivirus?.disposition === "quarantine" ||
+    (tier !== "personal" && scannerUnavailable);
   const spamRouted = spam !== null && spam.isSpam;
   return {
     spam,
     antivirus,
     routedToSpam: virusRouted || policyQuarantined || spamRouted,
     quarantined: policyQuarantined,
+    quarantineReasons: policyQuarantined
+      ? [virusRouted ? "malware" : scannerUnavailable ? "scanner_unavailable" : "scanner_policy"]
+      : [],
+    scannerUnavailable,
     spamReason: virusRouted
       ? "virus"
       : policyQuarantined
@@ -746,16 +840,85 @@ export async function scanInboundMail(
 async function runScan<T>(
   scanner: { scan(raw: Buffer | string): Promise<T> } | undefined,
   raw: Buffer | string,
-): Promise<T | null> {
+): Promise<{ readonly result: T | null; readonly failed: boolean }> {
   if (scanner === undefined) {
-    return null;
+    return { result: null, failed: false };
   }
   try {
-    return await scanner.scan(raw);
+    return { result: await scanner.scan(raw), failed: false };
   } catch {
-    // Scanner outages must not fail ingest — treat as "unscanned".
-    return null;
+    return { result: null, failed: true };
   }
+}
+
+export function applyInboundSecurityPolicy(
+  scan: InboundScanResult,
+  auth: MailAuthenticationSummary,
+  parsed: ParsedMail,
+): InboundScanResult {
+  const attachmentPolicy = inspectInboundAttachments(parsed.attachments);
+  const authFailed =
+    auth.dmarc === "fail" ||
+    ((auth.spf === "fail" || auth.spf === "softfail") &&
+      (auth.dkim === "fail" || auth.dkim === "none"));
+  const quarantineReasons = new Set(scan.quarantineReasons ?? []);
+  for (const reason of attachmentPolicy.reasons) quarantineReasons.add(reason);
+  return {
+    ...scan,
+    routedToSpam: scan.routedToSpam || authFailed || attachmentPolicy.quarantine,
+    quarantined: scan.quarantined || attachmentPolicy.quarantine,
+    spamReason:
+      scan.spamReason ??
+      (attachmentPolicy.quarantine ? "scanner-policy" : authFailed ? "auth-failure" : null),
+    quarantineReasons: [...quarantineReasons],
+  };
+}
+
+export class MailQuarantinePersistenceRequiredError extends Error {
+  constructor() {
+    super("Inbound message requires quarantine, but no durable quarantine store is configured.");
+    this.name = "MailQuarantinePersistenceRequiredError";
+  }
+}
+
+export class MailInboundQuarantinedError extends Error {
+  constructor(readonly quarantineId: string) {
+    super("Inbound message was accepted into quarantine and was not delivered.");
+    this.name = "MailInboundQuarantinedError";
+  }
+}
+
+function sanitizeMailAddress(address: MailAddress | undefined): MailAddress | undefined {
+  if (address === undefined) return undefined;
+  return {
+    ...address,
+    ...(typeof address.name === "string"
+      ? { name: sanitizeMailHeaderDisplayValue(address.name, 320) }
+      : {}),
+  };
+}
+
+function authenticationEvidence(auth: MailAuthenticationSummary): JsonObject {
+  return {
+    spf: auth.spf,
+    dkim: auth.dkim,
+    dmarc: auth.dmarc,
+    arc: auth.arc,
+    ...(auth.headers === undefined ? {} : { rawAuthenticationHeaders: auth.headers }),
+    ...(auth.evidence === undefined ? {} : { details: auth.evidence }),
+  };
+}
+
+function scanEvidence(scan: InboundScanResult): JsonObject {
+  return {
+    routedToSpam: scan.routedToSpam,
+    quarantined: scan.quarantined,
+    reason: scan.spamReason,
+    scannerUnavailable: scan.scannerUnavailable ?? false,
+    quarantineReasons: [...(scan.quarantineReasons ?? [])],
+    ...(scan.antivirus?.evidence === undefined ? {} : { antivirus: scan.antivirus.evidence }),
+    ...(scan.spam?.evidence === undefined ? {} : { spam: scan.spam.evidence }),
+  };
 }
 
 /** Merge spam + antivirus scan evidence into the stored message metadata. */

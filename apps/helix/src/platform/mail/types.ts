@@ -258,6 +258,7 @@ export interface MailDraftRecord {
   readonly actorId: string;
   readonly threadId: string | null;
   readonly envelope: JsonObject;
+  readonly version: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

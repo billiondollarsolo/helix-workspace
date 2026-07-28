@@ -146,6 +146,9 @@ export const mailOutboundRecordSchema = z.object({
   failedAt: z.string().nullable().optional(),
   lastError: z.string().nullable().optional(),
   providerMessageId: z.string().nullable().optional(),
+  deliveryStatus: z
+    .enum(["queued", "sending", "sent", "delayed", "failed", "cancelled"])
+    .optional(),
 });
 export type MailOutboundRecord = z.infer<typeof mailOutboundRecordSchema>;
 
@@ -172,22 +175,29 @@ export const mailDraftSchema = z.object({
   bodyText: z.string().default(""),
   bodyHtml: z.string().optional(),
   attachments: z.array(mailAttachmentInputSchema).default([]),
+  version: z.number().int().positive(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type MailDraft = z.infer<typeof mailDraftSchema>;
 
-export const mailDraftSaveInputSchema = z.object({
-  id: z.string().uuid().optional(),
-  threadId: z.string().uuid().optional(),
-  to: z.array(mailAddressSchema).default([]),
-  cc: z.array(mailAddressSchema).default([]),
-  bcc: z.array(mailAddressSchema).default([]),
-  subject: z.string().default(""),
-  bodyText: z.string().default(""),
-  bodyHtml: z.string().optional(),
-  attachments: z.array(mailAttachmentInputSchema).default([]),
-});
+export const mailDraftSaveInputSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    expectedVersion: z.number().int().positive().optional(),
+    threadId: z.string().uuid().optional(),
+    to: z.array(mailAddressSchema).default([]),
+    cc: z.array(mailAddressSchema).default([]),
+    bcc: z.array(mailAddressSchema).default([]),
+    subject: z.string().default(""),
+    bodyText: z.string().default(""),
+    bodyHtml: z.string().optional(),
+    attachments: z.array(mailAttachmentInputSchema).default([]),
+  })
+  .refine((input) => input.id === undefined || input.expectedVersion !== undefined, {
+    message: "expectedVersion is required when updating a draft.",
+    path: ["expectedVersion"],
+  });
 export type MailDraftSaveInput = z.infer<typeof mailDraftSaveInputSchema>;
 
 export const mailDraftGetInputSchema = z.object({
@@ -278,6 +288,12 @@ export const mailOutboundCancelInputSchema = z.object({
   outboundId: z.string().uuid(),
 });
 export const mailOutboundCancelResultSchema = z.object({
+  outbound: mailOutboundRecordSchema.nullable(),
+});
+export const mailOutboundRetryInputSchema = z.object({
+  outboundId: z.string().uuid(),
+});
+export const mailOutboundRetryResultSchema = z.object({
   outbound: mailOutboundRecordSchema.nullable(),
 });
 

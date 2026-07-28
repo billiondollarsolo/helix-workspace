@@ -10,9 +10,11 @@ import type {
 } from "./types.js";
 import type { MailStore } from "./store.js";
 import {
+  MailAttachmentSizeError,
   MailOutboundPayloadError,
   MailProviderConfigurationError,
   MailProviderError,
+  MailSendIdempotencyRequiredError,
 } from "./errors.js";
 import { normalizeMailboxAddress } from "./address-normalization.js";
 import {
@@ -60,6 +62,8 @@ export interface QueueMailInput {
   readonly references?: readonly string[];
   readonly envelope: MailOutboundEnvelope;
   readonly now?: Date;
+  readonly source?: "interactive" | "api" | "agent";
+  readonly idempotencyKey?: string;
 }
 
 export interface OutboundDispatchOptions {
@@ -79,6 +83,8 @@ export interface OutboundDispatchOptions {
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 60_000;
+/** Leaves headroom for base64/MIME expansion below the common 25 MiB provider limit. */
+export const MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES = 18 * 1024 * 1024;
 
 export class NodemailerMailTransport implements OutboundMailTransport {
   private readonly transporter: Transporter<SMTPTransport.SentMessageInfo>;
@@ -164,6 +170,7 @@ export async function resolveOutboundAttachments(
     return envelope;
   }
   const attachments: MailAttachmentInput[] = [];
+  let totalBytes = 0;
   for (const attachment of envelope.attachments) {
     if (attachment.objectId !== undefined && attachment.objectId.length > 0) {
       if (resolveObject === undefined || context === undefined) {
@@ -173,12 +180,14 @@ export async function resolveOutboundAttachments(
         );
       }
       const content = await resolveObject(attachment.objectId, context);
+      totalBytes = addAttachmentBytes(totalBytes, content.byteLength);
       attachments.push({
         ...attachment,
         content,
       });
       continue;
     }
+    totalBytes = addAttachmentBytes(totalBytes, attachment.content?.byteLength ?? 0);
     attachments.push({
       ...attachment,
       content: attachment.content ?? Buffer.alloc(0),
@@ -197,6 +206,14 @@ export class MailSendService {
   }
 
   queue(input: QueueMailInput): Promise<MailOutboundRecord> {
+    if (
+      input.source !== undefined &&
+      input.source !== "interactive" &&
+      (input.idempotencyKey === undefined || input.idempotencyKey.trim().length === 0)
+    ) {
+      throw new MailSendIdempotencyRequiredError();
+    }
+    assertKnownOutboundAttachmentSizes(input.envelope);
     const now = input.now ?? new Date();
     return this.options.store.createOutbound({
       orgId: input.orgId,
@@ -207,6 +224,9 @@ export class MailSendService {
       envelope: input.envelope,
       undoUntil: new Date(now.getTime() + this.undoWindowMs),
       outboxSubject: this.outboxSubject,
+      ...(input.idempotencyKey === undefined
+        ? {}
+        : { idempotencyKey: input.idempotencyKey.trim() }),
     });
   }
 
@@ -217,6 +237,37 @@ export class MailSendService {
   }): Promise<MailOutboundRecord | null> {
     return this.options.store.cancelOutbound(input);
   }
+
+  retry(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<MailOutboundRecord | null> {
+    if (this.options.store.retryOutbound === undefined) {
+      return Promise.resolve(null);
+    }
+    return this.options.store.retryOutbound({
+      ...input,
+      outboxSubject: this.outboxSubject,
+    });
+  }
+}
+
+function assertKnownOutboundAttachmentSizes(envelope: MailOutboundEnvelope): void {
+  let totalBytes = 0;
+  for (const attachment of envelope.attachments) {
+    totalBytes = addAttachmentBytes(totalBytes, attachment.content?.byteLength ?? 0);
+  }
+}
+
+function addAttachmentBytes(totalBytes: number, attachmentBytes: number): number {
+  if (
+    attachmentBytes > MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES ||
+    totalBytes + attachmentBytes > MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES
+  ) {
+    throw new MailAttachmentSizeError(MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES);
+  }
+  return totalBytes + attachmentBytes;
 }
 
 export class OutboundMailDispatcher {
@@ -334,7 +385,7 @@ export class OutboundMailDispatcher {
                 span.recordException(error instanceof Error ? error : new Error(String(error)));
                 const message = error instanceof Error ? error.message : String(error);
 
-                if (attempt >= this.maxAttempts) {
+                if (attempt >= this.maxAttempts || isNonRetryableDispatchError(error)) {
                   span.setAttribute("helix.mail.delivery_status", "dead_lettered");
                   span.setStatus({ code: SpanStatusCode.ERROR });
                   const wrapped = new MailProviderError(message, error);
@@ -425,6 +476,15 @@ export class OutboundMailDispatcher {
       );
     }
   }
+}
+
+function isNonRetryableDispatchError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "retryable" in error &&
+    (error as { readonly retryable?: unknown }).retryable === false
+  );
 }
 
 /** Exponential backoff with full jitter, capped at maxDelayMs. */

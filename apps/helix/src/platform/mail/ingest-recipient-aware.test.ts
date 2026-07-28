@@ -7,6 +7,7 @@ import type {
 import { ingestResolvedRawMail } from "./ingest.js";
 import type { MailMessageInput, MailThreadStatePatch } from "./types.js";
 import type { SmtpResolvedRecipient } from "./smtp-recipient-resolver.js";
+import { InMemoryMailQuarantineStore } from "./quarantine.js";
 
 const orgOne = "10000000-0000-4000-8000-000000000001";
 const orgTwo = "20000000-0000-4000-8000-000000000002";
@@ -151,8 +152,10 @@ describe("recipient-aware inbound ingest", () => {
 
   it("retains infected and scanner-policy quarantine evidence for every tenant copy", async () => {
     const store = new RecordingRecipientAwareStore();
+    const quarantineStore = new InMemoryMailQuarantineStore();
     const result = await ingestResolvedRawMail({
       store: store.asStore(),
+      quarantineStore,
       authenticator: noneAuthenticator,
       scanners: {
         antivirus: {
@@ -174,9 +177,83 @@ describe("recipient-aware inbound ingest", () => {
       quarantined: true,
       spamReason: "virus",
     });
-    expect(store.messages.every((message) => message.metadata?.quarantined === true)).toBe(true);
-    expect(store.patches).toHaveLength(3);
-    expect(store.patches.every((patch) => patch.patch.spamAt instanceof Date)).toBe(true);
+    expect(store.messages).toHaveLength(0);
+    expect(result.quarantines).toHaveLength(2);
+    expect(await quarantineStore.list(orgOne)).toHaveLength(1);
+    expect(await quarantineStore.list(orgTwo)).toHaveLength(1);
+    expect(store.patches).toHaveLength(0);
+  });
+
+  it("fails closed on Business scanner outage and never delivers attachment objects", async () => {
+    const store = new RecordingRecipientAwareStore();
+    const quarantineStore = new InMemoryMailQuarantineStore();
+    const result = await ingestResolvedRawMail({
+      store: store.asStore(),
+      quarantineStore,
+      authenticator: noneAuthenticator,
+      scanners: {
+        tier: "business",
+        antivirus: {
+          async scan() {
+            throw new Error("clamd unavailable");
+          },
+        },
+      },
+      input: { raw, recipients: recipients.slice(0, 2) },
+    });
+    expect(result.scan).toMatchObject({
+      quarantined: true,
+      scannerUnavailable: true,
+      quarantineReasons: ["scanner_unavailable"],
+    });
+    expect(store.messages).toHaveLength(0);
+    expect(result.quarantines).toHaveLength(1);
+  });
+
+  it("quarantines active attachments before any mailbox or Drive object is created", async () => {
+    const store = new RecordingRecipientAwareStore();
+    const quarantineStore = new InMemoryMailQuarantineStore();
+    const activeAttachmentRaw = [
+      "From: Sender <sender@external.example>",
+      "To: owner@one.example",
+      "Message-ID: <active-attachment@external.example>",
+      "Subject: Active attachment",
+      'Content-Type: multipart/mixed; boundary="helix-boundary"',
+      "",
+      "--helix-boundary",
+      "Content-Type: text/plain",
+      "",
+      "See attachment.",
+      "--helix-boundary",
+      "Content-Type: application/javascript",
+      'Content-Disposition: attachment; filename="payload.js"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      "YWxlcnQoMSk=",
+      "--helix-boundary--",
+      "",
+    ].join("\r\n");
+
+    const result = await ingestResolvedRawMail({
+      store: store.asStore(),
+      quarantineStore,
+      authenticator: noneAuthenticator,
+      input: {
+        raw: activeAttachmentRaw,
+        recipients: recipients.slice(0, 1),
+      },
+    });
+
+    expect(result.scan).toMatchObject({
+      quarantined: true,
+      quarantineReasons: expect.arrayContaining([
+        "active_attachment_extension",
+        "active_attachment_mime",
+      ]),
+    });
+    expect(store.messages).toHaveLength(0);
+    expect(result.deliveries).toHaveLength(0);
+    expect(await quarantineStore.list(orgOne)).toHaveLength(1);
   });
 });
 

@@ -57,6 +57,42 @@ function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }
 
+function MailMessageBody({
+  body,
+  bodyFormat,
+}: {
+  readonly body: string;
+  readonly bodyFormat: "plain" | "html";
+}) {
+  if (bodyFormat === "html") {
+    return (
+      <iframe
+        title="Email message content"
+        sandbox=""
+        referrerPolicy="no-referrer"
+        srcDoc={body}
+        style={{
+          width: "100%",
+          minHeight: 160,
+          border: 0,
+          background: "transparent",
+        }}
+      />
+    );
+  }
+  return (
+    <div
+      style={{
+        whiteSpace: "pre-wrap",
+        fontSize: "var(--text-body-sm)",
+        lineHeight: 1.6,
+      }}
+    >
+      {body}
+    </div>
+  );
+}
+
 /* ----------------------------------------------------------- icons + time */
 
 /** Static folder → icon map; the backend `mail.folders.list` is icon-free. */
@@ -1390,6 +1426,8 @@ function ThreadView({
             type="button"
             className="btn sm"
             style={{ marginBottom: 16 }}
+            disabled
+            title="AI summary is not available yet"
             onClick={() => {
               setAiSummary((value) => !value);
             }}
@@ -1432,7 +1470,12 @@ function ThreadView({
                 >
                   Draft reply
                 </button>
-                <button type="button" className="btn sm">
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled
+                  title="Meeting scheduling is not available yet"
+                >
                   Schedule meeting
                 </button>
               </div>
@@ -1523,15 +1566,7 @@ function ThreadView({
                         ? message.to.map((addr) => addr.name ?? addr.address).join(", ")
                         : "me"}
                     </div>
-                    <div
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        fontSize: "var(--text-body-sm)",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      {message.body}
-                    </div>
+                    <MailMessageBody body={message.body} bodyFormat={message.bodyFormat} />
                     {message.hasAttachment && (
                       <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
                         <div
@@ -1589,7 +1624,7 @@ function ThreadView({
             >
               <Icons.Forward /> Forward
             </button>
-            <button type="button" className="btn">
+            <button type="button" className="btn" disabled title="Smart reply is not available yet">
               <Icons.Sparkles /> Smart reply
             </button>
           </div>
@@ -1704,16 +1739,40 @@ function ThreadView({
                 >
                   <Icons.Send /> {replyMutation.isPending ? "Sending…" : "Send"}
                 </button>
-                <button type="button" className="icon-btn" aria-label="Attach">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="Attach"
+                  disabled
+                  title="Reply attachments are not available yet"
+                >
                   <Icons.Paperclip />
                 </button>
-                <button type="button" className="icon-btn" aria-label="Insert link">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="Insert link"
+                  disabled
+                  title="Link insertion is not available yet"
+                >
                   <Icons.Link />
                 </button>
-                <button type="button" className="icon-btn" aria-label="Emoji">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="Emoji"
+                  disabled
+                  title="Emoji insertion is not available yet"
+                >
                   <Icons.Smile />
                 </button>
-                <button type="button" className="icon-btn" aria-label="AI assist">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="AI assist"
+                  disabled
+                  title="AI assist is not available yet"
+                >
                   <Icons.Sparkles />
                 </button>
                 <button
@@ -1786,6 +1845,8 @@ function Compose({ onClose, onSent }: ComposeProps) {
   const [sendFailed, setSendFailed] = useState(false);
   const [attachments, setAttachments] = useState<readonly MailAttachment[]>([]);
   const [draftId, setDraftId] = useState<string | null>(null);
+  const [draftVersion, setDraftVersion] = useState<number | null>(null);
+  const [draftSaveError, setDraftSaveError] = useState<string | null>(null);
   const [undo, setUndo] = useState<{
     readonly outboundId: string;
     readonly untilMs: number;
@@ -1841,23 +1902,25 @@ function Compose({ onClose, onSent }: ComposeProps) {
     }
     void saveMailDraft({
       ...(draftId === null ? {} : { id: draftId }),
-      envelope: {
-        to: parseRecipients(to),
-        cc: parseRecipients(cc),
-        bcc: parseRecipients(bcc),
-        subject,
-        text: body,
-      },
-    }).then((saved) => {
-      const id =
-        typeof saved === "object" && saved !== null && "id" in saved && typeof saved.id === "string"
-          ? (saved as { id: string }).id
-          : null;
-      if (id !== null) {
-        setDraftId(id);
-      }
-    });
-  }, [bcc, body, cc, draftId, subject, to]);
+      ...(draftVersion === null ? {} : { expectedVersion: draftVersion }),
+      to: parseRecipients(to),
+      cc: parseRecipients(cc),
+      bcc: parseRecipients(bcc),
+      subject,
+      bodyText: body,
+      attachments,
+    })
+      .then((saved) => {
+        setDraftId(saved.id);
+        setDraftVersion(saved.version);
+        setDraftSaveError(null);
+      })
+      .catch(() => {
+        setDraftSaveError(
+          "Draft was not saved. It may have changed on another device; reload before retrying.",
+        );
+      });
+  }, [attachments, bcc, body, cc, draftId, draftVersion, subject, to]);
 
   const recipients = parseRecipients(to);
   const canSend = recipients.length > 0 && !sendMutation.isPending;
@@ -2129,14 +2192,14 @@ function Compose({ onClose, onSent }: ComposeProps) {
         <div className="compose-attachments" aria-label="Attached files">
           {attachments.map((attachment, index) => (
             <div
-              key={`${attachment.filename}-${String(index)}`}
+              key={`${attachment.filename ?? "attachment"}-${String(index)}`}
               className="compose-attachment-chip"
             >
               <Icons.Paperclip />
               <span title={attachment.filename}>{attachment.filename}</span>
               <button
                 type="button"
-                aria-label={`Remove attachment ${attachment.filename}`}
+                aria-label={`Remove attachment ${attachment.filename ?? "attachment"}`}
                 onClick={() => {
                   removeAttachment(index);
                 }}
@@ -2181,6 +2244,14 @@ function Compose({ onClose, onSent }: ComposeProps) {
           Could not send message. Try again.
         </div>
       )}
+      {draftSaveError !== null && (
+        <div
+          role="alert"
+          style={{ margin: "0 14px 8px", fontSize: "var(--text-caption)", color: "var(--danger)" }}
+        >
+          {draftSaveError}
+        </div>
+      )}
       {scheduling && (
         <div
           style={{
@@ -2196,13 +2267,13 @@ function Compose({ onClose, onSent }: ComposeProps) {
             Schedule send
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" className="btn sm">
+            <button type="button" className="btn sm" disabled>
               Tomorrow 8:00 AM
             </button>
-            <button type="button" className="btn sm">
+            <button type="button" className="btn sm" disabled>
               Monday 8:00 AM
             </button>
-            <button type="button" className="btn sm">
+            <button type="button" className="btn sm" disabled>
               Pick date &amp; time
             </button>
           </div>
@@ -2225,6 +2296,8 @@ function Compose({ onClose, onSent }: ComposeProps) {
             type="button"
             className="btn primary icon"
             aria-label="Schedule send"
+            disabled
+            title="Scheduled send is not available yet"
             style={{
               borderLeft: "1px solid rgba(255,255,255,0.2)",
               marginLeft: 1,
@@ -2247,16 +2320,40 @@ function Compose({ onClose, onSent }: ComposeProps) {
         >
           <Icons.Paperclip />
         </button>
-        <button type="button" className="icon-btn" aria-label="Insert link">
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Insert link"
+          disabled
+          title="Link insertion is not available yet"
+        >
           <Icons.Link />
         </button>
-        <button type="button" className="icon-btn" aria-label="Emoji">
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Emoji"
+          disabled
+          title="Emoji insertion is not available yet"
+        >
           <Icons.Smile />
         </button>
-        <button type="button" className="icon-btn" aria-label="Insert image">
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Insert image"
+          disabled
+          title="Inline image insertion is not available yet"
+        >
           <Icons.Image />
         </button>
-        <button type="button" className="icon-btn" aria-label="AI assist">
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="AI assist"
+          disabled
+          title="AI assist is not available yet"
+        >
           <Icons.Sparkles />
         </button>
         <button

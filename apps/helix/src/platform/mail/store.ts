@@ -38,6 +38,8 @@ import type {
 } from "./types.js";
 import { MAIL_FOLDER_IDS } from "./types.js";
 import { classifyMailCategory, coerceMailCategory } from "./category.js";
+import { sanitizeMailHtml } from "./content-safety.js";
+import { MailDraftVersionConflictError } from "./errors.js";
 // ponytail: store.ts is the mail IO adapter surface (~1700 LOC). Split list/folder
 // projection into store-threads when next touching listThreads; keep god-file note
 // until that extraction lands fully (G9).
@@ -79,6 +81,7 @@ export interface CreateOutboundMailInput {
   readonly envelope: MailOutboundEnvelope;
   readonly undoUntil: Date;
   readonly outboxSubject: string;
+  readonly idempotencyKey?: string;
 }
 
 export type MarkOutboundSentInput = MailOutboundDeliveryResult & {
@@ -216,6 +219,7 @@ export interface MailStore {
     readonly id?: string;
     readonly threadId?: string | null;
     readonly envelope: JsonObject;
+    readonly expectedVersion?: number;
   }): Promise<MailDraftRecord>;
   getDraft?(input: {
     readonly orgId: string;
@@ -231,6 +235,12 @@ export interface MailStore {
     readonly actorId: string;
     readonly id: string;
   }): Promise<boolean>;
+  retryOutbound?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+    readonly outboxSubject?: string;
+  }): Promise<MailOutboundRecord | null>;
   listAliases?(orgId: string, actorId?: string): Promise<readonly MailAliasRecord[]>;
   createAlias?(input: {
     readonly orgId: string;
@@ -439,6 +449,18 @@ export class PostgresMailStore
 
   async createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord> {
     return this.sql.begin(async (tx) => {
+      if (input.idempotencyKey !== undefined) {
+        const lockKey = `${input.orgId}:${input.actorId}:${input.idempotencyKey}`;
+        await tx`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+        const existing = (await tx`
+          select * from mail_outbound_messages
+          where org_id = ${input.orgId}
+            and actor_id = ${input.actorId}
+            and idempotency_key = ${input.idempotencyKey}
+          limit 1
+        `) as unknown as readonly MailOutboundRow[];
+        if (existing[0] !== undefined) return mapOutbound(existing[0]);
+      }
       const message = await insertMailMessage(
         tx,
         {
@@ -477,7 +499,8 @@ export class PostgresMailStore
 
       const outboundRows = (await tx`
         insert into mail_outbound_messages (
-          id, org_id, actor_id, message_id, thread_id, outbox_id, status, envelope, undo_until
+          id, org_id, actor_id, message_id, thread_id, outbox_id, status, envelope,
+          undo_until, idempotency_key
         )
         values (
           ${outboundId},
@@ -488,7 +511,8 @@ export class PostgresMailStore
           ${outboxId},
           'queued',
           ${tx.json(toSqlJson(input.envelope))},
-          ${input.undoUntil}
+          ${input.undoUntil},
+          ${input.idempotencyKey ?? null}
         )
         returning *
       `) as unknown as readonly MailOutboundRow[];
@@ -1363,6 +1387,7 @@ export class PostgresMailStore
     readonly id?: string;
     readonly threadId?: string | null;
     readonly envelope: JsonObject;
+    readonly expectedVersion?: number;
   }): Promise<MailDraftRecord> {
     if (input.id !== undefined) {
       const updated = (await this.sql`
@@ -1370,14 +1395,24 @@ export class PostgresMailStore
         set
           thread_id = ${input.threadId ?? null},
           envelope = ${this.sql.json(toSqlJson(input.envelope))},
+          version = version + 1,
           updated_at = now()
         where id = ${input.id}
           and org_id = ${input.orgId}
           and actor_id = ${input.actorId}
+          and version = ${input.expectedVersion ?? -1}
         returning *
       `) as unknown as readonly MailDraftRow[];
       if (updated[0] !== undefined) {
         return mapDraft(updated[0]);
+      }
+      const current = (await this.sql`
+        select version from mail_drafts
+        where id = ${input.id} and org_id = ${input.orgId} and actor_id = ${input.actorId}
+        limit 1
+      `) as unknown as readonly { readonly version: number }[];
+      if (current[0] !== undefined) {
+        throw new MailDraftVersionConflictError(input.id, current[0].version);
       }
     }
     const rows = (await this.sql`
@@ -1543,6 +1578,55 @@ export class PostgresMailStore
     return rows[0] !== undefined;
   }
 
+  async retryOutbound(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+    readonly outboxSubject?: string;
+  }): Promise<MailOutboundRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const current = (await tx`
+        select id from mail_outbound_messages
+        where id = ${input.id}
+          and org_id = ${input.orgId}
+          and actor_id = ${input.actorId}
+          and status = 'failed'
+        for update
+      `) as unknown as readonly { readonly id: string }[];
+      if (current[0] === undefined) return null;
+      const outbox = (await tx`
+        insert into outbox (subject, payload, deliver_after)
+        values (
+          ${input.outboxSubject ?? "mail.send"},
+          ${tx.json(
+            toSqlJson({
+              mailOutboundId: input.id,
+              orgId: input.orgId,
+              actorId: input.actorId,
+            }),
+          )},
+          now()
+        )
+        returning id
+      `) as unknown as readonly { readonly id: string }[];
+      const rows = (await tx`
+        update mail_outbound_messages
+        set
+          outbox_id = ${outbox[0]?.id ?? null},
+          status = 'queued',
+          failed_at = null,
+          dead_lettered_at = null,
+          last_error = null,
+          attempt_count = 0,
+          next_attempt_at = now(),
+          updated_at = now()
+        where id = ${input.id} and org_id = ${input.orgId} and actor_id = ${input.actorId}
+        returning *
+      `) as unknown as readonly MailOutboundRow[];
+      return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    });
+  }
+
   async listAliases(orgId: string, actorId?: string): Promise<readonly MailAliasRecord[]> {
     const rows =
       actorId === undefined
@@ -1607,6 +1691,7 @@ interface MailDraftRow {
   readonly actor_id: string;
   readonly thread_id: string | null;
   readonly envelope: JsonObject;
+  readonly version?: number;
   readonly created_at: Date;
   readonly updated_at: Date;
 }
@@ -1628,6 +1713,7 @@ function mapDraft(row: MailDraftRow): MailDraftRecord {
     actorId: row.actor_id,
     threadId: row.thread_id,
     envelope: row.envelope,
+    version: row.version ?? 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2157,6 +2243,7 @@ function mapThreadDetail(rows: readonly MailThreadRow[]): MailThreadDetail {
 }
 
 function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
+  const html = row.body_format === "html" ? sanitizeMailHtml(row.body).html : row.body;
   return {
     id: row.message_id,
     from: mailAddress(row.metadata.from),
@@ -2164,7 +2251,7 @@ function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
     cc: mailAddressArray(row.metadata.cc),
     bcc: mailAddressArray(row.metadata.bcc),
     sentAt: row.sent_at,
-    body: row.body,
+    body: html,
     bodyFormat: row.body_format === "html" ? "html" : "plain",
     hasAttachment: row.has_attachment,
     attachments: mailThreadAttachments(row.attachments),

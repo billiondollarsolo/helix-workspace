@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   MailSendService,
+  MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES,
   NodemailerMailTransport,
   OutboundMailDispatcher,
   type OutboundMailTransport,
@@ -8,7 +9,13 @@ import {
 } from "./outbound.js";
 import type { MailStore } from "./store.js";
 import type { MailOutboundEnvelope, MailOutboundRecord } from "./types.js";
-import { MailOutboundPayloadError, MailProviderError } from "./errors.js";
+import {
+  MailAttachmentSizeError,
+  MailOutboundPayloadError,
+  MailProviderError,
+  MailSendIdempotencyRequiredError,
+} from "./errors.js";
+import { createDispatchAuthorizedAttachmentResolver } from "./reliability.js";
 
 const now = new Date("2026-05-20T12:00:00.000Z");
 
@@ -92,9 +99,56 @@ describe("resolveOutboundAttachments", () => {
     if (resolvedContent === undefined) throw new Error("Expected resolved attachment content");
     expect(Buffer.from(resolvedContent).toString()).toBe("from-drive");
   });
+
+  it("rejects an attachment that exceeds the documented outbound limit", async () => {
+    await expect(
+      resolveOutboundAttachments(
+        envelope({
+          attachments: [
+            {
+              filename: "too-large.bin",
+              mimeType: "application/octet-stream",
+              content: Buffer.alloc(MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES + 1),
+            },
+          ],
+        }),
+      ),
+    ).rejects.toBeInstanceOf(MailAttachmentSizeError);
+  });
 });
 
 describe("OutboundMailDispatcher retry + dead-letter", () => {
+  it("preserves undo-send across a dispatcher restart", async () => {
+    let undoExpired = false;
+    const queued = baseOutbound({
+      undoUntil: new Date("2026-05-20T12:00:30.000Z"),
+    });
+    const sending = { ...queued, status: "sending" as const };
+    const send = vi
+      .fn()
+      .mockResolvedValue({ providerMessageId: "provider-1", deliveryMetadata: {} });
+    const store = {
+      markOutboundSending: vi.fn().mockImplementation(async () => {
+        if (!undoExpired) return null;
+        return sending;
+      }),
+      markOutboundSent: vi.fn().mockImplementation(async () => ({
+        ...sending,
+        status: "sent",
+        sentAt: new Date(),
+      })),
+    } as unknown as MailStore;
+
+    const beforeRestart = new OutboundMailDispatcher(store, { send });
+    expect(await beforeRestart.dispatch(queued.id)).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+
+    undoExpired = true;
+    const afterRestart = new OutboundMailDispatcher(store, { send });
+    expect((await afterRestart.dispatch(queued.id))?.status).toBe("sent");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("binds the dispatch-time provider decision and persists only safe metadata", async () => {
     const record = baseOutbound({ status: "sending" });
     const send = vi.fn().mockResolvedValue({
@@ -265,6 +319,51 @@ describe("OutboundMailDispatcher retry + dead-letter", () => {
     ).rejects.toBeInstanceOf(MailProviderError);
   });
 
+  it("dead-letters immediately when dispatch-time attachment access was revoked", async () => {
+    const record = baseOutbound({
+      status: "sending",
+      envelope: envelope({
+        attachments: [
+          {
+            filename: "revoked.pdf",
+            mimeType: "application/pdf",
+            objectId: "11111111-1111-1111-1111-111111111111",
+          },
+        ],
+      }),
+    });
+    const send = vi.fn();
+    const markOutboundRetry = vi.fn();
+    const markOutboundDeadLettered = vi.fn().mockImplementation(async (input) => ({
+      ...record,
+      status: "failed",
+      deadLetteredAt: now,
+      lastError: input.lastError,
+    }));
+    const store = {
+      markOutboundSending: vi.fn().mockResolvedValue(record),
+      markOutboundRetry,
+      markOutboundDeadLettered,
+    } as unknown as MailStore;
+    const readFile = vi.fn().mockResolvedValue(null);
+    const dispatcher = new OutboundMailDispatcher(
+      store,
+      { send },
+      {
+        maxAttempts: 5,
+        resolveAttachment: createDispatchAuthorizedAttachmentResolver({ readFile }),
+      },
+    );
+
+    const result = await dispatcher.dispatch(record.id);
+
+    expect(result).toMatchObject({ status: "failed", deadLetteredAt: now });
+    expect(readFile).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+    expect(markOutboundRetry).not.toHaveBeenCalled();
+    expect(markOutboundDeadLettered).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects invalid outbox payloads with MailOutboundPayloadError", async () => {
     const dispatcher = new OutboundMailDispatcher({} as MailStore, {
       send: async () => ({ providerMessageId: "x", deliveryMetadata: {} }),
@@ -288,6 +387,75 @@ describe("MailSendService.cancel", () => {
       actorId: "a1",
       id: "out-1",
     });
+  });
+
+  it("explicitly retries only through the scoped store method", async () => {
+    const retryOutbound = vi.fn().mockResolvedValue(baseOutbound({ status: "queued" }));
+    const service = new MailSendService({
+      store: { retryOutbound } as unknown as MailStore,
+    });
+    expect(
+      await service.retry({
+        orgId: "o1",
+        actorId: "a1",
+        id: "out-1",
+      }),
+    ).toMatchObject({ status: "queued" });
+    expect(retryOutbound).toHaveBeenCalledWith({
+      orgId: "o1",
+      actorId: "a1",
+      id: "out-1",
+      outboxSubject: "mail.send",
+    });
+  });
+});
+
+describe("MailSendService idempotency", () => {
+  it("requires a key for agent and API sends", () => {
+    const service = new MailSendService({ store: {} as MailStore });
+    for (const source of ["agent", "api"] as const) {
+      expect(() =>
+        service.queue({
+          orgId: "o1",
+          actorId: "a1",
+          source,
+          envelope: envelope(),
+        }),
+      ).toThrow(MailSendIdempotencyRequiredError);
+    }
+  });
+
+  it("uses the same durable key for duplicate API send attempts", async () => {
+    const records = new Map<string, MailOutboundRecord>();
+    const createOutbound = vi.fn().mockImplementation(async (input) => {
+      const key = input.idempotencyKey as string;
+      const prior = records.get(key);
+      if (prior !== undefined) return prior;
+      const created = baseOutbound({ id: `out-${String(records.size + 1)}` });
+      records.set(key, created);
+      return created;
+    });
+    const service = new MailSendService({
+      store: { createOutbound } as unknown as MailStore,
+      undoWindowMs: 0,
+    });
+    const input = {
+      orgId: "o1",
+      actorId: "a1",
+      source: "api" as const,
+      idempotencyKey: "request-123",
+      envelope: envelope(),
+    };
+
+    const [first, second] = await Promise.all([service.queue(input), service.queue(input)]);
+
+    expect(first.id).toBe(second.id);
+    expect(records.size).toBe(1);
+    expect(createOutbound).toHaveBeenCalledTimes(2);
+    expect(createOutbound).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ idempotencyKey: "request-123" }),
+    );
   });
 });
 

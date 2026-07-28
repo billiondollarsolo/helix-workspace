@@ -6,10 +6,7 @@ import type {
   OutboundMailMessage,
   OutboundMailProvider,
 } from "@helix/sdk-types";
-import type {
-  MailOutboundDeliveryResult,
-  MailOutboundEnvelope,
-} from "./types.js";
+import type { MailOutboundDeliveryResult, MailOutboundEnvelope } from "./types.js";
 import type { OutboundMailTransport } from "./outbound.js";
 
 /**
@@ -47,6 +44,8 @@ export interface OutboundProviderConfig {
   readonly config: JsonObject;
   /** Env-var name holding the API key / SMTP password; resolved at build time. */
   readonly secretRef: string | null;
+  /** Secret reference used only to verify inbound provider delivery webhooks. */
+  readonly webhookSecretRef?: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -93,10 +92,7 @@ export class SesMailProvider implements OutboundMailProvider {
   readonly #transport: Transporter<SMTPTransport.SentMessageInfo>;
   readonly #region: string;
 
-  constructor(
-    options: SesProviderOptions,
-    transport?: Transporter<SMTPTransport.SentMessageInfo>,
-  ) {
+  constructor(options: SesProviderOptions, transport?: Transporter<SMTPTransport.SentMessageInfo>) {
     this.name = options.name;
     this.#region = options.region;
     this.#transport =
@@ -192,7 +188,10 @@ export class MailgunMailProvider implements OutboundMailProvider {
       const detail = await safeText(response);
       throw new Error(`Mailgun delivery failed (${String(response.status)}): ${detail}`);
     }
-    const payload = (await response.json()) as { readonly id?: unknown; readonly message?: unknown };
+    const payload = (await response.json()) as {
+      readonly id?: unknown;
+      readonly message?: unknown;
+    };
     return {
       ...(typeof payload.id === "string" ? { providerMessageId: payload.id } : {}),
       metadata: {
@@ -328,9 +327,7 @@ export class PostmarkMailProvider implements OutboundMailProvider {
       );
     }
     return {
-      ...(typeof payload.MessageID === "string"
-        ? { providerMessageId: payload.MessageID }
-        : {}),
+      ...(typeof payload.MessageID === "string" ? { providerMessageId: payload.MessageID } : {}),
       metadata: {
         provider: "postmark",
         messageStream: this.#messageStream,
@@ -495,18 +492,16 @@ function envelopeToMessage(envelope: MailOutboundEnvelope): OutboundMailMessage 
     ...(envelope.html === undefined ? {} : { html: envelope.html }),
     attachments: envelope.attachments.map((attachment) => ({
       ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
-      ...(attachment.contentType === undefined
-        ? {}
-        : { contentType: attachment.contentType }),
+      ...(attachment.contentType === undefined ? {} : { contentType: attachment.contentType }),
       content: new Uint8Array(attachment.content ?? Buffer.alloc(0)),
     })),
   };
 }
 
-function addressOf(value: {
+function addressOf(value: { readonly address: string; readonly name?: string }): {
   readonly address: string;
   readonly name?: string;
-}): { readonly address: string; readonly name?: string } {
+} {
   return value.name === undefined
     ? { address: value.address }
     : { address: value.address, name: value.name };
@@ -525,9 +520,7 @@ function toNodemailerMail(message: OutboundMailMessage): SMTPTransport.MailOptio
     ...(message.headers === undefined ? {} : { headers: { ...message.headers } }),
     attachments: (message.attachments ?? []).map((attachment) => ({
       ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
-      ...(attachment.contentType === undefined
-        ? {}
-        : { contentType: attachment.contentType }),
+      ...(attachment.contentType === undefined ? {} : { contentType: attachment.contentType }),
       content: Buffer.from(attachment.content),
     })),
   };

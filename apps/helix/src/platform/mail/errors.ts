@@ -1,9 +1,4 @@
-import {
-  ApiError,
-  BadRequestError,
-  ForbiddenError,
-  NotFoundError,
-} from "../../api/api-error.js";
+import { ApiError, BadRequestError, ForbiddenError, NotFoundError } from "../../api/api-error.js";
 
 export class MailThreadNotFoundError extends NotFoundError {
   constructor(threadId: string) {
@@ -25,12 +20,9 @@ export class MailFilterNotFoundError extends NotFoundError {
 
 export class MailInboundActorForbiddenError extends ForbiddenError {
   constructor(actorType: string) {
-    super(
-      `mail.inbound.accept requires a service-account or system actor; got ${actorType}.`,
-      {
-        details: { mailCode: "mail.inbound_forbidden", actorType },
-      },
-    );
+    super(`mail.inbound.accept requires a service-account or system actor; got ${actorType}.`, {
+      details: { mailCode: "mail.inbound_forbidden", actorType },
+    });
     this.name = "MailInboundActorForbiddenError";
   }
 }
@@ -51,6 +43,23 @@ export class MailProviderError extends ApiError {
       cause,
     });
     this.name = "MailProviderError";
+  }
+}
+
+/** Stable, operator-visible non-retryable outbound routing failure. */
+export class MailProviderConfigurationError extends Error {
+  readonly retryable = false;
+
+  constructor(
+    readonly operatorCode:
+      | "MAIL_PROVIDER_NOT_CONFIGURED"
+      | "MAIL_PROVIDER_DISABLED"
+      | "MAIL_PROVIDER_DECISION_CONFLICT"
+      | "MAIL_RECIPIENT_SUPPRESSED",
+    message: string,
+  ) {
+    super(`${operatorCode}: ${message}`);
+    this.name = "MailProviderConfigurationError";
   }
 }
 

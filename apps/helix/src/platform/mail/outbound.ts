@@ -9,7 +9,17 @@ import type {
   MailOutboundRecord,
 } from "./types.js";
 import type { MailStore } from "./store.js";
-import { MailOutboundPayloadError, MailProviderError } from "./errors.js";
+import {
+  MailOutboundPayloadError,
+  MailProviderConfigurationError,
+  MailProviderError,
+} from "./errors.js";
+import { normalizeMailboxAddress } from "./address-normalization.js";
+import {
+  providerDecisionMetadata,
+  type OutboundTransportFor,
+  type ResolvedOutboundTransport,
+} from "./outbound-routing.js";
 
 export interface OutboundMailConfig {
   readonly host: string;
@@ -58,6 +68,12 @@ export interface OutboundDispatchOptions {
   readonly maxDelayMs?: number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly resolveAttachment?: AttachmentObjectResolver;
+  readonly suppressionStore?: {
+    findActiveSuppressions(
+      orgId: string,
+      normalizedRecipients: readonly string[],
+    ): Promise<readonly { readonly normalizedRecipient: string }[]>;
+  };
 }
 
 const DEFAULT_MAX_ATTEMPTS = 5;
@@ -209,10 +225,13 @@ export class OutboundMailDispatcher {
   private readonly maxDelayMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly resolveAttachment: AttachmentObjectResolver | undefined;
+  private readonly suppressionStore: OutboundDispatchOptions["suppressionStore"];
+  private readonly transportFor: OutboundTransportFor | undefined;
+  private readonly legacyTransport: OutboundMailTransport | undefined;
 
   constructor(
     private readonly store: MailStore,
-    private readonly transport: OutboundMailTransport,
+    transport: OutboundMailTransport | OutboundTransportFor,
     options: OutboundDispatchOptions = {},
   ) {
     this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
@@ -225,6 +244,14 @@ export class OutboundMailDispatcher {
           setTimeout(resolve, ms);
         }));
     this.resolveAttachment = options.resolveAttachment;
+    this.suppressionStore = options.suppressionStore;
+    if (typeof transport === "function") {
+      this.transportFor = transport;
+      this.legacyTransport = undefined;
+    } else {
+      this.transportFor = undefined;
+      this.legacyTransport = transport;
+    }
   }
 
   async dispatch(outboundId: string): Promise<MailOutboundRecord | null> {
@@ -242,6 +269,40 @@ export class OutboundMailDispatcher {
               return null;
             }
 
+            let decision: ResolvedOutboundTransport | undefined;
+            try {
+              await this.#assertRecipientsNotSuppressed(outbound);
+              decision = await this.#resolveTransport(outbound);
+              if (decision !== undefined && this.store.bindOutboundProviderDecision !== undefined) {
+                const bound = await this.store.bindOutboundProviderDecision({
+                  id: outbound.id,
+                  orgId: outbound.orgId,
+                  providerId: decision.providerId,
+                  providerKind: decision.providerKind,
+                  source: decision.source,
+                });
+                if (bound === null) {
+                  throw new MailProviderConfigurationError(
+                    "MAIL_PROVIDER_DECISION_CONFLICT",
+                    "A different provider is already bound to this queued message.",
+                  );
+                }
+              }
+            } catch (error) {
+              if (error instanceof MailProviderConfigurationError) {
+                span.setAttribute("helix.mail.delivery_status", "configuration_failed");
+                span.setAttribute("helix.mail.operator_code", error.operatorCode);
+                span.setStatus({ code: SpanStatusCode.ERROR });
+                return await (this.store.markOutboundDeadLettered === undefined
+                  ? this.store.markOutboundFailed(outbound.id, error.message)
+                  : this.store.markOutboundDeadLettered({
+                      id: outbound.id,
+                      lastError: error.message,
+                    }));
+              }
+              throw error;
+            }
+
             let attempt = outbound.attemptCount ?? 0;
             let lastError: unknown;
 
@@ -254,12 +315,19 @@ export class OutboundMailDispatcher {
                   this.resolveAttachment,
                   { orgId: outbound.orgId, actorId: outbound.actorId },
                 );
-                const delivery = await this.transport.send(resolved);
+                const delivery = await (
+                  decision?.transport ?? this.#requiredLegacyTransport()
+                ).send(resolved);
+                const deliveryMetadata = {
+                  ...(delivery.deliveryMetadata ?? {}),
+                  ...(decision === undefined ? {} : providerDecisionMetadata(decision)),
+                  attempt,
+                };
                 span.setAttribute("helix.mail.delivery_status", "sent");
                 return await this.store.markOutboundSent({
                   id: outbound.id,
                   providerMessageId: delivery.providerMessageId,
-                  deliveryMetadata: delivery.deliveryMetadata,
+                  deliveryMetadata,
                 });
               } catch (error) {
                 lastError = error;
@@ -315,6 +383,47 @@ export class OutboundMailDispatcher {
   async dispatchOutboxPayload(payload: unknown): Promise<MailOutboundRecord | null> {
     const parsed = mailOutboxPayloadSchema(payload);
     return this.dispatch(parsed.mailOutboundId);
+  }
+
+  async #resolveTransport(
+    outbound: MailOutboundRecord,
+  ): Promise<ResolvedOutboundTransport | undefined> {
+    if (this.transportFor === undefined) {
+      return undefined;
+    }
+    const fromDomain = normalizeMailboxAddress(outbound.envelope.from.address).domain;
+    return this.transportFor(outbound.orgId, fromDomain, outbound.providerId ?? null);
+  }
+
+  #requiredLegacyTransport(): OutboundMailTransport {
+    if (this.legacyTransport === undefined) {
+      throw new MailProviderConfigurationError(
+        "MAIL_PROVIDER_NOT_CONFIGURED",
+        "No outbound transport was resolved.",
+      );
+    }
+    return this.legacyTransport;
+  }
+
+  async #assertRecipientsNotSuppressed(outbound: MailOutboundRecord): Promise<void> {
+    if (this.suppressionStore === undefined) {
+      return;
+    }
+    const recipients = [
+      ...outbound.envelope.to,
+      ...outbound.envelope.cc,
+      ...outbound.envelope.bcc,
+    ].map((recipient) => normalizeMailboxAddress(recipient.address).address);
+    const suppressed = await this.suppressionStore.findActiveSuppressions(
+      outbound.orgId,
+      recipients,
+    );
+    if (suppressed.length > 0) {
+      throw new MailProviderConfigurationError(
+        "MAIL_RECIPIENT_SUPPRESSED",
+        `Delivery is blocked for ${suppressed[0]?.normalizedRecipient ?? "a suppressed recipient"}.`,
+      );
+    }
   }
 }
 

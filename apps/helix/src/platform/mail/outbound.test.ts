@@ -95,6 +95,85 @@ describe("resolveOutboundAttachments", () => {
 });
 
 describe("OutboundMailDispatcher retry + dead-letter", () => {
+  it("binds the dispatch-time provider decision and persists only safe metadata", async () => {
+    const record = baseOutbound({ status: "sending" });
+    const send = vi.fn().mockResolvedValue({
+      providerMessageId: "provider-message",
+      deliveryMetadata: { provider: "mailgun" },
+    });
+    const transportFor = vi.fn().mockResolvedValue({
+      transport: { send },
+      providerId: "11111111-1111-4111-8111-111111111111",
+      providerKind: "mailgun",
+      source: "org_default",
+      fromDomain: "example.com",
+    });
+    const bindOutboundProviderDecision = vi.fn().mockResolvedValue({
+      ...record,
+      providerId: "11111111-1111-4111-8111-111111111111",
+    });
+    const markOutboundSent = vi.fn().mockImplementation(async (input) => ({
+      ...record,
+      status: "sent",
+      deliveryMetadata: input.deliveryMetadata,
+    }));
+    const store = {
+      markOutboundSending: vi.fn().mockResolvedValue(record),
+      bindOutboundProviderDecision,
+      markOutboundSent,
+    } as unknown as MailStore;
+
+    const result = await new OutboundMailDispatcher(store, transportFor).dispatch("out-1");
+
+    expect(transportFor).toHaveBeenCalledWith("o1", "example.com", null);
+    expect(bindOutboundProviderDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "out-1",
+        orgId: "o1",
+        providerKind: "mailgun",
+        source: "org_default",
+      }),
+    );
+    expect(result?.deliveryMetadata).toEqual(
+      expect.objectContaining({
+        providerId: "11111111-1111-4111-8111-111111111111",
+        providerKind: "mailgun",
+        providerDecisionSource: "org_default",
+        attempt: 1,
+      }),
+    );
+  });
+
+  it("fails without retrying when an org-scoped recipient suppression is active", async () => {
+    const record = baseOutbound({ status: "sending" });
+    const transportFor = vi.fn();
+    const markOutboundDeadLettered = vi.fn().mockImplementation(async (input) => ({
+      ...record,
+      status: "failed",
+      lastError: input.lastError,
+      deadLetteredAt: now,
+    }));
+    const store = {
+      markOutboundSending: vi.fn().mockResolvedValue(record),
+      markOutboundDeadLettered,
+    } as unknown as MailStore;
+    const suppressionStore = {
+      findActiveSuppressions: vi.fn().mockResolvedValue([
+        {
+          normalizedRecipient: "bob@example.net",
+        },
+      ]),
+    };
+
+    const result = await new OutboundMailDispatcher(store, transportFor, {
+      suppressionStore,
+    }).dispatch("out-1");
+
+    expect(transportFor).not.toHaveBeenCalled();
+    expect(result?.lastError).toContain("MAIL_RECIPIENT_SUPPRESSED");
+    expect(suppressionStore.findActiveSuppressions).toHaveBeenCalledWith("o1", ["bob@example.net"]);
+  });
+
   it("retries transient transport failures then succeeds", async () => {
     let attempts = 0;
     const transport: OutboundMailTransport = {

@@ -86,6 +86,15 @@ export type MarkOutboundSentInput = MailOutboundDeliveryResult & {
   readonly sentAt?: Date | undefined;
 };
 
+export interface BindOutboundProviderDecisionInput {
+  readonly id: string;
+  readonly orgId: string;
+  readonly providerId: string;
+  readonly providerKind: string;
+  readonly source: "sending_domain" | "org_default" | "environment";
+  readonly decidedAt?: Date;
+}
+
 export interface MailInboundDedupInput {
   readonly key: string;
   readonly normalizedMessageId: string | null;
@@ -124,6 +133,13 @@ export interface MailStore {
   createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord>;
   getOutbound(id: string): Promise<MailOutboundRecord | null>;
   markOutboundSending(id: string): Promise<MailOutboundRecord | null>;
+  /**
+   * Atomically bind the first provider decision. A retry may read the same
+   * decision, but cannot silently replace it.
+   */
+  bindOutboundProviderDecision?(
+    input: BindOutboundProviderDecisionInput,
+  ): Promise<MailOutboundRecord | null>;
   markOutboundSent(input: MarkOutboundSentInput): Promise<MailOutboundRecord | null>;
   markOutboundFailed(
     id: string,
@@ -275,6 +291,10 @@ interface MailOutboundRow {
   readonly failed_at: Date | null;
   readonly last_error: string | null;
   readonly provider_message_id: string | null;
+  readonly provider_id?: string | null;
+  readonly provider_kind?: string | null;
+  readonly provider_decision_source?: "sending_domain" | "org_default" | "environment" | null;
+  readonly provider_decided_at?: Date | null;
   readonly attempt_count?: number;
   readonly next_attempt_at?: Date | null;
   readonly dead_lettered_at?: Date | null;
@@ -526,6 +546,25 @@ export class PostgresMailStore
       update mail_outbound_messages
       set status = 'sending', updated_at = now()
       where id = ${id} and status = 'queued' and undo_until <= now()
+      returning *
+    `) as unknown as readonly MailOutboundRow[];
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
+  async bindOutboundProviderDecision(
+    input: BindOutboundProviderDecisionInput,
+  ): Promise<MailOutboundRecord | null> {
+    const rows = (await this.sql`
+      update mail_outbound_messages
+      set
+        provider_id = ${input.providerId},
+        provider_kind = ${input.providerKind},
+        provider_decision_source = ${input.source},
+        provider_decided_at = coalesce(provider_decided_at, ${input.decidedAt ?? new Date()}),
+        updated_at = now()
+      where id = ${input.id}
+        and org_id = ${input.orgId}
+        and (provider_id is null or provider_id = ${input.providerId})
       returning *
     `) as unknown as readonly MailOutboundRow[];
     return rows[0] === undefined ? null : mapOutbound(rows[0]);
@@ -1943,6 +1982,10 @@ function mapOutbound(row: MailOutboundRow | undefined): MailOutboundRecord {
     failedAt: row.failed_at,
     lastError: row.last_error,
     providerMessageId: row.provider_message_id,
+    providerId: row.provider_id ?? null,
+    providerKind: row.provider_kind ?? null,
+    providerDecisionSource: row.provider_decision_source ?? null,
+    providerDecidedAt: row.provider_decided_at ?? null,
     deliveryMetadata: row.delivery_metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

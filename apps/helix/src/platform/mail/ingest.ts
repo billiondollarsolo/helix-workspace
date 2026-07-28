@@ -9,10 +9,24 @@ import type {
   MailMessageInput,
   StoredMailMessage,
 } from "./types.js";
-import type { MailStore } from "./store.js";
+import type {
+  IdempotentStoredMailMessage,
+  MailInboundResolvedRecipient,
+  MailStore,
+  RecipientAwareMailStore,
+} from "./store.js";
 import { evaluateInboundMail, type MailFilterEvaluationResult } from "./filters.js";
 import type { SpamScanner, SpamScanResult } from "./spam.js";
 import type { AntivirusScanner, AntivirusScanResult } from "./antivirus.js";
+import { normalizeMailboxAddress, MailAddressNormalizationError } from "./address-normalization.js";
+import { createInboundDeliveryDedup } from "./inbound-dedup.js";
+import type { SmtpRecipientResolver, SmtpResolvedRecipient } from "./smtp-recipient-resolver.js";
+import { InMemorySmtpRateLimitStore, type SmtpRateLimitStore } from "./smtp-rate-limit.js";
+import {
+  smtpDisabledCommands,
+  smtpTransportSecurityOptions,
+  type SmtpTransportSecurity,
+} from "./smtp-transport-security.js";
 
 export interface MailAuthenticationSummary {
   readonly spf: string;
@@ -53,6 +67,22 @@ export interface IngestRawMailResult {
   readonly scan: InboundScanResult;
 }
 
+export interface ResolvedInboundDeliveryResult {
+  readonly orgId: string;
+  readonly recipients: readonly string[];
+  readonly stored: IdempotentStoredMailMessage;
+  readonly filterResults: readonly {
+    readonly actorId: string;
+    readonly result: MailFilterEvaluationResult;
+  }[];
+}
+
+export interface IngestResolvedRawMailResult {
+  readonly deliveries: readonly ResolvedInboundDeliveryResult[];
+  readonly auth: MailAuthenticationSummary;
+  readonly scan: InboundScanResult;
+}
+
 /**
  * Optional inbound content scanners. Config-gated in `server.ts`: when the
  * spamd / clamd hooks are disabled the scanner is `undefined` and ingest
@@ -69,13 +99,54 @@ export interface MailAuthenticator {
 }
 
 export interface SmtpReceiverOptions {
-  readonly store: MailStore;
-  readonly orgId: string;
+  readonly store: RecipientAwareMailStore;
+  readonly recipientResolver: SmtpRecipientResolver;
   readonly authenticator?: MailAuthenticator;
   readonly disabledCommands?: readonly string[];
   readonly logger?: { error(error: unknown, message?: string): void };
   /** Optional inbound spam + antivirus scanners (config-gated in server.ts). */
   readonly scanners?: InboundMailScanners | undefined;
+  readonly transportSecurity: SmtpTransportSecurity;
+  readonly limits?: Partial<SmtpReceiverLimits> | undefined;
+  readonly rateLimitStore?: SmtpRateLimitStore | undefined;
+}
+
+export interface SmtpReceiverLimits {
+  readonly maxMessageBytes: number;
+  readonly maxRecipientsPerMessage: number;
+  readonly maxMessagesPerConnection: number;
+  readonly maxCommandsPerConnection: number;
+  readonly maxConcurrentConnections: number;
+  readonly maxConcurrentConnectionsPerIp: number;
+  readonly connectionsPerWindow: number;
+  readonly connectionWindowMs: number;
+  readonly messagesPerWindow: number;
+  readonly messageWindowMs: number;
+  readonly recipientResolutionTimeoutMs: number;
+  readonly socketTimeoutMs: number;
+}
+
+const DEFAULT_SMTP_RECEIVER_LIMITS: SmtpReceiverLimits = {
+  maxMessageBytes: 25 * 1024 * 1024,
+  maxRecipientsPerMessage: 100,
+  maxMessagesPerConnection: 20,
+  maxCommandsPerConnection: 500,
+  maxConcurrentConnections: 250,
+  maxConcurrentConnectionsPerIp: 20,
+  connectionsPerWindow: 60,
+  connectionWindowMs: 60_000,
+  messagesPerWindow: 120,
+  messageWindowMs: 60_000,
+  recipientResolutionTimeoutMs: 5_000,
+  socketTimeoutMs: 60_000,
+};
+
+interface SmtpSessionState {
+  commands: number;
+  messageAttempts: number;
+  connected: boolean;
+  envelopeFrom?: string | undefined;
+  readonly recipients: Map<string, SmtpResolvedRecipient>;
 }
 
 export class MailauthAuthenticator implements MailAuthenticator {
@@ -91,38 +162,195 @@ export class MailauthAuthenticator implements MailAuthenticator {
 
 export class SmtpMailReceiver {
   private readonly server: SMTPServer;
+  private readonly sessions = new WeakMap<SMTPServerSession, SmtpSessionState>();
+  private readonly activeConnectionsByIp = new Map<string, number>();
+  private readonly limits: SmtpReceiverLimits;
+  private readonly rateLimits: SmtpRateLimitStore;
 
   constructor(private readonly options: SmtpReceiverOptions) {
+    this.limits = resolveSmtpReceiverLimits(options.limits);
+    this.rateLimits = options.rateLimitStore ?? new InMemorySmtpRateLimitStore();
     this.server = new SMTPServer({
-      disabledCommands: [...(options.disabledCommands ?? ["AUTH"])],
-      onData: (stream, session, callback) => {
-        collectStream(stream)
-          .then(async (raw) => {
-            await ingestRawMail({
-              store: this.options.store,
-              ...(this.options.authenticator === undefined
-                ? {}
-                : { authenticator: this.options.authenticator }),
-              ...(this.options.scanners === undefined ? {} : { scanners: this.options.scanners }),
-              input: {
-                orgId: this.options.orgId,
-                raw,
-                ...(session.envelope.mailFrom === false
-                  ? {}
-                  : { envelopeFrom: session.envelope.mailFrom.address }),
-                envelopeTo: session.envelope.rcptTo.map((recipient) => recipient.address),
-                remoteAddress: session.remoteAddress,
-                helo: session.hostNameAppearsAs,
-              },
-            });
+      ...smtpTransportSecurityOptions(options.transportSecurity),
+      disabledCommands: smtpDisabledCommands(
+        options.transportSecurity,
+        options.disabledCommands ?? ["AUTH"],
+      ),
+      maxClients: this.limits.maxConcurrentConnections,
+      size: this.limits.maxMessageBytes,
+      socketTimeout: this.limits.socketTimeoutMs,
+      hideSMTPUTF8: true,
+      onConnect: (session, callback) => {
+        void this.handleConnect(session).then(
+          () => {
             callback();
+          },
+          (error: unknown) => {
+            callback(asSmtpError(error, 421, "Connection temporarily refused."));
+          },
+        );
+      },
+      onClose: (session) => {
+        this.handleClose(session);
+      },
+      onMailFrom: (address, session, callback) => {
+        try {
+          const state = this.requireCommandCapacity(session);
+          if (state.messageAttempts >= this.limits.maxMessagesPerConnection) {
+            callback(smtpError(452, "Message limit for this connection exceeded."));
+            return;
+          }
+          state.recipients.clear();
+          state.envelopeFrom =
+            address.address.length === 0
+              ? undefined
+              : normalizeMailboxAddress(address.address).address;
+          callback();
+        } catch (error) {
+          callback(
+            error instanceof MailAddressNormalizationError
+              ? smtpError(553, "Malformed envelope sender.")
+              : asSmtpError(error, 421, "Command limit exceeded."),
+          );
+        }
+      },
+      onRcptTo: (address, session, callback) => {
+        void this.handleRecipient(address.address, session).then(
+          () => {
+            callback();
+          },
+          (error: unknown) => {
+            callback(asSmtpError(error, 451, "Recipient lookup unavailable."));
+          },
+        );
+      },
+      onData: (stream, session, callback) => {
+        this.handleData(stream, session)
+          .then(() => {
+            callback(null, "Message accepted for delivery.");
           })
           .catch((error: unknown) => {
             this.options.logger?.error(error, "SMTP mail ingest failed");
-            callback(error instanceof Error ? error : new Error(String(error)));
+            callback(asSmtpError(error, 451, "Message persistence temporarily unavailable."));
           });
       },
     });
+  }
+
+  private async handleConnect(session: SMTPServerSession): Promise<void> {
+    const allowed = await this.rateLimits.consume({
+      scope: "connection",
+      key: session.remoteAddress,
+      limit: this.limits.connectionsPerWindow,
+      windowMs: this.limits.connectionWindowMs,
+    });
+    if (!allowed) {
+      throw smtpError(421, "Connection rate limit exceeded.");
+    }
+    const current = this.activeConnectionsByIp.get(session.remoteAddress) ?? 0;
+    if (current >= this.limits.maxConcurrentConnectionsPerIp) {
+      throw smtpError(421, "Concurrent connection limit exceeded.");
+    }
+    this.activeConnectionsByIp.set(session.remoteAddress, current + 1);
+    this.sessions.set(session, {
+      commands: 0,
+      messageAttempts: 0,
+      connected: true,
+      recipients: new Map(),
+    });
+  }
+
+  private handleClose(session: SMTPServerSession): void {
+    const state = this.sessions.get(session);
+    if (state?.connected !== true) {
+      return;
+    }
+    state.connected = false;
+    const current = this.activeConnectionsByIp.get(session.remoteAddress) ?? 0;
+    if (current <= 1) {
+      this.activeConnectionsByIp.delete(session.remoteAddress);
+    } else {
+      this.activeConnectionsByIp.set(session.remoteAddress, current - 1);
+    }
+  }
+
+  private async handleRecipient(address: string, session: SMTPServerSession): Promise<void> {
+    const state = this.requireCommandCapacity(session);
+    let normalized: string;
+    try {
+      normalized = normalizeMailboxAddress(address).address;
+    } catch {
+      throw smtpError(550, "Unknown or malformed recipient.");
+    }
+    if (state.recipients.has(normalized)) {
+      return;
+    }
+    if (state.recipients.size >= this.limits.maxRecipientsPerMessage) {
+      throw smtpError(452, "Recipient limit exceeded.");
+    }
+    let recipient: SmtpResolvedRecipient | null;
+    try {
+      recipient = await withTimeout(
+        this.options.recipientResolver.resolveRecipient(normalized),
+        this.limits.recipientResolutionTimeoutMs,
+      );
+    } catch {
+      throw smtpError(451, "Recipient lookup temporarily unavailable.");
+    }
+    if (recipient === null) {
+      throw smtpError(550, "Unknown recipient domain or mailbox.");
+    }
+    if (recipient.normalizedAddress !== normalized) {
+      throw smtpError(451, "Recipient resolver returned inconsistent data.");
+    }
+    state.recipients.set(normalized, recipient);
+  }
+
+  private async handleData(
+    stream: SMTPServerDataStream,
+    session: SMTPServerSession,
+  ): Promise<void> {
+    const state = this.requireCommandCapacity(session);
+    if (state.recipients.size === 0) {
+      throw smtpError(554, "No accepted recipients.");
+    }
+    state.messageAttempts += 1;
+    const rateAllowed = await this.rateLimits.consume({
+      scope: "message",
+      key: session.remoteAddress,
+      limit: this.limits.messagesPerWindow,
+      windowMs: this.limits.messageWindowMs,
+    });
+    if (!rateAllowed) {
+      throw smtpError(451, "Message rate limit exceeded.");
+    }
+    const raw = await collectStream(stream, this.limits.maxMessageBytes);
+    await ingestResolvedRawMail({
+      store: this.options.store,
+      ...(this.options.authenticator === undefined
+        ? {}
+        : { authenticator: this.options.authenticator }),
+      ...(this.options.scanners === undefined ? {} : { scanners: this.options.scanners }),
+      input: {
+        raw,
+        recipients: [...state.recipients.values()],
+        ...(state.envelopeFrom === undefined ? {} : { envelopeFrom: state.envelopeFrom }),
+        remoteAddress: session.remoteAddress,
+        helo: session.hostNameAppearsAs,
+      },
+    });
+  }
+
+  private requireCommandCapacity(session: SMTPServerSession): SmtpSessionState {
+    const state = this.sessions.get(session);
+    if (state === undefined || !state.connected) {
+      throw smtpError(421, "SMTP session is not active.");
+    }
+    state.commands += 1;
+    if (state.commands > this.limits.maxCommandsPerConnection) {
+      throw smtpError(421, "Command limit exceeded.");
+    }
+    return state;
   }
 
   listen(port: number, host?: string): Promise<void> {
@@ -149,6 +377,141 @@ export class SmtpMailReceiver {
 
   get nodeServer(): SMTPServer {
     return this.server;
+  }
+}
+
+export async function ingestResolvedRawMail(input: {
+  readonly store: RecipientAwareMailStore;
+  readonly input: {
+    readonly raw: Buffer | string;
+    readonly recipients: readonly SmtpResolvedRecipient[];
+    readonly envelopeFrom?: string | undefined;
+    readonly remoteAddress?: string | undefined;
+    readonly helo?: string | undefined;
+    readonly receivedAt?: Date | undefined;
+  };
+  readonly authenticator?: MailAuthenticator;
+  readonly scanners?: InboundMailScanners;
+}): Promise<IngestResolvedRawMailResult> {
+  if (input.input.recipients.length === 0) {
+    throw new TypeError("Resolved mail ingest requires at least one recipient.");
+  }
+  const receivedAt = input.input.receivedAt ?? new Date();
+  const firstOrgId = input.input.recipients[0]?.orgId;
+  if (firstOrgId === undefined) {
+    throw new TypeError("Resolved mail ingest requires a recipient organization.");
+  }
+
+  return trace.getTracer("helix.mail").startActiveSpan("smtp.receive", async (span) => {
+    try {
+      const authenticator = input.authenticator ?? new MailauthAuthenticator();
+      const authInput: IngestRawMailInput = {
+        orgId: firstOrgId,
+        raw: input.input.raw,
+        envelopeTo: input.input.recipients.map((recipient) => recipient.normalizedAddress),
+        ...(input.input.envelopeFrom === undefined
+          ? {}
+          : { envelopeFrom: input.input.envelopeFrom }),
+        ...(input.input.remoteAddress === undefined
+          ? {}
+          : { remoteAddress: input.input.remoteAddress }),
+        ...(input.input.helo === undefined ? {} : { helo: input.input.helo }),
+        receivedAt,
+      };
+      const [auth, parsed, scan] = await Promise.all([
+        authenticator.authenticate(authInput),
+        simpleParser(input.input.raw),
+        scanInboundMail(input.scanners, input.input.raw),
+      ]);
+      assertParsedInboundMessage(parsed);
+      const groups = groupRecipientsByOrg(input.input.recipients);
+      span.setAttribute("helix.mail.recipient_org_count", groups.size);
+      span.setAttribute("helix.mail.recipient_count", input.input.recipients.length);
+      span.setAttribute("helix.mail.auth_spf", auth.spf);
+      span.setAttribute("helix.mail.auth_dmarc", auth.dmarc);
+      span.setAttribute("helix.mail.spam_routed", scan.routedToSpam);
+
+      const deliveries: ResolvedInboundDeliveryResult[] = [];
+      for (const [orgId, recipients] of groups) {
+        const dedup = createInboundDeliveryDedup({
+          orgId,
+          raw: input.input.raw,
+          messageId: parsed.messageId,
+          ...(input.input.envelopeFrom === undefined
+            ? {}
+            : { envelopeFrom: input.input.envelopeFrom }),
+          envelopeTo: recipients.map((recipient) => recipient.normalizedAddress),
+          receivedAt,
+        });
+        const message = withScanMetadata(
+          parsedMailToResolvedMessage({
+            orgId,
+            parsed,
+            auth,
+            scan,
+            recipients,
+            dedupKey: dedup.key,
+            envelopeFrom: input.input.envelopeFrom,
+            receivedAt,
+          }),
+          scan,
+        );
+        const storeRecipients: MailInboundResolvedRecipient[] = recipients.map((recipient) => ({
+          actorId: recipient.actorId,
+          address: recipient.normalizedAddress,
+          match: recipient.match,
+        }));
+        const stored = await input.store.insertInboundMessageIdempotent({
+          message,
+          dedup,
+          recipients: storeRecipients,
+        });
+        const filterResults: {
+          readonly actorId: string;
+          readonly result: MailFilterEvaluationResult;
+        }[] = [];
+        // A retry after the final 250 was lost must not repeat vacation/filter
+        // side effects for a delivery the durable store already committed.
+        if (!stored.duplicate) {
+          for (const actorId of new Set(recipients.map((recipient) => recipient.actorId))) {
+            const result = await evaluateInboundMail(input.store, {
+              message,
+              stored,
+              recipientActorId: actorId,
+              now: receivedAt,
+            });
+            filterResults.push({ actorId, result });
+            if (scan.routedToSpam) {
+              await input.store.updateThreadState({
+                orgId,
+                actorId,
+                threadId: stored.threadId,
+                patch: { spamAt: receivedAt },
+              });
+            }
+          }
+        }
+        deliveries.push({
+          orgId,
+          recipients: recipients.map((recipient) => recipient.normalizedAddress),
+          stored,
+          filterResults,
+        });
+      }
+      return { deliveries, auth, scan };
+    } catch (error) {
+      span.recordException(error instanceof Error ? error : new Error(String(error)));
+      span.setStatus({ code: SpanStatusCode.ERROR });
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
+}
+
+function assertParsedInboundMessage(parsed: ParsedMail): void {
+  if (addressObjectToList(parsed.from).length === 0) {
+    throw smtpError(550, "Malformed message: a valid From header is required.");
   }
 }
 
@@ -210,6 +573,80 @@ export async function ingestRawMail(input: {
         }
       },
     );
+}
+
+function parsedMailToResolvedMessage(input: {
+  readonly orgId: string;
+  readonly parsed: ParsedMail;
+  readonly auth: MailAuthenticationSummary;
+  readonly scan: InboundScanResult;
+  readonly recipients: readonly SmtpResolvedRecipient[];
+  readonly dedupKey: string;
+  readonly envelopeFrom?: string | undefined;
+  readonly receivedAt: Date;
+}): MailMessageInput {
+  const primaryRecipient = input.recipients[0];
+  if (primaryRecipient === undefined) {
+    throw new TypeError("Tenant delivery requires at least one recipient.");
+  }
+  const tenantAddresses = input.recipients.map((recipient) => ({
+    address: recipient.normalizedAddress,
+  }));
+  return {
+    orgId: input.orgId,
+    actorId: primaryRecipient.actorId,
+    from: addressObjectToList(input.parsed.from)[0] ?? {
+      address: input.envelopeFrom ?? "unknown@localhost",
+    },
+    // Deliberately project only this tenant's accepted envelope recipients.
+    // Parsed To/Cc/Bcc may contain recipients belonging to another tenant.
+    to: tenantAddresses,
+    cc: [],
+    bcc: [],
+    subject: input.parsed.subject ?? "",
+    bodyText: input.parsed.text ?? "",
+    ...(typeof input.parsed.html === "string" ? { bodyHtml: input.parsed.html } : {}),
+    messageId: input.parsed.messageId,
+    inReplyTo: input.parsed.inReplyTo,
+    references: Array.isArray(input.parsed.references)
+      ? input.parsed.references
+      : input.parsed.references === undefined
+        ? []
+        : [input.parsed.references],
+    receivedAt: input.receivedAt,
+    attachments: input.parsed.attachments.map(
+      (attachment): MailAttachmentInput => ({
+        filename: attachment.filename,
+        mimeType: attachment.contentType,
+        content: attachment.content,
+        contentId: attachment.cid,
+        disposition: attachment.contentDisposition,
+      }),
+    ),
+    metadata: {
+      direction: "inbound",
+      auth: { ...input.auth },
+      envelopeFrom: input.envelopeFrom ?? null,
+      envelopeTo: input.recipients.map((recipient) => recipient.normalizedAddress),
+      recipientActorIds: [...new Set(input.recipients.map((recipient) => recipient.actorId))],
+      inboundDedupKey: input.dedupKey,
+      quarantined: input.scan.quarantined,
+    },
+  };
+}
+
+function groupRecipientsByOrg(
+  recipients: readonly SmtpResolvedRecipient[],
+): Map<string, SmtpResolvedRecipient[]> {
+  const groups = new Map<string, SmtpResolvedRecipient[]>();
+  for (const recipient of recipients) {
+    const group = groups.get(recipient.orgId) ?? [];
+    if (!group.some((existing) => existing.normalizedAddress === recipient.normalizedAddress)) {
+      group.push(recipient);
+      groups.set(recipient.orgId, group);
+    }
+  }
+  return groups;
 }
 
 async function parsedMailToMessage(
@@ -477,19 +914,74 @@ function firstEnvelopeRecipient(
   return envelopeTo[0] ?? parsedTo[0]?.address;
 }
 
-function collectStream(stream: SMTPServerDataStream): Promise<Buffer> {
+function collectStream(stream: SMTPServerDataStream, maxBytes: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let observedBytes = 0;
+    let oversized = false;
     stream.on("data", (chunk: Buffer | string) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      observedBytes += bytes.byteLength;
+      if (observedBytes > maxBytes) {
+        oversized = true;
+        return;
+      }
+      chunks.push(bytes);
     });
     stream.on("error", (error: Error) => {
       reject(error);
     });
     stream.on("end", () => {
-      resolve(Buffer.concat(chunks));
+      if (oversized || stream.sizeExceeded) {
+        reject(smtpError(552, "Message exceeds the configured size limit."));
+      } else {
+        resolve(Buffer.concat(chunks, observedBytes));
+      }
     });
   });
+}
+
+function resolveSmtpReceiverLimits(
+  configured: Partial<SmtpReceiverLimits> | undefined,
+): SmtpReceiverLimits {
+  const limits = { ...DEFAULT_SMTP_RECEIVER_LIMITS, ...configured };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new TypeError(`${name} must be a positive safe integer.`);
+    }
+  }
+  return limits;
+}
+
+function smtpError(responseCode: number, message: string): Error {
+  return Object.assign(new Error(message), { responseCode });
+}
+
+function asSmtpError(error: unknown, fallbackCode: number, fallbackMessage: string): Error {
+  if (
+    error instanceof Error &&
+    "responseCode" in error &&
+    typeof (error as { readonly responseCode?: unknown }).responseCode === "number"
+  ) {
+    return error;
+  }
+  return smtpError(fallbackCode, fallbackMessage);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(() => {
+          reject(new Error("SMTP recipient resolution timed out."));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 
 export type { SMTPServerSession };

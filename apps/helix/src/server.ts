@@ -210,6 +210,7 @@ import {
   PostgresMailDmarcReportStore,
   PostgresMailRoutingRuleStore,
   PostgresOutboundProviderStore,
+  PostgresReceivingDomainStore,
   PostgresSendingDomainStore,
   MailAdminStatusService,
   registerMailAdminRoutes,
@@ -218,10 +219,10 @@ import {
   registerMailIndexer,
   registerMailStreamRoutes,
   registerMailTools,
+  createSmtpRecipientResolver,
   resolveOutboundTransport,
   SmtpMailReceiver,
   SpamdScanner,
-  type SmtpReceiverOptions,
 } from "./platform/mail/index.js";
 import { mailConfig } from "./platform/mail/config.js";
 import {
@@ -1802,7 +1803,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // Mail background workers run only when the mail app is registered in this
   // process (enabled org-wide AND in the booting role's app set).
   const mailAppRegistered = coreApps.shouldRegister("mail");
-  const mailCfg = mailConfig(bootEnv);
+  const mailCfg = mailConfig(bootEnv, securityTier);
   const outboundMailConfig = mailAppRegistered ? mailCfg.outbound : undefined;
   // Resolve the org's configured outbound provider (SES/Mailgun/SMTP/Postmark)
   // when one is set; otherwise fall back to the env-configured SMTP relay.
@@ -1875,7 +1876,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       ? undefined
       : new SmtpMailReceiver({
           store: mailStore,
-          orgId: smtpMailReceiverConfig.orgId,
+          recipientResolver: createSmtpRecipientResolver({
+            receivingDomains: new PostgresReceivingDomainStore(sql),
+          }),
+          transportSecurity: smtpMailReceiverConfig.transportSecurity,
+          limits: smtpMailReceiverConfig.limits,
           logger: app.log,
           scanners: {
             ...(spamdScannerConfig ? { spam: new SpamdScanner(spamdScannerConfig) } : {}),
@@ -3954,16 +3959,13 @@ export function getOutboundMailConfig(
 /** @deprecated Prefer mailConfig(loadEnv(...)).receiver — kept for server.test.ts. */
 export function getSmtpMailReceiverConfig(
   source: NodeJS.ProcessEnv | Record<string, string | undefined>,
-):
-  | { readonly orgId: SmtpReceiverOptions["orgId"]; readonly port: number; readonly host?: string }
-  | undefined {
+): { readonly port: number; readonly host?: string } | undefined {
   if (!envValueFlag(source.MAIL_SMTP_RECEIVER_ENABLED ?? "", false)) {
     return undefined;
   }
 
   const host = source.MAIL_SMTP_RECEIVER_HOST;
   return {
-    orgId: source.HELIX_DEFAULT_ORG_ID ?? "00000000-0000-0000-0000-000000000000",
     port: Number.parseInt(source.MAIL_SMTP_RECEIVER_PORT ?? "2525", 10),
     ...(host === undefined || host.length === 0 ? {} : { host }),
   };

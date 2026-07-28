@@ -467,6 +467,63 @@ export const messages = pgTable(
   }),
 );
 
+export const mailInboundDeliveries = pgTable(
+  "mail_inbound_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    dedupKey: text("dedup_key").notNull(),
+    normalizedMessageId: text("normalized_message_id"),
+    rawSha256: text("raw_sha256").notNull(),
+    envelopeFrom: text("envelope_from"),
+    envelopeTo: text("envelope_to").array().notNull(),
+    messageId: uuid("message_id").references(() => messages.id, { onDelete: "cascade" }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+    ...timestamps,
+  },
+  (table) => ({
+    orgDedupIdx: uniqueIndex("mail_inbound_deliveries_org_dedup_idx").on(
+      table.orgId,
+      table.dedupKey,
+    ),
+    messageIdx: uniqueIndex("mail_inbound_deliveries_message_idx")
+      .on(table.messageId)
+      .where(sql`${table.messageId} is not null`),
+    orgReceivedIdx: index("mail_inbound_deliveries_org_received_idx").on(
+      table.orgId,
+      table.receivedAt,
+    ),
+  }),
+);
+
+export const mailInboundRecipients = pgTable(
+  "mail_inbound_recipients",
+  {
+    deliveryId: uuid("delivery_id")
+      .notNull()
+      .references(() => mailInboundDeliveries.id, { onDelete: "cascade" }),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => actors.id),
+    address: text("address").notNull(),
+    matchKind: text("match_kind").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.deliveryId, table.address] }),
+    actorIdx: index("mail_inbound_recipients_actor_idx").on(
+      table.orgId,
+      table.actorId,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const messageAttachments = pgTable(
   "message_attachments",
   {

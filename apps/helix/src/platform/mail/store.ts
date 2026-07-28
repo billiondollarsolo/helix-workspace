@@ -86,12 +86,41 @@ export type MarkOutboundSentInput = MailOutboundDeliveryResult & {
   readonly sentAt?: Date | undefined;
 };
 
+export interface MailInboundDedupInput {
+  readonly key: string;
+  readonly normalizedMessageId: string | null;
+  readonly rawSha256: string;
+  readonly envelopeFrom: string | null;
+  readonly envelopeTo: readonly string[];
+  readonly receivedAt: Date;
+}
+
+export interface MailInboundResolvedRecipient {
+  readonly actorId: string;
+  readonly address: string;
+  readonly match: "primary" | "alias" | "catch_all";
+}
+
+export interface InsertInboundMessageIdempotentInput {
+  readonly message: MailMessageInput;
+  readonly dedup: MailInboundDedupInput;
+  readonly recipients: readonly MailInboundResolvedRecipient[];
+}
+
+export interface IdempotentStoredMailMessage extends StoredMailMessage {
+  readonly deliveryId: string;
+  readonly duplicate: boolean;
+}
+
 export interface MailStore {
   findActorByAddress(
     orgId: string,
     address: string,
   ): Promise<{ readonly actorId: string; readonly email: string } | null>;
   insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage>;
+  insertInboundMessageIdempotent?(
+    input: InsertInboundMessageIdempotentInput,
+  ): Promise<IdempotentStoredMailMessage>;
   createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord>;
   getOutbound(id: string): Promise<MailOutboundRecord | null>;
   markOutboundSending(id: string): Promise<MailOutboundRecord | null>;
@@ -194,11 +223,11 @@ export interface MailStore {
     readonly displayName?: string | null;
     readonly isPrimary?: boolean;
   }): Promise<MailAliasRecord>;
-  deleteAlias?(input: {
-    readonly orgId: string;
-    readonly id: string;
-  }): Promise<boolean>;
+  deleteAlias?(input: { readonly orgId: string; readonly id: string }): Promise<boolean>;
 }
+
+export type RecipientAwareMailStore = MailStore &
+  Required<Pick<MailStore, "insertInboundMessageIdempotent">>;
 
 export interface PostgresMailStoreOptions {
   readonly storageResolver?: TenantStorageResolver | undefined;
@@ -380,6 +409,12 @@ export class PostgresMailStore
 
   async insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage> {
     return this.sql.begin(async (tx) => insertMailMessage(tx, input, this.options));
+  }
+
+  async insertInboundMessageIdempotent(
+    input: InsertInboundMessageIdempotentInput,
+  ): Promise<IdempotentStoredMailMessage> {
+    return this.sql.begin(async (tx) => insertInboundMessageIdempotent(tx, input, this.options));
   }
 
   async createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord> {
@@ -1514,10 +1549,7 @@ export class PostgresMailStore
     return mapAlias(row);
   }
 
-  async deleteAlias(input: {
-    readonly orgId: string;
-    readonly id: string;
-  }): Promise<boolean> {
+  async deleteAlias(input: { readonly orgId: string; readonly id: string }): Promise<boolean> {
     const rows = (await this.sql`
       update mail_aliases
       set disabled_at = now(), enabled = false, updated_at = now()
@@ -1586,6 +1618,126 @@ const MAIL_FOLDER_LABELS: Readonly<Record<MailFolderId, string>> = {
 };
 
 type SqlLike = postgres.Sql | postgres.TransactionSql;
+
+async function insertInboundMessageIdempotent(
+  sql: postgres.TransactionSql,
+  input: InsertInboundMessageIdempotentInput,
+  options: PostgresMailStoreOptions,
+): Promise<IdempotentStoredMailMessage> {
+  assertInboundDedupInput(input);
+  const deliveryRows = (await sql`
+    insert into mail_inbound_deliveries (
+      org_id, dedup_key, normalized_message_id, raw_sha256,
+      envelope_from, envelope_to, received_at
+    )
+    values (
+      ${input.message.orgId},
+      ${input.dedup.key},
+      ${input.dedup.normalizedMessageId},
+      ${input.dedup.rawSha256},
+      ${input.dedup.envelopeFrom},
+      ${sql.array([...input.dedup.envelopeTo])},
+      ${input.dedup.receivedAt}
+    )
+    on conflict (org_id, dedup_key) do nothing
+    returning id
+  `) as unknown as readonly { readonly id: string }[];
+  const deliveryId = deliveryRows[0]?.id;
+
+  if (deliveryId === undefined) {
+    const existing = (await sql`
+      select d.id as delivery_id, d.message_id, m.thread_id
+      from mail_inbound_deliveries d
+      join messages m on m.id = d.message_id and m.org_id = d.org_id
+      where d.org_id = ${input.message.orgId}
+        and d.dedup_key = ${input.dedup.key}
+      limit 1
+    `) as unknown as readonly {
+      readonly delivery_id: string;
+      readonly message_id: string;
+      readonly thread_id: string;
+    }[];
+    const stored = existing[0];
+    if (stored === undefined) {
+      throw new Error("Existing inbound delivery is incomplete.");
+    }
+    const attachments = (await sql`
+      select object_id
+      from message_attachments
+      where message_id = ${stored.message_id}
+      order by object_id
+    `) as unknown as readonly { readonly object_id: string }[];
+    return {
+      deliveryId: stored.delivery_id,
+      duplicate: true,
+      threadId: stored.thread_id,
+      messageId: stored.message_id,
+      attachmentObjectIds: attachments.map((row) => row.object_id),
+    };
+  }
+
+  const stored = await insertMailMessage(sql, input.message, options);
+  await sql`
+    update mail_inbound_deliveries
+    set message_id = ${stored.messageId}, updated_at = now()
+    where id = ${deliveryId} and org_id = ${input.message.orgId}
+  `;
+  for (const recipient of input.recipients) {
+    await sql`
+      insert into mail_inbound_recipients (
+        delivery_id, org_id, actor_id, address, match_kind
+      )
+      values (
+        ${deliveryId},
+        ${input.message.orgId},
+        ${recipient.actorId},
+        ${recipient.address},
+        ${recipient.match}
+      )
+      on conflict (delivery_id, address) do nothing
+    `;
+  }
+
+  const recipientActorIds = [...new Set(input.recipients.map((recipient) => recipient.actorId))];
+  const category = classifyMailCategory({
+    fromAddress: input.message.from.address,
+    ...(input.message.from.name === undefined ? {} : { fromName: input.message.from.name }),
+    subject: input.message.subject,
+    hasListUnsubscribe: headerHasListUnsubscribe(input.message.metadata ?? {}),
+  });
+  for (const actorId of recipientActorIds) {
+    await sql`
+      insert into mail_thread_state (actor_id, thread_id, org_id, category)
+      values (${actorId}, ${stored.threadId}, ${input.message.orgId}, ${category})
+      on conflict (actor_id, thread_id) do nothing
+    `;
+  }
+
+  return {
+    ...stored,
+    deliveryId,
+    duplicate: false,
+  };
+}
+
+function assertInboundDedupInput(input: InsertInboundMessageIdempotentInput): void {
+  if (!/^[a-f0-9]{64}$/u.test(input.dedup.key)) {
+    throw new TypeError("Inbound dedup key must be SHA-256 hex.");
+  }
+  if (!/^[a-f0-9]{64}$/u.test(input.dedup.rawSha256)) {
+    throw new TypeError("Inbound raw digest must be SHA-256 hex.");
+  }
+  if (input.recipients.length === 0 || input.dedup.envelopeTo.length === 0) {
+    throw new TypeError("Inbound delivery requires at least one resolved recipient.");
+  }
+  const recipientAddresses = new Set(input.recipients.map((recipient) => recipient.address));
+  if (
+    input.dedup.envelopeTo.some((address) => !recipientAddresses.has(address)) ||
+    input.recipients.some((recipient) => recipient.address.length === 0)
+  ) {
+    throw new TypeError("Inbound dedup envelope must contain only resolved tenant recipients.");
+  }
+}
 
 async function insertMailMessage(
   sql: SqlLike,

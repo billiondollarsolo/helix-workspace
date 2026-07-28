@@ -65,13 +65,11 @@ describe("mail server env config", () => {
     expect(getSmtpMailReceiverConfig({})).toBeUndefined();
     expect(
       getSmtpMailReceiverConfig({
-        HELIX_DEFAULT_ORG_ID: "org-local",
         MAIL_SMTP_RECEIVER_ENABLED: "true",
         MAIL_SMTP_RECEIVER_HOST: "0.0.0.0",
         MAIL_SMTP_RECEIVER_PORT: "2525",
       }),
     ).toEqual({
-      orgId: "org-local",
       host: "0.0.0.0",
       port: 2525,
     });

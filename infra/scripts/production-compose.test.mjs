@@ -1,0 +1,160 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+let secretsDirectory;
+let resolvedCompose;
+let resolvedAllProfilesCompose;
+
+const secretNames = [
+  "database_url",
+  "postgres_password",
+  "better_auth_secret",
+  "rustfs_access_key",
+  "rustfs_secret_key",
+  "meili_master_key",
+  "mail_smtp_password",
+  "mail_provider_webhook_secret",
+];
+
+beforeAll(() => {
+  secretsDirectory = mkdtempSync(join(tmpdir(), "helix-production-compose-"));
+  const generatedSecret = "D7y9xP3vL6qR2sT8uW4aC5fG0hJ1kM7nB9zX3";
+  for (const name of secretNames) {
+    writeFileSync(join(secretsDirectory, name), generatedSecret, { mode: 0o600 });
+  }
+  writeFileSync(
+    join(secretsDirectory, "database_url"),
+    `postgres://helix:${generatedSecret}@postgres:5432/helix`,
+    { mode: 0o600 },
+  );
+
+  const composeEnvironment = {
+    ...process.env,
+    HELIX_PRODUCTION_SECRETS_DIR: secretsDirectory,
+    HELIX_DOMAIN: "workspace.example.test",
+    MAIL_PROVIDER: "postmark",
+    MAIL_FROM_DOMAIN: "example.test",
+    MAIL_SMTP_HOST: "smtp.postmarkapp.com",
+    MAIL_SMTP_USER: "provider-user",
+    HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED: "true",
+    HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED: "true",
+    HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED: "true",
+  };
+  const composeArgs = [
+    "compose",
+    "-f",
+    "docker-compose.yml",
+    "-f",
+    "docker-compose.production.yml",
+  ];
+  const resolveCompose = (extraArgs = []) =>
+    JSON.parse(
+      execFileSync("docker", [...composeArgs, ...extraArgs, "config", "--format", "json"], {
+        cwd: root,
+        encoding: "utf8",
+        env: composeEnvironment,
+      }),
+    );
+  resolvedCompose = resolveCompose();
+  resolvedAllProfilesCompose = resolveCompose(["--profile", "*"]);
+});
+
+afterAll(() => {
+  if (secretsDirectory !== undefined) {
+    rmSync(secretsDirectory, { recursive: true, force: true });
+  }
+});
+
+describe("production Compose overlay", () => {
+  it("publishes only Caddy HTTP/HTTPS and inbound SMTP", () => {
+    const published = Object.entries(resolvedAllProfilesCompose.services).flatMap(
+      ([service, config]) =>
+        (config.ports ?? []).map((port) => ({
+          service,
+          target: port.target,
+          published: Number(port.published),
+          protocol: port.protocol,
+        })),
+    );
+
+    expect(published).toEqual([
+      { service: "caddy", target: 80, published: 80, protocol: "tcp" },
+      { service: "caddy", target: 443, published: 443, protocol: "tcp" },
+      { service: "caddy", target: 443, published: 443, protocol: "udp" },
+      { service: "helix", target: 2525, published: 25, protocol: "tcp" },
+    ]);
+  });
+
+  it("keeps every data-plane and admin service private", () => {
+    for (const service of [
+      "postgres",
+      "redis",
+      "nats",
+      "meilisearch",
+      "rustfs",
+      "cerbos",
+      "clamav",
+    ]) {
+      expect(resolvedCompose.services[service].ports).toBeUndefined();
+      expect(resolvedCompose.services[service].networks).toHaveProperty("data-plane");
+    }
+    expect(resolvedCompose.networks["data-plane"].internal).toBe(true);
+  });
+
+  it("removes Mailpit from active production and Helix dependencies", () => {
+    expect(resolvedCompose.services.mailpit).toBeUndefined();
+    expect(resolvedCompose.services.helix.depends_on).not.toHaveProperty("mailpit");
+    expect(resolvedCompose.services.helix.depends_on).toHaveProperty("clamav");
+  });
+
+  it("uses mounted file-backed application secrets without inline fallbacks", () => {
+    const environment = resolvedCompose.services.helix.environment;
+    expect(environment.DATABASE_URL).toBeUndefined();
+    expect(environment.BETTER_AUTH_SECRET).toBeUndefined();
+    expect(environment.RUSTFS_SECRET_KEY).toBeUndefined();
+    expect(environment.MEILI_MASTER_KEY).toBeUndefined();
+    expect(environment.MAIL_SMTP_PASS).toBeUndefined();
+    expect(environment.MAIL_PROVIDER_WEBHOOK_SECRET).toBeUndefined();
+    expect(environment.DATABASE_URL_FILE).toBe("/run/secrets/database_url");
+    expect(environment.BETTER_AUTH_SECRET_FILE).toBe("/run/secrets/better_auth_secret");
+    expect(environment.MAIL_SMTP_PASS_FILE).toBe("/run/secrets/mail_smtp_password");
+  });
+
+  it("enables real Mail and Drive scanning in the Business fixture", () => {
+    const environment = resolvedCompose.services.helix.environment;
+    expect(environment.HELIX_SECURITY_TIER).toBe("business");
+    expect(environment.MAIL_CLAMAV_ENABLED).toBe("true");
+    expect(environment.MAIL_CLAMAV_HOST).toBe("clamav");
+    expect(environment.DRIVE_CLAMAV_ENABLED).toBe("true");
+    expect(environment.DRIVE_CLAMAV_HOST).toBe("clamav");
+    expect(environment.DRIVE_CLAMAV_MAX_BYTES).toBe("1073741824");
+    expect(resolvedCompose.services.clamav.healthcheck).toBeDefined();
+  });
+
+  it("applies supported container hardening and resource limits", () => {
+    const helix = resolvedCompose.services.helix;
+    expect(helix.read_only).toBe(true);
+    expect(helix.user).toBe("10001:10001");
+    expect(helix.cap_drop).toContain("ALL");
+    expect(helix.security_opt).toContain("no-new-privileges:true");
+    expect(helix.tmpfs).toBeDefined();
+    expect(helix.deploy.resources.limits).toMatchObject({
+      cpus: 2,
+      memory: "2147483648",
+    });
+    expect(resolvedCompose.services.caddy.read_only).toBe(true);
+    expect(resolvedCompose.services.cerbos.read_only).toBe(true);
+  });
+
+  it("uses the production edge policy without public data-plane proxies", () => {
+    const caddyfile = readFileSync(join(root, "infra/caddy/Caddyfile.production"), "utf8");
+    expect(caddyfile).toContain("admin off");
+    expect(caddyfile).not.toContain("/rustfs");
+    expect(caddyfile).not.toContain("/cerbos");
+  });
+});

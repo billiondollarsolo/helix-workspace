@@ -1,0 +1,405 @@
+name: helix-production
+
+# Production hardening overlay. Apply after docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.production.yml config
+#
+# Secret files are mounted from HELIX_PRODUCTION_SECRETS_DIR (default
+# ./secrets). See docs/deployment-production.md for generation and ownership.
+
+services:
+  helix:
+    environment:
+      NODE_ENV: production
+      HELIX_SECURITY_TIER: business
+      HELIX_PUBLIC_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
+      PUBLIC_BASE_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
+      BETTER_AUTH_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
+      BETTER_AUTH_TRUSTED_ORIGINS: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
+      HELIX_CONFIG_JSON: >-
+        {"security":{"tier":"business"}}
+
+      # The application resolves only its explicit *_FILE allowlist.
+      DATABASE_URL: !reset null
+      DATABASE_URL_FILE: /run/secrets/database_url
+      BETTER_AUTH_SECRET: !reset null
+      BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
+      RUSTFS_ACCESS_KEY: !reset null
+      RUSTFS_ACCESS_KEY_FILE: /run/secrets/rustfs_access_key
+      RUSTFS_SECRET_KEY: !reset null
+      RUSTFS_SECRET_KEY_FILE: /run/secrets/rustfs_secret_key
+      MEILI_MASTER_KEY: !reset null
+      MEILI_MASTER_KEY_FILE: /run/secrets/meili_master_key
+
+      HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED: ${HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED:?set true only after verifying encrypted Postgres storage}
+      HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED: ${HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED:?set true only after verifying encrypted object storage}
+      HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED: ${HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED:?set true only after verifying encrypted backups}
+      RUSTFS_SERVER_SIDE_ENCRYPTION: ${RUSTFS_SERVER_SIDE_ENCRYPTION:-AES256}
+
+      MAIL_OUTBOUND_ENABLED: "true"
+      MAIL_PROVIDER: ${MAIL_PROVIDER:?a managed outbound provider is required}
+      MAIL_FROM_DOMAIN: ${MAIL_FROM_DOMAIN:?Internet sending domain is required}
+      MAIL_SMTP_HOST: ${MAIL_SMTP_HOST:?managed provider SMTP host is required}
+      MAIL_SMTP_PORT: ${MAIL_SMTP_PORT:-587}
+      MAIL_SMTP_USER: ${MAIL_SMTP_USER:?managed provider SMTP user is required}
+      MAIL_SMTP_PASS: !reset null
+      MAIL_SMTP_PASS_FILE: /run/secrets/mail_smtp_password
+      MAIL_SMTP_SECURE: ${MAIL_SMTP_SECURE:-false}
+      MAIL_PROVIDER_WEBHOOK_ENABLED: "true"
+      MAIL_PROVIDER_WEBHOOK_SECRET: !reset null
+      MAIL_PROVIDER_WEBHOOK_SECRET_FILE: /run/secrets/mail_provider_webhook_secret
+      MAIL_SMTP_RECEIVER_ENABLED: "true"
+      MAIL_SMTP_RECEIVER_HOST: 0.0.0.0
+      MAIL_SMTP_RECEIVER_PORT: 2525
+      MAIL_CLAMAV_ENABLED: "true"
+      MAIL_CLAMAV_HOST: clamav
+      MAIL_CLAMAV_PORT: 3310
+      MAIL_CLAMAV_TIMEOUT_MS: ${MAIL_CLAMAV_TIMEOUT_MS:-30000}
+      DRIVE_CLAMAV_ENABLED: "true"
+      DRIVE_CLAMAV_HOST: clamav
+      DRIVE_CLAMAV_PORT: 3310
+      DRIVE_CLAMAV_TIMEOUT_MS: ${DRIVE_CLAMAV_TIMEOUT_MS:-30000}
+      DRIVE_CLAMAV_MAX_BYTES: ${DRIVE_CLAMAV_MAX_BYTES:-1073741824}
+      DRIVE_CLAMAV_CHUNK_SIZE_BYTES: ${DRIVE_CLAMAV_CHUNK_SIZE_BYTES:-65536}
+      DRIVE_CLAMAV_SCANNER_VERSION: ${DRIVE_CLAMAV_SCANNER_VERSION:-clamd}
+
+      # Meet is outside the core Workspace MVP and its development credentials
+      # from the base Compose file must never reach a production process.
+      MEET_JITSI_ENABLED: "false"
+      MEET_JITSI_JWT_SECRET: !reset null
+      MEET_JITSI_WEBHOOK_SHARED_SECRET: !reset null
+      AUDIT_IMMUTABLE_S3_ENABLED: "false"
+      AUDIT_IMMUTABLE_S3_ACCESS_KEY: !reset null
+      AUDIT_IMMUTABLE_S3_SECRET_KEY: !reset null
+      AUDIT_WORM_POSTGRES_ENABLED: "true"
+    secrets:
+      - database_url
+      - better_auth_secret
+      - rustfs_access_key
+      - rustfs_secret_key
+      - meili_master_key
+      - mail_smtp_password
+      - mail_provider_webhook_secret
+    ports: !override
+      - target: 2525
+        published: ${HELIX_SMTP_RECEIVE_PORT:-25}
+        host_ip: ${HELIX_SMTP_RECEIVE_BIND_IP:-0.0.0.0}
+        protocol: tcp
+        mode: host
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      meilisearch:
+        condition: service_started
+      rustfs:
+        condition: service_started
+      cerbos:
+        condition: service_started
+      clamav:
+        condition: service_healthy
+    networks: !override
+      - edge
+      - data-plane
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    user: "10001:10001"
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+        reservations:
+          cpus: "0.25"
+          memory: 512m
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: !reset null
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    ports: !override []
+    networks: !override
+      - data-plane
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+        reservations:
+          memory: 512m
+
+  redis:
+    ports: !override []
+    networks: !override
+      - data-plane
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+
+  nats:
+    ports: !override []
+    networks: !override
+      - data-plane
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+
+  meilisearch:
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: !reset null
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        export MEILI_MASTER_KEY="$$(cat /run/secrets/meili_master_key)"
+        exec meilisearch
+    secrets:
+      - meili_master_key
+    ports: !override []
+    networks: !override
+      - data-plane
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+
+  rustfs:
+    environment:
+      RUSTFS_ACCESS_KEY: !reset null
+      RUSTFS_SECRET_KEY: !reset null
+      RUSTFS_CONSOLE_ENABLE: "false"
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        export RUSTFS_ACCESS_KEY="$$(cat /run/secrets/rustfs_access_key)"
+        export RUSTFS_SECRET_KEY="$$(cat /run/secrets/rustfs_secret_key)"
+        exec rustfs /data
+    secrets:
+      - rustfs_access_key
+      - rustfs_secret_key
+    ports: !override []
+    networks: !override
+      - data-plane
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+
+  cerbos:
+    ports: !override []
+    networks: !override
+      - data-plane
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
+  mailpit:
+    profiles: !override
+      - development-only
+    ports: !override []
+    networks: !override
+      - data-plane
+
+  spamd:
+    ports: !override []
+    networks: !override
+      - data-plane
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+
+  clamav:
+    profiles: !override []
+    ports: !override []
+    networks: !override
+      - data-plane
+      - edge
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+
+  drive-preview-libreoffice:
+    ports: !override []
+    networks: !override
+      - data-plane
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    environment:
+      HELIX_DOMAIN: ${HELIX_DOMAIN:?HELIX_DOMAIN is required}
+      HELIX_UPSTREAM: helix:3000
+    ports: !override
+      - target: 80
+        published: ${CADDY_HTTP_PORT:-80}
+        host_ip: ${CADDY_BIND_IP:-0.0.0.0}
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: ${CADDY_HTTPS_PORT:-443}
+        host_ip: ${CADDY_BIND_IP:-0.0.0.0}
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: ${CADDY_HTTPS_PORT:-443}
+        host_ip: ${CADDY_BIND_IP:-0.0.0.0}
+        protocol: udp
+        mode: host
+    volumes:
+      - ./infra/caddy/Caddyfile.production:/etc/caddy/Caddyfile:ro
+    depends_on: !override
+      helix:
+        condition: service_healthy
+    networks: !override
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256m
+
+  # Optional profiles remain private even when an operator explicitly enables
+  # them. Use a VPN, SSH tunnel, or separately authenticated admin ingress.
+  jitsi-web:
+    ports: !override []
+    networks: !override
+      - data-plane
+  jitsi-prosody:
+    ports: !override []
+    networks: !override
+      - data-plane
+  jitsi-jicofo:
+    networks: !override
+      - data-plane
+  jitsi-jvb:
+    ports: !override []
+    networks: !override
+      - data-plane
+  jitsi-jibri:
+    networks: !override
+      - data-plane
+  otel-collector:
+    ports: !override []
+    networks: !override
+      - data-plane
+  prometheus:
+    ports: !override []
+    networks: !override
+      - data-plane
+  alertmanager:
+    ports: !override []
+    networks: !override
+      - data-plane
+  tempo:
+    ports: !override []
+    networks: !override
+      - data-plane
+  loki:
+    ports: !override []
+    networks: !override
+      - data-plane
+  grafana:
+    ports: !override []
+    networks: !override
+      - data-plane
+
+networks:
+  edge:
+    name: helix-production-edge
+  data-plane:
+    name: helix-production-data-plane
+    internal: true
+
+secrets:
+  database_url:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/database_url
+  postgres_password:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/postgres_password
+  better_auth_secret:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/better_auth_secret
+  rustfs_access_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/rustfs_access_key
+  rustfs_secret_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/rustfs_secret_key
+  meili_master_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/meili_master_key
+  mail_smtp_password:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/mail_smtp_password
+  mail_provider_webhook_secret:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/mail_provider_webhook_secret
+
+volumes:
+  # The base recording profile references this volume but does not declare it.
+  # It remains private and inactive in the core Workspace MVP.
+  jibri-recordings:

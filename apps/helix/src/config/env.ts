@@ -1,4 +1,6 @@
+import { readFileSync, statSync } from "node:fs";
 import { z } from "zod3";
+import { assertProductionConfiguration } from "./production-assertions.js";
 
 /**
  * Optional URL that accepts empty string as undefined (common for unset docker env).
@@ -30,9 +32,10 @@ const coerceNonNegInt = (fallback: number) =>
  */
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  DATABASE_URL: z.string().min(1).default(
-    "postgres://helix:helix_dev_password@localhost:28432/helix",
-  ),
+  DATABASE_URL: z
+    .string()
+    .min(1)
+    .default("postgres://helix:helix_dev_password@localhost:28432/helix"),
   HELIX_MIGRATION_DATABASE_URL: optionalString,
   MIGRATION_DATABASE_URL: optionalString,
   REDIS_URL: optionalUrl,
@@ -52,7 +55,12 @@ const envSchema = z.object({
   HELIX_API_BASE_URL: optionalUrl,
   HELIX_APP_VERSION: optionalString,
   HELIX_SECURITY_TIER: optionalString,
+  HELIX_CONFIG_JSON: optionalString,
   HELIX_PLUGINS_DIR: optionalString,
+  HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED: optionalString,
+  HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED: optionalString,
+  HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED: optionalString,
+  HELIX_DATA_ENCRYPTION_KEY: optionalString,
 
   // Storage (RustFS / S3-compatible)
   RUSTFS_ENDPOINT: optionalUrl,
@@ -62,6 +70,9 @@ const envSchema = z.object({
   RUSTFS_BUCKET: z.string().default("helix-objects"),
   RUSTFS_REGION: z.string().default("us-east-1"),
   RUSTFS_SERVER_SIDE_ENCRYPTION: optionalString,
+  AUDIT_IMMUTABLE_S3_ENABLED: optionalString,
+  AUDIT_IMMUTABLE_S3_ACCESS_KEY: optionalString,
+  AUDIT_IMMUTABLE_S3_SECRET_KEY: optionalString,
 
   // Drive preview / enrichment
   HELIX_DRIVE_OFFICE_PREVIEW_URL: optionalUrl,
@@ -73,6 +84,13 @@ const envSchema = z.object({
   HELIX_DRIVE_MULTIPART_PART_SIZE_BYTES: coercePositiveInt(8 * 1024 * 1024),
   HELIX_DRIVE_OFFICE_PREVIEW_ALLOWED_HOSTS: optionalString,
   DRIVE_AUTO_TAG_ENRICHMENT: optionalString,
+  DRIVE_CLAMAV_ENABLED: optionalString,
+  DRIVE_CLAMAV_HOST: optionalString,
+  DRIVE_CLAMAV_PORT: optionalString,
+  DRIVE_CLAMAV_TIMEOUT_MS: optionalString,
+  DRIVE_CLAMAV_MAX_BYTES: optionalString,
+  DRIVE_CLAMAV_CHUNK_SIZE_BYTES: optionalString,
+  DRIVE_CLAMAV_SCANNER_VERSION: optionalString,
   HELIX_CHROMIUM_PATH: optionalString,
   HELIX_DOCS_PDF_RENDERER: optionalString,
   HELIX_DOCS_PDF_RENDER_TIMEOUT_MS: coercePositiveInt(15_000),
@@ -87,6 +105,7 @@ const envSchema = z.object({
   WEBHOOK_RETRY_BATCH_SIZE: coercePositiveInt(100),
   WEBHOOK_RETRY_INTERVAL_MS: coercePositiveInt(1000),
   AUDIT_VERIFIER_INTERVAL_MS: coercePositiveInt(86_400_000),
+  AUDIT_WORM_POSTGRES_ENABLED: optionalString,
   PENDING_ACTION_EXPIRY_INTERVAL_MS: coercePositiveInt(60_000),
   PENDING_ACTION_EXPIRY_BATCH_SIZE: coercePositiveInt(500),
   TENANT_PROVISIONING_BATCH_SIZE: coercePositiveInt(10),
@@ -108,6 +127,7 @@ const envSchema = z.object({
 
   // Auth / signup
   BETTER_AUTH_SECRET: optionalString,
+  BETTER_AUTH_ENABLED: optionalString,
   BETTER_AUTH_URL: optionalUrl,
   BETTER_AUTH_DATABASE_URL: optionalUrl,
   BETTER_AUTH_TRUSTED_ORIGINS: optionalString,
@@ -125,6 +145,9 @@ const envSchema = z.object({
 
   // Mail
   MAIL_PROVIDER: optionalString,
+  MAIL_OUTBOUND_ENABLED: optionalString,
+  MAIL_PROVIDER_WEBHOOK_ENABLED: optionalString,
+  MAIL_PROVIDER_WEBHOOK_SECRET: optionalString,
   MAIL_SMTP_HOST: optionalString,
   MAIL_SMTP_PORT: optionalString,
   MAIL_SMTP_USER: optionalString,
@@ -177,6 +200,7 @@ const envSchema = z.object({
 
   // Meet / Jitsi
   MEET_JITSI_DOMAIN: optionalString,
+  MEET_JITSI_ENABLED: optionalString,
   MEET_JITSI_PUBLIC_URL: optionalUrl,
   MEET_JITSI_JWT_SECRET: optionalString,
   MEET_JITSI_JWT_APP_ID: optionalString,
@@ -218,16 +242,89 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-export function loadEnv(source: Record<string, string | undefined> = process.env): Env {
-  // In production, require DATABASE_URL explicitly (no silent localhost default).
-  const nodeEnv = source.NODE_ENV ?? "development";
-  if (nodeEnv === "production" && (source.DATABASE_URL === undefined || source.DATABASE_URL.trim() === "")) {
-    throw new Error(
-      "Invalid environment configuration:\n  - DATABASE_URL: Required in production",
-    );
+const FILE_BACKED_ENV = {
+  DATABASE_URL_FILE: "DATABASE_URL",
+  BETTER_AUTH_SECRET_FILE: "BETTER_AUTH_SECRET",
+  RUSTFS_ACCESS_KEY_FILE: "RUSTFS_ACCESS_KEY",
+  RUSTFS_SECRET_KEY_FILE: "RUSTFS_SECRET_KEY",
+  MEILI_MASTER_KEY_FILE: "MEILI_MASTER_KEY",
+  MEILI_API_KEY_FILE: "MEILI_API_KEY",
+  MEILISEARCH_API_KEY_FILE: "MEILISEARCH_API_KEY",
+  MAIL_SMTP_PASS_FILE: "MAIL_SMTP_PASS",
+  SES_SMTP_PASS_FILE: "SES_SMTP_PASS",
+  MAIL_PROVIDER_WEBHOOK_SECRET_FILE: "MAIL_PROVIDER_WEBHOOK_SECRET",
+  HELIX_DATA_ENCRYPTION_KEY_FILE: "HELIX_DATA_ENCRYPTION_KEY",
+  MEET_JITSI_JWT_SECRET_FILE: "MEET_JITSI_JWT_SECRET",
+  MEET_JITSI_WEBHOOK_SHARED_SECRET_FILE: "MEET_JITSI_WEBHOOK_SHARED_SECRET",
+  JITSI_JWT_SECRET_FILE: "JITSI_JWT_SECRET",
+  JITSI_WEBHOOK_SECRET_FILE: "JITSI_WEBHOOK_SECRET",
+} as const;
+
+const MAX_SECRET_FILE_BYTES = 64 * 1024;
+
+/**
+ * Resolve the small, explicit allowlist of `*_FILE` inputs used by Docker
+ * secrets and secret-manager CSI mounts.
+ *
+ * Arbitrary environment keys are intentionally not file-resolved. A direct
+ * value and its file-backed equivalent are mutually exclusive so a stale
+ * inline secret cannot silently win. Errors name only the environment
+ * variable; file paths and secret contents are never included.
+ */
+function resolveFileBackedEnvironment(
+  source: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const resolved = { ...source };
+
+  for (const [fileKey, valueKey] of Object.entries(FILE_BACKED_ENV)) {
+    const filePath = source[fileKey]?.trim();
+    const directValue = source[valueKey];
+    if (filePath === undefined || filePath.length === 0) {
+      continue;
+    }
+    if (directValue !== undefined && directValue.trim().length > 0) {
+      throw new Error(
+        `Invalid environment configuration:\n  - ${valueKey}: set either ${valueKey} or ${fileKey}, not both`,
+      );
+    }
+    if (!filePath.startsWith("/") || filePath.includes("\0")) {
+      throw new Error(
+        `Invalid environment configuration:\n  - ${fileKey}: must reference an absolute file path`,
+      );
+    }
+
+    try {
+      const stat = statSync(filePath);
+      if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_SECRET_FILE_BYTES) {
+        throw new Error("invalid secret file");
+      }
+      const value = readFileSync(filePath, "utf8").replace(/(?:\r?\n)+$/u, "");
+      if (value.length === 0) {
+        throw new Error("empty secret file");
+      }
+      resolved[valueKey] = value;
+    } catch {
+      throw new Error(
+        `Invalid environment configuration:\n  - ${fileKey}: cannot read a non-empty regular secret file of at most ${String(MAX_SECRET_FILE_BYTES)} bytes`,
+      );
+    }
   }
 
-  const result = envSchema.safeParse(source);
+  return resolved;
+}
+
+export function loadEnv(source: Record<string, string | undefined> = process.env): Env {
+  const resolvedSource = resolveFileBackedEnvironment(source);
+  // In production, require DATABASE_URL explicitly (no silent localhost default).
+  const nodeEnv = resolvedSource.NODE_ENV ?? "development";
+  if (
+    nodeEnv === "production" &&
+    (resolvedSource.DATABASE_URL === undefined || resolvedSource.DATABASE_URL.trim() === "")
+  ) {
+    throw new Error("Invalid environment configuration:\n  - DATABASE_URL: Required in production");
+  }
+
+  const result = envSchema.safeParse(resolvedSource);
   if (!result.success) {
     const details = result.error.issues
       .map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`)
@@ -241,7 +338,13 @@ let cached: Env | undefined;
 
 /** Memoized validated env for app code. Prefer injecting `loadEnv` in tests. */
 export function env(): Env {
-  return (cached ??= loadEnv());
+  if (cached !== undefined) {
+    return cached;
+  }
+  const loaded = loadEnv();
+  assertProductionConfiguration(loaded);
+  cached = loaded;
+  return cached;
 }
 
 /** Test helper — clears the memoized env so subsequent `env()` re-parses. */

@@ -31,6 +31,7 @@ New
 .env
 .env.*
 !.env.example
+!.env.production.example
 !**/.env.example
 
 # Local runtime data / volumes

@@ -15,6 +15,15 @@ function productionFixture(): Record<string, string> {
   return {
     NODE_ENV: "production",
     DATABASE_URL: `postgres://helix:${databaseSecret}@postgres:5432/helix`,
+    POSTGRES_TLS_CA_FILE: "/run/secrets/postgres_ca",
+    REDIS_URL: `rediss://:${encodeURIComponent(secret())}@redis:6379`,
+    REDIS_TLS_CA_FILE: "/run/secrets/redis_ca",
+    NATS_URL: "tls://nats:4222",
+    NATS_USER: "helix_app",
+    NATS_PASSWORD: secret(),
+    NATS_TLS_CA_FILE: "/run/secrets/nats_ca",
+    NATS_TLS_CERT_FILE: "/run/secrets/nats_client_cert",
+    NATS_TLS_KEY_FILE: "/run/secrets/nats_client_key",
     BETTER_AUTH_ENABLED: "true",
     BETTER_AUTH_SECRET: secret(),
     BETTER_AUTH_URL: "https://workspace.example.test",
@@ -205,6 +214,20 @@ describe("assertProductionConfiguration", () => {
 
   it("rejects disabling the startup migration compatibility check", () => {
     assertRejected({ HELIX_STARTUP_MIGRATION_CHECK: "false" }, "HELIX_STARTUP_MIGRATION_CHECK");
+  });
+
+  it.each([
+    ["POSTGRES_TLS_CA_FILE", undefined],
+    ["REDIS_URL", "redis://redis:6379"],
+    ["REDIS_URL", "rediss://redis:6379"],
+    ["REDIS_TLS_CA_FILE", undefined],
+    ["NATS_URL", "nats://nats:4222"],
+    ["NATS_PASSWORD", undefined],
+    ["NATS_TLS_CA_FILE", undefined],
+    ["NATS_TLS_CERT_FILE", undefined],
+    ["NATS_TLS_KEY_FILE", undefined],
+  ])("rejects an insecure production data-plane setting in %s", (variable, value) => {
+    assertRejected({ [variable]: value }, variable);
   });
 
   it("allows outbound Mail to be explicitly disabled", () => {

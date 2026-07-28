@@ -79,6 +79,23 @@ non-empty files with mode `0600`:
 | `database_url`                 | Least-privilege application Postgres URL |
 | `migration_database_url`       | Elevated schema-migrator Postgres URL    |
 | `postgres_password`            | The corresponding Postgres role password |
+| `postgres_app_password`        | Base64url application-role password      |
+| `postgres_migration_password`  | Base64url migrator-role password         |
+| `postgres_ca`                  | PEM CA for PostgreSQL server TLS         |
+| `postgres_server_cert`         | PEM PostgreSQL server certificate        |
+| `postgres_server_key`          | PEM PostgreSQL server private key        |
+| `redis_url`                    | `rediss:` URL with the Redis password    |
+| `redis_acl`                    | Redis ACL matching `redis_password`      |
+| `redis_password`               | Base64url Redis password                 |
+| `redis_ca`                     | PEM CA for Redis server TLS              |
+| `redis_server_cert`            | PEM Redis server certificate             |
+| `redis_server_key`             | PEM Redis server private key             |
+| `nats_password`                | Base64url NATS application password      |
+| `nats_ca`                      | PEM CA for NATS mutual TLS               |
+| `nats_server_cert`             | PEM NATS server certificate              |
+| `nats_server_key`              | PEM NATS server private key              |
+| `nats_client_cert`             | PEM Helix NATS client certificate        |
+| `nats_client_key`              | PEM Helix NATS client private key        |
 | `better_auth_secret`           | Random Better Auth secret                |
 | `rustfs_access_key`            | Random object-store access identifier    |
 | `rustfs_secret_key`            | Random object-store secret               |
@@ -88,11 +105,33 @@ non-empty files with mode `0600`:
 
 Secret values must contain at least 32 characters and at least 12 distinct characters. Generate
 independent values from a cryptographically secure random source. Do not reuse credentials between
-services. The `database_url` role may read and mutate application data but must not own schemas,
+services. PostgreSQL, Redis, and NATS password files must use base64url characters so their
+bootstrap/configuration parsers cannot interpret password bytes as configuration syntax.
+`database_url` must name `helix_app` and use `postgres_app_password`;
+`migration_database_url` must name `helix_migrator` and use
+`postgres_migration_password`. The `database_url` role may read and mutate application data but must not own schemas,
 create extensions, or change database roles. The distinct `migration_database_url` role owns Helix
 schemas and runs only in the one-shot `helix-migrate` service. Application replicas never receive
 that elevated secret. `postgres_password` is the bootstrap database credential consumed by the
 Postgres image and must not be reused for either Helix role in a managed production database.
+
+`redis_url` has the form `rediss://:<percent-encoded-password>@redis:6379`. Its decoded password
+must match `redis_password`; `redis_acl` must contain an enabled default user with the same
+credential, for example `user default on >PASSWORD ~* &* +@all`. Restrict that ACL further if Redis
+is split by application role. The production overlay disables Redis's plaintext port and validates
+the server certificate against `redis_ca`.
+
+The NATS certificate authority must sign both the server and client certificates. The server
+certificate must contain `nats` in its SANs. The checked-in NATS policy enables mutual TLS,
+authenticates only `helix_app`, and limits that application role to `helix.>` subjects. Split worker
+roles into narrower NATS users before deploying independently trusted workloads; the monolithic
+pilot process legitimately publishes and subscribes across the complete Helix event namespace.
+
+The PostgreSQL certificate must contain `postgres` in its SANs. The overlay installs a
+`hostssl`-only `pg_hba.conf`, enables SCRAM-SHA-256, creates separate application and migration
+roles on an empty database, and gives schema creation only to the migrator. For an existing
+database, provision and verify equivalent grants before switching URLs. Helix pins `postgres_ca`
+and refuses production startup without it.
 
 Set `HELIX_PRODUCTION_SECRETS_DIR` to the absolute host directory before resolving or starting the
 stack. Helix supports only its documented `*_FILE` allowlist. It rejects simultaneous inline and

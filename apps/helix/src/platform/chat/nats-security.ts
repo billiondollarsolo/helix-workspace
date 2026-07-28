@@ -34,6 +34,9 @@ export function createChatNatsSecurityPolicy(
   }
   if (production) {
     if (servers.length === 0) throw new Error("Production Chat requires NATS_URL.");
+    if (servers.some((server) => !server.startsWith("tls://"))) {
+      throw new Error("Production Chat NATS requires tls: server URLs.");
+    }
     if (user === undefined && token === undefined) {
       throw new Error("Production Chat NATS requires authenticated credentials.");
     }

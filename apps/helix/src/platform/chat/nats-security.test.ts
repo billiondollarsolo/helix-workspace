@@ -10,6 +10,20 @@ describe("Chat NATS production security", () => {
       createChatNatsSecurityPolicy(
         {
           NODE_ENV: "production",
+          NATS_URL: "nats://nats:4222",
+          NATS_USER: "chat",
+          NATS_PASSWORD: "secret",
+          NATS_TLS_CA_FILE: "/run/secrets/nats-ca.pem",
+          NATS_TLS_CERT_FILE: "/run/secrets/nats-cert.pem",
+          NATS_TLS_KEY_FILE: "/run/secrets/nats-key.pem",
+        },
+        [],
+      ),
+    ).toThrow("tls:");
+    expect(() =>
+      createChatNatsSecurityPolicy(
+        {
+          NODE_ENV: "production",
           NATS_URL: "tls://nats:4222",
           NATS_USER: "chat",
           NATS_PASSWORD: "secret",

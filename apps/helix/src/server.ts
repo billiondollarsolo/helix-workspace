@@ -50,6 +50,7 @@ import { createResourceClassifier } from "./api/classify-resource.js";
 import { createHelixTRPCRouter } from "./api/trpc.js";
 import { createSqlClient } from "./db/client.js";
 import { env } from "./config/env.js";
+import { resolveRedisConnection } from "./config/redis-connection.js";
 import { helixLoggerOptions } from "./platform/security/logger-redaction.js";
 import {
   installTrustedOriginPolicy,
@@ -1137,7 +1138,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // P1-10: process-local idempotency store for mutating tool calls.
   const idempotencyStore: IdempotencyStore = new InMemoryIdempotencyStore();
   const sql = createSqlClient();
-  const redis = bootEnv.REDIS_URL === undefined ? undefined : new Redis(bootEnv.REDIS_URL);
+  const redisConnection = resolveRedisConnection(bootEnv);
+  const redis =
+    redisConnection === undefined
+      ? undefined
+      : new Redis(redisConnection.url, redisConnection.options);
   const tenantApiRpsLimiter: TenantApiRpsLimiter =
     redis === undefined ? new InMemoryTenantApiRpsLimiter() : new RedisTenantApiRpsLimiter(redis);
   const tenantHourlyQuotaLimiter: TenantHourlyQuotaLimiter =
@@ -1318,7 +1323,19 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const natsSecurityPolicy =
     bootEnv.NATS_URL === undefined
       ? undefined
-      : createChatNatsSecurityPolicy(process.env, [defaultOrg.id]);
+      : createChatNatsSecurityPolicy(
+          {
+            NATS_URL: bootEnv.NATS_URL,
+            NATS_USER: bootEnv.NATS_USER,
+            NATS_PASSWORD: bootEnv.NATS_PASSWORD,
+            NATS_TOKEN: bootEnv.NATS_TOKEN,
+            NATS_TLS_CA_FILE: bootEnv.NATS_TLS_CA_FILE,
+            NATS_TLS_CERT_FILE: bootEnv.NATS_TLS_CERT_FILE,
+            NATS_TLS_KEY_FILE: bootEnv.NATS_TLS_KEY_FILE,
+            NODE_ENV: bootEnv.NODE_ENV,
+          },
+          [defaultOrg.id],
+        );
   const eventBus =
     natsSecurityPolicy === undefined
       ? new InMemoryEventBus({

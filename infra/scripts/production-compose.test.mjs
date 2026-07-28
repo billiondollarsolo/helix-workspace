@@ -14,6 +14,23 @@ const secretNames = [
   "database_url",
   "migration_database_url",
   "postgres_password",
+  "postgres_app_password",
+  "postgres_migration_password",
+  "postgres_ca",
+  "postgres_server_cert",
+  "postgres_server_key",
+  "redis_url",
+  "redis_acl",
+  "redis_password",
+  "redis_ca",
+  "redis_server_cert",
+  "redis_server_key",
+  "nats_password",
+  "nats_ca",
+  "nats_server_cert",
+  "nats_server_key",
+  "nats_client_cert",
+  "nats_client_key",
   "better_auth_secret",
   "rustfs_access_key",
   "rustfs_secret_key",
@@ -36,6 +53,14 @@ beforeAll(() => {
   writeFileSync(
     join(secretsDirectory, "migration_database_url"),
     `postgres://helix_migrator:${generatedSecret}@postgres:5432/helix`,
+    { mode: 0o600 },
+  );
+  writeFileSync(join(secretsDirectory, "redis_url"), `rediss://:${generatedSecret}@redis:6379`, {
+    mode: 0o600,
+  });
+  writeFileSync(
+    join(secretsDirectory, "redis_acl"),
+    `user default on >${generatedSecret} ~* &* +@all`,
     { mode: 0o600 },
   );
 
@@ -122,12 +147,16 @@ describe("production Compose overlay", () => {
   it("uses mounted file-backed application secrets without inline fallbacks", () => {
     const environment = resolvedCompose.services.helix.environment;
     expect(environment.DATABASE_URL).toBeUndefined();
+    expect(environment.REDIS_URL).toBeUndefined();
+    expect(environment.NATS_PASSWORD).toBeUndefined();
     expect(environment.BETTER_AUTH_SECRET).toBeUndefined();
     expect(environment.RUSTFS_SECRET_KEY).toBeUndefined();
     expect(environment.MEILI_MASTER_KEY).toBeUndefined();
     expect(environment.MAIL_SMTP_PASS).toBeUndefined();
     expect(environment.MAIL_PROVIDER_WEBHOOK_SECRET).toBeUndefined();
     expect(environment.DATABASE_URL_FILE).toBe("/run/secrets/database_url");
+    expect(environment.REDIS_URL_FILE).toBe("/run/secrets/redis_url");
+    expect(environment.NATS_PASSWORD_FILE).toBe("/run/secrets/nats_password");
     expect(environment.BETTER_AUTH_SECRET_FILE).toBe("/run/secrets/better_auth_secret");
     expect(environment.MAIL_SMTP_PASS_FILE).toBe("/run/secrets/mail_smtp_password");
   });
@@ -148,12 +177,18 @@ describe("production Compose overlay", () => {
     expect(migration.user).toBe("10001:10001");
     expect(migration.networks).toEqual({ "data-plane": null });
     expect(migration.ports).toBeUndefined();
-    expect(migration.secrets).toEqual([
-      {
-        source: "migration_database_url",
-        target: "/run/secrets/migration_database_url",
-      },
-    ]);
+    expect(migration.secrets).toEqual(
+      expect.arrayContaining([
+        {
+          source: "migration_database_url",
+          target: "/run/secrets/migration_database_url",
+        },
+        {
+          source: "postgres_ca",
+          target: "/run/secrets/postgres_ca",
+        },
+      ]),
+    );
     expect(helix.depends_on["helix-migrate"].condition).toBe("service_completed_successfully");
     expect(helix.secrets.map((secret) => secret.source)).not.toContain("migration_database_url");
   });
@@ -167,6 +202,51 @@ describe("production Compose overlay", () => {
     expect(environment.DRIVE_CLAMAV_HOST).toBe("clamav");
     expect(environment.DRIVE_CLAMAV_MAX_BYTES).toBe("1073741824");
     expect(resolvedCompose.services.clamav.healthcheck).toBeDefined();
+  });
+
+  it("requires encrypted authenticated data-plane connections", () => {
+    const helixEnvironment = resolvedCompose.services.helix.environment;
+    expect(helixEnvironment.POSTGRES_TLS_CA_FILE).toBe("/run/secrets/postgres_ca");
+    expect(helixEnvironment.REDIS_URL_FILE).toBe("/run/secrets/redis_url");
+    expect(helixEnvironment.REDIS_TLS_CA_FILE).toBe("/run/secrets/redis_ca");
+    expect(helixEnvironment.NATS_URL).toBe("tls://nats:4222");
+    expect(helixEnvironment.NATS_USER).toBe("helix_app");
+    expect(helixEnvironment.NATS_TLS_CA_FILE).toBe("/run/secrets/nats_ca");
+    expect(helixEnvironment.NATS_TLS_CERT_FILE).toBe("/run/secrets/nats_client_cert");
+    expect(helixEnvironment.NATS_TLS_KEY_FILE).toBe("/run/secrets/nats_client_key");
+
+    const postgres = resolvedCompose.services.postgres;
+    expect(postgres.entrypoint.join(" ")).toContain("ssl=on");
+    expect(postgres.entrypoint.join(" ")).toContain("hostnossl all all 0.0.0.0/0 reject");
+    expect(postgres.secrets.map((secret) => secret.source)).toEqual(
+      expect.arrayContaining([
+        "postgres_app_password",
+        "postgres_migration_password",
+        "postgres_ca",
+        "postgres_server_cert",
+        "postgres_server_key",
+      ]),
+    );
+
+    const redis = resolvedCompose.services.redis;
+    expect(redis.command).toEqual(
+      expect.arrayContaining([
+        "--port",
+        "0",
+        "--tls-port",
+        "6379",
+        "--aclfile",
+        "/run/secrets/redis_acl",
+      ]),
+    );
+    expect(redis.healthcheck.test.join(" ")).toContain("REDISCLI_AUTH");
+
+    const nats = resolvedCompose.services.nats;
+    expect(nats.entrypoint.join(" ")).toContain("nats-server.production.conf");
+    const natsConfig = readFileSync(join(root, "infra/nats/nats-server.production.conf"), "utf8");
+    expect(natsConfig).toContain('publish: ["helix.>"]');
+    expect(natsConfig).toContain('subscribe: ["helix.>"]');
+    expect(natsConfig).toContain("verify: true");
   });
 
   it("packages only the approved core Workspace MVP modules", () => {

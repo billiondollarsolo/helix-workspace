@@ -124,6 +124,111 @@ function databasePassword(databaseUrl: string): string | undefined {
   }
 }
 
+function parsedUrl(value: string | undefined): URL | undefined {
+  const configured = normalized(value);
+  if (configured === undefined) return undefined;
+  try {
+    return new URL(configured);
+  } catch {
+    return undefined;
+  }
+}
+
+function validateProductionDataPlane(
+  environment: Env,
+  issues: ProductionConfigurationIssue[],
+): void {
+  if (normalized(environment.POSTGRES_TLS_CA_FILE) === undefined) {
+    issues.push({
+      variable: "POSTGRES_TLS_CA_FILE",
+      message: "must pin the PostgreSQL server CA for encrypted production connections",
+    });
+  }
+  if (
+    (normalized(environment.POSTGRES_TLS_CERT_FILE) === undefined) !==
+    (normalized(environment.POSTGRES_TLS_KEY_FILE) === undefined)
+  ) {
+    issues.push({
+      variable: "POSTGRES_TLS_CERT_FILE",
+      message: "must be configured together with POSTGRES_TLS_KEY_FILE",
+    });
+  }
+
+  const redis = parsedUrl(environment.REDIS_URL);
+  if (redis === undefined || redis.protocol !== "rediss:") {
+    issues.push({
+      variable: "REDIS_URL",
+      message: "must use an authenticated rediss: URL in production",
+    });
+  } else {
+    const password = decodeURIComponent(redis.password);
+    if (password.length === 0 || secretIsWeak(password)) {
+      issues.push({
+        variable: "REDIS_URL",
+        message: "must contain a strong Redis authentication credential",
+      });
+    }
+  }
+  if (normalized(environment.REDIS_TLS_CA_FILE) === undefined) {
+    issues.push({
+      variable: "REDIS_TLS_CA_FILE",
+      message: "must pin the Redis server CA for encrypted production connections",
+    });
+  }
+  if (
+    (normalized(environment.REDIS_TLS_CERT_FILE) === undefined) !==
+    (normalized(environment.REDIS_TLS_KEY_FILE) === undefined)
+  ) {
+    issues.push({
+      variable: "REDIS_TLS_CERT_FILE",
+      message: "must be configured together with REDIS_TLS_KEY_FILE",
+    });
+  }
+
+  const natsServers = (environment.NATS_URL ?? "")
+    .split(",")
+    .map((server) => server.trim())
+    .filter((server) => server.length > 0);
+  if (
+    natsServers.length === 0 ||
+    natsServers.some((server) => parsedUrl(server)?.protocol !== "tls:")
+  ) {
+    issues.push({
+      variable: "NATS_URL",
+      message: "must contain only tls: NATS server URLs in production",
+    });
+  }
+  const natsPassword = normalized(environment.NATS_PASSWORD);
+  const natsToken = normalized(environment.NATS_TOKEN);
+  if (natsPassword !== undefined && natsToken !== undefined) {
+    issues.push({
+      variable: "NATS_PASSWORD",
+      message: "cannot be combined with NATS_TOKEN",
+    });
+  } else if (natsToken !== undefined) {
+    if (secretIsWeak(natsToken)) {
+      issues.push({ variable: "NATS_TOKEN", message: "must contain a strong credential" });
+    }
+  } else if (
+    normalized(environment.NATS_USER) === undefined ||
+    natsPassword === undefined ||
+    secretIsWeak(natsPassword)
+  ) {
+    issues.push({
+      variable: "NATS_PASSWORD",
+      message: "must configure a user and strong password, or a strong token",
+    });
+  }
+  for (const variable of ["NATS_TLS_CA_FILE", "NATS_TLS_CERT_FILE", "NATS_TLS_KEY_FILE"] as const) {
+    if (normalized(environment[variable]) === undefined) {
+      issues.push({
+        variable,
+        message: "is required for CA-pinned mutual TLS to NATS",
+      });
+    }
+  }
+}
+
 function configuredSecurityTier(environment: Env, issues: ProductionConfigurationIssue[]): string {
   const explicit = normalized(environment.HELIX_SECURITY_TIER)?.toLowerCase();
   if (explicit !== undefined) {
@@ -346,6 +451,8 @@ export function assertProductionConfiguration(environment: Env): void {
       message: `database password must contain at least ${String(MIN_SECRET_LENGTH)} characters with at least ${String(MIN_SECRET_DISTINCT_CHARACTERS)} distinct characters`,
     });
   }
+
+  validateProductionDataPlane(environment, issues);
 
   requireStrongSecret("BETTER_AUTH_SECRET", environment.BETTER_AUTH_SECRET, issues);
   requireStrongSecret("RUSTFS_SECRET_KEY", environment.RUSTFS_SECRET_KEY, issues);

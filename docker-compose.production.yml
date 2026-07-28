@@ -22,9 +22,11 @@ services:
       NODE_ENV: production
       DATABASE_URL: !reset null
       DATABASE_URL_FILE: /run/secrets/migration_database_url
+      POSTGRES_TLS_CA_FILE: /run/secrets/postgres_ca
       POSTGRES_POOL_MAX: "1"
     secrets:
       - migration_database_url
+      - postgres_ca
     depends_on:
       postgres:
         condition: service_healthy
@@ -76,6 +78,17 @@ services:
       # The application resolves only its explicit *_FILE allowlist.
       DATABASE_URL: !reset null
       DATABASE_URL_FILE: /run/secrets/database_url
+      POSTGRES_TLS_CA_FILE: /run/secrets/postgres_ca
+      REDIS_URL: !reset null
+      REDIS_URL_FILE: /run/secrets/redis_url
+      REDIS_TLS_CA_FILE: /run/secrets/redis_ca
+      NATS_URL: tls://nats:4222
+      NATS_USER: helix_app
+      NATS_PASSWORD: !reset null
+      NATS_PASSWORD_FILE: /run/secrets/nats_password
+      NATS_TLS_CA_FILE: /run/secrets/nats_ca
+      NATS_TLS_CERT_FILE: /run/secrets/nats_client_cert
+      NATS_TLS_KEY_FILE: /run/secrets/nats_client_key
       BETTER_AUTH_SECRET: !reset null
       BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
       RUSTFS_ACCESS_KEY: !reset null
@@ -128,6 +141,13 @@ services:
       AUDIT_WORM_POSTGRES_ENABLED: "true"
     secrets:
       - database_url
+      - postgres_ca
+      - redis_url
+      - redis_ca
+      - nats_password
+      - nats_ca
+      - nats_client_cert
+      - nats_client_key
       - better_auth_secret
       - rustfs_access_key
       - rustfs_secret_key
@@ -190,6 +210,35 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
+      - postgres_app_password
+      - postgres_migration_password
+      - postgres_ca
+      - postgres_server_cert
+      - postgres_server_key
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        install -d -m 0700 -o postgres -g postgres /var/run/postgresql/tls
+        install -m 0644 -o postgres -g postgres /run/secrets/postgres_ca /var/run/postgresql/tls/ca.pem
+        install -m 0644 -o postgres -g postgres /run/secrets/postgres_server_cert /var/run/postgresql/tls/server.pem
+        install -m 0600 -o postgres -g postgres /run/secrets/postgres_server_key /var/run/postgresql/tls/server-key.pem
+        {
+          echo 'local all all trust'
+          echo 'hostssl all all 0.0.0.0/0 scram-sha-256'
+          echo 'hostssl all all ::0/0 scram-sha-256'
+          echo 'hostnossl all all 0.0.0.0/0 reject'
+          echo 'hostnossl all all ::0/0 reject'
+        } > /var/run/postgresql/tls/pg_hba.conf
+        chown postgres:postgres /var/run/postgresql/tls/pg_hba.conf
+        chmod 0600 /var/run/postgresql/tls/pg_hba.conf
+        exec docker-entrypoint.sh postgres \
+          -c ssl=on \
+          -c ssl_ca_file=/var/run/postgresql/tls/ca.pem \
+          -c ssl_cert_file=/var/run/postgresql/tls/server.pem \
+          -c ssl_key_file=/var/run/postgresql/tls/server-key.pem \
+          -c hba_file=/var/run/postgresql/tls/pg_hba.conf \
+          -c password_encryption=scram-sha-256
     ports: !override []
     networks: !override
       - data-plane
@@ -204,6 +253,39 @@ services:
           memory: 512m
 
   redis:
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --port
+      - "0"
+      - --tls-port
+      - "6379"
+      - --tls-cert-file
+      - /run/secrets/redis_server_cert
+      - --tls-key-file
+      - /run/secrets/redis_server_key
+      - --tls-ca-cert-file
+      - /run/secrets/redis_ca
+      - --tls-auth-clients
+      - "no"
+      - --aclfile
+      - /run/secrets/redis_acl
+    secrets:
+      - redis_acl
+      - redis_password
+      - redis_ca
+      - redis_server_cert
+      - redis_server_key
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          REDISCLI_AUTH="$$(cat /run/secrets/redis_password)"
+          redis-cli --tls --cacert /run/secrets/redis_ca ping | grep -qx PONG
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports: !override []
     networks: !override
       - data-plane
@@ -216,6 +298,32 @@ services:
           memory: 512m
 
   nats:
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        HELIX_NATS_PASSWORD="$$(tr -d '\r\n' < /run/secrets/nats_password)"
+        case "$$HELIX_NATS_PASSWORD" in
+          *[!A-Za-z0-9_-]*|'') echo "NATS password must be a non-empty base64url value." >&2; exit 1 ;;
+        esac
+        export HELIX_NATS_PASSWORD
+        exec /nats-server --config /etc/nats/nats-server.production.conf
+    command: !reset []
+    volumes: !override
+      - nats-data:/data
+      - ./infra/nats/nats-server.production.conf:/etc/nats/nats-server.production.conf:ro
+    secrets:
+      - nats_password
+      - nats_ca
+      - nats_server_cert
+      - nats_server_key
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1:8222/healthz | grep -q '"status":"ok"'
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports: !override []
     networks: !override
       - data-plane
@@ -463,6 +571,40 @@ secrets:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/migration_database_url
   postgres_password:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/postgres_password
+  postgres_app_password:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/postgres_app_password
+  postgres_migration_password:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/postgres_migration_password
+  postgres_ca:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/postgres_ca
+  postgres_server_cert:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/postgres_server_cert
+  postgres_server_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/postgres_server_key
+  redis_url:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/redis_url
+  redis_acl:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/redis_acl
+  redis_password:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/redis_password
+  redis_ca:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/redis_ca
+  redis_server_cert:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/redis_server_cert
+  redis_server_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/redis_server_key
+  nats_password:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/nats_password
+  nats_ca:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/nats_ca
+  nats_server_cert:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/nats_server_cert
+  nats_server_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/nats_server_key
+  nats_client_cert:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/nats_client_cert
+  nats_client_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/nats_client_key
   better_auth_secret:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/better_auth_secret
   rustfs_access_key:

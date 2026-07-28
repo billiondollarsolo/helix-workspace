@@ -1,5 +1,9 @@
 import postgres from "postgres";
 import { env as loadValidatedEnv, type Env } from "../config/env.js";
+import {
+  resolvePostgresSsl,
+  type PostgresConnectionEnvironment,
+} from "../config/postgres-connection.js";
 
 const DEFAULT_DATABASE_URL = "postgres://helix:helix_dev_password@localhost:28432/helix";
 
@@ -24,15 +28,20 @@ export function resolveMigrationDatabaseUrl(source: NodeJS.ProcessEnv | Env = pr
 
 export interface SqlClientOptions {
   readonly poolMax?: number;
+  readonly environment?: PostgresConnectionEnvironment;
+  readonly readTlsFile?: (path: string) => Buffer;
 }
 
 export function createSqlClient(
   databaseUrl = resolveDatabaseUrl(),
   options: SqlClientOptions = {},
 ): postgres.Sql {
-  const poolMax = options.poolMax ?? loadValidatedEnv().POSTGRES_POOL_MAX;
+  const validatedEnv = loadValidatedEnv();
+  const poolMax = options.poolMax ?? validatedEnv.POSTGRES_POOL_MAX;
+  const ssl = resolvePostgresSsl(options.environment ?? validatedEnv, options.readTlsFile);
   return postgres(databaseUrl, {
     max: poolMax,
     prepare: false,
+    ssl,
   });
 }

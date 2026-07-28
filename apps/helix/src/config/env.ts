@@ -39,6 +39,12 @@ const envSchema = z.object({
   HELIX_MIGRATION_DATABASE_URL: optionalString,
   MIGRATION_DATABASE_URL: optionalString,
   REDIS_URL: optionalUrl,
+  REDIS_TLS_CA_FILE: optionalString,
+  REDIS_TLS_CERT_FILE: optionalString,
+  REDIS_TLS_KEY_FILE: optionalString,
+  POSTGRES_TLS_CA_FILE: optionalString,
+  POSTGRES_TLS_CERT_FILE: optionalString,
+  POSTGRES_TLS_KEY_FILE: optionalString,
   PORT: coercePositiveInt(3000),
   HOST: z.string().default("0.0.0.0"),
   SHUTDOWN_TIMEOUT_MS: coerceNonNegInt(50_000),
@@ -98,6 +104,12 @@ const envSchema = z.object({
 
   // Event bus / workers
   NATS_URL: optionalUrl,
+  NATS_USER: optionalString,
+  NATS_PASSWORD: optionalString,
+  NATS_TOKEN: optionalString,
+  NATS_TLS_CA_FILE: optionalString,
+  NATS_TLS_CERT_FILE: optionalString,
+  NATS_TLS_KEY_FILE: optionalString,
   OUTBOX_BATCH_SIZE: coercePositiveInt(100),
   OUTBOX_POLL_INTERVAL_MS: coercePositiveInt(1000),
   SEARCH_EVENT_SUBJECT: z.string().default(">"),
@@ -264,6 +276,9 @@ export type Env = z.infer<typeof envSchema>;
 
 const FILE_BACKED_ENV = {
   DATABASE_URL_FILE: "DATABASE_URL",
+  REDIS_URL_FILE: "REDIS_URL",
+  NATS_PASSWORD_FILE: "NATS_PASSWORD",
+  NATS_TOKEN_FILE: "NATS_TOKEN",
   BETTER_AUTH_SECRET_FILE: "BETTER_AUTH_SECRET",
   RUSTFS_ACCESS_KEY_FILE: "RUSTFS_ACCESS_KEY",
   RUSTFS_SECRET_KEY_FILE: "RUSTFS_SECRET_KEY",

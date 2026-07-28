@@ -15,6 +15,7 @@ import {
   RESTORE_DRILL_SCENARIOS,
   validateRestoreDrillEvidence,
 } from "./restore-drill-evidence.mjs";
+import { CHAT_LIVE_SCENARIOS, validateChatLiveEvidence } from "./chat-live-evidence-contract.mjs";
 
 const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|cookie|key|credential)/iu;
 
@@ -30,6 +31,8 @@ Options:
   --require-evidence <path>    Required relative evidence path; repeatable
   --mail-live-evidence <path>  Validate and require passed local M7 Mail evidence
   --agent-live-evidence <path> Validate and require passed A7 Agent evidence
+  --chat-live-evidence <path>  Validate and require passed C6/V3 Chat evidence,
+                               including the release pilot-load minimums
   --restore-drill-evidence <path>
                                Validate and require passed O4 restore evidence
   --require-external-mail-evidence
@@ -117,6 +120,7 @@ export async function buildReleaseReadinessManifest(options) {
   const mailEvidence = await validateRequiredMailEvidence(options, evidencePaths);
   const agentEvidence = await validateRequiredAgentEvidence(options, evidencePaths);
   const restoreEvidence = await validateRequiredRestoreEvidence(options, evidencePaths);
+  const chatEvidence = await validateRequiredChatEvidence(options, evidencePaths);
 
   const timestamp = canonicalTimestamp(options.timestamp);
   const raw = {
@@ -146,6 +150,7 @@ export async function buildReleaseReadinessManifest(options) {
       files: evidence,
       ...(mailEvidence === undefined ? {} : { mail: mailEvidence }),
       ...(agentEvidence === undefined ? {} : { agent: agentEvidence }),
+      ...(chatEvidence === undefined ? {} : { chat: chatEvidence }),
       ...(restoreEvidence === undefined ? {} : { restore: restoreEvidence }),
     },
   };
@@ -163,6 +168,7 @@ export function parseArgs(args, cwd, environment = process.env) {
     requiredEvidence: [],
     mailLiveEvidence: undefined,
     agentLiveEvidence: undefined,
+    chatLiveEvidence: undefined,
     restoreDrillEvidence: undefined,
     requireExternalMailEvidence: false,
     applicationImageDigest:
@@ -207,6 +213,9 @@ export function parseArgs(args, cwd, environment = process.env) {
       case "--agent-live-evidence":
         options.agentLiveEvidence = normalizeRelativePath(value);
         break;
+      case "--chat-live-evidence":
+        options.chatLiveEvidence = normalizeRelativePath(value);
+        break;
       case "--restore-drill-evidence":
         options.restoreDrillEvidence = normalizeRelativePath(value);
         break;
@@ -234,6 +243,49 @@ export function parseArgs(args, cwd, environment = process.env) {
     throw new Error("--require-external-mail-evidence requires --mail-live-evidence");
   }
   return options;
+}
+
+async function validateRequiredChatEvidence(options, evidencePaths) {
+  if (options.chatLiveEvidence === undefined) return undefined;
+  if (!evidencePaths.has(options.chatLiveEvidence)) {
+    throw new Error(`required Chat live evidence missing: ${options.chatLiveEvidence}`);
+  }
+  const path = resolve(options.evidenceDir, options.chatLiveEvidence);
+  let evidence;
+  try {
+    evidence = validateChatLiveEvidence(JSON.parse(await readFile(path, "utf8")), {
+      requirePass: true,
+      requireReleaseLoad: true,
+    });
+  } catch (error) {
+    throw new Error(
+      `invalid or incomplete Chat live evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  const load = evidence.scenarios.pilot_load.evidence;
+  return {
+    path: options.chatLiveEvidence,
+    status: evidence.status,
+    profile: {
+      users: load.actualUsers,
+      sockets: load.actualSockets,
+      durationSeconds: load.durationSeconds,
+      p95LatencyMs: load.p95LatencyMs,
+      p99LatencyMs: load.p99LatencyMs,
+      errorRate: load.errorRate,
+      memoryGrowthBytes: load.memoryGrowthBytes,
+      eventLoopLagPeakMs: load.eventLoopLagPeakMs,
+      dbPoolPendingPeak: load.dbPoolPendingPeak,
+      redisBacklogPeak: load.redisBacklogPeak,
+      natsBacklogPeak: load.natsBacklogPeak,
+    },
+    scenarios: CHAT_LIVE_SCENARIOS.map((scenario) => ({
+      name: scenario,
+      status: evidence.scenarios[scenario].status,
+    })),
+  };
 }
 
 async function validateRequiredRestoreEvidence(options, evidencePaths) {

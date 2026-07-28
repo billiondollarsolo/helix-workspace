@@ -14,6 +14,7 @@ import {
   RESTORE_DRILL_EVIDENCE_SCHEMA,
   createStaticEvidence as createStaticRestoreEvidence,
 } from "./restore-drill-evidence.mjs";
+import { CHAT_LIVE_SCENARIOS, createChatEvidenceSkeleton } from "./chat-live-evidence-contract.mjs";
 
 describe("release-readiness manifest", () => {
   it("redacts sensitive keys recursively and case-insensitively", () => {
@@ -291,6 +292,62 @@ describe("release-readiness manifest", () => {
     });
   });
 
+  it("requires passed Chat C6 evidence at the full release pilot-load profile", async () => {
+    const fixture = await createFixture();
+    const evidencePath = resolve(fixture.evidence, "chat-live-evidence.json");
+    await writeFile(
+      evidencePath,
+      `${JSON.stringify(createChatEvidenceSkeleton(new Date("2026-07-28T20:00:00.000Z")))}\n`,
+      "utf8",
+    );
+    const args = [
+      "--workspace-dir",
+      fixture.workspace,
+      "--editors-dir",
+      fixture.editors,
+      "--evidence-dir",
+      fixture.evidence,
+      "--chat-live-evidence",
+      "chat-live-evidence.json",
+      "--image-digest",
+      `sha256:${"a".repeat(64)}`,
+      "--web-image-digest",
+      `sha256:${"b".repeat(64)}`,
+    ];
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "invalid or incomplete Chat live evidence",
+    );
+
+    const tooBrief = passedChatEvidence();
+    tooBrief.profile.durationSeconds = 1_799;
+    tooBrief.scenarios.pilot_load.evidence.durationSeconds = 1_799;
+    await writeFile(evidencePath, `${JSON.stringify(tooBrief)}\n`, "utf8");
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "release Chat load requires at least 1800 seconds",
+    );
+
+    await writeFile(evidencePath, `${JSON.stringify(passedChatEvidence())}\n`, "utf8");
+    const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
+    expect(manifest.evidence.chat).toMatchObject({
+      path: "chat-live-evidence.json",
+      status: "passed",
+      profile: {
+        users: 50,
+        sockets: 100,
+        durationSeconds: 1_800,
+        p95LatencyMs: 100,
+        p99LatencyMs: 200,
+        errorRate: 0,
+        memoryGrowthBytes: 10,
+        eventLoopLagPeakMs: 10,
+        dbPoolPendingPeak: 0,
+        redisBacklogPeak: 0,
+        natsBacklogPeak: 0,
+      },
+      scenarios: CHAT_LIVE_SCENARIOS.map((name) => ({ name, status: "passed" })),
+    });
+  });
+
   it("requires live passed restore evidence and publishes measured RPO/RTO", async () => {
     const fixture = await createFixture();
     const evidencePath = resolve(fixture.evidence, "restore-drill-evidence.json");
@@ -328,6 +385,112 @@ describe("release-readiness manifest", () => {
     });
   });
 });
+
+function passedChatEvidence() {
+  const timestamp = "2026-07-28T20:00:00.000Z";
+  const hash = "a".repeat(24);
+  const secondHash = "b".repeat(24);
+  const evidence = createChatEvidenceSkeleton(new Date(timestamp));
+  evidence.mode = "live";
+  evidence.status = "passed";
+  evidence.environment = {
+    replicaCount: 2,
+    transport: "wss",
+    tlsVerified: true,
+    replicaHashes: [hash, secondHash],
+  };
+  evidence.scenarios = {
+    authenticated_browser_fanout: passedChatScenario(timestamp, {
+      twoAuthenticatedBrowserContexts: true,
+      bidirectionalMessagesObserved: true,
+      realWebSockets: true,
+      roomHash: hash,
+      messagesObserved: 2,
+    }),
+    non_member_denials: passedChatScenario(timestamp, {
+      roomAbsentFromList: true,
+      restListDenied: true,
+      restSearchDenied: true,
+      restSendDenied: true,
+      websocketSubscribeDenied: true,
+      websocketSendDenied: true,
+    }),
+    multi_replica_nats_fanout: passedChatScenario(timestamp, {
+      distinctReplicaEndpoints: 2,
+      replicaAToB: true,
+      replicaBToA: true,
+      replicaAHash: hash,
+      replicaBHash: secondHash,
+    }),
+    app_restart_reconnect_durability: passedChatRestart(timestamp),
+    redis_restart_reconnect_durability: passedChatRestart(timestamp),
+    nats_restart_reconnect_durability: passedChatRestart(timestamp),
+    clean_drive_attachment: passedChatScenario(timestamp, {
+      driveStateActive: true,
+      chatMessageObserved: true,
+      objectHash: hash,
+      messageHash: hash,
+    }),
+    eicar_drive_attachment_denied: passedChatScenario(timestamp, {
+      driveStateQuarantined: true,
+      chatSendDenied: true,
+      messageNotObserved: true,
+      objectHash: hash,
+    }),
+    invalid_origin_and_token_leakage: passedChatScenario(timestamp, {
+      invalidOriginDenied: true,
+      invalidOriginCloseCode: 4403,
+      browserSocketUrlsClean: true,
+      browserNetworkUrlsClean: true,
+      authFailureResponseRedacted: true,
+      applicationLogsRedacted: true,
+      logLinesInspected: 10,
+    }),
+    pilot_load: passedChatScenario(timestamp, {
+      actualUsers: 50,
+      actualSockets: 100,
+      durationSeconds: 1_800,
+      messagesAttempted: 1_800,
+      messagesObserved: 1_800,
+      errors: 0,
+      errorRate: 0,
+      p95LatencyMs: 100,
+      p99LatencyMs: 200,
+      memoryStartBytes: 100,
+      memoryPeakBytes: 120,
+      memoryEndBytes: 110,
+      memoryGrowthBytes: 10,
+      eventLoopLagPeakMs: 10,
+      dbPoolPendingPeak: 0,
+      redisBacklogPeak: 0,
+      natsBacklogPeak: 0,
+      steadyTrafficObserved: true,
+      burstTrafficObserved: true,
+      noUnboundedMemoryGrowth: true,
+      backlogsWithinLimits: true,
+    }),
+  };
+  return evidence;
+}
+
+function passedChatRestart(timestamp) {
+  return passedChatScenario(timestamp, {
+    restartHookSucceeded: true,
+    reconnectsObserved: 2,
+    preRestartMessageDurable: true,
+    postRestartFanoutObserved: true,
+    recoveryMs: 250,
+  });
+}
+
+function passedChatScenario(timestamp, evidence) {
+  return {
+    status: "passed",
+    startedAt: timestamp,
+    completedAt: timestamp,
+    evidence,
+  };
+}
 
 function passedRestoreEvidence() {
   const hash = "a".repeat(64);

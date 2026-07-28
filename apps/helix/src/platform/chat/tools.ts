@@ -1,11 +1,13 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import {
   chatCreateRoomInputSchema,
+  chatBodyFormatSchema,
   chatDeleteInputSchema,
   chatEditInputSchema,
   chatInviteInputSchema,
   chatListMessagesInputSchema,
   chatMessageSchema,
+  chatRemoveMemberInputSchema,
   chatPinInputSchema,
   chatReactInputSchema,
   chatReactionSchema,
@@ -65,6 +67,12 @@ const chatSearchResultSchema = z.object({
 const chatInviteResultSchema = z.object({
   roomId: z.string().uuid(),
   invitedActorIds: z.array(z.string()),
+});
+
+const chatRemoveMemberResultSchema = z.object({
+  roomId: z.string().uuid(),
+  removedActorId: z.string().uuid(),
+  removed: z.literal(true),
 });
 
 const chatPinRecordSchema = z.object({
@@ -301,6 +309,7 @@ export function createChatToolDefinitions(
           actorId: ctx.actor.id,
           messageId: input.messageId,
           body: input.body,
+          ...(input.bodyFormat === undefined ? {} : { bodyFormat: input.bodyFormat }),
         });
         if (message === null) {
           throw new ChatMessageNotFoundError(input.messageId);
@@ -367,6 +376,29 @@ export function createChatToolDefinitions(
           roomId: result.roomId,
           invitedActorIds: [...result.invitedActorIds],
         };
+      },
+    }),
+    defineTool<
+      z.output<typeof chatRemoveMemberInputSchema>,
+      z.output<typeof chatRemoveMemberResultSchema>
+    >({
+      id: "chat.member.remove",
+      description: "Remove a member from a chat room.",
+      permission: "chat.create",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(chatRemoveMemberInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRemoveMemberResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.removeMember === undefined) {
+          throw new Error("This Chat store does not support member removal.");
+        }
+        return options.store.removeMember({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          roomId: input.roomId,
+          removedActorId: input.actorId,
+        });
       },
     }),
     defineTool<z.output<typeof chatSearchInputSchema>, z.output<typeof chatSearchResultSchema>>({
@@ -441,7 +473,8 @@ function serializeMessage(message: ChatMessageRecord) {
     roomId: message.roomId,
     actorId: message.actorId,
     body: message.body,
-    bodyFormat: message.bodyFormat,
+    bodyFormat: chatBodyFormatSchema.parse(message.bodyFormat),
+    renderedBodyHtml: message.renderedBodyHtml,
     metadata: message.metadata,
     attachmentObjectIds: [...message.attachmentObjectIds],
     parentMessageId: message.parentMessageId ?? null,
@@ -501,5 +534,4 @@ function serializeSearchHit(hit: ChatSearchHit) {
 function toJsonObject(value: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
-
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  CHAT_BODY_MAX_BYTES,
+  CHAT_MAX_ATTACHMENTS,
+  CHAT_METADATA_MAX_BYTES,
   chatInboundFrameSchema,
   chatOutboundFrameSchema,
   chatSendInputSchema,
@@ -45,6 +48,24 @@ describe("chat contracts", () => {
         body: "ok",
       }).body,
     ).toBe("ok");
+  });
+
+  it("enforces UTF-8, Unicode, format, metadata, and attachment bounds", () => {
+    const roomId = "11111111-1111-4111-8111-111111111111";
+    const objectId = "22222222-2222-4222-8222-222222222222";
+    for (const unsafe of [
+      { roomId, body: "é".repeat(CHAT_BODY_MAX_BYTES / 2 + 1) },
+      { roomId, body: "bad \ud800 value" },
+      { roomId, body: "ok", bodyFormat: "html" },
+      { roomId, body: "ok", metadata: { value: "x".repeat(CHAT_METADATA_MAX_BYTES) } },
+      {
+        roomId,
+        body: "ok",
+        attachmentObjectIds: Array.from({ length: CHAT_MAX_ATTACHMENTS + 1 }, () => objectId),
+      },
+    ]) {
+      expect(chatSendInputSchema.safeParse(unsafe).success).toBe(false);
+    }
   });
 
   it("validates outbound message.created and error frames", () => {

@@ -1,22 +1,11 @@
-import {
-  ForbiddenError,
-  NotFoundError,
-  RateLimitedError,
-  type ApiErrorOptions,
-} from "../../api/api-error.js";
+import { NotFoundError, RateLimitedError, type ApiErrorOptions } from "../../api/api-error.js";
 
-/** Thrown when the actor cannot access a chat room (G4/G6). */
-export class ChatRoomAccessError extends ForbiddenError {
-  readonly roomId: string;
+/** Non-enumerable denial for an unknown room, tenant, actor, or membership. */
+export class ChatRoomAccessError extends NotFoundError {
+  readonly roomId: string | undefined;
 
-  constructor(roomId: string, o?: ApiErrorOptions) {
-    super(`Unknown or inaccessible chat room: ${roomId}`, {
-      ...o,
-      details: {
-        roomId,
-        ...(typeof o?.details === "object" && o.details !== null ? o.details : {}),
-      },
-    });
+  constructor(roomId?: string, o?: ApiErrorOptions) {
+    super("Chat room was not found.", o);
     this.name = "ChatRoomAccessError";
     this.roomId = roomId;
   }
@@ -24,18 +13,28 @@ export class ChatRoomAccessError extends ForbiddenError {
 
 /** Thrown when a message id is unknown or not editable/deletable by the actor. */
 export class ChatMessageNotFoundError extends NotFoundError {
-  readonly messageId: string;
+  readonly messageId: string | undefined;
 
-  constructor(messageId: string, o?: ApiErrorOptions) {
-    super(`Unknown chat message: ${messageId}`, {
-      ...o,
-      details: {
-        messageId,
-        ...(typeof o?.details === "object" && o.details !== null ? o.details : {}),
-      },
-    });
+  constructor(messageId?: string, o?: ApiErrorOptions) {
+    super("Chat message was not found.", o);
     this.name = "ChatMessageNotFoundError";
     this.messageId = messageId;
+  }
+}
+
+/** Non-enumerable denial for cross-tenant or unauthorized member changes. */
+export class ChatMemberAccessError extends NotFoundError {
+  constructor(o?: ApiErrorOptions) {
+    super("Chat member was not found.", o);
+    this.name = "ChatMemberAccessError";
+  }
+}
+
+/** Non-enumerable denial for inaccessible, inactive, or unknown attachments. */
+export class ChatAttachmentAccessError extends NotFoundError {
+  constructor(o?: ApiErrorOptions) {
+    super("Chat attachment was not found.", o);
+    this.name = "ChatAttachmentAccessError";
   }
 }
 

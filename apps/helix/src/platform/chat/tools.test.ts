@@ -27,6 +27,7 @@ describe("chat tools", () => {
       "chat.delete",
       "chat.edit",
       "chat.invite",
+      "chat.member.remove",
       "chat.message.list",
       "chat.pin",
       "chat.pins.list",
@@ -53,6 +54,17 @@ describe("chat tools", () => {
       (t) => t.id === "chat.pin",
     );
     expect(tool?.permission).toBe("chat.post");
+  });
+
+  it("requires confirmation before removing a room member", () => {
+    const tool = createChatToolDefinitions({ store: new FakeChatStore() }).find(
+      (candidate) => candidate.id === "chat.member.remove",
+    );
+    expect(tool).toMatchObject({
+      permission: "chat.create",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+    });
   });
 
   it("sends messages through the shared store contract", async () => {

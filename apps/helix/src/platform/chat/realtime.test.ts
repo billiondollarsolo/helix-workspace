@@ -183,10 +183,39 @@ describe("chat realtime", () => {
     expect(socket.messages).toContainEqual(
       expect.objectContaining({
         type: "error",
-        code: "forbidden",
-        message: `Unknown or inaccessible chat room: ${roomId}`,
+        code: "not_found",
+        message: "Chat room was not found.",
       }),
     );
+  });
+
+  it("stops realtime fanout and presence immediately after membership revocation", async () => {
+    const socket = new FakeSocket();
+    const store = new FakeChatStore();
+    const bus = new InMemoryChatRoomBus();
+    const presence = new InMemoryChatPresenceStore({ ttlSeconds: 30 });
+    await handleChatSocket(socket, emptyWebSocketRequest, {
+      store,
+      actorFromRequest: () => actor,
+      trustedOrigins,
+      bus,
+      presence,
+    });
+    socket.receive({ type: "subscribe", roomId });
+    await settle();
+    socket.messages.length = 0;
+
+    store.denyRoom(roomId);
+    await bus.publish(roomId, {
+      type: "typing",
+      roomId,
+      actorId: otherActor.id,
+      isTyping: true,
+    });
+    await settle();
+
+    expect(socket.messages).toEqual([]);
+    expect(await presence.list(roomId)).toEqual([]);
   });
 
   it("honors presence status busy on touch and lists it", async () => {
@@ -516,6 +545,10 @@ class FakeChatStore implements ChatStore {
 
   constructor(options: { readonly inaccessibleRoomIds?: readonly string[] } = {}) {
     this.#inaccessibleRoomIds = new Set(options.inaccessibleRoomIds ?? []);
+  }
+
+  denyRoom(deniedRoomId: string): void {
+    this.#inaccessibleRoomIds.add(deniedRoomId);
   }
 
   async createRoom(): Promise<ChatRoomRecord> {

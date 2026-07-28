@@ -15,9 +15,10 @@ import {
   type TokenBucketConfig,
 } from "./core/rate-limit.js";
 import { ChatRateLimitedError, ChatRoomAccessError } from "./errors.js";
-import type { ChatPresenceStore, ChatRoomBus, ChatRoomEvent } from "./realtime.js";
+import type { ChatPresenceStore, ChatRoomBus, ChatRoomEvent, PresenceEntry } from "./realtime.js";
 import { InMemoryChatPresenceStore, InMemoryChatRoomBus } from "./realtime.js";
 import type { ChatStore } from "./store.js";
+import type { ChatRoomRecord } from "./types.js";
 import { serializeReadReceipt } from "./tools.js";
 import {
   evaluateWebSocketOrigin,
@@ -400,6 +401,15 @@ async function handleInboundMessage(input: {
     input.setPresenceStatus(message.status);
     await Promise.all(
       [...input.subscriptions.keys()].map(async (roomId) => {
+        const room = await input.options.store.getRoomForActor({
+          orgId: input.actor.orgId,
+          actorId: input.actor.id,
+          roomId,
+        });
+        if (room === null) {
+          await dropSocketRoom(input, roomId);
+          return;
+        }
         const entry = await input.options.presence.touch({
           roomId,
           actor: input.actor,
@@ -411,7 +421,7 @@ async function handleInboundMessage(input: {
           actorId: input.actor.id,
           status: message.status,
           entry,
-          roster: await input.options.presence.list(roomId),
+          roster: filterRoomPresence(room, await input.options.presence.list(roomId)),
         });
       }),
     );
@@ -419,9 +429,18 @@ async function handleInboundMessage(input: {
   }
 
   if (message.type === "subscribe") {
-    await requireSocketRoomAccess(input.options.store, input.actor, message.roomId);
+    const room = await requireSocketRoomAccess(input.options.store, input.actor, message.roomId);
     if (!input.subscriptions.has(message.roomId)) {
       const unsubscribe = await input.options.bus.subscribe(message.roomId, async (event) => {
+        const currentRoom = await input.options.store.getRoomForActor({
+          orgId: input.actor.orgId,
+          actorId: input.actor.id,
+          roomId: message.roomId,
+        });
+        if (currentRoom === null) {
+          await dropSocketRoom(input, message.roomId);
+          return;
+        }
         sendSocket(input.socket, event);
       });
       input.subscriptions.set(message.roomId, unsubscribe);
@@ -431,7 +450,7 @@ async function handleInboundMessage(input: {
       actor: input.actor,
       status: input.getPresenceStatus(),
     });
-    const roster = await input.options.presence.list(message.roomId);
+    const roster = filterRoomPresence(room, await input.options.presence.list(message.roomId));
     await input.options.bus.publish(message.roomId, {
       type: "presence.joined",
       roomId: message.roomId,
@@ -540,8 +559,8 @@ async function handleInboundMessage(input: {
     return;
   }
 
-  await requireSocketRoomAccess(input.options.store, input.actor, message.roomId);
-  const roster = await input.options.presence.list(message.roomId);
+  const room = await requireSocketRoomAccess(input.options.store, input.actor, message.roomId);
+  const roster = filterRoomPresence(room, await input.options.presence.list(message.roomId));
   sendSocket(input.socket, {
     type: "presence",
     roomId: message.roomId,
@@ -570,15 +589,38 @@ async function requireSocketRoomAccess(
   store: ChatStore,
   actor: Actor,
   roomId: string,
-): Promise<void> {
+): Promise<ChatRoomRecord> {
   const room = await store.getRoomForActor({
     orgId: actor.orgId,
     actorId: actor.id,
     roomId,
   });
   if (room === null) {
-    throw new ChatRoomAccessError(roomId);
+    throw new ChatRoomAccessError();
   }
+  return room;
+}
+
+async function dropSocketRoom(
+  input: {
+    readonly actor: Actor;
+    readonly subscriptions: Map<string, Awaited<ReturnType<ChatRoomBus["subscribe"]>>>;
+    readonly options: ChatSocketOptions;
+  },
+  roomId: string,
+): Promise<void> {
+  const unsubscribe = input.subscriptions.get(roomId);
+  input.subscriptions.delete(roomId);
+  await input.options.presence.remove({ roomId, actorId: input.actor.id });
+  await unsubscribe?.();
+}
+
+function filterRoomPresence(
+  room: ChatRoomRecord,
+  entries: readonly PresenceEntry[],
+): readonly PresenceEntry[] {
+  const memberIds = new Set(room.members.map((member) => member.actorId));
+  return entries.filter((entry) => entry.orgId === room.orgId && memberIds.has(entry.actorId));
 }
 
 function sendErrorFrame(socket: ChatSocket, error: unknown): void {

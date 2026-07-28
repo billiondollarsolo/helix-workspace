@@ -49,6 +49,8 @@ export interface ChatMessageView {
   readonly authorName: string;
   readonly time: string;
   readonly body: string;
+  readonly bodyFormat: "plain" | "markdown";
+  readonly renderedBodyHtml?: string;
   readonly isMine: boolean;
   readonly editedAt: string | null;
   readonly reactions: readonly ChatReactionView[];
@@ -222,6 +224,8 @@ export function toMessageView(input: {
     authorName: nameForActor(record.actorId),
     time: formatChatTime(record.sentAt),
     body: record.body,
+    bodyFormat: record.bodyFormat,
+    ...(record.renderedBodyHtml === undefined ? {} : { renderedBodyHtml: record.renderedBodyHtml }),
     isMine: record.actorId !== null && record.actorId === selfActorId,
     editedAt: record.editedAt,
     reactions,

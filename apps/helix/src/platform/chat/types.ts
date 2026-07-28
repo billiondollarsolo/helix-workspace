@@ -1,4 +1,5 @@
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
+import type { ChatBodyFormat } from "@helix/contracts";
 
 export const chatPluginId = "com.helix.core.chat";
 
@@ -49,7 +50,8 @@ export interface ChatMessageRecord {
   readonly roomId: string;
   readonly actorId: string | null;
   readonly body: string;
-  readonly bodyFormat: string;
+  readonly bodyFormat: ChatBodyFormat;
+  readonly renderedBodyHtml?: string;
   readonly metadata: JsonObject;
   readonly attachmentObjectIds: readonly string[];
   readonly parentMessageId?: string | null;

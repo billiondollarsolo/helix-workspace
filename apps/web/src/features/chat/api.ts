@@ -231,7 +231,7 @@ export type CreateChatRoomRequest = {
 export type InviteToRoomRequest = {
   readonly roomId: string;
   readonly actorIds: readonly string[];
-  readonly role?: string;
+  readonly role?: "member" | "admin";
 };
 
 export async function createChatRoom(

@@ -1,17 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/api-error.js";
-import {
-  ChatMessageNotFoundError,
-  ChatRateLimitedError,
-  ChatRoomAccessError,
-} from "./errors.js";
+import { ChatMessageNotFoundError, ChatRateLimitedError, ChatRoomAccessError } from "./errors.js";
 
 describe("chat errors", () => {
-  it("ChatRoomAccessError is ApiError forbidden", () => {
+  it("ChatRoomAccessError is a non-enumerable ApiError", () => {
     const e = new ChatRoomAccessError("11111111-1111-4111-8111-111111111111");
     expect(e).toBeInstanceOf(ApiError);
-    expect(e.code).toBe("forbidden");
-    expect(e.statusCode).toBe(403);
+    expect(e.code).toBe("not_found");
+    expect(e.statusCode).toBe(404);
+    expect(e.message).not.toContain("11111111");
+    expect(e.details).toBeUndefined();
     expect(e.roomId).toBe("11111111-1111-4111-8111-111111111111");
   });
 

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SpamdScanner, getSpamdScannerConfig, parseSpamdResponse } from "./spam.js";
 import { ClamavScanner, getClamavScannerConfig, parseClamavResponse } from "./antivirus.js";
 import { ingestRawMail, scanInboundMail } from "./ingest.js";
+import { InMemoryMailQuarantineStore } from "./quarantine.js";
 import type { MailMessageInput, MailThreadStatePatch, StoredMailMessage } from "./types.js";
 
 /**
@@ -237,7 +238,7 @@ describe("scanInboundMail", () => {
       "infected",
     );
     expect(result.routedToSpam).toBe(true);
-    expect(result.quarantined).toBe(false);
+    expect(result.quarantined).toBe(true);
     expect(result.spamReason).toBe("virus");
   });
 
@@ -438,31 +439,36 @@ describe("ingest spam routing", () => {
     expect(store.patches.some((entry) => entry.patch.spamAt !== undefined)).toBe(false);
   });
 
-  it("routes an infected message to Spam via the antivirus scanner", async () => {
+  it("quarantines an infected message instead of inserting it into Spam", async () => {
     const store = new RecordingMailStore();
-    const result = await ingestRawMail({
-      store: store as never,
-      authenticator: trustedAuthenticator,
-      scanners: {
-        antivirus: {
-          async scan() {
-            return {
-              infected: true,
-              signature: "Eicar-Test-Signature",
-              scanned: true,
-              evidence: { scanned: true },
-            };
+    const quarantineStore = new InMemoryMailQuarantineStore();
+    await expect(
+      ingestRawMail({
+        store: store as never,
+        quarantineStore,
+        authenticator: trustedAuthenticator,
+        scanners: {
+          antivirus: {
+            async scan() {
+              return {
+                infected: true,
+                signature: "Eicar-Test-Signature",
+                scanned: true,
+                evidence: { scanned: true },
+              };
+            },
           },
         },
-      },
-      input: {
-        orgId: "org-1",
-        raw: rawMessage,
-        envelopeTo: ["user@helix.test"],
-      },
-    });
-    expect(result.scan.spamReason).toBe("virus");
-    expect(store.patches.some((entry) => entry.patch.spamAt !== undefined)).toBe(true);
+        input: {
+          orgId: "org-1",
+          raw: rawMessage,
+          envelopeTo: ["user@helix.test"],
+        },
+      }),
+    ).rejects.toMatchObject({ name: "MailInboundQuarantinedError" });
+    expect(await quarantineStore.list("org-1")).toHaveLength(1);
+    expect(store.inserted).toHaveLength(0);
+    expect(store.patches).toHaveLength(0);
   });
 });
 

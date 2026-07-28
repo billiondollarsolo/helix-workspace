@@ -81,6 +81,7 @@ import {
   driveAccessQueryOptions,
   driveActorQueryOptions,
   driveItemsQueryOptions,
+  driveUploadStatusQueryOptions,
   driveQueryKeys,
   entryFromSearchHit,
   type DriveScope,
@@ -96,6 +97,10 @@ interface DriveUploadOutcome {
   readonly fileName: string;
   readonly mimeType: string;
   readonly openAfterUpload: boolean;
+}
+
+interface ProcessingDriveUpload extends DriveUploadOutcome {
+  readonly initialState: "uploaded";
 }
 
 interface DriveScopeItem {
@@ -299,6 +304,7 @@ export function DriveShell() {
   const [scope, setScope] = useState<DriveScope>(driveSearch.scope ?? "my");
   const [trail, setTrail] = useState<readonly DriveCrumb[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(driveSearch.file ?? null);
+  const [processingUpload, setProcessingUpload] = useState<ProcessingDriveUpload | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const folderId =
@@ -345,6 +351,9 @@ export function DriveShell() {
       limit: fetchListLimit,
     }),
   );
+  const uploadStatusQuery = useQuery(
+    driveUploadStatusQueryOptions(processingUpload?.objectId ?? null),
+  );
 
   const invalidateDrive = () => queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
   const invalidateSheets = () => queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
@@ -352,27 +361,41 @@ export function DriveShell() {
   const invalidateDocs = () => queryClient.invalidateQueries({ queryKey: ["docs"] });
 
   const uploadMutation = useMutation({
-    mutationFn: async (input: DriveUploadInput): Promise<DriveUploadOutcome> => {
+    mutationFn: async (input: DriveUploadInput): Promise<ProcessingDriveUpload> => {
       const uploaded = await uploadDriveFile({ file: input.file, folderId });
       return {
         objectId: uploaded.objectId,
         fileName: input.file.name,
         mimeType: input.file.type.length > 0 ? input.file.type : "application/octet-stream",
         openAfterUpload: input.openAfterUpload,
+        initialState: "uploaded",
       };
     },
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: (result) => {
+      setProcessingUpload(result);
       void invalidateDrive();
       void invalidateDocs();
       void invalidateSheets();
       void invalidateSlides();
-      if (result.openAfterUpload && shouldOpenUploadedFile(result.fileName, result.mimeType)) {
-        void navigate({ to: "/open/$objectId", params: { objectId: result.objectId } });
-      }
     },
   });
+
+  useEffect(() => {
+    const status = uploadStatusQuery.data;
+    if (processingUpload === null || status?.state !== "active") return;
+    void invalidateDrive();
+    if (
+      processingUpload.openAfterUpload &&
+      shouldOpenUploadedFile(processingUpload.fileName, processingUpload.mimeType)
+    ) {
+      void navigate({
+        to: "/open/$objectId",
+        params: { objectId: processingUpload.objectId },
+      });
+    }
+  }, [processingUpload, uploadStatusQuery.data]);
 
   const trashMutation = useMutation({
     mutationFn: (objectId: string) => trashDriveObject(objectId),
@@ -701,6 +724,45 @@ export function DriveShell() {
         style={{ display: "none" }}
         onChange={onFileChosen}
       />
+      {processingUpload !== null ? (
+        <div
+          role={
+            uploadStatusQuery.data?.state === "quarantined" ||
+            uploadStatusQuery.data?.state === "scan_failed" ||
+            uploadStatusQuery.isError
+              ? "alert"
+              : "status"
+          }
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            top: 20,
+            right: 20,
+            zIndex: 9999,
+            maxWidth: 420,
+            padding: "12px 16px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--surface)",
+            boxShadow: "var(--shadow-lg)",
+          }}
+        >
+          <strong>{processingUpload.fileName}</strong>
+          <div style={{ marginTop: 4, color: "var(--text-2)" }}>
+            {uploadStatusQuery.isError
+              ? "Upload stored safely, but its security scan status could not be refreshed."
+              : (uploadStatusQuery.data?.label ?? "Queued for security scan")}
+          </div>
+          <button
+            type="button"
+            className="btn sm"
+            style={{ marginTop: 8 }}
+            onClick={() => setProcessingUpload(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
       {importing !== null ? (
         <div
           role="status"

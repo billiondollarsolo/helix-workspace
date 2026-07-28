@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createClamAvVirusScanner,
   createNoopVirusScanner,
+  assertDriveMalwareScannerReady,
   resolveEffectiveMime,
   sniffMimeType,
 } from "./scanning.js";
@@ -84,6 +85,15 @@ describe("resolveEffectiveMime", () => {
 describe("createNoopVirusScanner", () => {
   it("reports clean", async () => {
     expect(await createNoopVirusScanner().scan(PNG)).toEqual({ clean: true });
+  });
+
+  it("is rejected for Business production boot", () => {
+    expect(() => {
+      assertDriveMalwareScannerReady("business", createNoopVirusScanner());
+    }).toThrow("Business Drive requires the real streaming ClamAV adapter");
+    expect(() => {
+      assertDriveMalwareScannerReady("personal", createNoopVirusScanner());
+    }).not.toThrow();
   });
 });
 

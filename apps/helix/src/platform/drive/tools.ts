@@ -25,6 +25,7 @@ import {
   driveShareLinkRevokeOutputSchema,
   driveShareOutputSchema,
   driveUploadOutputSchema,
+  driveUploadStatusOutputSchema,
   driveVersionOutputSchema,
   driveVersionsListOutputSchema,
 } from "./tool-output-schemas.js";
@@ -38,6 +39,7 @@ import type {
   DriveCommentRecord,
   DriveSearchHit,
   DriveUploadRecord,
+  DriveUploadStatusRecord,
   DriveVersionRecord,
 } from "./types.js";
 import type { DocsStore } from "../docs/index.js";
@@ -386,6 +388,29 @@ export function createDriveToolDefinitions(
           }),
         ),
     }),
+    defineTool<z.output<typeof objectIdSchema>, unknown>({
+      id: "drive.upload.status",
+      description:
+        "Read the processing, quarantine, or availability state of a prepared Drive upload.",
+      permission: "drive.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveUploadStatusOutputSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.getUploadStatus === undefined) {
+          throw new Error("drive.upload.status requires DriveStore.getUploadStatus.");
+        }
+        const status = await options.store.getUploadStatus({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.objectId,
+        });
+        if (status === null) {
+          throw new NotFoundError(`Unknown Drive upload: ${input.objectId}`);
+        }
+        return serializeUploadStatus(status);
+      },
+    }),
     defineTool<z.output<typeof uploadCompleteSchema>, unknown>({
       id: "drive.upload.complete",
       description:
@@ -559,7 +584,11 @@ export function createDriveToolDefinitions(
               ? null
               : new Date(input.expiresAt),
         });
-        return { objectId: input.objectId, actorId: input.actorId, grant: serializeNullableGrant(grant) };
+        return {
+          objectId: input.objectId,
+          actorId: input.actorId,
+          grant: serializeNullableGrant(grant),
+        };
       },
     }),
     defineTool<z.output<typeof moveSchema>, unknown>({
@@ -927,7 +956,8 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof revertVersionSchema>, z.output<typeof driveVersionOutputSchema>>({
       id: "drive.versions.revert",
-      description: "Create a new version that restores bytes from a prior version (history is append-only).",
+      description:
+        "Create a new version that restores bytes from a prior version (history is append-only).",
       permission: "drive.write",
       sideEffects: "write",
       confirmationRequired: true,
@@ -947,32 +977,34 @@ export function createDriveToolDefinitions(
         );
       },
     }),
-    defineTool<z.output<typeof createShareLinkSchema>, z.output<typeof driveShareLinkOutputSchema>>({
-      id: "drive.link.create",
-      description: "Create a public/anonymous share link for a Drive object (owner only).",
-      permission: "drive.write",
-      sideEffects: "write",
-      confirmationRequired: true,
-      inputSchema: zodToolSchema(createShareLinkSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(driveShareLinkOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if (options.store.createShareLink === undefined) {
-          throw new Error("drive.link.create requires DriveStore.createShareLink.");
-        }
-        return serializeShareLink(
-          await options.store.createShareLink({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            objectId: input.objectId,
-            role: input.role,
-            expiresAt:
-              input.expiresAt === undefined || input.expiresAt === null
-                ? null
-                : new Date(input.expiresAt),
-          }),
-        );
+    defineTool<z.output<typeof createShareLinkSchema>, z.output<typeof driveShareLinkOutputSchema>>(
+      {
+        id: "drive.link.create",
+        description: "Create a public/anonymous share link for a Drive object (owner only).",
+        permission: "drive.write",
+        sideEffects: "write",
+        confirmationRequired: true,
+        inputSchema: zodToolSchema(createShareLinkSchema, genericObjectJsonSchema),
+        outputSchema: zodToolSchema(driveShareLinkOutputSchema, genericObjectJsonSchema),
+        handler: async (input, ctx) => {
+          if (options.store.createShareLink === undefined) {
+            throw new Error("drive.link.create requires DriveStore.createShareLink.");
+          }
+          return serializeShareLink(
+            await options.store.createShareLink({
+              orgId: ctx.actor.orgId,
+              actorId: ctx.actor.id,
+              objectId: input.objectId,
+              role: input.role,
+              expiresAt:
+                input.expiresAt === undefined || input.expiresAt === null
+                  ? null
+                  : new Date(input.expiresAt),
+            }),
+          );
+        },
       },
-    }),
+    ),
     defineTool<z.output<typeof objectIdSchema>, z.output<typeof driveShareLinkListOutputSchema>>({
       id: "drive.link.list",
       description: "List active public share links for a Drive object.",
@@ -995,7 +1027,10 @@ export function createDriveToolDefinitions(
         };
       },
     }),
-    defineTool<z.output<typeof revokeShareLinkSchema>, z.output<typeof driveShareLinkRevokeOutputSchema>>({
+    defineTool<
+      z.output<typeof revokeShareLinkSchema>,
+      z.output<typeof driveShareLinkRevokeOutputSchema>
+    >({
       id: "drive.link.revoke",
       description: "Revoke a public share link.",
       permission: "drive.write",
@@ -1017,7 +1052,6 @@ export function createDriveToolDefinitions(
         };
       },
     }),
-
   ];
 }
 
@@ -1065,6 +1099,13 @@ function serializeVersion(version: DriveVersionRecord) {
   return {
     ...version,
     createdAt: version.createdAt.toISOString(),
+  };
+}
+
+function serializeUploadStatus(status: DriveUploadStatusRecord) {
+  return {
+    ...status,
+    updatedAt: status.updatedAt.toISOString(),
   };
 }
 

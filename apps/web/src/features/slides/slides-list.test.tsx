@@ -94,7 +94,7 @@ describe("SlidesList", () => {
               (body as { readonly mimeType?: string }).mimeType ?? "application/octet-stream",
             byteSize: (body as { readonly byteSize?: number }).byteSize ?? 0,
             sha256: "0".repeat(64),
-            status: "prepared",
+            status: "pending_upload",
             uploadUrl: null,
             uploadHeaders: {},
             metadata: {},

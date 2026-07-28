@@ -421,7 +421,7 @@ describe("NativePresentationEditor", () => {
             mimeType: "image/png",
             byteSize: 3,
             sha256: "0".repeat(64),
-            status: "prepared",
+            status: "pending_upload",
             uploadUrl: null,
             uploadHeaders: {},
             metadata: {},

@@ -9,6 +9,7 @@ import type {
   DriveSearchHit,
   DriveShareLink,
   DriveUploadResult as DriveUploadResultContract,
+  DriveUploadStatus,
   DriveVersion,
 } from "@helix/contracts";
 
@@ -44,6 +45,7 @@ export interface DriveUploadInput {
 }
 
 export type DriveUploadResult = DriveUploadResultContract;
+export type { DriveUploadStatus };
 
 export interface DriveFinalizeInput {
   readonly objectId: string;
@@ -98,6 +100,13 @@ export async function finalizeDriveUpload(
   );
 }
 
+export async function getDriveUploadStatus(
+  objectId: string,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<DriveUploadStatus> {
+  return callDriveTool<DriveUploadStatus>("drive.upload.status", { objectId }, fetchImpl);
+}
+
 /**
  * Full browser upload pipeline: hash the file, `drive.upload` to reserve a
  * storage key, then `drive.finalize` with the base64 content to commit the
@@ -140,7 +149,7 @@ export async function uploadDriveFile(
       },
       fetchImpl,
     );
-    return prepared;
+    return { ...prepared, status: "uploaded" };
   }
 
   // Direct-to-storage when the server returned a presigned PUT URL (RustFS /
@@ -170,16 +179,16 @@ export async function uploadDriveFile(
         },
         fetchImpl,
       );
-      return prepared;
+      return { ...prepared, status: "uploaded" };
     } catch {
       await finalizeDriveUploadWithContent(prepared, buffer, sha256, mimeType, fetchImpl);
-      return prepared;
+      return { ...prepared, status: "uploaded" };
     }
   } else {
     await finalizeDriveUploadWithContent(prepared, buffer, sha256, mimeType, fetchImpl);
   }
 
-  return prepared;
+  return { ...prepared, status: "uploaded" };
 }
 
 async function uploadMultipartParts(
@@ -207,13 +216,18 @@ async function uploadMultipartParts(
         body: slice,
       });
       if (!putRes.ok) {
-        throw new Error(`Multipart part ${String(index + 1)} failed: HTTP ${String(putRes.status)}`);
+        throw new Error(
+          `Multipart part ${String(index + 1)} failed: HTTP ${String(putRes.status)}`,
+        );
       }
-      const etag = putRes.headers.get("etag") ?? putRes.headers.get("ETag") ?? `"part-${String(index + 1)}"`;
+      const etag =
+        putRes.headers.get("etag") ?? putRes.headers.get("ETag") ?? `"part-${String(index + 1)}"`;
       completed.push({ partNumber: index + 1, etag });
     }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, multipart.partUrls.length) }, () => worker()));
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, multipart.partUrls.length) }, () => worker()),
+  );
   return completed.sort((a, b) => a.partNumber - b.partNumber);
 }
 
@@ -339,11 +353,7 @@ export async function removeDriveAccess(
   actorId: string,
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<{ readonly objectId: string; readonly actorId: string; readonly removed: boolean }> {
-  return callDriveTool(
-    "drive.access.remove",
-    { objectId, actorId },
-    fetchImpl,
-  );
+  return callDriveTool("drive.access.remove", { objectId, actorId }, fetchImpl);
 }
 
 export async function updateDriveAccessRole(
@@ -376,11 +386,7 @@ export async function setDriveObjectStarred(
   starred: boolean,
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<DriveApiEntry | null> {
-  return callDriveTool<DriveApiEntry | null>(
-    "drive.star.set",
-    { objectId, starred },
-    fetchImpl,
-  );
+  return callDriveTool<DriveApiEntry | null>("drive.star.set", { objectId, starred }, fetchImpl);
 }
 
 export interface DriveDownloadResult {
@@ -436,7 +442,8 @@ function inAppEditorUrl(entry: DriveApiEntry): string | null {
   const mime = entry.mimeType ?? "";
   const name = entry.name.toLowerCase();
   if (mime === "application/pdf" || (mime.length === 0 && name.endsWith(".pdf"))) {
-    const sourceFolder = entry.folderId === null ? "" : `?folder=${encodeURIComponent(entry.folderId)}`;
+    const sourceFolder =
+      entry.folderId === null ? "" : `?folder=${encodeURIComponent(entry.folderId)}`;
     return `/pdf/${encodeURIComponent(entry.id)}${sourceFolder}`;
   }
   return null;
@@ -573,7 +580,10 @@ export async function revokeDriveShareLink(
 }
 
 /** Public unauthenticated URL for a share-link token. */
-export function drivePublicShareUrl(token: string, origin: string = globalThis.location?.origin ?? ""): string {
+export function drivePublicShareUrl(
+  token: string,
+  origin: string = globalThis.location?.origin ?? "",
+): string {
   const base = origin.replace(/\/$/u, "");
   return `${base}/api/drive/share/${encodeURIComponent(token)}`;
 }

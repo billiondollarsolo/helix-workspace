@@ -150,12 +150,13 @@ describe("S3-compatible storage", () => {
 
     const object = await storage(fetchStub.fetch).get("result.json");
 
-    expect(object).toEqual({
+    expect(object).toMatchObject({
       key: "result.json",
-      body: new TextEncoder().encode("payload"),
       contentType: "application/json",
       metadata: { owner: "agent-1" },
     });
+    if (object === null) throw new Error("Expected stored object.");
+    expect(await collectBody(object.body)).toEqual(new TextEncoder().encode("payload"));
     expect(firstUrlCall(fetchStub)[1].method).toBe("GET");
   });
 
@@ -321,8 +322,7 @@ describe("S3-compatible storage", () => {
     expect(request.headers).toEqual({
       "content-type": "text/csv",
       "x-amz-server-side-encryption": "aws:kms",
-      "x-amz-server-side-encryption-aws-kms-key-id":
-        "arn:aws:kms:us-east-1:123456789012:key/test",
+      "x-amz-server-side-encryption-aws-kms-key-id": "arn:aws:kms:us-east-1:123456789012:key/test",
     });
   });
 
@@ -374,9 +374,27 @@ describe("S3-compatible storage", () => {
     const [url, init] = firstUrlCall(fetchStub);
     expect(init.method).toBe("POST");
     expect(url.searchParams.get("uploadId")).toBe("up-1");
-    const body = typeof init.body === "string" ? init.body : new TextDecoder().decode(init.body as Uint8Array);
+    const body =
+      typeof init.body === "string" ? init.body : new TextDecoder().decode(init.body as Uint8Array);
     expect(body).toContain("<CompleteMultipartUpload>");
     expect(body).toContain("<PartNumber>1</PartNumber>");
     expect(body).toContain("<ETag>&quot;etag1&quot;</ETag>");
   });
 });
+
+async function collectBody(body: Uint8Array | AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  if (body instanceof Uint8Array) return body;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of body) {
+    chunks.push(chunk);
+    size += chunk.byteLength;
+  }
+  const result = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}

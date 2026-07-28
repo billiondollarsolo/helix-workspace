@@ -114,7 +114,7 @@ describe("NativeSpreadsheetEditor", () => {
       mimeType: "image/png",
       byteSize: 3,
       sha256: "0".repeat(64),
-      status: "prepared",
+      status: "uploaded",
       uploadUrl: null,
       uploadHeaders: {},
       metadata: {},

@@ -129,7 +129,7 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
     }
     await expectOk(response, "get", key);
 
-    const body = new Uint8Array(await response.arrayBuffer());
+    const body = responseBodyChunks(response);
     const contentType = response.headers.get("content-type") ?? undefined;
     const metadata = responseMetadata(response.headers);
     return {
@@ -360,6 +360,24 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
   }
 }
 
+async function* responseBodyChunks(response: Response): AsyncIterable<Uint8Array> {
+  const stream = response.body;
+  if (stream === null) {
+    return;
+  }
+  const reader = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    let result = await reader.read();
+    while (!result.done) {
+      const chunk = result.value;
+      if (chunk.byteLength > 0) yield chunk;
+      result = await reader.read();
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 type S3Method = "DELETE" | "GET" | "POST" | "PUT";
 
 function escapeXml(value: string): string {
@@ -469,8 +487,7 @@ function serverSideEncryptionHeaders(config: NormalizedS3Config): Record<string,
         ...(config.serverSideEncryptionAwsKmsKeyId === undefined
           ? {}
           : {
-              "x-amz-server-side-encryption-aws-kms-key-id":
-                config.serverSideEncryptionAwsKmsKeyId,
+              "x-amz-server-side-encryption-aws-kms-key-id": config.serverSideEncryptionAwsKmsKeyId,
             }),
       };
 }

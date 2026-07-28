@@ -24,6 +24,8 @@ export interface VirusScanResult {
 }
 
 export interface VirusScanner {
+  /** Identifies whether production is backed by a real scanning engine. */
+  readonly kind?: "noop" | "clamav";
   scan(bytes: SecurityScanInput): Promise<VirusScanResult>;
 }
 
@@ -127,6 +129,7 @@ export function resolveEffectiveMime(clientMime: string, sniffed: string | null)
 
 export function createNoopVirusScanner(): VirusScanner {
   return {
+    kind: "noop",
     async scan(): Promise<VirusScanResult> {
       return { clean: true };
     },
@@ -170,6 +173,7 @@ export function createClamAvVirusScanner(
   });
 
   return {
+    kind: "clamav",
     async scan(bytes: SecurityScanInput): Promise<VirusScanResult> {
       const securityScan = await client.scan(bytes);
       const disposition = resolveTerminalSecurityScanPolicy(tier, securityScan, metrics);
@@ -183,6 +187,17 @@ export function createClamAvVirusScanner(
       };
     },
   };
+}
+
+export function assertDriveMalwareScannerReady(
+  tier: SecurityTier,
+  scanner: VirusScanner | undefined,
+): void {
+  if (tier !== "personal" && (scanner === undefined || scanner.kind !== "clamav")) {
+    throw new Error(
+      "Business Drive requires the real streaming ClamAV adapter; the no-op scanner is forbidden.",
+    );
+  }
 }
 
 function startsWith(buf: Buffer, magic: Buffer): boolean {

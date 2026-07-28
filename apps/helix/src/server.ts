@@ -162,6 +162,9 @@ import {
   registerDocsTools,
 } from "./platform/docs/index.js";
 import {
+  assertDriveMalwareScannerReady,
+  createClamAvVirusScanner,
+  createDriveUploadScanWorker,
   createLocalOfficePreviewConverter,
   createLibreOfficePreviewClient,
   type DrivePreview,
@@ -1675,6 +1678,31 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       app.log.error({ error }, "Drive storage quota event emission failed");
     },
   });
+  const driveVirusScanner =
+    driveConfig.malwareScanner === undefined
+      ? undefined
+      : createClamAvVirusScanner({
+          ...driveConfig.malwareScanner,
+          tier: securityTier,
+          metrics,
+        });
+  if (driveConfig.isProduction) {
+    assertDriveMalwareScannerReady(securityTier, driveVirusScanner);
+  }
+  const driveUploadScanWorker =
+    driveVirusScanner === undefined || !coreApps.shouldRegister("drive")
+      ? undefined
+      : createDriveUploadScanWorker({
+          sql,
+          scanner: driveVirusScanner,
+          tier: securityTier,
+          ...(driveStorage === undefined ? {} : { storage: driveStorage }),
+          storageResolver: driveStorageResolver,
+          metrics,
+          onError: (error) => {
+            app.log.error({ error }, "Drive upload scan worker error");
+          },
+        });
   const searchEngine = await createSearchEngine();
   const semanticEmbeddingProvider = createSemanticSearchEmbeddingProvider(runtimeConfig.ai);
   const vectorStore = createConfiguredVectorStore(runtimeConfig.ai, { sql });
@@ -3070,6 +3098,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     leaderGatedWorkers.push({
       name: "tenant-storage-migration-worker",
       worker: tenantStorageMigrationWorker,
+    });
+  }
+  if (driveUploadScanWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "drive-upload-scan-worker",
+      worker: driveUploadScanWorker,
     });
   }
   if (smtpMailReceiver !== undefined && smtpMailReceiverConfig !== undefined) {

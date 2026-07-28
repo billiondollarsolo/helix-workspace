@@ -4,6 +4,7 @@ import type {
   DrivePreview as ContractDrivePreview,
   DrivePreviewKind as ContractDrivePreviewKind,
   DriveRole,
+  DriveUploadState as ContractDriveUploadState,
 } from "@helix/contracts";
 
 export const drivePluginId = "com.helix.core.drive";
@@ -13,6 +14,7 @@ export type DriveItemKind = ContractDriveItemKind;
 export type DriveShareRole = DriveRole | "viewer";
 export type DrivePreviewKind = ContractDrivePreviewKind;
 export type DrivePreviewStatus = ContractDrivePreview["status"];
+type DriveUploadState = ContractDriveUploadState;
 export type { DriveRole };
 
 export type DriveActor = JsonObject & {
@@ -92,7 +94,7 @@ export interface DriveUploadRecord {
   readonly mimeType: string;
   readonly byteSize: number;
   readonly sha256: string | null;
-  readonly status: string;
+  readonly status: DriveUploadState;
   readonly uploadUrl: string | null;
   readonly uploadHeaders: Record<string, string>;
   readonly metadata: JsonObject;
@@ -100,6 +102,15 @@ export interface DriveUploadRecord {
   readonly updatedAt: Date;
   /** Present when the server prepared an S3 multipart upload for large files. */
   readonly multipart?: DriveMultipartUploadInfo | undefined;
+}
+
+export interface DriveUploadStatusRecord {
+  readonly objectId: string;
+  readonly state: DriveUploadState;
+  readonly label: string;
+  readonly available: boolean;
+  readonly terminal: boolean;
+  readonly updatedAt: Date;
 }
 
 export interface DriveVersionRecord {

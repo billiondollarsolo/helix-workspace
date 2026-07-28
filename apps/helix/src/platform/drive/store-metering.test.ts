@@ -18,9 +18,18 @@ const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
 const objectId = "33333333-3333-4333-8333-333333333333";
 
+function bytesOfSize(size: number, value: number): Uint8Array {
+  const bytes = new Uint8Array(size);
+  bytes.fill(value);
+  return bytes;
+}
+
 describe("PostgresDriveStore metering", () => {
   it("emits positive storage.delta after a prepared upload is finalized", async () => {
+    const content = bytesOfSize(128, 1);
+    const sha256 = createHash("sha256").update(content).digest("hex");
     const metering = new RecordingMeteringClient();
+    const storage = new RecordingStorageClient();
     const recording = createRecordingSql([
       [objectRow({ byteSize: 128, metadata: { name: "report.txt", status: "pending_upload" } })],
       [storageQuotaRow({ limit: 1_000, used: 0 })],
@@ -30,15 +39,16 @@ describe("PostgresDriveStore metering", () => {
       [],
       [],
     ]);
-    const store = new PostgresDriveStore(recording.sql, undefined, { metering });
+    const store = new PostgresDriveStore(recording.sql, storage, { metering });
 
     await store.finalizeUpload({
       orgId,
       actorId,
       objectId,
       byteSize: 128,
-      sha256: "a".repeat(64),
+      sha256,
       mimeType: "text/plain",
+      content,
       metadata: {},
     });
 
@@ -60,7 +70,7 @@ describe("PostgresDriveStore metering", () => {
     expect(metadataJson).not.toContain("sha256");
   });
 
-  it("emits replacement deltas for finalized overwrites of the current storage key", async () => {
+  it("rejects using finalize to replace an already-active object", async () => {
     const metering = new RecordingMeteringClient();
     const recording = createRecordingSql([
       [objectRow({ byteSize: 200, metadata: { name: "report.txt", status: "ready" } })],
@@ -72,26 +82,19 @@ describe("PostgresDriveStore metering", () => {
     ]);
     const store = new PostgresDriveStore(recording.sql, undefined, { metering });
 
-    await store.finalizeUpload({
-      orgId,
-      actorId,
-      objectId,
-      byteSize: 150,
-      sha256: "b".repeat(64),
-      mimeType: "text/plain",
-      metadata: {},
-    });
-
-    expect(metering.records).toEqual([
-      {
+    await expect(
+      store.finalizeUpload({
         orgId,
-        event: {
-          type: "storage.delta",
-          quantity: -50,
-          metadata: { bucket: "drive", byte_delta: -50 },
-        },
-      },
-    ]);
+        actorId,
+        objectId,
+        byteSize: 150,
+        sha256: "b".repeat(64),
+        mimeType: "text/plain",
+        metadata: {},
+      }),
+    ).rejects.toThrow("cannot be finalized from state 'active'");
+
+    expect(metering.records).toEqual([]);
   });
 
   it("emits a negative storage.delta for hard deletes using distinct stored keys", async () => {
@@ -128,6 +131,8 @@ describe("PostgresDriveStore metering", () => {
   });
 
   it("does not fail finalized uploads when metering emission fails", async () => {
+    const content = bytesOfSize(16, 2);
+    const sha256 = createHash("sha256").update(content).digest("hex");
     const errors: unknown[] = [];
     const metering = new RecordingMeteringClient({ reject: true });
     const recording = createRecordingSql([
@@ -139,7 +144,7 @@ describe("PostgresDriveStore metering", () => {
       [],
       [],
     ]);
-    const store = new PostgresDriveStore(recording.sql, undefined, {
+    const store = new PostgresDriveStore(recording.sql, new RecordingStorageClient(), {
       metering,
       onMeteringError(error) {
         errors.push(error);
@@ -152,8 +157,9 @@ describe("PostgresDriveStore metering", () => {
         actorId,
         objectId,
         byteSize: 16,
-        sha256: "c".repeat(64),
+        sha256,
         mimeType: "text/plain",
+        content,
         metadata: {},
       }),
     ).resolves.toMatchObject({ objectId, byteSize: 16 });
@@ -169,7 +175,10 @@ describe("PostgresDriveStore metering", () => {
       [objectRow({ byteSize: 0, metadata: { name: "report.txt", status: "pending_upload" } })],
       [storageQuotaRow({ limit: 100, used: "95" })],
     ]);
-    const store = new PostgresDriveStore(recording.sql, undefined, { events, metering });
+    const store = new PostgresDriveStore(recording.sql, new RecordingStorageClient(), {
+      events,
+      metering,
+    });
 
     await expect(
       store.finalizeUpload({
@@ -246,6 +255,8 @@ describe("PostgresDriveStore metering", () => {
   });
 
   it("treats JSON null storage_bytes_limit as unlimited", async () => {
+    const content = bytesOfSize(512, 3);
+    const sha256 = createHash("sha256").update(content).digest("hex");
     const metering = new RecordingMeteringClient();
     const recording = createRecordingSql([
       [objectRow({ byteSize: 0, metadata: { name: "report.txt", status: "pending_upload" } })],
@@ -256,7 +267,9 @@ describe("PostgresDriveStore metering", () => {
       [],
       [],
     ]);
-    const store = new PostgresDriveStore(recording.sql, undefined, { metering });
+    const store = new PostgresDriveStore(recording.sql, new RecordingStorageClient(), {
+      metering,
+    });
 
     await expect(
       store.finalizeUpload({
@@ -264,8 +277,9 @@ describe("PostgresDriveStore metering", () => {
         actorId,
         objectId,
         byteSize: 512,
-        sha256: "e".repeat(64),
+        sha256,
         mimeType: "text/plain",
+        content,
         metadata: {},
       }),
     ).resolves.toMatchObject({ objectId, byteSize: 512 });
@@ -342,7 +356,9 @@ describe("PostgresDriveStore metering", () => {
     const recording = createRecordingSql([
       [objectRow({ byteSize: 0, metadata: { name: "report.txt", status: "pending_upload" } })],
     ]);
-    const store = new PostgresDriveStore(recording.sql, undefined, { metering });
+    const store = new PostgresDriveStore(recording.sql, new RecordingStorageClient(), {
+      metering,
+    });
 
     await expect(
       store.finalizeUpload({
@@ -355,7 +371,7 @@ describe("PostgresDriveStore metering", () => {
         content: new TextEncoder().encode("bad"),
         metadata: {},
       }),
-    ).rejects.toThrow("sha256");
+    ).rejects.toThrow("SHA-256");
 
     expect(metering.records).toHaveLength(0);
   });
@@ -429,7 +445,13 @@ describe("PostgresDriveStore metering", () => {
         }),
       ],
       [storageQuotaRow({ limit: 1_000, used: 0 })],
-      [versionRow({ byteSize: content.byteLength, versionNumber: 1, storageKey: legacyStorageKey })],
+      [
+        versionRow({
+          byteSize: content.byteLength,
+          versionNumber: 1,
+          storageKey: legacyStorageKey,
+        }),
+      ],
       [],
       [],
       [],
@@ -494,6 +516,10 @@ function createRecordingSql(responses: readonly unknown[]): {
     if (text.includes("objects.owner_actor_id") || text.includes("drive_folders.owner_actor_id")) {
       return { text, values };
     }
+    if (text.includes("insert into drive_scan_jobs")) {
+      calls.push({ text, values });
+      return Promise.resolve([{ id: "scan-job-1" }]);
+    }
     calls.push({ text, values });
     return Promise.resolve(responses[callIndex++] ?? []);
   };
@@ -520,6 +546,9 @@ function objectRow(input: {
     mime_type: "text/plain",
     byte_size: input.byteSize,
     sha256: null,
+    upload_state: input.metadata?.status === "pending_upload" ? "pending_upload" : "active",
+    upload_declared_byte_size: null,
+    upload_declared_sha256: null,
     metadata: input.metadata ?? { name: "report.txt", status: "ready" },
     deleted_at: null,
     created_at: new Date("2026-05-24T12:00:00.000Z"),
@@ -599,14 +628,32 @@ class RecordingEventBus implements EventBus {
 
 class RecordingStorageClient implements TenantStorageClient {
   readonly calls: string[] = [];
+  readonly objects = new Map<string, Uint8Array>();
 
-  async put(object: { readonly key: string }): Promise<void> {
+  async put(object: {
+    readonly key: string;
+    readonly body: Uint8Array | AsyncIterable<Uint8Array>;
+  }): Promise<void> {
     this.calls.push(`put:${object.key}`);
+    if (object.body instanceof Uint8Array) {
+      this.objects.set(object.key, object.body);
+      return;
+    }
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of object.body) chunks.push(chunk);
+    const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+    const body = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    this.objects.set(object.key, body);
   }
 
   async get(key: string): Promise<{ readonly key: string; readonly body: Uint8Array } | null> {
-    this.calls.push(`get:${key}`);
-    return { key, body: new Uint8Array([1]) };
+    const body = this.objects.get(key);
+    return body === undefined ? null : { key, body };
   }
 
   async delete(key: string): Promise<void> {

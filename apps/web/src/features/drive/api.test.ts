@@ -119,7 +119,7 @@ describe("drive API", () => {
           mimeType: "application/pdf",
           byteSize: 128,
           sha256,
-          status: "prepared",
+          status: "pending_upload",
           uploadUrl: "https://storage.example/upload",
           uploadHeaders: { "content-type": "application/pdf" },
           metadata: { source: "web-shell" },
@@ -219,7 +219,7 @@ describe("drive API", () => {
           mimeType: "image/png",
           byteSize: 3,
           sha256: "0".repeat(64),
-          status: "prepared",
+          status: "pending_upload",
           uploadUrl: "https://storage.example/upload",
           uploadHeaders: { "content-type": "image/png" },
           metadata: { source: "web-shell" },
@@ -497,12 +497,18 @@ describe("drive API", () => {
       .mockResolvedValueOnce(Response.json({ links: [link] }))
       .mockResolvedValueOnce(Response.json({ id: link.id, revoked: true }));
 
-    await expect(renameDriveObject({ objectId, name: "renamed.pdf" }, fetchImpl)).resolves.toMatchObject({
+    await expect(
+      renameDriveObject({ objectId, name: "renamed.pdf" }, fetchImpl),
+    ).resolves.toMatchObject({
       name: "renamed.pdf",
     });
     await expect(listDriveVersions(objectId, fetchImpl)).resolves.toEqual([version]);
-    await expect(revertDriveVersion(objectId, 2, fetchImpl)).resolves.toMatchObject({ versionNumber: 2 });
-    await expect(createDriveShareLink({ objectId, role: "reader" }, fetchImpl)).resolves.toMatchObject({
+    await expect(revertDriveVersion(objectId, 2, fetchImpl)).resolves.toMatchObject({
+      versionNumber: 2,
+    });
+    await expect(
+      createDriveShareLink({ objectId, role: "reader" }, fetchImpl),
+    ).resolves.toMatchObject({
       token: "pubtoken123",
     });
     await expect(listDriveShareLinks(objectId, fetchImpl)).resolves.toEqual([link]);
@@ -515,8 +521,16 @@ describe("drive API", () => {
     );
 
     expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/drive.rename", expect.anything());
-    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/drive.versions.list", expect.anything());
-    expect(fetchImpl).toHaveBeenNthCalledWith(3, "/api/tools/drive.versions.revert", expect.anything());
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "/api/tools/drive.versions.list",
+      expect.anything(),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      "/api/tools/drive.versions.revert",
+      expect.anything(),
+    );
     expect(fetchImpl).toHaveBeenNthCalledWith(4, "/api/tools/drive.link.create", expect.anything());
     expect(fetchImpl).toHaveBeenNthCalledWith(5, "/api/tools/drive.link.list", expect.anything());
     expect(fetchImpl).toHaveBeenNthCalledWith(6, "/api/tools/drive.link.revoke", expect.anything());

@@ -78,6 +78,7 @@ describe("drive tools", () => {
         "drive.trash",
         "drive.upload",
         "drive.upload.complete",
+        "drive.upload.status",
         "drive.versions.list",
         "drive.versions.revert",
       ].sort(),

@@ -34,6 +34,23 @@ export const objectKind = pgEnum("object_kind", [
   "recording",
   "other",
 ]);
+export const driveUploadState = pgEnum("drive_upload_state", [
+  "pending_upload",
+  "uploaded",
+  "scanning",
+  "active",
+  "quarantined",
+  "scan_failed",
+  "trashed",
+]);
+export const driveScanJobStatus = pgEnum("drive_scan_job_status", [
+  "pending",
+  "running",
+  "retry_scheduled",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 export const threadKind = pgEnum("thread_kind", [
   "mail",
   "chat_room",
@@ -362,6 +379,9 @@ export const objects = pgTable(
     mimeType: text("mime_type").notNull(),
     byteSize: integer("byte_size").notNull(),
     sha256: text("sha256"),
+    uploadState: driveUploadState("upload_state").default("active").notNull(),
+    uploadDeclaredByteSize: numeric("upload_declared_byte_size"),
+    uploadDeclaredSha256: text("upload_declared_sha256"),
     classification: text("classification").default("internal").notNull(),
     metadata: jsonb("metadata").default({}).notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -370,6 +390,39 @@ export const objects = pgTable(
   (table) => ({
     orgKindIdx: index("objects_org_kind_idx").on(table.orgId, table.kind),
     ownerIdx: index("objects_owner_actor_idx").on(table.ownerActorId),
+  }),
+);
+
+export const driveScanJobs = pgTable(
+  "drive_scan_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    objectId: uuid("object_id")
+      .notNull()
+      .references(() => objects.id, { onDelete: "cascade" }),
+    versionId: uuid("version_id")
+      .notNull()
+      .references(() => driveVersions.id, { onDelete: "cascade" }),
+    requestedByActorId: uuid("requested_by_actor_id").references(() => actors.id),
+    status: driveScanJobStatus("status").default("pending").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(5).notNull(),
+    availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    scanEvidence: jsonb("scan_evidence").default({}).notNull(),
+    lastErrorCode: text("last_error_code"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => ({
+    versionIdx: uniqueIndex("drive_scan_jobs_version_unique").on(table.versionId),
+    orgObjectIdx: index("drive_scan_jobs_org_object_idx").on(
+      table.orgId,
+      table.objectId,
+      table.createdAt,
+    ),
   }),
 );
 

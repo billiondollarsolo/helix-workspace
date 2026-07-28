@@ -33,10 +33,7 @@ function objectRow(overrides: { owner?: string } = {}) {
  * Nested canReadObjectSql fragments surface the actorId; the outer select
  * uses that actor to decide visibility.
  */
-function createAuthzSql(options: {
-  grants: Readonly<Record<string, string>>;
-  ownerId?: string;
-}) {
+function createAuthzSql(options: { grants: Readonly<Record<string, string>>; ownerId?: string }) {
   const owner = options.ownerId ?? ownerId;
   let lastAclActorId: string | undefined;
 

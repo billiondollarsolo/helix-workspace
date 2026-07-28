@@ -121,6 +121,7 @@ import {
   createOpenAICompatibleEmbeddingProvider,
   createOpenAICompatibleProvider,
   createVertexProvider,
+  deriveClassification,
   ioredisAICostClient,
   PostgresAICostLimitStore,
   PostgresAIProvenanceStore,
@@ -202,12 +203,16 @@ import type { SiemAuditFormat } from "./platform/audit/siem-format.js";
 import type { SiemSyslogTransport } from "./platform/audit/siem-syslog.js";
 import {
   ClamavScanner,
+  createDispatchAuthorizedAttachmentResolver,
   DispatchTimeTransportResolver,
+  ingestRawMail,
+  MailQuarantineService,
   MailDeliveryAlertMonitor,
   NodemailerMailTransport,
   OutboundMailDispatcher,
   OutboundMailWorker,
   PostgresMailDeliveryEventStore,
+  PostgresMailQuarantineStore,
   PostgresMailStore,
   PostgresMailDkimKeyStore,
   PostgresMailDmarcReportStore,
@@ -222,11 +227,13 @@ import {
   registerMailEnrichments,
   registerMailIndexer,
   registerMailProviderWebhookRoutes,
+  registerMailQuarantineAdminRoutes,
   registerMailStreamRoutes,
   registerMailTools,
   createSmtpRecipientResolver,
   SmtpMailReceiver,
   SpamdScanner,
+  quarantineReleaseScannerFromAntivirus,
   withOutboundRoutingInvalidation,
 } from "./platform/mail/index.js";
 import { mailConfig } from "./platform/mail/config.js";
@@ -1655,6 +1662,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const mailStore = new PostgresMailStore(sql, {
     storageResolver: driveStorageResolver,
   });
+  const mailQuarantineStore = new PostgresMailQuarantineStore(sql);
   const officePreviewConverter =
     driveConfig.officePreview.url === undefined
       ? driveConfig.officePreview.localFallback
@@ -1854,17 +1862,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
             outboundTransportResolver.transportFor,
             {
               // Stream/large attachments referenced by Drive objectId (G8 / Mail A2.5).
-              resolveAttachment: async (objectId, context) => {
-                const file = await driveStore.readFile({
-                  orgId: context.orgId,
-                  actorId: context.actorId,
-                  objectId,
-                });
-                if (file?.content == null) {
-                  throw new Error(`Drive attachment ${objectId} is unavailable.`);
-                }
-                return Buffer.from(file.content);
-              },
+              resolveAttachment: createDispatchAuthorizedAttachmentResolver({
+                readFile: (input) => driveStore.readFile(input),
+              }),
               suppressionStore: mailDeliveryEventStore,
             },
           ),
@@ -1902,6 +1902,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // Config-gated inbound content scanners: spamd (SpamAssassin) and ClamAV.
   const spamdScannerConfig = mailCfg.spamd;
   const clamavScannerConfig = mailCfg.clamav;
+  const mailAntivirusScanner =
+    clamavScannerConfig === undefined
+      ? undefined
+      : new ClamavScanner({
+          ...clamavScannerConfig,
+          tier: securityTier,
+          metrics,
+        });
   const smtpMailReceiver =
     smtpMailReceiverConfig === undefined
       ? undefined
@@ -1915,8 +1923,29 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           logger: app.log,
           scanners: {
             ...(spamdScannerConfig ? { spam: new SpamdScanner(spamdScannerConfig) } : {}),
-            ...(clamavScannerConfig ? { antivirus: new ClamavScanner(clamavScannerConfig) } : {}),
+            ...(mailAntivirusScanner === undefined ? {} : { antivirus: mailAntivirusScanner }),
+            tier: securityTier,
           },
+          quarantineStore: mailQuarantineStore,
+        });
+  const mailQuarantineService =
+    mailAntivirusScanner === undefined
+      ? undefined
+      : new MailQuarantineService({
+          store: mailQuarantineStore,
+          scanner: quarantineReleaseScannerFromAntivirus(mailAntivirusScanner),
+          deliver: async (record, rawMessage) => {
+            await ingestRawMail({
+              store: mailStore,
+              input: {
+                orgId: record.orgId,
+                raw: rawMessage,
+                envelopeTo: record.envelopeTo,
+                ...(record.envelopeFrom === null ? {} : { envelopeFrom: record.envelopeFrom }),
+              },
+            });
+          },
+          auditSink: auditStore,
         });
   const outboundWebhookWorker = new OutboundWebhookWorker({
     store: webhookStore,
@@ -2465,6 +2494,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ...(runtimeSearchEngine === undefined ? {} : { search: runtimeSearchEngine }),
     confirmationGate,
     slashCommands: new AssistantSlashCommandHooks(),
+    classifyUserInput: async ({ content }) =>
+      deriveClassification({ content, scanContent: true }).classification,
+    blockHighRiskToolsWhenUntrusted: securityTier !== "personal",
   });
   if (coreApps.shouldRegister("assistant")) {
     registerAssistantTools(tools, {
@@ -2721,6 +2753,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
       auditSink: auditStore,
     });
+    if (mailQuarantineService !== undefined) {
+      await registerMailQuarantineAdminRoutes(app, {
+        service: mailQuarantineService,
+        actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      });
+    }
   }
   // Core-app enablement admin API: org admins view/toggle which core apps are
   // enabled org-wide. Toggling writes `config.modules[appId].enabled` through

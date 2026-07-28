@@ -33,6 +33,7 @@
     "quality:live-restore-drill": "bash infra/scripts/live-restore-drill-smoke.sh",
     "quality:mail-deliverability-smoke": "node infra/scripts/mail-deliverability-smoke.mjs",
     "quality:mail-live-evidence": "node infra/scripts/mail-live-evidence-smoke.mjs",
+    "quality:chat-live-evidence": "node infra/scripts/chat-live-evidence-smoke.mjs",
     "quality:agent-live-evidence": "node infra/scripts/agent-live-evidence-smoke.mjs",
     "quality:release-readiness-manifest": "node infra/scripts/release-readiness-manifest.mjs",
     "quality:production-images": "node infra/scripts/validate-production-images.mjs",

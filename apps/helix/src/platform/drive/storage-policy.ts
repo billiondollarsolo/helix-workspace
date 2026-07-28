@@ -9,6 +9,18 @@ export interface DriveStorageEncryptionEvidence {
   readonly serverSideEncryptionAwsKmsKeyId: string | null;
 }
 
+export function driveStorageEncryptionPolicyForTenant(input: {
+  readonly byoConfig: unknown;
+  readonly defaultPolicy: DriveStorageEncryptionPolicy | undefined;
+}): DriveStorageEncryptionPolicy | undefined {
+  const root = record(input.byoConfig);
+  const storage = record(root?.storage);
+  const encryption = record(storage?.encryption);
+  const kmsKeyId =
+    typeof encryption?.sse_kms_key_arn === "string" ? encryption.sse_kms_key_arn.trim() : "";
+  return kmsKeyId.length > 0 ? { mode: "aws:kms", kmsKeyId } : input.defaultPolicy;
+}
+
 export function assertDriveStorageEncryption(
   policy: DriveStorageEncryptionPolicy,
   evidence: DriveStorageEncryptionEvidence | null,
@@ -27,4 +39,10 @@ export function assertDriveStorageEncryption(
   ) {
     throw new Error("Drive storage KMS key evidence does not match the tenant policy.");
   }
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
 }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { assertDriveStorageEncryption } from "./storage-policy.js";
+import {
+  assertDriveStorageEncryption,
+  driveStorageEncryptionPolicyForTenant,
+} from "./storage-policy.js";
 
 describe("Drive storage encryption policy", () => {
   it("accepts matching SSE-S3 and tenant KMS evidence", () => {
@@ -39,5 +42,22 @@ describe("Drive storage encryption policy", () => {
         },
       );
     }).toThrow(/tenant policy/u);
+  });
+
+  it("selects a tenant KMS key without leaking the default tenant policy", () => {
+    expect(
+      driveStorageEncryptionPolicyForTenant({
+        byoConfig: {
+          storage: { encryption: { sse_kms_key_arn: "kms-tenant-a" } },
+        },
+        defaultPolicy: { mode: "AES256" },
+      }),
+    ).toEqual({ mode: "aws:kms", kmsKeyId: "kms-tenant-a" });
+    expect(
+      driveStorageEncryptionPolicyForTenant({
+        byoConfig: {},
+        defaultPolicy: { mode: "AES256" },
+      }),
+    ).toEqual({ mode: "AES256" });
   });
 });

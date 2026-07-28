@@ -570,6 +570,15 @@ export function assertProductionConfiguration(environment: Env): void {
         message: "must be AES256 or aws:kms for Business storage",
       });
     }
+    if (
+      environment.RUSTFS_SERVER_SIDE_ENCRYPTION === "aws:kms" &&
+      normalized(environment.RUSTFS_SSE_KMS_KEY_ID) === undefined
+    ) {
+      issues.push({
+        variable: "RUSTFS_SSE_KMS_KEY_ID",
+        message: "is required when Business storage uses aws:kms",
+      });
+    }
     if (flag(environment.DRIVE_CLAMAV_ENABLED) !== true) {
       issues.push({
         variable: "DRIVE_CLAMAV_ENABLED",

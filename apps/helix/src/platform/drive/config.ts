@@ -7,6 +7,7 @@ export interface DriveStorageConfig {
   readonly accessKeyId: string;
   readonly secretAccessKey: string;
   readonly serverSideEncryption?: "AES256" | "aws:kms";
+  readonly serverSideEncryptionAwsKmsKeyId?: string;
   readonly forcePathStyle: boolean;
 }
 
@@ -35,6 +36,12 @@ export interface DriveConfig {
   readonly contentAddressedDedup: boolean;
   readonly multipartThresholdBytes: number;
   readonly multipartPartSizeBytes: number;
+  readonly gc: {
+    readonly enabled: boolean;
+    readonly intervalMs: number;
+    readonly orphanGraceHours: number;
+    readonly batchSize: number;
+  };
   readonly chromiumPath?: string;
   readonly isProduction: boolean;
 }
@@ -84,6 +91,12 @@ export function loadDriveConfig(e: Env = env()): DriveConfig {
     e.RUSTFS_ENDPOINT ??
     (e.RUSTFS_API_PORT === undefined ? undefined : `http://localhost:${e.RUSTFS_API_PORT}`);
   const serverSideEncryption = parseServerSideEncryption(e.RUSTFS_SERVER_SIDE_ENCRYPTION);
+  if (serverSideEncryption === "aws:kms" && e.RUSTFS_SSE_KMS_KEY_ID === undefined) {
+    throw new Error("RUSTFS_SSE_KMS_KEY_ID is required when Drive storage uses aws:kms.");
+  }
+  if (serverSideEncryption !== "aws:kms" && e.RUSTFS_SSE_KMS_KEY_ID !== undefined) {
+    throw new Error("RUSTFS_SSE_KMS_KEY_ID requires RUSTFS_SERVER_SIDE_ENCRYPTION=aws:kms.");
+  }
   const scannerEnabled = coerceBool(e.DRIVE_CLAMAV_ENABLED, false);
   const scannerTimeoutMs = parsePositiveInteger(e.DRIVE_CLAMAV_TIMEOUT_MS);
   const scannerMaxBytes = parsePositiveInteger(e.DRIVE_CLAMAV_MAX_BYTES);
@@ -96,6 +109,9 @@ export function loadDriveConfig(e: Env = env()): DriveConfig {
       accessKeyId: e.RUSTFS_ACCESS_KEY,
       secretAccessKey: e.RUSTFS_SECRET_KEY,
       ...(serverSideEncryption === undefined ? {} : { serverSideEncryption }),
+      ...(e.RUSTFS_SSE_KMS_KEY_ID === undefined
+        ? {}
+        : { serverSideEncryptionAwsKmsKeyId: e.RUSTFS_SSE_KMS_KEY_ID }),
       forcePathStyle: true,
     },
     malwareScanner: scannerEnabled
@@ -124,6 +140,12 @@ export function loadDriveConfig(e: Env = env()): DriveConfig {
     contentAddressedDedup: coerceBool(e.HELIX_DRIVE_CONTENT_DEDUP, false),
     multipartThresholdBytes: e.HELIX_DRIVE_MULTIPART_THRESHOLD_BYTES,
     multipartPartSizeBytes: e.HELIX_DRIVE_MULTIPART_PART_SIZE_BYTES,
+    gc: {
+      enabled: coerceBool(e.HELIX_DRIVE_GC_ENABLED, isProduction),
+      intervalMs: e.HELIX_DRIVE_GC_INTERVAL_MS,
+      orphanGraceHours: e.HELIX_DRIVE_GC_ORPHAN_GRACE_HOURS,
+      batchSize: e.HELIX_DRIVE_GC_BATCH_SIZE,
+    },
     ...(e.HELIX_CHROMIUM_PATH === undefined ? {} : { chromiumPath: e.HELIX_CHROMIUM_PATH }),
     isProduction,
   };

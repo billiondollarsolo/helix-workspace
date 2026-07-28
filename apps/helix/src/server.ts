@@ -170,6 +170,8 @@ import {
   assertDriveMalwareScannerReady,
   createClamAvVirusScanner,
   createDriveUploadScanWorker,
+  DriveLifecycleGcWorker,
+  driveStorageEncryptionPolicyForTenant,
   createLocalOfficePreviewConverter,
   createLibreOfficePreviewClient,
   type DrivePreview,
@@ -1627,6 +1629,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
                 serverSideEncryption: parseS3ServerSideEncryption(
                   driveConfig.storage.serverSideEncryption,
                 ),
+                ...(driveConfig.storage.serverSideEncryptionAwsKmsKeyId === undefined
+                  ? {}
+                  : {
+                      serverSideEncryptionAwsKmsKeyId:
+                        driveConfig.storage.serverSideEncryptionAwsKmsKeyId,
+                    }),
               }),
           forcePathStyle: driveConfig.storage.forcePathStyle,
         });
@@ -1724,6 +1732,19 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     contentAddressedDedup: driveConfig.contentAddressedDedup,
     multipartThresholdBytes: driveConfig.multipartThresholdBytes,
     multipartPartSizeBytes: driveConfig.multipartPartSizeBytes,
+    storageEncryptionPolicy: async (orgId) =>
+      driveStorageEncryptionPolicyForTenant({
+        byoConfig: (await orgStore.findById(orgId))?.byoConfig,
+        defaultPolicy:
+          driveConfig.storage.serverSideEncryption === undefined
+            ? undefined
+            : {
+                mode: driveConfig.storage.serverSideEncryption,
+                ...(driveConfig.storage.serverSideEncryptionAwsKmsKeyId === undefined
+                  ? {}
+                  : { kmsKeyId: driveConfig.storage.serverSideEncryptionAwsKmsKeyId }),
+              },
+      }),
     onMeteringError: (error: unknown) => {
       app.log.error({ error }, "Drive storage metering emission failed");
     },
@@ -1731,6 +1752,22 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       app.log.error({ error }, "Drive storage quota event emission failed");
     },
   });
+  const driveLifecycleGcWorker = driveConfig.gc.enabled
+    ? new DriveLifecycleGcWorker({
+        store: driveStore,
+        intervalMs: driveConfig.gc.intervalMs,
+        orphanGraceHours: driveConfig.gc.orphanGraceHours,
+        batchSize: driveConfig.gc.batchSize,
+        onResult: (result) => {
+          if (result.candidates > 0) {
+            app.log.info(result, "Drive lifecycle garbage collection completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Drive lifecycle garbage collection error");
+        },
+      })
+    : undefined;
   const driveVirusScanner =
     driveConfig.malwareScanner === undefined
       ? undefined
@@ -3030,6 +3067,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     await registerDriveRoutes(app, {
       store: driveStore,
       appPasswords: appPasswordStore,
+      requireTls: driveConfig.isProduction,
     });
     await registerDriveShareLinkRoute(app, { store: driveStore });
 
@@ -3363,6 +3401,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     leaderGatedWorkers.push({
       name: "drive-upload-scan-worker",
       worker: driveUploadScanWorker,
+    });
+  }
+  if (driveLifecycleGcWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "drive-lifecycle-gc-worker",
+      worker: driveLifecycleGcWorker,
     });
   }
   if (chatRetentionWorker !== undefined) {
@@ -3965,9 +4009,9 @@ async function createSearchEngine(): Promise<MeilisearchSearchEngine | undefined
   return engine;
 }
 
-function parseS3ServerSideEncryption(value: string): "AES256" {
-  if (value !== "AES256") {
-    throw new TypeError("RUSTFS_SERVER_SIDE_ENCRYPTION must be AES256");
+function parseS3ServerSideEncryption(value: string): "AES256" | "aws:kms" {
+  if (value !== "AES256" && value !== "aws:kms") {
+    throw new TypeError("RUSTFS_SERVER_SIDE_ENCRYPTION must be AES256 or aws:kms");
   }
   return value;
 }

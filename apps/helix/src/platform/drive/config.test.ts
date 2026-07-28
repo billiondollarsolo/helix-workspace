@@ -47,6 +47,27 @@ describe("loadDriveConfig", () => {
     expect(loadDriveConfig(loadEnv(base)).malwareScanner).toBeUndefined();
   });
 
+  it("requires a KMS key with aws:kms and enables bounded production GC", () => {
+    expect(() =>
+      loadDriveConfig(loadEnv({ ...base, RUSTFS_SERVER_SIDE_ENCRYPTION: "aws:kms" })),
+    ).toThrow(/RUSTFS_SSE_KMS_KEY_ID/u);
+    const cfg = loadDriveConfig(
+      loadEnv({
+        ...base,
+        NODE_ENV: "production",
+        RUSTFS_SERVER_SIDE_ENCRYPTION: "aws:kms",
+        RUSTFS_SSE_KMS_KEY_ID: "kms-default",
+      }),
+    );
+    expect(cfg.storage.serverSideEncryptionAwsKmsKeyId).toBe("kms-default");
+    expect(cfg.gc).toEqual({
+      enabled: true,
+      intervalMs: 3_600_000,
+      orphanGraceHours: 24,
+      batchSize: 100,
+    });
+  });
+
   it("parses a bounded ClamAV scanner configuration", () => {
     const cfg = loadDriveConfig(
       loadEnv({

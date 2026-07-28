@@ -4,6 +4,7 @@ export * from "./core/roles.js";
 export * from "./errors.js";
 export * from "./inline-body.js";
 export * from "./lifecycle.js";
+export * from "./lifecycle-worker.js";
 export * from "./multipart.js";
 export * from "./preview.js";
 export * from "./range-response.js";

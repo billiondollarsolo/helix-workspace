@@ -255,6 +255,13 @@ describe("assertProductionConfiguration", () => {
     assertRejected({ RUSTFS_SERVER_SIDE_ENCRYPTION: undefined }, "RUSTFS_SERVER_SIDE_ENCRYPTION");
   });
 
+  it("requires a concrete default KMS key when Business storage selects aws:kms", () => {
+    assertRejected(
+      { RUSTFS_SERVER_SIDE_ENCRYPTION: "aws:kms", RUSTFS_SSE_KMS_KEY_ID: undefined },
+      "RUSTFS_SSE_KMS_KEY_ID",
+    );
+  });
+
   it.each([
     ["DRIVE_CLAMAV_ENABLED", "false"],
     ["DRIVE_CLAMAV_HOST", undefined],

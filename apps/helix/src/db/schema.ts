@@ -1123,7 +1123,13 @@ export const mailOutboundMessages = pgTable(
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     failedAt: timestamp("failed_at", { withTimezone: true }),
     lastError: text("last_error"),
+    providerId: text("provider_id"),
+    providerKind: text("provider_kind"),
+    providerDecisionSource: text("provider_decision_source"),
+    providerDecidedAt: timestamp("provider_decided_at", { withTimezone: true }),
     providerMessageId: text("provider_message_id"),
+    deliveryStatus: text("delivery_status"),
+    deliveryEventAt: timestamp("delivery_event_at", { withTimezone: true }),
     deliveryMetadata: jsonb("delivery_metadata").default({}).notNull(),
     ...timestamps,
   },
@@ -1144,6 +1150,7 @@ export const mailOutboundProviders = pgTable(
     isDefault: boolean("is_default").default(false).notNull(),
     config: jsonb("config").default({}).notNull(),
     secretRef: text("secret_ref"),
+    webhookSecretRef: text("webhook_secret_ref"),
     createdBy: uuid("created_by"),
     ...timestamps,
   },
@@ -1176,6 +1183,72 @@ export const mailSendingDomains = pgTable(
     orgDefaultIdx: uniqueIndex("mail_sending_domains_org_default_idx")
       .on(table.orgId)
       .where(sql`${table.isDefault}`),
+  }),
+);
+
+export const mailProviderDeliveryEvents = pgTable(
+  "mail_provider_delivery_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    providerId: uuid("provider_id")
+      .notNull()
+      .references(() => mailOutboundProviders.id, { onDelete: "restrict" }),
+    outboundId: uuid("outbound_id").references(() => mailOutboundMessages.id, {
+      onDelete: "set null",
+    }),
+    providerEventId: text("provider_event_id").notNull(),
+    providerMessageId: text("provider_message_id").notNull(),
+    normalizedRecipient: text("normalized_recipient").notNull(),
+    eventType: text("event_type").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idempotencyIdx: uniqueIndex("mail_provider_delivery_events_idempotency_idx").on(
+      table.orgId,
+      table.providerId,
+      table.providerEventId,
+    ),
+    outboundIdx: index("mail_provider_delivery_events_outbound_idx").on(
+      table.orgId,
+      table.outboundId,
+      table.occurredAt,
+      table.id,
+    ),
+    thresholdIdx: index("mail_provider_delivery_events_threshold_idx").on(
+      table.orgId,
+      table.eventType,
+      table.occurredAt,
+    ),
+  }),
+);
+
+export const mailSuppressions = pgTable(
+  "mail_suppressions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    normalizedRecipient: text("normalized_recipient").notNull(),
+    reason: text("reason").notNull(),
+    sourceEventId: uuid("source_event_id")
+      .notNull()
+      .references(() => mailProviderDeliveryEvents.id, { onDelete: "restrict" }),
+    clearedAt: timestamp("cleared_at", { withTimezone: true }),
+    clearedBy: uuid("cleared_by").references(() => actors.id),
+    clearReason: text("clear_reason"),
+    ...timestamps,
+  },
+  (table) => ({
+    activeRecipientIdx: uniqueIndex("mail_suppressions_org_recipient_active_idx")
+      .on(table.orgId, table.normalizedRecipient)
+      .where(sql`${table.clearedAt} is null`),
+    orgCreatedIdx: index("mail_suppressions_org_created_idx").on(table.orgId, table.createdAt),
   }),
 );
 

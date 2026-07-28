@@ -202,9 +202,12 @@ import type { SiemAuditFormat } from "./platform/audit/siem-format.js";
 import type { SiemSyslogTransport } from "./platform/audit/siem-syslog.js";
 import {
   ClamavScanner,
+  DispatchTimeTransportResolver,
+  MailDeliveryAlertMonitor,
   NodemailerMailTransport,
   OutboundMailDispatcher,
   OutboundMailWorker,
+  PostgresMailDeliveryEventStore,
   PostgresMailStore,
   PostgresMailDkimKeyStore,
   PostgresMailDmarcReportStore,
@@ -215,14 +218,16 @@ import {
   MailAdminStatusService,
   registerMailAdminRoutes,
   registerMailDeliveryAdminRoutes,
+  registerMailDeliveryEventAdminRoutes,
   registerMailEnrichments,
   registerMailIndexer,
+  registerMailProviderWebhookRoutes,
   registerMailStreamRoutes,
   registerMailTools,
   createSmtpRecipientResolver,
-  resolveOutboundTransport,
   SmtpMailReceiver,
   SpamdScanner,
+  withOutboundRoutingInvalidation,
 } from "./platform/mail/index.js";
 import { mailConfig } from "./platform/mail/config.js";
 import {
@@ -1806,38 +1811,63 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const mailAppRegistered = coreApps.shouldRegister("mail");
   const mailCfg = mailConfig(bootEnv, securityTier);
   const outboundMailConfig = mailAppRegistered ? mailCfg.outbound : undefined;
-  // Resolve the org's configured outbound provider (SES/Mailgun/SMTP/Postmark)
-  // when one is set; otherwise fall back to the env-configured SMTP relay.
-  const outboundMailOrgId = mailCfg.defaultOrgId;
-  const outboundMailTransport =
-    outboundMailConfig === undefined
-      ? undefined
-      : await resolveOutboundTransport({
-          orgId: outboundMailOrgId,
-          providerStore: new PostgresOutboundProviderStore(sql),
-          fallbackTransport: new NodemailerMailTransport(outboundMailConfig),
-          // Pass validated env as the secret lookup table (no process.env in mail/*).
-          env: bootEnv as unknown as Record<string, string | undefined>,
+  const outboundProviderStore = new PostgresOutboundProviderStore(sql);
+  const sendingDomainStore = new PostgresSendingDomainStore(sql);
+  const mailDeliveryEventStore = new PostgresMailDeliveryEventStore(sql);
+  const validatedMailSecrets = bootEnv as unknown as Readonly<Record<string, string | undefined>>;
+  const mailSecretProvider = {
+    resolveSecret: async (reference: string): Promise<string | undefined> =>
+      /^[A-Z][A-Z0-9_]*$/u.test(reference) ? validatedMailSecrets[reference] : undefined,
+  };
+  const environmentOutboundTransport =
+    outboundMailConfig === undefined ? undefined : new NodemailerMailTransport(outboundMailConfig);
+  const outboundTransportResolver = !mailAppRegistered
+    ? undefined
+    : new DispatchTimeTransportResolver({
+        providerStore: outboundProviderStore,
+        domainStore: sendingDomainStore,
+        secrets: mailSecretProvider,
+        ...(outboundMailConfig === undefined
+          ? {}
+          : {
+              environmentFallback: {
+                id: "validated-smtp-relay",
+                kind: "smtp",
+                managed: true,
+                buildTransport: async () => new NodemailerMailTransport(outboundMailConfig),
+              },
+            }),
+      });
+  const mailAdminRoutingStores =
+    outboundTransportResolver === undefined
+      ? { providerStore: outboundProviderStore, domainStore: sendingDomainStore }
+      : withOutboundRoutingInvalidation(outboundProviderStore, sendingDomainStore, (orgId) => {
+          outboundTransportResolver.invalidateOrg(orgId);
         });
   const outboundMailWorker =
-    outboundMailTransport === undefined
+    outboundTransportResolver === undefined
       ? undefined
       : new OutboundMailWorker({
           events: eventBus,
-          dispatcher: new OutboundMailDispatcher(mailStore, outboundMailTransport, {
-            // Stream/large attachments referenced by Drive objectId (G8 / Mail A2.5).
-            resolveAttachment: async (objectId, context) => {
-              const file = await driveStore.readFile({
-                orgId: context.orgId,
-                actorId: context.actorId,
-                objectId,
-              });
-              if (file?.content == null) {
-                throw new Error(`Drive attachment ${objectId} is unavailable.`);
-              }
-              return Buffer.from(file.content);
+          dispatcher: new OutboundMailDispatcher(
+            mailStore,
+            outboundTransportResolver.transportFor,
+            {
+              // Stream/large attachments referenced by Drive objectId (G8 / Mail A2.5).
+              resolveAttachment: async (objectId, context) => {
+                const file = await driveStore.readFile({
+                  orgId: context.orgId,
+                  actorId: context.actorId,
+                  objectId,
+                });
+                if (file?.content == null) {
+                  throw new Error(`Drive attachment ${objectId} is unavailable.`);
+                }
+                return Buffer.from(file.content);
+              },
+              suppressionStore: mailDeliveryEventStore,
             },
-          }),
+          ),
           onError: (error) => {
             app.log.error({ error }, "Outbound mail dispatch error");
           },
@@ -1847,22 +1877,22 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     name: mailCfg.signupFrom.name,
   };
   const signupVerificationEmailWorker =
-    outboundMailTransport === undefined
+    environmentOutboundTransport === undefined
       ? undefined
       : new SignupVerificationEmailWorker({
           events: eventBus,
-          transport: outboundMailTransport,
+          transport: environmentOutboundTransport,
           from: signupFromAddress,
           onError: (error) => {
             app.log.error({ error }, "Signup verification email delivery error");
           },
         });
   const signupOnboardingInviteEmailWorker =
-    outboundMailTransport === undefined
+    environmentOutboundTransport === undefined
       ? undefined
       : new SignupOnboardingInviteEmailWorker({
           events: eventBus,
-          transport: outboundMailTransport,
+          transport: environmentOutboundTransport,
           from: signupFromAddress,
           onError: (error) => {
             app.log.error({ error }, "Signup onboarding invite email delivery error");
@@ -2654,11 +2684,40 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     });
     await registerMailDeliveryAdminRoutes(app, {
-      providerStore: new PostgresOutboundProviderStore(sql),
-      domainStore: new PostgresSendingDomainStore(sql),
+      providerStore: mailAdminRoutingStores.providerStore,
+      domainStore: mailAdminRoutingStores.domainStore,
       dkimStore: new PostgresMailDkimKeyStore(sql),
       dmarcStore: new PostgresMailDmarcReportStore(sql),
       routingStore: new PostgresMailRoutingRuleStore(sql),
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      auditSink: auditStore,
+    });
+    const mailDeliveryAlertMonitor = new MailDeliveryAlertMonitor({
+      store: mailDeliveryEventStore,
+      emit: (alert) => {
+        app.log.warn(
+          {
+            orgId: alert.orgId,
+            category: alert.category,
+            count: alert.count,
+            threshold: alert.threshold,
+            windowMinutes: alert.windowMinutes,
+          },
+          "Managed mail provider delivery threshold reached",
+        );
+      },
+    });
+    await registerMailProviderWebhookRoutes(app, {
+      providerStore: mailAdminRoutingStores.providerStore,
+      deliveryStore: mailDeliveryEventStore,
+      secrets: mailSecretProvider,
+      alertMonitor: mailDeliveryAlertMonitor,
+      onSignatureFailure: ({ orgId, providerId }) => {
+        app.log.warn({ orgId, providerId }, "Rejected managed mail provider webhook signature");
+      },
+    });
+    await registerMailDeliveryEventAdminRoutes(app, {
+      store: mailDeliveryEventStore,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
       auditSink: auditStore,
     });

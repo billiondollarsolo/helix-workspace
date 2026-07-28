@@ -58,6 +58,7 @@ export interface LLMChatMetrics {
     readonly feature: string;
     readonly providerId: string;
     readonly model: string;
+    readonly classification: AIClassification;
     readonly status: LLMMetricStatus;
     readonly durationSeconds: number;
     readonly fallback: boolean;
@@ -322,6 +323,7 @@ export class AIRouter implements AICapability {
           status: "error",
           durationSeconds: durationSecondsSince(started),
           fallback: attempt.fallback,
+          classification,
           errorType: errorName(error),
         });
         lastError = error;
@@ -441,6 +443,7 @@ export class AIRouter implements AICapability {
       status: "success",
       durationSeconds: durationSecondsSince(input.started),
       fallback: input.attempt.fallback,
+      classification: input.classification,
       costCents,
     });
     input.span.setAttribute("llm.provider", input.providerId);
@@ -546,6 +549,7 @@ export class AIRouter implements AICapability {
           status: "success",
           durationSeconds: durationSecondsSince(started),
           fallback: attempt.fallback,
+          classification,
           costCents,
         });
         span.setAttribute("llm.provider", output.providerId);
@@ -603,6 +607,7 @@ export class AIRouter implements AICapability {
           status: "error",
           durationSeconds: durationSecondsSince(started),
           fallback: attempt.fallback,
+          classification,
           errorType: errorName(error),
         });
         lastError = error;
@@ -960,16 +965,22 @@ export function providerAllowedForClassification(
   if (policy.localAiOnly === true || policy.tier === "sovereign") {
     return providerIsLocalOnly(provider);
   }
-  if (policy.classificationEnabled === false || classification === "public") {
-    return true;
-  }
-  if (classification === "standard") {
+  if (classification === "public") {
     return true;
   }
   if (classification === "confidential") {
     return providerHasAnyTag(provider, confidentialProviderTags);
   }
-  return providerIsLocalOnly(provider);
+  if (classification === "restricted") {
+    return providerIsLocalOnly(provider);
+  }
+  if (policy.classificationEnabled !== true) {
+    return true;
+  }
+  return (
+    providerHasAnyTag(provider, ["admin-allowlisted"]) ||
+    providerHasAnyTag(provider, confidentialProviderTags)
+  );
 }
 
 export function assertClassificationAllowed(

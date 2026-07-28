@@ -1510,6 +1510,72 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
       registry.invoke("relaxed.override", {}, { actor, credentialPolicy }),
     ).resolves.toMatchObject({ ok: true });
   });
+
+  it("provides a content-free dry-run explanation with stable firewall reasons", async () => {
+    const registry = createToolRegistry();
+    registry.register(
+      tool({
+        id: "policy.explain-target",
+        permission: "platform.read",
+        sideEffects: "write",
+        handler: async () => ({ ok: true }),
+      }),
+    );
+    const credentialPolicy = {
+      version: "7",
+      automationPolicy: {
+        version: "7",
+        rules: [
+          {
+            id: "room-rule",
+            toolId: "policy.explain-target",
+            action: "platform.read",
+            resourceIds: ["room-1"],
+            recipients: [],
+            targets: [],
+            activeFrom: "2020-01-01T00:00:00.000Z",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+            requestsPerMinute: 1,
+            requestsPerDay: 5,
+          },
+        ],
+      },
+    };
+    const policyContext = {
+      effectiveClassification: "confidential" as const,
+      sourceIds: ["mail-1"],
+      containsUntrustedContext: true,
+      requestChannel: "mcp" as const,
+    };
+
+    await expect(
+      registry.explainPolicy(
+        "policy.explain-target",
+        { roomId: "room-1", body: "never echo this content" },
+        { actor, credentialId: "credential-1", credentialPolicy, policyContext },
+      ),
+    ).resolves.toEqual({
+      toolId: "policy.explain-target",
+      effectiveClassification: "confidential",
+      requestChannel: "mcp",
+      sourceIds: ["mail-1"],
+      decision: { outcome: "allow-automation", reason: "automation_policy_match" },
+    });
+    await expect(
+      registry.explainPolicy(
+        "policy.explain-target",
+        { roomId: "room-2", body: "never echo this content" },
+        { actor, credentialId: "credential-1", credentialPolicy, policyContext },
+      ),
+    ).resolves.toMatchObject({
+      decision: { outcome: "queue-confirmation", reason: "automation_policy_no_match" },
+    });
+    await expect(
+      registry.explainPolicy("unknown.tool", {}, { actor, policyContext }),
+    ).resolves.toMatchObject({
+      decision: { outcome: "deny", reason: "unknown_tool" },
+    });
+  });
 });
 
 describe("featureFlagForTool", () => {

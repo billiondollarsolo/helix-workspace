@@ -158,6 +158,13 @@ async function dispatchMcpJsonRpcRequest(
       }
       const result = await input.tools.invoke(params.name, params.arguments ?? {}, {
         ...toolInvocationOptions(input.principal, input.request),
+        policyContext: {
+          effectiveClassification: "standard",
+          sourceIds: [],
+          containsUntrustedContext: false,
+          requestChannel: "mcp",
+          tenantId: input.principal.actor.orgId,
+        },
         enforceConfirmation: true,
       });
       if (!result.ok) {

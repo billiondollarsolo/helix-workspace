@@ -46,6 +46,14 @@ const toolCallSchema = z.object({
   toolId: z.string().min(1),
   input: z.unknown().optional(),
 });
+const toolPolicyExplainSchema = toolCallSchema.extend({
+  effectiveClassification: z
+    .enum(["public", "standard", "confidential", "restricted"])
+    .default("standard"),
+  sourceIds: z.array(z.string().min(1).max(512)).max(100).default([]),
+  containsUntrustedContext: z.boolean().default(false),
+  blockHighRiskWhenUntrusted: z.boolean().default(false),
+});
 
 /**
  * Builds a per-tool tRPC procedure (P1-3). Each registered tool projects into a
@@ -62,6 +70,13 @@ function buildToolProcedure(tools: RuntimeToolRegistry, tool: ToolDefinition) {
   const resolve = async ({ ctx, input }: { ctx: HelixTRPCContext; input: unknown }) => {
     const result = await tools.invoke(tool.id, input, {
       ...toolInvocationOptions(ctx.principal, ctx.request),
+      policyContext: {
+        effectiveClassification: "standard",
+        sourceIds: [],
+        containsUntrustedContext: false,
+        requestChannel: "trpc",
+        tenantId: ctx.principal.actor.orgId,
+      },
       enforceConfirmation: true,
     });
     return unwrapToolResult(result);
@@ -147,11 +162,34 @@ export function createHelixTRPCRouter(input: {
       visible: trpc.procedure.query(async ({ ctx }) => ({
         tools: (await input.tools.listVisible(ctx.principal.actor)).map(projectToolListItem),
       })),
+      explain: adminConfigReadProcedure
+        .input(toolPolicyExplainSchema)
+        .query(async ({ ctx, input: request }) =>
+          input.tools.explainPolicy(request.toolId, request.input, {
+            ...toolInvocationOptions(ctx.principal, ctx.request),
+            policyContext: {
+              effectiveClassification: request.effectiveClassification,
+              sourceIds: request.sourceIds,
+              containsUntrustedContext: request.containsUntrustedContext,
+              requestChannel: "trpc",
+              tenantId: ctx.principal.actor.orgId,
+              blockHighRiskWhenUntrusted: request.blockHighRiskWhenUntrusted,
+            },
+            enforceConfirmation: true,
+          }),
+        ),
       // Generic back-compat procedure — kept so untyped callers and dynamic
       // tooling keep working alongside the per-tool projection below.
       invoke: trpc.procedure.input(toolCallSchema).mutation(async ({ ctx, input: call }) => {
         const result = await input.tools.invoke(call.toolId, call.input, {
           ...toolInvocationOptions(ctx.principal, ctx.request),
+          policyContext: {
+            effectiveClassification: "standard",
+            sourceIds: [],
+            containsUntrustedContext: false,
+            requestChannel: "trpc",
+            tenantId: ctx.principal.actor.orgId,
+          },
           enforceConfirmation: true,
         });
         return unwrapToolResult(result);

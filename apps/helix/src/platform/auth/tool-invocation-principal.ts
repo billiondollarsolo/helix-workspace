@@ -82,6 +82,16 @@ export function toolInvocationOptions(
   return {
     actor: principal.actor,
     ...(request === undefined ? {} : { request }),
+    // REST is the default projection for the shared principal conversion.
+    // MCP, tRPC, Assistant, and pending execution replace this with their
+    // explicit server-known channel before invoking the registry.
+    policyContext: {
+      effectiveClassification: "standard",
+      sourceIds: [],
+      containsUntrustedContext: false,
+      requestChannel: "rest",
+      tenantId: principal.actor.orgId,
+    },
     ...(principal.credentialId === undefined ? {} : { credentialId: principal.credentialId }),
     ...(principal.credentialOwnerActorId === undefined
       ? {}

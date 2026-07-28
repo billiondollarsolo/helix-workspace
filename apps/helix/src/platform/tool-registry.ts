@@ -4,6 +4,7 @@ import type { FeatureFlagProvider } from "@helix/sdk";
 import type {
   AuditRecord,
   Actor,
+  AIClassification,
   JsonObject,
   JsonValue,
   PendingToolInvocation,
@@ -24,6 +25,11 @@ import type { ConfirmationGate } from "./tools/registry.js";
 import type { PendingActionRecord } from "./tools/registry.js";
 import type { AgentAutomationPolicy, AgentCredentialPolicy } from "./auth/credentials.js";
 import { evaluateAutomationPolicy, hashToolInput } from "./tools/automation-policy.js";
+import {
+  evaluateToolPolicyFirewall,
+  type ToolPolicyDecision,
+  type ToolPolicyRequestChannel,
+} from "./tools/policy-firewall.js";
 import type { TierSecurityDefaults } from "@helix/sdk-types";
 import {
   resolveAgentLimitBudget,
@@ -90,12 +96,34 @@ export interface ToolInvokeOptions {
   readonly enforceConfirmation?: boolean;
   readonly estimatedCostUsdMicros?: number;
   /**
+   * Server-derived AI/tool policy context. Source IDs are safe provenance
+   * identifiers only; retrieved contents must never be placed here.
+   */
+  readonly policyContext?: ToolInvocationPolicyContext;
+  /**
    * Per-credential policy overrides (PRD §9.2) resolved from the credential
    * that authenticated the request. When present, `confirmationOverride`
    * overrides the tier confirmation decision and `rateLimitOverrides` adjust
    * the agent rate / cost budget for this invocation.
    */
   readonly credentialPolicy?: CredentialPolicyOverrides;
+}
+
+export interface ToolInvocationPolicyContext {
+  readonly effectiveClassification: AIClassification;
+  readonly sourceIds: readonly string[];
+  readonly containsUntrustedContext: boolean;
+  readonly requestChannel: ToolPolicyRequestChannel;
+  readonly tenantId?: string;
+  readonly blockHighRiskWhenUntrusted?: boolean;
+}
+
+export interface ToolPolicyExplanation {
+  readonly toolId: string;
+  readonly effectiveClassification: AIClassification;
+  readonly requestChannel: ToolPolicyRequestChannel;
+  readonly sourceIds: readonly string[];
+  readonly decision: ToolPolicyDecision;
 }
 
 /**
@@ -166,6 +194,11 @@ export interface RuntimeToolRegistry {
   get(toolId: string): ToolDefinition | undefined;
   list(): readonly ToolDefinition[];
   listVisible(actor: Actor): Promise<readonly ToolDefinition[]>;
+  explainPolicy(
+    toolId: string,
+    rawInput: unknown,
+    options: ToolInvokeOptions,
+  ): Promise<ToolPolicyExplanation>;
   invoke<Output = unknown>(
     toolId: string,
     rawInput: unknown,
@@ -267,6 +300,97 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     async listVisible(actor) {
       const visible = await filterToolsForActor(this.list(), actor, accessPolicy);
       return filterToolsByFeatureFlags(visible, actor);
+    },
+    async explainPolicy(toolId, rawInput, explainOptions) {
+      const actor = explainOptions.actor ?? unauthenticatedActor;
+      const tool = tools.get(toolId);
+      const effectiveClassification =
+        explainOptions.policyContext?.effectiveClassification ?? "standard";
+      const requestChannel = explainOptions.policyContext?.requestChannel ?? "internal";
+      const sourceIds = explainOptions.policyContext?.sourceIds ?? [];
+      if (tool === undefined) {
+        return {
+          toolId,
+          effectiveClassification,
+          requestChannel,
+          sourceIds,
+          decision: evaluateToolPolicyFirewall({
+            actor,
+            tenantId: explainOptions.policyContext?.tenantId ?? actor.orgId,
+            effectiveClassification,
+            sourceProvenance: {
+              sourceIds,
+              containsUntrustedContext:
+                explainOptions.policyContext?.containsUntrustedContext ?? false,
+            },
+            requestChannel,
+            tier: agentLimitTier,
+            scopeAllowed: false,
+            featureEnabled: false,
+            confirmationRequired: true,
+          }),
+        };
+      }
+      const scopeAllowed = await accessPolicy.can(actor, tool.permission, toolResource(tool));
+      const featureEnabled = (await evaluateToolFeatureFlag(tool, actor)).enabled;
+      let parsedInput: unknown = rawInput;
+      let inputAllowed = true;
+      try {
+        parsedInput = tool.inputSchema.parse(rawInput);
+      } catch {
+        inputAllowed = false;
+      }
+      const compositionAllowed = inputAllowed && checkScopeComposition(actor, tool, parsedInput).ok;
+      const automationDecision =
+        actor.type === "agent" && tool.sideEffects !== "read" && inputAllowed
+          ? evaluateAutomationPolicy({
+              policy:
+                explainOptions.credentialId === undefined
+                  ? null
+                  : explainOptions.credentialPolicy?.automationPolicy,
+              tool,
+              parsedInput,
+            })
+          : null;
+      const confirmationRequired =
+        (actor.type === "agent" ||
+          explainOptions.enforceConfirmation === true ||
+          requestChannel === "assistant") &&
+        shouldQueueConfirmation({
+          tool,
+          actor,
+          defaults: confirmationDefaults,
+          skipConfirmation: explainOptions.skipConfirmation,
+          approvedPendingExecution: explainOptions.pendingActionId !== undefined,
+          confirmationOverride: explainOptions.credentialPolicy?.confirmationOverride,
+          automationAllowed: automationDecision?.allowed === true,
+        });
+      return {
+        toolId,
+        effectiveClassification,
+        requestChannel,
+        sourceIds,
+        decision: evaluateToolPolicyFirewall({
+          actor,
+          tenantId: explainOptions.policyContext?.tenantId ?? actor.orgId,
+          tool,
+          effectiveClassification,
+          sourceProvenance: {
+            sourceIds,
+            containsUntrustedContext:
+              explainOptions.policyContext?.containsUntrustedContext ?? false,
+          },
+          requestChannel,
+          tier: agentLimitTier,
+          scopeAllowed: scopeAllowed && compositionAllowed,
+          featureEnabled,
+          confirmationRequired,
+          automationDecision,
+          approvedPendingExecution: explainOptions.pendingActionId !== undefined,
+          blockHighRiskWhenUntrusted:
+            explainOptions.policyContext?.blockHighRiskWhenUntrusted ?? false,
+        }),
+      };
     },
     async invoke<Output = unknown>(
       toolId: string,
@@ -417,6 +541,21 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
             { actor, tool, toolId, start, status: "denied", invokeOptions },
           );
         }
+        const policyExplanation = await registry.explainPolicy(toolId, input, {
+          ...(invokeOptions ?? {}),
+          actor,
+        });
+        if (policyExplanation.decision.outcome === "deny") {
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 403,
+              error: `Tool policy denied invocation: ${policyExplanation.decision.reason}`,
+            },
+            { actor, tool, toolId, start, status: "denied", invokeOptions },
+          );
+        }
         const rateLimitOverrides =
           automationDecision?.allowed === true
             ? automationRateLimitOverrides(
@@ -450,16 +589,17 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         );
         const confirmationGate = registryOptionsConfirmationGate();
         const queueRequired =
-          (actor.type === "agent" || invokeOptions?.enforceConfirmation === true) &&
-          shouldQueueConfirmation({
-            tool,
-            actor,
-            defaults: confirmationDefaults,
-            skipConfirmation: invokeOptions?.skipConfirmation,
-            approvedPendingExecution: invokeOptions?.pendingActionId !== undefined,
-            confirmationOverride: invokeOptions?.credentialPolicy?.confirmationOverride,
-            automationAllowed: automationDecision?.allowed === true,
-          });
+          policyExplanation.decision.outcome === "queue-confirmation" ||
+          (invokeOptions?.enforceConfirmation === true &&
+            shouldQueueConfirmation({
+              tool,
+              actor,
+              defaults: confirmationDefaults,
+              skipConfirmation: invokeOptions.skipConfirmation,
+              approvedPendingExecution: invokeOptions.pendingActionId !== undefined,
+              confirmationOverride: invokeOptions.credentialPolicy?.confirmationOverride,
+              automationAllowed: automationDecision?.allowed === true,
+            }));
         if (queueRequired && confirmationGate === undefined) {
           return await completeInvocation(
             span,
@@ -698,6 +838,13 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           : { credentialPolicy: requestingPrincipal.credentialPolicy }),
         idempotencyFingerprint: claim.record.inputHash,
         pendingActionId: pendingId,
+        policyContext: {
+          effectiveClassification: "restricted",
+          sourceIds: [],
+          containsUntrustedContext: false,
+          requestChannel: "pending_execution",
+          tenantId: claim.record.orgId,
+        },
         enforceConfirmation: true,
         skipConfirmation: true,
       });
@@ -920,6 +1067,15 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           ...(input.invokeOptions?.pendingActionId === undefined
             ? {}
             : { pendingActionId: input.invokeOptions.pendingActionId }),
+          ...(input.invokeOptions?.policyContext === undefined
+            ? {}
+            : {
+                effectiveClassification: input.invokeOptions.policyContext.effectiveClassification,
+                requestChannel: input.invokeOptions.policyContext.requestChannel,
+                sourceIds: [...input.invokeOptions.policyContext.sourceIds],
+                containsUntrustedContext:
+                  input.invokeOptions.policyContext.containsUntrustedContext,
+              }),
         },
         createdAt: new Date().toISOString(),
       });

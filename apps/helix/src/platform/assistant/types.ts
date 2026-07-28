@@ -9,7 +9,6 @@ import type {
   ToolDefinition,
 } from "@helix/sdk-types";
 import type { ForgetCriteria, MemoryItem } from "../ai/memory/index.js";
-import type { SearchHit } from "../search/index.js";
 import type { ToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 
 export type AssistantMessageRole = "system" | "user" | "assistant" | "tool";
@@ -157,11 +156,16 @@ export interface AssistantStore {
 export interface AssistantSource {
   readonly id: string;
   readonly type: string;
+  readonly trust: "untrusted_retrieved";
+  readonly classification: AIClassification;
+  readonly provenance: {
+    readonly sourceId: string;
+    readonly sourceType: string;
+    readonly orgId: string;
+  };
   readonly title?: string;
   readonly body?: string;
-  readonly url?: string;
   readonly score?: number;
-  readonly attributes?: JsonObject;
 }
 
 export type AssistantToolCallStatus = "executed" | "pending_confirmation" | "failed" | "skipped";
@@ -174,6 +178,8 @@ export interface AssistantToolCallResult {
   readonly output?: JsonValue;
   readonly pending?: PendingToolInvocation;
   readonly error?: string;
+  /** IDs only; source contents never enter generic tool audit/provenance. */
+  readonly sourceIds?: readonly string[];
 }
 
 export interface AssistantTurnResponse {
@@ -185,6 +191,7 @@ export interface AssistantTurnResponse {
   readonly sources: readonly AssistantSource[];
   readonly memory: readonly MemoryItem[];
   readonly pendingConfirmations: readonly PendingToolInvocation[];
+  readonly effectiveClassification: AIClassification;
 }
 
 /**
@@ -257,16 +264,4 @@ export interface AssistantVisibleTool {
   readonly sideEffects: ToolDefinition["sideEffects"];
   readonly confirmationRequired: boolean;
   readonly inputSchema: JsonObject;
-}
-
-export function searchHitToAssistantSource(hit: SearchHit): AssistantSource {
-  return {
-    id: hit.id,
-    type: hit.type,
-    ...(hit.title === undefined ? {} : { title: hit.title }),
-    ...(hit.body === undefined ? {} : { body: hit.body }),
-    ...(hit.url === undefined ? {} : { url: hit.url }),
-    ...(hit.score === undefined ? {} : { score: hit.score }),
-    ...(hit.attributes === undefined ? {} : { attributes: hit.attributes }),
-  };
 }

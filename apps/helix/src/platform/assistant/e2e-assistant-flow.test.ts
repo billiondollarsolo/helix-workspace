@@ -75,12 +75,14 @@ describe("AssistantOrchestrator", () => {
         type: "drive",
         title: "Q3 Launch PRD",
         body: "The Q3 Launch PRD should be shared with Bruno for review.",
+        attributes: { orgId: actor.orgId, classification: "standard" },
       },
       {
         id: "chat:share-request",
         type: "chat",
         title: "Launch room",
         body: "Bruno asked Ada to share the Q3 Launch PRD.",
+        attributes: { orgId: actor.orgId, classification: "standard" },
       },
     ]);
     const ai = new ShareFlowAI({ prdObjectId, targetActorId });
@@ -379,6 +381,7 @@ describe("AssistantOrchestrator", () => {
         type: "docs",
         title: "Launch Plan",
         body: "Launch owner is Ada and the ship date is Friday.",
+        attributes: { orgId: actor.orgId, classification: "standard" },
       },
     ]);
     const ai = new FakeAssistantAI();
@@ -553,6 +556,7 @@ describe("AssistantOrchestrator", () => {
           type: "docs",
           title: "Slash command context",
           body: "Actor-visible context for slash command routing.",
+          attributes: { orgId: actor.orgId, classification: "standard" },
         },
       ]);
       const ai = new SlashRouteAI(testCase);

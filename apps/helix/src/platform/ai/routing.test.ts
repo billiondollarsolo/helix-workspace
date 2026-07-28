@@ -3,6 +3,7 @@ import {
   AIClassificationBlockedError,
   AIProviderUnavailableError,
   AIRouter,
+  providerAllowedForClassification,
   type LLMChatMetrics,
   type LLMMetricStatus,
 } from "./routing.js";
@@ -32,6 +33,24 @@ const actor: Actor = {
 };
 
 describe("AIRouter", () => {
+  it("never lets a disabled standard gate route confidential/restricted data to untagged cloud", () => {
+    const cloud = { id: "cloud", tags: ["external"] };
+
+    expect(
+      providerAllowedForClassification(cloud, "public", { classificationEnabled: false }),
+    ).toBe(true);
+    expect(
+      providerAllowedForClassification(cloud, "confidential", {
+        classificationEnabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      providerAllowedForClassification(cloud, "restricted", {
+        classificationEnabled: false,
+      }),
+    ).toBe(false);
+  });
+
   it("routes feature chat to configured provider and records provenance", async () => {
     const provenanceIds: string[] = [];
     const router = new AIRouter({
@@ -68,6 +87,26 @@ describe("AIRouter", () => {
       // client-supplied request payload.
       router.chat(request(), { actor, classification: "restricted" }),
     ).rejects.toThrow("No AI provider is configured");
+  });
+
+  it("routes restricted context to a tagged local fallback instead of the configured cloud primary", async () => {
+    const router = new AIRouter({
+      providers: [provider("cloud", ["admin-allowlisted"]), provider("local", ["local-only"])],
+      policy: {
+        featureRoutes: {
+          "assistant.chat": {
+            primary: { providerId: "cloud" },
+            fallback: { providerId: "local" },
+          },
+        },
+      },
+    });
+
+    await expect(
+      router.chat(request(), { actor, classification: "restricted" }),
+    ).resolves.toMatchObject({
+      providerId: "local",
+    });
   });
 
   it("routes sovereign standard requests to a local provider", async () => {
@@ -456,10 +495,7 @@ describe("AIRouter", () => {
     });
 
     await expect(
-      router.generateImage(
-        { feature: "slides.generate-image", prompt: "draw a chart" },
-        { actor },
-      ),
+      router.generateImage({ feature: "slides.generate-image", prompt: "draw a chart" }, { actor }),
     ).resolves.toMatchObject({ providerId: "image", model: "image-model" });
 
     expect(calls).toEqual(["primary", "image:image-model"]);

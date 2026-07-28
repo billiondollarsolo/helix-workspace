@@ -82,4 +82,53 @@ describe("createHelixTRPCRouter — per-tool projection (P1-3)", () => {
     const result = await caller.tools.invoke({ toolId: "platform.ping", input: {} });
     expect(result).toMatchObject({ ok: true, service: "helix-app" });
   });
+
+  it("exposes an admin-only dry-run explanation without echoing tool input", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+    const router = createHelixTRPCRouter({ tools, metrics: createPlatformMetrics() });
+    const caller = router.createCaller(
+      context({
+        id: "admin-1",
+        orgId: "org-1",
+        type: "user",
+        scopes: ["admin.config.read"],
+      }),
+    );
+
+    const explanation = await caller.tools.explain({
+      toolId: "missing.tool",
+      input: { secret: "must-not-echo" },
+      effectiveClassification: "confidential",
+      sourceIds: ["mail-1"],
+      containsUntrustedContext: true,
+      blockHighRiskWhenUntrusted: false,
+    });
+
+    expect(explanation).toEqual({
+      toolId: "missing.tool",
+      effectiveClassification: "confidential",
+      requestChannel: "trpc",
+      sourceIds: ["mail-1"],
+      decision: { outcome: "deny", reason: "unknown_tool" },
+    });
+    expect(JSON.stringify(explanation)).not.toContain("must-not-echo");
+  });
+
+  it("denies the dry-run endpoint without platform config read authority", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+    const router = createHelixTRPCRouter({ tools, metrics: createPlatformMetrics() });
+    const caller = router.createCaller(
+      context({ id: "user-1", orgId: "org-1", type: "user", scopes: ["platform.read"] }),
+    );
+
+    await expect(
+      caller.tools.explain({
+        toolId: "platform.ping",
+        effectiveClassification: "standard",
+        sourceIds: [],
+        containsUntrustedContext: false,
+        blockHighRiskWhenUntrusted: false,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
 });

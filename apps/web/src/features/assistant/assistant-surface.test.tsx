@@ -21,8 +21,7 @@ const streamAssistantChatMock =
       callbacks: AssistantChatStreamCallbacks,
     ) => Promise<AssistantTurnResponseWithPendingConfirmations>
   >();
-const listAssistantConversationsMock =
-  vi.fn<() => Promise<AssistantConversationListPage>>();
+const listAssistantConversationsMock = vi.fn<() => Promise<AssistantConversationListPage>>();
 const setAssistantConversationPinnedMock =
   vi.fn<
     (input: {
@@ -39,8 +38,7 @@ const renameAssistantConversationMock =
   >();
 const deleteAssistantConversationMock =
   vi.fn<(input: { readonly conversationId: string }) => Promise<void>>();
-const forgetAssistantMemoryMock =
-  vi.fn<() => Promise<AssistantMemoryForgetResult>>();
+const forgetAssistantMemoryMock = vi.fn<() => Promise<AssistantMemoryForgetResult>>();
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
@@ -112,6 +110,8 @@ describe("AssistantSurface", () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-27T12:00:00.000Z"));
     navigateMock.mockReset();
     streamAssistantChatMock.mockReset();
     listAssistantConversationsMock.mockReset();
@@ -153,6 +153,7 @@ describe("AssistantSurface", () => {
       root.unmount();
     });
     container.remove();
+    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
@@ -189,7 +190,7 @@ describe("AssistantSurface", () => {
       node instanceof HTMLTextAreaElement
         ? HTMLTextAreaElement.prototype
         : HTMLInputElement.prototype;
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with node receiver
+
     const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
     if (setter === undefined) {
       throw new Error("native value setter unavailable");
@@ -364,9 +365,7 @@ describe("AssistantSurface", () => {
     act(() => {
       buttonByText("Rename")?.click();
     });
-    const titleInput = container.querySelector<HTMLInputElement>(
-      'input[aria-label="Chat title"]',
-    );
+    const titleInput = container.querySelector<HTMLInputElement>('input[aria-label="Chat title"]');
     expect(titleInput).not.toBeNull();
     if (titleInput !== null) {
       setNativeValue(titleInput, "Renamed chat");

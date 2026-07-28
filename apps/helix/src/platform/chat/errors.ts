@@ -14,9 +14,7 @@ export class ChatRoomAccessError extends ForbiddenError {
       ...o,
       details: {
         roomId,
-        ...(typeof o?.details === "object" && o.details !== null
-          ? (o.details as Record<string, unknown>)
-          : {}),
+        ...(typeof o?.details === "object" && o.details !== null ? o.details : {}),
       },
     });
     this.name = "ChatRoomAccessError";
@@ -33,9 +31,7 @@ export class ChatMessageNotFoundError extends NotFoundError {
       ...o,
       details: {
         messageId,
-        ...(typeof o?.details === "object" && o.details !== null
-          ? (o.details as Record<string, unknown>)
-          : {}),
+        ...(typeof o?.details === "object" && o.details !== null ? o.details : {}),
       },
     });
     this.name = "ChatMessageNotFoundError";
@@ -45,7 +41,10 @@ export class ChatMessageNotFoundError extends NotFoundError {
 
 /** Per-connection WebSocket frame rate limit exceeded. */
 export class ChatRateLimitedError extends RateLimitedError {
-  constructor(message = "Chat rate limit exceeded; slow down inbound frames.", o?: ApiErrorOptions) {
+  constructor(
+    message = "Chat rate limit exceeded; slow down inbound frames.",
+    o?: ApiErrorOptions,
+  ) {
     super(message, o);
     this.name = "ChatRateLimitedError";
   }

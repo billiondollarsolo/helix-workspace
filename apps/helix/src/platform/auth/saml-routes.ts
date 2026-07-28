@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import { invalidRequest, notFound } from "../admin/console-shared.js";
 import type { OrgStore } from "../tenancy/orgs.js";
 import type { TenantIdpConfigStore } from "./tenant-idp-configs.js";

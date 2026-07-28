@@ -78,11 +78,11 @@
     "y-protocols": "^1.0.6",
     "yaml": "^2.9.0",
     "yjs": "^13.6.27",
-    "zod": "^3.23.8",
+    "zod": "^4.4.3",
+    "zod3": "npm:zod@^3.25.76",
     "zxcvbn": "^4.4.2"
   },
   "devDependencies": {
-    "@better-auth/cli": "^1.4.21",
     "@opentelemetry/context-async-hooks": "^2.7.1",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^22.10.2",

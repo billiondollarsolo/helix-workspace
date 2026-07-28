@@ -94,7 +94,9 @@ describe("Drive WebDAV routes", () => {
     expect(response.body).toContain("<D:lockscope><D:exclusive/></D:lockscope>");
     expect(response.body).toContain("<D:lockdiscovery/>");
     expect(response.body).toContain("<D:quota-used-bytes>0</D:quota-used-bytes>");
-    expect(response.body).toContain("<D:quota-available-bytes>10995116277760</D:quota-available-bytes>");
+    expect(response.body).toContain(
+      "<D:quota-available-bytes>10995116277760</D:quota-available-bytes>",
+    );
   });
 
   it("filters requested PROPFIND properties and reports unsupported properties in multistatus", async () => {
@@ -123,8 +125,7 @@ describe("Drive WebDAV routes", () => {
         "content-type": "application/xml",
         depth: "0",
       },
-      payload:
-        '<D:propfind xmlns:D="DAV:"><D:prop><D:getetag/><D:made-up/></D:prop></D:propfind>',
+      payload: '<D:propfind xmlns:D="DAV:"><D:prop><D:getetag/><D:made-up/></D:prop></D:propfind>',
     } as unknown as InjectOptions);
 
     expect(filtered.statusCode).toBe(207);
@@ -582,7 +583,7 @@ describe("Drive public share-link route", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("text/plain");
     expect(response.body).toBe("public bytes");
-    expect(String(response.headers["content-disposition"] ?? "")).toContain("shared-report.txt");
+    expect(response.headers["content-disposition"] ?? "").toContain("shared-report.txt");
   });
 
   it("supports Range requests on share-link content", async () => {

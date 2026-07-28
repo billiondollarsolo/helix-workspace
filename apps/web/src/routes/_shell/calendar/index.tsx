@@ -8,7 +8,7 @@ import {
   calendarRouteStateFromSearch,
   validateCalendarRouteSearch,
   type CalendarRouteSearch,
-} from "@/features/calendar/queries";
+} from "@/features/calendar/route-state";
 
 export const Route = createFileRoute("/_shell/calendar/")({
   validateSearch: (search): CalendarRouteSearch => validateCalendarRouteSearch(search),

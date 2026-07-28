@@ -220,89 +220,96 @@ export class OutboundMailDispatcher {
     this.maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
     this.sleep =
       options.sleep ??
-      ((ms) => new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      }));
+      ((ms) =>
+        new Promise((resolve) => {
+          setTimeout(resolve, ms);
+        }));
     this.resolveAttachment = options.resolveAttachment;
   }
 
   async dispatch(outboundId: string): Promise<MailOutboundRecord | null> {
     // P2-6: an `smtp.send` span covers the SMTP delivery of one queued message.
-    return trace.getTracer("helix.mail").startActiveSpan(
-      "smtp.send",
-      { attributes: { "helix.mail.outbound_id": outboundId } },
-      async (span) => {
-        try {
-          const outbound = await this.store.markOutboundSending(outboundId);
-          if (outbound === null) {
-            span.setAttribute("helix.mail.dispatch_skipped", true);
-            return null;
-          }
-
-          let attempt = outbound.attemptCount ?? 0;
-          let lastError: unknown;
-
-          while (attempt < this.maxAttempts) {
-            attempt += 1;
-            span.setAttribute("helix.mail.attempt", attempt);
-            try {
-              const resolved = await resolveOutboundAttachments(
-                outbound.envelope,
-                this.resolveAttachment,
-                { orgId: outbound.orgId, actorId: outbound.actorId },
-              );
-              const delivery = await this.transport.send(resolved);
-              span.setAttribute("helix.mail.delivery_status", "sent");
-              return await this.store.markOutboundSent({
-                id: outbound.id,
-                providerMessageId: delivery.providerMessageId,
-                deliveryMetadata: delivery.deliveryMetadata,
-              });
-            } catch (error) {
-              lastError = error;
-              span.recordException(error instanceof Error ? error : new Error(String(error)));
-              const message = error instanceof Error ? error.message : String(error);
-
-              if (attempt >= this.maxAttempts) {
-                span.setAttribute("helix.mail.delivery_status", "dead_lettered");
-                span.setStatus({ code: SpanStatusCode.ERROR });
-                const wrapped = new MailProviderError(message, error);
-                if (this.store.markOutboundDeadLettered !== undefined) {
-                  return await this.store.markOutboundDeadLettered({
-                    id: outbound.id,
-                    lastError: wrapped.message,
-                  });
-                }
-                return await this.store.markOutboundFailed(outbound.id, wrapped.message);
-              }
-
-              const delay = computeBackoffMs(attempt, this.baseDelayMs, this.maxDelayMs);
-              span.setAttribute("helix.mail.delivery_status", "retry");
-              span.setAttribute("helix.mail.next_delay_ms", delay);
-              if (this.store.markOutboundRetry !== undefined) {
-                await this.store.markOutboundRetry({
-                  id: outbound.id,
-                  attemptCount: attempt,
-                  nextAttemptAt: new Date(Date.now() + delay),
-                  lastError: message,
-                });
-              } else {
-                await this.store.markOutboundFailed(outbound.id, message);
-              }
-              await this.sleep(delay);
+    return trace
+      .getTracer("helix.mail")
+      .startActiveSpan(
+        "smtp.send",
+        { attributes: { "helix.mail.outbound_id": outboundId } },
+        async (span) => {
+          try {
+            const outbound = await this.store.markOutboundSending(outboundId);
+            if (outbound === null) {
+              span.setAttribute("helix.mail.dispatch_skipped", true);
+              return null;
             }
-          }
 
-          const message =
-            lastError instanceof Error ? lastError.message : String(lastError ?? "unknown");
-          span.setAttribute("helix.mail.delivery_status", "failed");
-          span.setStatus({ code: SpanStatusCode.ERROR });
-          return await this.store.markOutboundFailed(outbound.id, message);
-        } finally {
-          span.end();
-        }
-      },
-    );
+            let attempt = outbound.attemptCount ?? 0;
+            let lastError: unknown;
+
+            while (attempt < this.maxAttempts) {
+              attempt += 1;
+              span.setAttribute("helix.mail.attempt", attempt);
+              try {
+                const resolved = await resolveOutboundAttachments(
+                  outbound.envelope,
+                  this.resolveAttachment,
+                  { orgId: outbound.orgId, actorId: outbound.actorId },
+                );
+                const delivery = await this.transport.send(resolved);
+                span.setAttribute("helix.mail.delivery_status", "sent");
+                return await this.store.markOutboundSent({
+                  id: outbound.id,
+                  providerMessageId: delivery.providerMessageId,
+                  deliveryMetadata: delivery.deliveryMetadata,
+                });
+              } catch (error) {
+                lastError = error;
+                span.recordException(error instanceof Error ? error : new Error(String(error)));
+                const message = error instanceof Error ? error.message : String(error);
+
+                if (attempt >= this.maxAttempts) {
+                  span.setAttribute("helix.mail.delivery_status", "dead_lettered");
+                  span.setStatus({ code: SpanStatusCode.ERROR });
+                  const wrapped = new MailProviderError(message, error);
+                  if (this.store.markOutboundDeadLettered !== undefined) {
+                    return await this.store.markOutboundDeadLettered({
+                      id: outbound.id,
+                      lastError: wrapped.message,
+                    });
+                  }
+                  return await this.store.markOutboundFailed(outbound.id, wrapped.message);
+                }
+
+                const delay = computeBackoffMs(attempt, this.baseDelayMs, this.maxDelayMs);
+                span.setAttribute("helix.mail.delivery_status", "retry");
+                span.setAttribute("helix.mail.next_delay_ms", delay);
+                if (this.store.markOutboundRetry !== undefined) {
+                  await this.store.markOutboundRetry({
+                    id: outbound.id,
+                    attemptCount: attempt,
+                    nextAttemptAt: new Date(Date.now() + delay),
+                    lastError: message,
+                  });
+                } else {
+                  await this.store.markOutboundFailed(outbound.id, message);
+                }
+                await this.sleep(delay);
+              }
+            }
+
+            const message =
+              lastError instanceof Error
+                ? lastError.message
+                : typeof lastError === "string"
+                  ? lastError
+                  : "unknown";
+            span.setAttribute("helix.mail.delivery_status", "failed");
+            span.setStatus({ code: SpanStatusCode.ERROR });
+            return await this.store.markOutboundFailed(outbound.id, message);
+          } finally {
+            span.end();
+          }
+        },
+      );
   }
 
   async dispatchOutboxPayload(payload: unknown): Promise<MailOutboundRecord | null> {
@@ -312,11 +319,7 @@ export class OutboundMailDispatcher {
 }
 
 /** Exponential backoff with full jitter, capped at maxDelayMs. */
-export function computeBackoffMs(
-  attempt: number,
-  baseDelayMs: number,
-  maxDelayMs: number,
-): number {
+export function computeBackoffMs(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
   const exp = Math.min(maxDelayMs, baseDelayMs * 2 ** Math.max(0, attempt - 1));
   return Math.floor(Math.random() * exp);
 }

@@ -17,16 +17,12 @@ import {
   listDocsVersions,
   type DocsCommentStatusFilter,
   type DocsSuggestionStatus,
-  type DocsExportFormat,
 } from "./api";
 import { formatModified, type DocSummary } from "./data";
+import { docsQueryKeys, type DocsDocumentExportQueryInput } from "./query-keys";
 
-export interface DocsDocumentExportQueryInput {
-  readonly docId: string;
-  readonly format?: DocsExportFormat;
-  readonly includeComments?: boolean;
-  readonly filename?: string;
-}
+export { docsQueryKeys };
+export type { DocsDocumentExportQueryInput };
 
 export interface DocsSmartChipPickerOption {
   readonly id: string;
@@ -39,31 +35,6 @@ export interface DocsSmartChipPickerData {
   readonly files: readonly DocsSmartChipPickerOption[];
   readonly events: readonly DocsSmartChipPickerOption[];
 }
-
-export const docsQueryKeys = {
-  document: (docId: string) => ["docs", "document", docId] as const,
-  nativeSession: (docId: string) => ["docs", "native-session", docId] as const,
-  documentExport: (input: DocsDocumentExportQueryInput) =>
-    [
-      "docs",
-      "document-export",
-      input.docId,
-      input.format ?? "markdown",
-      input.includeComments ?? true,
-      input.filename ?? "",
-    ] as const,
-  comments: (docId: string, status?: DocsCommentStatusFilter) =>
-    status === undefined
-      ? (["docs", "comments", docId] as const)
-      : (["docs", "comments", docId, status] as const),
-  suggestions: (docId: string, status?: DocsSuggestionStatus) =>
-    status === undefined
-      ? (["docs", "suggestions", docId] as const)
-      : (["docs", "suggestions", docId, status] as const),
-  versions: (docId: string) => ["docs", "versions", docId] as const,
-  askHistory: (docId: string) => ["docs", "ask-history", docId] as const,
-  smartChipPicker: () => ["docs", "smart-chip-picker"] as const,
-};
 
 /** Fetches a single backend document (`docs.get`). */
 export function docsDocumentQueryOptions(docId: string) {

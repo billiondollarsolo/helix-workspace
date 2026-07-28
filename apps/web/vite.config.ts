@@ -2,7 +2,11 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+
+const standardChunkBudgetBytes = 500_000;
+const initialGraphBudgetBytes = 450_000;
+const passwordStrengthChunkBudgetBytes = 850_000;
 
 export default defineConfig({
   plugins: [
@@ -12,6 +16,7 @@ export default defineConfig({
     }),
     react(),
     tailwindcss(),
+    enforceBundleBudgets(),
   ],
   resolve: {
     alias: {
@@ -47,4 +52,124 @@ export default defineConfig({
       ].map((path) => [path, { target: "http://localhost:3000", changeOrigin: true, ws: true }]),
     ),
   },
+  build: {
+    // The only intentionally larger lazy chunk is zxcvbn's password corpus.
+    // `enforceBundleBudgets` applies stricter graph-aware limits to every
+    // initial and non-password chunk.
+    chunkSizeWarningLimit: passwordStrengthChunkBudgetBytes / 1_000,
+    rollupOptions: {
+      output: {
+        manualChunks: semanticVendorChunk,
+      },
+    },
+  },
 });
+
+function semanticVendorChunk(moduleId: string): string | undefined {
+  if (isDependency(moduleId, "react") || isDependency(moduleId, "react-dom")) {
+    return "vendor-react";
+  }
+  if (isDependency(moduleId, "scheduler")) {
+    return "vendor-react";
+  }
+  if (
+    isDependency(moduleId, "@tanstack/react-query") ||
+    isDependency(moduleId, "@tanstack/query-core") ||
+    isDependency(moduleId, "@tanstack/react-router") ||
+    isDependency(moduleId, "@tanstack/router-core") ||
+    isDependency(moduleId, "@tanstack/history")
+  ) {
+    return "vendor-tanstack";
+  }
+  if (moduleId.includes("/@tiptap+") || isDependency(moduleId, "linkifyjs")) {
+    return "vendor-tiptap";
+  }
+  if (moduleId.includes("/prosemirror-")) {
+    return "vendor-prosemirror";
+  }
+  if (isDependency(moduleId, "pdf-lib")) {
+    return "vendor-pdf-editing";
+  }
+  if (moduleId.includes("/@pdf-lib+") || isDependency(moduleId, "pako")) {
+    return "vendor-pdf-codecs";
+  }
+  if (isDependency(moduleId, "zxcvbn")) {
+    return "password-strength";
+  }
+  return undefined;
+}
+
+function isDependency(moduleId: string, packageName: string): boolean {
+  return moduleId.replaceAll("\\", "/").includes(`/node_modules/${packageName}/`);
+}
+
+function enforceBundleBudgets(): Plugin {
+  return {
+    name: "helix-bundle-budgets",
+    apply: "build",
+    generateBundle(_outputOptions, bundle) {
+      const chunks = Object.values(bundle).filter((entry) => entry.type === "chunk");
+      const chunksByFileName = new Map(chunks.map((chunk) => [chunk.fileName, chunk]));
+      const initialFiles = new Set<string>();
+
+      const visitInitialImport = (fileName: string): void => {
+        if (initialFiles.has(fileName)) {
+          return;
+        }
+        const chunk = chunksByFileName.get(fileName);
+        if (chunk === undefined) {
+          return;
+        }
+        initialFiles.add(fileName);
+        for (const importedFile of chunk.imports) {
+          visitInitialImport(importedFile);
+        }
+      };
+
+      for (const chunk of chunks) {
+        if (chunk.isEntry) {
+          visitInitialImport(chunk.fileName);
+        }
+      }
+
+      const initialBytes = [...initialFiles].reduce(
+        (total, fileName) =>
+          total + Buffer.byteLength(chunksByFileName.get(fileName)?.code ?? "", "utf8"),
+        0,
+      );
+      const violations: string[] = [];
+      if (initialBytes > initialGraphBudgetBytes) {
+        violations.push(
+          `initial JavaScript graph is ${formatBytes(initialBytes)} (budget ${formatBytes(initialGraphBudgetBytes)})`,
+        );
+      }
+
+      for (const chunk of chunks) {
+        const bytes = Buffer.byteLength(chunk.code, "utf8");
+        const isPasswordStrengthChunk = Object.keys(chunk.modules).some((moduleId) =>
+          isDependency(moduleId, "zxcvbn"),
+        );
+        const budget = isPasswordStrengthChunk
+          ? passwordStrengthChunkBudgetBytes
+          : standardChunkBudgetBytes;
+        if (bytes > budget) {
+          violations.push(
+            `${chunk.fileName} is ${formatBytes(bytes)} (budget ${formatBytes(budget)})`,
+          );
+        }
+      }
+
+      if (violations.length > 0) {
+        this.error(`Bundle budget exceeded:\n- ${violations.join("\n- ")}`);
+      }
+
+      this.info(
+        `Bundle budget: initial ${formatBytes(initialBytes)} across ${String(initialFiles.size)} chunks; ${String(chunks.length)} JavaScript chunks total.`,
+      );
+    },
+  };
+}
+
+function formatBytes(bytes: number): string {
+  return `${(bytes / 1_000).toFixed(1)} kB`;
+}

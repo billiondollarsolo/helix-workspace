@@ -6,7 +6,7 @@ describe("useMailRealtime", () => {
     expect(typeof useMailRealtime).toBe("function");
   });
 
-  it("invalidates mail queries when a mail.received frame arrives", async () => {
+  it("invalidates mail queries when a mail.received frame arrives", () => {
     const invalidateQueries = vi.fn();
     const listeners = new Map<string, (event: MessageEvent<string>) => void>();
 

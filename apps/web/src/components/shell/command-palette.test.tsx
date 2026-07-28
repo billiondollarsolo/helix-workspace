@@ -132,7 +132,6 @@ describe("CommandPalette", () => {
       throw new Error("Missing command palette search input.");
     }
     act(() => {
-      // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with input receiver
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       if (setter === undefined) {
         throw new Error("Missing input value setter.");

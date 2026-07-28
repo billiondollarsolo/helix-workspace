@@ -1,6 +1,6 @@
 import type { Actor, SecurityTier } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import { resolveAICostBudget } from "./budget.js";
 import type { AICostLimitOverride, AICostLimitStore } from "./limit-store.js";
 

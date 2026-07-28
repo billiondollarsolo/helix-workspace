@@ -555,7 +555,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
       actorId: actor.id,
       attributes: { toolId: tool.id },
     });
-    return enabled === true ? { enabled: true } : { enabled: false, flag };
+    return enabled ? { enabled: true } : { enabled: false, flag };
   }
 }
 

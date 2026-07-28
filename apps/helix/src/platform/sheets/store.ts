@@ -3475,7 +3475,7 @@ export class PostgresSheetsStore implements SheetsStore {
           and metadata->>'app' = 'sheets'
         limit 1
       `) as unknown as readonly { readonly metadata: JsonObject }[];
-      const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata?.folderId);
+      const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata.folderId);
       const folderId = input.folderId === undefined ? sourceFolderId : input.folderId;
       const title = assertTitle(input.title ?? `${source.title} (Copy)`);
       const sheetRows = (await tx`
@@ -5608,5 +5608,8 @@ function nativeSheetPreviewText(
       }
     }
   }
-  return grid.map((row) => row.join("\t").trimEnd()).join("\n").slice(0, 2000);
+  return grid
+    .map((row) => row.join("\t").trimEnd())
+    .join("\n")
+    .slice(0, 2000);
 }

@@ -6,7 +6,7 @@ import {
   type MeteringRollupMetricKey,
 } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import {
   adminConsoleReadScope,
   canReadAdminConsole,

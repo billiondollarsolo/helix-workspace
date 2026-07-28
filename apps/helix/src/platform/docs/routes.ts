@@ -6,7 +6,7 @@ import * as encoding from "lib0/encoding";
 import * as Y from "yjs";
 import * as awarenessProtocol from "y-protocols/awareness";
 import * as syncProtocol from "y-protocols/sync";
-import { z } from "zod";
+import { z } from "zod3";
 import type { DocsDocumentRecord } from "./types.js";
 import type { DocsStore } from "./store.js";
 import type { WebsocketConnectionMetrics } from "../websocket-metrics.js";

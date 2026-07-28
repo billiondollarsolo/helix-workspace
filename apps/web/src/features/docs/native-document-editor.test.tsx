@@ -707,6 +707,71 @@ describe("NativeDocumentEditor find and replace", () => {
   // ribbon/menu bar. Coverage for those commands now lives in
   // `native-document-chrome.test.tsx`.
 
+  it("selects matches and replaces through editor transactions", async () => {
+    render();
+    await settle();
+
+    setInputValue("native-document-find", "body");
+    submitFindForm();
+    await settle();
+
+    expect(container.textContent ?? "").toContain("1 of 2");
+    expect(chain.setTextSelection).toHaveBeenLastCalledWith({ from: 9, to: 13 });
+    expect(latestFindDecorationMeta()).toMatchObject({
+      findMatches: [
+        { from: 9, to: 13 },
+        { from: 24, to: 28 },
+      ],
+      activeFindMatchIndex: 0,
+    });
+
+    clickButton("Next");
+    await settle();
+    expect(container.textContent ?? "").toContain("2 of 2");
+
+    setInputValue("native-document-replace", "copy");
+    clickButton("Replace");
+    await settle();
+    expect(chain.insertContentAt).toHaveBeenCalledWith({ from: 24, to: 28 }, "copy");
+
+    clickButton("Replace all");
+    await settle();
+    expect(chain.insertContentAt).toHaveBeenCalledWith({ from: 9, to: 13 }, "copy");
+    expect(container.textContent ?? "").toContain("Replaced 2");
+  });
+
+  it("stages smart compose drafts for explicit acceptance", async () => {
+    const generateSuggestionDraft = vi.fn(
+      (): Promise<DocsSuggestionDraft> =>
+        Promise.resolve({
+          slotId: "docs.smart-write",
+          text: "Polished session body",
+          metadata: { providerId: "test-ai" },
+        }),
+    );
+    render({ generateSuggestionDraft });
+    await settle();
+
+    setInputValue("native-document-smart-compose-prompt", "Polish this");
+    clickButton("Compose");
+    await settle();
+
+    expect(generateSuggestionDraft).toHaveBeenCalledWith({
+      docId: "doc-1",
+      slotId: "docs.smart-write",
+      selection: "Session body",
+      prompt: "Polish this",
+    });
+    expect(chain.insertContent).not.toHaveBeenCalledWith("Polished session body");
+    expect(container.textContent ?? "").toContain("Draft ready. Press Tab to accept");
+    expect(container.textContent ?? "").toContain("Polished session body");
+
+    clickButton("Accept");
+    expect(chain.insertContent).toHaveBeenCalledWith("Polished session body");
+    expect(container.textContent ?? "").toContain("Draft inserted");
+    expect(smartComposePromptInput().value).toBe("");
+  });
+
   it("runs native document commands dispatched from the command palette", async () => {
     render();
     await settle();
@@ -764,13 +829,38 @@ describe("NativeDocumentEditor find and replace", () => {
       },
     });
 
-    // `find` command dispatch is wired but the find UI is now menu-launched —
-    // no inline input to focus. Verify dispatch doesn't throw.
     act(() => {
       window.dispatchEvent(
         new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, { detail: { command: "find" } }),
       );
     });
+    expect(document.activeElement).toBe(findInput());
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, { detail: { command: "smart-compose" } }),
+      );
+    });
+    expect(document.activeElement).toBe(smartComposePromptInput());
+  });
+
+  it("notifies the shell when the editor document changes", async () => {
+    const onContentChange = vi.fn();
+    render({ onContentChange });
+    await settle();
+
+    const editorOptions = useEditorMock.mock.calls.at(-1)?.[0];
+    const editor = useEditorMock.mock.results.at(-1)?.value;
+    if (editorOptions?.onUpdate === undefined || editor === undefined) {
+      throw new Error("Missing TipTap update fixture");
+    }
+
+    await act(async () => {
+      editorOptions.onUpdate?.({ editor } as never);
+      await Promise.resolve();
+    });
+
+    expect(onContentChange).toHaveBeenCalledTimes(1);
   });
 
   it("copies, cuts, and pastes selected document text from native document commands", async () => {
@@ -1179,9 +1269,8 @@ describe("NativeDocumentEditor find and replace", () => {
     await settle();
 
     expect(
-      container
-        .querySelector<HTMLElement>(".native-document-editor__content-layout")
-        ?.dataset.showNonprinting,
+      container.querySelector<HTMLElement>(".native-document-editor__content-layout")?.dataset
+        .showNonprinting,
     ).toBe("true");
   });
 
@@ -1189,9 +1278,7 @@ describe("NativeDocumentEditor find and replace", () => {
     render({ editable: false });
     await settle();
 
-    const editorOptions = useEditorMock.mock.calls[0]?.[0] as
-      | { readonly editable?: boolean }
-      | undefined;
+    const editorOptions = useEditorMock.mock.calls[0]?.[0];
     expect(editorOptions?.editable).toBe(false);
     const editor = useEditorMock.mock.results[0]?.value as
       | { readonly setEditable?: ReturnType<typeof vi.fn> }
@@ -1352,7 +1439,7 @@ describe("NativeDocumentEditor find and replace", () => {
     await settle();
 
     const recoveredYdoc = latestNativeDocumentYDoc();
-    expect(recoveredYdoc.getText("recovery").toString()).toBe("Unsaved docs story");
+    expect(recoveredYdoc.getText("recovery").toJSON()).toBe("Unsaved docs story");
     expect(
       container.querySelector('[data-testid="native-document-editor-status"]')?.textContent,
     ).toBe("Recovered local changes");
@@ -1367,12 +1454,13 @@ describe("NativeDocumentEditor find and replace", () => {
     await settle();
 
     expect(window.localStorage.getItem(recoveryKey)).toBeNull();
-    expect(latestNativeDocumentYDoc().getText("recovery").toString()).toBe("Unsaved docs story");
+    expect(latestNativeDocumentYDoc().getText("recovery").toJSON()).toBe("Unsaved docs story");
   });
 
   function render(
     options: {
       readonly generateSuggestionDraft?: NativeDocumentEditorProps["generateSuggestionDraft"];
+      readonly onContentChange?: NativeDocumentEditorProps["onContentChange"];
       readonly onRecoveryStatusChange?: NativeDocumentEditorProps["onRecoveryStatusChange"];
       readonly editable?: boolean;
       readonly showNonPrintingCharacters?: boolean;
@@ -1385,6 +1473,7 @@ describe("NativeDocumentEditor find and replace", () => {
           <NativeDocumentEditor
             session={options.session ?? nativeDocumentSession()}
             generateSuggestionDraft={options.generateSuggestionDraft}
+            onContentChange={options.onContentChange}
             editable={options.editable}
             showNonPrintingCharacters={options.showNonPrintingCharacters}
             onRecoveryStatusChange={options.onRecoveryStatusChange}
@@ -1411,27 +1500,27 @@ describe("NativeDocumentEditor find and replace", () => {
     render(options);
   }
 
-function submitFindForm(): void {
+  function submitFindForm(): void {
     const form = container.querySelector<HTMLFormElement>('form[aria-label="Find and replace"]');
     if (form === null) {
       throw new Error("Missing find and replace form.");
     }
     act(() => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-  });
-}
+    });
+  }
 
-async function dispatchNativeDocumentCommandForTest(
-  detail: NativeDocumentCommandEventDetail,
-): Promise<void> {
-  await act(async () => {
-    window.dispatchEvent(new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, { detail }));
-    await Promise.resolve();
-  });
-  await settle();
-}
+  async function dispatchNativeDocumentCommandForTest(
+    detail: NativeDocumentCommandEventDetail,
+  ): Promise<void> {
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(NATIVE_DOCUMENT_COMMAND_EVENT, { detail }));
+      await Promise.resolve();
+    });
+    await settle();
+  }
 
-function latestFindDecorationMeta(): unknown {
+  function latestFindDecorationMeta(): unknown {
     const meta = [...decorationMetaCalls]
       .reverse()
       .find(
@@ -1458,31 +1547,6 @@ function latestFindDecorationMeta(): unknown {
     });
   }
 
-  function buttonByLabel(label: string): HTMLButtonElement {
-    const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-    if (button === null) {
-      throw new Error(`Missing button: ${label}`);
-    }
-    return button;
-  }
-
-  function clickButtonByLabel(label: string): void {
-    const button = buttonByLabel(label);
-    act(() => {
-      button.click();
-    });
-  }
-
-  function clickElementByLabel(label: string): void {
-    const element = container.querySelector<HTMLElement>(`[aria-label="${label}"]`);
-    if (element === null) {
-      throw new Error(`Missing element: ${label}`);
-    }
-    act(() => {
-      element.click();
-    });
-  }
-
   function buttonByText(label: string): HTMLButtonElement {
     const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (candidate) => candidate.textContent?.includes(label),
@@ -1503,27 +1567,6 @@ function latestFindDecorationMeta(): unknown {
 
   function inputMaybe(label: string): HTMLInputElement | null {
     return container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
-  }
-
-  function appendEquationToken(input: {
-    readonly from: number;
-    readonly to: number;
-    readonly latex: string;
-  }): void {
-    const editorContent = container.querySelector<HTMLElement>(".native-document-editor__content");
-    if (editorContent === null) {
-      throw new Error("Missing editor content.");
-    }
-    const token = document.createElement("span");
-    token.dataset.nativeDocumentTokenKind = "equation";
-    token.dataset.nativeDocumentTokenFrom = String(input.from);
-    token.dataset.nativeDocumentTokenTo = String(input.to);
-    token.dataset.nativeDocumentEquationLatex = input.latex;
-    token.setAttribute("aria-label", `Edit equation ${input.latex}`);
-    token.setAttribute("role", "button");
-    token.tabIndex = 0;
-    token.textContent = input.latex;
-    editorContent.append(token);
   }
 
   function fieldSelect(): HTMLSelectElement {
@@ -1582,30 +1625,6 @@ function latestFindDecorationMeta(): unknown {
       throw new Error("Missing smart compose prompt input.");
     }
     return input;
-  }
-
-  function keyDownEditor(key: string): void {
-    const editorOptions = useEditorMock.mock.calls[0]?.[0] as
-      | {
-          readonly editorProps?: {
-            readonly handleKeyDown?: (view: unknown, event: KeyboardEvent) => boolean;
-          };
-        }
-      | undefined;
-    const handleKeyDown = editorOptions?.editorProps?.handleKeyDown;
-    if (handleKeyDown === undefined) {
-      throw new Error("Missing editor key handler.");
-    }
-    act(() => {
-      handleKeyDown(
-        {},
-        new KeyboardEvent("keydown", {
-          key,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    });
   }
 
   async function dropFileOnDocument(element: HTMLElement, file: File): Promise<void> {
@@ -1672,20 +1691,6 @@ function latestFindDecorationMeta(): unknown {
     act(() => {
       setNativeSelectValue(select, value);
       select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-  }
-
-  function pressShortcut(key: string, options: { readonly shiftKey?: boolean } = {}): void {
-    act(() => {
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key,
-          ctrlKey: true,
-          shiftKey: options.shiftKey ?? false,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
     });
   }
 });
@@ -1795,7 +1800,6 @@ function setInputValue(id: string, value: string): void {
 }
 
 function setNativeInputValue(element: HTMLInputElement, value: string): void {
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   if (setter === undefined) {
     throw new Error("native input value setter unavailable");
@@ -1804,7 +1808,6 @@ function setNativeInputValue(element: HTMLInputElement, value: string): void {
 }
 
 function setNativeSelectValue(element: HTMLSelectElement, value: string): void {
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
   if (setter === undefined) {
     throw new Error("native select value setter unavailable");

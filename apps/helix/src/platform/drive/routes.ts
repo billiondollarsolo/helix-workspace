@@ -43,48 +43,45 @@ export async function registerDriveShareLinkRoute(
   app: FastifyInstance,
   options: RegisterDriveShareLinkRouteOptions,
 ): Promise<void> {
-  app.get<{ Params: { token: string } }>(
-    "/api/drive/share/:token",
-    async (request, reply) => {
-      const token = request.params.token?.trim() ?? "";
-      if (token.length === 0) {
-        throw new NotFoundError("Share link not found.");
-      }
-      if (options.store.readFileByShareToken === undefined) {
-        // No dedicated not_implemented code in the envelope taxonomy; 500 is honest.
-        throw new ApiError("internal_error", "Share links are not configured.");
-      }
-      const file = await options.store.readFileByShareToken(token);
-      if (file === null) {
-        throw new NotFoundError("Share link not found.");
-      }
+  app.get<{ Params: { token: string } }>("/api/drive/share/:token", async (request, reply) => {
+    const token = request.params.token.trim();
+    if (token.length === 0) {
+      throw new NotFoundError("Share link not found.");
+    }
+    if (options.store.readFileByShareToken === undefined) {
+      // No dedicated not_implemented code in the envelope taxonomy; 500 is honest.
+      throw new ApiError("internal_error", "Share links are not configured.");
+    }
+    const file = await options.store.readFileByShareToken(token);
+    if (file === null) {
+      throw new NotFoundError("Share link not found.");
+    }
 
-      const filename = file.entry.name;
-      const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
-      const utf8Encoded = encodeURIComponent(filename);
-      const download = (request.query as { download?: string }).download === "1";
-      const disposition = `${download ? "attachment" : "inline"}; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+    const filename = file.entry.name;
+    const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
+    const utf8Encoded = encodeURIComponent(filename);
+    const download = (request.query as { download?: string }).download === "1";
+    const disposition = `${download ? "attachment" : "inline"}; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
 
-      if (file.content !== null) {
-        return sendBytesWithRangeSupport({
-          reply,
-          request,
-          bytes: Buffer.from(file.content),
-          mimeType: file.entry.mimeType ?? "application/octet-stream",
-          disposition,
-        });
-      }
-
-      // Content unavailable (no blob yet / storage miss) — return metadata only.
-      return reply.code(200).send({
-        objectId: file.entry.id,
-        name: file.entry.name,
+    if (file.content !== null) {
+      return sendBytesWithRangeSupport({
+        reply,
+        request,
+        bytes: Buffer.from(file.content),
         mimeType: file.entry.mimeType ?? "application/octet-stream",
-        byteSize: file.entry.byteSize ?? 0,
-        contentAvailable: false,
+        disposition,
       });
-    },
-  );
+    }
+
+    // Content unavailable (no blob yet / storage miss) — return metadata only.
+    return reply.code(200).send({
+      objectId: file.entry.id,
+      name: file.entry.name,
+      mimeType: file.entry.mimeType ?? "application/octet-stream",
+      byteSize: file.entry.byteSize ?? 0,
+      contentAvailable: false,
+    });
+  });
 }
 
 export async function registerDriveRoutes(
@@ -235,7 +232,8 @@ export async function registerDriveRoutes(
 
       if (method === "LOCK") {
         const target = await resolveTarget(options.store, actor, path);
-        const parent = target === null ? await resolveParentFolder(options.store, actor, path) : null;
+        const parent =
+          target === null ? await resolveParentFolder(options.store, actor, path) : null;
         if (target === null && parent === null) {
           return reply.code(409).send("Unknown WebDAV parent collection.");
         }
@@ -245,7 +243,10 @@ export async function registerDriveRoutes(
         }
         const lock = existingLock ?? createWebDavLock(request, actor, path);
         locks.set(lock.pathKey, lock);
-        const href = target?.kind === "folder" || request.url.endsWith("/") ? folderHref(path) : fileHref(path);
+        const href =
+          target?.kind === "folder" || request.url.endsWith("/")
+            ? folderHref(path)
+            : fileHref(path);
         return reply
           .header("Lock-Token", `<${lock.token}>`)
           .code(target === null ? 201 : 200)
@@ -530,7 +531,9 @@ function responseXml(input: {
 }): string {
   const values: Partial<Record<WebDavProperty, string | undefined>> = {
     creationdate:
-      input.createdAt === undefined ? undefined : `<D:creationdate>${input.createdAt.toISOString()}</D:creationdate>`,
+      input.createdAt === undefined
+        ? undefined
+        : `<D:creationdate>${input.createdAt.toISOString()}</D:creationdate>`,
     displayname: `<D:displayname>${xmlEscape(input.name)}</D:displayname>`,
     getcontentlength:
       input.contentLength === undefined
@@ -540,7 +543,8 @@ function responseXml(input: {
       input.contentType === undefined
         ? undefined
         : `<D:getcontenttype>${xmlEscape(input.contentType)}</D:getcontenttype>`,
-    getetag: input.etag === undefined ? undefined : `<D:getetag>${xmlEscape(input.etag)}</D:getetag>`,
+    getetag:
+      input.etag === undefined ? undefined : `<D:getetag>${xmlEscape(input.etag)}</D:getetag>`,
     getlastmodified:
       input.updatedAt === undefined
         ? undefined
@@ -579,7 +583,11 @@ function responseXml(input: {
   return `<D:response><D:href>${xmlEscape(input.href)}</D:href>${okPropstat}${missingPropstat}</D:response>`;
 }
 
-function createWebDavLock(request: FastifyRequest, actor: Actor, path: readonly string[]): WebDavLock {
+function createWebDavLock(
+  request: FastifyRequest,
+  actor: Actor,
+  path: readonly string[],
+): WebDavLock {
   const timeoutSeconds = lockTimeoutSeconds(headerString(request.headers.timeout));
   const createdAt = new Date();
   return {
@@ -605,7 +613,10 @@ function lockedPreconditionFailure(
   return "WebDAV resource is locked.";
 }
 
-function findLockForPath(locks: Map<string, WebDavLock>, path: readonly string[]): WebDavLock | undefined {
+function findLockForPath(
+  locks: Map<string, WebDavLock>,
+  path: readonly string[],
+): WebDavLock | undefined {
   cleanupExpiredLocks(locks);
   const direct = locks.get(pathKey(path));
   if (direct !== undefined) {
@@ -632,7 +643,11 @@ function cleanupExpiredLocks(locks: Map<string, WebDavLock>): void {
 function requestIncludesLockToken(request: FastifyRequest, token: string): boolean {
   const ifHeader = headerString(request.headers.if);
   const lockTokenHeader = parseLockTokenHeader(headerString(request.headers["lock-token"]));
-  return lockTokenHeader === token || ifHeader?.includes(`<${token}>`) === true || ifHeader?.includes(token) === true;
+  return (
+    lockTokenHeader === token ||
+    ifHeader?.includes(`<${token}>`) === true ||
+    ifHeader?.includes(token) === true
+  );
 }
 
 function parseLockTokenHeader(value: string | undefined): string | null {
@@ -724,7 +739,9 @@ function propfindRequest(body: string): PropfindRequest {
     return { mode: "allprop" };
   }
   const names = [
-    ...propMatch.groups.body.matchAll(/<(?<name>[A-Za-z0-9_-]+:)?(?<local>[A-Za-z0-9_-]+)\b[^>]*\/?>/gu),
+    ...propMatch.groups.body.matchAll(
+      /<(?<name>[A-Za-z0-9_-]+:)?(?<local>[A-Za-z0-9_-]+)\b[^>]*\/?>/gu,
+    ),
   ]
     .map((match) => match.groups?.local)
     .filter((name): name is string => name !== undefined)

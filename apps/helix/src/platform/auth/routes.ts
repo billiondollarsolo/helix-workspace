@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Actor, JsonObject } from "@helix/sdk-types";
-import { z } from "zod";
+import { z } from "zod3";
 import {
   InMemoryOAuthClientStore,
   OAuthError,

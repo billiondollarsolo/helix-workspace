@@ -4,8 +4,9 @@
    and re-subscribes rooms. Supports optimistic pending sends keyed by
    clientMessageId. */
 
+import { Debouncer } from "@tanstack/pacer";
+import { useDebouncedCallback, useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
 import {
   createChatRealtimeClient,
   type ChatMessageRecord,
@@ -76,18 +77,16 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
   const [pendingMessages, setPendingMessages] = useState<readonly PendingChatMessage[]>([]);
   const [presence, setPresence] = useState<readonly ChatPresenceEntry[]>([]);
   const [receipts, setReceipts] = useState<readonly ChatReadReceiptRecord[]>([]);
-  const [typingStamps, setTypingStamps] = useState<ReadonlyMap<string, number>>(
-    () => new Map(),
-  );
+  const [typingStamps, setTypingStamps] = useState<ReadonlyMap<string, number>>(() => new Map());
 
   const clientRef = useRef<ChatRealtimeClient | null>(null);
   const roomIdRef = useRef<string | undefined>(roomId);
   const selfActorIdRef = useRef<string | null>(null);
   const subscribedRoomsRef = useRef<Set<string>>(new Set());
   const attemptRef = useRef(0);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disposedRef = useRef(false);
-  const pendingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const connectRef = useRef<() => void>(() => undefined);
+  const pendingSchedulersRef = useRef<Map<string, Debouncer<() => void>>>(new Map());
 
   roomIdRef.current = roomId;
   selfActorIdRef.current = selfActorId;
@@ -110,6 +109,15 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
     },
     { wait: TYPING_TTL_MS },
   );
+  const reconnectScheduler = useDebouncer(
+    () => {
+      connectRef.current();
+    },
+    { wait: reconnectBaseMs },
+  );
+  const cancelReconnect = reconnectScheduler.cancel;
+  const scheduleReconnectExecution = reconnectScheduler.maybeExecute;
+  const setReconnectOptions = reconnectScheduler.setOptions;
 
   useEffect(() => {
     disposedRef.current = false;
@@ -129,7 +137,7 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
         setReceipts,
         setTypingStamps,
         setPendingMessages,
-        pendingTimersRef,
+        pendingSchedulersRef,
         scheduleSweep: () => {
           sweepTyping();
         },
@@ -137,9 +145,7 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
 
       const client = createChatRealtimeClient({
         ...(options.url === undefined ? {} : { url: options.url }),
-        ...(options.WebSocketImpl === undefined
-          ? {}
-          : { WebSocketImpl: options.WebSocketImpl }),
+        ...(options.WebSocketImpl === undefined ? {} : { WebSocketImpl: options.WebSocketImpl }),
         onOpen: () => {
           if (disposedRef.current) {
             client.close();
@@ -178,6 +184,7 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
       });
       clientRef.current = client;
     };
+    connectRef.current = connect;
 
     const scheduleReconnect = (): void => {
       if (disposedRef.current) {
@@ -189,27 +196,19 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
       const exp = Math.min(reconnectCapMs, reconnectBaseMs * 2 ** attempt);
       const jitter = Math.floor(Math.random() * (exp * 0.2));
       const delay = exp + jitter;
-      if (reconnectTimerRef.current !== null) {
-        clearTimeout(reconnectTimerRef.current);
-      }
-      reconnectTimerRef.current = setTimeout(() => {
-        reconnectTimerRef.current = null;
-        connect();
-      }, delay);
+      setReconnectOptions({ wait: delay });
+      scheduleReconnectExecution();
     };
 
     connect();
 
     return () => {
       disposedRef.current = true;
-      if (reconnectTimerRef.current !== null) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
+      cancelReconnect();
+      for (const scheduler of pendingSchedulersRef.current.values()) {
+        scheduler.cancel();
       }
-      for (const timer of pendingTimersRef.current.values()) {
-        clearTimeout(timer);
-      }
-      pendingTimersRef.current.clear();
+      pendingSchedulersRef.current.clear();
       clientRef.current?.close();
       clientRef.current = null;
     };
@@ -219,6 +218,9 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
     sweepTyping,
     reconnectBaseMs,
     reconnectCapMs,
+    cancelReconnect,
+    scheduleReconnectExecution,
+    setReconnectOptions,
   ]);
 
   useEffect(() => {
@@ -240,21 +242,25 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
 
   const armPendingTimeout = useCallback(
     (clientMessageId: string) => {
-      const existing = pendingTimersRef.current.get(clientMessageId);
+      const existing = pendingSchedulersRef.current.get(clientMessageId);
       if (existing !== undefined) {
-        clearTimeout(existing);
+        existing.cancel();
       }
-      const timer = setTimeout(() => {
-        pendingTimersRef.current.delete(clientMessageId);
-        setPendingMessages((prev) =>
-          prev.map((p) =>
-            p.clientMessageId === clientMessageId && p.status === "pending"
-              ? { ...p, status: "failed" }
-              : p,
-          ),
-        );
-      }, pendingTimeoutMs);
-      pendingTimersRef.current.set(clientMessageId, timer);
+      const scheduler = new Debouncer(
+        () => {
+          pendingSchedulersRef.current.delete(clientMessageId);
+          setPendingMessages((prev) =>
+            prev.map((p) =>
+              p.clientMessageId === clientMessageId && p.status === "pending"
+                ? { ...p, status: "failed" }
+                : p,
+            ),
+          );
+        },
+        { wait: pendingTimeoutMs },
+      );
+      pendingSchedulersRef.current.set(clientMessageId, scheduler);
+      scheduler.maybeExecute();
     },
     [pendingTimeoutMs],
   );
@@ -281,9 +287,7 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
 
       if (client === null || !client.isOpen()) {
         setPendingMessages((prev) =>
-          prev.map((p) =>
-            p.clientMessageId === clientMessageId ? { ...p, status: "failed" } : p,
-          ),
+          prev.map((p) => (p.clientMessageId === clientMessageId ? { ...p, status: "failed" } : p)),
         );
         return false;
       }
@@ -307,9 +311,7 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
         return false;
       }
       setPendingMessages((prev) =>
-        prev.map((p) =>
-          p.clientMessageId === clientMessageId ? { ...p, status: "pending" } : p,
-        ),
+        prev.map((p) => (p.clientMessageId === clientMessageId ? { ...p, status: "pending" } : p)),
       );
       client.sendMessage({
         roomId: pending.roomId,
@@ -390,8 +392,8 @@ interface EventHandlers {
   readonly setPendingMessages: (
     update: (prev: readonly PendingChatMessage[]) => readonly PendingChatMessage[],
   ) => void;
-  readonly pendingTimersRef: {
-    current: Map<string, ReturnType<typeof setTimeout>>;
+  readonly pendingSchedulersRef: {
+    current: Map<string, Debouncer<() => void>>;
   };
   readonly scheduleSweep: () => void;
 }
@@ -415,8 +417,7 @@ function handleEvent(event: ChatRealtimeEvent, h: EventHandlers): void {
       if (event.roomId !== h.roomIdRef.current) {
         return;
       }
-      const roster =
-        event.type === "presence" ? event.presence : (event.roster ?? null);
+      const roster = event.type === "presence" ? event.presence : (event.roster ?? null);
       if (roster !== null) {
         h.setPresence(() => roster);
       }
@@ -431,10 +432,7 @@ function handleEvent(event: ChatRealtimeEvent, h: EventHandlers): void {
       return;
     }
     case "typing": {
-      if (
-        event.roomId !== h.roomIdRef.current ||
-        event.actorId === h.selfActorIdRef.current
-      ) {
+      if (event.roomId !== h.roomIdRef.current || event.actorId === h.selfActorIdRef.current) {
         return;
       }
       if (event.isTyping) {
@@ -458,19 +456,15 @@ function handleEvent(event: ChatRealtimeEvent, h: EventHandlers): void {
       }
       const clientMessageId = event.message.clientMessageId;
       if (clientMessageId !== undefined) {
-        const timer = h.pendingTimersRef.current.get(clientMessageId);
-        if (timer !== undefined) {
-          clearTimeout(timer);
-          h.pendingTimersRef.current.delete(clientMessageId);
+        const scheduler = h.pendingSchedulersRef.current.get(clientMessageId);
+        if (scheduler !== undefined) {
+          scheduler.cancel();
+          h.pendingSchedulersRef.current.delete(clientMessageId);
         }
-        h.setPendingMessages((prev) =>
-          prev.filter((p) => p.clientMessageId !== clientMessageId),
-        );
+        h.setPendingMessages((prev) => prev.filter((p) => p.clientMessageId !== clientMessageId));
       }
       h.setLiveMessages((prev) =>
-        prev.some((m) => m.id === event.message.id)
-          ? prev
-          : [...prev, event.message],
+        prev.some((m) => m.id === event.message.id) ? prev : [...prev, event.message],
       );
       return;
     }

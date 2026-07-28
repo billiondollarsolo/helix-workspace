@@ -16,7 +16,7 @@ import type { Browser } from "playwright";
 import { Redis } from "ioredis";
 import { fromNodeHeaders } from "better-auth/node";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
-import { ZodError, z } from "zod";
+import { ZodError, z } from "zod3";
 import { ContractValidationError } from "@helix/contracts";
 import { createMeteringClient } from "@helix/sdk";
 import {
@@ -513,6 +513,11 @@ export function installTenantApiRpsLimitHook(
   options: TenantApiRpsLimitHookOptions,
 ): void {
   app.addHook("preHandler", async (request, reply) => {
+    const path = request.url.split("?")[0] ?? request.url;
+    if (path === "/api/auth" || path.startsWith("/api/auth/")) {
+      return;
+    }
+
     const tenant = (request as unknown as { readonly tenant?: TenantContext | null }).tenant;
     if (tenant === null || tenant === undefined) {
       return;
@@ -553,7 +558,7 @@ export function installTenantApiRpsLimitHook(
         retryAfterSeconds: decision.retryAfterSeconds,
         resetsAt: decision.resetsAt,
         method: request.method,
-        path: request.url.split("?")[0] ?? request.url,
+        path,
       })
       .catch((error: unknown) => {
         options.onQuotaEventError?.(error);
@@ -951,7 +956,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     // segments; Fastify's default `maxParamLength` of 100 silently 404s
     // anything longer. 2 KB matches the URL-segment ceiling most reverse
     // proxies tolerate without rejecting the request outright.
-    maxParamLength: 2048,
+    routerOptions: {
+      maxParamLength: 2048,
+    },
   });
 
   const metrics = createPlatformMetrics();
@@ -1125,9 +1132,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const signupAbuseOptions = {
     maxSignupsPerWindow: bootEnv.HELIX_SIGNUP_RATE_LIMIT_PER_HOUR,
     windowMs: 60 * 60 * 1000,
-    blockedEmailDomains: parseBlockedSignupEmailDomains(
-      bootEnv.HELIX_SIGNUP_BLOCKED_EMAIL_DOMAINS,
-    ),
+    blockedEmailDomains: parseBlockedSignupEmailDomains(bootEnv.HELIX_SIGNUP_BLOCKED_EMAIL_DOMAINS),
   };
   const signupAbuseProtector =
     redis === undefined
@@ -2087,9 +2092,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       events: eventBus,
       resolveActor: async (request) => {
         const actor = await actorFromAuthenticatedRequest(request);
-        if (actor === null) {
-          return null;
-        }
         return { id: actor.id, orgId: actor.orgId };
       },
     });
@@ -2220,9 +2222,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     registerMeetTools(tools, {
       store: meetStore,
       jwtSecret:
-        bootEnv.MEET_JITSI_JWT_SECRET ??
-        bootEnv.JITSI_JWT_SECRET ??
-        "helix_jitsi_dev_secret",
+        bootEnv.MEET_JITSI_JWT_SECRET ?? bootEnv.JITSI_JWT_SECRET ?? "helix_jitsi_dev_secret",
       jwtAppId: bootEnv.MEET_JITSI_JWT_APP_ID ?? bootEnv.JITSI_JWT_APP_ID ?? "helix",
       jwtIssuer: bootEnv.MEET_JITSI_JWT_ISSUER ?? bootEnv.JITSI_JWT_ISSUER ?? "helix",
       jwtAudience: bootEnv.MEET_JITSI_JWT_AUDIENCE ?? "jitsi",
@@ -2603,12 +2603,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   });
   await registerBackupAdminRoutes(app, {
     service: new ScriptedBackupAdminService({
-      ...(bootEnv.HELIX_BACKUP_DIR === undefined
-        ? {}
-        : { backupDir: bootEnv.HELIX_BACKUP_DIR }),
-      ...(bootEnv.HELIX_SECURITY_TIER === undefined
-        ? {}
-        : { tier: bootEnv.HELIX_SECURITY_TIER }),
+      ...(bootEnv.HELIX_BACKUP_DIR === undefined ? {} : { backupDir: bootEnv.HELIX_BACKUP_DIR }),
+      ...(bootEnv.HELIX_SECURITY_TIER === undefined ? {} : { tier: bootEnv.HELIX_SECURITY_TIER }),
       ...(bootEnv.HELIX_BACKUP_SCRIPT === undefined
         ? {}
         : { backupScript: bootEnv.HELIX_BACKUP_SCRIPT }),
@@ -2841,13 +2837,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           if (png !== null) {
             return sendPngPreview(reply, imagePreviewFilename(filename), png);
           }
-          return reply.type("text/html; charset=utf-8").send(
-            wrapPreview(
-              filename,
-              `<div class="placeholder"><p>This image preview could not be rendered safely.</p><p><a class="dl" href="${rawUrl}?download=1">Download to open in a native app</a></p></div>`,
-              [],
-            ),
-          );
+          return reply
+            .type("text/html; charset=utf-8")
+            .send(
+              wrapPreview(
+                filename,
+                `<div class="placeholder"><p>This image preview could not be rendered safely.</p><p><a class="dl" href="${rawUrl}?download=1">Download to open in a native app</a></p></div>`,
+                [],
+              ),
+            );
         }
 
         // Browser-native formats: serve as-is, inline.
@@ -2931,13 +2929,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
               .type("text/html; charset=utf-8")
               .send(wrapPreview(filename, renderPptxPreviewSlides(deck.slides), []));
           } catch (error) {
-            return reply.type("text/html; charset=utf-8").send(
-              wrapPreview(
-                filename,
-                `<div class="placeholder"><p>This presentation preview could not be rendered.</p><p>${escapeHtml(error instanceof Error ? error.message : "Unknown preview error.")}</p><p><a class="dl" href="${rawUrl}?download=1">Download to open in a native app</a></p></div>`,
-                [],
-              ),
-            );
+            return reply
+              .type("text/html; charset=utf-8")
+              .send(
+                wrapPreview(
+                  filename,
+                  `<div class="placeholder"><p>This presentation preview could not be rendered.</p><p>${escapeHtml(error instanceof Error ? error.message : "Unknown preview error.")}</p><p><a class="dl" href="${rawUrl}?download=1">Download to open in a native app</a></p></div>`,
+                  [],
+                ),
+              );
           }
         }
 
@@ -2980,9 +2980,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // multi-replica deploy. Each is now wrapped in a SingletonWorkerSupervisor
   // that holds a named leader lease for the worker's lifetime.
   //
-  // Every supervisor uses its own PostgresAdvisoryLockClient: session-level
-  // advisory locks are connection-bound, so each long-lived lease needs its
-  // own pinned (reserved) connection.
+  // PostgreSQL sessions may hold multiple independent advisory locks. Sharing
+  // one lock client therefore preserves connection-bound lock ownership while
+  // reserving only one pool connection, regardless of worker count.
   if (searchEventIndexer !== undefined) {
     leaderGatedWorkers.push({ name: "search-event-indexer", worker: searchEventIndexer });
   }
@@ -3063,12 +3063,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   });
 
   const workerRetryIntervalMs = bootEnv.LEADER_ELECTION_RETRY_INTERVAL_MS;
+  const workerLockClient = new PostgresAdvisoryLockClient(sql);
   const workerSupervisors = leaderGatedWorkers.map(
     ({ name, worker }) =>
       new SingletonWorkerSupervisor({
         name,
         worker,
-        election: new LeaderElection(new PostgresAdvisoryLockClient(sql)),
+        election: new LeaderElection(workerLockClient),
         retryIntervalMs: workerRetryIntervalMs,
         onLeadershipAcquired: (workerName) => {
           app.log.info({ worker: workerName }, "Singleton worker leadership acquired");
@@ -3584,8 +3585,7 @@ function createAssistantAIRouter(
     readonly aiConfig?: AiConfig;
   },
 ): AIRouter {
-  const defaultProviderId =
-    env().ASSISTANT_AI_PROVIDER_ID ?? env().AI_DEFAULT_PROVIDER_ID;
+  const defaultProviderId = env().ASSISTANT_AI_PROVIDER_ID ?? env().AI_DEFAULT_PROVIDER_ID;
   const configuredRouting = aiRoutingPolicyFromConfig(options.aiConfig);
   const featureRoutes =
     defaultProviderId === undefined
@@ -3878,7 +3878,9 @@ function parseSiemAuditFormat(value: string): SiemAuditFormat {
 }
 
 /** @deprecated Prefer mailConfig(loadEnv(...)).outbound — kept for server.test.ts. */
-export function getOutboundMailConfig(source: NodeJS.ProcessEnv | Record<string, string | undefined>) {
+export function getOutboundMailConfig(
+  source: NodeJS.ProcessEnv | Record<string, string | undefined>,
+) {
   // Delegate through loadEnv-compatible mailConfig when keys match Env;
   // fall back to the historical open-record reader for partial test stubs.
   const host = source.MAIL_SMTP_HOST ?? source.SES_SMTP_HOST;
@@ -4601,9 +4603,7 @@ function isSvgPreviewFormat(mime: string, filename: string): boolean {
   return mime.toLowerCase() === "image/svg+xml" || filename.toLowerCase().endsWith(".svg");
 }
 
-function isAvailablePdfPreview(
-  preview: DrivePreview | undefined,
-): boolean {
+function isAvailablePdfPreview(preview: DrivePreview | undefined): boolean {
   return preview?.kind === "pdf" && preview.status === "available";
 }
 
@@ -4612,7 +4612,9 @@ function previewPdfFilename(filename: string): string {
 }
 
 function previewPdfAsciiFilename(filename: string): string {
-  return previewPdfFilename(filename).replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
+  return previewPdfFilename(filename)
+    .replace(/[^\x20-\x7e]/g, "_")
+    .replace(/"/g, '\\"');
 }
 
 const maxSvgPreviewBytes = 2_000_000;
@@ -4665,12 +4667,13 @@ function isBrowserSafeRasterImagePreviewFormat(mime: string, filename: string): 
 function isGeneratedRasterImagePreviewFormat(mime: string, filename: string): boolean {
   const normalizedMime = mime.toLowerCase();
   const normalizedName = filename.toLowerCase();
-  if (normalizedMime.startsWith("image/") && !isBrowserSafeRasterImagePreviewFormat(mime, filename)) {
+  if (
+    normalizedMime.startsWith("image/") &&
+    !isBrowserSafeRasterImagePreviewFormat(mime, filename)
+  ) {
     return true;
   }
-  return /\.(avif|bmp|dib|heic|heif|tif|tiff|psd|jp2|j2k|jpf|jpx|jpm|jxl)$/iu.test(
-    normalizedName,
-  );
+  return /\.(avif|bmp|dib|heic|heif|tif|tiff|psd|jp2|j2k|jpf|jpx|jpm|jxl)$/iu.test(normalizedName);
 }
 
 async function rasterizeImagePreviewToPng(
@@ -4740,9 +4743,7 @@ async function rasterizeAvifPreviewToPng(imageBytes: Buffer): Promise<Buffer | n
   }
 }
 
-async function initAvifDecoder(
-  init: (module?: object) => Promise<void> | void,
-): Promise<void> {
+async function initAvifDecoder(init: (module?: object) => Promise<void> | void): Promise<void> {
   avifDecoderInitPromise ??= (async () => {
     const wasmPath = fileURLToPath(import.meta.resolve("@jsquash/avif/codec/dec/avif_dec.wasm"));
     const wasmRuntime = (globalThis as typeof globalThis & { readonly WebAssembly: WasmCompiler })
@@ -4776,21 +4777,21 @@ async function rasterizeImagePreviewWithSharp(imageBytes: Buffer): Promise<Buffe
 async function normalizePngPreview(imageBytes: Buffer): Promise<Buffer> {
   const sharp = (await import("sharp")).default;
   return sharp(imageBytes, {
-      animated: false,
-      failOn: "none",
-      limitInputPixels: 50_000_000,
+    animated: false,
+    failOn: "none",
+    limitInputPixels: 50_000_000,
+  })
+    .rotate()
+    .resize({
+      width: 512,
+      height: 512,
+      fit: "inside",
+      withoutEnlargement: true,
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
     })
-      .rotate()
-      .resize({
-        width: 512,
-        height: 512,
-        fit: "inside",
-        withoutEnlargement: true,
-        background: { r: 255, g: 255, b: 255, alpha: 1 },
-      })
-      .flatten({ background: { r: 255, g: 255, b: 255 } })
-      .png()
-      .toBuffer();
+    .flatten({ background: { r: 255, g: 255, b: 255 } })
+    .png()
+    .toBuffer();
 }
 
 async function rasterizeBrowserImagePreviewToPng(
@@ -4928,7 +4929,10 @@ interface SlidePreviewContent {
 function slidePreviewBody(content: SlidePreviewContent): string {
   const items = content.items ?? [];
   if (items.length > 0) {
-    return `<ul>${items.slice(0, 12).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+    return `<ul>${items
+      .slice(0, 12)
+      .map((item) => `<li>${escapeHtml(item)}</li>`)
+      .join("")}</ul>`;
   }
   const subtitle = typeof content.subtitle === "string" ? content.subtitle.trim() : "";
   if (subtitle.length > 0) {

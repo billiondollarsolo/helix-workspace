@@ -14,6 +14,10 @@ export default defineConfig({
     },
   },
   test: {
+    // The large editor suites use React's process-global act queue. Running
+    // those files concurrently lets one timed-out render poison unrelated
+    // suites, so keep file execution deterministic.
+    fileParallelism: false,
     setupFiles: ["./src/test/setup.ts"],
   },
 });

@@ -48,9 +48,7 @@ function parseAllowedHosts(raw: string | undefined): readonly string[] {
     .filter((part) => part.length > 0);
 }
 
-function parseServerSideEncryption(
-  value: string | undefined,
-): "AES256" | "aws:kms" | undefined {
+function parseServerSideEncryption(value: string | undefined): "AES256" | "aws:kms" | undefined {
   if (value === undefined || value.trim() === "") {
     return undefined;
   }
@@ -65,7 +63,7 @@ export function loadDriveConfig(e: Env = env()): DriveConfig {
   const isProduction = e.NODE_ENV === "production";
   const endpoint =
     e.RUSTFS_ENDPOINT ??
-    (e.RUSTFS_API_PORT === undefined ? undefined : `http://localhost:${String(e.RUSTFS_API_PORT)}`);
+    (e.RUSTFS_API_PORT === undefined ? undefined : `http://localhost:${e.RUSTFS_API_PORT}`);
   const serverSideEncryption = parseServerSideEncryption(e.RUSTFS_SERVER_SIDE_ENCRYPTION);
   return {
     storage: {

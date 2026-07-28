@@ -11,12 +11,16 @@ import { HELIX_DRIVE_ITEM_DRAG_MIME } from "./drag-payload";
 // Mock @tanstack/react-router so DriveShell can call router hooks without a router context.
 const routerMocks = vi.hoisted(() => ({
   navigate: vi.fn(),
-  search: {} as Record<string, unknown>,
+  search: {},
 }));
 const navigateMock = routerMocks.navigate;
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
   useSearch: () => routerMocks.search,
+}));
+
+vi.mock("./file-thumbnail", () => ({
+  FileThumbnail: () => null,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -261,7 +265,10 @@ describe("DriveShell", () => {
   }
 
   function setSelectValue(select: HTMLSelectElement, value: string): void {
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLSelectElement.prototype,
+      "value",
+    )?.set;
     if (setter === undefined) {
       throw new Error("native select value setter unavailable");
     }
@@ -314,7 +321,12 @@ describe("DriveShell", () => {
       if (url === "/api/auth/get-session") {
         return Promise.resolve(
           Response.json({
-            user: { id: "session-user", email: "owner@helix.local", name: "Owner One", actorId: "owner-1" },
+            user: {
+              id: "session-user",
+              email: "owner@helix.local",
+              name: "Owner One",
+              actorId: "owner-1",
+            },
           }),
         );
       }
@@ -421,10 +433,7 @@ describe("DriveShell", () => {
       'aside[aria-label="File details"] input[placeholder="Email, name, or actor ID"]',
     );
     expect(input).not.toBeNull();
-    setInputValue(
-      input!,
-      "maya@helix.local 66666666-6666-4666-8666-666666666666 Maya",
-    );
+    setInputValue(input!, "maya@helix.local 66666666-6666-4666-8666-666666666666 Maya");
     const shareRole = container.querySelector<HTMLSelectElement>(
       'aside[aria-label="File details"] select[aria-label="Share role"]',
     );

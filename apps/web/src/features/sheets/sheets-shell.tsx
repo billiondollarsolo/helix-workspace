@@ -19,7 +19,7 @@ import type { SheetListRow } from "./model";
 import { NativeSpreadsheetEditor } from "./native-spreadsheet-editor";
 import { sheetQueryOptions, sheetsQueryKeys } from "./queries";
 import { SheetsList } from "./sheets-list";
-import { UniversalEditorRouter } from "@/features/_open/ui";
+import { UniversalEditorRouter } from "@/features/_open/ui/UniversalEditorRouter";
 
 /** Default tab name(s) for a freshly-created spreadsheet. */
 const DEFAULT_TAB_NAMES = ["Sheet 1"];

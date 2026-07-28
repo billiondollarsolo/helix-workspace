@@ -1,10 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import type { OrgStore } from "../tenancy/orgs.js";
-import {
-  verifyScimBearerToken,
-  type TenantScimCredentialStore,
-} from "./scim-credentials.js";
+import { verifyScimBearerToken, type TenantScimCredentialStore } from "./scim-credentials.js";
 
 /**
  * Audit sink consumed when a SCIM request fails authentication. Matches the
@@ -120,12 +117,7 @@ export async function registerTenantScimRoutes(
         return reply
           .code(501)
           .header("content-type", SCIM_JSON)
-          .send(
-            scimError(
-              501,
-              `${entry.resource} SCIM provisioning is not implemented yet.`,
-            ),
-          );
+          .send(scimError(501, `${entry.resource} SCIM provisioning is not implemented yet.`));
       },
     });
   }
@@ -255,7 +247,7 @@ async function recordScimAuthFailure(
       actorId: "scim-anonymous",
       verb: "scim.auth.failed",
       objectType: "scim_endpoint",
-      objectId: request.routeOptions?.url ?? request.url,
+      objectId: request.routeOptions.url ?? request.url,
       metadata: {
         method: request.method,
         path: request.url,

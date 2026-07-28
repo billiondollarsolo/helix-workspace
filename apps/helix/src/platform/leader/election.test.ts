@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type postgres from "postgres";
 import {
   advisoryLockKey,
   LeaderElection,
+  PostgresAdvisoryLockClient,
   SingletonWorkerSupervisor,
   type AdvisoryLockClient,
   type SupervisedWorker,
@@ -107,6 +109,35 @@ describe("LeaderElection", () => {
     // Releasing the un-acquired lease must not free A's lock.
     const electionC = new LeaderElection(new FakeAdvisoryLockClient(held));
     expect((await electionC.tryAcquire("worker")).acquired).toBe(false);
+  });
+});
+
+describe("PostgresAdvisoryLockClient", () => {
+  it("shares one reserved session across multiple held locks and releases it when idle", async () => {
+    const release = vi.fn();
+    const reservedSql = Object.assign(
+      vi.fn(async () => [{ acquired: true }]),
+      { release },
+    );
+    const reserve = vi.fn(async () => reservedSql);
+    const sql = Object.assign(vi.fn(), { reserve }) as unknown as postgres.Sql;
+    const client = new PostgresAdvisoryLockClient(sql);
+    const firstKey = advisoryLockKey("first-worker");
+    const secondKey = advisoryLockKey("second-worker");
+
+    const acquired = await Promise.all([
+      client.tryAdvisoryLock(firstKey),
+      client.tryAdvisoryLock(secondKey),
+    ]);
+
+    expect(acquired).toEqual([true, true]);
+    expect(reserve).toHaveBeenCalledTimes(1);
+
+    await client.releaseAdvisoryLock(firstKey);
+    expect(release).not.toHaveBeenCalled();
+
+    await client.releaseAdvisoryLock(secondKey);
+    expect(release).toHaveBeenCalledTimes(1);
   });
 });
 

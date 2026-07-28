@@ -1,6 +1,6 @@
 import type { Actor, EventBus, EventEnvelope, Unsubscribe } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import { unauthenticatedActor } from "../../api/actor.js";
 import type { WebsocketConnectionMetrics } from "../websocket-metrics.js";
 import { trackWebsocketConnection } from "../websocket-metrics.js";

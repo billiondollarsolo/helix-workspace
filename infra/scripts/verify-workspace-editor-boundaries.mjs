@@ -11,7 +11,11 @@ const editorsRoot = resolve(
 const editorsPackagesRoot = join(editorsRoot, "packages");
 const thisScript = resolve(new URL("", import.meta.url).pathname);
 
-const allowedEditorPackages = new Set(["@helix/editors-core-app"]);
+const allowedEditorPackages = new Map([
+  ["@helix/editors-core-app", "core-app"],
+  ["@helix/editors-format-loader", "format-loader"],
+  ["@helix/editors-ui", "ui-kit"],
+]);
 const sourceRoots = ["apps", "packages", "plugins", "infra"];
 const sourceExtensions = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
 const skippedDirectories = new Set(["dist", "node_modules", ".turbo", "coverage"]);
@@ -39,7 +43,7 @@ if (violations.length > 0) {
     );
   }
   console.error(
-    "helix-workspace may depend on @helix/editors-core-app only; use SDK contracts instead of editor engine internals or sibling package paths.",
+    "helix-workspace may depend only on the public editor seams (@helix/editors-core-app, @helix/editors-format-loader, and @helix/editors-ui); use SDK contracts instead of editor engine internals or arbitrary sibling paths.",
   );
   process.exitCode = 1;
 }
@@ -163,7 +167,7 @@ async function scanPackageManifest(path) {
           reason: packageReason,
         });
       }
-      const pathReason = editorPathViolationReason(path, specifier);
+      const pathReason = editorPathViolationReason(path, specifier, name);
       if (pathReason !== null) {
         addViolation({
           file: path,
@@ -197,7 +201,19 @@ function editorPackageViolationReason(specifier) {
     : "direct dependency on editor package internals";
 }
 
-function editorPathViolationReason(file, specifier) {
+function editorPathViolationReason(file, specifier, dependencyName) {
+  if (
+    dependencyName !== undefined &&
+    allowedEditorPackages.has(dependencyName) &&
+    specifier.startsWith("file:")
+  ) {
+    const linkedPath = resolve(file, "..", specifier.slice("file:".length));
+    const expectedPath = join(editorsPackagesRoot, allowedEditorPackages.get(dependencyName));
+    return linkedPath === expectedPath
+      ? null
+      : "public editor package points to an unexpected sibling path";
+  }
+
   const normalized = specifier.replaceAll("\\", "/");
   if (normalized.includes("helix-editors/packages/")) {
     return "specifier crosses into helix-editors/packages";

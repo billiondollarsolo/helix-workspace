@@ -1,5 +1,13 @@
 import { afterEach, beforeAll, beforeEach } from "vitest";
 
+// React 19 requires test environments that use `act` to opt in globally.
+// Keep this in the shared setup so hook-only tests cannot silently omit it.
+(
+  globalThis as typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT: boolean;
+  }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
 // `@tanstack/react-virtual` queries the scroll container's clientHeight,
 // scrollHeight, and offsetHeight to size the virtual window. jsdom returns
 // 0 for all of those by default, which collapses the virtualizer to zero

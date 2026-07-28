@@ -11,6 +11,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useWebPlatformHost } from "@helix/sdk-web";
 import {
@@ -33,8 +34,6 @@ import {
   buildSheetsSidePanelTabs,
   type SheetsBorderPreset,
   type SheetsChromeContext,
-  type SheetsHorizontalAlign,
-  type SheetsNumberFormat,
   type SheetsSidePanelTabId,
   type SheetsVerticalAlign,
 } from "./native-spreadsheet-chrome";
@@ -574,6 +573,7 @@ export function NativeSpreadsheetEditor({
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [commentEditDrafts, setCommentEditDrafts] = useState<Record<string, string>>({});
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
   const [chartType, setChartType] = useState<SheetChartType>("bar");
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [imageDragPreview, setImageDragPreview] = useState<{
@@ -596,6 +596,12 @@ export function NativeSpreadsheetEditor({
   const syncProviderRef = useRef<NativeSpreadsheetSyncProvider | null>(null);
   const applyingRecoveredGridRef = useRef(false);
   const suppressGridRecoveryRef = useRef(false);
+  const releaseGridRecoverySuppression = useDebouncedCallback(
+    () => {
+      suppressGridRecoveryRef.current = false;
+    },
+    { wait: 0 },
+  );
 
   useEffect(() => {
     if (activeTabId === null) {
@@ -672,11 +678,14 @@ export function NativeSpreadsheetEditor({
       },
     });
     syncProviderRef.current = provider;
-    const connectTimer = window.setTimeout(() => {
-      provider.connect();
-    }, 0);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        provider.connect();
+      }
+    });
     return () => {
-      window.clearTimeout(connectTimer);
+      cancelled = true;
       provider.disconnect({ notify: false });
       if (syncProviderRef.current === provider) {
         syncProviderRef.current = null;
@@ -833,10 +842,7 @@ export function NativeSpreadsheetEditor({
   }, [commentStatusFilter, sheetId]);
 
   const updateMutation = useMutation({
-    mutationFn: (input: {
-      readonly tabId: string;
-      readonly edits: readonly SheetsCellEdit[];
-    }) => {
+    mutationFn: (input: { readonly tabId: string; readonly edits: readonly SheetsCellEdit[] }) => {
       return updateSheetCells({
         tabId: input.tabId,
         edits: input.edits,
@@ -960,9 +966,7 @@ export function NativeSpreadsheetEditor({
         ),
       );
       await queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
-      window.setTimeout(() => {
-        suppressGridRecoveryRef.current = false;
-      }, 0);
+      releaseGridRecoverySuppression();
     },
     onError: () => undefined,
   });
@@ -1332,9 +1336,7 @@ export function NativeSpreadsheetEditor({
       if (options.recordHistory !== false) {
         recordSheetCellHistory(targetTabId, meaningfulEdits);
       }
-      if (
-        syncProviderRef.current?.sendCellEdits(targetTabId, meaningfulEdits) === true
-      ) {
+      if (syncProviderRef.current?.sendCellEdits(targetTabId, meaningfulEdits) === true) {
         return;
       }
       updateMutation.mutate({ tabId: targetTabId, edits: meaningfulEdits });
@@ -2125,10 +2127,22 @@ export function NativeSpreadsheetEditor({
     if (activeTabId === null || targetRange === null || filterViewsMutation.isPending) {
       return;
     }
-    filterViewsMutation.mutate((currentViews) => [
-      ...currentViews,
-      createFilterViewSpec(activeTabId, targetRange, sortDirection, currentViews),
-    ]);
+    const view = createFilterViewSpec(activeTabId, targetRange, sortDirection, filterViews);
+    setActiveFilterViewId(view.id);
+    filterViewsMutation.mutate((currentViews) => [...currentViews, view]);
+  }
+
+  function toggleActiveFilterView() {
+    if (activeFilterViewId !== null) {
+      setActiveFilterViewId(null);
+      return;
+    }
+    const savedView = activeFilterViews[0];
+    if (savedView !== undefined) {
+      setActiveFilterViewId(savedView.id);
+      return;
+    }
+    addFilterView("asc");
   }
 
   function analyzeSelectedRange() {
@@ -2782,15 +2796,6 @@ export function NativeSpreadsheetEditor({
     }
   }
 
-  function scrollViewport(rowDelta: number, colDelta: number) {
-    setViewport((current) =>
-      clampViewport({
-        row: current.row + rowDelta,
-        col: current.col + colDelta,
-      }),
-    );
-  }
-
   if (sheetQuery.isLoading) {
     return <EditorNotice icon={<Icons.Sheet />} text="Loading spreadsheet..." />;
   }
@@ -2834,15 +2839,13 @@ export function NativeSpreadsheetEditor({
     italic: formatBoolean(selectedFormat.italic),
     underline: formatBoolean(selectedFormat.underline),
     strikethrough: formatBoolean(selectedFormat.strikethrough),
-    textColor:
-      typeof selectedFormat.textColor === "string" ? (selectedFormat.textColor as string) : "",
-    fillColor:
-      typeof selectedFormat.fillColor === "string" ? (selectedFormat.fillColor as string) : "",
+    textColor: typeof selectedFormat.textColor === "string" ? selectedFormat.textColor : "",
+    fillColor: typeof selectedFormat.fillColor === "string" ? selectedFormat.fillColor : "",
     numberFormat: formatNumberFormat(
       selectedFormat.numberFormat,
       selectedFormat.customNumberFormat,
-    ) as SheetsNumberFormat,
-    horizontalAlign: formatAlign(selectedFormat.align) as SheetsHorizontalAlign,
+    ),
+    horizontalAlign: formatAlign(selectedFormat.align),
     verticalAlign: formatVerticalAlign(selectedFormat.verticalAlign),
     wrapText: formatBoolean(selectedFormat.wrapText),
     mergeCellsEnabled:
@@ -2869,8 +2872,8 @@ export function NativeSpreadsheetEditor({
     setFillColor: (color) => applyFormatPatch({ fillColor: color }),
     setNumberFormat: (next) =>
       applyFormatPatch(numberFormatPatch(next, selectedFormat.customNumberFormat)),
-    increaseDecimals: () => undefined,
-    decreaseDecimals: () => undefined,
+    increaseDecimals: () => applyFormatPatch(adjustSheetDecimalFormat(selectedFormat, 1)),
+    decreaseDecimals: () => applyFormatPatch(adjustSheetDecimalFormat(selectedFormat, -1)),
     setPercent: () =>
       applyFormatPatch(numberFormatPatch("percent", selectedFormat.customNumberFormat)),
     setCurrency: () =>
@@ -2888,12 +2891,8 @@ export function NativeSpreadsheetEditor({
       applyBorderPreset(legacy);
     },
     mergeSelectedCells: mergeSelectedRange,
-    canUndo:
-      !updateMutation.isPending &&
-      cellHistory.past.at(-1)?.tabId === activeTabId,
-    canRedo:
-      !updateMutation.isPending &&
-      cellHistory.future[0]?.tabId === activeTabId,
+    canUndo: !updateMutation.isPending && cellHistory.past.at(-1)?.tabId === activeTabId,
+    canRedo: !updateMutation.isPending && cellHistory.future[0]?.tabId === activeTabId,
     undo: undoSheetCellHistory,
     redo: redoSheetCellHistory,
     canCutCopyCells: selectedCommentTarget !== null && !selectedRangeBlocked,
@@ -2909,7 +2908,7 @@ export function NativeSpreadsheetEditor({
     pasteCells: pasteInternalClipboardToSelection,
     sortRangeAsc: () => sortSelectedRange("asc"),
     sortRangeDesc: () => sortSelectedRange("desc"),
-    toggleFilter: () => undefined,
+    toggleFilter: toggleActiveFilterView,
     filterActive: activeFilterViewId !== null,
     insertChart: addChart,
     insertPivotTable: addPivotTable,
@@ -2967,6 +2966,7 @@ export function NativeSpreadsheetEditor({
     onCopyLink: () => {
       void copyCurrentSpreadsheetLink(sheetId).catch(() => undefined);
     },
+    onOpenKeyboardShortcuts: () => setKeyboardShortcutsOpen(true),
     openSidePanelTab: (tabId) => {
       setSidePanelTabId(tabId);
       setSidePanelOpen(true);
@@ -5068,6 +5068,47 @@ export function NativeSpreadsheetEditor({
         shareUrl={shareDialogOpen ? buildCurrentSpreadsheetLink(sheetId) : undefined}
         onOpenChange={setShareDialogOpen}
       />
+      {keyboardShortcutsOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Spreadsheet keyboard shortcuts"
+          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
+        >
+          <section className="w-full max-w-md rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl">
+            <h2 className="m-0 text-lg font-semibold">Keyboard shortcuts</h2>
+            <dl className="mt-4 grid grid-cols-[1fr_auto] gap-x-6 gap-y-2 text-sm">
+              <dt>Undo</dt>
+              <dd>
+                <kbd>Ctrl/⌘ Z</kbd>
+              </dd>
+              <dt>Redo</dt>
+              <dd>
+                <kbd>Ctrl/⌘ Shift Z</kbd>
+              </dd>
+              <dt>Copy</dt>
+              <dd>
+                <kbd>Ctrl/⌘ C</kbd>
+              </dd>
+              <dt>Paste</dt>
+              <dd>
+                <kbd>Ctrl/⌘ V</kbd>
+              </dd>
+              <dt>Edit cell</dt>
+              <dd>
+                <kbd>Enter</kbd>
+              </dd>
+            </dl>
+            <button
+              type="button"
+              className="btn sm mt-5"
+              onClick={() => setKeyboardShortcutsOpen(false)}
+            >
+              Close
+            </button>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -7310,7 +7351,9 @@ function sheetCellFromDrop(
     return null;
   }
   const rowOffset = Math.floor((event.clientY - rect.top - SHEET_CELL_HEIGHT) / SHEET_CELL_HEIGHT);
-  const colOffset = Math.floor((event.clientX - rect.left - SHEET_ROW_HEADER_WIDTH) / SHEET_CELL_WIDTH);
+  const colOffset = Math.floor(
+    (event.clientX - rect.left - SHEET_ROW_HEADER_WIDTH) / SHEET_CELL_WIDTH,
+  );
   if (rowOffset < 0 || colOffset < 0) {
     return null;
   }
@@ -9128,12 +9171,7 @@ function cellVisualOverflowPlacement({
   readonly visibleCols: readonly number[];
   readonly wrapText: boolean;
 }): { readonly span: number; readonly offsetPx: number } {
-  if (
-    focused ||
-    coveredByMerge ||
-    wrapText ||
-    renderedValue.trim().length === 0
-  ) {
+  if (focused || coveredByMerge || wrapText || renderedValue.trim().length === 0) {
     return { span: 1, offsetPx: 0 };
   }
 
@@ -9227,9 +9265,7 @@ function formatFontFamily(value: unknown): string | undefined {
 }
 
 function formatFontSize(value: unknown): string | undefined {
-  return typeof value === "string" && /^(10|11|12|14|18)$/u.test(value)
-    ? `${value}px`
-    : undefined;
+  return typeof value === "string" && /^(10|11|12|14|18)$/u.test(value) ? `${value}px` : undefined;
 }
 
 function formatTextDecoration(format: CellFormat, linkPreview: boolean): string | undefined {
@@ -9267,6 +9303,32 @@ function numberFormatPatch(format: NumberFormat, currentCustomNumberFormat: unkn
     };
   }
   return { numberFormat: format, customNumberFormat: "" };
+}
+
+export function adjustSheetDecimalFormat(format: CellFormat, delta: -1 | 1): CellFormat {
+  const numberFormat = formatNumberFormat(format.numberFormat, format.customNumberFormat);
+  const currentCustom =
+    typeof format.customNumberFormat === "string" ? format.customNumberFormat.trim() : "";
+  const currentDecimals =
+    currentCustom.match(/\.(0+)/u)?.[1]?.length ??
+    (numberFormat === "currency" || numberFormat === "custom" ? 2 : 0);
+  const nextDecimals = clampNumber(currentDecimals + delta, 0, 10);
+  const decimalSuffix = nextDecimals === 0 ? "" : `.${"0".repeat(nextDecimals)}`;
+  const basePattern =
+    currentCustom.length > 0
+      ? currentCustom
+          .split(";")
+          .map((section) => section.replace(/\.(0+)/gu, "").replace(/(?=%|$)/u, decimalSuffix))
+          .join(";")
+      : numberFormat === "currency"
+        ? `$#,##0${decimalSuffix}`
+        : numberFormat === "percent"
+          ? `0${decimalSuffix}%`
+          : `#,##0${decimalSuffix}`;
+  return {
+    numberFormat: "custom",
+    customNumberFormat: basePattern,
+  };
 }
 
 function formatCustomNumberFormat(value: unknown): string {

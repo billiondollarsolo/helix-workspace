@@ -34,7 +34,7 @@ import "./drive-shell.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
-import { detectFormat, fetchDriveBlob, loadDriveObjectForEditor } from "@/features/_open";
+import { detectFormat } from "@/features/_open/format-detection";
 import { setHelixDriveItemDragData } from "./drag-payload";
 import { FileNameText } from "./file-name-text";
 import { FileThumbnail } from "./file-thumbnail";
@@ -44,24 +44,17 @@ import {
   type DocumentSurfaceView,
 } from "./view-preference";
 import {
-  convertImportedDocToNative,
-  convertImportedSheetToNative,
-  convertImportedDeckToNative,
-  ConverterNotAvailableError,
-} from "@/features/_open/converters";
-import {
   canCreateEditableCopyFromFormat,
   editableCopyUnavailableMessage,
 } from "@/features/_open/conversion-capabilities";
 import { Avatar } from "@/components/ui/avatar";
-import { slidesQueryKeys } from "@/features/slides/queries";
-import { sheetsQueryKeys } from "@/features/sheets/queries";
+import { slidesQueryKeys } from "@/features/slides/query-keys";
+import { sheetsQueryKeys } from "@/features/sheets/query-keys";
 import {
   createDriveEntry,
   deleteDriveObject,
   driveDownloadResult,
   driveRawDownloadUrl,
-  listDriveAccess,
   moveDriveObject,
   removeDriveAccess,
   restoreDriveObject,
@@ -85,6 +78,7 @@ import {
 } from "./drive-data";
 import {
   applyDriveScope,
+  driveAccessQueryOptions,
   driveActorQueryOptions,
   driveItemsQueryOptions,
   driveQueryKeys,
@@ -610,20 +604,27 @@ export function DriveShell() {
     setImporting({ name: fileName, surface });
     setImportErrorState(null);
     try {
-      const result = await loadDriveObjectForEditor(objectId, { expectedSurface: surface });
+      const [{ loadDriveObjectForEditor }, { fetchDriveBlob }, converters] = await Promise.all([
+        import("@/features/_open/universal-loader"),
+        import("@/features/_open/drive-fetcher"),
+        import("@/features/_open/converters"),
+      ]);
+      const [result, blob] = await Promise.all([
+        loadDriveObjectForEditor(objectId, { expectedSurface: surface }),
+        fetchDriveBlob(objectId),
+      ]);
       if (result.kind !== "imported") {
         throw new Error(
           result.kind === "not-found" ? "File no longer exists in Drive." : "Format not supported.",
         );
       }
-      const blob = await fetchDriveBlob(objectId);
       let target;
       if (surface === "docs" && result.parsed.kind === "doc") {
-        target = await convertImportedDocToNative(blob, result.parsed, objectId);
+        target = await converters.convertImportedDocToNative(blob, result.parsed, objectId);
       } else if (surface === "sheets" && result.parsed.kind === "sheet") {
-        target = await convertImportedSheetToNative(blob, result.parsed, objectId);
+        target = await converters.convertImportedSheetToNative(blob, result.parsed, objectId);
       } else if (surface === "slides" && result.parsed.kind === "deck") {
-        target = await convertImportedDeckToNative(blob, result.parsed, objectId);
+        target = await converters.convertImportedDeckToNative(blob, result.parsed, objectId);
       } else {
         throw new Error(
           `Parse result shape (${result.parsed.kind}) does not match surface (${surface}).`,
@@ -642,7 +643,7 @@ export function DriveShell() {
           break;
       }
     } catch (err) {
-      if (err instanceof ConverterNotAvailableError) {
+      if (err instanceof Error && err.name === "ConverterNotAvailableError") {
         setImportErrorState(`${err.message} The file is still downloadable via its details pane.`);
       } else {
         setImportErrorState(
@@ -804,7 +805,8 @@ export function DriveShell() {
         onShowMore={() =>
           setListLimit((current) =>
             Math.min(
-              current + (driveQuery.length > 0 ? DRIVE_SEARCH_LIST_LIMIT : DRIVE_DEFAULT_LIST_LIMIT),
+              current +
+                (driveQuery.length > 0 ? DRIVE_SEARCH_LIST_LIMIT : DRIVE_DEFAULT_LIST_LIMIT),
               maxListLimit,
             ),
           )
@@ -1854,11 +1856,7 @@ function DriveStarToggle({
     );
   }
   return (
-    <span
-      role="button"
-      tabIndex={0}
-      {...commonProps}
-    >
+    <span role="button" tabIndex={0} {...commonProps}>
       {content}
     </span>
   );
@@ -1939,24 +1937,23 @@ function DriveDetailsPanel({
 
   const download = entry === null ? null : driveDownloadResult(entry);
   const queryClient = useQueryClient();
-  const accessQuery = useQuery({
-    queryKey: ["drive", "access", file.id],
-    queryFn: () => listDriveAccess(file.id),
-    enabled: entry !== null && !isTrash,
-    throwOnError: false,
-  });
+  const accessQuery = useQuery(driveAccessQueryOptions(file.id, entry !== null && !isTrash));
   const removeAccessMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
     mutationFn: (actorId: string) => removeDriveAccess(file.id, actorId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["drive", "access", file.id] });
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.access(file.id) });
       void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
     },
   });
   const updateAccessMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
     mutationFn: (input: { readonly actorId: string; readonly role: DriveAccessRole }) =>
       updateDriveAccessRole(file.id, input.actorId, input.role),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["drive", "access", file.id] });
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.access(file.id) });
       void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
     },
   });
@@ -2361,8 +2358,7 @@ function AccessList({
   );
 }
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function driveShareTargetsFromInput(targets: readonly string[]): {
   readonly actorIds: readonly string[];

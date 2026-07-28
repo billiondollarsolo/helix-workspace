@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import { env } from "../../config/env.js";
 
 const execFileAsync = promisify(execFile);

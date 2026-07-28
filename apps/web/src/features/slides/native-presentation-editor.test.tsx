@@ -623,7 +623,9 @@ describe("NativePresentationEditor", () => {
     clickAppMenu("edit");
     clickOpenMenuItem("Copy");
     await settle();
-    const stored = JSON.parse(window.localStorage.getItem("helix.slides.shapeClipboard.v1") ?? "{}") as {
+    const stored = JSON.parse(
+      window.localStorage.getItem("helix.slides.shapeClipboard.v1") ?? "{}",
+    ) as {
       readonly shape?: { readonly text?: string };
     };
     expect(stored.shape?.text).toBe("Copy me");
@@ -4062,7 +4064,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function changeInput(label: string, value: string): Promise<void> {
   const target = input(label);
   await act(async () => {
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (valueSetter !== undefined) {
       Reflect.apply(valueSetter, target, [value]);
@@ -4075,7 +4076,6 @@ async function changeInput(label: string, value: string): Promise<void> {
 async function changeTextarea(label: string, value: string): Promise<void> {
   const target = textarea(label);
   await act(async () => {
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
     const valueSetter = Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,
       "value",
@@ -4091,7 +4091,6 @@ async function changeTextarea(label: string, value: string): Promise<void> {
 async function changeSelect(label: string, value: string): Promise<void> {
   const target = select(label);
   await act(async () => {
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
     if (valueSetter !== undefined) {
       Reflect.apply(valueSetter, target, [value]);

@@ -93,6 +93,7 @@ export interface NativeDocumentEditorProps {
   readonly editable?: boolean;
   readonly showNonPrintingCharacters?: boolean;
   readonly generateSuggestionDraft?: typeof generateDocsSuggestionDraft;
+  readonly onContentChange?: (() => void) | undefined;
   readonly onRecoveryStatusChange?: ((recovered: boolean) => void) | undefined;
   readonly onInspectorSnapshotChange?: (snapshot: NativeDocumentInspectorSnapshot) => void;
   readonly onSelectionAnchorChange?: (selection: NativeDocumentSelectionAnchor | null) => void;
@@ -225,6 +226,7 @@ export function NativeDocumentEditor({
   editable = true,
   showNonPrintingCharacters = false,
   generateSuggestionDraft = generateDocsSuggestionDraft,
+  onContentChange,
   onRecoveryStatusChange,
   onInspectorSnapshotChange,
   onSelectionAnchorChange,
@@ -281,9 +283,11 @@ export function NativeDocumentEditor({
   const smartChipKindSelectRef = useRef<HTMLSelectElement | null>(null);
   const equationInputRef = useRef<HTMLInputElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
+  const smartComposeInputRef = useRef<HTMLInputElement | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
   const editorWrapRef = useRef<HTMLElement | null>(null);
   const mountedRef = useRef(false);
+  const onContentChangeRef = useRef(onContentChange);
   const recoveredState = useMemo(
     () => readRecoveredNativeDocumentState(session.document.id, session.document.stateVectorBase64),
     [session.document.id, session.document.stateVectorBase64],
@@ -416,6 +420,7 @@ export function NativeDocumentEditor({
         invalidateSmartComposeRequest("Document changed. Compose again");
         setToolbarRevision((revision) => revision + 1);
         emitNativeDocumentInspectorSnapshot(onInspectorSnapshotChange, updatedEditor.state.doc);
+        onContentChangeRef.current?.();
         queueMicrotask(() => refreshNativeDocumentHeadingReferences());
       },
       shouldRerenderOnTransaction: false,
@@ -430,6 +435,10 @@ export function NativeDocumentEditor({
       session.document.title,
     ],
   );
+
+  useEffect(() => {
+    onContentChangeRef.current = onContentChange;
+  }, [onContentChange]);
 
   useEffect(() => {
     editor?.setEditable(editable);
@@ -516,11 +525,14 @@ export function NativeDocumentEditor({
         },
       });
     }
-    const connectTimer = window.setTimeout(() => {
-      provider.connect();
-    }, 0);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        provider.connect();
+      }
+    });
     return () => {
-      window.clearTimeout(connectTimer);
+      cancelled = true;
       provider.disconnect({ notify: false });
     };
   }, [actorQuery.data, session.sync.url, ydoc]);
@@ -709,7 +721,11 @@ export function NativeDocumentEditor({
     if (targetEditor === null || equationText.trim().length === 0) {
       return;
     }
-    targetEditor.chain().focus().insertContent(nativeDocumentEquationInsertionText(equationText)).run();
+    targetEditor
+      .chain()
+      .focus()
+      .insertContent(nativeDocumentEquationInsertionText(equationText))
+      .run();
     const insertedEquation = equationText.trim();
     setEquationText("");
     setEquationDialogOpen(false);
@@ -1126,7 +1142,6 @@ export function NativeDocumentEditor({
     if (targetEditor === null) {
       return false;
     }
-    const selection = targetEditor.state.selection;
     const text = nativeDocumentSelectedPlainText(targetEditor);
     if (text.length === 0) {
       return false;
@@ -1236,6 +1251,11 @@ export function NativeDocumentEditor({
       if (event.detail.command === "find") {
         findInputRef.current?.focus();
         findInputRef.current?.select();
+        return;
+      }
+      if (event.detail.command === "smart-compose") {
+        smartComposeInputRef.current?.focus();
+        smartComposeInputRef.current?.select();
         return;
       }
       if (event.detail.command === "copy") {
@@ -1422,8 +1442,145 @@ export function NativeDocumentEditor({
             ? "Live editing"
             : "Editing locally"}
       </span>
+      <form
+        className="native-document-editor__smart-compose"
+        style={SMART_COMPOSE_STYLE}
+        aria-label="Smart compose"
+        onSubmit={onSmartCompose}
+        onKeyDown={(event) => {
+          if (event.key === "Tab" && smartComposeDraft.length > 0) {
+            event.preventDefault();
+            acceptSmartComposeDraft();
+          }
+          if (event.key === "Escape" && smartComposeDraft.length > 0) {
+            event.preventDefault();
+            dismissSmartComposeDraft();
+          }
+        }}
+      >
+        <Icons.Sparkles aria-hidden="true" />
+        <input
+          ref={smartComposeInputRef}
+          id="native-document-smart-compose-prompt"
+          aria-label="Smart compose prompt"
+          value={smartComposePrompt}
+          onChange={(event) => {
+            invalidateSmartComposeRequest("Prompt changed. Compose again");
+            setSmartComposePrompt(event.currentTarget.value);
+            if (smartComposeDraft.length > 0) {
+              setSmartComposeDraft("");
+              setSmartComposeStatus("Draft cleared");
+            }
+          }}
+          placeholder="Improve selected text"
+          style={SMART_COMPOSE_INPUT_STYLE}
+        />
+        <button className="btn sm" type="submit" disabled={editor === null || smartComposePending}>
+          {smartComposePending ? "Drafting..." : "Compose"}
+        </button>
+        <output style={SMART_COMPOSE_STATUS_STYLE} aria-live="polite">
+          {smartComposeStatus}
+        </output>
+        {smartComposeDraft.length > 0 ? (
+          <>
+            <span
+              className="native-document-editor__smart-compose-ghost"
+              style={SMART_COMPOSE_GHOST_STYLE}
+              aria-label="Smart compose draft"
+            >
+              {smartComposeDraft}
+            </span>
+            <button className="btn primary sm" type="button" onClick={acceptSmartComposeDraft}>
+              Accept
+            </button>
+            <button className="btn ghost sm" type="button" onClick={dismissSmartComposeDraft}>
+              Dismiss
+            </button>
+          </>
+        ) : null}
+      </form>
+      <form
+        className="native-document-editor__tools"
+        style={FIND_REPLACE_STYLE}
+        onSubmit={onFind}
+        aria-label="Find and replace"
+      >
+        <label style={FIELD_LABEL_STYLE} htmlFor="native-document-find">
+          Find
+        </label>
+        <input
+          id="native-document-find"
+          ref={findInputRef}
+          value={findText}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            setFindText(value);
+            setMatches([]);
+            setActiveMatchIndex(0);
+            dispatchNativeDocumentFindDecorations(editor, [], 0);
+            setFindStatus(value.length === 0 ? "No query" : "Ready");
+          }}
+          style={INPUT_STYLE}
+        />
+        <label style={FIELD_LABEL_STYLE} htmlFor="native-document-replace">
+          Replace
+        </label>
+        <input
+          id="native-document-replace"
+          value={replaceText}
+          onChange={(event) => setReplaceText(event.currentTarget.value)}
+          style={INPUT_STYLE}
+        />
+        <button
+          className="btn sm"
+          type="submit"
+          disabled={editor === null || findText.length === 0}
+        >
+          <Icons.Search aria-hidden="true" />
+          Find
+        </button>
+        <button
+          className="btn sm"
+          type="button"
+          disabled={editor === null || findText.length === 0}
+          onClick={onFindPrevious}
+        >
+          Previous
+        </button>
+        <button
+          className="btn sm"
+          type="button"
+          disabled={editor === null || findText.length === 0}
+          onClick={onFindNext}
+        >
+          Next
+        </button>
+        <button
+          className="btn sm"
+          type="button"
+          disabled={editor === null || findText.length === 0}
+          onClick={onReplaceCurrent}
+        >
+          Replace
+        </button>
+        <button
+          className="btn sm"
+          type="button"
+          disabled={editor === null || findText.length === 0}
+          onClick={onReplaceAll}
+        >
+          Replace all
+        </button>
+        <output style={FIND_STATUS_STYLE} aria-live="polite">
+          {findStatus}
+        </output>
+      </form>
       {linkDialogOpen ? (
-        <form aria-label="Insert link" onSubmit={onInsertLink} style={LINK_FORM_STYLE}>
+        <form
+          aria-label="Insert link"
+          onSubmit={(event) => void onInsertLink(event)}
+          style={LINK_FORM_STYLE}
+        >
           <label style={FIELD_LABEL_STYLE} htmlFor="native-document-link-text">
             Text
           </label>
@@ -1465,7 +1622,11 @@ export function NativeDocumentEditor({
         </form>
       ) : null}
       {equationDialogOpen ? (
-        <form aria-label="Insert equation" onSubmit={onInsertEquation} style={EQUATION_FORM_STYLE}>
+        <form
+          aria-label="Insert equation"
+          onSubmit={(event) => void onInsertEquation(event)}
+          style={EQUATION_FORM_STYLE}
+        >
           <label style={FIELD_LABEL_STYLE} htmlFor="native-document-equation">
             Equation
           </label>
@@ -1494,7 +1655,11 @@ export function NativeDocumentEditor({
         </form>
       ) : null}
       {tableDialogOpen ? (
-        <form aria-label="Insert table" onSubmit={onInsertTable} style={TABLE_FORM_STYLE}>
+        <form
+          aria-label="Insert table"
+          onSubmit={(event) => void onInsertTable(event)}
+          style={TABLE_FORM_STYLE}
+        >
           <label style={FIELD_LABEL_STYLE} htmlFor="native-document-table-rows">
             Rows
           </label>
@@ -1525,11 +1690,7 @@ export function NativeDocumentEditor({
           <button type="submit" className="btn sm">
             Insert table
           </button>
-          <button
-            type="button"
-            className="btn sm ghost"
-            onClick={() => setTableDialogOpen(false)}
-          >
+          <button type="button" className="btn sm ghost" onClick={() => setTableDialogOpen(false)}>
             Cancel
           </button>
         </form>
@@ -1545,7 +1706,9 @@ export function NativeDocumentEditor({
             aria-label="Field"
             value={selectedField}
             onChange={(event) =>
-              setSelectedField(nativeDocumentFieldKindFromValue(event.currentTarget.value) ?? "date")
+              setSelectedField(
+                nativeDocumentFieldKindFromValue(event.currentTarget.value) ?? "date",
+              )
             }
             style={FIELD_SELECT_STYLE}
           >
@@ -1558,11 +1721,7 @@ export function NativeDocumentEditor({
           <button type="submit" className="btn sm">
             Insert field
           </button>
-          <button
-            type="button"
-            className="btn sm ghost"
-            onClick={() => setFieldDialogOpen(false)}
-          >
+          <button type="button" className="btn sm ghost" onClick={() => setFieldDialogOpen(false)}>
             Cancel
           </button>
         </form>
@@ -1667,7 +1826,11 @@ export function NativeDocumentEditor({
         </form>
       ) : null}
       {equationEdit !== null ? (
-        <form aria-label="Edit equation" onSubmit={onSaveEquationEdit} style={EQUATION_FORM_STYLE}>
+        <form
+          aria-label="Edit equation"
+          onSubmit={(event) => void onSaveEquationEdit(event)}
+          style={EQUATION_FORM_STYLE}
+        >
           <label style={FIELD_LABEL_STYLE} htmlFor="native-document-equation-edit">
             Equation
           </label>
@@ -2336,13 +2499,13 @@ function createNativeDocumentImageNodeView(
 
   const commitAttrs = (patch: Partial<NativeDocumentImageAttrs>) => {
     updateNativeDocumentImageNodeAttrs(view, getPos, currentNode, patch);
-    window.setTimeout(() => {
+    queueMicrotask(() => {
       options.onPersist({
         source: "web.native-document-editor.image-object",
         ...(patch.widthPercent === undefined ? {} : { widthPercent: patch.widthPercent }),
         ...(patch.caption === undefined ? {} : { captionLength: patch.caption.trim().length }),
       });
-    }, 0);
+    });
   };
 
   resizeHandle.addEventListener("mousedown", (event) => {
@@ -2558,7 +2721,7 @@ function hrefFromDroppedNativeDocumentHtml(html: string): string | null {
 
 function normalizedDroppedNativeDocumentText(text: string): string {
   return text
-    .replace(/\u0000/gu, "")
+    .replaceAll("\u0000", "")
     .replace(/\r\n/gu, "\n")
     .replace(/\r/gu, "\n")
     .trim()
@@ -2980,6 +3143,7 @@ function isNativeDocumentCommandEventDetail(
   const command = (value as { readonly command?: unknown }).command;
   if (
     command === "find" ||
+    command === "smart-compose" ||
     command === "cut" ||
     command === "copy" ||
     command === "paste" ||
@@ -3453,7 +3617,7 @@ function nativeDocumentSmartChipNavigationTarget(value: string | null | undefine
     return null;
   }
   const href = value.trim();
-  if (href.length === 0 || /[\u0000\r\n]/u.test(href)) {
+  if (href.length === 0 || href.includes("\u0000") || href.includes("\r") || href.includes("\n")) {
     return null;
   }
   let url: URL;
@@ -4038,28 +4202,6 @@ const EDITOR_WRAP_STYLE = {
 // EDITOR_HEADER_STYLE, EDITOR_STATUS_STYLE, FORMAT_TOOLBAR_STYLE removed when the
 // formatting toolbar moved into the unified chrome.
 
-const EDITOR_TOOLS_STYLE = {
-  display: "grid",
-  gap: 10,
-  marginTop: 10,
-} satisfies CSSProperties;
-
-const EDITOR_TOOLS_DETAILS_STYLE = {
-  border: "1px solid var(--border)",
-  borderRadius: 8,
-  padding: "8px 12px",
-  background: "var(--surface, transparent)",
-} satisfies CSSProperties;
-
-const EDITOR_TOOLS_SUMMARY_STYLE = {
-  cursor: "pointer",
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--text-muted, #6b7280)",
-  listStyle: "revert",
-  userSelect: "none",
-} satisfies CSSProperties;
-
 const EDITOR_CONTENT_SINGLE_COLUMN_STYLE = {
   columnCount: 1,
 } satisfies CSSProperties;
@@ -4067,19 +4209,6 @@ const EDITOR_CONTENT_SINGLE_COLUMN_STYLE = {
 const EDITOR_CONTENT_TWO_COLUMN_STYLE = {
   columnCount: 2,
   columnGap: 40,
-} satisfies CSSProperties;
-
-const FIELD_PICKER_STYLE = {
-  justifySelf: "start",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 6,
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  padding: "4px 8px",
-  background: "var(--surface-2)",
-  color: "var(--text-2)",
-  fontSize: "var(--text-body-sm)",
 } satisfies CSSProperties;
 
 const FIELD_SELECT_STYLE = {
@@ -4163,7 +4292,8 @@ const FIND_REPLACE_STYLE = {
 
 const LINK_FORM_STYLE = {
   display: "grid",
-  gridTemplateColumns: "auto minmax(140px, 1fr) auto minmax(180px, 1fr) auto auto minmax(120px, auto)",
+  gridTemplateColumns:
+    "auto minmax(140px, 1fr) auto minmax(180px, 1fr) auto auto minmax(120px, auto)",
   alignItems: "center",
   gap: 8,
   padding: 10,

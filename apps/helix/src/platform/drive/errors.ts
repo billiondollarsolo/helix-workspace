@@ -49,9 +49,7 @@ export class DriveQuotaExceededError extends ConflictError {
         orgId,
         limitBytes,
         projectedBytes,
-        ...(typeof o?.details === "object" && o.details !== null
-          ? (o.details as Record<string, unknown>)
-          : {}),
+        ...(typeof o?.details === "object" && o.details !== null ? o.details : {}),
       },
     });
     this.name = "DriveQuotaExceededError";

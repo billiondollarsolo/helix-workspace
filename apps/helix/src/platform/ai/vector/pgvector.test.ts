@@ -79,9 +79,9 @@ describe("PgVectorStore", () => {
   it("rejects an unsupported metric on createCollection", async () => {
     const { sql } = createFakeSql();
     const store = new PgVectorStore(sql);
-    await expect(
-      store.createCollection(ORG_A, "docs", 8, "manhattan" as never),
-    ).rejects.toThrow("Unsupported vector metric");
+    await expect(store.createCollection(ORG_A, "docs", 8, "manhattan" as never)).rejects.toThrow(
+      "Unsupported vector metric",
+    );
   });
 
   it("includes org_id in createCollection upsert SQL", async () => {
@@ -118,9 +118,9 @@ describe("PgVectorStore", () => {
   it("rejects an upsert vector whose dimension differs from the collection", async () => {
     const { sql } = createFakeSql({ results: [[{ dim: 3, metric: "cosine" }]] });
     const store = new PgVectorStore(sql);
-    await expect(
-      store.upsert(ORG_A, "docs", [{ id: "a", vector: [0.1, 0.2] }]),
-    ).rejects.toThrow("does not match expected dimension");
+    await expect(store.upsert(ORG_A, "docs", [{ id: "a", vector: [0.1, 0.2] }])).rejects.toThrow(
+      "does not match expected dimension",
+    );
   });
 
   it("throws a descriptive error when the collection does not exist for the org", async () => {
@@ -175,7 +175,11 @@ describe("PgVectorStore", () => {
     ]);
     expect(queries.some((query) => query.text.includes("<=>"))).toBe(true);
     // Every query SQL is org-scoped.
-    expect(queries.filter((query) => query.text.includes("<=>")).every((query) => query.text.includes("org_id"))).toBe(true);
+    expect(
+      queries
+        .filter((query) => query.text.includes("<=>"))
+        .every((query) => query.text.includes("org_id")),
+    ).toBe(true);
   });
 
   it("uses the dot-product operator for the dot metric", async () => {
@@ -232,7 +236,7 @@ describe("PgVectorStore", () => {
         typeof value === "object" &&
         value !== null &&
         "__fragment" in value &&
-        typeof (value as { __fragment: unknown }).__fragment === "string"
+        typeof value.__fragment === "string"
       ) {
         const text = (value as { __fragment: string }).__fragment;
         if (text.includes("visibility")) return text;
@@ -248,8 +252,10 @@ describe("PgVectorStore", () => {
     const store = new PgVectorStore(sql);
     await store.query(ORG_A, "docs", [1, 2]);
     const queryRow = queries.find((q) => q.text.includes("<=>"));
-    expect(queryRow).toBeDefined();
-    const visibility = fragmentText(queryRow!.values);
+    if (queryRow === undefined) {
+      throw new Error("Expected a vector similarity query");
+    }
+    const visibility = fragmentText(queryRow.values);
     expect(visibility).toContain("visibility = 'org'");
     // No actorId was supplied → the private-or-mine clause must NOT appear.
     expect(visibility).not.toContain("owner_actor_id");
@@ -263,8 +269,10 @@ describe("PgVectorStore", () => {
     const actorId = "00000000-0000-4000-8000-0000000000aa";
     await store.query(ORG_A, "docs", [1, 2], { actorId });
     const queryRow = queries.find((q) => q.text.includes("<=>"));
-    expect(queryRow).toBeDefined();
-    const visibility = fragmentText(queryRow!.values);
+    if (queryRow === undefined) {
+      throw new Error("Expected a vector similarity query");
+    }
+    const visibility = fragmentText(queryRow.values);
     expect(visibility).toContain("visibility = 'org'");
     expect(visibility).toContain("visibility = 'private'");
     expect(visibility).toContain("owner_actor_id");
@@ -296,9 +304,7 @@ describe("PgVectorStore", () => {
     });
     const store = new PgVectorStore(sql);
     await expect(
-      store.upsert(ORG_A, "docs", [
-        { id: "u1", vector: [0.1, 0.2], visibility: "private" },
-      ]),
+      store.upsert(ORG_A, "docs", [{ id: "u1", vector: [0.1, 0.2], visibility: "private" }]),
     ).rejects.toThrow(/ownerActorId/);
   });
 

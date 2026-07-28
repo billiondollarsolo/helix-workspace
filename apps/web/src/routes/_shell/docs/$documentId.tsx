@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { UniversalEditorRouter } from "@/features/_open/ui";
+import { UniversalEditorRouter } from "@/features/_open/ui/UniversalEditorRouter";
 import { useEditorsAlpha } from "@/features/apps/editors-alpha";
 import { NativeDocumentShell } from "@/features/docs/native-document-shell";
 import { nativeDocumentSessionQueryOptions } from "@/features/docs/queries";

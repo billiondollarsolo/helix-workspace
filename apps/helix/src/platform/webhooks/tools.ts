@@ -15,7 +15,7 @@ import type {
 } from "./store.js";
 import { jsonRecordSchema, stringRecordSchema, zodToolSchema } from "./tool-schemas.js";
 import { webhookDeliveryStatuses, webhookDirections } from "./types.js";
-import { z } from "zod";
+import { z } from "zod3";
 
 const uuidSchema = z.string().uuid();
 const slugSchema = z

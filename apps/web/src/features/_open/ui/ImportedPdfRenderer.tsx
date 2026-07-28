@@ -34,7 +34,7 @@ export function ImportedPdfRenderer({ pdf, objectId, fileName }: ImportedPdfRend
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         // Import only the API surface; pdfjs ships its own worker, configured
         // via an inlined Vite import so no extra wiring is required.
@@ -113,7 +113,7 @@ function PdfPage({
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       const page = await doc.getPage(pageNum);
       if (cancelled) return;
       const viewport = page.getViewport({ scale });
@@ -173,9 +173,7 @@ function PdfToolbar({
         flexWrap: "wrap",
       }}
     >
-      <strong style={{ fontSize: "var(--text-body)" }}>
-        {fileName ?? "PDF"}
-      </strong>
+      <strong style={{ fontSize: "var(--text-body)" }}>{fileName ?? "PDF"}</strong>
       {pageCount !== undefined ? (
         <span style={{ color: "var(--text-3)", fontSize: "var(--text-caption)" }}>
           {pageCount} pages

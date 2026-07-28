@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Actor, EventBus, JsonObject } from "@helix/sdk-types";
-import { z } from "zod";
+import { z } from "zod3";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -560,7 +560,7 @@ async function tenantConfigView(
     branding: org.branding,
     plan: planView(plan),
     effective: {
-      byo: effective.byo as JsonObject,
+      byo: effective.byo,
       features: effective.features as JsonObject,
       quotas: effective.quotas as JsonObject,
       branding: effective.branding as JsonObject,

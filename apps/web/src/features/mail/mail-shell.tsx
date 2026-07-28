@@ -16,14 +16,7 @@
    offline/error fallback when a query fails. */
 
 import "./mail-shell.css";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Icons, type IconName } from "@/components/icons";
@@ -51,11 +44,7 @@ import {
   type MailThreadDetail,
   type MailThreadRow,
 } from "./api";
-import {
-  MAIL_EMPTY_STATES,
-  MAIL_TABS,
-  type MailTabId,
-} from "./mail-seed";
+import { MAIL_EMPTY_STATES, MAIL_TABS, type MailTabId } from "./mail-seed";
 import {
   mailFoldersQueryOptions,
   mailLabelsQueryOptions,
@@ -184,7 +173,15 @@ function MailSidebar({
               onClick={() => onLabel(active ? null : label.slug)}
               className="surf-nav-row"
             >
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: label.color, flexShrink: 0 }} />
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 2,
+                  background: label.color,
+                  flexShrink: 0,
+                }}
+              />
               <span className="label">{label.name}</span>
               {label.threadCount > 0 && <span className="count">{label.threadCount}</span>}
             </button>
@@ -318,10 +315,7 @@ function ThreadRow({
       >
         {thread.from}
         {thread.messageCount > 1 && (
-          <span style={{ color: "var(--text-3)", fontWeight: 400 }}>
-            {" "}
-            ({thread.messageCount})
-          </span>
+          <span style={{ color: "var(--text-3)", fontWeight: 400 }}> ({thread.messageCount})</span>
         )}
       </span>
       <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
@@ -352,10 +346,7 @@ function ThreadRow({
           >
             {thread.subject}
           </span>
-          <span style={{ color: "var(--text-3)", fontWeight: 400 }}>
-            {" "}
-            — {thread.preview}
-          </span>
+          <span style={{ color: "var(--text-3)", fontWeight: 400 }}> — {thread.preview}</span>
         </span>
       </div>
       {/* Date + inline hover actions cell */}
@@ -458,7 +449,9 @@ function EmptyState({
   return (
     <div className="empty" style={{ padding: 64 }}>
       {icon}
-      <div style={{ fontSize: "var(--text-body)", fontWeight: 500, color: "var(--text)" }}>{title}</div>
+      <div style={{ fontSize: "var(--text-body)", fontWeight: 500, color: "var(--text)" }}>
+        {title}
+      </div>
       <div>{body}</div>
       {children}
     </div>
@@ -503,11 +496,7 @@ interface ThreadListProps {
   readonly onBulkRead: (ids: ReadonlySet<string>, unread: boolean) => void;
   readonly onBulkSnooze: (ids: ReadonlySet<string>) => void;
   readonly onBulkMove: (ids: ReadonlySet<string>, folderId: MailFolderKey) => void;
-  readonly onBulkLabel: (
-    ids: ReadonlySet<string>,
-    labelSlug: string,
-    add: boolean,
-  ) => void;
+  readonly onBulkLabel: (ids: ReadonlySet<string>, labelSlug: string, add: boolean) => void;
   // New toolbar actions
   readonly onRefresh: () => void;
   readonly onMarkAllRead: () => void;
@@ -526,7 +515,14 @@ interface PagerControlsProps {
   readonly onPage: (offset: number) => void;
 }
 
-function PagerControls({ total, offset, limit, threadCount, isLoading, onPage }: PagerControlsProps) {
+function PagerControls({
+  total,
+  offset,
+  limit,
+  threadCount,
+  isLoading,
+  onPage,
+}: PagerControlsProps) {
   const rangeStart = total === 0 ? 0 : offset + 1;
   const rangeEnd = offset + threadCount;
   return (
@@ -610,8 +606,7 @@ function ThreadList({
 }: ThreadListProps) {
   const emptyState = MAIL_EMPTY_STATES[folder];
   const isEmptyFolder = emptyState != null && threads.length === 0 && !isLoading;
-  const noResults =
-    query.trim() !== "" && threads.length === 0 && !isEmptyFolder && !isLoading;
+  const noResults = query.trim() !== "" && threads.length === 0 && !isEmptyFolder && !isLoading;
 
   // Select-all dropdown state
   const [selectDropOpen, setSelectDropOpen] = useState(false);
@@ -635,34 +630,19 @@ function ThreadList({
   // Close dropdowns on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (
-        selectDropRef.current &&
-        !selectDropRef.current.contains(e.target as Node)
-      ) {
+      if (selectDropRef.current && !selectDropRef.current.contains(e.target as Node)) {
         setSelectDropOpen(false);
       }
-      if (
-        idleMoreRef.current &&
-        !idleMoreRef.current.contains(e.target as Node)
-      ) {
+      if (idleMoreRef.current && !idleMoreRef.current.contains(e.target as Node)) {
         setIdleMoreOpen(false);
       }
-      if (
-        moveMenuRef.current &&
-        !moveMenuRef.current.contains(e.target as Node)
-      ) {
+      if (moveMenuRef.current && !moveMenuRef.current.contains(e.target as Node)) {
         setMoveMenuOpen(false);
       }
-      if (
-        labelsMenuRef.current &&
-        !labelsMenuRef.current.contains(e.target as Node)
-      ) {
+      if (labelsMenuRef.current && !labelsMenuRef.current.contains(e.target as Node)) {
         setLabelsMenuOpen(false);
       }
-      if (
-        bulkMoreRef.current &&
-        !bulkMoreRef.current.contains(e.target as Node)
-      ) {
+      if (bulkMoreRef.current && !bulkMoreRef.current.contains(e.target as Node)) {
         setBulkMoreOpen(false);
       }
     }
@@ -740,11 +720,8 @@ function ThreadList({
   }
 
   // Determine if a majority are unread to decide the bulk read button label
-  const checkedUnreadCount = threads.filter(
-    (t) => checkedIds.has(t.threadId) && t.unread,
-  ).length;
-  const bulkReadLabel =
-    checkedUnreadCount >= checkedIds.size / 2 ? "Mark read" : "Mark unread";
+  const checkedUnreadCount = threads.filter((t) => checkedIds.has(t.threadId) && t.unread).length;
+  const bulkReadLabel = checkedUnreadCount >= checkedIds.size / 2 ? "Mark read" : "Mark unread";
   const bulkReadUnread = !(checkedUnreadCount >= checkedIds.size / 2);
 
   const SELECT_SUBSETS: Array<{ label: string; value: SelectAllSubset }> = [
@@ -769,7 +746,13 @@ function ThreadList({
             el.indeterminate = someChecked;
           }
         }}
-        onChange={hasBulk ? () => { onCheckedChange(new Set()); } : handleMasterCheckbox}
+        onChange={
+          hasBulk
+            ? () => {
+                onCheckedChange(new Set());
+              }
+            : handleMasterCheckbox
+        }
       />
       <button
         type="button"
@@ -784,11 +767,7 @@ function ThreadList({
         <Icons.ChevronDown size={10} />
       </button>
       {selectDropOpen && (
-        <div
-          className="mail-select-dropdown"
-          role="listbox"
-          aria-label="Select subset"
-        >
+        <div className="mail-select-dropdown" role="listbox" aria-label="Select subset">
           {SELECT_SUBSETS.map((item) => (
             <button
               key={item.value}
@@ -819,7 +798,11 @@ function ThreadList({
       }}
     >
       {/* ---- Single persistent toolbar strip (above the category tabs, Gmail-style) ---- */}
-      <div className="mail-toolbar-strip" role="toolbar" aria-label={hasBulk ? "Bulk actions" : "Toolbar"}>
+      <div
+        className="mail-toolbar-strip"
+        role="toolbar"
+        aria-label={hasBulk ? "Bulk actions" : "Toolbar"}
+      >
         {/* Left section — swaps based on selection state */}
         <div className="mail-toolbar-left">
           {masterCheckboxSection}
@@ -869,7 +852,9 @@ function ThreadList({
                   aria-label="More actions"
                   aria-haspopup="menu"
                   aria-expanded={idleMoreOpen}
-                  onClick={() => { setIdleMoreOpen((v) => !v); }}
+                  onClick={() => {
+                    setIdleMoreOpen((v) => !v);
+                  }}
                 >
                   <Icons.More />
                 </button>
@@ -893,16 +878,16 @@ function ThreadList({
           ) : (
             /* Active (bulk) state left section */
             <>
-              <span className="mail-bulk-toolbar-count">
-                {String(checkedIds.size)} selected
-              </span>
+              <span className="mail-bulk-toolbar-count">{String(checkedIds.size)} selected</span>
               <div className="v-divider mail-toolbar-divider" />
               {/* Destructive group */}
               <button
                 type="button"
                 className="mail-bulk-btn"
                 aria-label="Archive selected"
-                onClick={() => { onBulkArchive(checkedIds); }}
+                onClick={() => {
+                  onBulkArchive(checkedIds);
+                }}
               >
                 <Icons.Archive /> Archive
               </button>
@@ -910,7 +895,9 @@ function ThreadList({
                 type="button"
                 className="mail-bulk-btn"
                 aria-label="Report spam"
-                onClick={() => { onBulkSpam(checkedIds); }}
+                onClick={() => {
+                  onBulkSpam(checkedIds);
+                }}
               >
                 <Icons.Bell /> Report spam
               </button>
@@ -918,7 +905,9 @@ function ThreadList({
                 type="button"
                 className="mail-bulk-btn"
                 aria-label="Delete selected"
-                onClick={() => { onBulkDelete(checkedIds); }}
+                onClick={() => {
+                  onBulkDelete(checkedIds);
+                }}
               >
                 <Icons.Trash /> Delete
               </button>
@@ -928,7 +917,9 @@ function ThreadList({
                 type="button"
                 className="mail-bulk-btn"
                 aria-label={bulkReadLabel}
-                onClick={() => { onBulkRead(checkedIds, bulkReadUnread); }}
+                onClick={() => {
+                  onBulkRead(checkedIds, bulkReadUnread);
+                }}
               >
                 <Icons.Eye /> {bulkReadLabel}
               </button>
@@ -936,7 +927,9 @@ function ThreadList({
                 type="button"
                 className="mail-bulk-btn"
                 aria-label="Snooze selected"
-                onClick={() => { onBulkSnooze(checkedIds); }}
+                onClick={() => {
+                  onBulkSnooze(checkedIds);
+                }}
               >
                 <Icons.Snooze /> Snooze
               </button>
@@ -1009,10 +1002,7 @@ function ThreadList({
                             setLabelsMenuOpen(false);
                           }}
                         >
-                          <span
-                            className="mail-menu-label-dot"
-                            style={{ background: lbl.color }}
-                          />
+                          <span className="mail-menu-label-dot" style={{ background: lbl.color }} />
                           {lbl.name}
                           {applied && (
                             <Icons.Check
@@ -1043,7 +1033,11 @@ function ThreadList({
                   <Icons.More />
                 </button>
                 {bulkMoreOpen && (
-                  <div className="mail-menu-dropdown" role="menu" aria-label="More bulk actions menu">
+                  <div
+                    className="mail-menu-dropdown"
+                    role="menu"
+                    aria-label="More bulk actions menu"
+                  >
                     <button
                       type="button"
                       className="mail-menu-item"
@@ -1119,11 +1113,7 @@ function ThreadList({
           </div>
         )}
         {isLoading && (
-          <EmptyState
-            icon={<Icons.Inbox />}
-            title="Loading mail…"
-            body="Fetching your threads."
-          />
+          <EmptyState icon={<Icons.Inbox />} title="Loading mail…" body="Fetching your threads." />
         )}
         {!isLoading && noResults && (
           <EmptyState
@@ -1132,8 +1122,7 @@ function ThreadList({
             body={
               <>
                 Try a different search or remove an operator like{" "}
-                <span className="mono">from:</span> or{" "}
-                <span className="mono">has:attachment</span>.
+                <span className="mono">from:</span> or <span className="mono">has:attachment</span>.
               </>
             }
           >
@@ -1152,13 +1141,7 @@ function ThreadList({
           emptyState != null &&
           (() => {
             const Icon = Icons[emptyState.icon];
-            return (
-              <EmptyState
-                icon={<Icon />}
-                title={emptyState.title}
-                body={emptyState.body}
-              />
-            );
+            return <EmptyState icon={<Icon />} title={emptyState.title} body={emptyState.body} />;
           })()}
         {!isLoading &&
           !noResults &&
@@ -1344,7 +1327,9 @@ function ThreadView({
         <button type="button" className="icon-btn" aria-label="More actions">
           <Icons.MoreV />
         </button>
-        <span style={{ marginLeft: "auto", fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+        <span
+          style={{ marginLeft: "auto", fontSize: "var(--text-caption)", color: "var(--text-3)" }}
+        >
           {messages.length > 0 ? `${String(messages.length)} messages` : ""}
         </span>
         <button type="button" className="icon-btn" aria-label="Previous conversation">
@@ -1358,7 +1343,12 @@ function ThreadView({
         <div style={{ maxWidth: 880, margin: "0 auto", padding: "20px 32px" }}>
           <div style={{ marginBottom: 16 }}>
             <h1
-              style={{ margin: "0 0 8px", fontSize: "var(--text-h2)", fontWeight: 600, lineHeight: 1.35 }}
+              style={{
+                margin: "0 0 8px",
+                fontSize: "var(--text-h2)",
+                fontWeight: 600,
+                lineHeight: 1.35,
+              }}
             >
               {subject}
             </h1>
@@ -1382,12 +1372,16 @@ function ThreadView({
           </div>
 
           {isError && (
-            <div style={{ marginBottom: 12, fontSize: "var(--text-caption)", color: "var(--danger)" }}>
+            <div
+              style={{ marginBottom: 12, fontSize: "var(--text-caption)", color: "var(--danger)" }}
+            >
               Could not load the full conversation — showing the list preview.
             </div>
           )}
           {actionError != null && (
-            <div style={{ marginBottom: 12, fontSize: "var(--text-caption)", color: "var(--danger)" }}>
+            <div
+              style={{ marginBottom: 12, fontSize: "var(--text-caption)", color: "var(--danger)" }}
+            >
               {actionError}
             </div>
           )}
@@ -1400,8 +1394,7 @@ function ThreadView({
               setAiSummary((value) => !value);
             }}
           >
-            <Icons.Sparkles />{" "}
-            {aiSummary ? "Hide AI summary" : "Summarize with Helix AI"}
+            <Icons.Sparkles /> {aiSummary ? "Hide AI summary" : "Summarize with Helix AI"}
           </button>
           {aiSummary && (
             <div
@@ -1427,8 +1420,8 @@ function ThreadView({
               >
                 <Icons.Sparkles /> Summary
               </div>
-              {senderName} is asking for sign-off on this thread. Key open items and
-              requested next steps are highlighted below — review before replying.
+              {senderName} is asking for sign-off on this thread. Key open items and requested next
+              steps are highlighted below — review before replying.
               <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
                 <button
                   type="button"
@@ -1501,7 +1494,9 @@ function ThreadView({
                         flexWrap: "wrap",
                       }}
                     >
-                      <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>{msgSender}</span>
+                      <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>
+                        {msgSender}
+                      </span>
                       <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
                         {message.from?.address ?? row.fromEmail}
                       </span>
@@ -1525,13 +1520,15 @@ function ThreadView({
                     >
                       to{" "}
                       {message.to.length > 0
-                        ? message.to
-                            .map((addr) => addr.name ?? addr.address)
-                            .join(", ")
+                        ? message.to.map((addr) => addr.name ?? addr.address).join(", ")
                         : "me"}
                     </div>
                     <div
-                      style={{ whiteSpace: "pre-wrap", fontSize: "var(--text-body-sm)", lineHeight: 1.6 }}
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        fontSize: "var(--text-body-sm)",
+                        lineHeight: 1.6,
+                      }}
                     >
                       {message.body}
                     </div>
@@ -1621,8 +1618,7 @@ function ThreadView({
                 {replyMode === "forward" ? <Icons.Forward /> : <Icons.Reply />}
                 <span style={{ fontWeight: 600 }}>
                   {replyMode === "reply" && `Replying to ${senderName}`}
-                  {replyMode === "replyAll" &&
-                    `Replying all (${String(participantCount)} people)`}
+                  {replyMode === "replyAll" && `Replying all (${String(participantCount)} people)`}
                   {replyMode === "forward" && `Forwarding "${subject}"`}
                 </span>
                 <button
@@ -1830,6 +1826,8 @@ function Compose({ onClose, onSent }: ComposeProps) {
   });
 
   const cancelMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
     mutationFn: (outboundId: string) => cancelOutboundMail(outboundId),
     onSuccess: () => {
       setUndo(null);
@@ -1852,10 +1850,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
       },
     }).then((saved) => {
       const id =
-        typeof saved === "object" &&
-        saved !== null &&
-        "id" in saved &&
-        typeof (saved as { id: unknown }).id === "string"
+        typeof saved === "object" && saved !== null && "id" in saved && typeof saved.id === "string"
           ? (saved as { id: string }).id
           : null;
       if (id !== null) {
@@ -1980,12 +1975,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
           <button type="button" className="icon-btn" aria-label="Minimize">
             <Icons.ChevronDown />
           </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Close"
-            onClick={onClose}
-          >
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
             <Icons.X />
           </button>
         </div>
@@ -1999,7 +1989,9 @@ function Compose({ onClose, onSent }: ComposeProps) {
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>To</span>
+          <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
+            To
+          </span>
           <input
             value={to}
             onChange={(event) => {
@@ -2045,7 +2037,9 @@ function Compose({ onClose, onSent }: ComposeProps) {
               borderBottom: "1px solid var(--border)",
             }}
           >
-            <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>Cc</span>
+            <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
+              Cc
+            </span>
             <input
               value={cc}
               onChange={(event) => {
@@ -2071,7 +2065,9 @@ function Compose({ onClose, onSent }: ComposeProps) {
               borderBottom: "1px solid var(--border)",
             }}
           >
-            <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>Bcc</span>
+            <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
+              Bcc
+            </span>
             <input
               value={bcc}
               onChange={(event) => {
@@ -2132,7 +2128,10 @@ function Compose({ onClose, onSent }: ComposeProps) {
       {attachments.length > 0 && (
         <div className="compose-attachments" aria-label="Attached files">
           {attachments.map((attachment, index) => (
-            <div key={`${attachment.filename}-${String(index)}`} className="compose-attachment-chip">
+            <div
+              key={`${attachment.filename}-${String(index)}`}
+              className="compose-attachment-chip"
+            >
               <Icons.Paperclip />
               <span title={attachment.filename}>{attachment.filename}</span>
               <button
@@ -2176,7 +2175,9 @@ function Compose({ onClose, onSent }: ComposeProps) {
         </div>
       )}
       {sendFailed && (
-        <div style={{ margin: "0 14px 8px", fontSize: "var(--text-caption)", color: "var(--danger)" }}>
+        <div
+          style={{ margin: "0 14px 8px", fontSize: "var(--text-caption)", color: "var(--danger)" }}
+        >
           Could not send message. Try again.
         </div>
       )}
@@ -2217,12 +2218,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
         }}
       >
         <div style={{ display: "flex" }}>
-          <button
-            type="button"
-            className="btn primary"
-            disabled={!canSend}
-            onClick={handleSend}
-          >
+          <button type="button" className="btn primary" disabled={!canSend} onClick={handleSend}>
             <Icons.Send /> {sendMutation.isPending ? "Sending…" : "Send"}
           </button>
           <button
@@ -2287,10 +2283,15 @@ export function MailShell() {
   // Push-driven inbox: SSE invalidates mail queries on activity.mail.* events.
   useMailRealtime(true);
   // URL-hydrated initial values — back button restores the prior view.
-  const urlSearch: Partial<{ folder: string; tab: MailTabId; thread: string; q: string; label: string }> =
-    useSearch({ strict: false });
+  const urlSearch: Partial<{
+    folder: string;
+    tab: MailTabId;
+    thread: string;
+    q: string;
+    label: string;
+  }> = useSearch({ strict: false });
   const [folder, setFolder] = useState<MailFolderKey>(
-    ((urlSearch.folder as MailFolderKey | undefined) ?? "inbox"),
+    (urlSearch.folder as MailFolderKey | undefined) ?? "inbox",
   );
   const [tab, setTab] = useState<MailTabId>(urlSearch.tab ?? "primary");
   const [activeLabel, setActiveLabel] = useState<string | null>(urlSearch.label ?? null);
@@ -2331,7 +2332,6 @@ export function MailShell() {
     if (urlThread !== selected) setSelected(urlThread);
     if (urlQuery !== query) setQuery(urlQuery);
     if (urlLabel !== activeLabel) setActiveLabel(urlLabel);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlSearch.folder, urlSearch.tab, urlSearch.thread, urlSearch.q, urlSearch.label]);
   const [offset, setOffset] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -2361,10 +2361,7 @@ export function MailShell() {
   const threads = threadsResult?.threads ?? [];
   const total = threadsResult?.total ?? 0;
 
-  const labelColors = useMemo(
-    () => new Map(labels.map((label) => [label.slug, label])),
-    [labels],
-  );
+  const labelColors = useMemo(() => new Map(labels.map((label) => [label.slug, label])), [labels]);
 
   const selectedRow = useMemo(
     () => threads.find((thread) => thread.threadId === selected) ?? null,
@@ -2717,14 +2714,12 @@ export function MailShell() {
                 if (firstLabel === undefined) {
                   return;
                 }
-                const applied = (
-                  threadDetailQuery.data?.labels ?? selectedRow.labels
-                ).includes(firstLabel.slug);
+                const applied = (threadDetailQuery.data?.labels ?? selectedRow.labels).includes(
+                  firstLabel.slug,
+                );
                 labelMutation.mutate({
                   threadId: selectedRow.threadId,
-                  ...(applied
-                    ? { remove: [firstLabel.slug] }
-                    : { add: [firstLabel.slug] }),
+                  ...(applied ? { remove: [firstLabel.slug] } : { add: [firstLabel.slug] }),
                 });
               }}
               actionBusy={actionBusy}
@@ -2762,9 +2757,7 @@ export function MailShell() {
                 });
               }}
               pendingThreadId={
-                starMutation.isPending
-                  ? (starMutation.variables?.threadId ?? null)
-                  : null
+                starMutation.isPending ? (starMutation.variables?.threadId ?? null) : null
               }
               onArchive={handleRowArchive}
               onDelete={handleRowDelete}

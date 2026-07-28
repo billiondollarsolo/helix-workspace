@@ -14,13 +14,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, access } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  Document,
-  HeadingLevel,
-  Packer,
-  Paragraph,
-  TextRun,
-} from "docx";
+import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { createRequire } from "node:module";
 // pptxgenjs ships as CommonJS only; default-import under ESM/tsx wraps the
 // constructor in unpredictable ways. Drop down to CJS via createRequire so
@@ -47,19 +41,74 @@ interface SourceItem {
  *  which source cached doc they derive from. seed-corpus's manifest.json
  *  references the `outputManifestId` to load the generated file. */
 const GENERATORS: readonly SourceItem[] = [
-  { sourceManifestId: "doc.wikipedia.postgresql",   title: "PostgreSQL — overview",        genKind: "docx", outputManifestId: "docx.wikipedia.postgresql" },
-  { sourceManifestId: "doc.wikipedia.kubernetes",   title: "Kubernetes — overview",        genKind: "docx", outputManifestId: "docx.wikipedia.kubernetes" },
-  { sourceManifestId: "doc.wikipedia.typescript",   title: "TypeScript — overview",        genKind: "docx", outputManifestId: "docx.wikipedia.typescript" },
-  { sourceManifestId: "doc.wikipedia.cloud-computing", title: "Cloud Computing — overview", genKind: "docx", outputManifestId: "docx.wikipedia.cloud-computing" },
+  {
+    sourceManifestId: "doc.wikipedia.postgresql",
+    title: "PostgreSQL — overview",
+    genKind: "docx",
+    outputManifestId: "docx.wikipedia.postgresql",
+  },
+  {
+    sourceManifestId: "doc.wikipedia.kubernetes",
+    title: "Kubernetes — overview",
+    genKind: "docx",
+    outputManifestId: "docx.wikipedia.kubernetes",
+  },
+  {
+    sourceManifestId: "doc.wikipedia.typescript",
+    title: "TypeScript — overview",
+    genKind: "docx",
+    outputManifestId: "docx.wikipedia.typescript",
+  },
+  {
+    sourceManifestId: "doc.wikipedia.cloud-computing",
+    title: "Cloud Computing — overview",
+    genKind: "docx",
+    outputManifestId: "docx.wikipedia.cloud-computing",
+  },
 
-  { sourceManifestId: "doc.wikipedia.apple-inc",    title: "Apple Inc. — investor deck",   genKind: "pptx", outputManifestId: "pptx.wikipedia.apple-inc" },
-  { sourceManifestId: "doc.wikipedia.tesla-inc",    title: "Tesla, Inc. — investor deck",  genKind: "pptx", outputManifestId: "pptx.wikipedia.tesla-inc" },
-  { sourceManifestId: "doc.wikipedia.microsoft",    title: "Microsoft — investor deck",    genKind: "pptx", outputManifestId: "pptx.wikipedia.microsoft" },
-  { sourceManifestId: "doc.wikipedia.nvidia",       title: "Nvidia — investor deck",       genKind: "pptx", outputManifestId: "pptx.wikipedia.nvidia" },
+  {
+    sourceManifestId: "doc.wikipedia.apple-inc",
+    title: "Apple Inc. — investor deck",
+    genKind: "pptx",
+    outputManifestId: "pptx.wikipedia.apple-inc",
+  },
+  {
+    sourceManifestId: "doc.wikipedia.tesla-inc",
+    title: "Tesla, Inc. — investor deck",
+    genKind: "pptx",
+    outputManifestId: "pptx.wikipedia.tesla-inc",
+  },
+  {
+    sourceManifestId: "doc.wikipedia.microsoft",
+    title: "Microsoft — investor deck",
+    genKind: "pptx",
+    outputManifestId: "pptx.wikipedia.microsoft",
+  },
+  {
+    sourceManifestId: "doc.wikipedia.nvidia",
+    title: "Nvidia — investor deck",
+    genKind: "pptx",
+    outputManifestId: "pptx.wikipedia.nvidia",
+  },
 
-  { sourceManifestId: "doc.wikipedia.federal-reserve",      title: "Federal Reserve — plain text",      genKind: "txt", outputManifestId: "txt.wikipedia.federal-reserve" },
-  { sourceManifestId: "doc.wikipedia.transformer-architecture", title: "Transformer architecture — plain text", genKind: "txt", outputManifestId: "txt.wikipedia.transformer" },
-  { sourceManifestId: "doc.wikipedia.large-language-model", title: "Large language models — plain text", genKind: "txt", outputManifestId: "txt.wikipedia.llm" },
+  {
+    sourceManifestId: "doc.wikipedia.federal-reserve",
+    title: "Federal Reserve — plain text",
+    genKind: "txt",
+    outputManifestId: "txt.wikipedia.federal-reserve",
+  },
+  {
+    sourceManifestId: "doc.wikipedia.transformer-architecture",
+    title: "Transformer architecture — plain text",
+    genKind: "txt",
+    outputManifestId: "txt.wikipedia.transformer",
+  },
+  {
+    sourceManifestId: "doc.wikipedia.large-language-model",
+    title: "Large language models — plain text",
+    genKind: "txt",
+    outputManifestId: "txt.wikipedia.llm",
+  },
 ];
 
 async function exists(path: string): Promise<boolean> {
@@ -90,15 +139,21 @@ function markdownToDocx(title: string, markdown: string): Buffer | Promise<Buffe
       continue;
     }
     if (line.startsWith("# ")) {
-      paragraphs.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun(line.slice(2))] }));
+      paragraphs.push(
+        new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun(line.slice(2))] }),
+      );
       continue;
     }
     if (line.startsWith("## ")) {
-      paragraphs.push(new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun(line.slice(3))] }));
+      paragraphs.push(
+        new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun(line.slice(3))] }),
+      );
       continue;
     }
     if (line.startsWith("### ")) {
-      paragraphs.push(new Paragraph({ heading: HeadingLevel.HEADING_3, children: [new TextRun(line.slice(4))] }));
+      paragraphs.push(
+        new Paragraph({ heading: HeadingLevel.HEADING_3, children: [new TextRun(line.slice(4))] }),
+      );
       continue;
     }
     paragraphs.push(new Paragraph({ children: [new TextRun(line)] }));
@@ -118,7 +173,13 @@ async function markdownToPptx(title: string, markdown: string): Promise<Buffer> 
   // Title slide
   const titleSlide = pres.addSlide();
   titleSlide.addText(title, { x: 0.5, y: 1.5, w: 9, h: 1.5, fontSize: 36, bold: true });
-  titleSlide.addText("Source: Wikipedia · CC BY-SA 4.0", { x: 0.5, y: 5.5, w: 9, fontSize: 12, color: "888888" });
+  titleSlide.addText("Source: Wikipedia · CC BY-SA 4.0", {
+    x: 0.5,
+    y: 5.5,
+    w: 9,
+    fontSize: 12,
+    color: "888888",
+  });
 
   for (const chunk of chunks) {
     const slide = pres.addSlide();
@@ -126,7 +187,7 @@ async function markdownToPptx(title: string, markdown: string): Promise<Buffer> 
     slide.addText(chunk.body, { x: 0.5, y: 1.3, w: 9, h: 5, fontSize: 14, valign: "top" });
   }
 
-  return pres.write({ outputType: "nodebuffer" }) as Promise<Buffer>;
+  return pres.write({ outputType: "nodebuffer" });
 }
 
 interface SlideChunk {
@@ -169,13 +230,20 @@ function markdownToTxt(title: string, markdown: string): Buffer {
   return Buffer.from(`${title}\n${"=".repeat(title.length)}\n\n${stripped}\n`, "utf8");
 }
 
-async function ensureGenerated(spec: SourceItem): Promise<{ status: "generated" | "skipped"; hash: string }> {
+async function ensureGenerated(
+  spec: SourceItem,
+): Promise<{ status: "generated" | "skipped"; hash: string }> {
   const srcDir = resolve(CACHE_ROOT, spec.sourceManifestId);
   const srcMetaPath = resolve(srcDir, "metadata.json");
   if (!(await exists(srcMetaPath))) {
-    throw new Error(`generate-corpus: source ${spec.sourceManifestId} not cached — run pnpm helix db:fetch:corpus first.`);
+    throw new Error(
+      `generate-corpus: source ${spec.sourceManifestId} not cached — run pnpm helix db:fetch:corpus first.`,
+    );
   }
-  const srcMeta = JSON.parse(await readFile(srcMetaPath, "utf8")) as { readonly extension: string; readonly sha256: string };
+  const srcMeta = JSON.parse(await readFile(srcMetaPath, "utf8")) as {
+    readonly extension: string;
+    readonly sha256: string;
+  };
   const srcContent = await readFile(resolve(srcDir, `content.${srcMeta.extension}`));
   const markdown = srcContent.toString("utf8");
 
@@ -230,10 +298,14 @@ async function main(): Promise<void> {
       const r = await ensureGenerated(spec);
       if (r.status === "skipped") {
         stats.skipped += 1;
-        process.stdout.write(`  ${spec.outputManifestId.padEnd(40)} (cached, sha256 ${r.hash.slice(0, 12)}…)\n`);
+        process.stdout.write(
+          `  ${spec.outputManifestId.padEnd(40)} (cached, sha256 ${r.hash.slice(0, 12)}…)\n`,
+        );
       } else {
         stats.generated += 1;
-        process.stdout.write(`✓ ${spec.outputManifestId.padEnd(40)} generated (sha256 ${r.hash.slice(0, 12)}…)\n`);
+        process.stdout.write(
+          `✓ ${spec.outputManifestId.padEnd(40)} generated (sha256 ${r.hash.slice(0, 12)}…)\n`,
+        );
       }
     } catch (error) {
       stats.failed += 1;

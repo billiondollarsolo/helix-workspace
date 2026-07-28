@@ -12,7 +12,7 @@ describe("mail errors", () => {
     expect(e).toBeInstanceOf(NotFoundError);
     expect(e.statusCode).toBe(404);
     expect(e.code).toBe("not_found");
-    expect(String(e.message)).toContain("t1");
+    expect(e.message).toContain("t1");
   });
 
   it("MailFilterNotFoundError is a 404", () => {

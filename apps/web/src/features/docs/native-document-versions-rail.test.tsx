@@ -324,7 +324,6 @@ function inputByLabel(label: string): HTMLInputElement {
 }
 
 function setNativeInputValue(element: HTMLInputElement, value: string): void {
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   if (setter === undefined) {
     throw new Error("native input value setter unavailable");

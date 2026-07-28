@@ -17,20 +17,8 @@
    - On API error, the sidebar renders an "offline" notice instead of any
      fabricated rows. */
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -81,8 +69,9 @@ const QUICK_REACTIONS = ["👍", "🎉", "🙏", "👀", "✅"] as const;
 export function ChatShell() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const urlSearch: Partial<{ room: string; thread: string; tab: InfoTab }> =
-    useSearch({ strict: false });
+  const urlSearch: Partial<{ room: string; thread: string; tab: InfoTab }> = useSearch({
+    strict: false,
+  });
   const [activeRoomId, setActiveRoomId] = useState<string | undefined>(urlSearch.room);
   const [threadId, setThreadId] = useState<string | null>(urlSearch.thread ?? null);
   const [infoTab, setInfoTab] = useState<InfoTab>(urlSearch.tab ?? "about");
@@ -118,10 +107,7 @@ export function ChatShell() {
     });
   }, [activeRoomId, threadId, infoTab]);
 
-  const presence = useMemo(
-    () => presenceMap(realtime.presence),
-    [realtime.presence],
-  );
+  const presence = useMemo(() => presenceMap(realtime.presence), [realtime.presence]);
 
   const { spaces, directs } = useMemo(
     () => partitionRooms(rooms, selfActorId, presence),
@@ -160,9 +146,9 @@ export function ChatShell() {
 
   // Locally-applied reactions: the list/WS payloads carry no reactions, so we
   // optimistically reflect the current actor's own reactions (see REPORT).
-  const [localReactions, setLocalReactions] = useState<
-    Readonly<Record<string, readonly string[]>>
-  >({});
+  const [localReactions, setLocalReactions] = useState<Readonly<Record<string, readonly string[]>>>(
+    {},
+  );
 
   // History (infinite pages, each newest-first) + live (WS) + pending, oldest-first.
   const messageRecords = useMemo<readonly ChatMessageRecord[]>(() => {
@@ -182,10 +168,7 @@ export function ChatShell() {
       .sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt));
   }, [messagesQuery.data, realtime.liveMessages]);
 
-  const orderedIds = useMemo(
-    () => messageRecords.map((m) => m.id),
-    [messageRecords],
-  );
+  const orderedIds = useMemo(() => messageRecords.map((m) => m.id), [messageRecords]);
 
   const messages = useMemo<readonly ChatMessageView[]>(() => {
     const confirmed = messageRecords.map((record) => {
@@ -201,12 +184,7 @@ export function ChatShell() {
         nameForActor,
         reactions,
         readBy: readCountFor(record.id, orderedIds, realtime.receipts, selfActorId),
-        seenByActorIds: seenByForMessage(
-          record.id,
-          orderedIds,
-          realtime.receipts,
-          selfActorId,
-        ),
+        seenByActorIds: seenByForMessage(record.id, orderedIds, realtime.receipts, selfActorId),
       });
     });
     const pending = realtime.pendingMessages
@@ -262,17 +240,10 @@ export function ChatShell() {
   }, [newestId, realtime]);
 
   const about: ChatAboutView = useMemo(() => roomAbout(activeRoom), [activeRoom]);
-  const members: readonly ChatMemberView[] = useMemo(
-    () => roomMembers(activeRoom),
-    [activeRoom],
-  );
-  const roomName = activeRoom
-    ? roomDisplayName(activeRoom, selfActorId)
-    : "Chat";
+  const members: readonly ChatMemberView[] = useMemo(() => roomMembers(activeRoom), [activeRoom]);
+  const roomName = activeRoom ? roomDisplayName(activeRoom, selfActorId) : "Chat";
 
-  const threadMessage = threadId
-    ? (messages.find((m) => m.id === threadId) ?? null)
-    : null;
+  const threadMessage = threadId ? (messages.find((m) => m.id === threadId) ?? null) : null;
 
   // --- Mutations -------------------------------------------------------
 
@@ -382,6 +353,7 @@ export function ChatShell() {
   );
 
   const createRoomMutation = useMutation({
+    onMutate: () => undefined,
     mutationFn: (input: {
       readonly kind: "chat_room" | "chat_dm";
       readonly subject?: string;
@@ -402,6 +374,7 @@ export function ChatShell() {
   });
 
   const inviteMutation = useMutation({
+    onMutate: () => undefined,
     mutationFn: (actorIds: readonly string[]) => {
       if (activeRoomId === undefined) {
         return Promise.reject(new Error("No room"));
@@ -417,6 +390,10 @@ export function ChatShell() {
   });
 
   const pinMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => {
+      setActionError("Couldn’t pin that message.");
+    },
     mutationFn: (messageId: string) => {
       if (activeRoomId === undefined) {
         return Promise.reject(new Error("No room"));
@@ -471,8 +448,7 @@ export function ChatShell() {
         />
 
         <section className="chat-channel" aria-label={`${roomName} channel`}>
-          {realtime.connection === "closed" ||
-          realtime.connection === "reconnecting" ? (
+          {realtime.connection === "closed" || realtime.connection === "reconnecting" ? (
             <div className="chat-banner" role="status">
               {realtime.connection === "reconnecting"
                 ? "Reconnecting…"
@@ -521,9 +497,7 @@ export function ChatShell() {
             }}
           />
 
-          <ChatTypingIndicator
-            names={realtime.typingActorIds.map((id) => nameForActor(id))}
-          />
+          <ChatTypingIndicator names={realtime.typingActorIds.map((id) => nameForActor(id))} />
 
           <ChatComposer
             placeholder={`Message #${roomName}`}
@@ -689,9 +663,7 @@ function ChatSidebar({
             >
               <Icons.Hash size={16} />
               <span className="chat-nav-name truncate">{s.name}</span>
-              {s.unread > 0 ? (
-                <span className="chat-unread-badge">{s.unread}</span>
-              ) : null}
+              {s.unread > 0 ? <span className="chat-unread-badge">{s.unread}</span> : null}
             </button>
           );
         })
@@ -740,18 +712,14 @@ function ChatSidebar({
                 />
               </span>
               <span className="chat-nav-name truncate">{d.name}</span>
-              {d.unread > 0 ? (
-                <span className="chat-unread-badge">{d.unread}</span>
-              ) : null}
+              {d.unread > 0 ? <span className="chat-unread-badge">{d.unread}</span> : null}
             </button>
           );
         })
       )}
 
       {offline ? (
-        <p className="chat-sidebar-state chat-sidebar-offline">
-          Offline — chat rooms unavailable.
-        </p>
+        <p className="chat-sidebar-state chat-sidebar-offline">Offline — chat rooms unavailable.</p>
       ) : null}
     </aside>
   );
@@ -794,11 +762,7 @@ function ChatChannelHeader({ name, memberCount, onInvite }: ChatChannelHeaderPro
           </button>
         </Tooltip>
         <Tooltip label="Notifications" side="bottom">
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Notification settings"
-          >
+          <button type="button" className="icon-btn" aria-label="Notification settings">
             <Icons.Bell size={16} />
           </button>
         </Tooltip>
@@ -896,9 +860,7 @@ function ChatMessageList({
     return (
       <div className="chat-messages" role="log" aria-label="Messages">
         <p className="chat-messages-state">
-          {offline
-            ? "Offline — no messages available."
-            : "No messages yet. Say hello!"}
+          {offline ? "Offline — no messages available." : "No messages yet. Say hello!"}
         </p>
       </div>
     );
@@ -1012,12 +974,7 @@ function VirtualizedChatMessages({
   }, [hasOlder, loadingOlder, onLoadOlder]);
 
   return (
-    <div
-      ref={scrollRef}
-      className="chat-messages"
-      role="log"
-      aria-label="Messages"
-    >
+    <div ref={scrollRef} className="chat-messages" role="log" aria-label="Messages">
       <div
         style={{
           position: "relative",
@@ -1125,12 +1082,8 @@ function ChatMessageRow({
         <div className="chat-msg-head">
           <span className="chat-msg-author">{message.authorName}</span>
           <span className="chat-msg-time">{message.time}</span>
-          {message.editedAt !== null ? (
-            <span className="chat-msg-edited">(edited)</span>
-          ) : null}
-          {message.pending === true ? (
-            <span className="chat-msg-pending">Sending…</span>
-          ) : null}
+          {message.editedAt !== null ? <span className="chat-msg-edited">(edited)</span> : null}
+          {message.pending === true ? <span className="chat-msg-pending">Sending…</span> : null}
           {message.failed === true ? (
             <button
               type="button"
@@ -1241,11 +1194,7 @@ function ChatMessageRow({
         ) : null}
       </div>
 
-      <div
-        className="chat-msg-actions"
-        role="toolbar"
-        aria-label="Message actions"
-      >
+      <div className="chat-msg-actions" role="toolbar" aria-label="Message actions">
         <Tooltip label="React" side="bottom">
           <button
             type="button"
@@ -1353,12 +1302,7 @@ interface ChatComposerProps {
   readonly onTyping: (isTyping: boolean) => void;
 }
 
-function ChatComposer({
-  placeholder,
-  disabled,
-  onSend,
-  onTyping,
-}: ChatComposerProps) {
+function ChatComposer({ placeholder, disabled, onSend, onTyping }: ChatComposerProps) {
   const [draft, setDraft] = useState("");
   const typingRef = useRef(false);
 
@@ -1488,12 +1432,7 @@ interface ChatThreadPanelProps {
   readonly onReply: (body: string) => void;
 }
 
-function ChatThreadPanel({
-  spaceName,
-  parent,
-  onClose,
-  onReply,
-}: ChatThreadPanelProps) {
+function ChatThreadPanel({ spaceName, parent, onClose, onReply }: ChatThreadPanelProps) {
   const [reply, setReply] = useState("");
 
   const submit = () => {
@@ -1593,22 +1532,14 @@ interface ChatInfoPanelProps {
   readonly onInvite: (raw: string) => void;
 }
 
-function ChatInfoPanel({
-  tab,
-  onTabChange,
-  about,
-  members,
-  pins,
-  onInvite,
-}: ChatInfoPanelProps) {
+function ChatInfoPanel({ tab, onTabChange, about, members, pins, onInvite }: ChatInfoPanelProps) {
   const [inviteDraft, setInviteDraft] = useState("");
-  const tabs: ReadonlyArray<{ readonly id: InfoTab; readonly label: string }> =
-    [
-      { id: "about", label: "About" },
-      { id: "members", label: `Members · ${String(members.length)}` },
-      { id: "files", label: "Files" },
-      { id: "pinned", label: `Pinned · ${String(pins.length)}` },
-    ];
+  const tabs: ReadonlyArray<{ readonly id: InfoTab; readonly label: string }> = [
+    { id: "about", label: "About" },
+    { id: "members", label: `Members · ${String(members.length)}` },
+    { id: "files", label: "Files" },
+    { id: "pinned", label: `Pinned · ${String(pins.length)}` },
+  ];
 
   return (
     <aside className="chat-info-panel" aria-label="Channel info">
@@ -1681,12 +1612,8 @@ function ChatInfoPanel({
                 <div key={member.actorId} className="chat-info-member">
                   <Avatar name={member.name} size={22} />
                   <div className="chat-info-member-text">
-                    <div className="chat-info-member-name truncate">
-                      {member.name}
-                    </div>
-                    <div className="chat-info-member-role truncate">
-                      {member.role}
-                    </div>
+                    <div className="chat-info-member-name truncate">{member.name}</div>
+                    <div className="chat-info-member-role truncate">{member.role}</div>
                   </div>
                 </div>
               ))
@@ -1694,9 +1621,7 @@ function ChatInfoPanel({
           </>
         ) : null}
 
-        {tab === "files" ? (
-          <p className="chat-info-empty">No shared files yet.</p>
-        ) : null}
+        {tab === "files" ? <p className="chat-info-empty">No shared files yet.</p> : null}
 
         {tab === "pinned" ? (
           pins.length === 0 ? (
@@ -1706,9 +1631,7 @@ function ChatInfoPanel({
               <div key={pin.messageId} className="chat-info-pin">
                 <Icons.Pin size={12} />
                 <span className="truncate">{pin.messageId.slice(0, 8)}…</span>
-                <span className="chat-info-pin-time">
-                  {formatChatTime(pin.createdAt)}
-                </span>
+                <span className="chat-info-pin-time">{formatChatTime(pin.createdAt)}</span>
               </div>
             ))
           )

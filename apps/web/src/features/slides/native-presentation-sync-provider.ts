@@ -1,3 +1,4 @@
+import { Debouncer } from "@tanstack/pacer";
 import { addAccessTokenSearchParam } from "@/lib/auth";
 import type { SlidesApiDeck, SlidesApiDeckDetail, SlidesApiSlide } from "./api";
 import type { SlideContent } from "./seed";
@@ -140,7 +141,7 @@ export class NativePresentationSyncProvider {
   private status: NativePresentationSyncStatus = "offline";
   private revision = 0;
   private reconnectAttempts = 0;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly reconnectDebouncer: Debouncer<() => void>;
 
   constructor(input: NativePresentationSyncProviderInput) {
     this.deckId = input.deckId;
@@ -155,10 +156,16 @@ export class NativePresentationSyncProvider {
     this.reconnect = input.reconnect ?? true;
     this.reconnectDelayMs = input.reconnectDelayMs ?? defaultReconnectDelayMs;
     this.maxReconnectAttempts = input.maxReconnectAttempts ?? defaultMaxReconnectAttempts;
+    this.reconnectDebouncer = new Debouncer(
+      () => {
+        this.connect();
+      },
+      { wait: this.reconnectDelayMs },
+    );
   }
 
   connect(): void {
-    this.clearReconnectTimer();
+    this.reconnectDebouncer.cancel();
     if (this.socket !== null || this.WebSocketCtor === undefined) {
       this.setStatus("offline");
       return;
@@ -174,7 +181,7 @@ export class NativePresentationSyncProvider {
 
   disconnect(options: NativePresentationSyncProviderDisconnectOptions = {}): void {
     const notify = options.notify ?? true;
-    this.clearReconnectTimer();
+    this.reconnectDebouncer.cancel();
     this.reconnectAttempts = 0;
     const socket = this.socket;
     if (socket === null) {
@@ -351,24 +358,13 @@ export class NativePresentationSyncProvider {
       !this.reconnect ||
       this.WebSocketCtor === undefined ||
       this.socket !== null ||
-      this.reconnectTimer !== null ||
+      this.reconnectDebouncer.store.state.isPending ||
       this.reconnectAttempts >= this.maxReconnectAttempts
     ) {
       return;
     }
     this.reconnectAttempts += 1;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, this.reconnectDelayMs);
-  }
-
-  private clearReconnectTimer(): void {
-    if (this.reconnectTimer === null) {
-      return;
-    }
-    clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
+    this.reconnectDebouncer.maybeExecute();
   }
 
   private setStatus(status: NativePresentationSyncStatus): void {

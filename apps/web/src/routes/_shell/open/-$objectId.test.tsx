@@ -33,16 +33,25 @@ vi.mock("@/features/_open/converters", () => ({
   convertImportedDeckToNative: (...args: unknown[]) => convertImportedDeckToNativeMock(...args),
 }));
 
-vi.mock("@/features/_open/ui", () => ({
+vi.mock("@/features/_open/ui/ImportedDocumentRenderer", () => ({
   ImportedDocumentRenderer: ({ fileName }: { readonly fileName: string }) => (
     <div>Read-only document preview: {fileName}</div>
   ),
+}));
+
+vi.mock("@/features/_open/ui/ImportedSheetRenderer", () => ({
   ImportedSheetRenderer: ({ fileName }: { readonly fileName: string }) => (
     <div>Read-only sheet preview: {fileName}</div>
   ),
+}));
+
+vi.mock("@/features/_open/ui/ImportedDeckRenderer", () => ({
   ImportedDeckRenderer: ({ fileName }: { readonly fileName: string }) => (
     <div>Read-only deck preview: {fileName}</div>
   ),
+}));
+
+vi.mock("@/features/_open/ui/UnsupportedFormatPlaceholder", () => ({
   UnsupportedFormatPlaceholder: ({ fileName }: { readonly fileName?: string }) => (
     <div>Unsupported file: {fileName}</div>
   ),

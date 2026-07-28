@@ -91,20 +91,20 @@ async function insertEmail(
   const subject = mail.subject ?? "(no subject)";
   // mailparser gives `from`/`to` as either single address object or array; normalize.
   // Spread into plain JSON-friendly shapes before handing to sql.json.
-  const fromRaw = mail.from?.value?.[0];
+  const fromRaw = mail.from?.value[0];
   const fromAddress = {
     address: fromRaw?.address ?? "unknown@example",
     name: fromRaw?.name ?? "",
   };
   const toList = (mail.to ? (Array.isArray(mail.to) ? mail.to : [mail.to]) : []).flatMap((g) =>
-    g.value.map((v) => ({ address: v.address ?? "", name: v.name ?? "" })),
+    g.value.map((v) => ({ address: v.address, name: v.name })),
   );
   const ccList = (mail.cc ? (Array.isArray(mail.cc) ? mail.cc : [mail.cc]) : []).flatMap((g) =>
-    g.value.map((v) => ({ address: v.address ?? "", name: v.name ?? "" })),
+    g.value.map((v) => ({ address: v.address, name: v.name })),
   );
   const sentAt = mail.date ?? new Date();
   const bodyPlain = (mail.text ?? "").trim();
-  const bodyHtml = mail.html === false ? null : (mail.html as string | undefined) ?? null;
+  const bodyHtml = mail.html === false ? null : ((mail.html as string | undefined) ?? null);
   const body = bodyPlain.length > 0 ? bodyPlain : (bodyHtml ?? "").replace(/<[^>]+>/g, " ").trim();
   const bodyFormat = bodyHtml !== null && bodyPlain.length === 0 ? "html" : "plain";
 
@@ -114,9 +114,7 @@ async function insertEmail(
   >`select id from threads where org_id = ${orgId} and metadata->>'messageId' = ${messageId} limit 1`;
   if (existing.length > 0) return "skipped";
 
-  const threadRow = await sql<
-    { id: string }[]
-  >`
+  const threadRow = await sql<{ id: string }[]>`
     insert into threads (org_id, kind, subject, created_by_actor_id, metadata)
     values (
       ${orgId},
@@ -131,7 +129,11 @@ async function insertEmail(
     )
     returning id
   `;
-  const threadId = threadRow[0]!.id;
+  const thread = threadRow[0];
+  if (thread === undefined) {
+    throw new Error(`Failed to create mail thread for ${messageId}`);
+  }
+  const threadId = thread.id;
 
   const messageRow = await sql<{ id: string }[]>`
     insert into messages (org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
@@ -163,7 +165,11 @@ async function insertEmail(
     )
     returning id
   `;
-  const messageId_row = messageRow[0]!.id;
+  const message = messageRow[0];
+  if (message === undefined) {
+    throw new Error(`Failed to create mail message for ${messageId}`);
+  }
+  const messageId_row = message.id;
 
   // Attachments: mailparser exposes each part on `mail.attachments`. Insert
   // an `objects` row + a `message_attachments` link row for each so the
@@ -171,11 +177,11 @@ async function insertEmail(
   // lights up. Storage is filename-keyed; the bytes live as inlineBody on
   // the object metadata (the existing dev fallback in server.ts:2611 reads
   // these when storage is unavailable, so downloads still work).
-  const attachments = mail.attachments ?? [];
+  const attachments = mail.attachments;
   for (const att of attachments) {
     if (!Buffer.isBuffer(att.content) || att.content.byteLength === 0) continue;
-    const filename = att.filename ?? `attachment-${attachments.indexOf(att)}.bin`;
-    const mimeType = att.contentType ?? "application/octet-stream";
+    const filename = att.filename ?? `attachment-${String(attachments.indexOf(att))}.bin`;
+    const mimeType = att.contentType;
     const sha256 = createHash("sha256").update(att.content).digest("hex");
     const storageKey = `mail/${messageId_row}/${filename}`;
     const inlineBody = att.content.toString("base64");
@@ -200,11 +206,15 @@ async function insertEmail(
       )
       returning id
     `;
-    const objectId = objectRow[0]!.id;
+    const object = objectRow[0];
+    if (object === undefined) {
+      throw new Error(`Failed to create attachment object for ${filename}`);
+    }
+    const objectId = object.id;
 
     await sql`
       insert into message_attachments (message_id, object_id, disposition)
-      values (${messageId_row}, ${objectId}, ${att.contentDisposition ?? "attachment"})
+      values (${messageId_row}, ${objectId}, ${att.contentDisposition})
     `;
     await sql`
       insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)

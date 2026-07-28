@@ -20,7 +20,7 @@ import {
   type ParseSourceWebhookOptions,
   type WebhookHeaders,
 } from "./sources/index.js";
-import { z } from "zod";
+import { z } from "zod3";
 
 const paramsSchema = z.object({
   slug: z.string().min(1),

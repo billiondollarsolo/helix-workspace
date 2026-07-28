@@ -1,6 +1,6 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyReply } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 
 /**
  * Shared helpers for the Admin Console backend domains (Groups & OUs,

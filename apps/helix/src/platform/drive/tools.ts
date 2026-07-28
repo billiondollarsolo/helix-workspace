@@ -1,6 +1,6 @@
 // ponytail: tool surface registry >400 LOC; split by domain (upload/access/comments/links) when next feature lands.
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
-import { z } from "zod";
+import { z } from "zod3";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";

@@ -5,16 +5,19 @@ import type { MailStore } from "./store.js";
 import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
 
 function toolById(id: string, storeOverrides: Partial<MailStore> = {}) {
+  const updateThreadState = vi.fn<MailStore["updateThreadState"]>().mockResolvedValue(undefined);
+  const listFilters = vi.fn<MailStore["listFilters"]>().mockResolvedValue([]);
+  const cancelOutbound = vi.fn<MailStore["cancelOutbound"]>().mockResolvedValue(null);
   const store = {
-    updateThreadState: vi.fn().mockResolvedValue(undefined),
-    listFilters: vi.fn().mockResolvedValue([]),
-    cancelOutbound: vi.fn().mockResolvedValue(null),
+    updateThreadState,
+    listFilters,
+    cancelOutbound,
     getOutbound: vi.fn().mockResolvedValue(null),
     ...storeOverrides,
   } as unknown as MailStore;
   const tool = createMailToolDefinitions({ store }).find((t) => t.id === id);
   if (tool === undefined) throw new Error(`tool ${id} not registered`);
-  return { tool, store };
+  return { tool, store, updateThreadState, listFilters, cancelOutbound };
 }
 
 describe("mail.spam tool", () => {
@@ -25,28 +28,23 @@ describe("mail.spam tool", () => {
   });
 
   it("stamps spam_at when marking spam", async () => {
-    const { tool, store } = toolById("mail.spam");
+    const { tool, updateThreadState } = toolById("mail.spam");
     const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
     const out = (await tool.handler(
       { threadId: "11111111-1111-1111-1111-111111111111", spam: true },
       ctx,
     )) as { ok: boolean };
     expect(out.ok).toBe(true);
-    expect(store.updateThreadState).toHaveBeenCalledWith(
-      expect.objectContaining({ patch: expect.objectContaining({ spamAt: expect.any(Date) }) }),
-    );
+    const update = updateThreadState.mock.calls[0]?.[0];
+    expect(update?.patch.spamAt).toBeInstanceOf(Date);
   });
 
   it("clears spam_at when un-marking (spam:false)", async () => {
-    const { tool, store } = toolById("mail.spam");
+    const { tool, updateThreadState } = toolById("mail.spam");
     const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
-    await tool.handler(
-      { threadId: "11111111-1111-1111-1111-111111111111", spam: false },
-      ctx,
-    );
-    expect(store.updateThreadState).toHaveBeenCalledWith(
-      expect.objectContaining({ patch: expect.objectContaining({ spamAt: null }) }),
-    );
+    await tool.handler({ threadId: "11111111-1111-1111-1111-111111111111", spam: false }, ctx);
+    const update = updateThreadState.mock.calls[0]?.[0];
+    expect(update?.patch.spamAt).toBeNull();
   });
 
   it("requires the mail.write scope (not mail.read)", () => {
@@ -68,26 +66,27 @@ describe("mail.spam tool", () => {
 describe("mail.filter.list tool", () => {
   it("is registered and reads via store.listFilters", async () => {
     const now = new Date();
+    const listFilters = vi.fn().mockResolvedValue([
+      {
+        id: "f1",
+        name: "Newsletters",
+        enabled: true,
+        priority: 100,
+        criteria: {},
+        actions: {},
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
     const store = {
-      listFilters: vi.fn().mockResolvedValue([
-        {
-          id: "f1",
-          name: "Newsletters",
-          enabled: true,
-          priority: 100,
-          criteria: {},
-          actions: {},
-          createdAt: now,
-          updatedAt: now,
-        },
-      ]),
+      listFilters,
     } as unknown as MailStore;
     const tool = createMailToolDefinitions({ store }).find((t) => t.id === "mail.filter.list");
-    expect(tool).toBeDefined();
-    expect(tool?.permission).toBe("mail.read");
+    if (tool === undefined) throw new Error("Missing mail.filter.list tool");
+    expect(tool.permission).toBe("mail.read");
     const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
-    const out = (await tool!.handler({}, ctx)) as { filters: { id: string; createdAt: string }[] };
-    expect(store.listFilters).toHaveBeenCalledWith("o1", "a1");
+    const out = (await tool.handler({}, ctx)) as { filters: { id: string; createdAt: string }[] };
+    expect(listFilters).toHaveBeenCalledWith("o1", "a1");
     expect(out.filters[0]?.id).toBe("f1");
     expect(typeof out.filters[0]?.createdAt).toBe("string");
   });
@@ -122,8 +121,9 @@ describe("mail.outbound.cancel tool", () => {
       deliveryMetadata: {},
       updatedAt: new Date(),
     };
-    const { tool, store } = toolById("mail.outbound.cancel", {
-      cancelOutbound: vi.fn().mockResolvedValue(cancelled),
+    const cancelOutbound = vi.fn().mockResolvedValue(cancelled);
+    const { tool } = toolById("mail.outbound.cancel", {
+      cancelOutbound,
     });
     expect(tool.permission).toBe("mail.write");
     const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
@@ -131,7 +131,7 @@ describe("mail.outbound.cancel tool", () => {
       { outboundId: "11111111-1111-1111-1111-111111111111" },
       ctx,
     )) as { outbound: { id: string } | null };
-    expect(store.cancelOutbound).toHaveBeenCalledWith({
+    expect(cancelOutbound).toHaveBeenCalledWith({
       orgId: "o1",
       actorId: "a1",
       id: "11111111-1111-1111-1111-111111111111",
@@ -167,12 +167,14 @@ describe("mail.alias tools", () => {
 describe("mail.draft tools", () => {
   it("registers draft save/get/list/discard", () => {
     const ids = createMailToolDefinitions({ store: {} as MailStore }).map((t) => t.id);
-    expect(ids).toEqual(expect.arrayContaining([
-      "mail.draft.save",
-      "mail.draft.get",
-      "mail.draft.list",
-      "mail.draft.discard",
-    ]));
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "mail.draft.save",
+        "mail.draft.get",
+        "mail.draft.list",
+        "mail.draft.discard",
+      ]),
+    );
   });
 });
 
@@ -180,7 +182,7 @@ describe("mail tool error typing", () => {
   it("throws MailFilterNotFoundError on unknown filter update", async () => {
     const { tool } = toolById("mail.filter.update", {
       updateFilter: vi.fn().mockResolvedValue(null),
-    } as unknown as Partial<MailStore>);
+    });
     const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
     await expect(
       tool.handler({ id: "11111111-1111-1111-1111-111111111111", name: "x" }, ctx),

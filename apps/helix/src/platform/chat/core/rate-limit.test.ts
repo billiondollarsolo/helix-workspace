@@ -5,7 +5,7 @@ describe("chat token-bucket rate limit", () => {
   const config: TokenBucketConfig = { capacity: 3, refillPerSecond: 1 };
 
   it("drains after capacity frames", () => {
-    let now = 1_000;
+    const now = 1_000;
     const clock = { now: () => now };
     const bucket = createBucket(config, clock);
     expect(consumeToken(bucket, config, clock)).toBe(true);

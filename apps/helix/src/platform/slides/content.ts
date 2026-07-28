@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod3";
 import { slideBackgrounds, splitSlideRightKinds, type SlideContent } from "./types.js";
 
 /**

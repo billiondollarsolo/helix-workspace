@@ -9,7 +9,11 @@ import {
   startSignup,
   type SignupResponse,
 } from "./api";
-import { evaluateSignupPasswordStrength } from "./password-strength";
+import {
+  evaluateSignupPasswordStrength,
+  preloadSignupPasswordStrengthEstimator,
+  type SignupPasswordStrength,
+} from "./password-strength";
 import { defaultSignupRecaptchaExecutor, type SignupRecaptchaExecutor } from "./recaptcha";
 
 type SignupStatus = "idle" | "submitting" | "submitted";
@@ -43,7 +47,9 @@ export function SignupShell({
   const [status, setStatus] = useState<SignupStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SignupResponse | null>(null);
+  const [passwordStrength, setPasswordStrength] = useState<SignupPasswordStrength | null>(null);
   const slugCheckSeq = useRef(0);
+  const passwordStrengthSeq = useRef(0);
   const formViewedRecorded = useRef(false);
 
   const checkSlug = useAsyncDebouncedCallback(
@@ -77,15 +83,30 @@ export function SignupShell({
     { wait: 300 },
   );
 
-  const passwordStrength = useMemo(
-    () =>
-      evaluateSignupPasswordStrength({
-        password,
-        email,
-        orgName,
-      }),
-    [email, orgName, password],
-  );
+  useEffect(() => {
+    const seq = passwordStrengthSeq.current + 1;
+    passwordStrengthSeq.current = seq;
+    setPasswordStrength(null);
+    void evaluateSignupPasswordStrength({
+      password,
+      email,
+      orgName,
+    })
+      .then((strength) => {
+        if (seq === passwordStrengthSeq.current) {
+          setPasswordStrength(strength);
+        }
+      })
+      .catch(() => {
+        if (seq === passwordStrengthSeq.current) {
+          setPasswordStrength({
+            score: 0,
+            acceptable: false,
+            label: "Password strength could not be checked. Change the password to retry.",
+          });
+        }
+      });
+  }, [email, orgName, password]);
 
   useEffect(() => {
     if (formViewedRecorded.current) {
@@ -125,7 +146,7 @@ export function SignupShell({
       status !== "submitting" &&
       email.trim().length > 0 &&
       password.length >= 12 &&
-      passwordStrength.acceptable &&
+      passwordStrength?.acceptable === true &&
       orgName.trim().length > 0 &&
       orgName.trim().length <= 64 &&
       orgSlug.length >= 3 &&
@@ -140,7 +161,7 @@ export function SignupShell({
       orgName,
       orgSlug,
       password.length,
-      passwordStrength.acceptable,
+      passwordStrength?.acceptable,
       privacyAccepted,
       slugStatus.state,
       status,
@@ -245,6 +266,9 @@ export function SignupShell({
               autoComplete="new-password"
               placeholder="At least 12 characters"
               value={password}
+              onFocus={() => {
+                void preloadSignupPasswordStrengthEstimator().catch(() => undefined);
+              }}
               onChange={(event) => setPassword(event.target.value)}
               minLength={12}
               aria-describedby="signup-password-status"
@@ -253,10 +277,12 @@ export function SignupShell({
           </label>
           <p
             id="signup-password-status"
-            className={passwordStrength.acceptable ? "auth-status success" : "auth-status"}
+            className={
+              passwordStrength?.acceptable === true ? "auth-status success" : "auth-status"
+            }
             role="status"
           >
-            {passwordStrength.label}
+            {passwordStrength?.label ?? "Checking password strength…"}
           </p>
           <label className="auth-field">
             <span className="auth-label">Workspace name</span>

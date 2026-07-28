@@ -15,26 +15,18 @@ import {
   mailFiltersListResultSchema,
   mailOutboundCancelInputSchema,
   mailOutboundCancelResultSchema,
-  mailOutboundRecordSchema,
   mailSpamInputSchema,
   mailSpamResultSchema,
   mailThreadsListResultSchema,
 } from "@helix/contracts";
-import { z } from "zod";
+import { z } from "zod3";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import { BadRequestError } from "../../api/api-error.js";
 import type { MailStore } from "./store.js";
-import {
-  MailFilterNotFoundError,
-  MailInboundActorForbiddenError,
-} from "./errors.js";
-import {
-  ingestRawMail,
-  MailauthAuthenticator,
-  type MailAuthenticator,
-} from "./ingest.js";
+import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
+import { ingestRawMail, MailauthAuthenticator, type MailAuthenticator } from "./ingest.js";
 import { MailSendService } from "./outbound.js";
 import { MAIL_CATEGORY_TABS } from "./category.js";
 import type {
@@ -338,9 +330,10 @@ export function createMailToolDefinitions(
   });
 
   const internalDomains = new Set(
-    (options.internalDomains ?? (options.defaultFromDomain === undefined
-      ? []
-      : [options.defaultFromDomain])).map((domain) => domain.toLowerCase()),
+    (
+      options.internalDomains ??
+      (options.defaultFromDomain === undefined ? [] : [options.defaultFromDomain])
+    ).map((domain) => domain.toLowerCase()),
   );
   const externalRecipientScope = {
     scope: "mail.external",
@@ -790,9 +783,7 @@ export function createMailToolDefinitions(
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(outboundGetSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(mailOutboundGetOutputSchema,
-        genericObjectJsonSchema,
-      ),
+      outputSchema: zodToolSchema(mailOutboundGetOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         const outbound = await options.store.getOutbound(input.id);
         if (
@@ -954,13 +945,16 @@ export function createMailToolDefinitions(
         return serializeAlias(alias);
       },
     }),
-    defineTool<z.output<typeof mailAliasDeleteInputSchema>, unknown>({
+    defineTool<
+      z.output<typeof mailAliasDeleteInputSchema>,
+      z.output<typeof mailAliasDeleteOutputSchema>
+    >({
       id: "mail.alias.delete",
       description: "Disable a mail alias (admin routing mutation).",
       permission: "mail.admin",
       sideEffects: "destructive",
       inputSchema: zodToolSchema(mailAliasDeleteInputSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.object({ deleted: z.boolean() }), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailAliasDeleteOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         if (options.store.deleteAlias === undefined) {
           return { deleted: false };
@@ -1013,9 +1007,7 @@ function toEnvelope(
   defaultFrom: MailOutboundEnvelope["from"],
 ): MailOutboundEnvelope {
   const from =
-    "from" in input && input.from !== undefined
-      ? normalizeAddress(input.from)
-      : defaultFrom;
+    "from" in input && input.from !== undefined ? normalizeAddress(input.from) : defaultFrom;
   return {
     from,
     to: input.to.map(normalizeAddress),
@@ -1263,10 +1255,8 @@ function serializeDraft(
   const to = Array.isArray(env.to) ? env.to : (fallback?.to ?? []);
   const cc = Array.isArray(env.cc) ? env.cc : (fallback?.cc ?? []);
   const bcc = Array.isArray(env.bcc) ? env.bcc : (fallback?.bcc ?? []);
-  const subject =
-    typeof env.subject === "string" ? env.subject : (fallback?.subject ?? "");
-  const bodyText =
-    typeof env.bodyText === "string" ? env.bodyText : (fallback?.bodyText ?? "");
+  const subject = typeof env.subject === "string" ? env.subject : (fallback?.subject ?? "");
+  const bodyText = typeof env.bodyText === "string" ? env.bodyText : (fallback?.bodyText ?? "");
   const bodyHtml =
     typeof env.bodyHtml === "string"
       ? env.bodyHtml

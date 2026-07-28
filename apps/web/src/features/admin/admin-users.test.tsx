@@ -103,7 +103,9 @@ describe("AdminUsersList", () => {
     fetchMock
       .mockResolvedValueOnce(Response.json(adminUsersPage({ nextCursor: "cursor-2" })))
       .mockResolvedValueOnce(Response.json(adminUsersPage({ nextCursor: "cursor-2" })))
-      .mockResolvedValueOnce(Response.json({ users: [adminUser({ id: "page-2-user" })], nextCursor: null }));
+      .mockResolvedValueOnce(
+        Response.json({ users: [adminUser({ id: "page-2-user" })], nextCursor: null }),
+      );
 
     renderAdminUsers();
     await waitForText("Mina Jay");
@@ -139,11 +141,7 @@ describe("AdminUsersList", () => {
   function renderAdminUsers() {
     act(() => {
       root.render(
-        createElement(
-          QueryClientProvider,
-          { client: queryClient },
-          createElement(AdminUsersList),
-        ),
+        createElement(QueryClientProvider, { client: queryClient }, createElement(AdminUsersList)),
       );
     });
   }
@@ -195,7 +193,6 @@ describe("AdminUsersList", () => {
       throw new Error(`Input not found: ${label}`);
     }
     act(() => {
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")
         ?.set as ((this: HTMLInputElement, value: string) => void) | undefined;
       valueSetter?.call(input, value);

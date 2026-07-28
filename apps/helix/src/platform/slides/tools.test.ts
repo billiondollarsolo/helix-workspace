@@ -167,20 +167,30 @@ describe("slides tools end-to-end", () => {
         { deckId, title: "Launch deck (Copy)", metadata: { createdFrom: "test.copy" } },
         invokeContext,
       ),
-    );
+    ) as unknown as {
+      readonly deck: {
+        readonly id: string;
+        readonly title: string;
+        readonly metadata: Readonly<Record<string, unknown>>;
+      };
+      readonly slides: readonly {
+        readonly id: string;
+        readonly deckId: string;
+        readonly content: { readonly title?: string };
+        readonly speakerNotes: string;
+      }[];
+    };
 
     expect(copied.deck).toMatchObject({
       title: "Launch deck (Copy)",
       metadata: { createdFrom: "test.copy", copiedFromDeckId: deckId },
     });
-    expect(copied.slides).toEqual([
-      expect.objectContaining({
-        deckId: (copied.deck as { readonly id: string }).id,
-        content: expect.objectContaining({ title: "Hello" }),
-        speakerNotes: "Presenter note",
-      }),
-    ]);
-    expect((copied.slides as readonly { readonly id: string }[])[0]?.id).not.toBe(slide.id);
+    expect(copied.slides).toHaveLength(1);
+    const copiedSlide = copied.slides[0];
+    expect(copiedSlide?.deckId).toBe(copied.deck.id);
+    expect(copiedSlide?.content.title).toBe("Hello");
+    expect(copiedSlide?.speakerNotes).toBe("Presenter note");
+    expect(copiedSlide?.id).not.toBe(slide.id);
   });
 
   it("creates a deck, adds typed-layout slides, gets, and lists", async () => {

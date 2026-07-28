@@ -10,15 +10,30 @@
  */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { loadDriveObjectForEditor } from "@/features/_open/universal-loader";
-import {
-  ImportedAudioRenderer,
-  ImportedEbookRenderer,
-  ImportedImageRenderer,
-  ImportedVideoRenderer,
-  UnsupportedFormatPlaceholder,
-} from "@/features/_open/ui";
+import { queryOptions, useQuery } from "@tanstack/react-query";
+import { lazy, Suspense, type ReactNode } from "react";
+import { UnsupportedFormatPlaceholder } from "@/features/_open/ui/UnsupportedFormatPlaceholder";
+
+const LazyImportedAudioRenderer = lazy(() =>
+  import("@/features/_open/ui/ImportedAudioRenderer").then((module) => ({
+    default: module.ImportedAudioRenderer,
+  })),
+);
+const LazyImportedEbookRenderer = lazy(() =>
+  import("@/features/_open/ui/ImportedEbookRenderer").then((module) => ({
+    default: module.ImportedEbookRenderer,
+  })),
+);
+const LazyImportedImageRenderer = lazy(() =>
+  import("@/features/_open/ui/ImportedImageRenderer").then((module) => ({
+    default: module.ImportedImageRenderer,
+  })),
+);
+const LazyImportedVideoRenderer = lazy(() =>
+  import("@/features/_open/ui/ImportedVideoRenderer").then((module) => ({
+    default: module.ImportedVideoRenderer,
+  })),
+);
 
 export const Route = createFileRoute("/_shell/media/$objectId")({
   component: MediaRoute,
@@ -26,16 +41,11 @@ export const Route = createFileRoute("/_shell/media/$objectId")({
 
 function MediaRoute() {
   const { objectId } = Route.useParams();
-  const query = useQuery({
-    queryKey: ["media-open", objectId],
-    queryFn: () => loadDriveObjectForEditor(objectId, {}),
-  });
+  const query = useQuery(mediaObjectQueryOptions(objectId));
 
   if (query.isLoading) return <Centered>Loading media…</Centered>;
   if (query.isError) {
-    return (
-      <Centered isError>Failed to load media: {(query.error as Error).message}</Centered>
-    );
+    return <Centered isError>Failed to load media: {query.error.message}</Centered>;
   }
 
   const result = query.data;
@@ -56,13 +66,21 @@ function MediaRoute() {
   const parsed = result.parsed;
   switch (parsed.kind) {
     case "audio":
-      return <ImportedAudioRenderer audio={parsed} objectId={objectId} fileName={fileName} />;
+      return withMediaFallback(
+        <LazyImportedAudioRenderer audio={parsed} objectId={objectId} fileName={fileName} />,
+      );
     case "video":
-      return <ImportedVideoRenderer video={parsed} objectId={objectId} fileName={fileName} />;
+      return withMediaFallback(
+        <LazyImportedVideoRenderer video={parsed} objectId={objectId} fileName={fileName} />,
+      );
     case "image":
-      return <ImportedImageRenderer image={parsed} objectId={objectId} fileName={fileName} />;
+      return withMediaFallback(
+        <LazyImportedImageRenderer image={parsed} objectId={objectId} fileName={fileName} />,
+      );
     case "ebook":
-      return <ImportedEbookRenderer ebook={parsed} objectId={objectId} fileName={fileName} />;
+      return withMediaFallback(
+        <LazyImportedEbookRenderer ebook={parsed} objectId={objectId} fileName={fileName} />,
+      );
     case "unsupported":
       return (
         <UnsupportedFormatPlaceholder
@@ -92,11 +110,21 @@ function MediaRoute() {
   }
 }
 
+function mediaObjectQueryOptions(objectId: string) {
+  return queryOptions({
+    queryKey: ["media-open", objectId],
+    queryFn: async () => {
+      const { loadDriveObjectForEditor } = await import("@/features/_open/universal-loader");
+      return loadDriveObjectForEditor(objectId, {});
+    },
+  });
+}
+
 function Centered({
   children,
   isError = false,
 }: {
-  readonly children: React.ReactNode;
+  readonly children: ReactNode;
   readonly isError?: boolean;
 }) {
   return (
@@ -113,4 +141,8 @@ function Centered({
       {children}
     </div>
   );
+}
+
+function withMediaFallback(content: ReactNode): ReactNode {
+  return <Suspense fallback={<Centered>Loading preview…</Centered>}>{content}</Suspense>;
 }

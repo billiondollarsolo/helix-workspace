@@ -1,5 +1,5 @@
 import { TRPCError, initTRPC } from "@trpc/server";
-import { z, type ZodTypeAny } from "zod";
+import { z, type ZodTypeAny } from "zod3";
 import type { Actor, RequestContext, ToolDefinition } from "@helix/sdk-types";
 import type { PlatformMetrics } from "./metrics.js";
 import {

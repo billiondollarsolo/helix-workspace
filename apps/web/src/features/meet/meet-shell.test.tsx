@@ -10,6 +10,14 @@ import { MeetCall, formatElapsed } from "./meet-call";
 import type { MeetCallSession } from "./meet-shell";
 import * as authModule from "@/lib/auth";
 
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-router")>();
+  return {
+    ...actual,
+    useRouter: () => ({ invalidate: () => Promise.resolve() }),
+  };
+});
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
@@ -78,12 +86,7 @@ meetingsPayload.meetings = [...meetingsPayload.active, ...meetingsPayload.recent
 
 function mockTools(handlers: Record<string, () => unknown>) {
   return vi.spyOn(authModule, "authenticatedFetch").mockImplementation((input) => {
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url;
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const toolId = url.replace("/api/tools/", "");
     const handler = handlers[toolId];
     if (handler === undefined) {
@@ -128,7 +131,6 @@ async function waitForText(container: HTMLElement, text: string) {
 function setReactInputValue(input: HTMLInputElement, value: string) {
   const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
   if (descriptor?.set !== undefined) {
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- invoking a known setter
     Reflect.apply(descriptor.set, input, [value]);
   } else {
     input.value = value;
@@ -326,9 +328,7 @@ describe("MeetCall", () => {
     // Jitsi External API mounts its iframe inside our host div asynchronously,
     // after external_api.js loads. In tests that script never loads, so we just
     // verify the host is wired and the room subject + code are present.
-    const host = container.querySelector(
-      `[aria-label="Jitsi meeting: ${liveSession.subject}"]`,
-    );
+    const host = container.querySelector(`[aria-label="Jitsi meeting: ${liveSession.subject}"]`);
     expect(host).not.toBeNull();
     expect(container.textContent).toContain("helix.meet/atl-asly-snc");
   });
@@ -386,9 +386,7 @@ describe("MeetCall", () => {
     renderWithClient(<MeetCall session={liveSession} onLeave={() => undefined} />, root);
     // External API never finishes loading in jsdom; controls should be wired
     // but disabled. Once videoConferenceJoined fires the disabled flag flips.
-    const mic = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Mute microphone"]',
-    );
+    const mic = container.querySelector<HTMLButtonElement>('button[aria-label="Mute microphone"]');
     expect(mic).not.toBeNull();
     expect(mic?.disabled).toBe(true);
   });

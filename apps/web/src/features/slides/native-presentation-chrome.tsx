@@ -19,28 +19,20 @@ import {
   TextAlignCenter as AlignCenter,
   AlignEndHorizontal as AlignRight,
   TextAlignJustify as AlignJustify,
-  ArrowRightToLine as Indent,
-  ArrowLeftToLine as Outdent,
   Bold,
   ChevronDown,
   ChevronUp,
   Highlighter,
   Image as ImageIcon,
   Italic,
-  List,
-  ListOrdered,
   Minus,
   PaintBucket,
-  Pilcrow,
   Play,
-  SquarePlus as PlusSquare,
   Redo2,
   Shapes,
   Square,
   Strikethrough,
-  Table,
   TextCursorInput,
-  Type,
   Underline,
   Undo2,
   Video,
@@ -84,9 +76,9 @@ export interface SlidesChromeContext {
   // High-level actions wired by the editor.
   readonly onUndo: () => void;
   readonly onRedo: () => void;
-  readonly onCutShape?: () => void;
-  readonly onCopyShape?: () => void;
-  readonly onPasteShape?: () => void;
+  readonly onCutShape: () => void;
+  readonly onCopyShape: () => void;
+  readonly onPasteShape: () => void;
   readonly onAddSlide: () => void;
   readonly onDuplicateSlide: () => void;
   readonly onDeleteSlide: () => void;
@@ -110,44 +102,37 @@ export interface SlidesChromeContext {
   readonly onChangeShapeTextAlign: (next: SlideShapeTextAlign) => void;
   readonly onChangeShapeTextColor: (next: string) => void;
   readonly onChangeShapeHighlightColor: (next: string) => void;
-  readonly onToggleGrid?: () => void;
-  readonly onToggleRulers?: () => void;
-  readonly onToggleSnapToGuides?: () => void;
-  readonly onZoomIn?: () => void;
-  readonly onZoomOut?: () => void;
-  readonly onZoomFit?: () => void;
+  readonly onToggleGrid: () => void;
+  readonly onToggleRulers: () => void;
+  readonly onToggleSnapToGuides: () => void;
+  readonly onZoomIn: () => void;
+  readonly onZoomOut: () => void;
+  readonly onZoomFit: () => void;
 
-  // Insert / shape ops (no-op if not yet wired).
-  readonly onInsertTextBox?: () => void;
-  readonly onInsertShape?: (kind: string) => void;
-  readonly onInsertImage?: () => void;
-  readonly onInsertMedia?: () => void;
-  readonly onInsertTable?: () => void;
+  // Insert / shape ops supported by the native slide model.
+  readonly onInsertTextBox: () => void;
+  readonly onInsertShape: (kind: "rectangle" | "connector") => void;
+  readonly onInsertImage: () => void;
+  readonly onInsertMedia: () => void;
 
   // Arrange ops.
-  readonly onShapeBringForward?: () => void;
-  readonly onShapeSendBackward?: () => void;
-  readonly onShapeBringToFront?: () => void;
-  readonly onShapeSendToBack?: () => void;
-  readonly onShapeGroup?: () => void;
-  readonly onShapeUngroup?: () => void;
-  readonly onShapeAlign?: (
-    align: "left" | "center" | "right" | "top" | "middle" | "bottom",
-  ) => void;
+  readonly onShapeBringForward: () => void;
+  readonly onShapeSendBackward: () => void;
+  readonly onShapeBringToFront: () => void;
+  readonly onShapeSendToBack: () => void;
 
   // Misc.
-  readonly onOpenFindReplace?: () => void;
-  readonly onOpenSpellcheck?: () => void;
-  readonly onOpenComments?: () => void;
-  readonly onOpenVersionHistory?: () => void;
-  readonly onShareDeck?: () => void;
-  readonly onCopyDeckLink?: () => void;
-  readonly onOpenHelp?: () => void;
-  readonly onOpenAi?: () => void;
-}
-
-function noop(): void {
-  /* TODO: wire to slides ops. */
+  readonly onOpenComments: () => void;
+  readonly onOpenVersionHistory: () => void;
+  readonly onShareDeck: () => void;
+  readonly onCopyDeckLink: () => void;
+  readonly onOpenHelp: () => void;
+  readonly onOpenAi: () => void;
+  readonly onOpenTransitions: () => void;
+  readonly onOpenAnimations: () => void;
+  readonly onSuggestLayout: () => void;
+  readonly onRewriteBullets: () => void;
+  readonly onDraftSpeakerNotes: () => void;
 }
 
 /** Build the File / Edit / View / Insert / Format / Tools / Help / AI / Share menus. */
@@ -198,7 +183,7 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
         {
           id: "file:share",
           label: "Share",
-          onSelect: ctx.onShareDeck ?? noop,
+          onSelect: ctx.onShareDeck,
         },
         { kind: "separator" },
         {
@@ -227,7 +212,7 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
         {
           id: "file:version-history",
           label: "Version history",
-          onSelect: ctx.onOpenVersionHistory ?? noop,
+          onSelect: ctx.onOpenVersionHistory,
         },
       ],
     },
@@ -255,28 +240,21 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
           label: "Cut",
           keybinding: "Ctrl+X",
           disabled: !hasShape,
-          onSelect: ctx.onCutShape ?? noop,
+          onSelect: ctx.onCutShape,
         },
         {
           id: "edit:copy",
           label: "Copy",
           keybinding: "Ctrl+C",
           disabled: !hasShape,
-          onSelect: ctx.onCopyShape ?? noop,
+          onSelect: ctx.onCopyShape,
         },
         {
           id: "edit:paste",
           label: "Paste",
           keybinding: "Ctrl+V",
           disabled: !ctx.canPasteShape,
-          onSelect: ctx.onPasteShape ?? noop,
-        },
-        { kind: "separator" },
-        {
-          id: "edit:find-replace",
-          label: "Find and replace",
-          keybinding: "Ctrl+H",
-          onSelect: ctx.onOpenFindReplace ?? noop,
+          onSelect: ctx.onPasteShape,
         },
         {
           id: "edit:delete-slide",
@@ -302,17 +280,17 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
         {
           id: "view:grid",
           label: ctx.showGrid ? "Hide grid" : "Show grid",
-          onSelect: ctx.onToggleGrid ?? noop,
+          onSelect: ctx.onToggleGrid,
         },
         {
           id: "view:rulers",
           label: ctx.showRulers ? "Hide rulers" : "Show rulers",
-          onSelect: ctx.onToggleRulers ?? noop,
+          onSelect: ctx.onToggleRulers,
         },
         {
           id: "view:guides",
           label: ctx.snapToGuides ? "Disable snap to guides" : "Snap to guides",
-          onSelect: ctx.onToggleSnapToGuides ?? noop,
+          onSelect: ctx.onToggleSnapToGuides,
         },
         { kind: "separator" },
         {
@@ -320,20 +298,20 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
           label: "Zoom in",
           keybinding: "Ctrl+=",
           disabled: ctx.zoomPercent >= 150,
-          onSelect: ctx.onZoomIn ?? noop,
+          onSelect: ctx.onZoomIn,
         },
         {
           id: "view:zoom-out",
           label: "Zoom out",
           keybinding: "Ctrl+-",
           disabled: ctx.zoomPercent <= 50,
-          onSelect: ctx.onZoomOut ?? noop,
+          onSelect: ctx.onZoomOut,
         },
         {
           id: "view:zoom-fit",
           label: "Fit to window",
           disabled: ctx.zoomPercent === 100,
-          onSelect: ctx.onZoomFit ?? noop,
+          onSelect: ctx.onZoomFit,
         },
       ],
     },
@@ -345,7 +323,7 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
           id: "insert:textbox",
           label: "Text box",
           disabled: !hasSlide,
-          onSelect: ctx.onInsertTextBox ?? noop,
+          onSelect: ctx.onInsertTextBox,
         },
         {
           kind: "submenu",
@@ -356,19 +334,13 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
               id: "insert:shape:rect",
               label: "Rectangle",
               disabled: !hasSlide,
-              onSelect: () => (ctx.onInsertShape ?? noop)("rectangle"),
-            },
-            {
-              id: "insert:shape:ellipse",
-              label: "Ellipse",
-              disabled: !hasSlide,
-              onSelect: () => (ctx.onInsertShape ?? noop)("ellipse"),
+              onSelect: () => ctx.onInsertShape("rectangle"),
             },
             {
               id: "insert:shape:connector",
               label: "Connector",
               disabled: !hasSlide,
-              onSelect: () => (ctx.onInsertShape ?? noop)("connector"),
+              onSelect: () => ctx.onInsertShape("connector"),
             },
           ],
         },
@@ -376,19 +348,13 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
           id: "insert:image",
           label: "Image",
           disabled: !hasSlide,
-          onSelect: ctx.onInsertImage ?? noop,
+          onSelect: ctx.onInsertImage,
         },
         {
           id: "insert:media",
           label: "Audio or video",
           disabled: !hasSlide,
-          onSelect: ctx.onInsertMedia ?? noop,
-        },
-        {
-          id: "insert:table",
-          label: "Table",
-          disabled: !hasSlide,
-          onSelect: ctx.onInsertTable ?? noop,
+          onSelect: ctx.onInsertMedia,
         },
         { kind: "separator" },
         {
@@ -401,7 +367,7 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
           id: "insert:comment",
           label: "Comment",
           keybinding: "Ctrl+Alt+M",
-          onSelect: ctx.onOpenComments ?? noop,
+          onSelect: ctx.onOpenComments,
         },
       ],
     },
@@ -474,25 +440,6 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
             },
           ],
         },
-        {
-          kind: "submenu",
-          id: "format:list",
-          label: "Bullets & numbering",
-          items: [
-            {
-              id: "format:list:bulleted",
-              label: "Bulleted list",
-              disabled: !hasShape,
-              onSelect: noop /* TODO */,
-            },
-            {
-              id: "format:list:numbered",
-              label: "Numbered list",
-              disabled: !hasShape,
-              onSelect: noop /* TODO */,
-            },
-          ],
-        },
         { kind: "separator" },
         {
           kind: "submenu",
@@ -503,39 +450,27 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
               id: "format:arrange:front",
               label: "Bring to front",
               disabled: !hasShape,
-              onSelect: ctx.onShapeBringToFront ?? noop,
+              onSelect: ctx.onShapeBringToFront,
             },
             {
               id: "format:arrange:forward",
               label: "Bring forward",
               disabled: !hasShape,
-              onSelect: ctx.onShapeBringForward ?? noop,
+              onSelect: ctx.onShapeBringForward,
             },
             {
               id: "format:arrange:backward",
               label: "Send backward",
               disabled: !hasShape,
-              onSelect: ctx.onShapeSendBackward ?? noop,
+              onSelect: ctx.onShapeSendBackward,
             },
             {
               id: "format:arrange:back",
               label: "Send to back",
               disabled: !hasShape,
-              onSelect: ctx.onShapeSendToBack ?? noop,
+              onSelect: ctx.onShapeSendToBack,
             },
           ],
-        },
-        {
-          id: "format:group",
-          label: "Group",
-          disabled: !hasShape,
-          onSelect: ctx.onShapeGroup ?? noop,
-        },
-        {
-          id: "format:ungroup",
-          label: "Ungroup",
-          disabled: !hasShape,
-          onSelect: ctx.onShapeUngroup ?? noop,
         },
       ],
     },
@@ -544,27 +479,22 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
       label: "Tools",
       items: [
         {
-          id: "tools:spelling",
-          label: "Spelling & grammar",
-          onSelect: ctx.onOpenSpellcheck ?? noop,
-        },
-        {
           id: "tools:comments",
           label: "Comments",
-          onSelect: ctx.onOpenComments ?? noop,
+          onSelect: ctx.onOpenComments,
         },
         { kind: "separator" },
         {
           id: "tools:transitions",
           label: "Transitions",
           disabled: !hasSlide,
-          onSelect: noop /* TODO: open transitions side panel */,
+          onSelect: ctx.onOpenTransitions,
         },
         {
           id: "tools:animations",
           label: "Animations",
           disabled: !hasSlide,
-          onSelect: noop /* TODO: open animations side panel */,
+          onSelect: ctx.onOpenAnimations,
         },
       ],
     },
@@ -572,10 +502,8 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
       id: "help",
       label: "Help",
       items: [
-        { id: "help:slides", label: "Slides help", onSelect: ctx.onOpenHelp ?? noop },
-        { id: "help:keyboard", label: "Keyboard shortcuts", onSelect: noop /* TODO */ },
-        { kind: "separator" },
-        { id: "help:about", label: "About", onSelect: noop /* TODO */ },
+        { id: "help:slides", label: "Slides help", onSelect: ctx.onOpenHelp },
+        { id: "help:keyboard", label: "Keyboard shortcuts", onSelect: ctx.onOpenHelp },
       ],
     },
     {
@@ -585,25 +513,25 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
         {
           id: "ai:assistant",
           label: "Open AI assistant",
-          onSelect: ctx.onOpenAi ?? noop,
+          onSelect: ctx.onOpenAi,
         },
         {
           id: "ai:suggest-layout",
           label: "Suggest layout",
           disabled: !hasSlide,
-          onSelect: noop /* TODO: invoke from inspector */,
+          onSelect: ctx.onSuggestLayout,
         },
         {
           id: "ai:rewrite",
           label: "Rewrite bullets",
           disabled: !hasSlide,
-          onSelect: noop /* TODO */,
+          onSelect: ctx.onRewriteBullets,
         },
         {
           id: "ai:draft-notes",
           label: "Draft speaker notes",
           disabled: !hasSlide,
-          onSelect: noop /* TODO */,
+          onSelect: ctx.onDraftSpeakerNotes,
         },
       ],
     },
@@ -611,8 +539,8 @@ export function buildSlidesMenus(ctx: SlidesChromeContext): MenuBarMenu[] {
       id: "share",
       label: "Share",
       items: [
-        { id: "share:invite", label: "Share with people", onSelect: ctx.onShareDeck ?? noop },
-        { id: "share:link", label: "Copy link", onSelect: ctx.onCopyDeckLink ?? noop },
+        { id: "share:invite", label: "Share with people", onSelect: ctx.onShareDeck },
+        { id: "share:link", label: "Copy link", onSelect: ctx.onCopyDeckLink },
       ],
     },
   ];
@@ -751,33 +679,6 @@ export function buildSlidesRibbon(ctx: SlidesChromeContext): ReactNode {
         />
       </RibbonGroup>
       <RibbonDivider />
-      <RibbonGroup label="List">
-        <RibbonButton
-          icon={<List className="size-4" aria-hidden="true" />}
-          label="Bulleted list"
-          disabled={!hasShape}
-          onClick={noop /* TODO */}
-        />
-        <RibbonButton
-          icon={<ListOrdered className="size-4" aria-hidden="true" />}
-          label="Numbered list"
-          disabled={!hasShape}
-          onClick={noop /* TODO */}
-        />
-        <RibbonButton
-          icon={<Indent className="size-4" aria-hidden="true" />}
-          label="Increase indent"
-          disabled={!hasShape}
-          onClick={noop /* TODO */}
-        />
-        <RibbonButton
-          icon={<Outdent className="size-4" aria-hidden="true" />}
-          label="Decrease indent"
-          disabled={!hasShape}
-          onClick={noop /* TODO */}
-        />
-      </RibbonGroup>
-      <RibbonDivider />
       <RibbonGroup label="Align">
         <RibbonToggle
           icon={<AlignLeft className="size-4" aria-hidden="true" />}
@@ -807,12 +708,6 @@ export function buildSlidesRibbon(ctx: SlidesChromeContext): ReactNode {
           disabled={!hasShape}
           onClick={() => ctx.onChangeShapeTextAlign("justify")}
         />
-        <RibbonButton
-          icon={<Pilcrow className="size-4" aria-hidden="true" />}
-          label="Line spacing"
-          disabled={!hasShape}
-          onClick={noop /* TODO */}
-        />
       </RibbonGroup>
       <RibbonDivider />
       <RibbonGroup label="Insert">
@@ -820,31 +715,25 @@ export function buildSlidesRibbon(ctx: SlidesChromeContext): ReactNode {
           icon={<TextCursorInput className="size-4" aria-hidden="true" />}
           label="Insert text box"
           disabled={!hasSlide}
-          onClick={ctx.onInsertTextBox ?? noop}
+          onClick={ctx.onInsertTextBox}
         />
         <RibbonButton
           icon={<Shapes className="size-4" aria-hidden="true" />}
           label="Insert shape"
           disabled={!hasSlide}
-          onClick={() => (ctx.onInsertShape ?? noop)("rectangle")}
+          onClick={() => ctx.onInsertShape("rectangle")}
         />
         <RibbonButton
           icon={<ImageIcon className="size-4" aria-hidden="true" />}
           label="Insert image"
           disabled={!hasSlide}
-          onClick={ctx.onInsertImage ?? noop}
+          onClick={ctx.onInsertImage}
         />
         <RibbonButton
           icon={<Video className="size-4" aria-hidden="true" />}
           label="Insert media"
           disabled={!hasSlide}
-          onClick={ctx.onInsertMedia ?? noop}
-        />
-        <RibbonButton
-          icon={<Table className="size-4" aria-hidden="true" />}
-          label="Insert table"
-          disabled={!hasSlide}
-          onClick={ctx.onInsertTable ?? noop}
+          onClick={ctx.onInsertMedia}
         />
       </RibbonGroup>
       <RibbonDivider />
@@ -853,37 +742,25 @@ export function buildSlidesRibbon(ctx: SlidesChromeContext): ReactNode {
           icon={<ChevronUp className="size-4" aria-hidden="true" />}
           label="Bring forward"
           disabled={!hasShape}
-          onClick={ctx.onShapeBringForward ?? noop}
+          onClick={ctx.onShapeBringForward}
         />
         <RibbonButton
           icon={<ChevronDown className="size-4" aria-hidden="true" />}
           label="Send backward"
           disabled={!hasShape}
-          onClick={ctx.onShapeSendBackward ?? noop}
+          onClick={ctx.onShapeSendBackward}
         />
         <RibbonButton
           icon={<Square className="size-4" aria-hidden="true" />}
           label="Bring to front"
           disabled={!hasShape}
-          onClick={ctx.onShapeBringToFront ?? noop}
+          onClick={ctx.onShapeBringToFront}
         />
         <RibbonButton
           icon={<Minus className="size-4" aria-hidden="true" />}
           label="Send to back"
           disabled={!hasShape}
-          onClick={ctx.onShapeSendToBack ?? noop}
-        />
-        <RibbonButton
-          icon={<PlusSquare className="size-4" aria-hidden="true" />}
-          label="Group"
-          disabled={!hasShape}
-          onClick={ctx.onShapeGroup ?? noop}
-        />
-        <RibbonButton
-          icon={<Type className="size-4" aria-hidden="true" />}
-          label="Ungroup"
-          disabled={!hasShape}
-          onClick={ctx.onShapeUngroup ?? noop}
+          onClick={ctx.onShapeSendToBack}
         />
       </RibbonGroup>
       <RibbonDivider />
@@ -901,7 +778,7 @@ export function buildSlidesRibbon(ctx: SlidesChromeContext): ReactNode {
           value={transitionValue}
           onChange={ctx.onChangeTransition}
           options={TRANSITION_OPTIONS.map((o) => ({
-            value: o.value as SlidesTransitionValue,
+            value: o.value,
             label: o.label,
           }))}
           width={120}

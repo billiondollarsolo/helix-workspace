@@ -12,7 +12,10 @@ import type { CalendarApiEvent } from "./api";
   true;
 
 /** A backend event placed on Wednesday (day index 2) at 12:00–13:00 UTC. */
-function backendEvent(title: string, id = "11111111-1111-4111-8111-111111111111"): CalendarApiEvent {
+function backendEvent(
+  title: string,
+  id = "11111111-1111-4111-8111-111111111111",
+): CalendarApiEvent {
   return {
     id,
     calendarId: "team",
@@ -69,9 +72,7 @@ describe("CalendarShell", () => {
 
   /** Simulate the calendar backend being unreachable — drives the error banner. */
   const mockOffline = () => {
-    fetchMock = vi.fn<typeof fetch>(() =>
-      Promise.reject(new Error("network down")),
-    );
+    fetchMock = vi.fn<typeof fetch>(() => Promise.reject(new Error("network down")));
     vi.stubGlobal("fetch", fetchMock);
   };
 
@@ -95,7 +96,7 @@ describe("CalendarShell", () => {
 
   it("renders an empty week when the backend returns no events", async () => {
     mockEvents([]);
-    render();
+    render({ ...defaultCalendarRouteState, date: "2026-05-20" });
     await flush();
 
     expect(container.textContent).not.toContain("Eng standup");

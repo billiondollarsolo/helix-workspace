@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { optionalRawStringSearchParam, stringSearchParam } from "@/lib/search-params";
 
 /**
  * OAuth 2.1 Authorization Code consent screen (PRD §13.6).
@@ -14,20 +14,26 @@ import { Button } from "@/components/ui/button";
  * `redirect_uri`.
  */
 
-const consentSearchSchema = z.object({
-  response_type: z.string().default("code"),
-  client_id: z.string().default(""),
-  redirect_uri: z.string().default(""),
-  code_challenge: z.string().default(""),
-  code_challenge_method: z.string().default("S256"),
-  scope: z.string().optional(),
-  state: z.string().optional(),
-});
-
-type ConsentSearch = z.infer<typeof consentSearchSchema>;
+interface ConsentSearch {
+  readonly response_type: string;
+  readonly client_id: string;
+  readonly redirect_uri: string;
+  readonly code_challenge: string;
+  readonly code_challenge_method: string;
+  readonly scope?: string;
+  readonly state?: string;
+}
 
 export const Route = createFileRoute("/oauth/consent")({
-  validateSearch: (search): ConsentSearch => consentSearchSchema.parse(search),
+  validateSearch: (search): ConsentSearch => ({
+    response_type: stringSearchParam(search.response_type, "code"),
+    client_id: stringSearchParam(search.client_id),
+    redirect_uri: stringSearchParam(search.redirect_uri),
+    code_challenge: stringSearchParam(search.code_challenge),
+    code_challenge_method: stringSearchParam(search.code_challenge_method, "S256"),
+    scope: optionalRawStringSearchParam(search.scope),
+    state: optionalRawStringSearchParam(search.state),
+  }),
   component: OAuthConsentRoute,
 });
 

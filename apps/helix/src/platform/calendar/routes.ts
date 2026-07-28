@@ -1,6 +1,6 @@
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import { createIcsCalendar, type CalendarInvitationSender } from "./ics.js";
 import { expandCalendarEventOccurrences } from "./recurrence.js";
 import type { CalendarAttendeeInput, CalendarStore } from "./store.js";

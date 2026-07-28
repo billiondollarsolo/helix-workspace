@@ -39,7 +39,6 @@ import {
   buildSlidesMenus,
   buildSlidesRibbon,
   type SlidesChromeContext,
-  type SlidesTransitionValue,
 } from "./native-presentation-chrome";
 import { SlideThumbnailRail } from "./slide-thumbnail-rail";
 import { trashDriveObject, uploadDriveFile, type DriveApiEntry } from "@/features/drive/api";
@@ -363,6 +362,7 @@ export function NativePresentationEditor({
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editCommentDraft, setEditCommentDraft] = useState("");
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const commentRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const routeCommentIdRef = useRef<string | null>(routeCommentId);
   const suppressRouteEmitRef = useRef(false);
@@ -524,11 +524,14 @@ export function NativePresentationEditor({
       },
     });
     syncProviderRef.current = provider;
-    const connectTimer = window.setTimeout(() => {
-      provider.connect();
-    }, 0);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        provider.connect();
+      }
+    });
     return () => {
-      window.clearTimeout(connectTimer);
+      cancelled = true;
       setCollaborators([]);
       provider.disconnect({ notify: false });
       if (syncProviderRef.current === provider) {
@@ -991,10 +994,6 @@ export function NativePresentationEditor({
     reorderMutation.isPending ||
     themeMutation.isPending ||
     restoreVersionMutation.isPending;
-  const collaboratorSummary =
-    collaborators.length === 0
-      ? null
-      : `${collaborators.length} collaborator${collaborators.length === 1 ? "" : "s"}`;
   const activeRemoteShapeSelections = useMemo(
     () =>
       activeSlide === null
@@ -1331,6 +1330,19 @@ export function NativePresentationEditor({
       return next;
     });
   };
+  const openSidePanelTab = (tabId: string) => {
+    setSidePanelActiveTab(tabId);
+    setSidePanelOpen(true);
+  };
+  const moveSelectedShapeToEdge = (direction: -1 | 1) => {
+    const controller = slideEditor.controller;
+    if (controller === null) {
+      return;
+    }
+    for (let index = 1; index < controller.draft.shapes.length; index += 1) {
+      controller.moveSelectedShape(direction);
+    }
+  };
 
   const chromeContext: SlidesChromeContext = {
     deckTitle: deckQuery.data.deck.title,
@@ -1430,6 +1442,34 @@ export function NativePresentationEditor({
     onChangeShapeHighlightColor: (next) => {
       slideEditor.controller?.patchSelectedShape({ highlightColor: next });
     },
+    onInsertTextBox: () => {
+      slideEditor.controller?.addShape("text");
+      openSidePanelTab("format");
+    },
+    onInsertShape: (kind) => {
+      slideEditor.controller?.addShape(kind);
+      openSidePanelTab("format");
+    },
+    onInsertImage: () => {
+      slideEditor.controller?.addShape("image");
+      openSidePanelTab("format");
+    },
+    onInsertMedia: () => {
+      slideEditor.controller?.addShape("media");
+      openSidePanelTab("format");
+    },
+    onShapeBringForward: () => {
+      slideEditor.controller?.moveSelectedShape(1);
+    },
+    onShapeSendBackward: () => {
+      slideEditor.controller?.moveSelectedShape(-1);
+    },
+    onShapeBringToFront: () => {
+      moveSelectedShapeToEdge(1);
+    },
+    onShapeSendToBack: () => {
+      moveSelectedShapeToEdge(-1);
+    },
     onToggleGrid: () =>
       updateViewPreference((current) => ({ ...current, showGrid: !current.showGrid })),
     onToggleRulers: () =>
@@ -1454,13 +1494,27 @@ export function NativePresentationEditor({
         ...current,
         zoomPercent: SLIDES_FIT_ZOOM_PERCENT,
       })),
-    onOpenVersionHistory: () => {
-      setSidePanelActiveTab("versions");
-      setSidePanelOpen(true);
-    },
+    onOpenComments: () => openSidePanelTab("comments"),
+    onOpenVersionHistory: () => openSidePanelTab("versions"),
     onShareDeck: () => setShareDialogOpen(true),
     onCopyDeckLink: () => {
       void writeClipboardText(buildSlidesDeckLink(deckId)).catch(() => undefined);
+    },
+    onOpenHelp: () => setHelpOpen(true),
+    onOpenAi: () => openSidePanelTab("slide"),
+    onOpenTransitions: () => openSidePanelTab("slide"),
+    onOpenAnimations: () => openSidePanelTab("animations"),
+    onSuggestLayout: () => {
+      slideEditor.controller?.suggestLayout();
+      openSidePanelTab("slide");
+    },
+    onRewriteBullets: () => {
+      slideEditor.controller?.rewriteItems();
+      openSidePanelTab("slide");
+    },
+    onDraftSpeakerNotes: () => {
+      slideEditor.controller?.draftNotes();
+      openSidePanelTab("notes");
     },
   };
 
@@ -1798,6 +1852,45 @@ export function NativePresentationEditor({
         shareUrl={shareDialogOpen ? buildSlidesDeckLink(deckId) : undefined}
         onOpenChange={setShareDialogOpen}
       />
+      {helpOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Slides help and keyboard shortcuts"
+          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
+        >
+          <section className="w-full max-w-md rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl">
+            <h2 className="m-0 text-lg font-semibold">Slides help</h2>
+            <p className="mt-2 text-sm text-[var(--text-2)]">
+              Use the Insert menu for native shapes and media, and the side panel for slide layout,
+              transitions, animations, notes, and AI-assisted drafting.
+            </p>
+            <dl className="mt-4 grid grid-cols-[1fr_auto] gap-x-6 gap-y-2 text-sm">
+              <dt>New slide</dt>
+              <dd>
+                <kbd>Ctrl/⌘ M</kbd>
+              </dd>
+              <dt>Undo</dt>
+              <dd>
+                <kbd>Ctrl/⌘ Z</kbd>
+              </dd>
+              <dt>Redo</dt>
+              <dd>
+                <kbd>Ctrl/⌘ Y</kbd>
+              </dd>
+              <dt>Present</dt>
+              <dd>
+                <kbd>Ctrl/⌘ F5</kbd>
+              </dd>
+            </dl>
+            <div className="mt-5 flex justify-end">
+              <button type="button" className="btn primary" onClick={() => setHelpOpen(false)}>
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3374,7 +3467,9 @@ function SlidePreview({
       aria-label="Slide preview"
       onAnimationEnd={onTransitionAnimationEnd}
     >
-      {showGrid ? <div aria-hidden="true" data-slides-grid="true" style={SLIDE_GRID_STYLE} /> : null}
+      {showGrid ? (
+        <div aria-hidden="true" data-slides-grid="true" style={SLIDE_GRID_STYLE} />
+      ) : null}
       {content.layout === "title" ? (
         <div style={TITLE_LAYOUT_STYLE}>
           {content.eyebrow !== undefined ? (
@@ -4516,7 +4611,11 @@ function SlideEditor({
       {showRulers ? (
         <>
           <div aria-hidden="true" style={SLIDE_RULER_CORNER_STYLE} />
-          <div aria-hidden="true" data-slides-ruler="horizontal" style={SLIDE_HORIZONTAL_RULER_STYLE} />
+          <div
+            aria-hidden="true"
+            data-slides-ruler="horizontal"
+            style={SLIDE_HORIZONTAL_RULER_STYLE}
+          />
           <div aria-hidden="true" data-slides-ruler="vertical" style={SLIDE_VERTICAL_RULER_STYLE} />
         </>
       ) : null}
@@ -4685,11 +4784,7 @@ function linkUrlFromDroppedHtml(html: string): string | undefined {
 }
 
 function normalizedDroppedSlideText(text: string): string {
-  return text
-    .replace(/\u0000/gu, "")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, 500);
+  return text.replaceAll("\u0000", "").replace(/\s+/gu, " ").trim().slice(0, 500);
 }
 
 function normalizedSafeSlideLinkUrl(value: string): string | undefined {
@@ -6126,9 +6221,7 @@ function writeStoredSlideShapeClipboard(shape: SlideShape): void {
 
 function isStoredSlideShapeClipboard(value: unknown): value is StoredSlideShapeClipboard {
   return (
-    isObjectRecord(value) &&
-    isSlideShapeLike(value.shape) &&
-    typeof value.copiedAt === "string"
+    isObjectRecord(value) && isSlideShapeLike(value.shape) && typeof value.copiedAt === "string"
   );
 }
 
@@ -6226,7 +6319,10 @@ function slideDraftsEqual(left: SlideDraft, right: SlideDraft): boolean {
 }
 
 function slideDraftsEquivalentForHistory(left: SlideDraft, right: SlideDraft): boolean {
-  return slideDraftsEqual(normalizeSlideDraftForHistory(left), normalizeSlideDraftForHistory(right));
+  return slideDraftsEqual(
+    normalizeSlideDraftForHistory(left),
+    normalizeSlideDraftForHistory(right),
+  );
 }
 
 function normalizeSlideDraftForHistory(draft: SlideDraft): SlideDraft {
@@ -7692,21 +7788,6 @@ const SLIDE_SHAPE_ANIMATION_KEYFRAMES = `
 }
 `;
 
-const HEADER_STYLE = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  padding: "12px 16px",
-  borderBottom: "1px solid var(--border)",
-  background: "var(--surface)",
-} satisfies CSSProperties;
-
-const TITLE_STYLE = { fontWeight: 600 } satisfies CSSProperties;
-const META_STYLE = {
-  color: "var(--text-3)",
-  fontSize: "var(--text-caption)",
-} satisfies CSSProperties;
-
 const EXPORT_GATE_STATUS_STYLE = {
   maxWidth: 220,
   color: "var(--danger)",
@@ -7761,76 +7842,6 @@ const HEADER_SELECT_STYLE = {
   fontSize: "var(--text-body-sm)",
 } satisfies CSSProperties;
 
-const BODY_STYLE = {
-  display: "grid",
-  gridTemplateColumns: "280px minmax(0, 1fr)",
-  minHeight: 0,
-  flex: 1,
-} satisfies CSSProperties;
-
-const THUMB_RAIL_STYLE = {
-  display: "grid",
-  alignContent: "start",
-  gap: 8,
-  padding: 12,
-  borderRight: "1px solid var(--border)",
-  background: "var(--surface-2)",
-  overflowY: "auto",
-} satisfies CSSProperties;
-
-const THUMB_ROW_STYLE = {
-  display: "grid",
-  gridTemplateColumns: "minmax(0, 1fr) auto",
-  gap: 6,
-  alignItems: "center",
-  padding: "6px",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  background: "var(--surface)",
-} satisfies CSSProperties;
-
-const THUMB_SELECT_STYLE = {
-  display: "grid",
-  gridTemplateColumns: "28px minmax(0, 1fr) auto",
-  gap: 8,
-  alignItems: "center",
-  minWidth: 0,
-  height: 30,
-  padding: "0 4px",
-  border: "none",
-  background: "transparent",
-  color: "var(--text)",
-  textAlign: "left",
-  font: "inherit",
-  cursor: "pointer",
-} satisfies CSSProperties;
-
-const THUMB_ACTIONS_STYLE = {
-  display: "flex",
-  alignItems: "center",
-  gap: 2,
-} satisfies CSSProperties;
-
-const THUMB_INDEX_STYLE = {
-  color: "var(--text-3)",
-  fontSize: "var(--text-caption)",
-} satisfies CSSProperties;
-
-const THUMB_TITLE_STYLE = { minWidth: 0, fontSize: "var(--text-body-sm)" } satisfies CSSProperties;
-
-const THUMB_COMMENT_BADGE_STYLE = {
-  display: "inline-grid",
-  placeItems: "center",
-  minWidth: 20,
-  height: 20,
-  padding: "0 6px",
-  borderRadius: 999,
-  background: "var(--accent)",
-  color: "#fff",
-  fontSize: "var(--text-caption)",
-  fontWeight: 800,
-} satisfies CSSProperties;
-
 const CANVAS_COLUMN_STYLE = {
   display: "grid",
   gridTemplateColumns: "minmax(0, 1fr)",
@@ -7841,9 +7852,12 @@ const CANVAS_COLUMN_STYLE = {
   background: "var(--bg)",
 } satisfies CSSProperties;
 
-function collaboratorColor(_collaborator: PresentationCollaborator): string {
-  // TODO: derive a stable color hash from actor id; using accent for now.
-  return "var(--accent)";
+function collaboratorColor(collaborator: PresentationCollaborator): string {
+  let hash = 0;
+  for (const character of collaborator.actorId) {
+    hash = (hash * 31 + (character.codePointAt(0) ?? 0)) % 360;
+  }
+  return `hsl(${String(hash)} 65% 48%)`;
 }
 
 const SLIDE_CANVAS_STYLE = {

@@ -640,10 +640,7 @@ function rowToClient(row: OAuthClientRow | undefined): OAuthClientRecord | null 
     actorId: row.actor_id,
     orgId: row.org_id,
     scopes: [...row.scopes],
-    redirectUris:
-      row.redirect_uris === null || row.redirect_uris === undefined
-        ? []
-        : [...row.redirect_uris],
+    redirectUris: row.redirect_uris === null ? [] : [...row.redirect_uris],
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
   };

@@ -12,21 +12,21 @@ import { DriveForbiddenError } from "./errors.js";
 
 describe("assertPreviewUrlAllowed", () => {
   it("rejects a link-local metadata host", () => {
-    expect(() =>
-      assertPreviewUrlAllowed("http://169.254.169.254/latest/meta-data", ["office.internal"]),
-    ).toThrow(DriveForbiddenError);
+    expect(() => {
+      assertPreviewUrlAllowed("http://169.254.169.254/latest/meta-data", ["office.internal"]);
+    }).toThrow(DriveForbiddenError);
   });
 
   it("permits an allowlisted office host", () => {
-    expect(() =>
-      assertPreviewUrlAllowed("http://office.internal:8080/convert", ["office.internal"]),
-    ).not.toThrow();
+    expect(() => {
+      assertPreviewUrlAllowed("http://office.internal:8080/convert", ["office.internal"]);
+    }).not.toThrow();
   });
 
   it("rejects a non-allowlisted host when allowlist is non-empty", () => {
-    expect(() =>
-      assertPreviewUrlAllowed("http://evil.example/convert", ["office.internal"]),
-    ).toThrow(/not allowlisted/i);
+    expect(() => {
+      assertPreviewUrlAllowed("http://evil.example/convert", ["office.internal"]);
+    }).toThrow(/not allowlisted/i);
   });
 });
 
@@ -214,15 +214,19 @@ function readCorpus(path: string): Buffer {
 }
 
 function visibleText(html: string): string {
-  return html.replace(/<style>[\s\S]*?<\/style>/u, "").replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ");
+  return html
+    .replace(/<style>[\s\S]*?<\/style>/u, "")
+    .replace(/<[^>]+>/gu, " ")
+    .replace(/\s+/gu, " ");
 }
 
 function hasPreviewControlCharacter(value: string): boolean {
   for (const char of value) {
     const code = char.charCodeAt(0);
-    if ((code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) || (
-      code >= 0x7f && code <= 0x9f
-    )) {
+    if (
+      (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+      (code >= 0x7f && code <= 0x9f)
+    ) {
       return true;
     }
   }

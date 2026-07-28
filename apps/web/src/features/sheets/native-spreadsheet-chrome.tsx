@@ -149,6 +149,7 @@ export interface SheetsChromeContext {
   readonly onExportOds: () => void;
   readonly onAnalyzeRange: () => void;
   readonly onCopyLink: () => void;
+  readonly onOpenKeyboardShortcuts: () => void;
 
   /* Side panel: open a specific tab. */
   readonly openSidePanelTab: (tabId: SheetsSidePanelTabId) => void;
@@ -175,7 +176,12 @@ export function buildSheetsMenus(ctx: SheetsChromeContext): MenuBarMenu[] {
     { id: "file-new", label: "New spreadsheet", onSelect: ctx.onNewSpreadsheet },
     { id: "file-open", label: "Open...", onSelect: ctx.onOpenSpreadsheet },
     { id: "file-make-copy", label: "Make a copy", onSelect: ctx.onMakeCopy },
-    { id: "file-move-trash", label: "Move to trash", destructive: true, onSelect: ctx.onMoveToTrash },
+    {
+      id: "file-move-trash",
+      label: "Move to trash",
+      destructive: true,
+      onSelect: ctx.onMoveToTrash,
+    },
     { kind: "separator" },
     {
       kind: "submenu",
@@ -342,7 +348,7 @@ export function buildSheetsMenus(ctx: SheetsChromeContext): MenuBarMenu[] {
       id: "data-filter",
       label: "Create a filter",
       checked: ctx.filterActive,
-      onCheckedChange: (_next: boolean) => ctx.toggleFilter(),
+      onCheckedChange: () => ctx.toggleFilter(),
     },
     {
       id: "data-named-ranges",
@@ -379,7 +385,7 @@ export function buildSheetsMenus(ctx: SheetsChromeContext): MenuBarMenu[] {
       id: "help-shortcuts",
       label: "Keyboard shortcuts",
       keybinding: "Mod+/",
-      onSelect: () => undefined,
+      onSelect: ctx.onOpenKeyboardShortcuts,
     },
   ];
 
@@ -442,12 +448,6 @@ const NUMBER_FORMAT_OPTIONS: ReadonlyArray<{ value: SheetsNumberFormat; label: s
   { value: "percent", label: "Percent" },
   { value: "date", label: "Date" },
   { value: "custom", label: "Custom" },
-];
-
-const HALIGN_OPTIONS: ReadonlyArray<{ value: SheetsHorizontalAlign; label: string }> = [
-  { value: "left", label: "Left" },
-  { value: "center", label: "Center" },
-  { value: "right", label: "Right" },
 ];
 
 const VALIGN_OPTIONS: ReadonlyArray<{ value: SheetsVerticalAlign; label: string }> = [

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 import type { Actor } from "@helix/sdk";
 import {
   canReadPlatformConfig,

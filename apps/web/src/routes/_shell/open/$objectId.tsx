@@ -7,28 +7,33 @@
  */
 
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
 import { fetchDriveBlob } from "@/features/_open/drive-fetcher";
-import { loadDriveObjectForEditor, type LoaderResult } from "@/features/_open/universal-loader";
-import {
-  ConverterNotAvailableError,
-  convertImportedDeckToNative,
-  convertImportedDocToNative,
-  convertImportedSheetToNative,
-  type ConvertedTarget,
-} from "@/features/_open/converters";
-import {
-  ImportedDeckRenderer,
-  ImportedDocumentRenderer,
-  ImportedSheetRenderer,
-  UnsupportedFormatPlaceholder,
-} from "@/features/_open/ui";
+import type { LoaderResult } from "@/features/_open/universal-loader";
+import type { ConvertedTarget } from "@/features/_open/converters";
 import {
   canCreateEditableCopy,
   editableCopyUnavailableMessage,
 } from "@/features/_open/conversion-capabilities";
 import type { ImportedDeck, ImportedDoc, ImportedSheet } from "@/features/_open/parsers/types";
+import { UnsupportedFormatPlaceholder } from "@/features/_open/ui/UnsupportedFormatPlaceholder";
+
+const LazyImportedDeckRenderer = lazy(() =>
+  import("@/features/_open/ui/ImportedDeckRenderer").then((module) => ({
+    default: module.ImportedDeckRenderer,
+  })),
+);
+const LazyImportedDocumentRenderer = lazy(() =>
+  import("@/features/_open/ui/ImportedDocumentRenderer").then((module) => ({
+    default: module.ImportedDocumentRenderer,
+  })),
+);
+const LazyImportedSheetRenderer = lazy(() =>
+  import("@/features/_open/ui/ImportedSheetRenderer").then((module) => ({
+    default: module.ImportedSheetRenderer,
+  })),
+);
 
 export const Route = createFileRoute("/_shell/open/$objectId")({
   component: OpenRoute,
@@ -59,37 +64,22 @@ export function OpenObjectRouteContent({
   // importer to invoke. A 30s overall timeout protects against parser hangs
   // (e.g. SheetJS on password-protected XLSX) so the user gets a real error
   // page instead of an infinite "Preparing file…" spinner.
-  const loadQuery = useQuery({
-    queryKey: ["open-route", objectId],
-    queryFn: async () => {
-      const result = await Promise.race([
-        loadDriveObjectForEditor(objectId),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error(
-                  "Format detection / parse timed out after 30s. The file may be password-protected, corrupt, or an unsupported variant.",
-                ),
-              ),
-            30_000,
-          ),
-        ),
-      ]);
-      return result;
-    },
-    throwOnError: false,
-  });
+  const loadQuery = useQuery(openObjectQueryOptions(objectId));
 
   // Then: run the matching server-side importer and resolve to a fresh
   // native helix entity that we can route to.
   const importMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
     mutationFn: async (): Promise<ConvertedTarget> => {
       const result = loadQuery.data;
       if (result === undefined || result.kind !== "imported") {
         throw new Error("Drive blob is not importable into a native helix editor.");
       }
-      const blob = await fetchDriveBlob(objectId);
+      const [
+        blob,
+        { convertImportedDeckToNative, convertImportedDocToNative, convertImportedSheetToNative },
+      ] = await Promise.all([fetchDriveBlob(objectId), import("@/features/_open/converters")]);
       const { parsed } = result;
       if (parsed.kind === "doc") {
         return convertImportedDocToNative(blob, parsed, objectId);
@@ -156,16 +146,15 @@ export function OpenObjectRouteContent({
   if (loadQuery.isError) {
     return (
       <CenteredMessage isError>
-        Failed to load file: {(loadQuery.error as Error).message ?? String(loadQuery.error)}
+        Failed to load file: {loadQuery.error.message ?? String(loadQuery.error)}
       </CenteredMessage>
     );
   }
   if (importMutation.isError) {
-    const err = importMutation.error as Error;
-    const message =
-      err instanceof ConverterNotAvailableError
-        ? `${err.message} Preview or download the original instead.`
-        : `Failed to import file into helix: ${err.message ?? String(err)}`;
+    const err = importMutation.error;
+    const message = isConverterNotAvailableError(err)
+      ? `${err.message} Preview or download the original instead.`
+      : `Failed to import file into helix: ${err.message ?? String(err)}`;
     return <CenteredMessage isError>{message}</CenteredMessage>;
   }
 
@@ -208,6 +197,34 @@ export function OpenObjectRouteContent({
   return <CenteredMessage>Preparing file…</CenteredMessage>;
 }
 
+function openObjectQueryOptions(objectId: string) {
+  return queryOptions({
+    queryKey: ["open-route", objectId],
+    queryFn: async () => {
+      const timeout = AbortSignal.timeout(30_000);
+      const loaderPromise = import("@/features/_open/universal-loader").then(
+        ({ loadDriveObjectForEditor }) => loadDriveObjectForEditor(objectId),
+      );
+      return Promise.race([
+        loaderPromise,
+        new Promise<never>((_resolve, reject) => {
+          timeout.addEventListener(
+            "abort",
+            () =>
+              reject(
+                new Error(
+                  "Format detection / parse timed out after 30s. The file may be password-protected, corrupt, or an unsupported variant.",
+                ),
+              ),
+            { once: true },
+          );
+        }),
+      ]);
+    },
+    throwOnError: false,
+  });
+}
+
 function isEditableParsed(parsed: ImportedParsed): parsed is EditableParsed {
   return parsed.kind === "doc" || parsed.kind === "sheet" || parsed.kind === "deck";
 }
@@ -219,11 +236,17 @@ function renderEditablePreview(
 ): ReactNode {
   switch (parsed.kind) {
     case "doc":
-      return <ImportedDocumentRenderer doc={parsed} objectId={objectId} fileName={fileName} />;
+      return withPreviewFallback(
+        <LazyImportedDocumentRenderer doc={parsed} objectId={objectId} fileName={fileName} />,
+      );
     case "sheet":
-      return <ImportedSheetRenderer sheet={parsed} objectId={objectId} fileName={fileName} />;
+      return withPreviewFallback(
+        <LazyImportedSheetRenderer sheet={parsed} objectId={objectId} fileName={fileName} />,
+      );
     case "deck":
-      return <ImportedDeckRenderer deck={parsed} objectId={objectId} fileName={fileName} />;
+      return withPreviewFallback(
+        <LazyImportedDeckRenderer deck={parsed} objectId={objectId} fileName={fileName} />,
+      );
   }
 }
 
@@ -367,4 +390,14 @@ function CenteredMessage({
       {children}
     </div>
   );
+}
+
+function withPreviewFallback(content: ReactNode): ReactNode {
+  return (
+    <Suspense fallback={<CenteredMessage>Loading preview…</CenteredMessage>}>{content}</Suspense>
+  );
+}
+
+function isConverterNotAvailableError(error: Error): boolean {
+  return error.name === "ConverterNotAvailableError";
 }

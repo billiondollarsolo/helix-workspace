@@ -14,7 +14,6 @@ import {
 import {
   assertVectorMetric,
   scopedCollectionName,
-  validateCollectionName,
   validateDimension,
   validateLimit,
   validateVector,
@@ -43,7 +42,10 @@ export class WeaviateVectorStore implements VectorStore {
     await requestJson(this.id, this.#config, "POST", "/v1/schema", {
       class: className(orgId, name),
       vectorizer: "none",
-      vectorIndexConfig: { distance: weaviateDistance(assertVectorMetric(metric)), dimensions: validateDimension(dim) },
+      vectorIndexConfig: {
+        distance: weaviateDistance(assertVectorMetric(metric)),
+        dimensions: validateDimension(dim),
+      },
       properties: [
         { name: "helixId", dataType: ["text"] },
         { name: "metadata", dataType: ["object"] },
@@ -51,7 +53,11 @@ export class WeaviateVectorStore implements VectorStore {
     });
   }
 
-  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(
+    orgId: VectorOrgScope,
+    collection: string,
+    items: readonly VectorItem[],
+  ): Promise<void> {
     if (items.length === 0) {
       return;
     }
@@ -74,7 +80,12 @@ export class WeaviateVectorStore implements VectorStore {
   ): Promise<readonly VectorMatch[]> {
     const klass = className(orgId, collection);
     const response = await requestJson(this.id, this.#config, "POST", "/v1/graphql", {
-      query: weaviateGraphql(klass, validateLimit(opts.limit), opts.includeVectors === true, opts.filter !== undefined),
+      query: weaviateGraphql(
+        klass,
+        validateLimit(opts.limit),
+        opts.includeVectors === true,
+        opts.filter !== undefined,
+      ),
       variables: {
         vector: [...validateVector(vector)],
         ...(opts.filter === undefined ? {} : { where: weaviateWhere(opts.filter) }),
@@ -88,7 +99,16 @@ export class WeaviateVectorStore implements VectorStore {
       return;
     }
     const klass = className(orgId, collection);
-    await Promise.all(ids.map((id) => requestJson(this.id, this.#config, "DELETE", `/v1/objects/${encodeURIComponent(klass)}/${encodeURIComponent(id)}`)));
+    await Promise.all(
+      ids.map((id) =>
+        requestJson(
+          this.id,
+          this.#config,
+          "DELETE",
+          `/v1/objects/${encodeURIComponent(klass)}/${encodeURIComponent(id)}`,
+        ),
+      ),
+    );
   }
 }
 
@@ -108,7 +128,12 @@ function weaviateDistance(metric: VectorMetric): "cosine" | "dot" | "l2-squared"
   return "l2-squared";
 }
 
-function weaviateGraphql(klass: string, limit: number, includeVector: boolean, includeWhere: boolean): string {
+function weaviateGraphql(
+  klass: string,
+  limit: number,
+  includeVector: boolean,
+  includeWhere: boolean,
+): string {
   const where = includeWhere ? "where: $where," : "";
   const vectorField = includeVector ? " vector" : "";
   return `query HelixVectorSearch($vector: [Float!]!, $where: WhereInput) { Get { ${klass}(nearVector: { vector: $vector }, ${where} limit: ${String(limit)}) { helixId metadata${vectorField} _additional { id score distance } } } }`;
@@ -121,7 +146,9 @@ function weaviateWhere(filter: Readonly<Record<string, unknown>>): JsonObject {
     valueText: typeof value === "string" ? value : JSON.stringify(value),
   }));
   const firstOperand = operands[0];
-  return operands.length === 1 && firstOperand !== undefined ? firstOperand : { operator: "And", operands };
+  return operands.length === 1 && firstOperand !== undefined
+    ? firstOperand
+    : { operator: "And", operands };
 }
 
 function weaviateMatches(response: unknown, klass: string): readonly VectorMatch[] {
@@ -140,7 +167,9 @@ function weaviateMatch(value: unknown): VectorMatch | null {
     return null;
   }
   const id = optionalString(value.helixId) ?? optionalString(value._additional.id);
-  const score = optionalNumber(value._additional.score) ?? distanceToScore(optionalNumber(value._additional.distance));
+  const score =
+    optionalNumber(value._additional.score) ??
+    distanceToScore(optionalNumber(value._additional.distance));
   if (id === undefined || score === undefined) {
     return null;
   }

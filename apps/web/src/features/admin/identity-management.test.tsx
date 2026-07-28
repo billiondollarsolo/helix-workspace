@@ -639,21 +639,21 @@ function cssEscape(value: string): string {
   return value.replace(/"/g, '\\"');
 }
 
-function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const tick = () => {
-      try {
-        assertion();
-        resolve();
-      } catch (error) {
-        if (Date.now() - start > timeout) {
-          reject(error instanceof Error ? error : new Error(String(error)));
-          return;
-        }
-        setTimeout(tick, 10);
-      }
-    };
-    tick();
-  });
+async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
+  const start = Date.now();
+  let lastError: unknown;
+
+  while (Date.now() - start <= timeout) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }

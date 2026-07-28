@@ -707,7 +707,6 @@ function setSelectValue(label: string, value: string): void {
 }
 
 function setNativeInputValue(element: HTMLInputElement, value: string): void {
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   if (setter === undefined) {
     throw new Error("native input value setter unavailable");
@@ -716,7 +715,6 @@ function setNativeInputValue(element: HTMLInputElement, value: string): void {
 }
 
 function setNativeTextareaValue(element: HTMLTextAreaElement, value: string): void {
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
   if (setter === undefined) {
     throw new Error("native textarea value setter unavailable");

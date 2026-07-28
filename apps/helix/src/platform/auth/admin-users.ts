@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import type { Actor, ActorType } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod";
+import { z } from "zod3";
 
 const adminUsersScope = "admin.users";
 const actorTypeSchema = z.enum(["user", "agent", "service_account", "system"]);

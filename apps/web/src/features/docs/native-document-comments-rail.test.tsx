@@ -551,7 +551,6 @@ async function settle() {
 }
 
 function setTextareaValue(element: HTMLTextAreaElement, value: string): void {
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- native setter invoked via Reflect.apply with element receiver
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
   if (setter === undefined) {
     throw new Error("native textarea value setter unavailable");

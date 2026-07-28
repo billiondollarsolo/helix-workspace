@@ -1,5 +1,5 @@
 import js from "@eslint/js";
-import { helixBrowserPlugin, helixBrowserRules } from "@helix/config/eslint";
+import { helixBrowserPlugin, helixBrowserRules, helixTestRules } from "@helix/config/eslint";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
@@ -31,9 +31,7 @@ export default tseslint.config(
       "tests/**/*.ts",
       "tests/**/*.tsx",
     ],
-    rules: {
-      "helix/pacer-discipline": "off",
-    },
+    rules: helixTestRules,
   },
   {
     // Playwright E2E specs live outside the app tsconfig's `include`. Point the

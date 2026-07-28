@@ -43,10 +43,7 @@ function SlidesRoute() {
           replace: true,
           search: (previous) => ({
             ...slidesRouteSearchFromState(nextState),
-            q:
-              typeof (previous as SlidesRouteSearch).q === "string"
-                ? (previous as SlidesRouteSearch).q
-                : undefined,
+            q: typeof previous.q === "string" ? previous.q : undefined,
           }),
         });
       }}
@@ -55,7 +52,7 @@ function SlidesRoute() {
         void navigate({
           replace: true,
           search: (previous) => ({
-            ...(previous as SlidesRouteSearch),
+            ...previous,
             q: nextQuery.trim().length > 0 ? nextQuery : undefined,
           }),
         });

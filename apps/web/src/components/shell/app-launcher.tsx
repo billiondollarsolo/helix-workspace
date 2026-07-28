@@ -4,7 +4,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { APPS } from "@/components/apps";
-import { useEnabledApps, type AppId } from "@/features/apps/use-enabled-apps";
+import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 
 export interface AppLauncherProps {
   open: boolean;
@@ -17,7 +17,7 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
   if (!open) {
     return null;
   }
-  const visible = APPS.filter((app) => enabled.isEnabled(app.id as AppId));
+  const visible = APPS.filter((app) => enabled.isEnabled(app.id));
   return (
     <div className="launcher" onClick={(event) => event.stopPropagation()}>
       <div

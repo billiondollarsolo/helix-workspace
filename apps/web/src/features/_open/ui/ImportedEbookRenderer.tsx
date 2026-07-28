@@ -52,7 +52,7 @@ export function ImportedEbookRenderer({ ebook, objectId, fileName }: ImportedEbo
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const result = await parseEpub(ebook.bytes);
         if (cancelled) return;
@@ -71,7 +71,7 @@ export function ImportedEbookRenderer({ ebook, objectId, fileName }: ImportedEbo
     const entry = parsed.spine[spineIndex];
     if (entry === undefined) return;
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const html = await parsed.chapterHtml(entry.href);
         if (cancelled) return;
@@ -90,8 +90,8 @@ export function ImportedEbookRenderer({ ebook, objectId, fileName }: ImportedEbo
     if (parsed === null) return null;
     const entry = parsed.spine[spineIndex];
     if (entry === undefined) return null;
-    const tocMatch = parsed.toc.find((t) =>
-      t.href === entry.href || t.href.endsWith(entry.href) || entry.href.endsWith(t.href),
+    const tocMatch = parsed.toc.find(
+      (t) => t.href === entry.href || t.href.endsWith(entry.href) || entry.href.endsWith(t.href),
     );
     return tocMatch?.label ?? entry.href.split("/").pop() ?? null;
   }, [parsed, spineIndex]);
@@ -109,7 +109,8 @@ export function ImportedEbookRenderer({ ebook, objectId, fileName }: ImportedEbo
   };
 
   const title = parsed?.title ?? fileName ?? "EPUB";
-  const subtitle = parsed?.author !== null && parsed?.author !== undefined ? ` · ${parsed.author}` : "";
+  const subtitle =
+    parsed?.author !== null && parsed?.author !== undefined ? ` · ${parsed.author}` : "";
 
   return (
     <div
@@ -376,7 +377,10 @@ function parseNavToc(navXml: string): TocEntry[] {
   const out: TocEntry[] = [];
   const linkRe = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   for (const m of region.matchAll(linkRe)) {
-    const label = m[2]!.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    const label = m[2]!
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
     if (label.length > 0) out.push({ href: m[1]!, label });
   }
   return out;

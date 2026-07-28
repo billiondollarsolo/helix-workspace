@@ -1,3 +1,4 @@
+import { Debouncer } from "@tanstack/pacer";
 import { addAccessTokenSearchParam } from "@/lib/auth";
 import type { SheetsApiTabWithCells, SheetsCellEdit } from "./api";
 
@@ -86,7 +87,7 @@ export class NativeSpreadsheetSyncProvider {
   private revision = 0;
   private status: NativeSpreadsheetSyncStatus = "offline";
   private reconnectAttempts = 0;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly reconnectDebouncer: Debouncer<() => void>;
 
   constructor(input: NativeSpreadsheetSyncProviderInput) {
     this.sheetId = input.sheetId;
@@ -98,10 +99,16 @@ export class NativeSpreadsheetSyncProvider {
     this.reconnect = input.reconnect ?? true;
     this.reconnectDelayMs = input.reconnectDelayMs ?? defaultReconnectDelayMs;
     this.maxReconnectAttempts = input.maxReconnectAttempts ?? defaultMaxReconnectAttempts;
+    this.reconnectDebouncer = new Debouncer(
+      () => {
+        this.connect();
+      },
+      { wait: this.reconnectDelayMs },
+    );
   }
 
   connect(): void {
-    this.clearReconnectTimer();
+    this.reconnectDebouncer.cancel();
     if (this.socket !== null || this.WebSocketCtor === undefined) {
       this.setStatus("offline");
       return;
@@ -117,7 +124,7 @@ export class NativeSpreadsheetSyncProvider {
 
   disconnect(options: NativeSpreadsheetSyncProviderDisconnectOptions = {}): void {
     const notify = options.notify ?? true;
-    this.clearReconnectTimer();
+    this.reconnectDebouncer.cancel();
     this.reconnectAttempts = 0;
     const socket = this.socket;
     if (socket === null) {
@@ -257,24 +264,13 @@ export class NativeSpreadsheetSyncProvider {
       !this.reconnect ||
       this.WebSocketCtor === undefined ||
       this.socket !== null ||
-      this.reconnectTimer !== null ||
+      this.reconnectDebouncer.store.state.isPending ||
       this.reconnectAttempts >= this.maxReconnectAttempts
     ) {
       return;
     }
     this.reconnectAttempts += 1;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, this.reconnectDelayMs);
-  }
-
-  private clearReconnectTimer(): void {
-    if (this.reconnectTimer === null) {
-      return;
-    }
-    clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
+    this.reconnectDebouncer.maybeExecute();
   }
 
   private setStatus(status: NativeSpreadsheetSyncStatus): void {

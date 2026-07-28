@@ -21,10 +21,7 @@ describe("actorHasScope", () => {
 
   it("grants all scopes to system actors and wildcards", () => {
     expect(
-      actorHasScope(
-        { id: "system", orgId: "o", type: "system", scopes: [] },
-        "drive.read",
-      ),
+      actorHasScope({ id: "system", orgId: "o", type: "system", scopes: [] }, "drive.read"),
     ).toBe(true);
     expect(actorHasScope({ ...base, scopes: ["*"] }, "drive.read")).toBe(true);
     expect(actorHasScope({ ...base, scopes: ["admin.*"] }, "drive.read")).toBe(true);
@@ -39,18 +36,20 @@ describe("requireActorScope", () => {
       type: "agent",
       scopes: [],
     };
-    expect(() => requireActorScope(anon, "drive.read")).toThrow(UnauthorizedError);
+    expect(() => {
+      requireActorScope(anon, "drive.read");
+    }).toThrow(UnauthorizedError);
   });
 
   it("throws ForbiddenError when scope is missing", () => {
-    expect(() => requireActorScope({ ...base, scopes: [] }, "drive.read")).toThrow(
-      ForbiddenError,
-    );
+    expect(() => {
+      requireActorScope({ ...base, scopes: [] }, "drive.read");
+    }).toThrow(ForbiddenError);
   });
 
   it("passes when scope is present", () => {
-    expect(() =>
-      requireActorScope({ ...base, scopes: ["drive.read"] }, "drive.read"),
-    ).not.toThrow();
+    expect(() => {
+      requireActorScope({ ...base, scopes: ["drive.read"] }, "drive.read");
+    }).not.toThrow();
   });
 });

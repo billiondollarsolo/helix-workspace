@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
+    "dev": "LC_ALL=C LANG=C bash infra/scripts/dev-local.sh",
     "helix": "pnpm --filter @helix/app",
     "lint": "turbo run lint",
     "test": "turbo run test",
@@ -27,7 +27,7 @@
     "quality:boundaries": "node infra/scripts/verify-workspace-boundaries.mjs",
     "quality:editors-boundaries": "node infra/scripts/verify-workspace-editor-boundaries.mjs",
     "quality:editors-boundaries:test": "vitest run infra/scripts/verify-workspace-editor-boundaries.test.mjs",
-    "quality:editors-contract": "bash infra/scripts/verify-editors-contract.sh",
+    "quality:editors-contract": "LC_ALL=C LANG=C bash infra/scripts/verify-editors-contract.sh",
     "quality:docs-fidelity": "pnpm --filter @helix/app docs:verify-fidelity",
     "quality:sheets-fidelity": "bash infra/scripts/verify-sheets-fidelity.sh",
     "quality:live-restore-drill": "bash infra/scripts/live-restore-drill-smoke.sh",

@@ -15,6 +15,7 @@ import {
 import {
   NativeDocumentShell,
   nativeDocumentAnchorDecorationsFromRecords,
+  nativeDocumentEditorInstanceKey,
 } from "./native-document-shell";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -533,7 +534,9 @@ describe("NativeDocumentShell", () => {
     await settle();
     clickOpenMenuItem("About Helix Docs");
     await settle();
-    expect(container.querySelector('[role="dialog"][aria-label="About Helix Docs"]')).not.toBeNull();
+    expect(
+      container.querySelector('[role="dialog"][aria-label="About Helix Docs"]'),
+    ).not.toBeNull();
     expect(container.textContent ?? "").toContain("Helix Docs native editor");
     act(() => {
       buttonWithText("Close")?.click();
@@ -541,7 +544,9 @@ describe("NativeDocumentShell", () => {
     await settle();
     clickAppBarShare();
     await settle();
-    expect(container.querySelector('[role="dialog"][aria-label="Share Native session doc"]')).not.toBeNull();
+    expect(
+      container.querySelector('[role="dialog"][aria-label="Share Native session doc"]'),
+    ).not.toBeNull();
     expect(container.textContent ?? "").toContain("People with access");
     expect(container.textContent ?? "").toContain("Maya Chen");
     openSidePanel();
@@ -785,6 +790,25 @@ describe("NativeDocumentShell", () => {
       { id: "comment-1", kind: "comment", selection: { from: 3, to: 9, text: "review" } },
       { id: "suggestion-1", kind: "suggestion", selection: { from: 12, to: 18, text: "change" } },
     ]);
+  });
+
+  it("changes the editor instance key when a restored server snapshot arrives", () => {
+    const session = nativeSessionResponse("Current paragraph");
+    const currentKey = nativeDocumentEditorInstanceKey(session);
+
+    expect(
+      nativeDocumentEditorInstanceKey({
+        document: {
+          ...session.document,
+          updateSeq: session.document.updateSeq + 1,
+          stateBase64: nativeStateBase64({
+            heading: "Restored heading",
+            paragraph: "Restored paragraph",
+          }),
+        },
+      }),
+    ).not.toBe(currentKey);
+    expect(nativeDocumentEditorInstanceKey(session)).toBe(currentKey);
   });
 
   function render(documentId: string) {

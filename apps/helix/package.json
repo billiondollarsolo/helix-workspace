@@ -13,6 +13,7 @@
     "db:prepare:demo": "tsx src/db/prepare-local-demo.ts",
     "db:reindex:search": "tsx src/db/reindex-search.ts",
     "db:backfill:empty-objects": "tsx src/db/backfill-empty-objects.ts",
+    "db:backfill:mail-receiving-domain": "tsx src/db/backfill-mail-receiving-domain.ts",
     "db:reseed": "tsx src/db/reseed.ts",
     "db:seed:scenarios": "tsx src/db/seed-scenarios.ts",
     "db:fetch:corpus": "tsx src/db/fetch-corpus.ts",

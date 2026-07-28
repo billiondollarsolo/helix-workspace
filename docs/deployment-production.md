@@ -208,3 +208,20 @@ disable `HELIX_STARTUP_MIGRATION_CHECK` during a rollout. Startup also rejects a
 names that are unknown to the running image, which prevents an older replica from serving against
 a newer incompatible schema. For incompatible changes, ship expand/backfill/contract as separate
 releases; destructive rollback is performed from a tested backup, not by ad-hoc down SQL.
+
+Migration `0075` deliberately does not guess which organization owns a legacy mail domain. For an
+existing single-organization installation, verify domain ownership and run the explicit,
+idempotent one-record backfill after migrations:
+
+```sh
+pnpm --filter @helix/app db:backfill:mail-receiving-domain -- \
+  --org-id <organization-uuid> \
+  --domain example.com \
+  --created-by <admin-actor-uuid> \
+  --ownership-attested
+```
+
+Add `--catch-all-actor-id <actor-uuid>` only when that active actor belongs to the same
+organization. The command refuses multi-tenant mode, malformed or missing identifiers, implicit
+ownership, and bulk/first-organization behavior. Re-running the exact command returns the same
+active receiving-domain record.

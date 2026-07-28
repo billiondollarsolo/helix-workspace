@@ -11,6 +11,10 @@ import {
   validateMailLiveEvidence,
 } from "./mail-live-evidence-smoke.mjs";
 import { AGENT_LIVE_SCENARIOS, validateAgentLiveEvidence } from "./agent-live-evidence-smoke.mjs";
+import {
+  RESTORE_DRILL_SCENARIOS,
+  validateRestoreDrillEvidence,
+} from "./restore-drill-evidence.mjs";
 
 const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|cookie|key|credential)/iu;
 
@@ -26,6 +30,8 @@ Options:
   --require-evidence <path>    Required relative evidence path; repeatable
   --mail-live-evidence <path>  Validate and require passed local M7 Mail evidence
   --agent-live-evidence <path> Validate and require passed A7 Agent evidence
+  --restore-drill-evidence <path>
+                               Validate and require passed O4 restore evidence
   --require-external-mail-evidence
                                Also require passed provider/Gmail/Microsoft evidence
   --image-digest <digest>      Application image digest (legacy option name)
@@ -110,6 +116,7 @@ export async function buildReleaseReadinessManifest(options) {
   }
   const mailEvidence = await validateRequiredMailEvidence(options, evidencePaths);
   const agentEvidence = await validateRequiredAgentEvidence(options, evidencePaths);
+  const restoreEvidence = await validateRequiredRestoreEvidence(options, evidencePaths);
 
   const timestamp = canonicalTimestamp(options.timestamp);
   const raw = {
@@ -139,6 +146,7 @@ export async function buildReleaseReadinessManifest(options) {
       files: evidence,
       ...(mailEvidence === undefined ? {} : { mail: mailEvidence }),
       ...(agentEvidence === undefined ? {} : { agent: agentEvidence }),
+      ...(restoreEvidence === undefined ? {} : { restore: restoreEvidence }),
     },
   };
   return redactSensitive(raw);
@@ -155,6 +163,7 @@ export function parseArgs(args, cwd, environment = process.env) {
     requiredEvidence: [],
     mailLiveEvidence: undefined,
     agentLiveEvidence: undefined,
+    restoreDrillEvidence: undefined,
     requireExternalMailEvidence: false,
     applicationImageDigest:
       environment.HELIX_APPLICATION_IMAGE_DIGEST ?? environment.HELIX_IMAGE_DIGEST,
@@ -198,6 +207,9 @@ export function parseArgs(args, cwd, environment = process.env) {
       case "--agent-live-evidence":
         options.agentLiveEvidence = normalizeRelativePath(value);
         break;
+      case "--restore-drill-evidence":
+        options.restoreDrillEvidence = normalizeRelativePath(value);
+        break;
       case "--image-digest":
       case "--application-image-digest":
         options.applicationImageDigest = value;
@@ -222,6 +234,40 @@ export function parseArgs(args, cwd, environment = process.env) {
     throw new Error("--require-external-mail-evidence requires --mail-live-evidence");
   }
   return options;
+}
+
+async function validateRequiredRestoreEvidence(options, evidencePaths) {
+  if (options.restoreDrillEvidence === undefined) return undefined;
+  if (!evidencePaths.has(options.restoreDrillEvidence)) {
+    throw new Error(`required restore drill evidence missing: ${options.restoreDrillEvidence}`);
+  }
+  const path = resolve(options.evidenceDir, options.restoreDrillEvidence);
+  let evidence;
+  try {
+    evidence = validateRestoreDrillEvidence(JSON.parse(await readFile(path, "utf8")));
+  } catch (error) {
+    throw new Error(
+      `invalid restore drill evidence: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const incomplete = RESTORE_DRILL_SCENARIOS.filter(
+    (scenario) => evidence.scenarios[scenario].status !== "passed",
+  );
+  if (evidence.mode !== "live" || evidence.status !== "passed" || incomplete.length > 0) {
+    throw new Error(
+      `restore drill evidence is incomplete: ${incomplete.join(", ") || evidence.status}`,
+    );
+  }
+  return {
+    path: options.restoreDrillEvidence,
+    status: evidence.status,
+    rpoHours: evidence.metrics.rpoHours,
+    rtoHours: evidence.metrics.rtoHours,
+    scenarios: RESTORE_DRILL_SCENARIOS.map((scenario) => ({
+      name: scenario,
+      status: evidence.scenarios[scenario].status,
+    })),
+  };
 }
 
 async function validateRequiredAgentEvidence(options, evidencePaths) {

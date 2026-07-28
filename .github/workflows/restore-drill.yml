@@ -18,6 +18,13 @@ jobs:
       - name: Validate restore drill contracts
         run: infra/scripts/validate-restore-drill.sh
 
+      - name: Record static restore evidence
+        run: |
+          mkdir -p /tmp/helix-restore-evidence
+          node infra/scripts/restore-drill-evidence.mjs \
+            --static \
+            --output /tmp/helix-restore-evidence/restore-drill-evidence.json
+
       - name: Dry-run backup workflow
         run: infra/scripts/backup.sh --tier personal --output-dir /tmp/helix-backups --backup-id ci-dry-run
 
@@ -30,8 +37,15 @@ jobs:
       - name: Start drill Postgres
         run: docker compose up -d postgres
 
-      - name: Execute restore drill
+      - name: Execute disposable database smoke (not release evidence)
         run: infra/scripts/restore-drill.sh --create-backup --backup-dir /tmp/helix-backups --execute
+
+      - name: Upload truthful static evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-static-evidence
+          path: /tmp/helix-restore-evidence/restore-drill-evidence.json
 
       - name: Stop drill stack
         if: ${{ always() }}

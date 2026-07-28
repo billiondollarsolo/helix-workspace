@@ -10,6 +10,10 @@ import {
 } from "./release-readiness-manifest.mjs";
 import { MAIL_LIVE_SCENARIOS, createEvidenceSkeleton } from "./mail-live-evidence-smoke.mjs";
 import { AGENT_LIVE_SCENARIOS, createAgentEvidenceSkeleton } from "./agent-live-evidence-smoke.mjs";
+import {
+  RESTORE_DRILL_EVIDENCE_SCHEMA,
+  createStaticEvidence as createStaticRestoreEvidence,
+} from "./restore-drill-evidence.mjs";
 
 describe("release-readiness manifest", () => {
   it("redacts sensitive keys recursively and case-insensitively", () => {
@@ -286,7 +290,97 @@ describe("release-readiness manifest", () => {
       })),
     });
   });
+
+  it("requires live passed restore evidence and publishes measured RPO/RTO", async () => {
+    const fixture = await createFixture();
+    const evidencePath = resolve(fixture.evidence, "restore-drill-evidence.json");
+    await writeFile(
+      evidencePath,
+      `${JSON.stringify(createStaticRestoreEvidence(new Date("2026-07-28T20:00:00.000Z")))}\n`,
+      "utf8",
+    );
+    const args = [
+      "--workspace-dir",
+      fixture.workspace,
+      "--editors-dir",
+      fixture.editors,
+      "--evidence-dir",
+      fixture.evidence,
+      "--restore-drill-evidence",
+      "restore-drill-evidence.json",
+      "--image-digest",
+      `sha256:${"a".repeat(64)}`,
+      "--web-image-digest",
+      `sha256:${"b".repeat(64)}`,
+    ];
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "restore drill evidence is incomplete",
+    );
+
+    const passed = passedRestoreEvidence();
+    await writeFile(evidencePath, `${JSON.stringify(passed)}\n`, "utf8");
+    const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
+    expect(manifest.evidence.restore).toMatchObject({
+      path: "restore-drill-evidence.json",
+      status: "passed",
+      rpoHours: 23,
+      rtoHours: 1.5,
+    });
+  });
 });
+
+function passedRestoreEvidence() {
+  const hash = "a".repeat(64);
+  return {
+    schema: RESTORE_DRILL_EVIDENCE_SCHEMA,
+    runId: "restore-test",
+    mode: "live",
+    status: "passed",
+    startedAt: "2026-07-28T20:00:00.000Z",
+    completedAt: "2026-07-28T21:30:00.000Z",
+    metrics: { rpoHours: 23, rtoHours: 1.5, rpoTargetHours: 24, rtoTargetHours: 4 },
+    scenarios: {
+      manifest_integrity: {
+        status: "passed",
+        manifestSha256: hash,
+        recoverySetHash: hash,
+      },
+      encrypted_restore: {
+        status: "passed",
+        method: "age",
+        plaintextKeyMaterialObserved: false,
+      },
+      off_host_retention_key_custody: {
+        status: "passed",
+        offHostCopyRecorded: true,
+        retentionDays: 35,
+        keyCustodyReferenceRecorded: true,
+        plaintextKeyMaterialObserved: false,
+      },
+      disposable_environment: {
+        status: "passed",
+        databaseIsolated: true,
+        objectStoreIsolated: true,
+      },
+      database_consistency: {
+        status: "passed",
+        expectedSnapshotSha256: hash,
+        exactMatch: true,
+      },
+      object_version_consistency: {
+        status: "passed",
+        versionInventorySha256: hash,
+        isolatedRestore: true,
+      },
+      outbound_queue_consistency: { status: "passed", exactMatch: true },
+      audit_chain: { status: "passed", invalidLinks: 0 },
+      sampled_corpus_hashes: { status: "passed", sampleCount: 2, matchingCount: 2 },
+      search_reindex: { status: "passed", rebuiltFromRestoredDatabase: true },
+      rpo: { status: "passed", observedHours: 23, targetHours: 24 },
+      rto: { status: "passed", observedHours: 1.5, targetHours: 4 },
+    },
+  };
+}
 
 function passedAgentResult(scenario) {
   const hash = "a".repeat(20);

@@ -31,7 +31,10 @@ Options:
   --recovery-target-time <ts>      PITR recovery target (ISO 8601). Default: latest
   --pitr-data-dir <path>           Host dir to materialize the recovered cluster
   --restore-objects                Re-sync the object bucket from the backup
+  --target-object-bucket <name>    Required isolated bucket for strict drills
   --verify                         Run DB verification after a logical restore
+  --require-manifest-v3            Require checksum/recovery-set sidecars and schema v3
+  --verification-output <path>     Write content-free verification observations
   -h, --help
 
 Environment:
@@ -56,7 +59,15 @@ FORCE_PITR=false
 RECOVERY_TARGET_TIME=${HELIX_RECOVERY_TARGET_TIME:-}
 PITR_DATA_DIR=${HELIX_PITR_DATA_DIR:-./backups/pitr-restore}
 RESTORE_OBJECTS=false
+TARGET_OBJECT_BUCKET=${HELIX_RESTORE_TARGET_OBJECT_BUCKET:-}
+REQUIRE_MANIFEST_V3=false
+VERIFICATION_OUTPUT=
 WORK_DIR=
+MANIFEST_VERIFIED=false
+DATABASE_CONSISTENCY=not_run
+OBJECT_CONSISTENCY=not_run
+SAMPLE_COUNT=0
+SAMPLE_MATCHES=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -72,13 +83,25 @@ while [[ $# -gt 0 ]]; do
     --recovery-target-time) RECOVERY_TARGET_TIME=${2:?missing recovery target time}; shift 2 ;;
     --pitr-data-dir) PITR_DATA_DIR=${2:?missing pitr data dir}; shift 2 ;;
     --restore-objects) RESTORE_OBJECTS=true; shift ;;
+    --target-object-bucket) TARGET_OBJECT_BUCKET=${2:?missing target object bucket}; shift 2 ;;
     --verify) VERIFY=true; shift ;;
+    --require-manifest-v3) REQUIRE_MANIFEST_V3=true; shift ;;
+    --verification-output) VERIFICATION_OUTPUT=${2:?missing verification output}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
 done
 
 [[ -n "$BACKUP_PATH" ]] || die "--backup is required"
+if bool_true "$REQUIRE_MANIFEST_V3" && [[ -d "$BACKUP_PATH" ]]; then
+  die "strict restore requires an encrypted archive, not an already extracted directory"
+fi
+if bool_true "$REQUIRE_MANIFEST_V3"; then
+  case "$BACKUP_PATH" in
+    *.age|*.kms) ;;
+    *) die "strict restore requires a .age or .kms ciphertext archive" ;;
+  esac
+fi
 
 if [[ "$TARGET_DB" == "$POSTGRES_DB" ]] && ! bool_true "$ALLOW_LIVE_TARGET"; then
   die "refusing to restore into live database '$TARGET_DB'; use a drill database or pass --allow-live-target"
@@ -87,6 +110,7 @@ fi
 ensure_repo_root
 if [[ "$DRY_RUN" == "0" ]]; then
   require_cmd docker
+  require_cmd node
 fi
 require_cmd tar
 
@@ -111,6 +135,15 @@ extract_backup() {
   fi
 
   WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/helix-restore.XXXXXX")
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ shasum -a 256 -c %q\n' "$source.sha256" >&2
+  elif [[ -f "$source.sha256" ]]; then
+    (cd "$(dirname "$source")" && shasum -a 256 -c "$(basename "$source").sha256")
+  elif bool_true "$REQUIRE_MANIFEST_V3"; then
+    die "strict restore requires archive checksum sidecar: $source.sha256"
+  else
+    log "warning: archive checksum sidecar not found; restoring legacy backup"
+  fi
   case "$source" in
     *.age)
       [[ -n "$AGE_IDENTITY" ]] || die "encrypted backup requires --age-identity or AGE_IDENTITY_FILE"
@@ -160,6 +193,42 @@ BASEBACKUP_DIR="$BACKUP_DIR/postgres-basebackup"
 WAL_DIR="$BACKUP_DIR/wal"
 OBJECTS_DIR="$BACKUP_DIR/objects"
 MANIFEST="$BACKUP_DIR/manifest.json"
+
+verify_manifest() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ node %q verify --root %q\n' "$SCRIPT_DIR/backup-manifest.mjs" "$BACKUP_DIR"
+    printf '+ cmp %q %q\n' "$BACKUP_PATH.manifest.json" "$MANIFEST"
+    return
+  fi
+  if [[ ! -f "$MANIFEST" ]]; then
+    bool_true "$REQUIRE_MANIFEST_V3" && die "strict restore requires embedded manifest.json"
+    log "warning: embedded manifest missing; restoring legacy backup"
+    return
+  fi
+  if grep -Fq '"helix.backup-manifest.v3"' "$MANIFEST"; then
+    local verification
+    verification=$(node "$SCRIPT_DIR/backup-manifest.mjs" verify --root "$BACKUP_DIR" --json)
+    if bool_true "$REQUIRE_MANIFEST_V3"; then
+      grep -Fq '"encrypted": true' <<<"$verification" \
+        || die "strict restore requires an encrypted backup"
+      grep -Fq '"objectsIncluded": true' <<<"$verification" \
+        || die "strict restore requires an object-store snapshot"
+    fi
+    if [[ -f "$BACKUP_PATH.manifest.json" ]]; then
+      cmp "$BACKUP_PATH.manifest.json" "$MANIFEST" >/dev/null \
+        || die "external manifest sidecar does not match embedded manifest"
+    elif bool_true "$REQUIRE_MANIFEST_V3"; then
+      die "strict restore requires manifest sidecar: $BACKUP_PATH.manifest.json"
+    fi
+    MANIFEST_VERIFIED=true
+  elif bool_true "$REQUIRE_MANIFEST_V3"; then
+    die "strict restore requires helix.backup-manifest.v3"
+  else
+    log "warning: legacy manifest does not have recovery-set checksums"
+  fi
+}
+
+verify_manifest
 
 # Decide restore mode. A physical base backup => PITR; otherwise logical.
 RESTORE_MODE=logical
@@ -257,30 +326,117 @@ restore_logical() {
     run_shell "$(printf '%s exec -T %q psql -U %q -d %q -v ON_ERROR_STOP=1 -c %q' \
       "$(compose)" "$POSTGRES_SERVICE" "$POSTGRES_USER" "$TARGET_DB" \
       "select count(*) as activity_rows, count(this_hash) as hashed_activity_rows from public.activity;")"
+    verify_database_consistency
   fi
+}
+
+capture_database_consistency() {
+  local database=$1 output=$2
+  local sql
+  sql="select metric, value from (
+    select 'activity.count'::text metric, count(*)::text value from public.activity
+    union all select 'audit.invalid_links', count(*)::text from (
+      select prev_hash, lag(this_hash) over (partition by org_id order by created_at, id) expected
+      from public.activity
+    ) links where prev_hash is distinct from expected
+    union all select 'drive_versions.count', count(*)::text from public.drive_versions
+    union all select 'mail_outbound_messages.count', count(*)::text from public.mail_outbound_messages
+    union all select 'objects.count', count(*)::text from public.objects
+    union all select 'outbox.count', count(*)::text from public.outbox
+  ) metrics order by metric;
+  select 'drive_version.sample', concat_ws('|', id::text, storage_key, sha256)
+  from public.drive_versions order by id limit 25;"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ %s exec -T %q psql -At -F <tab> -U %q -d %q > %q # compare database, versions, outbound queues, audit chain\n' \
+      "$(compose)" "$POSTGRES_SERVICE" "$POSTGRES_USER" "$database" "$output"
+  else
+    bash -c "$(printf '%s exec -T %q psql -At -F %q -v ON_ERROR_STOP=1 -U %q -d %q -c %q > %q' \
+      "$(compose)" "$POSTGRES_SERVICE" $'\t' "$POSTGRES_USER" "$database" "$sql" "$output")"
+  fi
+}
+
+verify_database_consistency() {
+  local expected="$BACKUP_DIR/consistency/database.tsv"
+  local observed="${WORK_DIR:-${TMPDIR:-/tmp}}/restored-database.tsv"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    capture_database_consistency "$TARGET_DB" "$observed"
+    printf '+ cmp %q %q\n' "$expected" "$observed"
+    printf '+ assert audit.invalid_links == 0 and outbound queue counts match\n'
+    return
+  fi
+  [[ -f "$expected" ]] || {
+    bool_true "$REQUIRE_MANIFEST_V3" && die "strict restore requires database consistency snapshot"
+    log "warning: database consistency snapshot missing"
+    return
+  }
+  capture_database_consistency "$TARGET_DB" "$observed"
+  cmp "$expected" "$observed" >/dev/null || die "restored database consistency snapshot differs from source"
+  [[ "$(awk -F $'\t' '$1 == "audit.invalid_links" { print $2 }' "$observed")" == "0" ]] \
+    || die "restored audit hash chain has broken links"
+  DATABASE_CONSISTENCY=passed
 }
 
 # --- Object-store restore: re-sync the bucket from the backup ----------------
 restore_objects() {
-  local bucket=${HELIX_BACKUP_RUSTFS_BUCKET:-}
+  local configured_source_bucket=${HELIX_BACKUP_RUSTFS_BUCKET:-}
+  local source_bucket=
+  local bucket=$TARGET_OBJECT_BUCKET
   local endpoint
   endpoint=$(object_store_endpoint)
   local src="$OBJECTS_DIR"
-  if [[ -z "$bucket" && -d "$OBJECTS_DIR" ]]; then
-    bucket=$(find "$OBJECTS_DIR" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | head -n 1)
+  if [[ -d "$OBJECTS_DIR" ]]; then
+    source_bucket=$(find "$OBJECTS_DIR" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | head -n 1)
   fi
-  [[ -n "$bucket" ]] || die "object restore needs HELIX_BACKUP_RUSTFS_BUCKET or an objects/ dir in the backup"
+  [[ -n "$source_bucket" ]] || source_bucket=$configured_source_bucket
+  [[ -n "$source_bucket" ]] || die "object restore needs an objects/ bucket directory in the backup"
+  if [[ -n "$configured_source_bucket" && "$configured_source_bucket" != "$source_bucket" ]]; then
+    die "configured source bucket does not match backup manifest artifacts"
+  fi
+  [[ -n "$bucket" ]] || bucket=$source_bucket
+  if bool_true "$REQUIRE_MANIFEST_V3" && [[ "$bucket" == "$source_bucket" ]]; then
+    die "strict restore requires an isolated --target-object-bucket"
+  fi
   if [[ "$DRY_RUN" == "1" ]]; then
     printf '+ aws --endpoint-url %q s3 sync %q s3://%s --delete\n' \
-      "$endpoint" "$src/$bucket" "$bucket" >&2
+      "$endpoint" "$src/$source_bucket" "$bucket" >&2
+    printf '+ node %q object-samples --root %q | hash-compare s3://%s/<sample-key>\n' \
+      "$SCRIPT_DIR/backup-manifest.mjs" "$BACKUP_DIR" "$bucket" >&2
     return
   fi
-  [[ -d "$src/$bucket" ]] || die "object backup not found in archive: $src/$bucket"
+  [[ -d "$src/$source_bucket" ]] || die "object backup not found in archive: $src/$source_bucket"
   require_cmd aws
   export_object_store_credentials
   aws --endpoint-url "$endpoint" s3 mb "s3://$bucket" 2>/dev/null || true
-  aws --endpoint-url "$endpoint" s3 sync "$src/$bucket" "s3://$bucket" --delete
+  aws --endpoint-url "$endpoint" s3 sync "$src/$source_bucket" "s3://$bucket" --delete
+  local expected key observed
+  while IFS=$'\t' read -r expected key; do
+    [[ -n "$key" ]] || continue
+    SAMPLE_COUNT=$((SAMPLE_COUNT + 1))
+    observed=$(aws --endpoint-url "$endpoint" s3 cp "s3://$bucket/$key" - | shasum -a 256 | awk '{print $1}')
+    [[ "$observed" == "$expected" ]] || die "restored object sample checksum mismatch: $key"
+    SAMPLE_MATCHES=$((SAMPLE_MATCHES + 1))
+  done < <(node "$SCRIPT_DIR/backup-manifest.mjs" object-samples --root "$BACKUP_DIR")
+  (( SAMPLE_COUNT > 0 )) || die "strict object restore requires at least one sampled corpus object"
+  OBJECT_CONSISTENCY=passed
   log "object bucket restored: s3://$bucket"
+}
+
+write_verification_observations() {
+  [[ -n "$VERIFICATION_OUTPUT" ]] || return 0
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ write content-free restore verification observations: %q\n' "$VERIFICATION_OUTPUT"
+    return
+  fi
+  mkdir -p "$(dirname "$VERIFICATION_OUTPUT")"
+  {
+    printf 'manifest_integrity\t%s\n' "$([ "$MANIFEST_VERIFIED" == "true" ] && printf passed || printf failed)"
+    printf 'database_consistency\t%s\n' "$DATABASE_CONSISTENCY"
+    printf 'object_version_consistency\t%s\n' "$OBJECT_CONSISTENCY"
+    printf 'outbound_queue_consistency\t%s\n' "$DATABASE_CONSISTENCY"
+    printf 'audit_chain\t%s\n' "$DATABASE_CONSISTENCY"
+    printf 'sample_count\t%s\n' "$SAMPLE_COUNT"
+    printf 'sample_matches\t%s\n' "$SAMPLE_MATCHES"
+  } >"$VERIFICATION_OUTPUT"
 }
 
 if [[ "$RESTORE_MODE" == "pitr" ]]; then
@@ -293,4 +449,5 @@ if bool_true "$RESTORE_OBJECTS"; then
   restore_objects
 fi
 
+write_verification_observations
 log "restore workflow complete"

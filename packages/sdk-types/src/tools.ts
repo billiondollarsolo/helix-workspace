@@ -1,5 +1,5 @@
 import type { Actor, RequestContext, ResourceRef } from "./core.js";
-import type { JsonObject, JsonValue } from "./json.js";
+import type { JsonObject } from "./json.js";
 
 export interface SchemaAdapter<T> {
   readonly description?: string;

@@ -622,7 +622,7 @@ async function dispatchWithDeadline(
         timeout = setTimeout(() => {
           resolve(jsonRpcError(id, -32008, "MCP request exceeded its execution deadline."));
         }, boundedTimeoutMs);
-        timeout.unref?.();
+        timeout.unref();
       }),
     ]);
   } finally {

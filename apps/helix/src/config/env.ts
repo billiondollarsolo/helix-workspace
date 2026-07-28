@@ -68,6 +68,10 @@ const envSchema = z.object({
   HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED: optionalString,
   HELIX_DATA_ENCRYPTION_KEY: optionalString,
   HELIX_STARTUP_MIGRATION_CHECK: optionalString,
+  HELIX_AGENT_WRITES_ENABLED: optionalString,
+  HELIX_AGENT_WRITES_DISABLED_ORGS: optionalString,
+  HELIX_DISABLED_TOOLS: optionalString,
+  HELIX_GLOBAL_READ_ONLY: optionalString,
 
   // Storage (RustFS / S3-compatible)
   RUSTFS_ENDPOINT: optionalUrl,
@@ -393,4 +397,26 @@ export function env(): Env {
 /** Test helper — clears the memoized env so subsequent `env()` re-parses. */
 export function resetEnvCacheForTests(): void {
   cached = undefined;
+}
+
+const operationalControlEnvSchema = envSchema.pick({
+  HELIX_AGENT_WRITES_ENABLED: true,
+  HELIX_AGENT_WRITES_DISABLED_ORGS: true,
+  HELIX_DISABLED_TOOLS: true,
+  HELIX_GLOBAL_READ_ONLY: true,
+});
+
+export type OperationalControlEnv = z.infer<typeof operationalControlEnvSchema>;
+
+/**
+ * Read emergency controls without the normal environment cache.
+ *
+ * Operators may change these kill switches while a process is running, so the
+ * invocation boundary must observe the current values rather than the startup
+ * snapshot returned by {@link env}.
+ */
+export function operationalControlEnv(
+  source: Record<string, string | undefined> = process.env,
+): OperationalControlEnv {
+  return operationalControlEnvSchema.parse(source);
 }

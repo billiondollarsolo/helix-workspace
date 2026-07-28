@@ -37,6 +37,7 @@ import {
   type AgentLimitExceeded,
   type AgentRateCostLimiter,
 } from "./limits/index.js";
+import { operationalControlEnv } from "../config/env.js";
 
 export type ToolInvokeResult<Output = unknown> =
   | { readonly ok: true; readonly status?: "executed"; readonly output: Output }
@@ -1272,7 +1273,8 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     if (external !== undefined && !external.allowed) {
       return external;
     }
-    const disabledTools = parseDisabledToolControls(process.env.HELIX_DISABLED_TOOLS);
+    const controlEnv = operationalControlEnv();
+    const disabledTools = parseDisabledToolControls(controlEnv.HELIX_DISABLED_TOOLS);
     if (disabledTools.has(tool.id)) {
       return {
         allowed: false,
@@ -1280,7 +1282,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         controlId: `environment:tool:${tool.id}`,
       };
     }
-    if (environmentControlEnabled(process.env.HELIX_GLOBAL_READ_ONLY)) {
+    if (environmentControlEnabled(controlEnv.HELIX_GLOBAL_READ_ONLY)) {
       return {
         allowed: false,
         reason: "global_read_only",
@@ -1289,10 +1291,10 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     }
     if (actor.type === "agent") {
       const disabledAgentWriteOrgs = parseDisabledToolControls(
-        process.env.HELIX_AGENT_WRITES_DISABLED_ORGS,
+        controlEnv.HELIX_AGENT_WRITES_DISABLED_ORGS,
       );
       if (
-        environmentControlDisabled(process.env.HELIX_AGENT_WRITES_ENABLED) ||
+        environmentControlDisabled(controlEnv.HELIX_AGENT_WRITES_ENABLED) ||
         disabledAgentWriteOrgs.has(actor.orgId)
       ) {
         return {

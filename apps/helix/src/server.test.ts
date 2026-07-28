@@ -923,9 +923,8 @@ describe("tool REST idempotency (P1-10)", () => {
     await tokenStore.saveToken(
       accessToken({
         token: "idem-token",
-        actorId: "agent-idem",
+        actorId: "user-idem",
         orgId: "org-idem",
-        actorType: "agent",
         scopes: ["platform.read"],
       }),
     );
@@ -977,9 +976,8 @@ describe("tool REST idempotency (P1-10)", () => {
     await tokenStore.saveToken(
       accessToken({
         token: "idem-token-2",
-        actorId: "agent-idem-2",
+        actorId: "user-idem-2",
         orgId: "org-idem",
-        actorType: "agent",
         scopes: ["platform.read"],
       }),
     );
@@ -1050,7 +1048,7 @@ describe("action status routes", () => {
         type: "agent",
         scopes: actorToken.scopes,
       },
-      input: { value: true },
+      input: { value: true, secret: "sensitive-action-input" },
       traceId: "trace-action-1",
     });
     const app = fastify();
@@ -1069,9 +1067,17 @@ describe("action status routes", () => {
       actorId: "agent-action",
       toolId: "external.write",
       status: "pending_confirmation",
-      input: { value: true },
+      preview: {
+        toolId: "external.write",
+        action: "platform.read",
+        resourceIds: [],
+        recipients: [],
+        targets: [],
+      },
       traceId: "trace-action-1",
     });
+    expect(body.action).not.toHaveProperty("input");
+    expect(response.body).not.toContain("sensitive-action-input");
     await app.close();
   });
 
@@ -1239,7 +1245,13 @@ interface ActionStatusBody {
     readonly actorId: string;
     readonly toolId: string;
     readonly status: string;
-    readonly input: unknown;
+    readonly preview: {
+      readonly toolId: string;
+      readonly action: string;
+      readonly resourceIds: readonly string[];
+      readonly recipients: readonly string[];
+      readonly targets: readonly string[];
+    };
     readonly traceId?: string;
   };
 }

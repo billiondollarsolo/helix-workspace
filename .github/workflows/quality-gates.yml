@@ -151,6 +151,12 @@ jobs:
           DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
         run: pnpm --filter @helix/app db:migrate
 
+      - name: Disable tenant API rate limit for synthetic load
+        run: |
+          docker compose -p helix_demo_smoke_ci_${{ github.run_id }} exec -T postgres \
+            psql -U helix -d helix_demo_smoke -v ON_ERROR_STOP=1 \
+            -c "update orgs set quotas = jsonb_set(quotas, '{api_rps_limit}', 'null'::jsonb, true) where id = '00000000-0000-4000-8000-000000000100';"
+
       - name: Start Helix API
         env:
           HOST: 0.0.0.0

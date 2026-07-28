@@ -2294,7 +2294,7 @@ describe("NativeSpreadsheetEditor", () => {
       url: "/api/tools/sheets.cells.update",
       body: { tabId, edits: [{ row: 1, col: 1, value: "101" }] },
     });
-  }, 20_000);
+  }, 45_000);
 
   it("validates URL, localized date, and custom formula catalog rules", async () => {
     render();

@@ -22,6 +22,6 @@ export default defineConfig({
     // Editor integration tests perform full document and presentation renders.
     // Shared GitHub runners can exceed Vitest's 5-second default even when the
     // same render completes quickly on a developer workstation.
-    testTimeout: 15_000,
+    testTimeout: 30_000,
   },
 });

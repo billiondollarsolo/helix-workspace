@@ -7,7 +7,7 @@ import type {
   ChatRoom,
   ChatSearchHit,
 } from "@helix/contracts";
-import { authenticatedFetch, getStoredAccessToken } from "@/lib/auth";
+import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
 
 /** @deprecated Prefer ChatSearchHit from @helix/contracts */
@@ -129,7 +129,12 @@ export type ChatRealtimeEvent =
       readonly receipt: ChatReadReceiptRecord;
     }
   | { readonly type: "reconnect"; readonly reason: string }
-  | { readonly type: "error"; readonly code?: string; readonly message?: string; readonly error?: string };
+  | {
+      readonly type: "error";
+      readonly code?: string;
+      readonly message?: string;
+      readonly error?: string;
+    };
 
 export interface ChatRealtimeClient {
   subscribe(roomId: string): void;
@@ -324,12 +329,8 @@ export async function sendChatMessage(
       bodyFormat: input.bodyFormat ?? "plain",
       attachmentObjectIds: input.attachmentObjectIds ?? [],
       metadata: input.metadata ?? {},
-      ...(input.clientMessageId === undefined
-        ? {}
-        : { clientMessageId: input.clientMessageId }),
-      ...(input.parentMessageId === undefined
-        ? {}
-        : { parentMessageId: input.parentMessageId }),
+      ...(input.clientMessageId === undefined ? {} : { clientMessageId: input.clientMessageId }),
+      ...(input.parentMessageId === undefined ? {} : { parentMessageId: input.parentMessageId }),
     },
     fetchImpl,
   );
@@ -376,27 +377,28 @@ export function chatRealtimeUrl(path = "/ws/chat"): string {
   return url.toString();
 }
 
-/** Subprotocol list: `helix-bearer` + token when a stored bearer exists. */
-export function chatRealtimeProtocols(): string[] | undefined {
-  const token = getStoredAccessToken();
-  if (token === null) {
-    return undefined;
-  }
-  return ["helix-bearer", token];
-}
-
 export function createChatRealtimeClient(options: ChatRealtimeClientOptions): ChatRealtimeClient {
   const WebSocketImpl = options.WebSocketImpl ?? globalThis.WebSocket;
-  const protocols =
-    options.protocols ?? chatRealtimeProtocols();
+  // Browser WebSocket authentication is the same-origin Secure/HttpOnly
+  // session cookie. Reusable access tokens must not be copied into the
+  // Sec-WebSocket-Protocol header, where proxies and access logs may capture
+  // them. Explicit protocols remain injectable for non-secret application
+  // protocol negotiation and test doubles.
+  const protocols = options.protocols;
   const socket =
     protocols === undefined
       ? new WebSocketImpl(options.url ?? chatRealtimeUrl())
       : new WebSocketImpl(options.url ?? chatRealtimeUrl(), protocols);
 
-  socket.addEventListener("open", () => options.onOpen?.());
-  socket.addEventListener("close", (event) => options.onClose?.(event));
-  socket.addEventListener("error", (event) => options.onError?.(event));
+  socket.addEventListener("open", () => {
+    options.onOpen?.();
+  });
+  socket.addEventListener("close", (event) => {
+    options.onClose?.(event);
+  });
+  socket.addEventListener("error", (event) => {
+    options.onError?.(event);
+  });
   socket.addEventListener("message", (event) => {
     const parsed = parseChatRealtimeEvent(event.data);
     if (parsed !== null) {
@@ -409,27 +411,36 @@ export function createChatRealtimeClient(options: ChatRealtimeClientOptions): Ch
   };
 
   return {
-    subscribe: (roomId) => send({ type: "subscribe", roomId }),
-    sendMessage: (input) =>
+    subscribe: (roomId) => {
+      send({ type: "subscribe", roomId });
+    },
+    sendMessage: (input) => {
       send({
         type: "send",
         roomId: input.roomId,
         body: input.body,
         bodyFormat: input.bodyFormat ?? "plain",
         attachmentObjectIds: input.attachmentObjectIds ?? [],
-        ...(input.clientMessageId === undefined
-          ? {}
-          : { clientMessageId: input.clientMessageId }),
-        ...(input.parentMessageId === undefined
-          ? {}
-          : { parentMessageId: input.parentMessageId }),
-      }),
-    setTyping: (roomId, isTyping) => send({ type: "typing", roomId, isTyping }),
-    markRead: (roomId, messageId) => send({ type: "read", roomId, messageId }),
-    requestPresence: (roomId) => send({ type: "presence", roomId }),
-    setPresence: (status) => send({ type: "presence.set", status }),
+        ...(input.clientMessageId === undefined ? {} : { clientMessageId: input.clientMessageId }),
+        ...(input.parentMessageId === undefined ? {} : { parentMessageId: input.parentMessageId }),
+      });
+    },
+    setTyping: (roomId, isTyping) => {
+      send({ type: "typing", roomId, isTyping });
+    },
+    markRead: (roomId, messageId) => {
+      send({ type: "read", roomId, messageId });
+    },
+    requestPresence: (roomId) => {
+      send({ type: "presence", roomId });
+    },
+    setPresence: (status) => {
+      send({ type: "presence.set", status });
+    },
     isOpen: () => socket.readyState === WebSocketImpl.OPEN,
-    close: () => socket.close(),
+    close: () => {
+      socket.close();
+    },
   };
 }
 

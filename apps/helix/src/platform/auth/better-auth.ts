@@ -416,6 +416,7 @@ export interface BetterAuthRuntime {
 
 export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): BetterAuthRuntime {
   const pool = new Pool({ connectionString: config.databaseUrl });
+  const cookiePolicy = sessionCookiePolicyForBaseUrl(config.baseUrl);
   const auth = betterAuth({
     database: pool,
     secret: config.secret,
@@ -435,10 +436,13 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
       },
     },
     advanced: {
+      useSecureCookies: cookiePolicy.secure,
+      defaultCookieAttributes: cookiePolicy,
       cookiePrefix: "helix",
       cookies: {
         session_token: {
           name: "helix_session",
+          attributes: cookiePolicy,
         },
       },
     },
@@ -447,6 +451,20 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
     auth,
     pool,
     sessionVerifier: new BetterAuthApiSessionVerifier(auth),
+  };
+}
+
+export function sessionCookiePolicyForBaseUrl(baseUrl: string): {
+  readonly secure: boolean;
+  readonly httpOnly: true;
+  readonly sameSite: "lax";
+  readonly path: "/";
+} {
+  return {
+    secure: isSecureBaseUrl(baseUrl),
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
   };
 }
 

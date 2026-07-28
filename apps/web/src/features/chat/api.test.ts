@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { HELIX_ACCESS_TOKEN_STORAGE_KEY } from "@/lib/auth";
 import {
   chatRealtimeUrl,
   createChatRealtimeClient,
@@ -231,6 +232,15 @@ describe("chat API", () => {
   });
 
   it("serializes chat websocket messages and parses realtime events", () => {
+    const storage = new Map([[HELIX_ACCESS_TOKEN_STORAGE_KEY, "reusable-browser-token"]]);
+    vi.stubGlobal("window", {
+      location: { href: "https://app.helix.test/chat" },
+      localStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => storage.set(key, value),
+        removeItem: (key: string) => storage.delete(key),
+      },
+    });
     const events: unknown[] = [];
     const client = createChatRealtimeClient({
       url: "ws://localhost/ws/chat",
@@ -241,6 +251,9 @@ describe("chat API", () => {
     if (socket === undefined) {
       throw new Error("Expected websocket instance.");
     }
+    expect(socket.protocols).toBeUndefined();
+    expect(socket.url).not.toContain("reusable-browser-token");
+    vi.unstubAllGlobals();
 
     client.subscribe("33333333-3333-4333-8333-333333333333");
     client.setTyping("33333333-3333-4333-8333-333333333333", true);

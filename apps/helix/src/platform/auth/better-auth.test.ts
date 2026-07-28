@@ -8,6 +8,7 @@ import {
   PostgresBetterAuthActorStore,
   PostgresBetterAuthSessionIssuer,
   PostgresBetterAuthUserLinkStore,
+  sessionCookiePolicyForBaseUrl,
   type BetterAuthSessionVerifier,
 } from "./better-auth.js";
 
@@ -360,6 +361,26 @@ describe("PostgresBetterAuthActorStore", () => {
     ]);
     expect(JSON.stringify(metering)).not.toContain("created@example.com");
     expect(JSON.stringify(metering)).not.toContain("Created User");
+  });
+});
+
+describe("Better Auth browser cookie policy", () => {
+  it("enforces Secure, HttpOnly, and SameSite=Lax for an HTTPS production URL", () => {
+    expect(sessionCookiePolicyForBaseUrl("https://app.helix.example")).toEqual({
+      secure: true,
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+    });
+  });
+
+  it("keeps local HTTP development possible without weakening the other attributes", () => {
+    expect(sessionCookiePolicyForBaseUrl("http://localhost:3000")).toEqual({
+      secure: false,
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+    });
   });
 });
 

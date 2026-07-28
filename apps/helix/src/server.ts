@@ -5,7 +5,6 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -52,6 +51,11 @@ import { createResourceClassifier } from "./api/classify-resource.js";
 import { createHelixTRPCRouter } from "./api/trpc.js";
 import { createSqlClient } from "./db/client.js";
 import { env } from "./config/env.js";
+import { helixLoggerOptions } from "./platform/security/logger-redaction.js";
+import {
+  installTrustedOriginPolicy,
+  parseTrustedOrigins,
+} from "./platform/security/origin-policy.js";
 import { OAuthClientManager, OAuthTokenService } from "./platform/auth/oauth.js";
 import { PostgresAdminServiceStatusStore } from "./platform/admin/service-status.js";
 import { AdminServicesCatalog, registerAdminServicesRoutes } from "./platform/admin/services.js";
@@ -935,11 +939,9 @@ export async function verifyDefaultOrgAtBoot(input: {
 
 export async function createHelixServer(): Promise<FastifyInstance> {
   const bootEnv = env();
+  const trustedOrigins = parseTrustedOrigins(bootEnv.BETTER_AUTH_TRUSTED_ORIGINS);
   const app = fastify({
-    logger: {
-      level: bootEnv.LOG_LEVEL,
-      redact: ["req.headers.authorization", "password", "secret", "token"],
-    },
+    logger: helixLoggerOptions(bootEnv.LOG_LEVEL),
     // P1-10: API versioning. `/v1/...` requests are rewritten to the canonical
     // unprefixed path before routing, so a single handler set serves both the
     // versioned surface and the legacy unprefixed aliases.
@@ -2389,7 +2391,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     }
   });
 
-  await app.register(cors, { origin: true, credentials: true });
+  await installTrustedOriginPolicy(app, trustedOrigins);
   await app.register(cookie);
   registerBetterAuthRoutes(app, betterAuthRuntime?.auth);
   await app.register(websocket);
@@ -2641,6 +2643,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ? await registerChatRoutes(app, {
         store: chatStore,
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+        trustedOrigins,
         bus: new EventBusChatRoomBus(eventBus, { subjectPrefix: "chat.room" }),
         metrics,
         rateLimit: {
@@ -3700,7 +3703,7 @@ export function getBetterAuthRuntimeConfig(
     throw new TypeError("BETTER_AUTH_SECRET must be at least 32 characters");
   }
 
-  const trustedOrigins = parseCsv(env.BETTER_AUTH_TRUSTED_ORIGINS ?? env.CLIENT_ORIGIN);
+  const trustedOrigins = parseTrustedOrigins(env.BETTER_AUTH_TRUSTED_ORIGINS);
   return {
     databaseUrl,
     secret,
@@ -3963,16 +3966,6 @@ function resolveConfirmationTimeoutMs(tier: SecurityTier, env: NodeJS.ProcessEnv
     case "sovereign":
       return 3 * minute;
   }
-}
-
-function parseCsv(value: string | undefined): readonly string[] {
-  if (value === undefined || value.trim().length === 0) {
-    return [];
-  }
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
 }
 
 export function createAssistantProviders(

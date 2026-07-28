@@ -112,6 +112,39 @@ describe("platform metrics", () => {
     expect(output).not.toContain("actor_id=");
   });
 
+  it("records content-free operational-control denial metrics", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordAgentOperationalControlDenial({
+      toolId: "mail.send",
+      actorType: "agent",
+      reason: "global_read_only",
+    });
+
+    const output = await metrics.registry.metrics();
+    expect(output).toContain(
+      'helix_agent_operational_control_denials_total{tool_id="mail.send",actor_type="agent",reason="global_read_only"} 1',
+    );
+    expect(output).not.toContain("credential_id=");
+    expect(output).not.toContain("org_id=");
+  });
+
+  it("records content-free policy-firewall denial metrics", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordToolPolicyDenial({
+      toolId: "mail.send",
+      reason: "untrusted_context_high_risk_blocked",
+      requestChannel: "assistant",
+      effectiveClassification: "confidential",
+    });
+
+    const output = await metrics.registry.metrics();
+    expect(output).toContain(
+      'helix_tool_policy_denials_total{tool_id="mail.send",reason="untrusted_context_high_risk_blocked",request_channel="assistant",classification="confidential"} 1',
+    );
+  });
+
   it("records signup funnel and activation SLO metrics without tenant or actor labels", async () => {
     const metrics = createPlatformMetrics();
 

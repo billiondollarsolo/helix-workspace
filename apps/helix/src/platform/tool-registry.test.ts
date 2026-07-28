@@ -663,6 +663,131 @@ describe("RuntimeToolRegistry", () => {
     ]);
   });
 
+  it("stops mutations at the registry choke point while preserving reads", async () => {
+    const metrics = new MemoryToolMetrics();
+    const auditSink = new MemoryAuditSink();
+    const registry = createToolRegistry({
+      metrics,
+      auditSink,
+      operationalControls: {
+        async evaluate({ tool: candidate }) {
+          return candidate.sideEffects === "read"
+            ? { allowed: true }
+            : {
+                allowed: false,
+                reason: "global_read_only",
+                controlId: "incident:global-read-only",
+              };
+        },
+      },
+    });
+    let writes = 0;
+    registry.register(
+      tool({
+        id: "controlled.read",
+        permission: "platform.read",
+        handler: async () => ({ readable: true }),
+      }),
+    );
+    registry.register(
+      tool({
+        id: "controlled.write",
+        permission: "danger.write",
+        sideEffects: "write",
+        handler: async () => {
+          writes += 1;
+          return { written: true };
+        },
+      }),
+    );
+
+    await expect(registry.invoke("controlled.read", {}, { actor })).resolves.toMatchObject({
+      ok: true,
+      output: { readable: true },
+    });
+    await expect(
+      registry.invoke("controlled.write", {}, { actor, credentialId: "credential-1" }),
+    ).resolves.toMatchObject({
+      ok: false,
+      statusCode: 503,
+      error: "Tool mutations are temporarily disabled by global read-only mode.",
+    });
+    expect(writes).toBe(0);
+    expect(metrics.operationalControlDenials).toEqual([
+      {
+        toolId: "controlled.write",
+        actorType: "agent",
+        reason: "global_read_only",
+      },
+    ]);
+    expect(auditSink.records.at(-1)).toMatchObject({
+      metadata: {
+        credentialId: "credential-1",
+        operationalControlReason: "global_read_only",
+        status: "denied",
+      },
+    });
+  });
+
+  it("supports the environment agent-write and exact per-tool emergency switches", async () => {
+    const previousAgentWrites = process.env.HELIX_AGENT_WRITES_ENABLED;
+    const previousDisabledOrgs = process.env.HELIX_AGENT_WRITES_DISABLED_ORGS;
+    const previousDisabledTools = process.env.HELIX_DISABLED_TOOLS;
+    const previousGlobalReadOnly = process.env.HELIX_GLOBAL_READ_ONLY;
+    delete process.env.HELIX_AGENT_WRITES_ENABLED;
+    process.env.HELIX_AGENT_WRITES_DISABLED_ORGS = actor.orgId;
+    process.env.HELIX_DISABLED_TOOLS = "controlled.exact";
+    try {
+      const registry = createToolRegistry();
+      registry.register(
+        tool({
+          id: "controlled.agent",
+          permission: "danger.write",
+          sideEffects: "write",
+          handler: async () => ({ written: true }),
+        }),
+      );
+      registry.register(
+        tool({
+          id: "controlled.exact",
+          permission: "danger.write",
+          sideEffects: "write",
+          handler: async () => ({ written: true }),
+        }),
+      );
+
+      await expect(registry.invoke("controlled.agent", {}, { actor })).resolves.toMatchObject({
+        ok: false,
+        statusCode: 503,
+        error: "Agent tool mutations are temporarily disabled for this organization.",
+      });
+      await expect(
+        registry.invoke("controlled.agent", {}, { actor: humanActor }),
+      ).resolves.toMatchObject({ ok: true });
+      await expect(
+        registry.invoke("controlled.exact", {}, { actor: humanActor }),
+      ).resolves.toMatchObject({
+        ok: false,
+        statusCode: 503,
+        error: "This tool is temporarily disabled by an operational control.",
+      });
+      process.env.HELIX_DISABLED_TOOLS = "";
+      process.env.HELIX_GLOBAL_READ_ONLY = "true";
+      await expect(
+        registry.invoke("controlled.agent", {}, { actor: humanActor }),
+      ).resolves.toMatchObject({
+        ok: false,
+        statusCode: 503,
+        error: "Tool mutations are temporarily disabled by global read-only mode.",
+      });
+    } finally {
+      restoreEnvironment("HELIX_AGENT_WRITES_ENABLED", previousAgentWrites);
+      restoreEnvironment("HELIX_AGENT_WRITES_DISABLED_ORGS", previousDisabledOrgs);
+      restoreEnvironment("HELIX_DISABLED_TOOLS", previousDisabledTools);
+      restoreEnvironment("HELIX_GLOBAL_READ_ONLY", previousGlobalReadOnly);
+    }
+  });
+
   it("emits exactly one generic outcome for every invocation exit", async () => {
     const outcomes: { readonly name: string; readonly records: readonly AuditRecord[] }[] = [];
 
@@ -1667,6 +1792,17 @@ class MemoryToolMetrics {
     readonly actorType: string;
     readonly reason: string;
   }[] = [];
+  readonly operationalControlDenials: {
+    readonly toolId: string;
+    readonly actorType: string;
+    readonly reason: string;
+  }[] = [];
+  readonly policyDenials: {
+    readonly toolId: string;
+    readonly reason: string;
+    readonly requestChannel: string;
+    readonly effectiveClassification: string;
+  }[] = [];
 
   recordToolInvocation(record: {
     readonly toolId: string;
@@ -1683,6 +1819,31 @@ class MemoryToolMetrics {
     readonly reason: string;
   }): void {
     this.limiterDenials.push(record);
+  }
+
+  recordAgentOperationalControlDenial(record: {
+    readonly toolId: string;
+    readonly actorType: string;
+    readonly reason: "global_read_only" | "org_agent_writes_disabled" | "tool_disabled";
+  }): void {
+    this.operationalControlDenials.push(record);
+  }
+
+  recordToolPolicyDenial(record: {
+    readonly toolId: string;
+    readonly reason: string;
+    readonly requestChannel: string;
+    readonly effectiveClassification: string;
+  }): void {
+    this.policyDenials.push(record);
+  }
+}
+
+function restoreEnvironment(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
   }
 }
 

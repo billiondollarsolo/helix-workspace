@@ -1,0 +1,50 @@
+groups:
+  - name: helix-agent-safety
+    rules:
+      - alert: HelixAgentOperationalControlDenialSpike
+        expr: sum(rate(helix_agent_operational_control_denials_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Emergency agent controls are denying sustained tool traffic
+
+      - alert: HelixPendingApprovalVolumeHigh
+        expr: sum(increase(helix_tool_invocations_total{status="pending_confirmation"}[15m])) > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Pending approval volume is unusually high
+
+      - alert: HelixAgentCostSpike
+        expr: sum(increase(helix_llm_cost_usd_micros_total[15m])) > 50000000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent and assistant model cost has spiked
+
+      - alert: HelixExternalSendSpike
+        expr: sum(increase(helix_tool_invocations_total{tool_id=~"mail.send|mail.reply",status="executed"}[5m])) > 100
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: External mail send volume has spiked
+
+      - alert: HelixPromptInjectionPolicyDenials
+        expr: sum(increase(helix_tool_policy_denials_total{reason="untrusted_context_high_risk_blocked"}[10m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Untrusted-context high-risk tool attempts are being blocked
+
+      - alert: HelixAuditIntegrityFailure
+        expr: increase(helix_audit_hash_chain_failures_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Audit hash-chain verification failed

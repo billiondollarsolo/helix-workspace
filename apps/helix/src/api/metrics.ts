@@ -34,6 +34,17 @@ export interface PlatformMetrics extends SecurityScanningMetrics {
     readonly actorType: string;
     readonly reason: string;
   }): void;
+  recordAgentOperationalControlDenial(input: {
+    readonly toolId: string;
+    readonly actorType: string;
+    readonly reason: string;
+  }): void;
+  recordToolPolicyDenial(input: {
+    readonly toolId: string;
+    readonly reason: string;
+    readonly requestChannel: string;
+    readonly effectiveClassification: string;
+  }): void;
   recordSignupFunnelEvent(input: {
     readonly step: string;
     readonly tier?: string | undefined;
@@ -104,6 +115,18 @@ export function createPlatformMetrics(): PlatformMetrics {
     name: "helix_agent_tool_limiter_denials_total",
     help: "Total denied agent or service-account tool invocations by limiter reason.",
     labelNames: ["tool_id", "tier", "actor_type", "reason"],
+    registers: [registry],
+  });
+  const agentOperationalControlDenials = new Counter({
+    name: "helix_agent_operational_control_denials_total",
+    help: "Total content-free tool denials caused by emergency operational controls.",
+    labelNames: ["tool_id", "actor_type", "reason"],
+    registers: [registry],
+  });
+  const toolPolicyDenials = new Counter({
+    name: "helix_tool_policy_denials_total",
+    help: "Total content-free policy-firewall denials by tool, reason, channel, and classification.",
+    labelNames: ["tool_id", "reason", "request_channel", "classification"],
     registers: [registry],
   });
   const signupFunnelEvents = new Counter({
@@ -306,6 +329,23 @@ export function createPlatformMetrics(): PlatformMetrics {
         reason: input.reason,
       };
       agentToolLimiterDenials.inc(labels);
+    },
+    recordAgentOperationalControlDenial(input) {
+      const labels: LabelValues<"tool_id" | "actor_type" | "reason"> = {
+        tool_id: input.toolId,
+        actor_type: input.actorType,
+        reason: input.reason,
+      };
+      agentOperationalControlDenials.inc(labels);
+    },
+    recordToolPolicyDenial(input) {
+      const labels: LabelValues<"tool_id" | "reason" | "request_channel" | "classification"> = {
+        tool_id: input.toolId,
+        reason: input.reason,
+        request_channel: input.requestChannel,
+        classification: input.effectiveClassification,
+      };
+      toolPolicyDenials.inc(labels);
     },
     recordSignupFunnelEvent(input) {
       const labels: LabelValues<"step" | "tier" | "plan_id" | "region"> = {

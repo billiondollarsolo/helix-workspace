@@ -98,6 +98,8 @@ export interface ToolInvokeOptions {
    * Internal correlation for execution of an already-approved pending action.
    */
   readonly pendingActionId?: string;
+  /** Registry-authored reason when an emergency operational control denies a call. */
+  readonly operationalControlReason?: AgentOperationalControlReason;
   readonly skipConfirmation?: boolean;
   readonly enforceConfirmation?: boolean;
   readonly estimatedCostUsdMicros?: number;
@@ -190,9 +192,41 @@ export interface ToolInvocationMetrics {
     readonly actorType: string;
     readonly reason: string;
   }): void;
+  recordAgentOperationalControlDenial?(input: {
+    readonly toolId: string;
+    readonly actorType: string;
+    readonly reason: AgentOperationalControlReason;
+  }): void;
+  recordToolPolicyDenial?(input: {
+    readonly toolId: string;
+    readonly reason: Extract<ToolPolicyDecision, { readonly outcome: "deny" }>["reason"];
+    readonly requestChannel: ToolPolicyRequestChannel;
+    readonly effectiveClassification: AIClassification;
+  }): void;
 }
 
 export type ToolFeatureFlagResolver = (tool: ToolDefinition) => string | undefined;
+
+export type AgentOperationalControlReason =
+  | "global_read_only"
+  | "org_agent_writes_disabled"
+  | "tool_disabled";
+
+export type AgentOperationalControlDecision =
+  | { readonly allowed: true }
+  | {
+      readonly allowed: false;
+      readonly reason: AgentOperationalControlReason;
+      readonly controlId: string;
+    };
+
+export interface AgentOperationalControlProvider {
+  evaluate(input: {
+    readonly actor: Actor;
+    readonly credentialId?: string;
+    readonly tool: ToolDefinition;
+  }): Promise<AgentOperationalControlDecision>;
+}
 
 export interface RuntimeToolRegistry {
   register(tool: ToolDefinition): void;
@@ -271,6 +305,11 @@ export interface ToolRegistryOptions {
   readonly metrics?: ToolInvocationMetrics;
   readonly featureFlags?: FeatureFlagProvider;
   readonly toolFeatureFlag?: ToolFeatureFlagResolver;
+  /**
+   * Emergency controls evaluated for every invocation immediately before
+   * ordinary feature flags and policy checks.
+   */
+  readonly operationalControls?: AgentOperationalControlProvider;
   /**
    * Re-resolves the requesting principal immediately before approved work
    * executes. Credential-backed actions fail closed when this resolver is
@@ -454,6 +493,39 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
             },
           );
         }
+        const operationalControl = await evaluateOperationalControl(
+          tool,
+          actor,
+          invokeOptions?.credentialId,
+        );
+        if (!operationalControl.allowed) {
+          span.setAttribute("helix.tool.operational_control", operationalControl.controlId);
+          span.setAttribute("helix.tool.operational_control_reason", operationalControl.reason);
+          invocationMetrics?.recordAgentOperationalControlDenial?.({
+            toolId,
+            actorType: actor.type,
+            reason: operationalControl.reason,
+          });
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 503,
+              error: operationalControlMessage(operationalControl.reason),
+            },
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions: {
+                ...invokeOptions,
+                operationalControlReason: operationalControl.reason,
+              },
+            },
+          );
+        }
         const featureFlagDecision = await evaluateToolFeatureFlag(tool, actor);
         if (!featureFlagDecision.enabled) {
           span.setAttribute("helix.tool.feature_flag", featureFlagDecision.flag);
@@ -552,6 +624,12 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           actor,
         });
         if (policyExplanation.decision.outcome === "deny") {
+          invocationMetrics?.recordToolPolicyDenial?.({
+            toolId,
+            reason: policyExplanation.decision.reason,
+            requestChannel: policyExplanation.requestChannel,
+            effectiveClassification: policyExplanation.effectiveClassification,
+          });
           return await completeInvocation(
             span,
             {
@@ -1075,6 +1153,9 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           ...(input.invokeOptions?.pendingActionId === undefined
             ? {}
             : { pendingActionId: input.invokeOptions.pendingActionId }),
+          ...(input.invokeOptions?.operationalControlReason === undefined
+            ? {}
+            : { operationalControlReason: input.invokeOptions.operationalControlReason }),
           ...(input.invokeOptions?.policyContext === undefined
             ? {}
             : {
@@ -1175,6 +1256,57 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     return filtered;
   }
 
+  async function evaluateOperationalControl(
+    tool: ToolDefinition,
+    actor: Actor,
+    credentialId: string | undefined,
+  ): Promise<AgentOperationalControlDecision> {
+    if (tool.sideEffects === "read") {
+      return { allowed: true };
+    }
+    const external = await options.operationalControls?.evaluate({
+      actor,
+      tool,
+      ...(credentialId === undefined ? {} : { credentialId }),
+    });
+    if (external !== undefined && !external.allowed) {
+      return external;
+    }
+    const disabledTools = parseDisabledToolControls(process.env.HELIX_DISABLED_TOOLS);
+    if (disabledTools.has(tool.id)) {
+      return {
+        allowed: false,
+        reason: "tool_disabled",
+        controlId: `environment:tool:${tool.id}`,
+      };
+    }
+    if (environmentControlEnabled(process.env.HELIX_GLOBAL_READ_ONLY)) {
+      return {
+        allowed: false,
+        reason: "global_read_only",
+        controlId: "environment:global-read-only",
+      };
+    }
+    if (actor.type === "agent") {
+      const disabledAgentWriteOrgs = parseDisabledToolControls(
+        process.env.HELIX_AGENT_WRITES_DISABLED_ORGS,
+      );
+      if (
+        environmentControlDisabled(process.env.HELIX_AGENT_WRITES_ENABLED) ||
+        disabledAgentWriteOrgs.has(actor.orgId)
+      ) {
+        return {
+          allowed: false,
+          reason: "org_agent_writes_disabled",
+          controlId: disabledAgentWriteOrgs.has(actor.orgId)
+            ? `environment:org:${actor.orgId}:agent-writes`
+            : "environment:agent-writes",
+        };
+      }
+    }
+    return external ?? { allowed: true };
+  }
+
   async function evaluateToolFeatureFlag(
     tool: ToolDefinition,
     actor: Actor,
@@ -1209,6 +1341,37 @@ export function featureFlagForTool(tool: Pick<ToolDefinition, "id">): string | u
     return "editors_native_presentation";
   }
   return undefined;
+}
+
+function parseDisabledToolControls(value: string | undefined): ReadonlySet<string> {
+  if (value === undefined) {
+    return new Set();
+  }
+  return new Set(
+    value
+      .split(",")
+      .map((toolId) => toolId.trim())
+      .filter((toolId) => toolId.length > 0),
+  );
+}
+
+function environmentControlEnabled(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === "true" || value?.trim() === "1";
+}
+
+function environmentControlDisabled(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === "false" || value?.trim() === "0";
+}
+
+function operationalControlMessage(reason: AgentOperationalControlReason): string {
+  switch (reason) {
+    case "global_read_only":
+      return "Tool mutations are temporarily disabled by global read-only mode.";
+    case "org_agent_writes_disabled":
+      return "Agent tool mutations are temporarily disabled for this organization.";
+    case "tool_disabled":
+      return "This tool is temporarily disabled by an operational control.";
+  }
 }
 
 /**
@@ -1252,9 +1415,7 @@ function createToolContext(
     actor,
     ...(request === undefined ? {} : { request }),
     ...(request?.traceId === undefined ? {} : { traceId: request.traceId }),
-    ...(executionIdempotencyKey === undefined
-      ? {}
-      : { idempotencyKey: executionIdempotencyKey }),
+    ...(executionIdempotencyKey === undefined ? {} : { idempotencyKey: executionIdempotencyKey }),
     can: (action: string, resource?: ResourceRef) =>
       accessPolicy.can(actor, action, resource ?? defaultResource),
     requirePermission: async (action: string, resource?: ResourceRef) => {

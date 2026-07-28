@@ -197,6 +197,26 @@ TLS and application authentication and rejects subjects outside `helix.>`; and a
 recover after a complete CA/server/client certificate rotation. Use `--static` only to validate the
 evidence contract—it deliberately records every live scenario as `not_run`.
 
+Write the live result directly into the release evidence packet and require it in the manifest:
+
+```sh
+evidence_dir="artifacts/release-readiness/$(date +%F)/$(git rev-parse HEAD)"
+mkdir -p "$evidence_dir"
+
+HELIX_DATA_PLANE_EVIDENCE_OUTPUT="$evidence_dir/data-plane-live-evidence.json" \
+  node infra/scripts/data-plane-live-evidence.mjs --local
+
+pnpm quality:release-readiness-manifest -- \
+  --evidence-dir "$evidence_dir" \
+  --data-plane-live-evidence data-plane-live-evidence.json \
+  <application and web image digest options>
+```
+
+The gate requires `mode: "local"`, top-level `status: "passed"`, canonical ordered run
+timestamps, and exactly the eight required scenarios with nonnegative measured durations. Static,
+failed, extra, missing, or partially run scenarios are rejected. The manifest retains the total
+and per-scenario timings while the validator rejects secret-bearing fields.
+
 Retain the redacted resolved-config digest and encryption/scanner evidence in the release-readiness
 artifact packet.
 

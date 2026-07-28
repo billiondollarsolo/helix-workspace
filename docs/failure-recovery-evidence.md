@@ -73,6 +73,21 @@ node infra/scripts/failure-recovery-runner.mjs \
   --require-pass
 ```
 
+Require that validated live result in the release manifest:
+
+```sh
+pnpm quality:release-readiness-manifest -- \
+  --evidence-dir "$evidence_dir" \
+  --failure-recovery-evidence failure-recovery-evidence.json \
+  <application and web image digest options>
+```
+
+The release gate invokes the same strict validator with `requirePass`. It rejects static, running,
+failed, missing, duplicated, or incomplete scenario evidence. The manifest records only overall
+and per-scenario elapsed time, fault-to-recovery time, fault count, retry/idempotency counts,
+side-effect and duplicate counts, and alert count. It deliberately omits evidence references,
+resource IDs, and alert names.
+
 ## Known release blockers
 
 No live V4 run is included by this repository change. A site-specific harness and disposable stack

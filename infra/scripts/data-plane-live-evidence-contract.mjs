@@ -33,6 +33,28 @@ export function validateDataPlaneEvidence(evidence, requirePassed = false) {
   if (evidence?.schema !== DATA_PLANE_EVIDENCE_SCHEMA) {
     throw new Error("invalid data-plane evidence schema");
   }
+  if (!["static", "local"].includes(evidence.mode)) {
+    throw new Error("invalid data-plane evidence mode");
+  }
+  if (!["static_validated", "running", "passed", "failed"].includes(evidence.status)) {
+    throw new Error("invalid data-plane evidence status");
+  }
+  const startedAt = requireTimestamp(evidence.startedAt, "data-plane evidence startedAt");
+  const completedAt = requireTimestamp(evidence.completedAt, "data-plane evidence completedAt");
+  if (completedAt < startedAt) {
+    throw new Error("data-plane evidence timestamps are out of order");
+  }
+  const scenarioNames =
+    evidence.scenarios !== null && typeof evidence.scenarios === "object"
+      ? Object.keys(evidence.scenarios)
+      : [];
+  if (
+    scenarioNames.length !== DATA_PLANE_SCENARIOS.length ||
+    new Set(scenarioNames).size !== scenarioNames.length ||
+    DATA_PLANE_SCENARIOS.some((scenario) => !scenarioNames.includes(scenario))
+  ) {
+    throw new Error("data-plane evidence must contain every scenario exactly once");
+  }
   for (const scenario of DATA_PLANE_SCENARIOS) {
     const result = evidence.scenarios?.[scenario];
     if (
@@ -45,9 +67,30 @@ export function validateDataPlaneEvidence(evidence, requirePassed = false) {
     ) {
       throw new Error(`invalid data-plane evidence result: ${scenario}`);
     }
-    if (requirePassed && result.status !== "passed") {
-      throw new Error(`required data-plane evidence did not pass: ${scenario}`);
-    }
+  }
+  const everyScenarioPassed = DATA_PLANE_SCENARIOS.every(
+    (scenario) => evidence.scenarios[scenario].status === "passed",
+  );
+  if (
+    evidence.mode === "static" &&
+    (evidence.status !== "static_validated" ||
+      DATA_PLANE_SCENARIOS.some((scenario) => evidence.scenarios[scenario].status !== "not_run"))
+  ) {
+    throw new Error("static data-plane evidence cannot claim live execution");
+  }
+  if (evidence.mode === "local" && evidence.status === "passed" && !everyScenarioPassed) {
+    throw new Error("passed data-plane evidence requires every live scenario to pass");
+  }
+  if (
+    requirePassed &&
+    (evidence.mode !== "local" || evidence.status !== "passed" || !everyScenarioPassed)
+  ) {
+    const incomplete = DATA_PLANE_SCENARIOS.find(
+      (scenario) => evidence.scenarios[scenario].status !== "passed",
+    );
+    throw new Error(
+      `required data-plane evidence did not pass: ${incomplete ?? String(evidence.status)}`,
+    );
   }
   assertNoSensitiveEvidence(evidence);
   return evidence;
@@ -70,4 +113,15 @@ export function assertNoSensitiveEvidence(evidence) {
     }
   };
   visit(evidence, "$");
+}
+
+function requireTimestamp(value, label) {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a canonical ISO-8601 timestamp`);
+  }
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
+    throw new Error(`${label} must be a canonical ISO-8601 timestamp`);
+  }
+  return milliseconds;
 }

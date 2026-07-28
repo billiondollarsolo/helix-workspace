@@ -15,6 +15,22 @@ import {
   createStaticEvidence as createStaticRestoreEvidence,
 } from "./restore-drill-evidence.mjs";
 import { CHAT_LIVE_SCENARIOS, createChatEvidenceSkeleton } from "./chat-live-evidence-contract.mjs";
+import {
+  DRIVE_EVIDENCE_CASES,
+  DRIVE_EVIDENCE_SCHEMA_VERSION,
+  notRunDriveEvidence,
+} from "./drive-live-evidence-smoke.mjs";
+import {
+  DATA_PLANE_SCENARIOS,
+  createDataPlaneEvidenceSkeleton,
+} from "./data-plane-live-evidence-contract.mjs";
+import {
+  FAILURE_RECOVERY_OBSERVATION_SCHEMA,
+  FAILURE_RECOVERY_SCENARIOS,
+  createLiveFailureRecoveryEvidence,
+  createStaticFailureRecoveryEvidence,
+  finalizeFailureRecoveryEvidence,
+} from "./failure-recovery-contract.mjs";
 
 describe("release-readiness manifest", () => {
   it("redacts sensitive keys recursively and case-insensitively", () => {
@@ -348,6 +364,107 @@ describe("release-readiness manifest", () => {
     });
   });
 
+  it("requires genuine passed Drive D7 evidence and publishes bounded measurements", async () => {
+    const fixture = await createFixture();
+    const evidencePath = resolve(fixture.evidence, "drive-live-evidence.json");
+    await writeFile(
+      evidencePath,
+      `${JSON.stringify(notRunDriveEvidence(new Date("2026-07-28T20:00:00.000Z")))}\n`,
+      "utf8",
+    );
+    const args = liveEvidenceArgs(fixture, "--drive-live-evidence", "drive-live-evidence.json");
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "invalid or incomplete Drive live evidence",
+    );
+
+    await writeFile(evidencePath, `${JSON.stringify(passedDriveEvidence())}\n`, "utf8");
+    const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
+    expect(manifest.evidence.drive).toMatchObject({
+      path: "drive-live-evidence.json",
+      status: "passed",
+      durationMs: 1_000,
+      cases: DRIVE_EVIDENCE_CASES.map((name) => ({
+        name,
+        status: "pass",
+        durationMs: 1_000,
+        metrics: driveMetrics()[name],
+      })),
+    });
+  });
+
+  it("requires genuine passed O2 data-plane evidence and publishes timings", async () => {
+    const fixture = await createFixture();
+    const evidencePath = resolve(fixture.evidence, "data-plane-live-evidence.json");
+    await writeFile(
+      evidencePath,
+      `${JSON.stringify(createDataPlaneEvidenceSkeleton(new Date("2026-07-28T20:00:00.000Z")))}\n`,
+      "utf8",
+    );
+    const args = liveEvidenceArgs(
+      fixture,
+      "--data-plane-live-evidence",
+      "data-plane-live-evidence.json",
+    );
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "invalid or incomplete data-plane live evidence",
+    );
+
+    await writeFile(evidencePath, `${JSON.stringify(passedDataPlaneEvidence())}\n`, "utf8");
+    const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
+    expect(manifest.evidence.dataPlane).toMatchObject({
+      path: "data-plane-live-evidence.json",
+      status: "passed",
+      durationMs: 1_000,
+      scenarios: DATA_PLANE_SCENARIOS.map((name) => ({
+        name,
+        status: "passed",
+        durationMs: 1,
+      })),
+    });
+  });
+
+  it("requires genuine passed V4 failure/recovery evidence and publishes safe metrics", async () => {
+    const fixture = await createFixture();
+    const evidencePath = resolve(fixture.evidence, "failure-recovery-evidence.json");
+    await writeFile(
+      evidencePath,
+      `${JSON.stringify(
+        createStaticFailureRecoveryEvidence(new Date("2026-07-28T20:00:00.000Z")),
+      )}\n`,
+      "utf8",
+    );
+    const args = liveEvidenceArgs(
+      fixture,
+      "--failure-recovery-evidence",
+      "failure-recovery-evidence.json",
+    );
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "invalid or incomplete failure/recovery evidence",
+    );
+
+    await writeFile(evidencePath, `${JSON.stringify(passedFailureRecoveryEvidence())}\n`, "utf8");
+    const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
+    expect(manifest.evidence.failureRecovery).toMatchObject({
+      path: "failure-recovery-evidence.json",
+      status: "passed",
+      durationMs: 180_000,
+      scenarios: FAILURE_RECOVERY_SCENARIOS.map(({ id, faultCount, minLogicalOperations }) => ({
+        name: id,
+        status: "passed",
+        durationMs: 180_000,
+        faultToRecoveryMs: 60_000,
+        faultInjectionCount: faultCount,
+        logicalOperationCount: minLogicalOperations,
+        attemptCount: minLogicalOperations + faultCount,
+        duplicateCount: 0,
+        alertCount: FAILURE_RECOVERY_SCENARIOS.find(({ id: candidate }) => candidate === id).alerts
+          .length,
+      })),
+    });
+    expect(JSON.stringify(manifest.evidence.failureRecovery)).not.toContain("resourceId");
+    expect(JSON.stringify(manifest.evidence.failureRecovery)).not.toContain("ref");
+  });
+
   it("requires live passed restore evidence and publishes measured RPO/RTO", async () => {
     const fixture = await createFixture();
     const evidencePath = resolve(fixture.evidence, "restore-drill-evidence.json");
@@ -385,6 +502,163 @@ describe("release-readiness manifest", () => {
     });
   });
 });
+
+function liveEvidenceArgs(fixture, flag, path) {
+  return [
+    "--workspace-dir",
+    fixture.workspace,
+    "--editors-dir",
+    fixture.editors,
+    "--evidence-dir",
+    fixture.evidence,
+    flag,
+    path,
+    "--image-digest",
+    `sha256:${"a".repeat(64)}`,
+    "--web-image-digest",
+    `sha256:${"b".repeat(64)}`,
+  ];
+}
+
+function passedDriveEvidence() {
+  const startedAt = "2026-07-28T20:00:00.000Z";
+  const completedAt = "2026-07-28T20:00:01.000Z";
+  const metrics = driveMetrics();
+  return {
+    schemaVersion: DRIVE_EVIDENCE_SCHEMA_VERSION,
+    generatedAt: completedAt,
+    mode: "live",
+    status: "passed",
+    startedAt,
+    completedAt,
+    durationMs: 1_000,
+    cases: DRIVE_EVIDENCE_CASES.map((name) => ({
+      name,
+      status: "pass",
+      startedAt,
+      completedAt,
+      durationMs: 1_000,
+      metrics: metrics[name],
+      evidence: [{ source: "metric", ref: `drive/${name}`, observedAt: completedAt }],
+    })),
+  };
+}
+
+function driveMetrics() {
+  return {
+    clean_upload_hash: { uploadBytes: 12, scanLatencyMs: 10, hashMatched: true },
+    eicar_denied: {
+      retrievalSurfacesChecked: 4,
+      deniedSurfaces: 4,
+      scanLatencyMs: 12,
+    },
+    multipart_sse: {
+      uploadBytes: 12,
+      partCount: 2,
+      serverSideEncryptionVerified: true,
+    },
+    gib_bounded_memory: {
+      uploadBytes: 1024 ** 3,
+      peakRssGrowthBytes: 1_024,
+      memoryBoundBytes: 2_048,
+      withinMemoryBound: true,
+    },
+    webdav_quarantine: {
+      retrievalSurfacesChecked: 3,
+      deniedSurfaces: 3,
+      lockCycleVerified: true,
+    },
+    share_revoke: {
+      revokeLatencyMs: 5,
+      revokedAccessDenied: true,
+      expirationVerified: true,
+    },
+    restart_recovery: { restartsObserved: 3, recoveryMs: 20, hashMatched: true },
+    backup_restore: { restoredFiles: 2, restoredVersions: 3, hashMatched: true },
+  };
+}
+
+function passedDataPlaneEvidence() {
+  const evidence = createDataPlaneEvidenceSkeleton(new Date("2026-07-28T20:00:00.000Z"));
+  evidence.mode = "local";
+  evidence.status = "passed";
+  evidence.completedAt = "2026-07-28T20:00:01.000Z";
+  for (const scenario of DATA_PLANE_SCENARIOS) {
+    evidence.scenarios[scenario] = { status: "passed", durationMs: 1 };
+  }
+  return evidence;
+}
+
+function passedFailureRecoveryEvidence() {
+  const report = createLiveFailureRecoveryEvidence({
+    environmentId: "disposable-v4-release-manifest",
+    startedAt: new Date("2026-07-28T20:00:00.000Z"),
+  });
+  for (const contract of FAILURE_RECOVERY_SCENARIOS) {
+    report.scenarios[contract.id] = passedFailureRecoveryObservation(contract);
+  }
+  return finalizeFailureRecoveryEvidence(report, new Date("2026-07-28T20:03:00.000Z"));
+}
+
+function passedFailureRecoveryObservation(contract) {
+  const startedAt = "2026-07-28T20:00:00.000Z";
+  const faultInjectedAt = "2026-07-28T20:01:00.000Z";
+  const recoveredAt = "2026-07-28T20:02:00.000Z";
+  const completedAt = "2026-07-28T20:03:00.000Z";
+  const observed = (source, suffix) => ({
+    source,
+    observedAt: recoveredAt,
+    ref: `v4/${contract.id}/${suffix}`,
+  });
+  return {
+    schema: FAILURE_RECOVERY_OBSERVATION_SCHEMA,
+    scenarioId: contract.id,
+    status: "passed",
+    startedAt,
+    faultInjectedAt,
+    recoveredAt,
+    completedAt,
+    faultInjection: {
+      method: contract.faultMethod,
+      count: contract.faultCount,
+      observed: true,
+    },
+    assertions: {
+      userBehavior: {
+        status: "passed",
+        code: contract.userBehavior,
+        evidence: [observed("api", "user-behavior")],
+      },
+      noDuplicates: {
+        status: "passed",
+        code: contract.noDuplicates,
+        logicalOperationCount: contract.minLogicalOperations,
+        attemptCount: contract.minLogicalOperations + contract.faultCount,
+        sideEffectCount: ["audit_destination_failure", "provider_agent_credential_expiry"].includes(
+          contract.id,
+        )
+          ? 0
+          : contract.minLogicalOperations,
+        distinctIdempotencyKeyCount: contract.minLogicalOperations,
+        duplicateCount: 0,
+        evidence: [observed("database", "dedupe-query")],
+      },
+      alert: {
+        status: "passed",
+        rules: [...contract.alerts],
+        firedAt: recoveredAt,
+        resourceId: `scenario:${contract.id}`,
+        evidence: [observed("alertmanager", "alert")],
+      },
+      recovery: {
+        status: "passed",
+        code: contract.recovery,
+        healthy: true,
+        evidence: [observed("metric", "recovery")],
+      },
+    },
+  };
+}
 
 function passedChatEvidence() {
   const timestamp = "2026-07-28T20:00:00.000Z";

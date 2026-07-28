@@ -16,6 +16,15 @@ import {
   validateRestoreDrillEvidence,
 } from "./restore-drill-evidence.mjs";
 import { CHAT_LIVE_SCENARIOS, validateChatLiveEvidence } from "./chat-live-evidence-contract.mjs";
+import { DRIVE_EVIDENCE_CASES, validateDriveEvidence } from "./drive-live-evidence-smoke.mjs";
+import {
+  DATA_PLANE_SCENARIOS,
+  validateDataPlaneEvidence,
+} from "./data-plane-live-evidence-contract.mjs";
+import {
+  FAILURE_RECOVERY_SCENARIOS,
+  validateFailureRecoveryEvidence,
+} from "./failure-recovery-contract.mjs";
 
 const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|cookie|key|credential)/iu;
 
@@ -35,6 +44,11 @@ Options:
                                including the release pilot-load minimums
   --restore-drill-evidence <path>
                                Validate and require passed O4 restore evidence
+  --drive-live-evidence <path> Validate and require passed D7 Drive evidence
+  --data-plane-live-evidence <path>
+                               Validate and require passed O2 data-plane evidence
+  --failure-recovery-evidence <path>
+                               Validate and require passed V4 failure/recovery evidence
   --require-external-mail-evidence
                                Also require passed provider/Gmail/Microsoft evidence
   --image-digest <digest>      Application image digest (legacy option name)
@@ -121,10 +135,16 @@ export async function buildReleaseReadinessManifest(options) {
   const agentEvidence = await validateRequiredAgentEvidence(options, evidencePaths);
   const restoreEvidence = await validateRequiredRestoreEvidence(options, evidencePaths);
   const chatEvidence = await validateRequiredChatEvidence(options, evidencePaths);
+  const driveEvidence = await validateRequiredDriveEvidence(options, evidencePaths);
+  const dataPlaneEvidence = await validateRequiredDataPlaneEvidence(options, evidencePaths);
+  const failureRecoveryEvidence = await validateRequiredFailureRecoveryEvidence(
+    options,
+    evidencePaths,
+  );
 
   const timestamp = canonicalTimestamp(options.timestamp);
   const raw = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: timestamp,
     repositories: { workspace, editors },
     runtime: {
@@ -152,6 +172,11 @@ export async function buildReleaseReadinessManifest(options) {
       ...(agentEvidence === undefined ? {} : { agent: agentEvidence }),
       ...(chatEvidence === undefined ? {} : { chat: chatEvidence }),
       ...(restoreEvidence === undefined ? {} : { restore: restoreEvidence }),
+      ...(driveEvidence === undefined ? {} : { drive: driveEvidence }),
+      ...(dataPlaneEvidence === undefined ? {} : { dataPlane: dataPlaneEvidence }),
+      ...(failureRecoveryEvidence === undefined
+        ? {}
+        : { failureRecovery: failureRecoveryEvidence }),
     },
   };
   return redactSensitive(raw);
@@ -170,6 +195,9 @@ export function parseArgs(args, cwd, environment = process.env) {
     agentLiveEvidence: undefined,
     chatLiveEvidence: undefined,
     restoreDrillEvidence: undefined,
+    driveLiveEvidence: undefined,
+    dataPlaneLiveEvidence: undefined,
+    failureRecoveryEvidence: undefined,
     requireExternalMailEvidence: false,
     applicationImageDigest:
       environment.HELIX_APPLICATION_IMAGE_DIGEST ?? environment.HELIX_IMAGE_DIGEST,
@@ -219,6 +247,15 @@ export function parseArgs(args, cwd, environment = process.env) {
       case "--restore-drill-evidence":
         options.restoreDrillEvidence = normalizeRelativePath(value);
         break;
+      case "--drive-live-evidence":
+        options.driveLiveEvidence = normalizeRelativePath(value);
+        break;
+      case "--data-plane-live-evidence":
+        options.dataPlaneLiveEvidence = normalizeRelativePath(value);
+        break;
+      case "--failure-recovery-evidence":
+        options.failureRecoveryEvidence = normalizeRelativePath(value);
+        break;
       case "--image-digest":
       case "--application-image-digest":
         options.applicationImageDigest = value;
@@ -243,6 +280,113 @@ export function parseArgs(args, cwd, environment = process.env) {
     throw new Error("--require-external-mail-evidence requires --mail-live-evidence");
   }
   return options;
+}
+
+async function validateRequiredDriveEvidence(options, evidencePaths) {
+  if (options.driveLiveEvidence === undefined) return undefined;
+  if (!evidencePaths.has(options.driveLiveEvidence)) {
+    throw new Error(`required Drive live evidence missing: ${options.driveLiveEvidence}`);
+  }
+  const path = resolve(options.evidenceDir, options.driveLiveEvidence);
+  let evidence;
+  try {
+    evidence = validateDriveEvidence(JSON.parse(await readFile(path, "utf8")), {
+      requirePass: true,
+    });
+  } catch (error) {
+    throw new Error(
+      `invalid or incomplete Drive live evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return {
+    path: options.driveLiveEvidence,
+    status: evidence.status,
+    durationMs: evidence.durationMs,
+    cases: DRIVE_EVIDENCE_CASES.map((name) => {
+      const result = evidence.cases.find((entry) => entry.name === name);
+      return {
+        name,
+        status: result.status,
+        durationMs: result.durationMs,
+        metrics: result.metrics,
+      };
+    }),
+  };
+}
+
+async function validateRequiredDataPlaneEvidence(options, evidencePaths) {
+  if (options.dataPlaneLiveEvidence === undefined) return undefined;
+  if (!evidencePaths.has(options.dataPlaneLiveEvidence)) {
+    throw new Error(`required data-plane live evidence missing: ${options.dataPlaneLiveEvidence}`);
+  }
+  const path = resolve(options.evidenceDir, options.dataPlaneLiveEvidence);
+  let evidence;
+  try {
+    evidence = validateDataPlaneEvidence(JSON.parse(await readFile(path, "utf8")), true);
+  } catch (error) {
+    throw new Error(
+      `invalid or incomplete data-plane live evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return {
+    path: options.dataPlaneLiveEvidence,
+    status: evidence.status,
+    durationMs: elapsedMilliseconds(evidence.startedAt, evidence.completedAt),
+    scenarios: DATA_PLANE_SCENARIOS.map((name) => ({
+      name,
+      status: evidence.scenarios[name].status,
+      durationMs: evidence.scenarios[name].durationMs,
+    })),
+  };
+}
+
+async function validateRequiredFailureRecoveryEvidence(options, evidencePaths) {
+  if (options.failureRecoveryEvidence === undefined) return undefined;
+  if (!evidencePaths.has(options.failureRecoveryEvidence)) {
+    throw new Error(
+      `required failure/recovery evidence missing: ${options.failureRecoveryEvidence}`,
+    );
+  }
+  const path = resolve(options.evidenceDir, options.failureRecoveryEvidence);
+  let evidence;
+  try {
+    evidence = validateFailureRecoveryEvidence(JSON.parse(await readFile(path, "utf8")), {
+      requirePass: true,
+    });
+  } catch (error) {
+    throw new Error(
+      `invalid or incomplete failure/recovery evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return {
+    path: options.failureRecoveryEvidence,
+    status: evidence.status,
+    durationMs: elapsedMilliseconds(evidence.startedAt, evidence.completedAt),
+    scenarios: FAILURE_RECOVERY_SCENARIOS.map(({ id }) => {
+      const observation = evidence.scenarios[id];
+      return {
+        name: id,
+        status: observation.status,
+        durationMs: elapsedMilliseconds(observation.startedAt, observation.completedAt),
+        faultToRecoveryMs: elapsedMilliseconds(
+          observation.faultInjectedAt,
+          observation.recoveredAt,
+        ),
+        faultInjectionCount: observation.faultInjection.count,
+        logicalOperationCount: observation.assertions.noDuplicates.logicalOperationCount,
+        attemptCount: observation.assertions.noDuplicates.attemptCount,
+        sideEffectCount: observation.assertions.noDuplicates.sideEffectCount,
+        duplicateCount: observation.assertions.noDuplicates.duplicateCount,
+        alertCount: observation.assertions.alert.rules.length,
+      };
+    }),
+  };
 }
 
 async function validateRequiredChatEvidence(options, evidencePaths) {
@@ -524,6 +668,10 @@ function canonicalTimestamp(value) {
     throw new Error(`invalid timestamp: ${value}`);
   }
   return date.toISOString();
+}
+
+function elapsedMilliseconds(startedAt, completedAt) {
+  return Date.parse(completedAt) - Date.parse(startedAt);
 }
 
 function isMain() {

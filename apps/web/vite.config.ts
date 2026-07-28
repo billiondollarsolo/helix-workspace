@@ -7,6 +7,8 @@ import { defineConfig, type Plugin } from "vite";
 const standardChunkBudgetBytes = 500_000;
 const initialGraphBudgetBytes = 450_000;
 const passwordStrengthChunkBudgetBytes = 850_000;
+const devApiTarget =
+  process.env.HELIX_E2E_API_BASE_URL ?? process.env.HELIX_API_BASE_URL ?? "http://localhost:3000";
 
 export default defineConfig({
   plugins: [
@@ -49,7 +51,7 @@ export default defineConfig({
         "/sync",
         "/dav",
         "/.well-known",
-      ].map((path) => [path, { target: "http://localhost:3000", changeOrigin: true, ws: true }]),
+      ].map((path) => [path, { target: devApiTarget, changeOrigin: true, ws: true }]),
     ),
   },
   build: {

@@ -27,6 +27,7 @@ export const DEFAULT_LOCAL_OAUTH_SCOPES = [
   "calendar.read:freebusy",
   "calendar.write",
   "calendar.write:respond",
+  "assistant.read",
   "assistant.write",
   "assistant.memory",
   "meet.read",

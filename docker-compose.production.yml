@@ -7,7 +7,60 @@ name: helix-production
 # ./secrets). See docs/deployment-production.md for generation and ownership.
 
 services:
+  helix-migrate:
+    image: ${HELIX_IMAGE:-helix/workspace:production}
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      target: runtime
+      additional_contexts:
+        helix_editors: ../helix-editors
+    entrypoint:
+      - node
+      - dist/db/migrate.js
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: !reset null
+      DATABASE_URL_FILE: /run/secrets/migration_database_url
+      POSTGRES_POOL_MAX: "1"
+    secrets:
+      - migration_database_url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data-plane
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    user: "10001:10001"
+    init: true
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+          pids: 128
+        reservations:
+          memory: 128m
+
   helix:
+    image: ${HELIX_IMAGE:-helix/workspace:production}
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      target: runtime
+      additional_contexts:
+        helix_editors: ../helix-editors
     environment:
       NODE_ENV: production
       HELIX_SECURITY_TIER: business
@@ -16,8 +69,10 @@ services:
       BETTER_AUTH_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       BETTER_AUTH_TRUSTED_ORIGINS: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       HELIX_CONFIG_JSON: >-
-        {"security":{"tier":"business"}}
-
+        {"security":{"tier":"business"},"modules":{"docs":{"enabled":false},"calendar":{"enabled":false},"meet":{"enabled":false},"editors":{"enabled":false}}}
+      HELIX_APPS: mail,drive,chat,assistant
+      HELIX_EDITORS_MIGRATIONS_ENABLED: "false"
+      HELIX_STARTUP_MIGRATION_CHECK: "true"
       # The application resolves only its explicit *_FILE allowlist.
       DATABASE_URL: !reset null
       DATABASE_URL_FILE: /run/secrets/database_url
@@ -86,6 +141,8 @@ services:
         protocol: tcp
         mode: host
     depends_on: !override
+      helix-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -108,6 +165,10 @@ services:
       - /tmp:rw,noexec,nosuid,size=256m
     user: "10001:10001"
     init: true
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 16384
     cap_drop:
       - ALL
     security_opt:
@@ -118,6 +179,7 @@ services:
         limits:
           cpus: "2.0"
           memory: 2g
+          pids: 512
         reservations:
           cpus: "0.25"
           memory: 512m
@@ -260,7 +322,6 @@ services:
     ports: !override []
     networks: !override
       - data-plane
-      - edge
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -282,6 +343,13 @@ services:
       - no-new-privileges:true
 
   caddy:
+    image: ${HELIX_WEB_IMAGE:-helix/workspace-web:production}
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      target: web-runtime
+      additional_contexts:
+        helix_editors: ../helix-editors
     environment:
       HELIX_DOMAIN: ${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       HELIX_UPSTREAM: helix:3000
@@ -301,8 +369,9 @@ services:
         host_ip: ${CADDY_BIND_IP:-0.0.0.0}
         protocol: udp
         mode: host
-    volumes:
-      - ./infra/caddy/Caddyfile.production:/etc/caddy/Caddyfile:ro
+    volumes: !override
+      - caddy-data:/data
+      - caddy-config:/config
     depends_on: !override
       helix:
         condition: service_healthy
@@ -315,6 +384,11 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+    user: "10001:10001"
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -328,6 +402,7 @@ services:
         limits:
           cpus: "1.0"
           memory: 256m
+          pids: 128
 
   # Optional profiles remain private even when an operator explicitly enables
   # them. Use a VPN, SSH tunnel, or separately authenticated admin ingress.
@@ -384,6 +459,8 @@ networks:
 secrets:
   database_url:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/database_url
+  migration_database_url:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/migration_database_url
   postgres_password:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/postgres_password
   better_auth_secret:

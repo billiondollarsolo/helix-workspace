@@ -33,6 +33,7 @@
     "quality:live-restore-drill": "bash infra/scripts/live-restore-drill-smoke.sh",
     "quality:mail-deliverability-smoke": "node infra/scripts/mail-deliverability-smoke.mjs",
     "quality:release-readiness-manifest": "node infra/scripts/release-readiness-manifest.mjs",
+    "quality:production-images": "node infra/scripts/validate-production-images.mjs",
     "quality:alertmanager-signup-routing": "node infra/scripts/alertmanager-signup-routing-smoke.mjs",
     "quality:synthetic-signup-probe": "node infra/scripts/synthetic-signup-probe.mjs",
     "quality:gates-contract:test": "vitest run infra/scripts/quality-gates-contract.test.mjs",

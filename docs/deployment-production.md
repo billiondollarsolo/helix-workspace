@@ -20,6 +20,50 @@ Mailpit is placed behind a development-only profile and is not a Helix productio
 Outbound Internet mail must use `ses`, `postmark`, `mailgun`, `managed-smtp`, or `smtp-relay`.
 Direct-to-MX delivery is not supported.
 
+The overlay builds two targets from `infra/docker/Dockerfile`: the Helix API/worker runtime and a
+non-root Caddy edge containing the compiled web client. The web edge serves the SPA and proxies
+only explicit API, OAuth, MCP, realtime, WebDAV, and discovery paths to Helix. The production web
+shell advertises Mail, Drive, Chat, Assistant, and Admin; Docs, Sheets, Slides, Calendar, Meet, and
+native Editors are disabled for this MVP.
+
+The paired `../helix-editors` checkout is supplied as a BuildKit named context solely to build the
+repository's existing file-linked package boundary reproducibly. `HELIX_EDITORS_MIGRATIONS_ENABLED`
+is false, the Editors core app is disabled, and no native editor implementation is enabled. For
+standalone builds, use:
+
+```sh
+docker buildx build \
+  --build-context helix_editors=../helix-editors \
+  -f infra/docker/Dockerfile \
+  --target runtime \
+  -t helix/workspace:production .
+
+docker buildx build \
+  --build-context helix_editors=../helix-editors \
+  -f infra/docker/Dockerfile \
+  --target web-runtime \
+  -t helix/workspace-web:production .
+```
+
+Both final images run as fixed UID/GID `10001`. The application payload is limited by its package
+manifest to compiled output and production dependencies; it includes compiled database migrations
+but no source tree, package-manager cache, or source-control metadata. Promotion must pin all base
+images and both resulting application images by digest and record those digests in the
+release-readiness manifest.
+
+After building, execute the same runtime contract used by CI:
+
+```sh
+node infra/scripts/validate-production-images.mjs \
+  --application-image helix/workspace:production \
+  --web-image helix/workspace-web:production
+```
+
+The check inspects both image configurations and then runs their payload assertions with a
+read-only root filesystem and no network. It requires UID/GID `10001`, the expected entrypoints and
+health checks, compiled migrations and SPA assets, a valid Caddy configuration, and rejects source,
+source-control, environment, and package-manager-cache payloads.
+
 The overlay enables the existing WORM-Postgres audit destination so the Business tier starts with
 an enforced audit sink and removes the development immutable-S3 credentials. This is a bootstrap
 control, not the final off-host assurance gate: configure and prove immutable off-host audit
@@ -30,22 +74,25 @@ shipping before the private pilot.
 Create a root/operator-owned directory outside source control, mode `0700`, containing these
 non-empty files with mode `0600`:
 
-| File                           | Content                                                        |
-| ------------------------------ | -------------------------------------------------------------- |
-| `database_url`                 | Complete Postgres URL with the production password URL-encoded |
-| `postgres_password`            | The corresponding Postgres role password                       |
-| `better_auth_secret`           | Random Better Auth secret                                      |
-| `rustfs_access_key`            | Random object-store access identifier                          |
-| `rustfs_secret_key`            | Random object-store secret                                     |
-| `meili_master_key`             | Random Meilisearch master key                                  |
-| `mail_smtp_password`           | Managed provider SMTP/API credential                           |
-| `mail_provider_webhook_secret` | Managed provider event-signing secret                          |
+| File                           | Content                                  |
+| ------------------------------ | ---------------------------------------- |
+| `database_url`                 | Least-privilege application Postgres URL |
+| `migration_database_url`       | Elevated schema-migrator Postgres URL    |
+| `postgres_password`            | The corresponding Postgres role password |
+| `better_auth_secret`           | Random Better Auth secret                |
+| `rustfs_access_key`            | Random object-store access identifier    |
+| `rustfs_secret_key`            | Random object-store secret               |
+| `meili_master_key`             | Random Meilisearch master key            |
+| `mail_smtp_password`           | Managed provider SMTP/API credential     |
+| `mail_provider_webhook_secret` | Managed provider event-signing secret    |
 
 Secret values must contain at least 32 characters and at least 12 distinct characters. Generate
 independent values from a cryptographically secure random source. Do not reuse credentials between
-services. `database_url` and `postgres_password` necessarily encode the same database password,
-but they remain separate mounts because the Postgres image consumes a password file while Helix
-consumes an entire connection URL.
+services. The `database_url` role may read and mutate application data but must not own schemas,
+create extensions, or change database roles. The distinct `migration_database_url` role owns Helix
+schemas and runs only in the one-shot `helix-migrate` service. Application replicas never receive
+that elevated secret. `postgres_password` is the bootstrap database credential consumed by the
+Postgres image and must not be reused for either Helix role in a managed production database.
 
 Set `HELIX_PRODUCTION_SECRETS_DIR` to the absolute host directory before resolving or starting the
 stack. Helix supports only its documented `*_FILE` allowlist. It rejects simultaneous inline and
@@ -99,3 +146,12 @@ pnpm exec vitest run infra/scripts/production-compose.test.mjs
 
 Retain the redacted resolved-config digest and encryption/scanner evidence in the release-readiness
 artifact packet.
+
+The resolved stack starts `helix-migrate` after Postgres is healthy and starts application replicas
+only after that job exits successfully. The migrator uses the same reviewed image as the
+application, serializes concurrent attempts with a Postgres advisory lock, and applies each
+migration transactionally. Application startup independently rejects pending migrations. Never
+disable `HELIX_STARTUP_MIGRATION_CHECK` during a rollout. Startup also rejects applied migration
+names that are unknown to the running image, which prevents an older replica from serving against
+a newer incompatible schema. For incompatible changes, ship expand/backfill/contract as separate
+releases; destructive rollback is performed from a tested backup, not by ad-hoc down SQL.

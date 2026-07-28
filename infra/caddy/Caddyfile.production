@@ -21,5 +21,18 @@
 		reverse_proxy {$HELIX_UPSTREAM}
 	}
 
-	reverse_proxy {$HELIX_UPSTREAM}
+	@backend {
+		path /api/* /oauth /oauth/* /trpc /trpc/* /mcp /mcp/* /v1 /v1/*
+		path /openapi.json /openapi.yaml /asyncapi.json
+		path /events /events/* /ws /ws/* /sync /sync/* /dav /dav/* /.well-known/*
+	}
+	handle @backend {
+		reverse_proxy {$HELIX_UPSTREAM}
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
 }

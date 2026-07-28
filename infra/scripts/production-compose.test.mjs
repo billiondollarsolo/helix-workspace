@@ -12,6 +12,7 @@ let resolvedAllProfilesCompose;
 
 const secretNames = [
   "database_url",
+  "migration_database_url",
   "postgres_password",
   "better_auth_secret",
   "rustfs_access_key",
@@ -29,7 +30,12 @@ beforeAll(() => {
   }
   writeFileSync(
     join(secretsDirectory, "database_url"),
-    `postgres://helix:${generatedSecret}@postgres:5432/helix`,
+    `postgres://helix_app:${generatedSecret}@postgres:5432/helix`,
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    join(secretsDirectory, "migration_database_url"),
+    `postgres://helix_migrator:${generatedSecret}@postgres:5432/helix`,
     { mode: 0o600 },
   );
 
@@ -103,6 +109,7 @@ describe("production Compose overlay", () => {
       expect(resolvedCompose.services[service].ports).toBeUndefined();
       expect(resolvedCompose.services[service].networks).toHaveProperty("data-plane");
     }
+    expect(resolvedCompose.services.clamav.networks).toEqual({ "data-plane": null });
     expect(resolvedCompose.networks["data-plane"].internal).toBe(true);
   });
 
@@ -125,6 +132,32 @@ describe("production Compose overlay", () => {
     expect(environment.MAIL_SMTP_PASS_FILE).toBe("/run/secrets/mail_smtp_password");
   });
 
+  it("runs migrations as a separate one-shot job with a distinct credential", () => {
+    const migration = resolvedCompose.services["helix-migrate"];
+    const helix = resolvedCompose.services.helix;
+
+    expect(migration.entrypoint).toEqual(["node", "dist/db/migrate.js"]);
+    expect(migration.environment).toMatchObject({
+      NODE_ENV: "production",
+      DATABASE_URL_FILE: "/run/secrets/migration_database_url",
+      POSTGRES_POOL_MAX: "1",
+    });
+    expect(migration.environment.DATABASE_URL).toBeUndefined();
+    expect(migration.restart).toBe("no");
+    expect(migration.read_only).toBe(true);
+    expect(migration.user).toBe("10001:10001");
+    expect(migration.networks).toEqual({ "data-plane": null });
+    expect(migration.ports).toBeUndefined();
+    expect(migration.secrets).toEqual([
+      {
+        source: "migration_database_url",
+        target: "/run/secrets/migration_database_url",
+      },
+    ]);
+    expect(helix.depends_on["helix-migrate"].condition).toBe("service_completed_successfully");
+    expect(helix.secrets.map((secret) => secret.source)).not.toContain("migration_database_url");
+  });
+
   it("enables real Mail and Drive scanning in the Business fixture", () => {
     const environment = resolvedCompose.services.helix.environment;
     expect(environment.HELIX_SECURITY_TIER).toBe("business");
@@ -136,6 +169,44 @@ describe("production Compose overlay", () => {
     expect(resolvedCompose.services.clamav.healthcheck).toBeDefined();
   });
 
+  it("packages only the approved core Workspace MVP modules", () => {
+    const environment = resolvedCompose.services.helix.environment;
+    expect(environment.HELIX_APPS).toBe("mail,drive,chat,assistant");
+    expect(environment.HELIX_EDITORS_MIGRATIONS_ENABLED).toBe("false");
+    expect(JSON.parse(environment.HELIX_CONFIG_JSON).modules).toMatchObject({
+      docs: { enabled: false },
+      calendar: { enabled: false },
+      meet: { enabled: false },
+      editors: { enabled: false },
+    });
+  });
+
+  it("builds the reviewed non-root Workspace images with the paired package context", () => {
+    const helix = resolvedCompose.services.helix;
+    expect(helix.image).toBe("helix/workspace:production");
+    expect(helix.build.context).toBe(root);
+    expect(helix.build.dockerfile).toBe("infra/docker/Dockerfile");
+    expect(helix.build.target).toBe("runtime");
+    expect(helix.build.additional_contexts.helix_editors).toBe(resolve(root, "../helix-editors"));
+
+    const caddy = resolvedCompose.services.caddy;
+    expect(caddy.image).toBe("helix/workspace-web:production");
+    expect(caddy.build.context).toBe(root);
+    expect(caddy.build.dockerfile).toBe("infra/docker/Dockerfile");
+    expect(caddy.build.target).toBe("web-runtime");
+    expect(caddy.build.additional_contexts.helix_editors).toBe(resolve(root, "../helix-editors"));
+  });
+
+  it("limits the runtime payload to compiled application output", () => {
+    const appPackage = JSON.parse(readFileSync(join(root, "apps/helix/package.json"), "utf8"));
+    const dockerfile = readFileSync(join(root, "infra/docker/Dockerfile"), "utf8");
+
+    expect(appPackage.files).toEqual(["dist"]);
+    expect(dockerfile).toContain("pnpm --filter @helix/app... run build");
+    expect(dockerfile).toContain('ENTRYPOINT ["node", "dist/index.js"]');
+    expect(dockerfile).not.toContain("--legacy");
+  });
+
   it("applies supported container hardening and resource limits", () => {
     const helix = resolvedCompose.services.helix;
     expect(helix.read_only).toBe(true);
@@ -143,18 +214,33 @@ describe("production Compose overlay", () => {
     expect(helix.cap_drop).toContain("ALL");
     expect(helix.security_opt).toContain("no-new-privileges:true");
     expect(helix.tmpfs).toBeDefined();
+    expect(helix.ulimits.nofile).toEqual({ soft: 8192, hard: 16384 });
     expect(helix.deploy.resources.limits).toMatchObject({
       cpus: 2,
       memory: "2147483648",
+      pids: 512,
     });
-    expect(resolvedCompose.services.caddy.read_only).toBe(true);
+    const caddy = resolvedCompose.services.caddy;
+    expect(caddy.read_only).toBe(true);
+    expect(caddy.user).toBe("10001:10001");
+    expect(caddy.ulimits.nofile).toEqual({ soft: 1024, hard: 4096 });
+    expect(caddy.deploy.resources.limits.pids).toBe(128);
+    const migrator = resolvedCompose.services["helix-migrate"];
+    expect(migrator.ulimits.nofile).toEqual({ soft: 1024, hard: 4096 });
+    expect(migrator.deploy.resources.limits.pids).toBe(128);
     expect(resolvedCompose.services.cerbos.read_only).toBe(true);
   });
 
-  it("uses the production edge policy without public data-plane proxies", () => {
+  it("serves the SPA and proxies only explicit backend paths at the production edge", () => {
     const caddyfile = readFileSync(join(root, "infra/caddy/Caddyfile.production"), "utf8");
     expect(caddyfile).toContain("admin off");
+    expect(caddyfile).toContain("root * /srv");
+    expect(caddyfile).toContain("try_files {path} /index.html");
+    expect(caddyfile).toContain("file_server");
+    expect(caddyfile).toContain("/api/*");
+    expect(caddyfile).toContain("/ws/*");
     expect(caddyfile).not.toContain("/rustfs");
     expect(caddyfile).not.toContain("/cerbos");
+    expect(caddyfile).not.toContain("/metrics");
   });
 });

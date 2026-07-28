@@ -1,0 +1,135 @@
+name: Production Image Security
+
+on:
+  pull_request:
+    paths:
+      - "apps/helix/**"
+      - "apps/web/**"
+      - "packages/**"
+      - ".github/actions/checkout-editors/**"
+      - ".github/workflows/production-image-security.yml"
+      - "infra/docker/Dockerfile"
+      - "infra/caddy/Caddyfile.production"
+      - "infra/scripts/validate-production-images.mjs"
+      - ".dockerignore"
+      - "docker-compose.production.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/helix/**"
+      - "apps/web/**"
+      - "packages/**"
+      - ".github/actions/checkout-editors/**"
+      - ".github/workflows/production-image-security.yml"
+      - "infra/docker/Dockerfile"
+      - "infra/caddy/Caddyfile.production"
+      - "infra/scripts/validate-production-images.mjs"
+      - ".dockerignore"
+      - "docker-compose.production.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  workflow_dispatch:
+    inputs:
+      helix_editors_ref:
+        description: Optional paired helix-editors branch, tag, or SHA.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-sbom-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
+    steps:
+      - name: Checkout helix-workspace
+        uses: actions/checkout@v4
+        with:
+          path: helix-all/helix-workspace
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          requested-ref: ${{ inputs.helix_editors_ref }}
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build reviewed production image
+        run: >-
+          docker buildx build
+          --load
+          --build-context helix_editors=../helix-editors
+          --file infra/docker/Dockerfile
+          --target runtime
+          --tag helix/workspace:ci
+          .
+
+      - name: Build reviewed production web image
+        run: >-
+          docker buildx build
+          --load
+          --build-context helix_editors=../helix-editors
+          --file infra/docker/Dockerfile
+          --target web-runtime
+          --tag helix/workspace-web:ci
+          .
+
+      - name: Validate production runtime contracts
+        run: >-
+          node infra/scripts/validate-production-images.mjs
+          --application-image helix/workspace:ci
+          --web-image helix/workspace-web:ci
+
+      - name: Generate application SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: helix/workspace:ci
+          format: spdx-json
+          output-file: helix-all/helix-workspace/helix-workspace.spdx.json
+
+      - name: Generate web SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: helix/workspace-web:ci
+          format: spdx-json
+          output-file: helix-all/helix-workspace/helix-workspace-web.spdx.json
+
+      - name: Scan application image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: helix/workspace:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: HIGH,CRITICAL
+
+      - name: Scan web image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: helix/workspace-web:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: HIGH,CRITICAL
+
+      - name: Upload image SBOMs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: helix-workspace-spdx
+          path: |
+            helix-all/helix-workspace/helix-workspace.spdx.json
+            helix-all/helix-workspace/helix-workspace-web.spdx.json
+          if-no-files-found: error
+          retention-days: 30

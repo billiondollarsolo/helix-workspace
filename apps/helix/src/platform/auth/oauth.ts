@@ -25,6 +25,8 @@ export interface OAuthClientRecord {
    * matching, no wildcards.
    */
   readonly redirectUris: readonly string[];
+  /** Latest successful token issuance, when known by the backing store. */
+  readonly lastUsedAt?: Date | null;
   readonly expiresAt: Date | null;
   readonly revokedAt: Date | null;
 }

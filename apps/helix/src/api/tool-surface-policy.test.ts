@@ -165,7 +165,11 @@ async function invokeSurface(
         jsonrpc: "2.0",
         id: "policy-call",
         method: "tools/call",
-        params: { name: "policy.invoke", arguments: {} },
+        params: {
+          name: "policy.invoke",
+          arguments: {},
+          _meta: { idempotencyKey: "policy-surface-call" },
+        },
       },
     });
     if ("error" in response) {

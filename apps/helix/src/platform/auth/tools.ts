@@ -38,6 +38,7 @@ const listSchema = z.object({
 const revokeSchema = z.object({
   clientId: clientIdSchema,
 });
+const rotateSchema = revokeSchema;
 
 export interface RegisterAgentCredentialToolsOptions {
   readonly clientStore: OAuthClientStore;
@@ -142,6 +143,38 @@ export function createAgentCredentialToolDefinitions(
         };
       },
     }),
+    defineTool<z.output<typeof rotateSchema>, unknown>({
+      id: "agent.credentials.rotate",
+      description:
+        "Rotate an OAuth client secret in the current org and return the replacement once.",
+      permission: agentCredentialAdminScope,
+      sideEffects: "destructive",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(rotateSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const existing = await options.clientStore.findClient(input.clientId);
+        if (existing === null || existing.orgId !== ctx.actor.orgId) {
+          return { status: "not_found", clientId: input.clientId };
+        }
+        const registration = await clientManager.rotateClientSecret(input.clientId);
+        if (registration === null) {
+          return { status: "not_found", clientId: input.clientId };
+        }
+        await ctx.audit("agent.credential.rotated", {
+          credentialType: "oauth_client",
+          targetActorId: registration.client.actorId,
+          targetOrgId: registration.client.orgId,
+          clientId: registration.client.clientId,
+          rotatedAt: new Date().toISOString(),
+        });
+        return {
+          status: "rotated",
+          credential: serializeClient(registration.client),
+          clientSecret: registration.clientSecret,
+        };
+      },
+    }),
   ];
 }
 
@@ -208,6 +241,7 @@ function serializeClient(client: OAuthClientRecord): JsonObject {
     actorId: client.actorId,
     orgId: client.orgId,
     scopes: [...client.scopes],
+    lastUsedAt: dateToJson(client.lastUsedAt ?? null),
     expiresAt: dateToJson(client.expiresAt),
     revokedAt: dateToJson(client.revokedAt),
   };

@@ -16,7 +16,7 @@ const adminActor: Actor = {
 };
 
 describe("agent credential tools", () => {
-  it("registers create, list, and revoke backend tools", () => {
+  it("registers create, list, revoke, and rotate backend tools", () => {
     const registry = createToolRegistry();
     registerAgentCredentialTools(registry, { clientStore: new InMemoryOAuthClientStore() });
 
@@ -25,7 +25,66 @@ describe("agent credential tools", () => {
         .list()
         .filter((tool) => tool.id.startsWith("agent.credentials."))
         .map((tool) => tool.id),
-    ).toEqual(["agent.credentials.create", "agent.credentials.list", "agent.credentials.revoke"]);
+    ).toEqual([
+      "agent.credentials.create",
+      "agent.credentials.list",
+      "agent.credentials.revoke",
+      "agent.credentials.rotate",
+    ]);
+  });
+
+  it("rotates credentials only inside the admin org and returns the new secret once", async () => {
+    const store = new InMemoryOAuthClientStore();
+    const created = await store.createClient({
+      clientId: "client-rotate",
+      clientSecretHash: await hashSecret("old-secret"),
+      actorId: agentActorId,
+      orgId,
+      scopes: ["mail.read"],
+    });
+    const auditSink = new RecordingAuditSink();
+    const registry = createToolRegistry({ auditSink });
+    registerAgentCredentialTools(registry, { clientStore: store });
+
+    const result = await registry.invoke(
+      "agent.credentials.rotate",
+      { clientId: created.clientId },
+      { actor: adminActor, skipConfirmation: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      output: {
+        status: "rotated",
+        credential: {
+          clientId: "client-rotate",
+          lastUsedAt: null,
+        },
+        clientSecret: expect.stringMatching(/^helix_cs_/u),
+      },
+    });
+    expect(auditSink.domainRecords).toEqual([
+      expect.objectContaining({
+        verb: "agent.credential.rotated",
+        metadata: expect.objectContaining({
+          credentialType: "oauth_client",
+          clientId: "client-rotate",
+          targetActorId: agentActorId,
+          targetOrgId: orgId,
+        }),
+      }),
+    ]);
+
+    await expect(
+      registry.invoke(
+        "agent.credentials.rotate",
+        { clientId: "client-other-org" },
+        { actor: adminActor, skipConfirmation: true },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { status: "not_found" },
+    });
   });
 
   it("creates a scoped OAuth client without exposing the stored secret hash and records admin audit", async () => {

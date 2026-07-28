@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Actor, ToolDefinition } from "@helix/sdk-types";
-import { systemActor } from "./actor.js";
+import { systemActor, unauthenticatedActor } from "./actor.js";
 import {
   createSearchMcpResourceProvider,
   formatSseEvent,
@@ -12,6 +12,7 @@ import { HELIX_SERVER_VERSION, MCP_PROTOCOL_VERSION } from "./version.js";
 import { InMemoryAgentRateCostLimiter, type AgentLimitBudget } from "../platform/limits/index.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
 import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
+import { InMemoryConfirmationGate } from "../platform/tools/registry.js";
 import type {
   IndexDocument,
   SearchEngine,
@@ -460,6 +461,128 @@ describe("handleMcpJsonRpcRequest", () => {
         message: "Tenant export job quota exceeded.",
       },
     });
+  });
+
+  it("rejects anonymous, batched, and oversized requests before dispatch", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal: { actor: unauthenticatedActor },
+        body: { jsonrpc: "2.0", id: "anonymous", method: "initialize" },
+      }),
+    ).resolves.toMatchObject({
+      error: { code: -32001, message: "MCP authentication is required." },
+    });
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal: { actor: agentActor },
+        body: [{ jsonrpc: "2.0", id: "batch", method: "ping" }],
+      }),
+    ).resolves.toMatchObject({
+      error: { code: -32600, message: "MCP JSON-RPC batch requests are not supported." },
+    });
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal: { actor: agentActor },
+        limits: { maxBodyBytes: 64 },
+        body: {
+          jsonrpc: "2.0",
+          id: "large",
+          method: "ping",
+          params: { padding: "x".repeat(128) },
+        },
+      }),
+    ).resolves.toMatchObject({
+      error: { code: -32600, message: "MCP request body exceeds the allowed size." },
+    });
+  });
+
+  it("requires and replays idempotency keys for agent mutations", async () => {
+    const tools = createToolRegistry({
+      accessPolicy: new AllowAllToolAccessPolicy(),
+      confirmationGate: new InMemoryConfirmationGate(),
+    });
+    let calls = 0;
+    tools.register(
+      tool({
+        id: "mail.mutate",
+        permission: "mail.write",
+        sideEffects: "write",
+        handler: async () => {
+          calls += 1;
+          return { call: calls };
+        },
+      }),
+    );
+    const principal = {
+      actor: { ...agentActor, scopes: [...(agentActor.scopes ?? []), "mail.write"] },
+    };
+    const body = {
+      jsonrpc: "2.0",
+      id: "mutate",
+      method: "tools/call",
+      params: {
+        name: "mail.mutate",
+        arguments: { value: 1 },
+        _meta: { idempotencyKey: "mutation-0001" },
+      },
+    };
+
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal,
+        body: {
+          ...body,
+          params: { name: "mail.mutate", arguments: { value: 1 } },
+        },
+      }),
+    ).resolves.toMatchObject({
+      error: {
+        code: -32602,
+        message: "Agent tools/call mutations require params._meta.idempotencyKey.",
+      },
+    });
+
+    const [first, duplicate] = await Promise.all([
+      handleMcpJsonRpcRequest({ tools, principal, body }),
+      handleMcpJsonRpcRequest({ tools, principal, body }),
+    ]);
+    expect(first).toMatchObject({
+      result: {
+        structuredContent: {
+          status: "pending_confirmation",
+          pending: { status: "pending_confirmation" },
+        },
+      },
+    });
+    expect(duplicate).toEqual(first);
+    expect(calls).toBe(0);
+
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal,
+        body: {
+          ...body,
+          params: {
+            name: "mail.mutate",
+            arguments: { value: 2 },
+            _meta: { idempotencyKey: "mutation-0001" },
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      error: {
+        code: -32009,
+        message: "MCP idempotency key was reused with different arguments.",
+      },
+    });
+    expect(calls).toBe(0);
   });
 });
 

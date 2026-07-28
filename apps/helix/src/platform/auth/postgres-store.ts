@@ -32,6 +32,7 @@ interface OAuthClientRow {
   readonly org_id: string;
   readonly scopes: readonly string[];
   readonly redirect_uris: readonly string[] | null;
+  readonly last_used_at?: Date | null;
   readonly expires_at: Date | null;
   readonly revoked_at: Date | null;
 }
@@ -65,6 +66,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         a.org_id,
         c.scopes,
         c.redirect_uris,
+        c.last_used_at,
         c.expires_at,
         c.revoked_at
       from agent_credentials c
@@ -86,6 +88,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         a.org_id,
         c.scopes,
         c.redirect_uris,
+        c.last_used_at,
         c.expires_at,
         c.revoked_at
       from agent_credentials c
@@ -513,6 +516,7 @@ interface AgentCredentialRow {
   readonly rate_limit_overrides: unknown;
   readonly automation_policy: unknown;
   readonly policy_version: string;
+  readonly last_used_at: Date | null;
   readonly expires_at: Date | null;
   readonly revoked_at: Date | null;
 }
@@ -535,6 +539,7 @@ const AGENT_CREDENTIAL_COLUMNS = `
   c.rate_limit_overrides,
   c.automation_policy,
   c.policy_version,
+  c.last_used_at,
   c.expires_at,
   c.revoked_at
 `;
@@ -614,6 +619,7 @@ function rowToCredential(row: AgentCredentialRow | undefined): AgentCredentialRe
     label: row.label,
     approvalOwnerActorId: row.approval_owner_actor_id,
     policy: rowToPolicy(row),
+    lastUsedAt: row.last_used_at,
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
   };
@@ -699,6 +705,7 @@ function rowToClient(row: OAuthClientRow | undefined): OAuthClientRecord | null 
     orgId: row.org_id,
     scopes: [...row.scopes],
     redirectUris: row.redirect_uris === null ? [] : [...row.redirect_uris],
+    lastUsedAt: row.last_used_at ?? null,
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
   };

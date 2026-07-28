@@ -86,6 +86,7 @@ export interface AgentCredentialRecord {
   readonly label: string | null;
   readonly approvalOwnerActorId?: string | null;
   readonly policy: AgentCredentialPolicy;
+  readonly lastUsedAt?: Date | null;
   readonly expiresAt: Date | null;
   readonly revokedAt: Date | null;
 }

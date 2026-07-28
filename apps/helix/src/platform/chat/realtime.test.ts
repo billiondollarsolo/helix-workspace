@@ -191,6 +191,27 @@ describe("chat realtime", () => {
     );
   });
 
+  it("rejects a non-member subscribe frame before fanout or presence", async () => {
+    const socket = new FakeSocket();
+    const store = new FakeChatStore({ inaccessibleRoomIds: [roomId] });
+    const bus = new InMemoryChatRoomBus();
+
+    await handleChatSocket(socket, emptyWebSocketRequest, {
+      store,
+      actorFromRequest: () => actor,
+      trustedOrigins,
+      bus,
+      presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
+    });
+
+    socket.receive({ type: "subscribe", roomId });
+    await settle();
+
+    expect(store.getRoomForActorCalls).toEqual([{ orgId: actor.orgId, actorId: actor.id, roomId }]);
+    expect(store.sentBodies).toEqual([]);
+    expect(socket.messages.filter((message) => message.type === "error")).toHaveLength(1);
+  });
+
   it("stops realtime fanout and presence immediately after membership revocation", async () => {
     const socket = new FakeSocket();
     const store = new FakeChatStore();

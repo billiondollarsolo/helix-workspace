@@ -14,7 +14,7 @@ import type { MailMessageInput, MailThreadStatePatch, StoredMailMessage } from "
  */
 function fakeDaemon(reply: string | Buffer): Promise<{ port: number; close: () => Promise<void> }> {
   return new Promise((resolve, reject) => {
-    const server: Server = createServer((socket) => {
+    const server: Server = createServer({ allowHalfOpen: true }, (socket) => {
       let timer: NodeJS.Timeout | undefined;
       const replyOnce = (): void => {
         if (timer !== undefined) {
@@ -67,9 +67,7 @@ describe("spamd protocol parsing", () => {
   });
 
   it("parses a clean verdict with a negative score", () => {
-    const parsed = parseSpamdResponse(
-      "SPAMD/1.1 0 EX_OK\nSpam: False ; -1.2 / 5.0\n\nBAYES_00\n",
-    );
+    const parsed = parseSpamdResponse("SPAMD/1.1 0 EX_OK\nSpam: False ; -1.2 / 5.0\n\nBAYES_00\n");
     expect(parsed.score).toBe(-1.2);
     expect(parsed.symbols).toEqual(["BAYES_00"]);
   });
@@ -144,6 +142,40 @@ describe("ClamavScanner", () => {
     const scanner = new ClamavScanner({ host: "127.0.0.1", port: daemon.port });
     const result = await scanner.scan(Buffer.from("benign payload"));
     expect(result.infected).toBe(false);
+  });
+
+  it("maps a daemon failure into the shared Business quarantine policy", async () => {
+    const daemon = await fakeDaemon("INSTREAM read error. ERROR\0");
+    servers.push(daemon);
+    const scanner = new ClamavScanner({
+      host: "127.0.0.1",
+      port: daemon.port,
+      tier: "business",
+    });
+    const result = await scanner.scan(Buffer.from("private message"));
+
+    expect(result).toMatchObject({
+      infected: false,
+      scanned: false,
+      disposition: "quarantine",
+      securityScan: {
+        state: "scan_failed",
+        evidence: {
+          scannerName: "clamav",
+          scannerVersion: "unknown",
+          byteSize: 15,
+        },
+      },
+    });
+    expect(Object.keys(result.evidence).sort()).toEqual([
+      "byteSize",
+      "completedAt",
+      "scannerName",
+      "scannerVersion",
+      "startedAt",
+    ]);
+    expect(JSON.stringify(result)).not.toContain("private message");
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
   });
 });
 

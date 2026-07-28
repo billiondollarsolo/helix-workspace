@@ -89,6 +89,12 @@ export interface ToolInvokeOptions {
    */
   readonly idempotencyFingerprint?: string;
   /**
+   * Opaque server-side idempotency key supplied to the tool handler. Unlike
+   * {@link idempotencyFingerprint}, this value is never copied into telemetry
+   * or audit records.
+   */
+  readonly executionIdempotencyKey?: string;
+  /**
    * Internal correlation for execution of an already-approved pending action.
    */
   readonly pendingActionId?: string;
@@ -586,6 +592,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           accessPolicy,
           tool,
           optionsAuditSink(),
+          invokeOptions?.executionIdempotencyKey,
         );
         const confirmationGate = registryOptionsConfirmationGate();
         const queueRequired =
@@ -837,6 +844,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           ? {}
           : { credentialPolicy: requestingPrincipal.credentialPolicy }),
         idempotencyFingerprint: claim.record.inputHash,
+        executionIdempotencyKey: claim.record.executionIdempotencyKey,
         pendingActionId: pendingId,
         policyContext: {
           effectiveClassification: "restricted",
@@ -1236,6 +1244,7 @@ function createToolContext(
   accessPolicy: ToolAccessPolicy,
   tool: ToolDefinition,
   auditSink: ToolAuditSink | undefined,
+  executionIdempotencyKey: string | undefined,
 ): ToolContext {
   const defaultResource = toolResource(tool);
   return {
@@ -1243,6 +1252,9 @@ function createToolContext(
     actor,
     ...(request === undefined ? {} : { request }),
     ...(request?.traceId === undefined ? {} : { traceId: request.traceId }),
+    ...(executionIdempotencyKey === undefined
+      ? {}
+      : { idempotencyKey: executionIdempotencyKey }),
     can: (action: string, resource?: ResourceRef) =>
       accessPolicy.can(actor, action, resource ?? defaultResource),
     requirePermission: async (action: string, resource?: ResourceRef) => {

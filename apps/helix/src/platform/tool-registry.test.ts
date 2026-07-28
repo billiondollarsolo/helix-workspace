@@ -1075,13 +1075,15 @@ describe("RuntimeToolRegistry", () => {
       resolvePendingPrincipal: resolveTestPendingPrincipal,
     });
     let calls = 0;
+    let executionIdempotencyKey: string | undefined;
     registry.register(
       tool({
         id: "critical.approve-once",
         permission: "danger.write",
         sideEffects: "destructive",
-        handler: async () => {
+        handler: async (_input, context) => {
           calls += 1;
+          executionIdempotencyKey = context.idempotencyKey;
           return { ok: true };
         },
       }),
@@ -1125,6 +1127,8 @@ describe("RuntimeToolRegistry", () => {
       },
     });
     expect(calls).toBe(1);
+    expect(executionIdempotencyKey).toBe(`pending-action:${queued.pending.id}`);
+    expect(JSON.stringify(invocationRecords)).not.toContain(executionIdempotencyKey);
   });
 
   it("audits cancellation and fails its success closed during an audit outage", async () => {

@@ -24,6 +24,16 @@ export interface ToolContext {
   readonly actor: Actor;
   readonly request?: RequestContext;
   readonly traceId?: string;
+  /**
+   * Stable execution key for a side-effecting invocation.
+   *
+   * Approved pending actions receive the same opaque key for their entire
+   * lifetime. Domain handlers should persist it with an external operation or
+   * pass it to providers that support idempotency, so a lost response can be
+   * reconciled without issuing the side effect twice. The key is deliberately
+   * available only to the handler and must not be written to audit metadata.
+   */
+  readonly idempotencyKey?: string;
   can(action: string, resource?: ResourceRef): Promise<boolean>;
   requirePermission(action: string, resource?: ResourceRef): Promise<void>;
   audit(verb: string, metadata?: JsonObject): Promise<void>;

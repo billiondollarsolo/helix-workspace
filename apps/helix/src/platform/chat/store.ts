@@ -1261,7 +1261,9 @@ export class PostgresChatStore
     readonly limit?: number | undefined;
   }): Promise<{ readonly tombstonedMessageIds: readonly string[] }> {
     return this.sql.begin(async (tx) => {
-      await requireChatActorInOrg(tx, input.orgId, input.actorId);
+      if (input.actorId !== "system") {
+        await requireChatActorInOrg(tx, input.orgId, input.actorId);
+      }
       await lockChatCompliance(tx, input.orgId);
       const now = input.now ?? new Date();
       const candidates = (await tx`

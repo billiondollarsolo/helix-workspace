@@ -147,8 +147,11 @@ import {
 import { PostgresCardDavContactStore, registerCardDavRoutes } from "./platform/carddav/index.js";
 import {
   EventBusChatRoomBus,
+  ChatRetentionWorker,
   PostgresChatStore,
+  PostgresChatRetentionOrganizationSource,
   RedisChatPresenceStore,
+  createChatNatsSecurityPolicy,
   registerChatEnrichments,
   registerChatIndexer,
   registerChatRoutes,
@@ -1312,14 +1315,18 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const assistantStore = new PostgresAssistantStore(sql);
   const outboxStore = new PostgresOutboxStore(sql);
   const pluginLifecycleStore = new PostgresPluginLifecycleStore(sql);
-  const eventBus =
+  const natsSecurityPolicy =
     bootEnv.NATS_URL === undefined
+      ? undefined
+      : createChatNatsSecurityPolicy(process.env, [defaultOrg.id]);
+  const eventBus =
+    natsSecurityPolicy === undefined
       ? new InMemoryEventBus({
           onError: (error) => {
             app.log.error({ error }, "In-memory event bus subscriber error");
           },
         })
-      : await NatsEventBus.connect({ servers: bootEnv.NATS_URL }, { subjectPrefix: "helix" });
+      : await NatsEventBus.connect(natsSecurityPolicy.connection, { subjectPrefix: "helix" });
   const meteringEventStore = new PostgresMeteringEventStore(sql);
   const meteringRollupStore = new PostgresMeteringRollupStore(sql);
   const meteringClient = createMeteringClient(eventBus);
@@ -1474,6 +1481,20 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     },
     "Resolved core-app registration plan",
   );
+  const chatRetentionWorker = coreApps.shouldRegister("chat")
+    ? new ChatRetentionWorker({
+        store: chatStore,
+        organizations: new PostgresChatRetentionOrganizationSource(sql),
+        onResult: (result) => {
+          if (result.tombstonedMessages > 0 || result.saturatedOrganizations.length > 0) {
+            app.log.info(result, "Chat retention sweep completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Chat retention sweep failed");
+        },
+      })
+    : undefined;
   const aiProvenance = new PostgresAIProvenanceStore(sql);
   // P0-6: durable, replica-shared resource classification tags. The Postgres
   // store replaces the restart-volatile in-memory store; derivation applies
@@ -2924,7 +2945,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         store: chatStore,
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
         trustedOrigins,
-        bus: new EventBusChatRoomBus(eventBus, { subjectPrefix: "chat.room" }),
+        bus: new EventBusChatRoomBus(eventBus, { subjectPrefix: "chat" }),
         metrics,
         rateLimit: {
           capacity: bootEnv.CHAT_WS_RATE_LIMIT_CAPACITY,
@@ -3325,6 +3346,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     leaderGatedWorkers.push({
       name: "drive-upload-scan-worker",
       worker: driveUploadScanWorker,
+    });
+  }
+  if (chatRetentionWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "chat-retention-worker",
+      worker: chatRetentionWorker,
     });
   }
   if (smtpMailReceiver !== undefined && smtpMailReceiverConfig !== undefined) {

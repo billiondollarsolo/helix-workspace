@@ -44,8 +44,8 @@ describe("Chat NATS production security", () => {
       },
     });
     expect(policy.publishSubjects).toEqual([
-      "chat.org.org-a.room.*.events",
-      "chat.org.org-b.room.*.events",
+      "helix.chat.org.org-a.room.*.events",
+      "helix.chat.org.org-b.room.*.events",
     ]);
   });
 

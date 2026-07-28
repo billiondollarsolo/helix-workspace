@@ -2,6 +2,7 @@ export * from "./ai/index.js";
 export * from "./realtime.js";
 export * from "./nats-security.js";
 export * from "./compliance-policy.js";
+export * from "./retention-worker.js";
 export * from "./routes.js";
 export * from "./search/index.js";
 export * from "./store.js";

@@ -52,7 +52,7 @@ export function createChatNatsSecurityPolicy(
           ...(keyFile === undefined ? {} : { keyFile }),
         };
   const scopedSubjects = [...new Set(orgIds)].map(
-    (orgId) => `chat.org.${subjectPart(orgId)}.room.*.events`,
+    (orgId) => `helix.chat.org.${subjectPart(orgId)}.room.*.events`,
   );
   return {
     connection: {

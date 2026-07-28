@@ -72,8 +72,8 @@ describe("app password tools", () => {
         scopes: ["calendar.read", "calendar.write"],
       }),
     ]);
-    expect(auditSink.records).toHaveLength(1);
-    expect(auditSink.records[0]).toMatchObject({
+    expect(auditSink.domainRecords).toHaveLength(1);
+    expect(auditSink.domainRecords[0]).toMatchObject({
       orgId,
       actorId: adminActor.id,
       verb: "app.password.created",
@@ -164,11 +164,11 @@ describe("app password tools", () => {
         expect.objectContaining({ id: active.appPassword.id, orgId, revokedAt: null }),
       ]),
     );
-    expect(auditSink.records.map((record) => record.verb)).toEqual([
+    expect(auditSink.domainRecords.map((record) => record.verb)).toEqual([
       "app.password.listed",
       "app.password.listed",
     ]);
-    expect(auditSink.records[0]).toMatchObject({
+    expect(auditSink.domainRecords[0]).toMatchObject({
       actorId: adminActor.id,
       toolId: "app.passwords.list",
       metadata: {
@@ -178,7 +178,7 @@ describe("app password tools", () => {
         resultCount: 1,
       },
     });
-    expect(auditSink.records[1]).toMatchObject({
+    expect(auditSink.domainRecords[1]).toMatchObject({
       trace: { traceId: "trace-list" },
       metadata: {
         credentialType: "app_password",
@@ -232,8 +232,8 @@ describe("app password tools", () => {
         orgId,
       },
     });
-    expect(auditSink.records.map((record) => record.verb)).toEqual(["app.password.revoked"]);
-    expect(auditSink.records[0]?.metadata).toMatchObject({
+    expect(auditSink.domainRecords.map((record) => record.verb)).toEqual(["app.password.revoked"]);
+    expect(auditSink.domainRecords[0]?.metadata).toMatchObject({
       actorType: "user",
       credentialType: "app_password",
       targetActorId: actorId,
@@ -244,6 +244,10 @@ describe("app password tools", () => {
 
 class RecordingAuditSink implements ToolAuditSink {
   readonly records: (AuditRecord & { readonly orgId: string })[] = [];
+
+  get domainRecords(): readonly (AuditRecord & { readonly orgId: string })[] {
+    return this.records.filter((record) => !record.verb.startsWith("tool.invocation."));
+  }
 
   async append(record: AuditRecord & { readonly orgId: string }): Promise<void> {
     this.records.push(record);

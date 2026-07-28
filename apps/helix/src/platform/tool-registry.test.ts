@@ -268,13 +268,22 @@ describe("RuntimeToolRegistry", () => {
     });
     expect(JSON.stringify(blocked)).not.toContain("blocked-secret-token");
     expect(calls).toBe(1);
-    expect(auditSink.records).toHaveLength(1);
-    expect(auditSink.records[0]).toMatchObject({
+    const domainRecords = auditSink.records.filter((record) => record.verb === "tool.invoked");
+    const invocationRecords = auditSink.records.filter((record) =>
+      record.verb.startsWith("tool.invocation."),
+    );
+    expect(domainRecords).toHaveLength(1);
+    expect(domainRecords[0]).toMatchObject({
       actorId: actor.id,
       toolId: "limited.echo",
       trace: { traceId: traceRequest.traceId, spanId: traceRequest.spanId },
       metadata: { actorType: "agent", toolPermission: "platform.read" },
     });
+    expect(invocationRecords).toHaveLength(2);
+    expect(invocationRecords.map((record) => record.verb)).toEqual([
+      "tool.invocation.executed",
+      "tool.invocation.denied",
+    ]);
   });
 
   it("blocks agent invocations when estimated cost would exceed the daily budget", async () => {
@@ -636,6 +645,505 @@ describe("RuntimeToolRegistry", () => {
       },
     ]);
   });
+
+  it("emits exactly one generic outcome for every invocation exit", async () => {
+    const outcomes: { readonly name: string; readonly records: readonly AuditRecord[] }[] = [];
+
+    async function capture(
+      name: string,
+      run: (auditSink: MemoryAuditSink) => Promise<unknown>,
+    ): Promise<void> {
+      const auditSink = new MemoryAuditSink();
+      await run(auditSink);
+      outcomes.push({
+        name,
+        records: auditSink.records.filter((record) => record.verb.startsWith("tool.invocation.")),
+      });
+    }
+
+    await capture("unknown", async (auditSink) => {
+      await createToolRegistry({ auditSink }).invoke("missing.tool", {}, { actor });
+    });
+    await capture("access", async (auditSink) => {
+      const registry = createToolRegistry({ auditSink });
+      registry.register(
+        tool({
+          id: "matrix.access",
+          permission: "platform.read",
+          handler: async () => ({ ok: true }),
+        }),
+      );
+      await registry.invoke("matrix.access", {}, { actor: { ...actor, scopes: [] } });
+    });
+    await capture("feature", async (auditSink) => {
+      const registry = createToolRegistry({
+        auditSink,
+        featureFlags: {
+          get: (_key, defaultValue) => defaultValue,
+          async getAsync<T>() {
+            return false as T;
+          },
+        },
+      });
+      registry.register(
+        tool({
+          id: "mail.send",
+          permission: "platform.read",
+          sideEffects: "external_communication",
+          handler: async () => ({ ok: true }),
+        }),
+      );
+      await registry.invoke("mail.send", {}, { actor });
+    });
+    await capture("rate", async (auditSink) => {
+      const registry = createToolRegistry({
+        auditSink,
+        agentRateCostLimiter: new InMemoryAgentRateCostLimiter(),
+        agentLimitBudget: {
+          requestsPerMinute: 0,
+          requestsPerDay: null,
+          costPerDayUsdMicros: null,
+          costWarningThresholdRatio: 0.8,
+        },
+      });
+      registry.register(
+        tool({
+          id: "matrix.rate",
+          permission: "platform.read",
+          handler: async () => ({ ok: true }),
+        }),
+      );
+      await registry.invoke("matrix.rate", {}, { actor });
+    });
+    await capture("validation", async (auditSink) => {
+      const registry = createToolRegistry({ auditSink });
+      registry.register(
+        tool({
+          id: "matrix.validation",
+          permission: "platform.read",
+          inputSchema: {
+            parse: () => {
+              const error = new Error("invalid shape");
+              error.name = "ZodError";
+              throw error;
+            },
+            toJsonSchema: () => ({ type: "object" }),
+          },
+          handler: async () => ({ ok: true }),
+        }),
+      );
+      await registry.invoke("matrix.validation", { secret: "never-audited" }, { actor });
+    });
+    await capture("scope", async (auditSink) => {
+      const registry = createToolRegistry({ auditSink });
+      registry.register(
+        tool({
+          id: "matrix.scope",
+          permission: "platform.read",
+          scopeComposition: { requiredScopes: ["platform.admin"] },
+          handler: async () => ({ ok: true }),
+        }),
+      );
+      await registry.invoke("matrix.scope", {}, { actor });
+    });
+    await capture("pending", async (auditSink) => {
+      const registry = createToolRegistry({
+        auditSink,
+        confirmationGate: new InMemoryConfirmationGate(),
+      });
+      registry.register(
+        tool({
+          id: "matrix.pending",
+          permission: "danger.write",
+          sideEffects: "destructive",
+          handler: async () => ({ ok: true }),
+        }),
+      );
+      await registry.invoke("matrix.pending", {}, { actor, enforceConfirmation: true });
+    });
+    await capture("executed", async (auditSink) => {
+      const registry = createToolRegistry({ auditSink });
+      registry.register(
+        tool({
+          id: "matrix.executed",
+          permission: "platform.read",
+          handler: async () => ({ ok: true }),
+        }),
+      );
+      await registry.invoke("matrix.executed", {}, { actor });
+    });
+    await capture("handler", async (auditSink) => {
+      const registry = createToolRegistry({ auditSink });
+      registry.register(
+        tool({
+          id: "matrix.handler",
+          permission: "platform.read",
+          handler: async () => {
+            throw new Error("dependency unavailable");
+          },
+        }),
+      );
+      await registry.invoke("matrix.handler", {}, { actor });
+    });
+
+    expect(
+      outcomes.map(({ name, records }) => ({
+        name,
+        count: records.length,
+        verb: records[0]?.verb,
+      })),
+    ).toEqual([
+      { name: "unknown", count: 1, verb: "tool.invocation.denied" },
+      { name: "access", count: 1, verb: "tool.invocation.denied" },
+      { name: "feature", count: 1, verb: "tool.invocation.denied" },
+      { name: "rate", count: 1, verb: "tool.invocation.denied" },
+      { name: "validation", count: 1, verb: "tool.invocation.denied" },
+      { name: "scope", count: 1, verb: "tool.invocation.denied" },
+      { name: "pending", count: 1, verb: "tool.invocation.pending" },
+      { name: "executed", count: 1, verb: "tool.invocation.executed" },
+      { name: "handler", count: 1, verb: "tool.invocation.failed" },
+    ]);
+  });
+
+  it("records only the safe generic audit shape, never input or output content", async () => {
+    const auditSink = new MemoryAuditSink();
+    const registry = createToolRegistry({
+      auditSink,
+      confirmationDefaults: tierDefaults.business,
+    });
+    registry.register(
+      tool({
+        id: "mail.deliver-sensitive",
+        permission: "mail.send",
+        sideEffects: "external_communication",
+        handler: async () => ({
+          body: "sensitive-output-body",
+          providerResponse: "provider-secret-response",
+        }),
+      }),
+    );
+    const idempotencyFingerprint = "a".repeat(64);
+
+    await registry.invoke(
+      "mail.deliver-sensitive",
+      {
+        prompt: "ignore prior instructions",
+        body: "sensitive-input-body",
+        address: "private@example.test",
+        filename: "secret-plan.pdf",
+        token: "raw-bearer-token",
+      },
+      {
+        actor: { ...actor, scopes: ["mail.send"] },
+        request: traceRequest,
+        credentialId: "credential-safe-id",
+        idempotencyFingerprint,
+      },
+    );
+
+    const record = auditSink.records[0];
+    if (record === undefined) {
+      throw new Error("Expected a generic audit record.");
+    }
+    const normalized = {
+      ...record,
+      createdAt: "<timestamp>",
+      metadata: {
+        ...record.metadata,
+        durationBucket: "<duration-bucket>",
+      },
+    };
+    expect(normalized).toMatchInlineSnapshot(`
+      {
+        "actorId": "actor-1",
+        "createdAt": "<timestamp>",
+        "metadata": {
+          "actorType": "agent",
+          "credentialId": "credential-safe-id",
+          "durationBucket": "<duration-bucket>",
+          "idempotencyFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "orgId": "org-1",
+          "sideEffectClass": "external_communication",
+          "status": "executed",
+          "toolId": "mail.deliver-sensitive",
+          "toolPermission": "mail.send",
+        },
+        "objectType": "tool_invocation",
+        "orgId": "org-1",
+        "toolId": "mail.deliver-sensitive",
+        "trace": {
+          "spanId": "0123456789abcdef",
+          "traceId": "0123456789abcdef0123456789abcdef",
+        },
+        "verb": "tool.invocation.executed",
+      }
+    `);
+    const serialized = JSON.stringify(record);
+    for (const sensitiveValue of [
+      "ignore prior instructions",
+      "sensitive-input-body",
+      "private@example.test",
+      "secret-plan.pdf",
+      "raw-bearer-token",
+      "sensitive-output-body",
+      "provider-secret-response",
+    ]) {
+      expect(serialized).not.toContain(sensitiveValue);
+    }
+  });
+
+  it("omits a raw idempotency value that is not a SHA-256 fingerprint", async () => {
+    const auditSink = new MemoryAuditSink();
+    const registry = createToolRegistry({ auditSink });
+
+    await registry.invoke(
+      "platform.ping",
+      {},
+      { actor, idempotencyFingerprint: "raw-idempotency-key-secret" },
+    );
+
+    expect(auditSink.records[0]?.metadata).not.toHaveProperty("idempotencyFingerprint");
+    expect(JSON.stringify(auditSink.records[0])).not.toContain("raw-idempotency-key-secret");
+  });
+
+  it.each([
+    {
+      name: "destructive",
+      id: "critical.delete",
+      permission: "danger.write",
+      sideEffects: "destructive" as const,
+    },
+    {
+      name: "external communication",
+      id: "critical.send",
+      permission: "danger.write",
+      sideEffects: "external_communication" as const,
+    },
+    {
+      name: "credential change",
+      id: "agent.credentials.rotate",
+      permission: "agent.credentials.write",
+      sideEffects: "write" as const,
+    },
+    {
+      name: "permission change",
+      id: "admin.permission.update",
+      permission: "permission.write",
+      sideEffects: "write" as const,
+    },
+    {
+      name: "policy change",
+      id: "admin.policy.update",
+      permission: "policy.write",
+      sideEffects: "write" as const,
+    },
+  ])("fails closed for an unaudited Business $name outcome", async (criticalTool) => {
+    let calls = 0;
+    const registry = createToolRegistry({
+      auditSink: new FailingAuditSink(),
+      confirmationDefaults: tierDefaults.business,
+    });
+    registry.register(
+      tool({
+        id: criticalTool.id,
+        permission: criticalTool.permission,
+        sideEffects: criticalTool.sideEffects,
+        handler: async () => {
+          calls += 1;
+          return { ok: true };
+        },
+      }),
+    );
+
+    const result = await registry.invoke(
+      criticalTool.id,
+      {},
+      {
+        actor: { ...actor, scopes: [criticalTool.permission] },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      statusCode: 503,
+      error:
+        "Critical tool outcome could not be durably audited; retry only with the same idempotency key.",
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("defines non-critical and Personal-tier audit outage behavior", async () => {
+    const businessRegistry = createToolRegistry({
+      auditSink: new FailingAuditSink(),
+      confirmationDefaults: tierDefaults.business,
+    });
+    businessRegistry.register(
+      tool({
+        id: "notes.write",
+        permission: "platform.read",
+        sideEffects: "write",
+        handler: async () => ({ ok: true }),
+      }),
+    );
+    const personalRegistry = createToolRegistry({
+      auditSink: new FailingAuditSink(),
+      confirmationDefaults: tierDefaults.personal,
+    });
+    personalRegistry.register(
+      tool({
+        id: "danger.personal-delete",
+        permission: "danger.write",
+        sideEffects: "destructive",
+        handler: async () => ({ ok: true }),
+      }),
+    );
+
+    await expect(businessRegistry.invoke("notes.write", {}, { actor })).resolves.toMatchObject({
+      ok: true,
+      output: { ok: true },
+    });
+    await expect(
+      personalRegistry.invoke("danger.personal-delete", {}, { actor }),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { ok: true },
+    });
+  });
+
+  it("fails closed and cancels a pending action when its audit cannot persist", async () => {
+    const confirmationGate = new InMemoryConfirmationGate();
+    const registry = createToolRegistry({
+      auditSink: new FailingAuditSink(),
+      confirmationGate,
+      confirmationDefaults: tierDefaults.business,
+    });
+    registry.register(
+      tool({
+        id: "critical.pending",
+        permission: "danger.write",
+        sideEffects: "destructive",
+        handler: async () => ({ ok: true }),
+      }),
+    );
+
+    const result = await registry.invoke(
+      "critical.pending",
+      {},
+      { actor, enforceConfirmation: true },
+    );
+
+    expect(result).toMatchObject({ ok: false, statusCode: 503 });
+  });
+
+  it("correlates pending approval execution and prevents duplicate executed audit outcomes", async () => {
+    const auditSink = new MemoryAuditSink();
+    const confirmationGate = new InMemoryConfirmationGate();
+    const registry = createToolRegistry({
+      auditSink,
+      confirmationGate,
+      confirmationDefaults: tierDefaults.business,
+    });
+    let calls = 0;
+    registry.register(
+      tool({
+        id: "critical.approve-once",
+        permission: "danger.write",
+        sideEffects: "destructive",
+        handler: async () => {
+          calls += 1;
+          return { ok: true };
+        },
+      }),
+    );
+
+    const queued = await registry.invoke(
+      "critical.approve-once",
+      {},
+      { actor, request: traceRequest, enforceConfirmation: true },
+    );
+    if (!queued.ok || queued.status !== "pending_confirmation") {
+      throw new Error("Expected pending confirmation.");
+    }
+
+    await expect(
+      registry.approvePending(queued.pending.id, {
+        actor,
+        request: { ...traceRequest, traceId: "f".repeat(32) },
+      }),
+    ).resolves.toMatchObject({ ok: true, output: { ok: true } });
+    await expect(registry.approvePending(queued.pending.id, { actor })).resolves.toMatchObject({
+      ok: false,
+      statusCode: 404,
+    });
+
+    const invocationRecords = auditSink.records.filter((record) =>
+      record.verb.startsWith("tool.invocation."),
+    );
+    expect(invocationRecords.map((record) => record.verb)).toEqual([
+      "tool.invocation.pending",
+      "tool.invocation.executed",
+      "tool.invocation.denied",
+    ]);
+    expect(
+      invocationRecords.filter((record) => record.verb === "tool.invocation.executed"),
+    ).toHaveLength(1);
+    expect(invocationRecords[1]).toMatchObject({
+      trace: { traceId: traceRequest.traceId },
+      metadata: {
+        pendingActionId: queued.pending.id,
+        status: "executed",
+      },
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("audits cancellation and fails its success closed during an audit outage", async () => {
+    const auditSink = new ToggleAuditSink();
+    const confirmationGate = new InMemoryConfirmationGate();
+    const registry = createToolRegistry({
+      auditSink,
+      confirmationGate,
+      confirmationDefaults: tierDefaults.business,
+    });
+    registry.register(
+      tool({
+        id: "critical.cancel",
+        permission: "danger.write",
+        sideEffects: "destructive",
+        handler: async () => ({ ok: true }),
+      }),
+    );
+
+    const first = await registry.invoke(
+      "critical.cancel",
+      {},
+      { actor, enforceConfirmation: true },
+    );
+    if (!first.ok || first.status !== "pending_confirmation") {
+      throw new Error("Expected pending confirmation.");
+    }
+    await expect(
+      registry.cancelPending(first.pending.id, { actor, request: traceRequest }),
+    ).resolves.toMatchObject({ ok: true, status: "cancelled" });
+    expect(auditSink.records.at(-1)).toMatchObject({
+      verb: "tool.invocation.cancelled",
+      metadata: { pendingActionId: first.pending.id, status: "cancelled" },
+    });
+
+    const second = await registry.invoke(
+      "critical.cancel",
+      {},
+      { actor, enforceConfirmation: true },
+    );
+    if (!second.ok || second.status !== "pending_confirmation") {
+      throw new Error("Expected second pending confirmation.");
+    }
+    auditSink.fail = true;
+    await expect(registry.cancelPending(second.pending.id, { actor })).resolves.toMatchObject({
+      ok: false,
+      statusCode: 503,
+    });
+  });
 });
 
 describe("per-credential policy overrides (PRD §9.2)", () => {
@@ -822,6 +1330,23 @@ class MemoryAuditSink {
 
   async append(record: AuditRecord & { readonly orgId: string }): Promise<void> {
     this.records.push(record);
+  }
+}
+
+class FailingAuditSink {
+  async append(_record: AuditRecord & { readonly orgId: string }): Promise<void> {
+    throw new Error("audit store unavailable");
+  }
+}
+
+class ToggleAuditSink extends MemoryAuditSink {
+  fail = false;
+
+  override async append(record: AuditRecord & { readonly orgId: string }): Promise<void> {
+    if (this.fail) {
+      throw new Error("audit store unavailable");
+    }
+    await super.append(record);
   }
 }
 

@@ -64,8 +64,8 @@ describe("agent credential tools", () => {
       orgId,
       scopes: ["mail.read", "drive.write"],
     });
-    expect(auditSink.records).toHaveLength(1);
-    expect(auditSink.records[0]).toMatchObject({
+    expect(auditSink.domainRecords).toHaveLength(1);
+    expect(auditSink.domainRecords[0]).toMatchObject({
       orgId,
       actorId: adminActor.id,
       verb: "agent.credential.created",
@@ -149,11 +149,11 @@ describe("agent credential tools", () => {
         revokedAt: "2026-05-20T19:00:00.000Z",
       }),
     ]);
-    expect(auditSink.records.map((record) => record.verb)).toEqual([
+    expect(auditSink.domainRecords.map((record) => record.verb)).toEqual([
       "agent.credential.listed",
       "agent.credential.listed",
     ]);
-    expect(auditSink.records[0]).toMatchObject({
+    expect(auditSink.domainRecords[0]).toMatchObject({
       actorId: adminActor.id,
       toolId: "agent.credentials.list",
       metadata: {
@@ -163,7 +163,7 @@ describe("agent credential tools", () => {
         resultCount: 1,
       },
     });
-    expect(auditSink.records[1]).toMatchObject({
+    expect(auditSink.domainRecords[1]).toMatchObject({
       trace: { traceId: "trace-list" },
       metadata: {
         credentialType: "oauth_client",
@@ -219,8 +219,10 @@ describe("agent credential tools", () => {
     });
     const revokedClient = await store.findClient("client-same-org");
     expect(revokedClient?.revokedAt).toBeInstanceOf(Date);
-    expect(auditSink.records.map((record) => record.verb)).toEqual(["agent.credential.revoked"]);
-    expect(auditSink.records[0]?.metadata).toMatchObject({
+    expect(auditSink.domainRecords.map((record) => record.verb)).toEqual([
+      "agent.credential.revoked",
+    ]);
+    expect(auditSink.domainRecords[0]?.metadata).toMatchObject({
       actorType: "user",
       credentialType: "oauth_client",
       targetActorId: agentActorId,
@@ -231,6 +233,10 @@ describe("agent credential tools", () => {
 
 class RecordingAuditSink implements ToolAuditSink {
   readonly records: (AuditRecord & { readonly orgId: string })[] = [];
+
+  get domainRecords(): readonly (AuditRecord & { readonly orgId: string })[] {
+    return this.records.filter((record) => !record.verb.startsWith("tool.invocation."));
+  }
 
   async append(record: AuditRecord & { readonly orgId: string }): Promise<void> {
     this.records.push(record);

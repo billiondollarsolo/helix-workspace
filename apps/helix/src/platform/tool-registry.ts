@@ -65,6 +65,22 @@ export interface ToolQuotaLimitMetadata {
 export interface ToolInvokeOptions {
   readonly request?: RequestContext;
   readonly actor?: Actor;
+  /**
+   * Identifier of the credential used to authenticate this call. This is
+   * deliberately separate from the actor so registry-level audit records can
+   * correlate credential revocation without serializing credential policy or
+   * token material.
+   */
+  readonly credentialId?: string;
+  /**
+   * A caller-computed SHA-256 fingerprint, never the raw idempotency key.
+   * Invalid/non-fingerprint values are omitted from audit records.
+   */
+  readonly idempotencyFingerprint?: string;
+  /**
+   * Internal correlation for execution of an already-approved pending action.
+   */
+  readonly pendingActionId?: string;
   readonly skipConfirmation?: boolean;
   readonly enforceConfirmation?: boolean;
   readonly estimatedCostUsdMicros?: number;
@@ -93,6 +109,22 @@ export interface CredentialPolicyOverrides {
 
 export interface ToolAuditSink {
   append(record: AuditRecord & { readonly orgId: string }): Promise<unknown>;
+}
+
+export type ToolInvocationAuditVerb =
+  | "tool.invocation.denied"
+  | "tool.invocation.pending"
+  | "tool.invocation.executed"
+  | "tool.invocation.failed"
+  | "tool.invocation.cancelled";
+
+export type ToolInvocationAuditStatus = "denied" | "pending" | "executed" | "failed" | "cancelled";
+
+export interface PendingToolActionOptions {
+  readonly actor: Actor;
+  readonly request?: RequestContext;
+  readonly credentialId?: string;
+  readonly idempotencyFingerprint?: string;
 }
 
 export type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
@@ -126,7 +158,7 @@ export interface RuntimeToolRegistry {
   ): Promise<ToolInvokeResult<Output>>;
   approvePending<Output = unknown>(
     pendingId: string,
-    options: { readonly actor: Actor; readonly request?: RequestContext },
+    options: PendingToolActionOptions,
   ): Promise<ToolInvokeResult<Output>>;
   getPendingAction(
     pendingId: string,
@@ -137,7 +169,7 @@ export interface RuntimeToolRegistry {
   >;
   cancelPending(
     pendingId: string,
-    options: { readonly actor: Actor },
+    options: PendingToolActionOptions,
   ): Promise<
     | { readonly ok: true; readonly status: "cancelled"; readonly pending: PendingToolInvocation }
     | { readonly ok: false; readonly statusCode: number; readonly error: string }
@@ -170,6 +202,14 @@ export interface ToolRegistryOptions {
   readonly accessPolicy?: ToolAccessPolicy;
   readonly confirmationGate?: ConfirmationGate;
   readonly confirmationDefaults?: TierSecurityDefaults;
+  /**
+   * Generic invocation outcomes use the same durable sink as domain audit
+   * events. Personal-tier and non-critical Business-tier outcomes are
+   * best-effort during a sink outage. In Business and higher tiers, pending
+   * actions, approved-pending executions, cancellations, destructive/external
+   * calls, and credential/permission/policy mutations fail before a success
+   * response can be returned unless their outcome append succeeds.
+   */
   readonly auditSink?: ToolAuditSink;
   readonly agentRateCostLimiter?: AgentRateCostLimiter;
   readonly agentLimitTier?: TierSecurityDefaults["tier"];
@@ -207,175 +247,303 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     async invoke<Output = unknown>(
       toolId: string,
       rawInput: unknown,
-      options?: ToolInvokeOptions,
+      invokeOptions?: ToolInvokeOptions,
     ): Promise<ToolInvokeResult<Output>> {
       const tool = tools.get(toolId);
-      if (!tool) {
-        return { ok: false, statusCode: 404, error: `Unknown tool: ${toolId}` };
-      }
-      const actor = options?.actor ?? unauthenticatedActor;
+      const actor = invokeOptions?.actor ?? unauthenticatedActor;
       const start = process.hrtime.bigint();
-      const span = trace.getTracer("helix.tools").startSpan(`tool.${tool.id}`, {
+      const span = trace.getTracer("helix.tools").startSpan(`tool.${toolId}`, {
         attributes: {
           "helix.tool.actor_type": actor.type,
-          "helix.tool.id": tool.id,
-          "helix.tool.permission": tool.permission,
-          "helix.tool.side_effects": tool.sideEffects,
+          "helix.tool.id": toolId,
+          ...(tool === undefined
+            ? {}
+            : {
+                "helix.tool.permission": tool.permission,
+                "helix.tool.side_effects": tool.sideEffects,
+              }),
         },
       });
       try {
+        if (tool === undefined) {
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 404,
+              error: `Unknown tool: ${toolId}`,
+            },
+            {
+              actor,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
+          );
+        }
         if (!(await accessPolicy.can(actor, tool.permission, toolResource(tool)))) {
-          return toolInvokeResultWithSpan(
+          return await completeInvocation(
             span,
             {
               ok: false,
               statusCode: 403,
               error: `Actor cannot invoke tool: ${toolId}`,
             },
-            tool.id,
-            start,
-            invocationMetrics,
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
           );
         }
         const featureFlagDecision = await evaluateToolFeatureFlag(tool, actor);
         if (!featureFlagDecision.enabled) {
           span.setAttribute("helix.tool.feature_flag", featureFlagDecision.flag);
           span.setAttribute("helix.tool.feature_flag_enabled", false);
-          return toolInvokeResultWithSpan(
+          return await completeInvocation(
             span,
             {
               ok: false,
               statusCode: 403,
               error: `Tool ${toolId} is disabled by tenant feature flag: ${featureFlagDecision.flag}`,
             },
-            tool.id,
-            start,
-            invocationMetrics,
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
           );
         }
         const estimatedCostUsdMicros = estimateToolInvocationCost(
           tool,
-          options?.estimatedCostUsdMicros,
+          invokeOptions?.estimatedCostUsdMicros,
         );
         const limitDecision = await consumeAgentLimit(
           tool.id,
           actor,
           estimatedCostUsdMicros,
-          options?.credentialPolicy?.rateLimitOverrides,
+          invokeOptions?.credentialPolicy?.rateLimitOverrides,
         );
         if (limitDecision !== null) {
-          return toolInvokeResultWithSpan(span, limitDecision, tool.id, start, invocationMetrics);
+          return await completeInvocation(span, limitDecision, {
+            actor,
+            tool,
+            toolId,
+            start,
+            status: "denied",
+            invokeOptions,
+          });
+        }
+
+        let input: unknown;
+        try {
+          input = tool.inputSchema.parse(rawInput);
+        } catch (error) {
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 400,
+              error: error instanceof Error ? error.message : "Tool input validation failed",
+            },
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
+          );
+        }
+
+        const compositionResult = checkScopeComposition(actor, tool, input);
+        if (!compositionResult.ok) {
+          span.setAttribute("helix.tool.missing_scopes", compositionResult.missingScopes.join(","));
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 403,
+              error: `Actor is missing required scopes for tool ${toolId}: ${compositionResult.missingScopes.join(", ")}`,
+            },
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
+          );
+        }
+        const context = createToolContext(
+          invokeOptions?.request,
+          actor,
+          accessPolicy,
+          tool,
+          optionsAuditSink(),
+        );
+        const confirmationGate = registryOptionsConfirmationGate();
+        if (
+          invokeOptions?.enforceConfirmation === true &&
+          confirmationGate !== undefined &&
+          shouldQueueConfirmation(
+            tool,
+            confirmationDefaults,
+            invokeOptions.skipConfirmation,
+            invokeOptions.credentialPolicy?.confirmationOverride,
+          )
+        ) {
+          const pending = await confirmationGate.queue({
+            tool,
+            actor,
+            input: toJsonValue(input),
+            ...(invokeOptions.request === undefined ? {} : { request: invokeOptions.request }),
+            ...(invokeOptions.request?.traceId === undefined
+              ? {}
+              : { traceId: invokeOptions.request.traceId }),
+          });
+          const pendingResult: ToolInvokeResult<Output> = {
+            ok: true,
+            status: "pending_confirmation",
+            output: { status: "pending_confirmation", pending } as Output,
+            pending,
+          };
+          const completed = await completeInvocation(span, pendingResult, {
+            actor,
+            tool,
+            toolId,
+            start,
+            status: "pending",
+            invokeOptions: {
+              ...invokeOptions,
+              pendingActionId: pending.id,
+            },
+          });
+          if (!completed.ok) {
+            // Do not leave an unaudited pending action available for later
+            // execution when fail-closed audit persistence rejects the call.
+            await confirmationGate.deny({ id: pending.id, actor }).catch(() => undefined);
+          }
+          return completed;
         }
 
         try {
-          const input = tool.inputSchema.parse(rawInput);
-          const compositionResult = checkScopeComposition(actor, tool, input);
-          if (!compositionResult.ok) {
-            span.setAttribute(
-              "helix.tool.missing_scopes",
-              compositionResult.missingScopes.join(","),
-            );
-            return toolInvokeResultWithSpan(
-              span,
-              {
-                ok: false,
-                statusCode: 403,
-                error: `Actor is missing required scopes for tool ${toolId}: ${compositionResult.missingScopes.join(", ")}`,
-              },
-              tool.id,
-              start,
-              invocationMetrics,
-            );
-          }
-          const context = createToolContext(
-            options?.request,
-            actor,
-            accessPolicy,
-            tool,
-            optionsAuditSink(),
-          );
-          const confirmationGate = registryOptionsConfirmationGate();
-          if (
-            options?.enforceConfirmation === true &&
-            confirmationGate !== undefined &&
-            shouldQueueConfirmation(
-              tool,
-              confirmationDefaults,
-              options.skipConfirmation,
-              options.credentialPolicy?.confirmationOverride,
-            )
-          ) {
-            const pending = await confirmationGate.queue({
-              tool,
-              actor,
-              input: toJsonValue(input),
-              ...(options.request === undefined ? {} : { request: options.request }),
-              ...(options.request?.traceId === undefined
-                ? {}
-                : { traceId: options.request.traceId }),
-            });
-            return toolInvokeResultWithSpan(
-              span,
-              {
-                ok: true,
-                status: "pending_confirmation",
-                output: { status: "pending_confirmation", pending } as Output,
-                pending,
-              },
-              tool.id,
-              start,
-              invocationMetrics,
-            );
-          }
           const output = await tool.handler(input, context);
           const parsedOutput = tool.outputSchema.parse(output) as Output;
           await recordAgentCost(
             actor,
             estimatedCostUsdMicros,
-            options?.credentialPolicy?.rateLimitOverrides,
+            invokeOptions?.credentialPolicy?.rateLimitOverrides,
           );
-          return toolInvokeResultWithSpan(
+          return await completeInvocation(
             span,
             {
               ok: true,
               output: parsedOutput,
             },
-            tool.id,
-            start,
-            invocationMetrics,
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "executed",
+              invokeOptions,
+            },
           );
         } catch (error) {
           const httpError = toolHttpError(error);
           const result: ToolInvokeErrorResult = {
             ok: false,
             statusCode:
-              httpError?.statusCode ??
-              (error instanceof PermissionDeniedError ? 403 : isInputError(error) ? 400 : 500),
+              httpError?.statusCode ?? (error instanceof PermissionDeniedError ? 403 : 500),
             error: error instanceof Error ? error.message : "Tool invocation failed",
             ...(httpError?.retryAfterSeconds === undefined
               ? {}
               : { retryAfterSeconds: httpError.retryAfterSeconds }),
             ...(httpError?.quotaLimit === undefined ? {} : { quotaLimit: httpError.quotaLimit }),
           };
-          return toolInvokeResultWithSpan(span, result, tool.id, start, invocationMetrics);
+          return await completeInvocation(span, result, {
+            actor,
+            tool,
+            toolId,
+            start,
+            status:
+              error instanceof PermissionDeniedError || result.statusCode === 403
+                ? "denied"
+                : "failed",
+            invokeOptions,
+          });
         }
+      } catch (error) {
+        return await completeInvocation(
+          span,
+          {
+            ok: false,
+            statusCode: 500,
+            error: error instanceof Error ? error.message : "Tool invocation failed",
+          },
+          {
+            actor,
+            ...(tool === undefined ? {} : { tool }),
+            toolId,
+            start,
+            status: "failed",
+            invokeOptions,
+          },
+        );
       } finally {
         span.end();
       }
     },
     async approvePending<Output = unknown>(
       pendingId: string,
-      approvalOptions: { readonly actor: Actor; readonly request?: RequestContext },
+      approvalOptions: PendingToolActionOptions,
     ): Promise<ToolInvokeResult<Output>> {
       const gate = registryOptionsConfirmationGate();
       if (gate === undefined) {
+        await auditPendingDecision({
+          actor: approvalOptions.actor,
+          pendingId,
+          status: "denied",
+          invokeOptions: approvalOptions,
+        });
         return { ok: false, statusCode: 400, error: "Confirmation gate is not configured." };
       }
-      const approved = await gate.approve({
-        id: pendingId,
-        actor: approvalOptions.actor,
-      });
+      let approved: PendingToolInvocation | null;
+      try {
+        approved = await gate.approve({
+          id: pendingId,
+          actor: approvalOptions.actor,
+        });
+      } catch {
+        await auditPendingDecision({
+          actor: approvalOptions.actor,
+          pendingId,
+          status: "failed",
+          invokeOptions: approvalOptions,
+        });
+        return {
+          ok: false,
+          statusCode: 500,
+          error: "Pending tool action approval failed.",
+        };
+      }
       if (approved === null || approved.status !== "confirmed") {
+        await auditPendingDecision({
+          actor: approvalOptions.actor,
+          pendingId,
+          status: "denied",
+          invokeOptions: approvalOptions,
+        });
         return {
           ok: false,
           statusCode: 404,
@@ -383,17 +551,32 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         };
       }
 
+      const executionRequest =
+        approved.traceId === undefined
+          ? approvalOptions.request
+          : {
+              requestId: approvalOptions.request?.requestId ?? `pending:${pendingId}`,
+              traceId: approved.traceId,
+              ...(approvalOptions.request?.spanId === undefined
+                ? {}
+                : { spanId: approvalOptions.request.spanId }),
+            };
       const result = await this.invoke<Output>(approved.toolId, approved.input, {
         actor: approvalOptions.actor,
-        ...(approvalOptions.request === undefined ? {} : { request: approvalOptions.request }),
+        ...(executionRequest === undefined ? {} : { request: executionRequest }),
+        ...(approvalOptions.credentialId === undefined
+          ? {}
+          : { credentialId: approvalOptions.credentialId }),
+        ...(approvalOptions.idempotencyFingerprint === undefined
+          ? {}
+          : { idempotencyFingerprint: approvalOptions.idempotencyFingerprint }),
+        pendingActionId: pendingId,
         skipConfirmation: true,
       });
       await gate.recordExecution({
         id: pendingId,
         actor: approvalOptions.actor,
-        ...(approvalOptions.request?.traceId === undefined
-          ? {}
-          : { traceId: approvalOptions.request.traceId }),
+        ...(executionRequest?.traceId === undefined ? {} : { traceId: executionRequest.traceId }),
         ...(result.ok && result.status === "executed"
           ? { result: toJsonValue(result.output) }
           : { error: result.ok ? "Pending action did not execute." : result.error }),
@@ -418,20 +601,62 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
       }
       return { ok: true, pending };
     },
-    async cancelPending(pendingId: string, cancelOptions: { readonly actor: Actor }) {
+    async cancelPending(pendingId: string, cancelOptions: PendingToolActionOptions) {
       const gate = registryOptionsConfirmationGate();
       if (gate === undefined) {
+        await auditPendingDecision({
+          actor: cancelOptions.actor,
+          pendingId,
+          status: "denied",
+          invokeOptions: cancelOptions,
+        });
         return { ok: false, statusCode: 400, error: "Confirmation gate is not configured." };
       }
-      const pending = await gate.deny({
-        id: pendingId,
-        actor: cancelOptions.actor,
-      });
+      let pending: PendingToolInvocation | null;
+      try {
+        pending = await gate.deny({
+          id: pendingId,
+          actor: cancelOptions.actor,
+        });
+      } catch {
+        await auditPendingDecision({
+          actor: cancelOptions.actor,
+          pendingId,
+          status: "failed",
+          invokeOptions: cancelOptions,
+        });
+        return {
+          ok: false,
+          statusCode: 500,
+          error: "Pending tool action cancellation failed.",
+        };
+      }
       if (pending === null || pending.status !== "cancelled") {
+        await auditPendingDecision({
+          actor: cancelOptions.actor,
+          pendingId,
+          status: "denied",
+          invokeOptions: cancelOptions,
+        });
         return {
           ok: false,
           statusCode: 404,
           error: `Pending tool action is not cancellable: ${pendingId}`,
+        };
+      }
+      const audited = await auditPendingDecision({
+        actor: cancelOptions.actor,
+        pendingId,
+        status: "cancelled",
+        tool: tools.get(pending.toolId),
+        toolId: pending.toolId,
+        invokeOptions: cancelOptions,
+      });
+      if (!audited && auditMustFailClosed()) {
+        return {
+          ok: false,
+          statusCode: 503,
+          error: criticalAuditFailureMessage,
         };
       }
       return { ok: true, status: "cancelled", pending };
@@ -462,6 +687,122 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
 
   function optionsAuditSink(): ToolAuditSink | undefined {
     return options.auditSink;
+  }
+
+  async function completeInvocation<Output>(
+    span: Span,
+    result: ToolInvokeResult<Output>,
+    audit: {
+      readonly actor: Actor;
+      readonly tool?: ToolDefinition | undefined;
+      readonly toolId: string;
+      readonly start: bigint;
+      readonly status: ToolInvocationAuditStatus;
+      readonly invokeOptions?: ToolInvokeOptions | undefined;
+    },
+  ): Promise<ToolInvokeResult<Output>> {
+    const durationNanoseconds = process.hrtime.bigint() - audit.start;
+    const persisted = await appendInvocationAudit({
+      actor: audit.actor,
+      ...(audit.tool === undefined ? {} : { tool: audit.tool }),
+      toolId: audit.toolId,
+      status: audit.status,
+      durationNanoseconds,
+      ...(audit.invokeOptions === undefined ? {} : { invokeOptions: audit.invokeOptions }),
+    });
+    const mustPersist =
+      result.ok &&
+      auditMustFailClosed() &&
+      requiresDurableOutcome(audit.tool, audit.status, audit.invokeOptions?.pendingActionId);
+    const finalResult: ToolInvokeResult<Output> =
+      persisted || !mustPersist
+        ? result
+        : {
+            ok: false,
+            statusCode: 503,
+            error: criticalAuditFailureMessage,
+          };
+    if (!persisted) {
+      span.setAttribute("helix.tool.audit_persisted", false);
+    }
+    return toolInvokeResultWithSpan(
+      span,
+      finalResult,
+      audit.toolId,
+      audit.start,
+      invocationMetrics,
+    );
+  }
+
+  async function auditPendingDecision(input: {
+    readonly actor: Actor;
+    readonly pendingId: string;
+    readonly status: Extract<ToolInvocationAuditStatus, "denied" | "failed" | "cancelled">;
+    readonly tool?: ToolDefinition | undefined;
+    readonly toolId?: string;
+    readonly invokeOptions: PendingToolActionOptions;
+  }): Promise<boolean> {
+    return appendInvocationAudit({
+      actor: input.actor,
+      ...(input.tool === undefined ? {} : { tool: input.tool }),
+      toolId: input.toolId ?? "pending-action",
+      status: input.status,
+      durationNanoseconds: 0n,
+      invokeOptions: {
+        ...input.invokeOptions,
+        pendingActionId: input.pendingId,
+      },
+    });
+  }
+
+  async function appendInvocationAudit(input: {
+    readonly actor: Actor;
+    readonly tool?: ToolDefinition | undefined;
+    readonly toolId: string;
+    readonly status: ToolInvocationAuditStatus;
+    readonly durationNanoseconds: bigint;
+    readonly invokeOptions?: ToolInvokeOptions | undefined;
+  }): Promise<boolean> {
+    const auditSink = optionsAuditSink();
+    if (auditSink === undefined) {
+      return false;
+    }
+    const credentialId = input.invokeOptions?.credentialId;
+    const idempotencyFingerprint = safeSha256Fingerprint(
+      input.invokeOptions?.idempotencyFingerprint,
+    );
+    try {
+      await auditSink.append({
+        orgId: input.actor.orgId,
+        actorId: input.actor.id,
+        verb: invocationAuditVerb(input.status),
+        objectType: "tool_invocation",
+        toolId: input.toolId,
+        ...auditTraceFromRequest(input.invokeOptions?.request),
+        metadata: {
+          orgId: input.actor.orgId,
+          actorType: input.actor.type,
+          ...(credentialId === undefined ? {} : { credentialId }),
+          toolId: input.toolId,
+          toolPermission: input.tool?.permission ?? "unknown",
+          sideEffectClass: input.tool?.sideEffects ?? "unknown",
+          status: input.status,
+          durationBucket: durationBucket(input.durationNanoseconds),
+          ...(idempotencyFingerprint === undefined ? {} : { idempotencyFingerprint }),
+          ...(input.invokeOptions?.pendingActionId === undefined
+            ? {}
+            : { pendingActionId: input.invokeOptions.pendingActionId }),
+        },
+        createdAt: new Date().toISOString(),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function auditMustFailClosed(): boolean {
+    return confirmationDefaults.tier !== "personal";
   }
 
   async function consumeAgentLimit(
@@ -649,6 +990,73 @@ function createToolContext(
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const sha256HexPattern = /^[0-9a-f]{64}$/u;
+const criticalControlChangePattern = /(?:credential|permission|policy|role|scope)/iu;
+const criticalAuditFailureMessage =
+  "Critical tool outcome could not be durably audited; retry only with the same idempotency key.";
+
+function invocationAuditVerb(status: ToolInvocationAuditStatus): ToolInvocationAuditVerb {
+  switch (status) {
+    case "denied":
+      return "tool.invocation.denied";
+    case "pending":
+      return "tool.invocation.pending";
+    case "executed":
+      return "tool.invocation.executed";
+    case "failed":
+      return "tool.invocation.failed";
+    case "cancelled":
+      return "tool.invocation.cancelled";
+  }
+}
+
+function durationBucket(durationNanoseconds: bigint): string {
+  const durationMilliseconds = Number(durationNanoseconds) / 1_000_000;
+  if (durationMilliseconds < 10) {
+    return "lt_10ms";
+  }
+  if (durationMilliseconds < 100) {
+    return "10ms_to_99ms";
+  }
+  if (durationMilliseconds < 1_000) {
+    return "100ms_to_999ms";
+  }
+  if (durationMilliseconds < 10_000) {
+    return "1s_to_9s";
+  }
+  return "gte_10s";
+}
+
+function safeSha256Fingerprint(value: string | undefined): string | undefined {
+  return value !== undefined && sha256HexPattern.test(value) ? value : undefined;
+}
+
+function requiresDurableOutcome(
+  tool: ToolDefinition | undefined,
+  status: ToolInvocationAuditStatus,
+  pendingActionId: string | undefined,
+): boolean {
+  if (status === "pending" || status === "cancelled" || pendingActionId !== undefined) {
+    return true;
+  }
+  if (status !== "executed" || tool === undefined) {
+    return false;
+  }
+  return (
+    tool.sideEffects === "destructive" ||
+    tool.sideEffects === "external_communication" ||
+    isCriticalControlChange(tool)
+  );
+}
+
+function isCriticalControlChange(
+  tool: Pick<ToolDefinition, "id" | "permission" | "sideEffects">,
+): boolean {
+  return (
+    tool.sideEffects !== "read" &&
+    criticalControlChangePattern.test(`${tool.id} ${tool.permission}`)
+  );
+}
 
 function toolInvokeResultWithSpan<Output>(
   span: Span,
@@ -717,13 +1125,6 @@ function shouldQueueConfirmation(
 
 function toJsonValue(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
-}
-
-function isInputError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.name === "ZodError" || error.name === "SyntaxError" || error.name === "TypeError")
-  );
 }
 
 function toolHttpError(error: unknown): {

@@ -249,6 +249,9 @@ jobs:
       - name: Build web app
         run: pnpm --filter @helix/web build
 
+      - name: Install Playwright Chromium
+        run: pnpm --filter @helix/web exec playwright install --with-deps chromium
+
       - name: Start web preview
         run: |
           pnpm --filter @helix/web preview > /tmp/helix-web-preview.log 2>&1 &

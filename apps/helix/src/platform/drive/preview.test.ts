@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import {
@@ -9,6 +9,8 @@ import {
   type OfficePreviewConversionResult,
 } from "./preview.js";
 import { DriveForbiddenError } from "./errors.js";
+
+const corpusIt = existsSync("../../test-corpus/apache-tika") ? it : it.skip;
 
 describe("assertPreviewUrlAllowed", () => {
   it("rejects a link-local metadata host", () => {
@@ -116,7 +118,7 @@ describe("local Office Drive preview converter", () => {
     expect(rendered[0]).toContain("1200");
   });
 
-  it("renders real corpus DOCX content before creating the PDF artifact", async () => {
+  corpusIt("renders real corpus DOCX content before creating the PDF artifact", async () => {
     const { html, result } = await convertCapturingHtml({
       name: "testWORD.docx",
       sourceMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -129,7 +131,7 @@ describe("local Office Drive preview converter", () => {
     expect(html).toContain("Helix Drive preview");
   });
 
-  it("renders real corpus PPTX slide text before creating the PDF artifact", async () => {
+  corpusIt("renders real corpus PPTX slide text before creating the PDF artifact", async () => {
     const { html } = await convertCapturingHtml({
       name: "testPPT.pptx",
       sourceMimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -142,27 +144,30 @@ describe("local Office Drive preview converter", () => {
     expect(html).toContain("Different words to test against");
   });
 
-  it("renders real corpus ODS and XLSB workbook previews with sanitized sheet names", async () => {
-    const ods = await convertCapturingHtml({
-      name: "LibreOfficeCalc_ods_1.3.ods",
-      sourceMimeType: "application/vnd.oasis.opendocument.spreadsheet",
-      content: readCorpus("apache-tika/miscoffice/versions/LibreOfficeCalc_ods_1.3.ods"),
-    });
-    const xlsb = await convertCapturingHtml({
-      name: "testEXCEL.xlsb",
-      sourceMimeType: "application/vnd.ms-excel.sheet.binary.macroenabled.12",
-      content: readCorpus("apache-tika/microsoft/testEXCEL.xlsb"),
-    });
+  corpusIt(
+    "renders real corpus ODS and XLSB workbook previews with sanitized sheet names",
+    async () => {
+      const ods = await convertCapturingHtml({
+        name: "LibreOfficeCalc_ods_1.3.ods",
+        sourceMimeType: "application/vnd.oasis.opendocument.spreadsheet",
+        content: readCorpus("apache-tika/miscoffice/versions/LibreOfficeCalc_ods_1.3.ods"),
+      });
+      const xlsb = await convertCapturingHtml({
+        name: "testEXCEL.xlsb",
+        sourceMimeType: "application/vnd.ms-excel.sheet.binary.macroenabled.12",
+        content: readCorpus("apache-tika/microsoft/testEXCEL.xlsb"),
+      });
 
-    expect(ods.html).toContain("Sheet1");
-    expect(visibleText(ods.html)).toContain("This is an example spreadsheet");
-    expect(xlsb.html).toContain("Sheet 1");
-    expect(xlsb.html).toContain(
-      "This is an example spreadsheet created with Microsoft Excel 2007 Beta 2.",
-    );
-    expect(xlsb.html).not.toContain("rId1");
-    expect(hasPreviewControlCharacter(xlsb.html)).toBe(false);
-  });
+      expect(ods.html).toContain("Sheet1");
+      expect(visibleText(ods.html)).toContain("This is an example spreadsheet");
+      expect(xlsb.html).toContain("Sheet 1");
+      expect(xlsb.html).toContain(
+        "This is an example spreadsheet created with Microsoft Excel 2007 Beta 2.",
+      );
+      expect(xlsb.html).not.toContain("rId1");
+      expect(hasPreviewControlCharacter(xlsb.html)).toBe(false);
+    },
+  );
 
   it("keeps unsupported legacy binary Office formats honest", async () => {
     let rendered = false;

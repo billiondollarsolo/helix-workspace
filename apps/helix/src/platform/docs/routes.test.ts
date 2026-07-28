@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   Actor,
   JsonObject,
@@ -55,6 +55,9 @@ describe("docs sync routes", () => {
       metadata: { source: "test" },
     });
     await settle();
+    await vi.waitFor(() => {
+      expect(store.compactions).toHaveLength(1);
+    });
 
     expect(firstSocket.messages[0]).toMatchObject({
       type: "ready",
@@ -230,6 +233,9 @@ describe("docs sync routes", () => {
     updateDoc.getText("markdown").insert(0, "# Synced Yjs title\n");
     firstSocket.receiveRaw(syncUpdateMessage(Y.encodeStateAsUpdate(updateDoc)));
     await settle();
+    await vi.waitFor(() => {
+      expect(store.compactions).toHaveLength(1);
+    });
 
     expect(store.updates).toHaveLength(1);
     expect(store.updates[0]).toMatchObject({

@@ -644,7 +644,7 @@ export class PostgresDriveStore
 
   async finalizeUpload(input: FinalizeDriveUploadInput): Promise<DriveVersionRecord> {
     let storageDelta = 0;
-    const version = await this.sql.begin(async (tx) => {
+    const completion = await this.sql.begin(async (tx) => {
       const current = await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
       const dedup = this.options.contentAddressedDedup === true;
       // Reserved key is where prepare/presign/multipart wrote (or will write).
@@ -724,6 +724,7 @@ export class PostgresDriveStore
 
       // ponytail: sniff/scan post-PUT when bytes are present (inline content or
       // read-back). Quarantine marks metadata rather than blocking the storage write.
+      let malwareScanMetadata: JsonObject = {};
       let bytesForScan: Buffer | null = null;
       if (content !== undefined) {
         bytesForScan = Buffer.from(content);
@@ -741,23 +742,60 @@ export class PostgresDriveStore
         mimeType = resolveEffectiveMime(mimeType, sniffed);
         const scanner = this.options.virusScanner ?? createNoopVirusScanner();
         const scan = await scanner.scan(bytesForScan);
-        if (!scan.clean) {
+        const disposition = scan.disposition ?? (scan.clean ? "allow" : "quarantine");
+        malwareScanMetadata =
+          scan.securityScan === undefined
+            ? {}
+            : {
+                malwareScan: {
+                  state: scan.securityScan.state,
+                  disposition,
+                  evidence: scan.securityScan.evidence,
+                },
+              };
+        if (disposition === "quarantine") {
+          const scanState =
+            scan.securityScan?.state ?? (scan.signature === undefined ? "scan_failed" : "infected");
+          const objectStatus = scanState === "infected" ? "infected" : "quarantined";
           await tx`
             update objects
             set
+              storage_key = ${storageKey},
+              mime_type = ${mimeType},
+              byte_size = ${input.byteSize},
+              sha256 = ${input.sha256},
               metadata = ${tx.json(
                 toSqlJson({
                   ...current.metadata,
-                  status: "infected",
-                  avSignature: scan.signature ?? "unknown",
+                  status: objectStatus,
+                  ...malwareScanMetadata,
+                  ...(scan.signature === undefined ? {} : { avSignature: scan.signature }),
                 }),
               )},
               updated_at = now()
             where id = ${input.objectId} and org_id = ${input.orgId}
           `;
-          throw new DriveConflictError("File failed virus scan.", {
-            details: { signature: scan.signature ?? "unknown" },
+          await appendDriveActivity(tx, {
+            orgId: input.orgId,
+            actorId: input.actorId,
+            verb: "drive.upload.quarantined",
+            objectId: input.objectId,
+            payload: {
+              byteSize: input.byteSize,
+              sha256: input.sha256,
+              scanState,
+              ...(scan.signature === undefined ? {} : { signature: scan.signature }),
+            },
           });
+          return {
+            kind: "quarantined" as const,
+            error: new DriveConflictError("File is quarantined by malware scan policy.", {
+              details: {
+                state: scanState,
+                ...(scan.signature === undefined ? {} : { signature: scan.signature }),
+              },
+            }),
+          };
         }
       }
 
@@ -800,6 +838,7 @@ export class PostgresDriveStore
             toSqlJson({
               ...current.metadata,
               status: "ready",
+              ...malwareScanMetadata,
               latestVersionId: version.id,
               versionNumber: version.versionNumber,
               ...preview,
@@ -821,10 +860,13 @@ export class PostgresDriveStore
         },
       });
 
-      return version;
+      return { kind: "ready" as const, version };
     });
     this.emitStorageDelta(input.orgId, storageDelta);
-    return version;
+    if (completion.kind === "quarantined") {
+      throw completion.error;
+    }
+    return completion.version;
   }
 
   async list(input: {

@@ -377,6 +377,7 @@ describe("mail tools", () => {
       "mail.labels.list",
       "mail.outbound.cancel",
       "mail.outbound.get",
+      "mail.outbound.retry",
       "mail.read.set",
       "mail.reply",
       "mail.search",

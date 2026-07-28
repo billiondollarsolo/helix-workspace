@@ -81,6 +81,12 @@ function createAuthzSql(options: {
       return Promise.resolve([{ role: options.grants[actor] }]);
     }
 
+    // Share-recipient validation: the target actor exists in this organization.
+    if (text.includes("from actors") && text.includes("disabled_at is null")) {
+      const actor = resolveActor(values);
+      return Promise.resolve(actor === undefined ? [] : [{ id: actor }]);
+    }
+
     // App trash-sync lookup
     if (text.includes("metadata->>'app'")) {
       return Promise.resolve([{ app: null }]);

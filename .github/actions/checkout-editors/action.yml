@@ -2,9 +2,6 @@ name: Checkout paired helix-editors
 description: Check out helix-editors beside helix-workspace and select a coordinated ref.
 
 inputs:
-  ssh-key:
-    description: Read-only deploy key for mjtechguy/helix-editors.
-    required: true
   requested-ref:
     description: Explicit helix-editors ref requested by workflow_dispatch.
     required: false
@@ -20,10 +17,9 @@ runs:
     - name: Checkout helix-editors main
       uses: actions/checkout@v4
       with:
-        repository: mjtechguy/helix-editors
+        repository: billiondollarsolo/helix-editors
         ref: main
         path: helix-all/helix-editors
-        ssh-key: ${{ inputs.ssh-key }}
 
     - name: Select coordinated helix-editors ref
       shell: bash

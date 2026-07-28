@@ -35,7 +35,6 @@ jobs:
       - name: Checkout paired helix-editors
         uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
         with:
-          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
           requested-ref: ${{ inputs.helix_editors_ref }}
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
@@ -74,7 +73,6 @@ jobs:
       - name: Checkout paired helix-editors
         uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
         with:
-          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
           requested-ref: ${{ inputs.helix_editors_ref }}
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
@@ -116,7 +114,6 @@ jobs:
       - name: Checkout paired helix-editors
         uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
         with:
-          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
           requested-ref: ${{ inputs.helix_editors_ref }}
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
@@ -220,7 +217,6 @@ jobs:
       - name: Checkout paired helix-editors
         uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
         with:
-          ssh-key: ${{ secrets.HELIX_EDITORS_READ_KEY }}
           requested-ref: ${{ inputs.helix_editors_ref }}
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 

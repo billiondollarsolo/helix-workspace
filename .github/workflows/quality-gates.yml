@@ -55,6 +55,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
+
       - name: Run platform mode test suite
         run: pnpm test:${{ matrix.helix_mode }}
 
@@ -133,6 +136,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
 
       - name: Check Docker daemon
         run: docker info
@@ -236,6 +242,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
 
       - name: Build web app
         run: pnpm --filter @helix/web build

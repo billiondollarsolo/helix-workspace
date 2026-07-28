@@ -67,6 +67,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
+
       - name: Typecheck E2E specs
         run: pnpm --filter @helix/web typecheck:e2e
 
@@ -131,6 +134,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
 
       - name: Install Playwright browsers
         run: pnpm --filter @helix/web exec playwright install --with-deps chromium

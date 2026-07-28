@@ -1487,7 +1487,7 @@ a {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .auth-demo-row {
@@ -1503,7 +1503,7 @@ a {
   min-height: 20px;
   margin-top: -4px;
   font-size: var(--text-body);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .auth-status.success {

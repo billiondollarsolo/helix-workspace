@@ -24,7 +24,7 @@ interface BackendCall {
 }
 
 test.describe("/mail feature flow", () => {
-  test("renders backend mail search hits in the inbox", async ({ page }) => {
+  test("renders backend thread rows in the inbox", async ({ page }) => {
     const backendCalls: BackendCall[] = [];
 
     const accessToken = await seedAccessToken(page, mailScope, "e2e-mail-token");
@@ -37,13 +37,13 @@ test.describe("/mail feature flow", () => {
     await expect(page.getByRole("main", { name: "Mail" })).toBeVisible();
 
     if (!isLiveBackend()) {
-      // The mocked fixture guarantees this exact thread is searchable.
+      // The mocked fixture guarantees this exact thread is in the inbox.
       await expect(page.getByText("Backend launch thread")).toBeVisible();
-      const searchCall = backendCalls.find(
-        (call) => call.pathname === "/api/tools/mail.search",
+      const listCall = backendCalls.find(
+        (call) => call.pathname === "/api/tools/mail.threads.list",
       );
-      expect(searchCall?.method).toBe("POST");
-      expect(searchCall?.authorization).toBe(`Bearer ${accessToken}`);
+      expect(listCall?.method).toBe("POST");
+      expect(listCall?.authorization).toBe(`Bearer ${accessToken}`);
     } else {
       // Live mode: the inbox region must render without a backend error state.
       await expect(page.getByText("Mail backend unavailable")).toHaveCount(0);
@@ -79,19 +79,30 @@ async function mockMailBackend(page: Page, calls: BackendCall[], accessToken: st
       return;
     }
 
-    if (pathname === "/api/tools/mail.search") {
+    if (pathname === "/api/tools/mail.threads.list") {
       await fulfillJson(route, {
-        hits: [
+        threads: [
           {
             threadId: "00000000-0000-4000-8000-000000000301",
             messageId: "00000000-0000-4000-8000-000000000401",
             subject: "Backend launch thread",
-            from: { address: "sam@helix.local", name: "Sam Patel" },
+            from: "Sam Patel",
+            fromEmail: "sam@helix.local",
             preview: "Backend search result preview",
-            sentAt: "2026-05-20T12:00:00.000Z",
+            time: "2026-05-20T12:00:00.000Z",
+            unread: true,
+            starred: false,
+            hasAttachment: false,
+            messageCount: 1,
             labels: ["planning"],
+            category: "primary",
+            folder: "inbox",
+            snoozedUntil: null,
           },
         ],
+        total: 1,
+        limit: 50,
+        offset: 0,
       });
       return;
     }

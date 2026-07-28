@@ -14,7 +14,7 @@ const docsScope = "platform.read docs.read";
 const docId = "00000000-0000-4000-8000-000000000801";
 
 test.describe("/docs feature flow", () => {
-  test("renders backend documents from docs.list", async ({ page }) => {
+  test("renders backend documents from the Drive-backed list", async ({ page }) => {
     const accessToken = await seedAccessToken(page, docsScope, "e2e-docs-token");
     if (!isLiveBackend()) {
       await mockDocsBackend(page, accessToken);
@@ -55,21 +55,22 @@ async function mockDocsBackend(page: Page, accessToken: string) {
       return;
     }
 
-    if (pathname === "/api/tools/docs.list") {
+    if (pathname === "/api/tools/drive.list") {
       await fulfillJson(route, {
-        documents: [
+        entries: [
           {
             id: docId,
-            title: "Backend listed doc",
-            threadId: "00000000-0000-4000-8000-000000000444",
+            type: "file",
+            name: "Backend listed doc.helixdoc",
+            folderId: null,
             ownerActorId: "00000000-0000-4000-8000-000000000111",
-            createdByActorId: "00000000-0000-4000-8000-000000000111",
-            ydocState: Buffer.from("# Backend listed doc\n\nBackend listed body\n").toString(
-              "base64",
-            ),
-            ydocStateVector: null,
-            updateSeq: 0,
-            metadata: {},
+            app: "docs",
+            mimeType: "application/x-helix-document",
+            byteSize: 1024,
+            sha256: null,
+            storageKey: "drive/backend-listed-doc.helixdoc",
+            versionNumber: 1,
+            metadata: { title: "Backend listed doc" },
             deletedAt: null,
             createdAt: "2026-05-20T12:00:00.000Z",
             updatedAt: "2026-05-20T12:00:00.000Z",

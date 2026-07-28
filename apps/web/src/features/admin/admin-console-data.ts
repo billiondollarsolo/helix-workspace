@@ -28,6 +28,7 @@ export const ADMIN_NAV = [
   { id: "users", label: "Users", icon: "Users" },
   { id: "groups", label: "Groups & OUs", icon: "Building" },
   { id: "security", label: "Security", icon: "Shield" },
+  { id: "tier-readiness", label: "Tier readiness", icon: "Shield" },
   { id: "identity", label: "Identity", icon: "Key" },
   { id: "apps", label: "Apps", icon: "Grid" },
   { id: "core-apps", label: "Core apps", icon: "Briefcase" },

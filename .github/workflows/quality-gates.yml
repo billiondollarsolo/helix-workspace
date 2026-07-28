@@ -146,6 +146,11 @@ jobs:
       - name: Run live demo data smoke
         run: pnpm quality:live-demo-data -- --execute --compose-project helix_demo_smoke_ci_${{ github.run_id }} --volume-mail-count 25 --batch-size 10
 
+      - name: Run editor-owned database migrations
+        env:
+          DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
+        run: pnpm --filter @helix/app db:migrate
+
       - name: Start Helix API
         env:
           HOST: 0.0.0.0
@@ -266,6 +271,14 @@ jobs:
         env:
           HELIX_A11Y_REPORT_DIR: /tmp/helix-a11y
         run: pnpm quality:a11y
+
+      - name: Upload accessibility report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accessibility-report
+          path: /tmp/helix-a11y
+          retention-days: 7
 
       - name: Validate k6 quality gate
         run: pnpm quality:k6

@@ -242,14 +242,25 @@ async function collectVisualSmoke(page, route, viewport, theme, rightRail) {
         let current = element;
         const white = { r: 255, g: 255, b: 255, a: 1 };
         while (current instanceof Element) {
-          const background = parsedColor(window.getComputedStyle(current).backgroundColor);
+          const backgroundValue = window.getComputedStyle(current).backgroundColor;
+          const background = parsedColor(backgroundValue);
           if (background !== null && background.a > 0) {
             return background.a < 1 ? blend(background, white) : background;
+          }
+          if (
+            background === null &&
+            backgroundValue !== "transparent" &&
+            backgroundValue !== "rgba(0, 0, 0, 0)"
+          ) {
+            // Chromium preserves CSS Color 4 values such as oklch() in
+            // computed styles. The hand-written parser cannot safely compare
+            // those values, while axe handles them correctly.
+            return null;
           }
           current = current.parentElement;
         }
         const bodyBackground = parsedColor(window.getComputedStyle(document.body).backgroundColor);
-        return bodyBackground ?? white;
+        return bodyBackground;
       }
 
       function requiredContrast(element) {
@@ -284,7 +295,7 @@ async function collectVisualSmoke(page, route, viewport, theme, rightRail) {
 
         const foreground = parsedColor(style.color);
         const background = effectiveBackground(element);
-        if (foreground !== null && label.length > 0) {
+        if (foreground !== null && background !== null && label.length > 0) {
           const ratio = contrastRatio(
             foreground.a < 1 ? blend(foreground, background) : foreground,
             background,

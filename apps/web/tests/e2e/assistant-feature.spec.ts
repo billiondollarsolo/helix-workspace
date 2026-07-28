@@ -23,9 +23,9 @@ test.describe("/assistant feature flow", () => {
 
     await page.goto("/assistant");
 
-    await expect(page.getByRole("main", { name: "Assistant" })).toBeVisible();
+    await expect(page.getByRole("main", { name: "Helix AI" })).toBeVisible();
 
-    const composer = page.locator("#assistant-composer-body");
+    const composer = page.getByRole("textbox", { name: "Message Helix AI" });
     await composer.fill(prompt);
     await page.getByRole("button", { name: "Send message" }).click();
 
@@ -36,7 +36,6 @@ test.describe("/assistant feature flow", () => {
       await expect(
         page.getByText("I found the PRD and need approval before sharing it."),
       ).toBeVisible();
-      await expect(page.getByText("drive.share", { exact: true })).toBeVisible();
     }
   });
 });

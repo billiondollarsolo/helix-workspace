@@ -15,7 +15,7 @@ interface MeetToolCall {
 }
 
 test.describe("/meet Jitsi embed", () => {
-  test("mints a backend token on Join and embeds the minted joinUrl unchanged", async ({
+  test("mints a backend token and initializes the configured Jitsi room", async ({
     page,
   }) => {
     const calls: MeetToolCall[] = [];
@@ -25,29 +25,82 @@ test.describe("/meet Jitsi embed", () => {
       token: accessToken,
     });
     await mockMeetTools(page, calls);
+    await mockJitsiExternalApi(page);
 
     await page.goto("/meet");
-    await expect(page.getByRole("heading", { name: "Backend launch review" })).toBeVisible();
+    await expect(page.getByText("Backend launch review", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Join", exact: true }).click();
+    await page.getByRole("button", { name: "Join now", exact: true }).click();
 
     await expect
       .poll(() => calls.find((call) => call.pathname === "/api/tools/meet.mint-token")?.body)
       .toEqual({
         roomId,
         expiresInSeconds: 3600,
-        moderator: true,
+        moderator: false,
       });
 
-    const iframe = page.locator(".meet-iframe");
-    await expect(iframe).toHaveAttribute("src", joinUrl);
-    await expect(iframe).toHaveAttribute(
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as Window & {
+                __helixJitsiE2E?: {
+                  readonly domain: string;
+                  readonly jwt: string;
+                  readonly roomName: string;
+                };
+              }
+            ).__helixJitsiE2E ?? null,
+        ),
+      )
+      .toEqual({
+        domain: "meet.helix.test",
+        jwt: "jwt",
+        roomName: "backend-launch-review",
+      });
+    await expect(page.locator(".meet-iframe")).toHaveAttribute(
       "allow",
-      "camera; microphone; fullscreen; display-capture",
+      "camera; microphone; fullscreen; display-capture; autoplay",
     );
-    await expect(iframe).toHaveAttribute("title", "Backend launch review Jitsi room");
   });
 });
+
+async function mockJitsiExternalApi(page: Page): Promise<void> {
+  await page.route("https://meet.helix.test/external_api.js", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: `
+        window.JitsiMeetExternalAPI = class {
+          constructor(domain, options) {
+            window.__helixJitsiE2E = {
+              domain,
+              jwt: options.jwt,
+              roomName: options.roomName,
+            };
+            this.iframe = document.createElement("iframe");
+            this.iframe.className = "meet-iframe";
+            options.parentNode.append(this.iframe);
+          }
+          addListener(event, handler) {
+            if (event === "videoConferenceJoined") {
+              queueMicrotask(() => handler({}));
+            }
+          }
+          executeCommand() {}
+          dispose() {
+            this.iframe.remove();
+          }
+          getIFrame() {
+            return this.iframe;
+          }
+        };
+      `,
+    });
+  });
+}
 
 async function mockMeetTools(page: Page, calls: MeetToolCall[]) {
   // The production shell calls GET /api/core-apps on mount; this spec's route
@@ -67,8 +120,13 @@ async function mockMeetTools(page: Page, calls: MeetToolCall[]) {
     } satisfies MeetToolCall;
     calls.push(call);
 
-    if (pathname === "/api/tools/meet.room.list") {
-      await fulfillJson(route, { rooms: [meetRoom] });
+    if (pathname === "/api/tools/meet.meetings.list") {
+      await fulfillJson(route, {
+        meetings: [meetMeeting],
+        active: [meetMeeting],
+        scheduled: [],
+        recent: [],
+      });
       return;
     }
     if (pathname === "/api/tools/meet.mint-token") {
@@ -110,4 +168,23 @@ const meetRoom = {
   recordingArtifacts: [],
   createdAt: "2026-05-20T12:00:00.000Z",
   updatedAt: "2026-05-20T12:00:00.000Z",
+};
+
+const meetMeeting = {
+  ...meetRoom,
+  title: meetRoom.subject,
+  code: "bck-lnd-rvw",
+  host: {
+    actorId: meetRoom.createdByActorId,
+    displayName: "Avery Park",
+    email: "admin@helix.local",
+    role: "owner",
+  },
+  attendees: [],
+  attendeeCount: 1,
+  scheduledStartAt: null,
+  scheduledEndAt: null,
+  durationSeconds: null,
+  recorded: false,
+  summaries: [],
 };

@@ -183,6 +183,7 @@ describe("scanInboundMail", () => {
   it("returns a no-op result when scanners are absent", async () => {
     const result = await scanInboundMail(undefined, "hello");
     expect(result.routedToSpam).toBe(false);
+    expect(result.quarantined).toBe(false);
     expect(result.spam).toBeNull();
     expect(result.antivirus).toBeNull();
   });
@@ -236,6 +237,7 @@ describe("scanInboundMail", () => {
       "infected",
     );
     expect(result.routedToSpam).toBe(true);
+    expect(result.quarantined).toBe(false);
     expect(result.spamReason).toBe("virus");
   });
 
@@ -251,7 +253,80 @@ describe("scanInboundMail", () => {
       "message",
     );
     expect(result.routedToSpam).toBe(false);
+    expect(result.quarantined).toBe(false);
     expect(result.spam).toBeNull();
+  });
+
+  it("quarantines a Business-tier scanner failure instead of delivering it to Inbox", async () => {
+    const result = await scanInboundMail(
+      {
+        antivirus: {
+          async scan() {
+            return {
+              infected: false,
+              signature: null,
+              scanned: false,
+              evidence: {
+                scannerName: "clamav",
+                scannerVersion: "unknown",
+                startedAt: "2026-07-28T12:00:00.000Z",
+                completedAt: "2026-07-28T12:00:01.000Z",
+                byteSize: 7,
+              },
+              securityScan: {
+                state: "scan_failed",
+                evidence: {
+                  scannerName: "clamav",
+                  scannerVersion: "unknown",
+                  startedAt: "2026-07-28T12:00:00.000Z",
+                  completedAt: "2026-07-28T12:00:01.000Z",
+                  byteSize: 7,
+                },
+              },
+              disposition: "quarantine",
+            };
+          },
+        },
+      },
+      "message",
+    );
+
+    expect(result).toMatchObject({
+      routedToSpam: true,
+      quarantined: true,
+      spamReason: "scanner-policy",
+      antivirus: {
+        infected: false,
+        scanned: false,
+        disposition: "quarantine",
+      },
+    });
+  });
+
+  it("keeps a Personal-tier scanner failure explicitly unscanned without quarantine", async () => {
+    const result = await scanInboundMail(
+      {
+        antivirus: {
+          async scan() {
+            return {
+              infected: false,
+              signature: null,
+              scanned: false,
+              evidence: { scannerName: "clamav", byteSize: 7 },
+              disposition: "allow_unscanned",
+            };
+          },
+        },
+      },
+      "message",
+    );
+
+    expect(result).toMatchObject({
+      routedToSpam: false,
+      quarantined: false,
+      spamReason: null,
+      antivirus: { scanned: false, disposition: "allow_unscanned" },
+    });
   });
 });
 

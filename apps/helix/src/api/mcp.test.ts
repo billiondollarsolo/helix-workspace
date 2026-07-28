@@ -584,6 +584,37 @@ describe("handleMcpJsonRpcRequest", () => {
     });
     expect(calls).toBe(0);
   });
+
+  it("bounds MCP request execution time", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+    tools.register(
+      tool({
+        id: "slow.read",
+        permission: "platform.read",
+        handler: async () => new Promise<never>(() => undefined),
+      }),
+    );
+
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal: { actor: agentActor },
+        limits: { requestTimeoutMs: 5 },
+        body: {
+          jsonrpc: "2.0",
+          id: "slow",
+          method: "tools/call",
+          params: { name: "slow.read", arguments: {} },
+        },
+      }),
+    ).resolves.toMatchObject({
+      id: "slow",
+      error: {
+        code: -32008,
+        message: "MCP request exceeded its execution deadline.",
+      },
+    });
+  });
 });
 
 class ResourceQuotaExceededError extends Error {

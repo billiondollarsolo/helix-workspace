@@ -42,11 +42,13 @@ type JsonRpcResponse =
 type JsonRpcErrorResponse = Extract<JsonRpcResponse, { readonly error: unknown }>;
 
 export const MCP_DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+export const MCP_DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export const MCP_MAX_IDENTIFIER_LENGTH = 256;
 export const MCP_MAX_RESOURCE_URI_LENGTH = 2_048;
 
 export interface McpRequestLimits {
   readonly maxBodyBytes?: number;
+  readonly requestTimeoutMs?: number;
 }
 
 type McpHandlerInput = {
@@ -128,7 +130,11 @@ export async function handleMcpJsonRpcRequest(input: McpHandlerInput): Promise<J
     },
     async (span) => {
       try {
-        const response = await dispatchMcpJsonRpcRequest(request, input);
+        const response = await dispatchWithDeadline(
+          dispatchMcpJsonRpcRequest(request, input),
+          input.limits?.requestTimeoutMs ?? MCP_DEFAULT_REQUEST_TIMEOUT_MS,
+          request.id,
+        );
         if ("error" in response) {
           span.setAttribute("helix.mcp.error_code", response.error.code);
           span.setStatus({ code: SpanStatusCode.ERROR });
@@ -600,6 +606,30 @@ function serializedByteLength(value: unknown): number {
 
 function isValidIdempotencyKey(value: string): boolean {
   return value.length >= 8 && value.length <= 200 && /^[\x21-\x7e]+$/u.test(value);
+}
+
+async function dispatchWithDeadline(
+  operation: Promise<JsonRpcResponse>,
+  timeoutMs: number,
+  id: JsonRpcId | undefined,
+): Promise<JsonRpcResponse> {
+  const boundedTimeoutMs = Math.min(Math.max(Math.trunc(timeoutMs), 1), 120_000);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<JsonRpcResponse>((resolve) => {
+        timeout = setTimeout(() => {
+          resolve(jsonRpcError(id, -32008, "MCP request exceeded its execution deadline."));
+        }, boundedTimeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function parseResourceReadParams(params: unknown): { readonly uri: string } | undefined {

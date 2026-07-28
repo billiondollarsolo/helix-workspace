@@ -86,6 +86,38 @@ connection strings. Keep it outside the repository with mode `0600`.
     "redis": ["kubectl", "-n", "helix-evidence", "rollout", "restart", "statefulset/redis"],
     "nats": ["kubectl", "-n", "helix-evidence", "rollout", "restart", "statefulset/nats"]
   },
+  "restartIdentityCommands": {
+    "app": [
+      "kubectl",
+      "-n",
+      "helix-evidence",
+      "get",
+      "pod",
+      "helix-app-a",
+      "-o",
+      "jsonpath={.metadata.uid}"
+    ],
+    "redis": [
+      "kubectl",
+      "-n",
+      "helix-evidence",
+      "get",
+      "pod",
+      "redis-0",
+      "-o",
+      "jsonpath={.metadata.uid}"
+    ],
+    "nats": [
+      "kubectl",
+      "-n",
+      "helix-evidence",
+      "get",
+      "pod",
+      "nats-0",
+      "-o",
+      "jsonpath={.metadata.uid}"
+    ]
+  },
   "logProbe": {
     "command": [
       "kubectl",
@@ -132,6 +164,9 @@ only after initiating the intended restart and must exit nonzero if they could n
 Replica identity probes must each print one distinct, stable, non-secret identifier using only
 letters, digits, dots, underscores, colons, or hyphens. The report stores hashes of those
 identifiers, not the identifiers themselves.
+Each restart identity command must print a dependency identity or start epoch that changes only
+when that app, Redis, or NATS process is replaced. The runner samples it before and after the hook;
+a successful no-op hook therefore fails rather than producing restart evidence.
 
 The backlog probe must emit exactly one JSON object on stdout, for example:
 

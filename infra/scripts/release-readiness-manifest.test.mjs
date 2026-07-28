@@ -476,6 +476,7 @@ function passedChatEvidence() {
 function passedChatRestart(timestamp) {
   return passedChatScenario(timestamp, {
     restartHookSucceeded: true,
+    dependencyIdentityChanged: true,
     reconnectsObserved: 2,
     preRestartMessageDurable: true,
     postRestartFanoutObserved: true,

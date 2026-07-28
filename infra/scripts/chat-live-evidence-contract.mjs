@@ -259,6 +259,7 @@ function validatePassedScenarioEvidence(name, evidence) {
     case "redis_restart_reconnect_durability":
     case "nats_restart_reconnect_durability":
       requireTrue(evidence.restartHookSucceeded, name);
+      requireTrue(evidence.dependencyIdentityChanged, name);
       requireInteger(evidence.reconnectsObserved, `${name}.reconnectsObserved`, 2);
       requireTrue(evidence.preRestartMessageDurable, name);
       requireTrue(evidence.postRestartFanoutObserved, name);

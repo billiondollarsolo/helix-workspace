@@ -292,14 +292,17 @@ async function proveMultiReplicaFanout(runtime) {
 async function proveRestart(runtime, dependency) {
   const { sender, receiver, config } = runtime;
   const hook = config.restartHooks[dependency];
+  const identityProbe = config.restartIdentityCommands[dependency];
   const before = `${runtime.markerPrefix}-${dependency}-before`;
   const after = `${runtime.markerPrefix}-${dependency}-after`;
   await Promise.all([subscribe(sender, config.roomId), subscribe(receiver, config.roomId)]);
   await sendAndObserve({ sender, receiver, roomId: config.roomId, marker: before });
   const reconnectsBefore =
     (await socketSnapshot(sender)).reconnects + (await socketSnapshot(receiver)).reconnects;
+  const dependencyIdentityBefore = await readDependencyIdentity(identityProbe, dependency);
   const started = Date.now();
   await runProtectedCommand(hook, `restart ${dependency}`);
+  await waitForDependencyIdentityChange(identityProbe, dependency, dependencyIdentityBefore);
   await Promise.all(config.replicaUrls.map((url) => waitForReadyz(url)));
   await Promise.all([forceReconnect(sender), forceReconnect(receiver)]);
   await Promise.all([waitReady(sender), waitReady(receiver)]);
@@ -319,6 +322,7 @@ async function proveRestart(runtime, dependency) {
     (await socketSnapshot(sender)).reconnects + (await socketSnapshot(receiver)).reconnects;
   return {
     restartHookSucceeded: true,
+    dependencyIdentityChanged: true,
     reconnectsObserved: reconnectsAfter - reconnectsBefore,
     preRestartMessageDurable: true,
     postRestartFanoutObserved: true,
@@ -1031,6 +1035,30 @@ async function runProtectedCommand(command, label) {
   }
 }
 
+async function readDependencyIdentity(command, dependency) {
+  const identity = (
+    await runProtectedCommand(command, `${dependency} dependency identity probe`)
+  ).trim();
+  if (!/^[a-z0-9._:-]{1,256}$/iu.test(identity)) {
+    throw new Error(`${dependency} dependency identity probe returned an unsafe identity`);
+  }
+  return identity;
+}
+
+async function waitForDependencyIdentityChange(command, dependency, previousIdentity) {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    try {
+      const currentIdentity = await readDependencyIdentity(command, dependency);
+      if (currentIdentity !== previousIdentity) return;
+    } catch {
+      // The identity endpoint may be briefly unavailable during the restart.
+    }
+    await delay(250);
+  }
+  throw new Error(`${dependency} dependency identity did not change after restart`);
+}
+
 async function waitForReadyz(origin) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
@@ -1060,6 +1088,7 @@ async function validateConfig(raw, baseDirectory) {
   requireObject(raw.drive, "drive");
   requireArray(raw.replicaIdentityCommands, "replicaIdentityCommands");
   requireObject(raw.restartHooks, "restartHooks");
+  requireObject(raw.restartIdentityCommands, "restartIdentityCommands");
   requireObject(raw.logProbe, "logProbe");
   requireObject(raw.metrics, "metrics");
   requireObject(raw.load, "load");
@@ -1069,8 +1098,13 @@ async function validateConfig(raw, baseDirectory) {
     actors[name] = await protectedFile(raw.actors[name], baseDirectory, `actors.${name}`);
   }
   const restartHooks = {};
+  const restartIdentityCommands = {};
   for (const name of ["app", "redis", "nats"]) {
     restartHooks[name] = commandArray(raw.restartHooks[name], `restartHooks.${name}`);
+    restartIdentityCommands[name] = commandArray(
+      raw.restartIdentityCommands[name],
+      `restartIdentityCommands.${name}`,
+    );
   }
   const replicaIdentityCommands = raw.replicaIdentityCommands.map((command, index) =>
     commandArray(command, `replicaIdentityCommands[${index}]`),
@@ -1102,6 +1136,7 @@ async function validateConfig(raw, baseDirectory) {
       eicarObjectId: requireUuid(raw.drive.eicarObjectId, "drive.eicarObjectId"),
     },
     restartHooks,
+    restartIdentityCommands,
     logProbe: {
       command: commandArray(raw.logProbe.command, "logProbe.command"),
       delayMs: boundedInteger(raw.logProbe.delayMs ?? 1_000, "logProbe.delayMs", 0, 30_000),

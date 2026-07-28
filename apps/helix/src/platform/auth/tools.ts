@@ -67,6 +67,7 @@ export function createAgentCredentialToolDefinitions(
         const registration = await clientManager.createClient({
           actorId: input.actorId,
           orgId: ctx.actor.orgId,
+          approvalOwnerActorId: ctx.actor.id,
           scopes: normalizeScopes(input.scopes),
           expiresAt:
             input.expiresAt === undefined || input.expiresAt === null

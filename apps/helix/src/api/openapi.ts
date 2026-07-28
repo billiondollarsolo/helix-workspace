@@ -44,9 +44,10 @@ export function buildOpenApiDocument(
   // Pin the real server version so the published spec never advertises 0.0.0.
   document.info = {
     ...(isRecord(document.info) ? document.info : {}),
-    title: isRecord(document.info) && typeof document.info.title === "string"
-      ? document.info.title
-      : "Helix Platform API",
+    title:
+      isRecord(document.info) && typeof document.info.title === "string"
+        ? document.info.title
+        : "Helix Platform API",
     version: HELIX_SERVER_VERSION,
   };
 
@@ -429,9 +430,15 @@ function exampleForSchema(schema: JsonObject): JsonValueForExample {
   return buildExample(schema, 0);
 }
 
-type JsonValueForExample = string | number | boolean | null | JsonValueForExample[] | {
-  [key: string]: JsonValueForExample;
-};
+type JsonValueForExample =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValueForExample[]
+  | {
+      [key: string]: JsonValueForExample;
+    };
 
 function buildExample(schema: Record<string, unknown>, depth: number): JsonValueForExample {
   if (depth > 4) {
@@ -445,11 +452,12 @@ function buildExample(schema: Record<string, unknown>, depth: number): JsonValue
     return jsonExampleValue(enumValues[0]);
   }
   const rawType = schema.type;
-  const type = typeof rawType === "string"
-    ? rawType
-    : Array.isArray(rawType) && typeof rawType[0] === "string"
-      ? rawType[0]
-      : undefined;
+  const type =
+    typeof rawType === "string"
+      ? rawType
+      : Array.isArray(rawType) && typeof rawType[0] === "string"
+        ? rawType[0]
+        : undefined;
   switch (type) {
     case "object": {
       const properties = isRecord(schema.properties) ? schema.properties : {};
@@ -583,18 +591,54 @@ const pendingActionStatusResponseSchema = {
     action: {
       type: "object",
       additionalProperties: false,
-      required: ["id", "toolId", "actorId", "input", "status", "createdAt", "expiresAt"],
+      required: [
+        "id",
+        "toolId",
+        "actorId",
+        "requesterActorId",
+        "preview",
+        "status",
+        "createdAt",
+        "expiresAt",
+      ],
       properties: {
         id: { type: "string", format: "uuid" },
         toolId: { type: "string" },
         actorId: { type: "string" },
-        input: {},
+        requesterActorId: { type: "string" },
+        requesterCredentialId: { type: "string", format: "uuid" },
+        approverActorId: { type: "string" },
+        executionActorId: { type: "string" },
+        preview: {
+          type: "object",
+          additionalProperties: false,
+          required: ["toolId", "action", "resourceIds", "recipients", "targets", "consequence"],
+          properties: {
+            toolId: { type: "string" },
+            action: { type: "string" },
+            resourceIds: { type: "array", items: { type: "string" } },
+            recipients: { type: "array", items: { type: "string" } },
+            targets: { type: "array", items: { type: "string" } },
+            consequence: { type: "string" },
+          },
+        },
         status: {
           type: "string",
-          enum: ["pending_confirmation", "confirmed", "cancelled", "expired"],
+          enum: [
+            "pending_confirmation",
+            "approved",
+            "executing",
+            "executed",
+            "failed",
+            "cancelled",
+            "expired",
+          ],
         },
         createdAt: { type: "string", format: "date-time" },
         expiresAt: { type: "string", format: "date-time" },
+        approvedAt: { type: "string", format: "date-time" },
+        executionStartedAt: { type: "string", format: "date-time" },
+        executionCompletedAt: { type: "string", format: "date-time" },
         traceId: { type: "string" },
       },
     },
@@ -606,7 +650,15 @@ const pendingActionStatusExample = {
     id: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
     toolId: "mail.send",
     actorId: "agent-123",
-    input: { to: "user@example.com", subject: "Hello" },
+    requesterActorId: "agent-123",
+    preview: {
+      toolId: "mail.send",
+      action: "mail.send",
+      resourceIds: [],
+      recipients: ["user@example.com"],
+      targets: [],
+      consequence: "Send external communication using mail.send.",
+    },
     status: "pending_confirmation",
     createdAt: "2026-05-21T12:00:00.000Z",
     expiresAt: "2026-05-21T12:15:00.000Z",
@@ -670,9 +722,7 @@ function yamlValue(value: unknown, indent: number): string {
       return "[]";
     }
     const pad = "  ".repeat(indent);
-    return value
-      .map((item) => `\n${pad}- ${yamlInline(item, indent + 1)}`)
-      .join("");
+    return value.map((item) => `\n${pad}- ${yamlInline(item, indent + 1)}`).join("");
   }
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>).filter(

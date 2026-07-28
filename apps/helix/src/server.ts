@@ -404,8 +404,9 @@ import {
 import type { PlatformMetrics } from "./api/metrics.js";
 import type { CreateFastifyContextOptions } from "@trpc/server/adapters/fastify";
 import type { AccessTokenStore } from "./platform/auth/oauth.js";
-import type { AgentCredentialStore } from "./platform/auth/credentials.js";
+import { enforceCredentialPolicy, type AgentCredentialStore } from "./platform/auth/credentials.js";
 import type {
+  Actor,
   AiConfig,
   AiProviderConfig,
   ChatRequest,
@@ -1975,8 +1976,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     {
       id: "platform.pending_action.created",
       subject: "platform.pending_action.created",
-      title: "Pending action created",
-      description: "A tool invocation is awaiting confirmation.",
+      title: "Pending action status",
+      description: "A pending tool invocation was created or changed state.",
       direction: "publish",
       tags: ["Tools"],
       payloadSchema: {
@@ -2062,6 +2063,25 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         );
       }
     },
+    onPendingActionChanged: async (record) => {
+      try {
+        await eventBus.publish("platform.pending_action.created", {
+          id: record.id,
+          orgId: record.orgId,
+          actorId: record.requesterActorId,
+          toolId: record.toolId,
+          status: record.status,
+          createdAt: record.createdAt.toISOString(),
+          expiresAt: record.expiresAt.toISOString(),
+          ...(record.traceId === null ? {} : { traceId: record.traceId }),
+        });
+      } catch (error) {
+        app.log.error(
+          { error, pendingActionId: record.id, status: record.status },
+          "Failed to publish pending action status notification",
+        );
+      }
+    },
   });
   // P0-4(b): leader-gated worker that transitions stale pending_confirmation
   // actions to `expired` once their per-tier timeout elapses.
@@ -2070,8 +2090,33 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     intervalMs: bootEnv.PENDING_ACTION_EXPIRY_INTERVAL_MS,
     batchSize: bootEnv.PENDING_ACTION_EXPIRY_BATCH_SIZE,
     onResult: (result) => {
-      if (result.expiredCount > 0) {
-        app.log.info({ expiredCount: result.expiredCount }, "Expired stale pending tool actions");
+      if (result.expiredCount > 0 || result.recoveredUnknownCount > 0) {
+        app.log.info(
+          {
+            expiredCount: result.expiredCount,
+            recoveredUnknownCount: result.recoveredUnknownCount,
+          },
+          "Recovered stale pending tool actions",
+        );
+        for (const record of [...result.expired, ...result.recoveredUnknown]) {
+          void eventBus
+            .publish("platform.pending_action.created", {
+              id: record.id,
+              orgId: record.orgId,
+              actorId: record.requesterActorId,
+              toolId: record.toolId,
+              status: record.status,
+              createdAt: record.createdAt.toISOString(),
+              expiresAt: record.expiresAt.toISOString(),
+              ...(record.traceId === null ? {} : { traceId: record.traceId }),
+            })
+            .catch((error: unknown) => {
+              app.log.error(
+                { error, pendingActionId: record.id },
+                "Failed to publish expired pending action notification",
+              );
+            });
+        }
       }
     },
     onError: (error) => {
@@ -2135,6 +2180,70 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       : { agentLimitBudget: agentLimitBudgetOverride }),
     metrics,
     featureFlags: runtimeFeatureFlags,
+    resolvePendingPrincipal: async (record) => {
+      if (record.requesterCredentialId === null) {
+        const rows = (await sql`
+          select id, org_id, type, display_name, email, scopes
+          from actors
+          where id = ${record.requesterActorId}
+            and org_id = ${record.orgId}
+            and disabled_at is null
+          limit 1
+        `) as unknown as readonly {
+          readonly id: string;
+          readonly org_id: string;
+          readonly type: Actor["type"];
+          readonly display_name: string;
+          readonly email: string | null;
+          readonly scopes: readonly string[];
+        }[];
+        const requester = rows[0];
+        if (requester === undefined) {
+          return null;
+        }
+        return {
+          actor: {
+            id: requester.id,
+            orgId: requester.org_id,
+            type: requester.type,
+            displayName: requester.display_name,
+            ...(requester.email === null ? {} : { email: requester.email }),
+            scopes: requester.scopes,
+          },
+        };
+      }
+      const credential = await agentCredentialStore.findById(record.requesterCredentialId);
+      if (
+        credential === null ||
+        credential.actorId !== record.requesterActorId ||
+        credential.orgId !== record.orgId
+      ) {
+        return null;
+      }
+      const enforcement = enforceCredentialPolicy(credential, {
+        ...(record.requesterIp === null ? {} : { ip: record.requesterIp }),
+        ...(credential.certFingerprint === null
+          ? {}
+          : { certFingerprint: credential.certFingerprint }),
+      });
+      if (!enforcement.ok) {
+        return null;
+      }
+      return {
+        actor: {
+          id: credential.actorId,
+          orgId: credential.orgId,
+          type: "agent",
+          scopes: credential.scopes,
+        },
+        credentialId: credential.id,
+        ...(credential.approvalOwnerActorId === undefined ||
+        credential.approvalOwnerActorId === null
+          ? {}
+          : { credentialOwnerActorId: credential.approvalOwnerActorId }),
+        credentialPolicy: credential.policy,
+      };
+    },
   });
   // P0-6 / PRD §8.4: auto-classify newly created resources. The feature tool
   // create / send / upload handlers call this classifier so mail messages,

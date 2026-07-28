@@ -193,6 +193,9 @@ export async function toolInvocationPrincipalFromRequest(
           principal: credentialToolInvocationPrincipal({
             actor,
             credentialId: credential.id,
+            ...(credential.approvalOwnerActorId === undefined
+              ? {}
+              : { credentialOwnerActorId: credential.approvalOwnerActorId }),
             credentialPolicy: credential.policy,
           }),
         };
@@ -281,6 +284,7 @@ function credentialPrincipal(credential: {
   readonly actorId: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
+  readonly approvalOwnerActorId?: string | null;
   readonly policy: AgentCredentialPolicy;
 }): ToolInvocationPrincipal {
   const actor: Actor = {
@@ -292,6 +296,9 @@ function credentialPrincipal(credential: {
   return credentialToolInvocationPrincipal({
     actor,
     credentialId: credential.id,
+    ...(credential.approvalOwnerActorId === undefined
+      ? {}
+      : { credentialOwnerActorId: credential.approvalOwnerActorId }),
     credentialPolicy: credential.policy,
   });
 }

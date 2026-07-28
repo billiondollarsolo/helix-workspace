@@ -480,35 +480,27 @@ export class AssistantOrchestrator {
       throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
     }
 
-    const approved = await this.options.confirmationGate.approve({
-      id: input.pendingId,
+    const pendingStatus = await this.options.tools.getPendingAction(input.pendingId, {
       actor: input.actor,
     });
-    if (approved === null || approved.status !== "confirmed") {
+    if (!pendingStatus.ok) {
       throw new Error(`Pending assistant tool action is not approvable: ${input.pendingId}`);
     }
-
-    const toolInput = jsonObjectFromValue(approved.input);
-    const execution = await this.options.tools.invoke(approved.toolId, toolInput, {
+    const execution = await this.options.tools.approvePending(input.pendingId, {
       ...toolInvocationOptions(principalForAssistantInput(input), input.request),
     });
-    await this.options.confirmationGate.recordExecution({
-      id: approved.id,
-      actor: input.actor,
-      ...(input.request?.traceId === undefined ? {} : { traceId: input.request.traceId }),
-      ...(execution.ok ? { result: toJsonValue(execution.output) } : { error: execution.error }),
-    });
+    const toolInput = toJsonObject({ preview: pendingStatus.pending.preview });
     const toolCall: AssistantToolCallResult = execution.ok
       ? {
-          toolCallId: approved.id,
-          toolId: approved.toolId,
+          toolCallId: input.pendingId,
+          toolId: pendingStatus.pending.toolId,
           input: toolInput,
           status: "executed",
           output: toJsonValue(execution.output),
         }
       : {
-          toolCallId: approved.id,
-          toolId: approved.toolId,
+          toolCallId: input.pendingId,
+          toolId: pendingStatus.pending.toolId,
           input: toolInput,
           status: "failed",
           error: execution.error,
@@ -518,9 +510,9 @@ export class AssistantOrchestrator {
       conversationId: conversation.id,
       role: "tool",
       content: toolResultContent(toolCall),
-      toolCallId: approved.id,
+      toolCallId: input.pendingId,
       metadata: toJsonObject({
-        approvedPendingTool: approved,
+        approvedPendingTool: pendingStatus.pending,
         toolCall,
         ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
       }),
@@ -547,8 +539,8 @@ export class AssistantOrchestrator {
         tools: visibleTools.map((tool) => tool.id),
         classification: input.classification ?? "standard",
         metadata: toJsonObject({
-          resumePendingId: approved.id,
-          approvedToolId: approved.toolId,
+          resumePendingId: input.pendingId,
+          approvedToolId: pendingStatus.pending.toolId,
           toolMessageId: toolMessage.id,
           ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
         }),
@@ -565,7 +557,7 @@ export class AssistantOrchestrator {
         model: aiResponse.model,
         usage: aiResponse.usage ?? {},
         ...(aiResponse.metadata === undefined ? {} : { ai: aiResponse.metadata }),
-        resumedPendingId: approved.id,
+        resumedPendingId: input.pendingId,
         toolCalls: aiResponse.toolCalls ?? [],
       }),
     });
@@ -607,7 +599,7 @@ export class AssistantOrchestrator {
       throw new Error(`Pending assistant tool action is not cancellable: ${input.pendingId}`);
     }
 
-    const toolInput = jsonObjectFromValue(cancelled.input);
+    const toolInput = toJsonObject({ preview: cancelled.preview });
     const toolCall: AssistantToolCallResult = {
       toolCallId: cancelled.id,
       toolId: cancelled.toolId,
@@ -992,7 +984,15 @@ function syntheticPendingConfirmation(
     id: randomUUID(),
     toolId,
     actorId: actor.id,
-    input,
+    requesterActorId: actor.id,
+    preview: {
+      toolId,
+      action: "assistant.synthetic",
+      resourceIds: [],
+      recipients: [],
+      targets: [],
+      consequence: "Await confirmation for an assistant-proposed workspace change.",
+    },
     status: "pending_confirmation",
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
@@ -1034,13 +1034,6 @@ function toJsonValue(value: unknown): JsonValue {
 
 function toJsonObject(value: unknown): JsonObject {
   return JSON.parse(JSON.stringify(value ?? {})) as JsonObject;
-}
-
-function jsonObjectFromValue(value: JsonValue): JsonObject {
-  if (isJsonObject(value)) {
-    return value;
-  }
-  throw new TypeError("Assistant pending tool input must be a JSON object.");
 }
 
 /** Extracts assembled tool calls from a streamed final chunk's metadata. */

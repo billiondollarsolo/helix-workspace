@@ -33,6 +33,8 @@ export interface OAuthClientCreateInput {
   readonly actorId: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
+  /** Human owner allowed to approve this credential's queued actions. */
+  readonly approvalOwnerActorId?: string;
   /**
    * Per-client redirect-URI allowlist (CRITICAL-3). When omitted, the client
    * is created with no registered redirect URIs and `/oauth/authorize` will
@@ -618,7 +620,11 @@ export async function hashSecretScrypt(secret: string): Promise<string> {
  * Detect the hashing algorithm used to produce a stored secret hash.
  */
 export function detectHashAlgorithm(hash: string): "argon2id" | "scrypt" | "unknown" {
-  if (hash.startsWith("$argon2id$") || hash.startsWith("$argon2i$") || hash.startsWith("$argon2d$")) {
+  if (
+    hash.startsWith("$argon2id$") ||
+    hash.startsWith("$argon2i$") ||
+    hash.startsWith("$argon2d$")
+  ) {
     return "argon2id";
   }
   if (hash.startsWith("scrypt$")) {

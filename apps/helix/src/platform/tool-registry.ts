@@ -21,6 +21,9 @@ import {
 } from "./permissions/tool-access.js";
 import { confirmationRequiredForSideEffect, tierDefaults } from "./config/tier.js";
 import type { ConfirmationGate } from "./tools/registry.js";
+import type { PendingActionRecord } from "./tools/registry.js";
+import type { AgentAutomationPolicy, AgentCredentialPolicy } from "./auth/credentials.js";
+import { evaluateAutomationPolicy, hashToolInput } from "./tools/automation-policy.js";
 import type { TierSecurityDefaults } from "@helix/sdk-types";
 import {
   resolveAgentLimitBudget,
@@ -72,6 +75,8 @@ export interface ToolInvokeOptions {
    * token material.
    */
   readonly credentialId?: string;
+  /** Human actor that owns the authenticating credential and may approve its actions. */
+  readonly credentialOwnerActorId?: string;
   /**
    * A caller-computed SHA-256 fingerprint, never the raw idempotency key.
    * Invalid/non-fingerprint values are omitted from audit records.
@@ -105,6 +110,8 @@ export interface CredentialPolicyOverrides {
     readonly requestsPerDay?: number | null;
     readonly costPerDayUsdMicros?: number | null;
   };
+  readonly automationPolicy?: AgentAutomationPolicy | null;
+  readonly version?: string;
 }
 
 export interface ToolAuditSink {
@@ -126,6 +133,13 @@ export interface PendingToolActionOptions {
   readonly credentialId?: string;
   readonly credentialPolicy?: CredentialPolicyOverrides;
   readonly idempotencyFingerprint?: string;
+}
+
+export interface PendingExecutionPrincipal {
+  readonly actor: Actor;
+  readonly credentialId?: string;
+  readonly credentialOwnerActorId?: string;
+  readonly credentialPolicy?: AgentCredentialPolicy;
 }
 
 export type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
@@ -218,6 +232,15 @@ export interface ToolRegistryOptions {
   readonly metrics?: ToolInvocationMetrics;
   readonly featureFlags?: FeatureFlagProvider;
   readonly toolFeatureFlag?: ToolFeatureFlagResolver;
+  /**
+   * Re-resolves the requesting principal immediately before approved work
+   * executes. Credential-backed actions fail closed when this resolver is
+   * absent or returns null.
+   */
+  readonly resolvePendingPrincipal?: (
+    record: PendingActionRecord,
+    approval: PendingToolActionOptions,
+  ) => Promise<PendingExecutionPrincipal | null>;
 }
 
 export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeToolRegistry {
@@ -326,22 +349,6 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           tool,
           invokeOptions?.estimatedCostUsdMicros,
         );
-        const limitDecision = await consumeAgentLimit(
-          tool.id,
-          actor,
-          estimatedCostUsdMicros,
-          invokeOptions?.credentialPolicy?.rateLimitOverrides,
-        );
-        if (limitDecision !== null) {
-          return await completeInvocation(span, limitDecision, {
-            actor,
-            tool,
-            toolId,
-            start,
-            status: "denied",
-            invokeOptions,
-          });
-        }
 
         let input: unknown;
         try {
@@ -385,6 +392,55 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
             },
           );
         }
+        const automationDecision =
+          actor.type === "agent" && tool.sideEffects !== "read"
+            ? evaluateAutomationPolicy({
+                policy:
+                  invokeOptions?.credentialId === undefined
+                    ? null
+                    : invokeOptions.credentialPolicy?.automationPolicy,
+                tool,
+                parsedInput: input,
+              })
+            : null;
+        if (
+          automationDecision?.allowed === false &&
+          automationDecision.reason === "policy_self_modification"
+        ) {
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 403,
+              error: `Agent credentials cannot modify their own authorization policy: ${toolId}`,
+            },
+            { actor, tool, toolId, start, status: "denied", invokeOptions },
+          );
+        }
+        const rateLimitOverrides =
+          automationDecision?.allowed === true
+            ? automationRateLimitOverrides(
+                invokeOptions?.credentialPolicy?.rateLimitOverrides,
+                automationDecision.requestsPerMinute,
+                automationDecision.requestsPerDay,
+              )
+            : invokeOptions?.credentialPolicy?.rateLimitOverrides;
+        const limitDecision = await consumeAgentLimit(
+          tool.id,
+          actor,
+          estimatedCostUsdMicros,
+          rateLimitOverrides,
+        );
+        if (limitDecision !== null) {
+          return await completeInvocation(span, limitDecision, {
+            actor,
+            tool,
+            toolId,
+            start,
+            status: "denied",
+            invokeOptions,
+          });
+        }
         const context = createToolContext(
           invokeOptions?.request,
           actor,
@@ -393,23 +449,44 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           optionsAuditSink(),
         );
         const confirmationGate = registryOptionsConfirmationGate();
-        if (
-          invokeOptions?.enforceConfirmation === true &&
-          confirmationGate !== undefined &&
-          shouldQueueConfirmation(
+        const queueRequired =
+          (actor.type === "agent" || invokeOptions?.enforceConfirmation === true) &&
+          shouldQueueConfirmation({
             tool,
             actor,
-            confirmationDefaults,
-            invokeOptions.skipConfirmation,
-            invokeOptions.credentialPolicy?.confirmationOverride,
-          )
-        ) {
+            defaults: confirmationDefaults,
+            skipConfirmation: invokeOptions?.skipConfirmation,
+            approvedPendingExecution: invokeOptions?.pendingActionId !== undefined,
+            confirmationOverride: invokeOptions?.credentialPolicy?.confirmationOverride,
+            automationAllowed: automationDecision?.allowed === true,
+          });
+        if (queueRequired && confirmationGate === undefined) {
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 503,
+              error: "Confirmation gate is required for this tool invocation.",
+            },
+            { actor, tool, toolId, start, status: "denied", invokeOptions },
+          );
+        }
+        if (queueRequired && confirmationGate !== undefined) {
           const pending = await confirmationGate.queue({
             tool,
             actor,
+            ...(invokeOptions?.credentialId === undefined
+              ? {}
+              : { requesterCredentialId: invokeOptions.credentialId }),
+            ...(invokeOptions?.credentialOwnerActorId === undefined
+              ? {}
+              : { approvalOwnerActorId: invokeOptions.credentialOwnerActorId }),
+            ...(invokeOptions?.credentialPolicy === undefined
+              ? {}
+              : { credentialPolicy: invokeOptions.credentialPolicy as AgentCredentialPolicy }),
             input: toJsonValue(input),
-            ...(invokeOptions.request === undefined ? {} : { request: invokeOptions.request }),
-            ...(invokeOptions.request?.traceId === undefined
+            ...(invokeOptions?.request === undefined ? {} : { request: invokeOptions.request }),
+            ...(invokeOptions?.request?.traceId === undefined
               ? {}
               : { traceId: invokeOptions.request.traceId }),
           });
@@ -539,7 +616,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           error: "Pending tool action approval failed.",
         };
       }
-      if (approved === null || approved.status !== "confirmed") {
+      if (approved === null || approved.status !== "approved") {
         await auditPendingDecision({
           actor: approvalOptions.actor,
           pendingId,
@@ -553,35 +630,81 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         };
       }
 
-      const executionRequest =
-        approved.traceId === undefined
-          ? approvalOptions.request
-          : {
-              requestId: approvalOptions.request?.requestId ?? `pending:${pendingId}`,
-              traceId: approved.traceId,
-              ...(approvalOptions.request?.spanId === undefined
-                ? {}
-                : { spanId: approvalOptions.request.spanId }),
-            };
-      const result = await this.invoke<Output>(approved.toolId, approved.input, {
-        actor: approvalOptions.actor,
-        ...(executionRequest === undefined ? {} : { request: executionRequest }),
-        ...(approvalOptions.credentialId === undefined
-          ? {}
-          : { credentialId: approvalOptions.credentialId }),
-        ...(approvalOptions.credentialPolicy === undefined
-          ? {}
-          : { credentialPolicy: approvalOptions.credentialPolicy }),
-        ...(approvalOptions.idempotencyFingerprint === undefined
-          ? {}
-          : { idempotencyFingerprint: approvalOptions.idempotencyFingerprint }),
-        pendingActionId: pendingId,
-        skipConfirmation: true,
-      });
-      await gate.recordExecution({
+      const pendingRecord = await gate.getRecord({
         id: pendingId,
         actor: approvalOptions.actor,
-        ...(executionRequest?.traceId === undefined ? {} : { traceId: executionRequest.traceId }),
+      });
+      if (
+        pendingRecord === null ||
+        hashToolInput(pendingRecord.input) !== pendingRecord.inputHash
+      ) {
+        return {
+          ok: false,
+          statusCode: 409,
+          error: "Pending action input integrity check failed.",
+        };
+      }
+      const requestingPrincipal = await options.resolvePendingPrincipal?.(
+        pendingRecord,
+        approvalOptions,
+      );
+      if (
+        requestingPrincipal === null ||
+        requestingPrincipal === undefined ||
+        requestingPrincipal.actor.id !== pendingRecord.requesterActorId ||
+        requestingPrincipal.actor.orgId !== pendingRecord.orgId ||
+        (pendingRecord.requesterCredentialId !== null &&
+          requestingPrincipal.credentialId !== pendingRecord.requesterCredentialId) ||
+        (requestingPrincipal.credentialPolicy?.version ?? "actor-session") !==
+          pendingRecord.policyVersion ||
+        (pendingRecord.requesterCredentialId !== null &&
+          requestingPrincipal.credentialOwnerActorId !== approvalOptions.actor.id &&
+          !actorIsOrgAdmin(approvalOptions.actor))
+      ) {
+        return {
+          ok: false,
+          statusCode: 403,
+          error: "Requesting credential, policy, owner, or tenant changed before execution.",
+        };
+      }
+      const claim = await gate.claimExecution({
+        id: pendingId,
+        approver: approvalOptions.actor,
+        executionActorId: requestingPrincipal.actor.id,
+      });
+      if (claim === null) {
+        return {
+          ok: false,
+          statusCode: 409,
+          error: `Pending tool action execution was already claimed: ${pendingId}`,
+        };
+      }
+      const executionRequest: RequestContext = {
+        requestId: `pending:${pendingId}`,
+        ...(claim.record.traceId === null ? {} : { traceId: claim.record.traceId }),
+        ...(claim.record.requesterIp === null ? {} : { ip: claim.record.requesterIp }),
+      };
+      const result = await this.invoke<Output>(claim.record.toolId, claim.record.input, {
+        actor: requestingPrincipal.actor,
+        request: executionRequest,
+        ...(requestingPrincipal.credentialId === undefined
+          ? {}
+          : { credentialId: requestingPrincipal.credentialId }),
+        ...(requestingPrincipal.credentialOwnerActorId === undefined
+          ? {}
+          : { credentialOwnerActorId: requestingPrincipal.credentialOwnerActorId }),
+        ...(requestingPrincipal.credentialPolicy === undefined
+          ? {}
+          : { credentialPolicy: requestingPrincipal.credentialPolicy }),
+        idempotencyFingerprint: claim.record.inputHash,
+        pendingActionId: pendingId,
+        enforceConfirmation: true,
+        skipConfirmation: true,
+      });
+      await gate.completeExecution({
+        id: pendingId,
+        executionActorId: requestingPrincipal.actor.id,
+        ...(executionRequest.traceId === undefined ? {} : { traceId: executionRequest.traceId }),
         ...(result.ok && result.status === "executed"
           ? { result: toJsonValue(result.output) }
           : { error: result.ok ? "Pending action did not execute." : result.error }),
@@ -1101,30 +1224,32 @@ class PermissionDeniedError extends Error {
   }
 }
 
-function shouldQueueConfirmation(
-  tool: ToolDefinition,
-  actor: Actor,
-  defaults: TierSecurityDefaults,
-  skipConfirmation: boolean | undefined,
-  confirmationOverride: CredentialPolicyOverrides["confirmationOverride"],
-): boolean {
-  if (skipConfirmation === true) {
+function shouldQueueConfirmation(input: {
+  readonly tool: ToolDefinition;
+  readonly actor: Actor;
+  readonly defaults: TierSecurityDefaults;
+  readonly skipConfirmation: boolean | undefined;
+  readonly approvedPendingExecution: boolean;
+  readonly confirmationOverride: CredentialPolicyOverrides["confirmationOverride"];
+  readonly automationAllowed: boolean;
+}): boolean {
+  if (input.skipConfirmation === true && input.approvedPendingExecution) {
     return false;
   }
   // RD-5: reads are immediate for agents, while every agent-originated
   // mutation is confirmation-gated unless a separately validated, bounded
   // automation policy authorizes this exact action. The legacy credential-wide
   // "never" value is not sufficiently narrow and therefore fails closed.
-  if (actor.type === "agent") {
-    return tool.sideEffects !== "read";
+  if (input.actor.type === "agent") {
+    return input.tool.sideEffects !== "read" && !input.automationAllowed;
   }
   const tierDecision = confirmationRequiredForSideEffect(
-    tool.sideEffects,
-    defaults,
-    tool.confirmationRequired,
+    input.tool.sideEffects,
+    input.defaults,
+    input.tool.confirmationRequired,
   );
   // Human session behavior retains the configured tier/override semantics.
-  switch (confirmationOverride) {
+  switch (input.confirmationOverride) {
     case "always":
       return true;
     case "never":
@@ -1133,6 +1258,37 @@ function shouldQueueConfirmation(
     case undefined:
       return tierDecision;
   }
+}
+
+function automationRateLimitOverrides(
+  credential: CredentialPolicyOverrides["rateLimitOverrides"],
+  requestsPerMinute: number,
+  requestsPerDay: number,
+): NonNullable<CredentialPolicyOverrides["rateLimitOverrides"]> {
+  return {
+    requestsPerMinute: strictestLimit(credential?.requestsPerMinute, requestsPerMinute),
+    requestsPerDay: strictestLimit(credential?.requestsPerDay, requestsPerDay),
+    ...(credential?.costPerDayUsdMicros === undefined
+      ? {}
+      : { costPerDayUsdMicros: credential.costPerDayUsdMicros }),
+  };
+}
+
+function strictestLimit(current: number | null | undefined, policy: number): number {
+  return current === null || current === undefined ? policy : Math.min(current, policy);
+}
+
+function actorIsOrgAdmin(actor: Actor): boolean {
+  return (
+    actor.type === "user" &&
+    (actor.scopes ?? []).some(
+      (scope) =>
+        scope === "*" ||
+        scope === "admin.*" ||
+        scope === "admin.agents" ||
+        scope === "admin.console.write",
+    )
+  );
 }
 
 function toJsonValue(value: unknown): JsonValue {

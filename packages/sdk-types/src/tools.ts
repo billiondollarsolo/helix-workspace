@@ -75,15 +75,39 @@ export interface ToolDefinition<Input = unknown, Output = unknown> {
   handler(input: Input, ctx: ToolContext): Promise<Output>;
 }
 
-export type PendingActionStatus = "pending_confirmation" | "confirmed" | "cancelled" | "expired";
+export type PendingActionStatus =
+  | "pending_confirmation"
+  | "approved"
+  | "executing"
+  | "executed"
+  | "failed"
+  | "cancelled"
+  | "expired";
+
+export interface PendingActionPreview {
+  readonly toolId: string;
+  readonly action: string;
+  readonly resourceIds: readonly string[];
+  readonly recipients: readonly string[];
+  readonly targets: readonly string[];
+  readonly consequence: string;
+}
 
 export interface PendingToolInvocation {
   readonly id: string;
   readonly toolId: string;
+  /** Backwards-compatible alias of requesterActorId. */
   readonly actorId: string;
-  readonly input: JsonValue;
+  readonly requesterActorId: string;
+  readonly requesterCredentialId?: string;
+  readonly approverActorId?: string;
+  readonly executionActorId?: string;
+  readonly preview: PendingActionPreview;
   readonly status: PendingActionStatus;
   readonly createdAt: string;
   readonly expiresAt: string;
+  readonly approvedAt?: string;
+  readonly executionStartedAt?: string;
+  readonly executionCompletedAt?: string;
   readonly traceId?: string;
 }

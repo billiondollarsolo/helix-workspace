@@ -11,6 +11,7 @@ import type { AgentCredentialPolicy } from "./credentials.js";
 export interface ToolInvocationPrincipal {
   readonly actor: Actor;
   readonly credentialId?: string;
+  readonly credentialOwnerActorId?: string;
   readonly credentialPolicy?: AgentCredentialPolicy;
 }
 
@@ -29,11 +30,13 @@ export function actorToolInvocationPrincipal(actor: Actor): ToolInvocationPrinci
 export function credentialToolInvocationPrincipal(input: {
   readonly actor: Actor;
   readonly credentialId: string;
+  readonly credentialOwnerActorId?: string | null;
   readonly credentialPolicy: AgentCredentialPolicy;
 }): ToolInvocationPrincipal {
   const principal = { actor: input.actor } as {
     actor: Actor;
     credentialId?: string;
+    credentialOwnerActorId?: string;
     credentialPolicy?: AgentCredentialPolicy;
   };
   // Defense in depth: even if a principal is accidentally handed to a JSON
@@ -46,6 +49,16 @@ export function credentialToolInvocationPrincipal(input: {
       value: input.credentialId,
       writable: false,
     },
+    ...(input.credentialOwnerActorId === undefined || input.credentialOwnerActorId === null
+      ? {}
+      : {
+          credentialOwnerActorId: {
+            configurable: false,
+            enumerable: false,
+            value: input.credentialOwnerActorId,
+            writable: false,
+          },
+        }),
     credentialPolicy: {
       configurable: false,
       enumerable: false,
@@ -70,6 +83,9 @@ export function toolInvocationOptions(
     actor: principal.actor,
     ...(request === undefined ? {} : { request }),
     ...(principal.credentialId === undefined ? {} : { credentialId: principal.credentialId }),
+    ...(principal.credentialOwnerActorId === undefined
+      ? {}
+      : { credentialOwnerActorId: principal.credentialOwnerActorId }),
     ...(principal.credentialPolicy === undefined
       ? {}
       : { credentialPolicy: principal.credentialPolicy }),

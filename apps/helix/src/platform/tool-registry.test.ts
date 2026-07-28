@@ -20,6 +20,16 @@ const actor: Actor = {
   type: "agent",
   scopes: ["platform.read", "danger.write"],
 };
+const approver: Actor = {
+  id: "admin-1",
+  orgId: "org-1",
+  type: "user",
+  scopes: ["admin.*"],
+};
+const humanActor: Actor = { ...actor, type: "user" };
+const resolveTestPendingPrincipal = async (record: { readonly requesterPrincipal: Actor }) => ({
+  actor: record.requesterPrincipal,
+});
 
 describe("RuntimeToolRegistry", () => {
   it("denies invocations without an authenticated actor by default", async () => {
@@ -76,7 +86,7 @@ describe("RuntimeToolRegistry", () => {
     const baseActor: Actor = {
       id: "agent-1",
       orgId: "org-1",
-      type: "agent",
+      type: "user",
       scopes: ["mail.send"],
     };
 
@@ -161,7 +171,7 @@ describe("RuntimeToolRegistry", () => {
     await expect(registry.listVisible(actor)).resolves.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "mail.send" })]),
     );
-    await expect(registry.invoke("mail.send", {}, { actor })).resolves.toMatchObject({
+    await expect(registry.invoke("mail.send", {}, { actor: humanActor })).resolves.toMatchObject({
       ok: true,
       output: { sent: true },
     });
@@ -172,6 +182,7 @@ describe("RuntimeToolRegistry", () => {
     const registry = createToolRegistry({
       confirmationGate,
       confirmationDefaults: tierDefaults.personal,
+      resolvePendingPrincipal: resolveTestPendingPrincipal,
     });
     const calls: unknown[] = [];
     registry.register(
@@ -201,7 +212,10 @@ describe("RuntimeToolRegistry", () => {
       pending: {
         toolId: "danger.delete",
         actorId: actor.id,
-        input: { id: "obj-1" },
+        preview: {
+          toolId: "danger.delete",
+          consequence: "Permanently change or remove data using danger.delete.",
+        },
       },
     });
     expect(calls).toEqual([]);
@@ -209,7 +223,7 @@ describe("RuntimeToolRegistry", () => {
       throw new Error("Expected pending confirmation.");
     }
 
-    const approved = await registry.approvePending(pending.pending.id, { actor });
+    const approved = await registry.approvePending(pending.pending.id, { actor: approver });
 
     expect(approved).toMatchObject({
       ok: true,
@@ -463,6 +477,7 @@ describe("RuntimeToolRegistry", () => {
     const registry = createToolRegistry({
       confirmationGate,
       confirmationDefaults: tierDefaults.personal,
+      resolvePendingPrincipal: resolveTestPendingPrincipal,
       agentRateCostLimiter: new InMemoryAgentRateCostLimiter(),
       agentLimitTier: "business",
       agentLimitBudget: {
@@ -499,7 +514,9 @@ describe("RuntimeToolRegistry", () => {
     }
     expect(calls).toBe(0);
 
-    await expect(registry.approvePending(pending.pending.id, { actor })).resolves.toMatchObject({
+    await expect(
+      registry.approvePending(pending.pending.id, { actor: approver }),
+    ).resolves.toMatchObject({
       ok: true,
       output: { ok: true },
     });
@@ -834,7 +851,7 @@ describe("RuntimeToolRegistry", () => {
         token: "raw-bearer-token",
       },
       {
-        actor: { ...actor, scopes: ["mail.send"] },
+        actor: { ...humanActor, scopes: ["mail.send"] },
         request: traceRequest,
         credentialId: "credential-safe-id",
         idempotencyFingerprint,
@@ -858,7 +875,7 @@ describe("RuntimeToolRegistry", () => {
         "actorId": "actor-1",
         "createdAt": "<timestamp>",
         "metadata": {
-          "actorType": "agent",
+          "actorType": "user",
           "credentialId": "credential-safe-id",
           "durationBucket": "<duration-bucket>",
           "idempotencyFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -959,17 +976,31 @@ describe("RuntimeToolRegistry", () => {
       criticalTool.id,
       {},
       {
-        actor: { ...actor, scopes: [criticalTool.permission] },
+        actor: {
+          ...actor,
+          type: criticalTool.id === "agent.credentials.rotate" ? "agent" : "user",
+          scopes: [criticalTool.permission],
+        },
       },
     );
 
-    expect(result).toMatchObject({
-      ok: false,
-      statusCode: 503,
-      error:
-        "Critical tool outcome could not be durably audited; retry only with the same idempotency key.",
-    });
-    expect(calls).toBe(1);
+    if (criticalTool.id === "agent.credentials.rotate") {
+      expect(result).toMatchObject({
+        ok: false,
+        statusCode: 403,
+        error:
+          "Agent credentials cannot modify their own authorization policy: agent.credentials.rotate",
+      });
+      expect(calls).toBe(0);
+    } else {
+      expect(result).toMatchObject({
+        ok: false,
+        statusCode: 503,
+        error:
+          "Critical tool outcome could not be durably audited; retry only with the same idempotency key.",
+      });
+      expect(calls).toBe(1);
+    }
   });
 
   it("defines non-critical and Personal-tier audit outage behavior", async () => {
@@ -998,12 +1029,11 @@ describe("RuntimeToolRegistry", () => {
       }),
     );
 
-    await expect(businessRegistry.invoke("notes.write", {}, { actor })).resolves.toMatchObject({
-      ok: true,
-      output: { ok: true },
-    });
     await expect(
-      personalRegistry.invoke("danger.personal-delete", {}, { actor }),
+      businessRegistry.invoke("notes.write", {}, { actor: humanActor }),
+    ).resolves.toMatchObject({ ok: true, output: { ok: true } });
+    await expect(
+      personalRegistry.invoke("danger.personal-delete", {}, { actor: humanActor }),
     ).resolves.toMatchObject({
       ok: true,
       output: { ok: true },
@@ -1042,6 +1072,7 @@ describe("RuntimeToolRegistry", () => {
       auditSink,
       confirmationGate,
       confirmationDefaults: tierDefaults.business,
+      resolvePendingPrincipal: resolveTestPendingPrincipal,
     });
     let calls = 0;
     registry.register(
@@ -1067,14 +1098,13 @@ describe("RuntimeToolRegistry", () => {
 
     await expect(
       registry.approvePending(queued.pending.id, {
-        actor,
+        actor: approver,
         request: { ...traceRequest, traceId: "f".repeat(32) },
       }),
     ).resolves.toMatchObject({ ok: true, output: { ok: true } });
-    await expect(registry.approvePending(queued.pending.id, { actor })).resolves.toMatchObject({
-      ok: false,
-      statusCode: 404,
-    });
+    await expect(
+      registry.approvePending(queued.pending.id, { actor: approver }),
+    ).resolves.toMatchObject({ ok: false, statusCode: 404 });
 
     const invocationRecords = auditSink.records.filter((record) =>
       record.verb.startsWith("tool.invocation."),
@@ -1147,6 +1177,66 @@ describe("RuntimeToolRegistry", () => {
 });
 
 describe("per-credential policy overrides (PRD §9.2)", () => {
+  it.each(["disabled", "scope_revoked"] as const)(
+    "fails approved execution closed when the requester is %s",
+    async (condition) => {
+      const confirmationGate = new InMemoryConfirmationGate();
+      const credentialPolicy = {
+        ipAllowlist: [],
+        allowedHours: null,
+        confirmationOverride: "inherit" as const,
+        rateLimitOverrides: {},
+        automationPolicy: null,
+        version: "1",
+      };
+      const registry = createToolRegistry({
+        confirmationGate,
+        confirmationDefaults: tierDefaults.personal,
+        resolvePendingPrincipal: async (record) =>
+          condition === "disabled"
+            ? null
+            : {
+                actor: { ...record.requesterPrincipal, scopes: [] },
+                ...(record.requesterCredentialId === null
+                  ? {}
+                  : { credentialId: record.requesterCredentialId }),
+                credentialOwnerActorId: approver.id,
+                credentialPolicy,
+              },
+      });
+      let executions = 0;
+      registry.register(
+        tool({
+          id: "fresh.scope.write",
+          permission: "danger.write",
+          sideEffects: "write",
+          handler: async () => {
+            executions += 1;
+            return { ok: true };
+          },
+        }),
+      );
+      const queued = await registry.invoke(
+        "fresh.scope.write",
+        {},
+        {
+          actor,
+          credentialId: "credential-1",
+          credentialOwnerActorId: approver.id,
+          credentialPolicy,
+        },
+      );
+      if (!queued.ok || queued.status !== "pending_confirmation") {
+        throw new Error("Expected pending confirmation.");
+      }
+
+      await expect(
+        registry.approvePending(queued.pending.id, { actor: approver }),
+      ).resolves.toMatchObject({ ok: false, statusCode: 403 });
+      expect(executions).toBe(0);
+    },
+  );
+
   it("keeps agent writes confirmation-gated with or without an 'always' override", async () => {
     const confirmationGate = new InMemoryConfirmationGate();
     const registry = createToolRegistry({
@@ -1180,6 +1270,81 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
       },
     );
     expect(pending).toMatchObject({ ok: true, status: "pending_confirmation" });
+  });
+
+  it("bypasses confirmation only for an exact, fully bounded automation rule", async () => {
+    const registry = createToolRegistry({
+      confirmationGate: new InMemoryConfirmationGate(),
+      confirmationDefaults: tierDefaults.personal,
+      agentRateCostLimiter: new InMemoryAgentRateCostLimiter(),
+      agentLimitTier: "business",
+    });
+    let executions = 0;
+    registry.register(
+      tool({
+        id: "chat.send",
+        permission: "chat.send",
+        sideEffects: "write",
+        handler: async () => {
+          executions += 1;
+          return { ok: true };
+        },
+      }),
+    );
+    const credentialPolicy = {
+      ipAllowlist: [],
+      allowedHours: null,
+      confirmationOverride: "inherit" as const,
+      rateLimitOverrides: {},
+      version: "3",
+      automationPolicy: {
+        version: "11",
+        rules: [
+          {
+            id: "chat-room-owner",
+            toolId: "chat.send",
+            action: "chat.send",
+            resourceIds: ["room-1"],
+            recipients: ["owner@example.test"],
+            targets: ["actor-2"],
+            activeFrom: "2020-01-01T00:00:00.000Z",
+            expiresAt: "2030-01-01T00:00:00.000Z",
+            requestsPerMinute: 10,
+            requestsPerDay: 100,
+          },
+        ],
+      },
+    };
+    const exact = {
+      roomId: "room-1",
+      recipient: "owner@example.test",
+      targetActorId: "actor-2",
+      body: "hello",
+    };
+
+    await expect(
+      registry.invoke("chat.send", exact, {
+        actor: { ...actor, scopes: ["chat.send"] },
+        credentialId: "credential-1",
+        credentialOwnerActorId: approver.id,
+        credentialPolicy,
+        enforceConfirmation: true,
+      }),
+    ).resolves.toMatchObject({ ok: true, output: { ok: true } });
+    await expect(
+      registry.invoke(
+        "chat.send",
+        { ...exact, roomId: "room-2" },
+        {
+          actor: { ...actor, scopes: ["chat.send"] },
+          credentialId: "credential-1",
+          credentialOwnerActorId: approver.id,
+          credentialPolicy,
+          enforceConfirmation: true,
+        },
+      ),
+    ).resolves.toMatchObject({ ok: true, status: "pending_confirmation" });
+    expect(executions).toBe(1);
   });
 
   it("fails closed for an agent mutation when the legacy override is 'never'", async () => {
@@ -1249,6 +1414,14 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
 
   it("re-applies the current credential rate policy to approved execution", async () => {
     const confirmationGate = new InMemoryConfirmationGate();
+    const credentialPolicy = {
+      ipAllowlist: [],
+      allowedHours: null,
+      confirmationOverride: "always" as const,
+      rateLimitOverrides: { requestsPerMinute: 1 },
+      automationPolicy: null,
+      version: "1",
+    };
     const registry = createToolRegistry({
       confirmationGate,
       confirmationDefaults: tierDefaults.personal,
@@ -1260,6 +1433,14 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
         costPerDayUsdMicros: null,
         costWarningThresholdRatio: 0.8,
       },
+      resolvePendingPrincipal: async (record) => ({
+        actor,
+        ...(record.requesterCredentialId === null
+          ? {}
+          : { credentialId: record.requesterCredentialId }),
+        credentialOwnerActorId: approver.id,
+        credentialPolicy,
+      }),
     });
     let executions = 0;
     registry.register(
@@ -1273,23 +1454,23 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
         },
       }),
     );
-    const credentialPolicy = {
-      confirmationOverride: "always" as const,
-      rateLimitOverrides: { requestsPerMinute: 1 },
-    };
     const queued = await registry.invoke(
       "pending.policy",
       {},
-      { actor, enforceConfirmation: true, credentialPolicy },
+      {
+        actor,
+        enforceConfirmation: true,
+        credentialId: "credential-1",
+        credentialOwnerActorId: approver.id,
+        credentialPolicy,
+      },
     );
     if (!queued.ok || queued.status !== "pending_confirmation") {
       throw new Error("Expected a pending action.");
     }
 
     const approved = await registry.approvePending(queued.pending.id, {
-      actor,
-      credentialId: "credential-1",
-      credentialPolicy,
+      actor: approver,
     });
 
     expect(approved).toMatchObject({

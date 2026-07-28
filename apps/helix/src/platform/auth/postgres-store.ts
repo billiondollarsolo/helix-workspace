@@ -14,6 +14,7 @@ import type {
   CodeChallengeMethod,
 } from "./authorization-code.js";
 import type {
+  AgentAutomationPolicy,
   AgentCredentialPolicy,
   AgentCredentialRecord,
   AgentCredentialStore,
@@ -111,6 +112,15 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         from actors
         where id = ${input.actorId}
           and org_id = ${input.orgId}
+          and (
+            ${input.approvalOwnerActorId ?? null}::uuid is null
+            or exists (
+              select 1 from actors owner
+              where owner.id = ${input.approvalOwnerActorId ?? null}::uuid
+                and owner.org_id = ${input.orgId}
+                and owner.type = 'user'
+            )
+          )
       ),
       inserted as (
         insert into agent_credentials (
@@ -120,6 +130,8 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
           secret_hash,
           scopes,
           redirect_uris,
+          created_by,
+          approval_owner_actor_id,
           expires_at
         )
         select
@@ -129,6 +141,8 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
           ${input.clientSecretHash},
           ${this.sql.array(scopes)},
           ${this.sql.array(redirectUris)},
+          ${input.approvalOwnerActorId ?? null},
+          ${input.approvalOwnerActorId ?? null},
           ${input.expiresAt ?? null}
         from selected_actor
         returning client_id, secret_hash, actor_id, scopes, redirect_uris, expires_at, revoked_at
@@ -492,10 +506,13 @@ interface AgentCredentialRow {
   readonly api_key_hash: string | null;
   readonly cert_fingerprint: string | null;
   readonly label: string | null;
+  readonly approval_owner_actor_id: string | null;
   readonly ip_allowlist: readonly string[] | null;
   readonly allowed_hours: unknown;
   readonly confirmation_override: unknown;
   readonly rate_limit_overrides: unknown;
+  readonly automation_policy: unknown;
+  readonly policy_version: string;
   readonly expires_at: Date | null;
   readonly revoked_at: Date | null;
 }
@@ -511,10 +528,13 @@ const AGENT_CREDENTIAL_COLUMNS = `
   c.api_key_hash,
   c.cert_fingerprint,
   c.label,
+  c.approval_owner_actor_id,
   c.ip_allowlist,
   c.allowed_hours,
   c.confirmation_override,
   c.rate_limit_overrides,
+  c.automation_policy,
+  c.policy_version,
   c.expires_at,
   c.revoked_at
 `;
@@ -564,6 +584,17 @@ export class PostgresAgentCredentialStore implements AgentCredentialStore {
     `) as unknown as readonly AgentCredentialRow[];
     return rowToCredential(rows[0]);
   }
+
+  async findById(credentialId: string): Promise<AgentCredentialRecord | null> {
+    const rows = (await this.sql`
+      select ${this.sql.unsafe(AGENT_CREDENTIAL_COLUMNS)}
+      from agent_credentials c
+      join actors a on a.id = c.actor_id
+      where c.id = ${credentialId}
+      limit 1
+    `) as unknown as readonly AgentCredentialRow[];
+    return rowToCredential(rows[0]);
+  }
 }
 
 function rowToCredential(row: AgentCredentialRow | undefined): AgentCredentialRecord | null {
@@ -581,6 +612,7 @@ function rowToCredential(row: AgentCredentialRow | undefined): AgentCredentialRe
     apiKeyHash: row.api_key_hash,
     certFingerprint: row.cert_fingerprint,
     label: row.label,
+    approvalOwnerActorId: row.approval_owner_actor_id,
     policy: rowToPolicy(row),
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
@@ -593,7 +625,21 @@ function rowToPolicy(row: AgentCredentialRow): AgentCredentialPolicy {
     allowedHours: parseAllowedHours(row.allowed_hours),
     confirmationOverride: parseConfirmationOverride(row.confirmation_override),
     rateLimitOverrides: parseRateLimitOverrides(row.rate_limit_overrides),
+    automationPolicy: parseAutomationPolicy(row.automation_policy),
+    version: row.policy_version,
   };
+}
+
+function parseAutomationPolicy(value: unknown): AgentAutomationPolicy | null {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value !== "object" ||
+    !Array.isArray((value as { readonly rules?: unknown }).rules)
+  ) {
+    return null;
+  }
+  return value as AgentAutomationPolicy;
 }
 
 function parseAllowedHours(value: unknown): AllowedHoursWindow | null {

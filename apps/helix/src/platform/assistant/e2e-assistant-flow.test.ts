@@ -51,6 +51,10 @@ import { InMemoryAssistantStore } from "./store.js";
 import { registerAssistantTools } from "./tools.js";
 import type { AssistantTurnResponse } from "./types.js";
 
+const resolveAssistantTestPendingPrincipal = async (record: {
+  readonly requesterPrincipal: Actor;
+}) => ({ actor: record.requesterPrincipal });
+
 describe("AssistantOrchestrator", () => {
   it("covers the PRD assistant share flow across drive search, chat search, pending confirmation, and approved execution", async () => {
     const actor: Actor = {
@@ -80,8 +84,12 @@ describe("AssistantOrchestrator", () => {
       },
     ]);
     const ai = new ShareFlowAI({ prdObjectId, targetActorId });
-    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const confirmationGate = new InMemoryConfirmationGate();
+    const tools = createToolRegistry({
+      accessPolicy: new AllowAllToolAccessPolicy(),
+      confirmationGate,
+      resolvePendingPrincipal: resolveAssistantTestPendingPrincipal,
+    });
     registerDriveTools(tools, { store: drive });
     registerChatTools(tools, { store: chat });
 
@@ -117,10 +125,9 @@ describe("AssistantOrchestrator", () => {
     expect(turn.pendingConfirmations[0]).toMatchObject({
       toolId: "drive.share",
       actorId: actor.id,
-      input: {
-        objectId: prdObjectId,
-        actorIds: [targetActorId],
-        role: "commenter",
+      preview: {
+        resourceIds: [prdObjectId],
+        targets: [targetActorId],
       },
       status: "pending_confirmation",
     });
@@ -138,20 +145,22 @@ describe("AssistantOrchestrator", () => {
         request: { requestId: "req-share-approve", traceId: "trace-share-approve" },
       },
     );
-    expect(resumeResult.ok).toBe(true);
     if (!resumeResult.ok) {
       throw new Error(resumeResult.error);
     }
+    expect(resumeResult.ok).toBe(true);
     const resumed = resumeResult.output;
 
-    expect(resumed.toolCalls).toEqual([
+    expect(resumed.toolCalls).toMatchObject([
       {
         toolCallId: turn.pendingConfirmations[0]?.id,
         toolId: "drive.share",
         input: {
-          objectId: prdObjectId,
-          actorIds: [targetActorId],
-          role: "commenter",
+          preview: {
+            toolId: "drive.share",
+            resourceIds: [prdObjectId],
+            targets: [targetActorId],
+          },
         },
         status: "executed",
         output: {
@@ -199,8 +208,12 @@ describe("AssistantOrchestrator", () => {
     };
     const store = new InMemoryAssistantStore();
     const ai = new CancelFlowAI();
-    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const confirmationGate = new InMemoryConfirmationGate();
+    const tools = createToolRegistry({
+      accessPolicy: new AllowAllToolAccessPolicy(),
+      confirmationGate,
+      resolvePendingPrincipal: resolveAssistantTestPendingPrincipal,
+    });
     let destructiveInvoked = false;
 
     tools.register(
@@ -264,7 +277,16 @@ describe("AssistantOrchestrator", () => {
       {
         toolCallId: pendingId,
         toolId: "demo.delete",
-        input: { id: "launch-note" },
+        input: {
+          preview: {
+            toolId: "demo.delete",
+            action: "demo.delete",
+            resourceIds: [],
+            recipients: [],
+            targets: [],
+            consequence: "Permanently change or remove data using demo.delete.",
+          },
+        },
         status: "skipped",
         error: "Pending assistant tool action was cancelled by the actor.",
       },
@@ -360,8 +382,12 @@ describe("AssistantOrchestrator", () => {
       },
     ]);
     const ai = new FakeAssistantAI();
-    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const confirmationGate = new InMemoryConfirmationGate();
+    const tools = createToolRegistry({
+      accessPolicy: new AllowAllToolAccessPolicy(),
+      confirmationGate,
+      resolvePendingPrincipal: resolveAssistantTestPendingPrincipal,
+    });
     let destructiveInvoked = false;
 
     tools.register(
@@ -579,8 +605,12 @@ describe("AssistantOrchestrator", () => {
         scopes: ["policy.invoke"],
       };
       const store = new InMemoryAssistantStore();
-      const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
       const confirmationGate = new InMemoryConfirmationGate();
+      const tools = createToolRegistry({
+        accessPolicy: new AllowAllToolAccessPolicy(),
+        confirmationGate,
+        resolvePendingPrincipal: resolveAssistantTestPendingPrincipal,
+      });
       let executions = 0;
       tools.register(
         readTool({

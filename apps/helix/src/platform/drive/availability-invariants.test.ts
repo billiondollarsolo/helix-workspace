@@ -89,7 +89,9 @@ describe("Drive non-active availability invariants", () => {
         role: "reader",
       }),
     ).rejects.toBeInstanceOf(DriveNotFoundError);
-    await expect(store.readFileByShareToken("share-token")).resolves.toBeNull();
+    await expect(
+      store.readFileByShareToken({ token: "share-token" }),
+    ).resolves.toBeNull();
     expect(get).not.toHaveBeenCalled();
   });
 });

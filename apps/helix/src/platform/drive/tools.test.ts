@@ -1192,6 +1192,10 @@ class FakeDriveStore implements DriveStore {
       createdByActorId: input.actorId,
       createdAt: now,
       revokedAt: null,
+      maxDownloads: input.maxDownloads ?? null,
+      downloadCount: 0,
+      rateLimitPerHour: input.rateLimitPerHour ?? 120,
+      lastUsedAt: null,
     };
   }
 

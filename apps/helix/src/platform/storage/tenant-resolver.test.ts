@@ -25,6 +25,13 @@ describe("tenant storage resolver", () => {
       metadata: { Upload: "demo" },
     });
     const getUrl = await scoped.presignGetUrl?.("drive/file.txt", { expiresSeconds: 60 });
+    const multipart = await scoped.createMultipartUpload?.("drive/large.bin");
+    const partUrl = await scoped.presignUploadPart?.("drive/large.bin", "upload-a", 1);
+    await scoped.completeMultipartUpload?.("drive/large.bin", "upload-a", [
+      { partNumber: 1, etag: "etag-a" },
+    ]);
+    await scoped.abortMultipartUpload?.("drive/abandoned.bin", "upload-b");
+    await scoped.copyObject?.("drive/source.bin", "drive/copy.bin");
 
     expect(storage.calls).toEqual([
       "put:tenants/org-1/drive/file.txt",
@@ -33,6 +40,11 @@ describe("tenant storage resolver", () => {
       "presign-put:tenants/org-1/drive/file.txt:text/plain",
       "presign-put-request:tenants/org-1/drive/file.txt:text/plain:demo",
       "presign-get:tenants/org-1/drive/file.txt:60",
+      "multipart-create:tenants/org-1/drive/large.bin",
+      "multipart-part:tenants/org-1/drive/large.bin:upload-a:1",
+      "multipart-complete:tenants/org-1/drive/large.bin:upload-a",
+      "multipart-abort:tenants/org-1/drive/abandoned.bin:upload-b",
+      "copy:tenants/org-1/drive/source.bin:tenants/org-1/drive/copy.bin",
     ]);
     expect(object?.key).toBe("drive/file.txt");
     expect(putUrl).toBe("put://tenants/org-1/drive/file.txt");
@@ -44,6 +56,8 @@ describe("tenant storage resolver", () => {
       },
     });
     expect(getUrl).toBe("get://tenants/org-1/drive/file.txt");
+    expect(multipart).toEqual({ uploadId: "upload-a" });
+    expect(partUrl).toBe("part://tenants/org-1/drive/large.bin/1");
   });
 
   it("creates helix-default tenant resolvers with the standard tenant prefix", async () => {
@@ -676,6 +690,28 @@ class RecordingStorageClient implements TenantStorageClient {
   ): Promise<string> {
     this.calls.push(`presign-get:${key}:${String(options?.expiresSeconds ?? "")}`);
     return `get://${key}`;
+  }
+
+  async createMultipartUpload(key: string): Promise<{ readonly uploadId: string }> {
+    this.calls.push(`multipart-create:${key}`);
+    return { uploadId: "upload-a" };
+  }
+
+  async presignUploadPart(key: string, uploadId: string, partNumber: number): Promise<string> {
+    this.calls.push(`multipart-part:${key}:${uploadId}:${String(partNumber)}`);
+    return `part://${key}/${String(partNumber)}`;
+  }
+
+  async completeMultipartUpload(key: string, uploadId: string): Promise<void> {
+    this.calls.push(`multipart-complete:${key}:${uploadId}`);
+  }
+
+  async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+    this.calls.push(`multipart-abort:${key}:${uploadId}`);
+  }
+
+  async copyObject(sourceKey: string, destinationKey: string): Promise<void> {
+    this.calls.push(`copy:${sourceKey}:${destinationKey}`);
   }
 }
 

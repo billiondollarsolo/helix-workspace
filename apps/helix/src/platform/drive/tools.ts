@@ -162,6 +162,9 @@ const createShareLinkSchema = z.object({
   objectId: uuidSchema,
   role: z.enum(["reader", "commenter", "editor"]).default("reader"),
   expiresAt: z.string().datetime().nullable().optional(),
+  password: z.string().min(8).max(200).optional(),
+  maxDownloads: z.number().int().positive().max(1_000_000).nullable().optional(),
+  rateLimitPerHour: z.number().int().positive().max(10_000).default(120),
 });
 
 const revokeShareLinkSchema = z.object({
@@ -1010,6 +1013,9 @@ export function createDriveToolDefinitions(
                 input.expiresAt === undefined || input.expiresAt === null
                   ? null
                   : new Date(input.expiresAt),
+              ...(input.password === undefined ? {} : { password: input.password }),
+              maxDownloads: input.maxDownloads ?? null,
+              rateLimitPerHour: input.rateLimitPerHour,
             }),
           );
         },
@@ -1161,12 +1167,16 @@ function serializeShareLink(link: {
   readonly id: string;
   readonly orgId: string;
   readonly objectId: string;
-  readonly token: string;
+  readonly token: string | null;
   readonly role: string;
   readonly expiresAt: Date | null;
   readonly createdByActorId: string | null;
   readonly createdAt: Date;
   readonly revokedAt: Date | null;
+  readonly maxDownloads: number | null;
+  readonly downloadCount: number;
+  readonly rateLimitPerHour: number;
+  readonly lastUsedAt: Date | null;
 }) {
   return {
     ...link,
@@ -1174,6 +1184,10 @@ function serializeShareLink(link: {
     expiresAt: link.expiresAt?.toISOString() ?? null,
     createdAt: link.createdAt.toISOString(),
     revokedAt: link.revokedAt?.toISOString() ?? null,
+    maxDownloads: link.maxDownloads,
+    downloadCount: link.downloadCount,
+    rateLimitPerHour: link.rateLimitPerHour,
+    lastUsedAt: link.lastUsedAt?.toISOString() ?? null,
   };
 }
 

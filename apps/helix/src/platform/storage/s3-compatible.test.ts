@@ -160,6 +160,38 @@ describe("S3-compatible storage", () => {
     expect(firstUrlCall(fetchStub)[1].method).toBe("GET");
   });
 
+  it("reads provider encryption evidence without fetching object bytes", async () => {
+    const fetchStub = createFetchStub(
+      () =>
+        new Response(null, {
+          status: 200,
+          headers: {
+            "content-length": "4096",
+            etag: '"encrypted-etag"',
+            "x-amz-server-side-encryption": "aws:kms",
+            "x-amz-server-side-encryption-aws-kms-key-id":
+              "arn:aws:kms:us-east-1:123456789012:key/tenant-a",
+            "x-amz-meta-objectid": "object-a",
+          },
+        }),
+    );
+
+    await expect(storage(fetchStub.fetch).headObject("encrypted.bin")).resolves.toEqual({
+      byteSize: 4096,
+      etag: '"encrypted-etag"',
+      serverSideEncryption: "aws:kms",
+      serverSideEncryptionAwsKmsKeyId: "arn:aws:kms:us-east-1:123456789012:key/tenant-a",
+      metadata: { objectid: "object-a" },
+    });
+    expect(firstUrlCall(fetchStub)[1].method).toBe("HEAD");
+  });
+
+  it("returns no encryption evidence for a missing object", async () => {
+    const fetchStub = createFetchStub(() => new Response(null, { status: 404 }));
+
+    await expect(storage(fetchStub.fetch).headObject("missing")).resolves.toBeNull();
+  });
+
   it("sends configurable SSE-S3 headers on signed PUT requests", async () => {
     const fetchStub = createFetchStub();
 
@@ -353,6 +385,38 @@ describe("S3-compatible storage", () => {
     const [url, init] = firstUrlCall(fetchStub);
     expect(init.method).toBe("POST");
     expect(url.searchParams.has("uploads")).toBe(true);
+  });
+
+  it("carries tenant KMS policy on multipart initiation", async () => {
+    const fetchStub = createFetchStub(
+      () =>
+        new Response("<UploadId>kms-upload</UploadId>", {
+          status: 200,
+        }),
+    );
+    await storage(fetchStub.fetch, {
+      serverSideEncryption: "aws:kms",
+      serverSideEncryptionAwsKmsKeyId: "kms-tenant-a",
+    }).createMultipartUpload("drive/o/encrypted.bin");
+
+    expect(requestHeaders(firstUrlCall(fetchStub)[1])).toMatchObject({
+      "x-amz-server-side-encryption": "aws:kms",
+      "x-amz-server-side-encryption-aws-kms-key-id": "kms-tenant-a",
+    });
+  });
+
+  it("carries tenant KMS policy when copying objects", async () => {
+    const fetchStub = createFetchStub(() => new Response(null, { status: 200 }));
+    await storage(fetchStub.fetch, {
+      serverSideEncryption: "aws:kms",
+      serverSideEncryptionAwsKmsKeyId: "kms-tenant-a",
+    }).copyObject("source.bin", "copy.bin");
+
+    expect(requestHeaders(firstUrlCall(fetchStub)[1])).toMatchObject({
+      "x-amz-copy-source": "/helix-objects/source.bin",
+      "x-amz-server-side-encryption": "aws:kms",
+      "x-amz-server-side-encryption-aws-kms-key-id": "kms-tenant-a",
+    });
   });
 
   it("presignUploadPart signs partNumber and uploadId", async () => {

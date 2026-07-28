@@ -392,6 +392,9 @@ describe("PostgresDriveStore content-addressed dedup", () => {
           objectIdA,
           {
             ...objectRow(objectIdA, blobKey, sha256),
+            upload_state: "trashed",
+            deleted_at: new Date("2026-06-01T00:00:00.000Z"),
+            trash_expires_at: new Date("2026-07-01T00:00:00.000Z"),
             metadata: { name: "a.bin", folderId: null, status: "ready" },
           },
         ],
@@ -399,6 +402,9 @@ describe("PostgresDriveStore content-addressed dedup", () => {
           objectIdB,
           {
             ...objectRow(objectIdB, blobKey, sha256),
+            upload_state: "trashed",
+            deleted_at: new Date("2026-06-01T00:00:00.000Z"),
+            trash_expires_at: new Date("2026-07-01T00:00:00.000Z"),
             metadata: { name: "b.bin", folderId: null, status: "ready" },
           },
         ],

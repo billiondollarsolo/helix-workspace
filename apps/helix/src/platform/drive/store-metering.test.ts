@@ -101,7 +101,14 @@ describe("PostgresDriveStore metering", () => {
     const metering = new RecordingMeteringClient();
     const deletedRows = Object.assign([], { count: 1 }) as unknown[];
     const recording = createRecordingSql([
-      [objectRow({ byteSize: 200, storageKey: "drive/org/file/current" })],
+      [
+        objectRow({
+          byteSize: 200,
+          storageKey: "drive/org/file/current",
+          hardDeleteReady: true,
+        }),
+      ],
+      [{ active_share_count: 0, pending_job_count: 0 }],
       [
         { storage_key: "drive/org/file/current", byte_size: 200 },
         { storage_key: "drive/org/file/v1", byte_size: 125 },
@@ -485,7 +492,8 @@ describe("PostgresDriveStore metering", () => {
     const metering = new RecordingMeteringClient();
     const notDeletedRows = Object.assign([], { count: 0 }) as unknown[];
     const recording = createRecordingSql([
-      [objectRow({ byteSize: 200 })],
+      [objectRow({ byteSize: 200, hardDeleteReady: true })],
+      [{ active_share_count: 0, pending_job_count: 0 }],
       [{ storage_key: "drive/org/file/current", byte_size: 200 }],
       [],
       [],
@@ -536,6 +544,7 @@ function objectRow(input: {
   readonly byteSize: number;
   readonly storageKey?: string;
   readonly metadata?: Record<string, unknown>;
+  readonly hardDeleteReady?: boolean;
 }): Record<string, unknown> {
   return {
     id: objectId,
@@ -546,11 +555,17 @@ function objectRow(input: {
     mime_type: "text/plain",
     byte_size: input.byteSize,
     sha256: null,
-    upload_state: input.metadata?.status === "pending_upload" ? "pending_upload" : "active",
+    upload_state:
+      input.metadata?.status === "pending_upload"
+        ? "pending_upload"
+        : input.hardDeleteReady === true
+          ? "trashed"
+          : "active",
     upload_declared_byte_size: null,
     upload_declared_sha256: null,
     metadata: input.metadata ?? { name: "report.txt", status: "ready" },
-    deleted_at: null,
+    deleted_at: input.hardDeleteReady === true ? new Date("2026-05-01T00:00:00.000Z") : null,
+    trash_expires_at: input.hardDeleteReady === true ? new Date("2026-05-02T00:00:00.000Z") : null,
     created_at: new Date("2026-05-24T12:00:00.000Z"),
     updated_at: new Date("2026-05-24T12:00:00.000Z"),
   };

@@ -200,12 +200,16 @@ export const driveShareLinkSchema = z.object({
   id: z.string().uuid(),
   orgId: z.string().uuid(),
   objectId: z.string().uuid(),
-  token: z.string().min(1),
+  token: z.string().min(1).nullable(),
   role: driveRoleSchema,
   expiresAt: z.string().nullable(),
   createdByActorId: z.string().uuid().nullable(),
   createdAt: z.string(),
   revokedAt: z.string().nullable(),
+  maxDownloads: z.number().int().positive().nullable(),
+  downloadCount: z.number().int().nonnegative(),
+  rateLimitPerHour: z.number().int().positive(),
+  lastUsedAt: z.string().nullable(),
 });
 export type DriveShareLink = z.infer<typeof driveShareLinkSchema>;
 

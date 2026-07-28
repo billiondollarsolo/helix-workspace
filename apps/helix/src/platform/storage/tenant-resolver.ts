@@ -3,10 +3,12 @@ import type { JsonObject, StorageClient, StorageObject } from "@helix/sdk-types"
 import {
   createS3CompatibleStorage,
   type S3CompatibleCredentials,
+  type S3CompatibleObjectEvidence,
   type S3CompatibleStorageConfig,
 } from "./s3-compatible.js";
 
 export interface TenantStorageClient extends StorageClient {
+  headObject?(key: string): Promise<S3CompatibleObjectEvidence | null>;
   presignGetUrl?(
     key: string,
     options?: {
@@ -31,6 +33,26 @@ export interface TenantStorageClient extends StorageClient {
       readonly metadata?: Record<string, string>;
     },
   ): Promise<TenantPresignedPutUpload>;
+  createMultipartUpload?(
+    key: string,
+    options?: {
+      readonly contentType?: string;
+      readonly metadata?: Record<string, string>;
+    },
+  ): Promise<{ readonly uploadId: string }>;
+  presignUploadPart?(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    options?: { readonly contentType?: string },
+  ): Promise<string>;
+  completeMultipartUpload?(
+    key: string,
+    uploadId: string,
+    parts: readonly { readonly partNumber: number; readonly etag: string }[],
+  ): Promise<void>;
+  abortMultipartUpload?(key: string, uploadId: string): Promise<void>;
+  copyObject?(sourceKey: string, destinationKey: string): Promise<void>;
 }
 
 export interface TenantPresignedPutUpload {
@@ -289,6 +311,14 @@ class LazyByoS3StorageClient implements TenantStorageClient {
     await (await this.client()).delete(key);
   }
 
+  async headObject(key: string): Promise<S3CompatibleObjectEvidence | null> {
+    const client = await this.client();
+    if (client.headObject === undefined) {
+      throw new Error("Resolved BYO storage client does not support object metadata evidence.");
+    }
+    return client.headObject(key);
+  }
+
   async presignGetUrl(
     key: string,
     options?: Parameters<NonNullable<TenantStorageClient["presignGetUrl"]>>[1],
@@ -326,6 +356,58 @@ class LazyByoS3StorageClient implements TenantStorageClient {
       url: await client.presignPutUrl(key, options),
       headers: presignedPutHeadersFromOptions(options),
     };
+  }
+
+  async createMultipartUpload(
+    key: string,
+    options?: Parameters<NonNullable<TenantStorageClient["createMultipartUpload"]>>[1],
+  ): Promise<{ readonly uploadId: string }> {
+    const client = await this.client();
+    if (client.createMultipartUpload === undefined) {
+      throw new Error("Resolved BYO storage client does not support multipart uploads.");
+    }
+    return client.createMultipartUpload(key, options);
+  }
+
+  async presignUploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    options?: Parameters<NonNullable<TenantStorageClient["presignUploadPart"]>>[3],
+  ): Promise<string> {
+    const client = await this.client();
+    if (client.presignUploadPart === undefined) {
+      throw new Error("Resolved BYO storage client does not support multipart uploads.");
+    }
+    return client.presignUploadPart(key, uploadId, partNumber, options);
+  }
+
+  async completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: readonly { readonly partNumber: number; readonly etag: string }[],
+  ): Promise<void> {
+    const client = await this.client();
+    if (client.completeMultipartUpload === undefined) {
+      throw new Error("Resolved BYO storage client does not support multipart uploads.");
+    }
+    await client.completeMultipartUpload(key, uploadId, parts);
+  }
+
+  async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+    const client = await this.client();
+    if (client.abortMultipartUpload === undefined) {
+      throw new Error("Resolved BYO storage client does not support multipart uploads.");
+    }
+    await client.abortMultipartUpload(key, uploadId);
+  }
+
+  async copyObject(sourceKey: string, destinationKey: string): Promise<void> {
+    const client = await this.client();
+    if (client.copyObject === undefined) {
+      throw new Error("Resolved BYO storage client does not support object copy.");
+    }
+    await client.copyObject(sourceKey, destinationKey);
   }
 
   private async client(): Promise<TenantStorageClient> {
@@ -412,6 +494,12 @@ export function createPrefixedStorageClient(
   const presignGetUrl = client.presignGetUrl?.bind(client);
   const presignPutUrl = client.presignPutUrl?.bind(client);
   const presignPutRequest = client.presignPutRequest?.bind(client);
+  const headObject = client.headObject?.bind(client);
+  const createMultipartUpload = client.createMultipartUpload?.bind(client);
+  const presignUploadPart = client.presignUploadPart?.bind(client);
+  const completeMultipartUpload = client.completeMultipartUpload?.bind(client);
+  const abortMultipartUpload = client.abortMultipartUpload?.bind(client);
+  const copyObject = client.copyObject?.bind(client);
   return {
     async put(object: StorageObject): Promise<void> {
       await client.put({ ...object, key: prefixedKey(normalizedPrefix, object.key) });
@@ -429,6 +517,13 @@ export function createPrefixedStorageClient(
     async delete(key: string): Promise<void> {
       await client.delete(prefixedKey(normalizedPrefix, key));
     },
+    ...(headObject === undefined
+      ? {}
+      : {
+          async headObject(key: string): Promise<S3CompatibleObjectEvidence | null> {
+            return headObject(prefixedKey(normalizedPrefix, key));
+          },
+        }),
     ...(presignGetUrl === undefined
       ? {}
       : {
@@ -466,6 +561,61 @@ export function createPrefixedStorageClient(
               url: await presignPutUrl(prefixedKey(normalizedPrefix, key), options),
               headers: presignedPutHeadersFromOptions(options),
             };
+          },
+        }),
+    ...(createMultipartUpload === undefined
+      ? {}
+      : {
+          async createMultipartUpload(
+            key: string,
+            options?: Parameters<NonNullable<TenantStorageClient["createMultipartUpload"]>>[1],
+          ): Promise<{ readonly uploadId: string }> {
+            return createMultipartUpload(prefixedKey(normalizedPrefix, key), options);
+          },
+        }),
+    ...(presignUploadPart === undefined
+      ? {}
+      : {
+          async presignUploadPart(
+            key: string,
+            uploadId: string,
+            partNumber: number,
+            options?: Parameters<NonNullable<TenantStorageClient["presignUploadPart"]>>[3],
+          ): Promise<string> {
+            return presignUploadPart(
+              prefixedKey(normalizedPrefix, key),
+              uploadId,
+              partNumber,
+              options,
+            );
+          },
+        }),
+    ...(completeMultipartUpload === undefined
+      ? {}
+      : {
+          async completeMultipartUpload(
+            key: string,
+            uploadId: string,
+            parts: readonly { readonly partNumber: number; readonly etag: string }[],
+          ): Promise<void> {
+            await completeMultipartUpload(prefixedKey(normalizedPrefix, key), uploadId, parts);
+          },
+        }),
+    ...(abortMultipartUpload === undefined
+      ? {}
+      : {
+          async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+            await abortMultipartUpload(prefixedKey(normalizedPrefix, key), uploadId);
+          },
+        }),
+    ...(copyObject === undefined
+      ? {}
+      : {
+          async copyObject(sourceKey: string, destinationKey: string): Promise<void> {
+            await copyObject(
+              prefixedKey(normalizedPrefix, sourceKey),
+              prefixedKey(normalizedPrefix, destinationKey),
+            );
           },
         }),
   };

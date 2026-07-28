@@ -324,6 +324,14 @@ the recipient provider's IMAP endpoint. This is test infrastructure and does
 not provide or imply a Helix-hosted IMAP server. Do not point this smoke at
 Mailpit.
 
+For the complete M7 local release flow, run
+`pnpm quality:mail-live-evidence -- --local` after configuring two tenant
+mailboxes, ClamAV, SpamAssassin, Mailpit, and a test-only signed provider webhook.
+The machine-readable report distinguishes real local evidence from the
+explicitly `not_run` provider-sandbox, Gmail, and Microsoft 365 checks. See
+[`mail-live-evidence.md`](mail-live-evidence.md) for the required environment
+and evidence-handling rules.
+
 ```sh
 HELIX_BASE_URL=http://127.0.0.1:28431 \
 HELIX_SMOKE_CLIENT_ID=helix-local-oauth-client \

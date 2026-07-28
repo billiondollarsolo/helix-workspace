@@ -8,6 +8,7 @@ import {
   parseArgs,
   redactSensitive,
 } from "./release-readiness-manifest.mjs";
+import { MAIL_LIVE_SCENARIOS, createEvidenceSkeleton } from "./mail-live-evidence-smoke.mjs";
 
 describe("release-readiness manifest", () => {
   it("redacts sensitive keys recursively and case-insensitively", () => {
@@ -188,7 +189,119 @@ describe("release-readiness manifest", () => {
       ),
     ).rejects.toThrow("web image digest must be an OCI sha256 digest");
   });
+
+  it("requires passed local Mail evidence and optionally fails closed on external not-run hooks", async () => {
+    const fixture = await createFixture();
+    const evidence = createEvidenceSkeleton(new Date("2026-07-28T20:00:00.000Z"));
+    evidence.mode = "local";
+    evidence.status = "passed";
+    for (const scenario of MAIL_LIVE_SCENARIOS) {
+      evidence.local[scenario] = passedLocalResult(scenario);
+    }
+    await writeFile(
+      resolve(fixture.evidence, "mail-live-evidence.json"),
+      `${JSON.stringify(evidence)}\n`,
+      "utf8",
+    );
+    const args = [
+      "--workspace-dir",
+      fixture.workspace,
+      "--editors-dir",
+      fixture.editors,
+      "--evidence-dir",
+      fixture.evidence,
+      "--mail-live-evidence",
+      "mail-live-evidence.json",
+      "--image-digest",
+      `sha256:${"a".repeat(64)}`,
+      "--web-image-digest",
+      `sha256:${"b".repeat(64)}`,
+    ];
+
+    const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
+    expect(manifest.evidence.mail).toMatchObject({
+      path: "mail-live-evidence.json",
+      status: "passed",
+      external: {
+        provider_sandbox: "not_run",
+        gmail: "not_run",
+        microsoft365: "not_run",
+      },
+    });
+
+    await expect(
+      buildReleaseReadinessManifest(
+        parseArgs([...args, "--require-external-mail-evidence"], fixture.root, {}),
+      ),
+    ).rejects.toThrow(
+      "external Mail evidence is incomplete: provider_sandbox, gmail, microsoft365",
+    );
+  });
 });
+
+function passedLocalResult(scenario) {
+  const hash = "a".repeat(20);
+  const recipient = { domain: "example.test", addressHash: hash };
+  switch (scenario) {
+    case "recipient_aware_routing":
+      return {
+        status: "passed",
+        markerHash: hash,
+        orgA: { ...recipient, messageIdHash: hash },
+        orgB: { ...recipient, messageIdHash: hash },
+        tenantRecipientIsolation: true,
+      };
+    case "clean_inbound":
+      return {
+        status: "passed",
+        acceptedAt: "2026-07-28T20:00:00.000Z",
+        messageIdHashes: [hash, hash],
+      };
+    case "spam_inbound":
+      return { status: "passed", messageIdHash: hash, folder: "spam" };
+    case "eicar_quarantine":
+      return {
+        status: "passed",
+        quarantineIdHash: hash,
+        reasons: ["malware"],
+        rawMessageExposed: false,
+      };
+    case "outbound_mailpit":
+      return {
+        status: "passed",
+        recipient,
+        outboundIdHash: hash,
+        providerMessageIdHash: hash,
+        mailpitMessageIdHash: hash,
+        latencyMs: 10,
+      };
+    case "provider_hard_bounce":
+      return {
+        status: "passed",
+        recipient,
+        eventIdHash: hash,
+        duplicateIdempotent: true,
+      };
+    case "provider_complaint":
+      return { status: "passed", recipient, eventIdHash: hash };
+    case "suppression":
+      return {
+        status: "passed",
+        outboundIdHash: hash,
+        operatorCode: "MAIL_RECIPIENT_SUPPRESSED",
+      };
+    case "deterministic_retry":
+      return {
+        status: "passed",
+        outboundIdHash: hash,
+        preservedIdentity: true,
+        finalStatus: "failed",
+        operatorCode: "MAIL_RECIPIENT_SUPPRESSED",
+      };
+    default:
+      throw new Error(`unknown scenario ${scenario}`);
+  }
+}
 
 async function createFixture() {
   const root = await mkdtemp(resolve(tmpdir(), "helix-release-manifest-"));

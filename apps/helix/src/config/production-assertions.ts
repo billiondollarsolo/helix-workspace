@@ -301,6 +301,13 @@ export function assertProductionConfiguration(environment: Env): void {
   const issues: ProductionConfigurationIssue[] = [];
   const environmentRecord = environment as Readonly<Record<string, unknown>>;
 
+  if (flag(environment.HELIX_STARTUP_MIGRATION_CHECK) === false) {
+    issues.push({
+      variable: "HELIX_STARTUP_MIGRATION_CHECK",
+      message: "must not be disabled in production",
+    });
+  }
+
   for (const [variable, candidates] of Object.entries(KNOWN_DEVELOPMENT_VALUES)) {
     const value = environmentRecord[variable];
     if (

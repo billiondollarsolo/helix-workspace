@@ -61,6 +61,7 @@ const envSchema = z.object({
   HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED: optionalString,
   HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED: optionalString,
   HELIX_DATA_ENCRYPTION_KEY: optionalString,
+  HELIX_STARTUP_MIGRATION_CHECK: optionalString,
 
   // Storage (RustFS / S3-compatible)
   RUSTFS_ENDPOINT: optionalUrl,

@@ -40,6 +40,7 @@ function productionFixture(): Record<string, string> {
     DRIVE_CLAMAV_ENABLED: "true",
     DRIVE_CLAMAV_HOST: "clamav",
     DRIVE_CLAMAV_MAX_BYTES: "1073741824",
+    HELIX_STARTUP_MIGRATION_CHECK: "true",
   };
 }
 
@@ -200,6 +201,10 @@ describe("assertProductionConfiguration", () => {
 
   it("rejects localhost as the production sending domain", () => {
     assertRejected({ MAIL_FROM_DOMAIN: "localhost" }, "MAIL_FROM_DOMAIN");
+  });
+
+  it("rejects disabling the startup migration compatibility check", () => {
+    assertRejected({ HELIX_STARTUP_MIGRATION_CHECK: "false" }, "HELIX_STARTUP_MIGRATION_CHECK");
   });
 
   it("allows outbound Mail to be explicitly disabled", () => {

@@ -1,10 +1,12 @@
 import type postgres from "postgres";
-import { createSqlClient, resolveMigrationDatabaseUrl } from "./client.js";
+import { createSqlClient, resolveDatabaseUrl } from "./client.js";
 import { resolvePlatformMigrationSources } from "./migration-sources.js";
 import {
   listPendingMigrations,
+  listUnknownAppliedMigrations,
   type MigrationSource,
   type PendingMigration,
+  type UnknownAppliedMigration,
 } from "./migration-runner.js";
 
 export class PendingStartupMigrationsError extends Error {
@@ -14,9 +16,17 @@ export class PendingStartupMigrationsError extends Error {
   }
 }
 
+export class IncompatibleStartupMigrationsError extends Error {
+  constructor(readonly unknown: readonly UnknownAppliedMigration[]) {
+    super(incompatibleMigrationErrorMessage(unknown));
+    this.name = "IncompatibleStartupMigrationsError";
+  }
+}
+
 export interface StartupMigrationCheckResult {
   readonly checked: boolean;
   readonly pending: readonly PendingMigration[];
+  readonly unknown: readonly UnknownAppliedMigration[];
 }
 
 export interface StartupMigrationCheckOptions {
@@ -27,6 +37,10 @@ export interface StartupMigrationCheckOptions {
     sql: postgres.Sql,
     sources: readonly MigrationSource[],
   ) => Promise<readonly PendingMigration[]>;
+  readonly listUnknownApplied?: (
+    sql: postgres.Sql,
+    sources: readonly MigrationSource[],
+  ) => Promise<readonly UnknownAppliedMigration[]>;
 }
 
 export async function assertNoPendingStartupMigrations(
@@ -34,20 +48,42 @@ export async function assertNoPendingStartupMigrations(
 ): Promise<StartupMigrationCheckResult> {
   const env = options.env ?? process.env;
   if (!shouldCheckStartupMigrations(env)) {
-    return { checked: false, pending: [] };
+    return { checked: false, pending: [], unknown: [] };
   }
 
-  const sql = options.createSql?.() ?? createSqlClient(resolveMigrationDatabaseUrl());
+  // Application replicas perform this read-only check with the least-privilege
+  // runtime credential. The elevated migration credential belongs only to the
+  // one-shot migrator process.
+  const sql = options.createSql?.() ?? createSqlClient(resolveDatabaseUrl());
   try {
     const sources = await (options.resolveSources?.() ?? resolvePlatformMigrationSources());
-    const pending = await (options.listPending?.(sql, sources) ?? listPendingMigrations(sql, sources));
+    const [pending, unknown] = await Promise.all([
+      options.listPending?.(sql, sources) ?? listPendingMigrations(sql, sources),
+      options.listUnknownApplied?.(sql, sources) ?? listUnknownAppliedMigrations(sql, sources),
+    ]);
+    if (unknown.length > 0) {
+      throw new IncompatibleStartupMigrationsError(unknown);
+    }
     if (pending.length > 0) {
       throw new PendingStartupMigrationsError(pending);
     }
-    return { checked: true, pending };
+    return { checked: true, pending, unknown };
   } finally {
     await sql.end({ timeout: 5 });
   }
+}
+
+function incompatibleMigrationErrorMessage(unknown: readonly UnknownAppliedMigration[]): string {
+  const preview = unknown
+    .slice(0, 10)
+    .map((migration) => `${migration.namespace}/${migration.name}`)
+    .join(", ");
+  const suffix = unknown.length > 10 ? `, and ${String(unknown.length - 10)} more` : "";
+  return [
+    "Database schema is newer than this Helix application image.",
+    `Unknown applied migrations: ${preview}${suffix}.`,
+    "Deploy a compatible image; never delete migration history or attempt an ad-hoc downgrade.",
+  ].join(" ");
 }
 
 export function shouldCheckStartupMigrations(env: NodeJS.ProcessEnv): boolean {
@@ -58,7 +94,7 @@ export function shouldCheckStartupMigrations(env: NodeJS.ProcessEnv): boolean {
   if (override === "true" || override === "1" || override === "on") {
     return true;
   }
-  return env.NODE_ENV !== "production";
+  return true;
 }
 
 function startupMigrationErrorMessage(pending: readonly PendingMigration[]): string {
@@ -66,11 +102,10 @@ function startupMigrationErrorMessage(pending: readonly PendingMigration[]): str
     .slice(0, 10)
     .map((migration) => `${migration.namespace}/${migration.name}`)
     .join(", ");
-  const suffix =
-    pending.length > 10 ? `, and ${String(pending.length - 10)} more` : "";
+  const suffix = pending.length > 10 ? `, and ${String(pending.length - 10)} more` : "";
   return [
     "Database schema has pending migrations.",
-    "Run `pnpm --filter @helix/app db:migrate` before starting Helix so realtime editors do not run against stale tables.",
+    "Run the dedicated Helix migration job before starting application replicas.",
     `Pending: ${preview}${suffix}.`,
     "Set HELIX_STARTUP_MIGRATION_CHECK=false only for intentional one-off diagnostics.",
   ].join(" ");

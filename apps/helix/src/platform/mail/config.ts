@@ -1,4 +1,5 @@
 import type { Env } from "../../config/env.js";
+import type { SecurityTier } from "@helix/sdk-types";
 import type { OutboundMailConfig } from "./outbound.js";
 import type { SpamdScannerOptions } from "./spam.js";
 import type { ClamavScannerOptions } from "./antivirus.js";
@@ -100,7 +101,10 @@ export function buildSpamdConfig(env: Env): SpamdScannerOptions | undefined {
 }
 
 /** Build ClamAV scanner options from validated env. */
-export function buildClamavConfig(env: Env): ClamavScannerOptions | undefined {
+export function buildClamavConfig(
+  env: Env,
+  tier: SecurityTier = "personal",
+): ClamavScannerOptions | undefined {
   if (!envFlag(env.MAIL_CLAMAV_ENABLED)) {
     return undefined;
   }
@@ -110,6 +114,7 @@ export function buildClamavConfig(env: Env): ClamavScannerOptions | undefined {
   return {
     host,
     port,
+    tier,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
   };
 }
@@ -118,7 +123,7 @@ export function buildClamavConfig(env: Env): ClamavScannerOptions | undefined {
  * Assemble the full mail config struct from a validated {@link Env}.
  * Zero raw `process.env` reads — call sites pass `env()` / `loadEnv(...)`.
  */
-export function mailConfig(env: Env): MailConfig {
+export function mailConfig(env: Env, securityTier: SecurityTier = "personal"): MailConfig {
   const fromDomain = env.MAIL_FROM_DOMAIN;
   return {
     fromDomain,
@@ -126,7 +131,7 @@ export function mailConfig(env: Env): MailConfig {
     outbound: buildOutboundConfig(env),
     receiver: buildReceiverConfig(env),
     spamd: buildSpamdConfig(env),
-    clamav: buildClamavConfig(env),
+    clamav: buildClamavConfig(env, securityTier),
     signupFrom: {
       address: env.HELIX_SIGNUP_EMAIL_FROM ?? `no-reply@${fromDomain}`,
       name: env.HELIX_SIGNUP_EMAIL_FROM_NAME,

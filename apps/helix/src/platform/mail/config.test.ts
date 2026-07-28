@@ -51,5 +51,22 @@ describe("mailConfig", () => {
     );
     expect(cfg.spamd?.host).toBe("spam.internal");
     expect(cfg.clamav?.host).toBe("av.internal");
+    expect(cfg.clamav?.tier).toBe("personal");
+  });
+
+  it("propagates the organization security tier into ClamAV policy", () => {
+    const cfg = mailConfig(
+      loadEnv({
+        ...base,
+        MAIL_CLAMAV_ENABLED: "true",
+        MAIL_CLAMAV_HOST: "av.internal",
+      }),
+      "business",
+    );
+
+    expect(cfg.clamav).toMatchObject({
+      host: "av.internal",
+      tier: "business",
+    });
   });
 });

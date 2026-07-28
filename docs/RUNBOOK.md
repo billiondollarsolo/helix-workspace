@@ -8,6 +8,7 @@ alerts, safe labels, and required telemetry. Start with the alert's
 prompts, tokens, or personal data into an incident channel or ticket.
 
 - [Platform or dependency outage](runbooks/platform-dependency-outage.md)
+- [Node filesystem low space](runbooks/node-filesystem-low-space.md)
 - [Signup activation SLO breach](specs/05-operations/runbooks/signup-activation-slo-breach.md)
 - [Outbox or worker backlog](runbooks/outbox-worker-backlog.md)
 - [Mail provider outage or backlog](runbooks/mail-provider-outage.md)
@@ -115,7 +116,8 @@ proof from the deployed backup backend.
 
    For a point-in-time recovery from a `--pitr` backup, use the PITR restore
    path documented in `docs/backup-restore.md` (`restore.sh --pitr
-   --recovery-target-time ...`).
+--recovery-target-time ...`).
+
 6. Start remaining services:
 
    ```sh

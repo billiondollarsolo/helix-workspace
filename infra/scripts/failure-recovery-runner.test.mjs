@@ -107,7 +107,7 @@ describe("V4 failure/recovery evidence contract", () => {
     );
   });
 
-  it("keeps the unresolved low-space alert gap explicit", async () => {
+  it("provisions every exact alert required by the failure scenarios", async () => {
     const rules = await readFile(
       resolve(
         import.meta.dirname,
@@ -118,7 +118,7 @@ describe("V4 failure/recovery evidence contract", () => {
     const expectedRules = new Set(FAILURE_RECOVERY_SCENARIOS.flatMap(({ alerts }) => alerts));
     const missing = [...expectedRules].filter((rule) => !rules.includes(`alert: ${rule}`));
 
-    expect(missing).toEqual(["HelixNodeFilesystemLowSpace"]);
+    expect(missing).toEqual([]);
   });
 });
 

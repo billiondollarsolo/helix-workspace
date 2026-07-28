@@ -88,6 +88,7 @@ describe("Workspace operations observability assets", () => {
         "HelixRateLimitDenialsSpike",
         "HelixDependencyUnavailable",
         "HelixDependencyTelemetryMissing",
+        "HelixNodeFilesystemLowSpace",
         "HelixOutboxBacklogHigh",
         "HelixWorkerFailureRateHigh",
         "HelixMailReceiveLatencyHigh",
@@ -127,6 +128,8 @@ describe("Workspace operations observability assets", () => {
       "helix_permission_checks_total",
       "helix_auth_rate_limit_decisions_total",
       "helix_dependency_up",
+      "node_filesystem_avail_bytes",
+      "node_filesystem_size_bytes",
       "helix_outbox_depth",
       "helix_outbox_oldest_age_seconds",
       "helix_worker_failures_total",
@@ -207,7 +210,7 @@ describe("Workspace operations observability assets", () => {
       runbookPaths.add(String(annotations.runbook_url));
     }
 
-    expect(runbookPaths.size).toBe(12);
+    expect(runbookPaths.size).toBe(13);
     await Promise.all(
       [...runbookPaths].map(async (relativePath) => {
         const runbook = await readFile(join(repoRoot, relativePath), "utf8");
@@ -225,7 +228,7 @@ describe("Workspace operations observability assets", () => {
     );
     const alertBlocks = ruleSources.flatMap((source) => source.split(/\n\s+- alert: /u).slice(1));
 
-    expect(alertBlocks).toHaveLength(46);
+    expect(alertBlocks).toHaveLength(47);
     await Promise.all(
       alertBlocks.map(async (block) => {
         const expression = block.match(/^\s+expr:\s+(.+)$/mu)?.[1] ?? "";

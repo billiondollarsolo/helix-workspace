@@ -64,6 +64,15 @@ groups:
           resource_id: telemetry:dependencies
           trace_query: '{ resource.service.name = "helix" && status = error }'
           summary: Required dependency telemetry is missing
+      - alert: HelixNodeFilesystemLowSpace
+        expr: min by (instance, mountpoint) (node_filesystem_avail_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs"} / clamp_min(node_filesystem_size_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs"}, 1)) < 0.10
+        for: 10m
+        labels: { severity: critical, priority: p1, service: platform, slo: storage_capacity }
+        annotations:
+          runbook_url: docs/runbooks/node-filesystem-low-space.md
+          resource_id: node:{{ $labels.instance }}:filesystem
+          trace_query: '{ resource.service.name = "helix" && status = error }'
+          summary: A persistent node filesystem has less than ten percent free space
       - alert: HelixOutboxBacklogHigh
         expr: sum(helix_outbox_depth) > 1000 or max(helix_outbox_oldest_age_seconds) > 300
         for: 10m

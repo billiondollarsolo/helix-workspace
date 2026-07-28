@@ -78,10 +78,9 @@ node infra/scripts/failure-recovery-runner.mjs \
 No live V4 run is included by this repository change. A site-specific harness and disposable stack
 are still required, so the plan's V4 gate remains open until the resulting report passes.
 
-The low-space contract requires `HelixNodeFilesystemLowSpace`. The current Workspace Prometheus
-rules do not define that alert, so this scenario cannot truthfully pass until observability adds
-the alert and its live firing is observed. This is intentionally a hard failure rather than a
-substitute alert.
+The low-space contract requires the provisioned `HelixNodeFilesystemLowSpace` alert and a live
+observation of that exact rule firing. A similarly named provider alert is not accepted as a
+substitute.
 
 The runner validates evidence; it does not claim that a passing JSON document independently proves
 the external system was honest. Release operators must retain the referenced Alertmanager queries,

@@ -28,6 +28,9 @@ function productionFixture(): Record<string, string> {
     BETTER_AUTH_SECRET: secret(),
     BETTER_AUTH_URL: "https://workspace.example.test",
     BETTER_AUTH_TRUSTED_ORIGINS: "https://workspace.example.test",
+    HELIX_MFA_ASSERTION_SECRET: secret(),
+    HELIX_MFA_ASSERTION_ISSUER: "https://auth.example.test",
+    HELIX_MFA_ASSERTION_AUDIENCE: "helix-workspace",
     HELIX_PUBLIC_URL: "https://workspace.example.test",
     HELIX_SECURITY_TIER: "business",
     HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED: "true",
@@ -96,6 +99,7 @@ describe("assertProductionConfiguration", () => {
   it.each([
     ["DATABASE_URL", "postgres://helix:helix_dev_password@postgres:5432/helix"],
     ["BETTER_AUTH_SECRET", "helix_local_better_auth_secret_change_me_32_chars"],
+    ["HELIX_MFA_ASSERTION_SECRET", "helix_local_mfa_assertion_secret_change_me"],
     ["RUSTFS_ACCESS_KEY", "helixrustfs"],
     ["RUSTFS_SECRET_KEY", "helix_rustfs_dev_secret"],
     ["AUDIT_IMMUTABLE_S3_ACCESS_KEY", "helixrustfs"],
@@ -147,12 +151,21 @@ describe("assertProductionConfiguration", () => {
   it.each([
     ["DATABASE_URL", "postgres://helix:short@postgres:5432/helix"],
     ["BETTER_AUTH_SECRET", "too-short"],
+    ["HELIX_MFA_ASSERTION_SECRET", "too-short"],
     ["RUSTFS_SECRET_KEY", "too-short"],
     ["MEILI_MASTER_KEY", "too-short"],
     ["MAIL_SMTP_PASS", "too-short"],
     ["MAIL_PROVIDER_WEBHOOK_SECRET", "too-short"],
     ["HELIX_DATA_ENCRYPTION_KEY", "too-short"],
   ])("rejects a weak required secret for %s", (variable, value) => {
+    assertRejected({ [variable]: value }, variable);
+  });
+
+  it.each([
+    ["HELIX_MFA_ASSERTION_SECRET", undefined],
+    ["HELIX_MFA_ASSERTION_ISSUER", undefined],
+    ["HELIX_MFA_ASSERTION_AUDIENCE", undefined],
+  ])("requires the signed Business MFA assertion setting %s", (variable, value) => {
     assertRejected({ [variable]: value }, variable);
   });
 

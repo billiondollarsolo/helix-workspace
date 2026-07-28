@@ -18,7 +18,9 @@
 
 	@health path /healthz /readyz
 	handle @health {
-		reverse_proxy {$HELIX_UPSTREAM}
+		reverse_proxy {$HELIX_UPSTREAM} {
+			header_up -X-Helix-Mfa-Verified
+		}
 	}
 
 	@backend {
@@ -27,7 +29,9 @@
 		path /events /events/* /ws /ws/* /sync /sync/* /dav /dav/* /.well-known/*
 	}
 	handle @backend {
-		reverse_proxy {$HELIX_UPSTREAM}
+		reverse_proxy {$HELIX_UPSTREAM} {
+			header_up -X-Helix-Mfa-Verified
+		}
 	}
 
 	handle {

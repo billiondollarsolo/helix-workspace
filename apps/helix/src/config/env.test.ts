@@ -70,6 +70,24 @@ describe("loadEnv", () => {
     expect(loaded.BETTER_AUTH_SECRET).toBe("file-backed-secret-with-a-trailing-newline");
   });
 
+  it("loads the dedicated MFA assertion key only from its allowlisted secret file", () => {
+    const directory = mkdtempSync(join(tmpdir(), "helix-env-test-"));
+    temporaryDirectories.push(directory);
+    const secretPath = join(directory, "mfa-assertion-secret");
+    writeFileSync(secretPath, "independent-mfa-assertion-secret-with-32-bytes\n", {
+      mode: 0o600,
+    });
+
+    const loaded = loadEnv({
+      ...base,
+      HELIX_MFA_ASSERTION_SECRET_FILE: secretPath,
+    });
+
+    expect(loaded.HELIX_MFA_ASSERTION_SECRET).toBe(
+      "independent-mfa-assertion-secret-with-32-bytes",
+    );
+  });
+
   it("rejects simultaneous inline and file-backed values without echoing either", () => {
     const directory = mkdtempSync(join(tmpdir(), "helix-env-test-"));
     temporaryDirectories.push(directory);

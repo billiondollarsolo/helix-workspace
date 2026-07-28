@@ -91,6 +91,10 @@ services:
       NATS_TLS_KEY_FILE: /run/secrets/nats_client_key
       BETTER_AUTH_SECRET: !reset null
       BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
+      HELIX_MFA_ASSERTION_SECRET: !reset null
+      HELIX_MFA_ASSERTION_SECRET_FILE: /run/secrets/mfa_assertion_secret
+      HELIX_MFA_ASSERTION_ISSUER: ${HELIX_MFA_ASSERTION_ISSUER:?trusted MFA assertion issuer is required}
+      HELIX_MFA_ASSERTION_AUDIENCE: ${HELIX_MFA_ASSERTION_AUDIENCE:?MFA assertion audience is required}
       RUSTFS_ACCESS_KEY: !reset null
       RUSTFS_ACCESS_KEY_FILE: /run/secrets/rustfs_access_key
       RUSTFS_SECRET_KEY: !reset null
@@ -149,6 +153,7 @@ services:
       - nats_client_cert
       - nats_client_key
       - better_auth_secret
+      - mfa_assertion_secret
       - rustfs_access_key
       - rustfs_secret_key
       - meili_master_key
@@ -609,6 +614,8 @@ secrets:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/nats_client_key
   better_auth_secret:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/better_auth_secret
+  mfa_assertion_secret:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/mfa_assertion_secret
   rustfs_access_key:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/rustfs_access_key
   rustfs_secret_key:

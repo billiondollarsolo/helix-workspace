@@ -16,6 +16,7 @@ describe("helixLoggerOptions", () => {
           headers: {
             authorization: "Bearer reusable-access-token",
             cookie: "helix_session=reusable-session",
+            "x-helix-mfa-assertion": "signed-mfa-assertion",
             "sec-websocket-protocol": "helix-bearer, reusable-protocol-token",
           },
         },
@@ -37,6 +38,7 @@ describe("helixLoggerOptions", () => {
 
     expect(line).not.toContain("reusable-access-token");
     expect(line).not.toContain("reusable-session");
+    expect(line).not.toContain("signed-mfa-assertion");
     expect(line).not.toContain("reusable-protocol-token");
     expect(line).not.toContain("new-session");
     expect(line).not.toContain("nested-access-token");

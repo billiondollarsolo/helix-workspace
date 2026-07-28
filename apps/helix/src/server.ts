@@ -374,8 +374,8 @@ import { createEditorsRuntimeHost } from "./platform/editors/core-app.js";
 import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
 import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
 import {
+  createMfaAssertionVerificationResolver,
   evaluateAdminMfa,
-  headerMfaVerificationResolver,
   type MfaVerificationResolver,
 } from "./platform/auth/mfa.js";
 import {
@@ -1563,7 +1563,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // P2-1: MFA-required-for-admins enforcement. On tiers that require admin MFA
   // (Tier 2+), admin-scoped requests from an actor without a verified MFA
   // factor are rejected before the route handler runs.
-  const mfaResolver: MfaVerificationResolver = headerMfaVerificationResolver;
+  const mfaResolver: MfaVerificationResolver = createMfaAssertionVerificationResolver({
+    secret: bootEnv.HELIX_MFA_ASSERTION_SECRET,
+    issuer: bootEnv.HELIX_MFA_ASSERTION_ISSUER,
+    audience: bootEnv.HELIX_MFA_ASSERTION_AUDIENCE,
+  });
   // P0-7: durable AI cost limiting. Backed by Redis when available so budgets
   // survive restarts and are shared across replicas; the in-memory limiter
   // remains the single-process fallback.
@@ -2692,7 +2696,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     const decision = evaluateAdminMfa({
       tier: securityTier,
       actor,
-      mfaVerified: await mfaResolver.isMfaVerified(request),
+      mfaVerified: await mfaResolver.isMfaVerified(request, actor),
     });
     if (!decision.allowed) {
       const traceId = traceIdForRequest(request);

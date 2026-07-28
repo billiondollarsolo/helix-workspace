@@ -32,6 +32,7 @@ const secretNames = [
   "nats_client_cert",
   "nats_client_key",
   "better_auth_secret",
+  "mfa_assertion_secret",
   "rustfs_access_key",
   "rustfs_secret_key",
   "meili_master_key",
@@ -68,6 +69,8 @@ beforeAll(() => {
     ...process.env,
     HELIX_PRODUCTION_SECRETS_DIR: secretsDirectory,
     HELIX_DOMAIN: "workspace.example.test",
+    HELIX_MFA_ASSERTION_ISSUER: "https://auth.example.test",
+    HELIX_MFA_ASSERTION_AUDIENCE: "helix-workspace",
     MAIL_PROVIDER: "postmark",
     MAIL_FROM_DOMAIN: "example.test",
     MAIL_SMTP_HOST: "smtp.postmarkapp.com",
@@ -150,6 +153,7 @@ describe("production Compose overlay", () => {
     expect(environment.REDIS_URL).toBeUndefined();
     expect(environment.NATS_PASSWORD).toBeUndefined();
     expect(environment.BETTER_AUTH_SECRET).toBeUndefined();
+    expect(environment.HELIX_MFA_ASSERTION_SECRET).toBeUndefined();
     expect(environment.RUSTFS_SECRET_KEY).toBeUndefined();
     expect(environment.MEILI_MASTER_KEY).toBeUndefined();
     expect(environment.MAIL_SMTP_PASS).toBeUndefined();
@@ -158,6 +162,9 @@ describe("production Compose overlay", () => {
     expect(environment.REDIS_URL_FILE).toBe("/run/secrets/redis_url");
     expect(environment.NATS_PASSWORD_FILE).toBe("/run/secrets/nats_password");
     expect(environment.BETTER_AUTH_SECRET_FILE).toBe("/run/secrets/better_auth_secret");
+    expect(environment.HELIX_MFA_ASSERTION_SECRET_FILE).toBe("/run/secrets/mfa_assertion_secret");
+    expect(environment.HELIX_MFA_ASSERTION_ISSUER).toBe("https://auth.example.test");
+    expect(environment.HELIX_MFA_ASSERTION_AUDIENCE).toBe("helix-workspace");
     expect(environment.MAIL_SMTP_PASS_FILE).toBe("/run/secrets/mail_smtp_password");
   });
 
@@ -322,5 +329,6 @@ describe("production Compose overlay", () => {
     expect(caddyfile).not.toContain("/rustfs");
     expect(caddyfile).not.toContain("/cerbos");
     expect(caddyfile).not.toContain("/metrics");
+    expect(caddyfile.match(/header_up -X-Helix-Mfa-Verified/gu)).toHaveLength(2);
   });
 });

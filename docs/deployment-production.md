@@ -97,6 +97,7 @@ non-empty files with mode `0600`:
 | `nats_client_cert`             | PEM Helix NATS client certificate        |
 | `nats_client_key`              | PEM Helix NATS client private key        |
 | `better_auth_secret`           | Random Better Auth secret                |
+| `mfa_assertion_secret`         | Random upstream MFA assertion HMAC key   |
 | `rustfs_access_key`            | Random object-store access identifier    |
 | `rustfs_secret_key`            | Random object-store secret               |
 | `meili_master_key`             | Random Meilisearch master key            |
@@ -141,6 +142,68 @@ Diagnostics identify the affected variable without printing the path or secret.
 For Kubernetes or another orchestrator, mount equivalent secret-manager/CSI files and set the
 corresponding `*_FILE` variables. Do not render secrets into a Compose file, image layer, command
 line, CI artifact, or application log.
+
+## Signed upstream MFA assertions
+
+Business and higher tiers reject every admin-scoped request unless the authenticated actor also
+presents a valid MFA assurance assertion. Helix does not currently run a native MFA enrollment or
+challenge flow. A trusted upstream authenticator is therefore a required deployment dependency for
+Business admin access; do not weaken or bypass the gate when that producer is unavailable.
+
+Configure the exact producer identity and consumer identifier:
+
+```dotenv
+HELIX_MFA_ASSERTION_ISSUER=https://auth.example.com
+HELIX_MFA_ASSERTION_AUDIENCE=helix-workspace
+HELIX_MFA_ASSERTION_SECRET_FILE=/run/secrets/mfa_assertion_secret
+```
+
+The HMAC secret is dedicated to this contract, shared only by the upstream authenticator and Helix,
+and contains at least 32 cryptographically random bytes. It must not be reused as the Better Auth
+secret or any provider credential. Production startup rejects a missing, weak, known-development,
+or partially configured assertion contract.
+
+After completing an MFA challenge, the authenticator constructs this exact JSON object:
+
+```json
+{
+  "v": 1,
+  "iss": "https://auth.example.com",
+  "aud": "helix-workspace",
+  "sub": "authenticated-actor-id",
+  "org": "authenticated-organization-id",
+  "amr": "mfa",
+  "iat": 1784908800,
+  "exp": 1784908860
+}
+```
+
+`iat` and `exp` are integer Unix seconds. Use a 60-second lifetime; Helix refuses an assertion
+whose lifetime exceeds 300 seconds. Encode the UTF-8 JSON bytes without padding using base64url,
+compute `HMAC-SHA256(secret, encodedClaims)`, encode the 32-byte MAC without padding using
+base64url, and send `encodedClaims.encodedMac` in `X-Helix-Mfa-Assertion`. The producer must derive
+`sub` and `org` from the same authenticated principal for which it completed the factor challenge,
+not from client-supplied identity headers.
+
+Helix verifies the MAC with a timing-safe comparison before parsing claims. It then requires the
+exact version, issuer, audience, `amr=mfa`, authenticated actor ID, authenticated organization ID,
+non-future issue time, unexpired expiry, positive lifetime, and maximum lifetime. Malformed,
+repeated, tampered, future, expired, overlong, cross-actor, and cross-organization assertions fail
+closed. `X-Helix-Mfa-Verified` has no authority and Caddy removes it before proxying. The signed
+assertion is included in the central structured-log redaction policy; producers and intermediate
+proxies must also redact it and must use TLS.
+
+The version 1 assertion is an authentication-assurance credential, not a one-operation
+authorization token. Reuse by the same authenticated actor during its short validity window is
+intentional for a multi-request admin UI. Replay is bounded to at most five minutes and is useful
+only alongside authentication that resolves to the signed actor and organization. A nonce store is
+therefore not required for this MVP contract. If a future assertion authorizes an individual
+high-risk action, add a versioned `jti` claim and atomically consume it in the shared Redis data
+plane until `exp`; do not retrofit one-time consumption into version 1.
+
+Rotate the dedicated secret during a coordinated authenticator and Helix deployment, invalidate
+outstanding assertions, and verify new assertions before restoring admin traffic. Never log,
+persist, or place a raw assertion in an incident ticket or release artifact.
 
 ## Required attestations
 

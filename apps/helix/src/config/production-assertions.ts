@@ -28,6 +28,7 @@ const KNOWN_DEVELOPMENT_VALUES: Readonly<Record<string, readonly string[]>> = {
     "helix_local_better_auth_secret_change_me_32_chars",
     "helix_jitsi_dev_secret",
   ],
+  HELIX_MFA_ASSERTION_SECRET: ["helix_local_mfa_assertion_secret_change_me"],
   RUSTFS_ACCESS_KEY: ["helixrustfs"],
   RUSTFS_SECRET_KEY: ["helix_rustfs_dev_secret"],
   AUDIT_IMMUTABLE_S3_ACCESS_KEY: ["helixrustfs"],
@@ -454,7 +455,32 @@ export function assertProductionConfiguration(environment: Env): void {
 
   validateProductionDataPlane(environment, issues);
 
+  const securityTier = configuredSecurityTier(environment, issues);
   requireStrongSecret("BETTER_AUTH_SECRET", environment.BETTER_AUTH_SECRET, issues);
+  const mfaAssertionConfig = [
+    normalized(environment.HELIX_MFA_ASSERTION_SECRET),
+    normalized(environment.HELIX_MFA_ASSERTION_ISSUER),
+    normalized(environment.HELIX_MFA_ASSERTION_AUDIENCE),
+  ];
+  if (BUSINESS_TIERS.has(securityTier) || mfaAssertionConfig.some((value) => value !== undefined)) {
+    requireStrongSecret(
+      "HELIX_MFA_ASSERTION_SECRET",
+      environment.HELIX_MFA_ASSERTION_SECRET,
+      issues,
+    );
+    if (mfaAssertionConfig[1] === undefined) {
+      issues.push({
+        variable: "HELIX_MFA_ASSERTION_ISSUER",
+        message: "is required with the signed upstream MFA assertion contract",
+      });
+    }
+    if (mfaAssertionConfig[2] === undefined) {
+      issues.push({
+        variable: "HELIX_MFA_ASSERTION_AUDIENCE",
+        message: "is required with the signed upstream MFA assertion contract",
+      });
+    }
+  }
   requireStrongSecret("RUSTFS_SECRET_KEY", environment.RUSTFS_SECRET_KEY, issues);
   if (flag(environment.AUDIT_IMMUTABLE_S3_ENABLED) === true) {
     requireStrongSecret(
@@ -547,7 +573,6 @@ export function assertProductionConfiguration(environment: Env): void {
     );
   }
 
-  const securityTier = configuredSecurityTier(environment, issues);
   if (BUSINESS_TIERS.has(securityTier)) {
     for (const variable of [
       "HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED",

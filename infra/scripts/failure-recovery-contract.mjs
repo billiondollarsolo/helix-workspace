@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { validateOptionalReleaseEvidenceBinding } from "./release-evidence-binding.mjs";
 
 export const FAILURE_RECOVERY_REPORT_SCHEMA = "helix.failure-recovery-evidence.v1";
 export const FAILURE_RECOVERY_OBSERVATION_SCHEMA = "helix.failure-recovery-observation.v1";
@@ -148,6 +149,7 @@ export function validateFailureRecoveryEvidence(report, { requirePass = false } 
   if (!isRecord(report) || report.schema !== FAILURE_RECOVERY_REPORT_SCHEMA) {
     throw new Error("invalid failure/recovery evidence schema");
   }
+  validateOptionalReleaseEvidenceBinding(report.releaseBinding);
   if (!["static", "live"].includes(report.mode)) {
     throw new Error("invalid failure/recovery evidence mode");
   }

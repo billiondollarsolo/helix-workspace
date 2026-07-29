@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -31,6 +31,10 @@ import {
   createStaticFailureRecoveryEvidence,
   finalizeFailureRecoveryEvidence,
 } from "./failure-recovery-contract.mjs";
+import {
+  attachReleaseEvidenceBinding,
+  createReleaseEvidenceBinding,
+} from "./release-evidence-binding.mjs";
 
 describe("release-readiness manifest", () => {
   it("redacts sensitive keys recursively and case-insensitively", () => {
@@ -88,6 +92,7 @@ describe("release-readiness manifest", () => {
 
     expect(second).toEqual(first);
     expect(first.generatedAt).toBe("2026-07-28T20:00:00.000Z");
+    expect(first.release).toEqual({ mode: "preflight", requiredGates: [] });
     expect(first.repositories.workspace.dirty).toBe(false);
     expect(first.repositories.editors.dirty).toBe(false);
     expect(first.database.migrationHead).toBe("0002_second.sql");
@@ -501,6 +506,178 @@ describe("release-readiness manifest", () => {
       rtoHours: 1.5,
     });
   });
+
+  it("requires every revision-bound live gate together in final-release mode", async () => {
+    const fixture = await createFixture();
+    const workspaceSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace,
+      encoding: "utf8",
+    }).trim();
+    const editorsSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.editors,
+      encoding: "utf8",
+    }).trim();
+    const binding = createReleaseEvidenceBinding({
+      workspaceSha,
+      editorsSha,
+      applicationImageDigest: `sha256:${"a".repeat(64)}`,
+      webImageDigest: `sha256:${"b".repeat(64)}`,
+    });
+    const args = [
+      "--final-release",
+      ...liveEvidenceArgs(fixture, "--mail-live-evidence", "mail-live-evidence.json").slice(0, -4),
+      "--drive-live-evidence",
+      "drive-live-evidence.json",
+      "--chat-live-evidence",
+      "chat-live-evidence.json",
+      "--agent-live-evidence",
+      "agent-live-evidence.json",
+      "--data-plane-live-evidence",
+      "data-plane-live-evidence.json",
+      "--restore-drill-evidence",
+      "restore-drill-evidence.json",
+      "--failure-recovery-evidence",
+      "failure-recovery-evidence.json",
+      "--image-digest",
+      binding.applicationImageDigest,
+      "--web-image-digest",
+      binding.webImageDigest,
+    ];
+
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "required Mail live evidence missing",
+    );
+    await writeFinalReleaseEvidence(fixture, undefined);
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "missing its required release binding",
+    );
+
+    await writeFinalReleaseEvidence(fixture, binding);
+    const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
+    expect(manifest).toMatchObject({
+      schemaVersion: 4,
+      release: {
+        mode: "final",
+        requiredGates: ["M7", "D7", "C6", "A7", "O2", "O4", "V4"],
+      },
+      repositories: {
+        workspace: { sha: workspaceSha },
+        editors: { sha: editorsSha },
+      },
+      deployment: {
+        images: {
+          application: binding.applicationImageDigest,
+          web: binding.webImageDigest,
+        },
+      },
+      evidence: {
+        mail: { status: "passed" },
+        drive: { status: "passed" },
+        chat: { status: "passed" },
+        agent: { status: "passed" },
+        dataPlane: { status: "passed" },
+        restore: { status: "passed" },
+        failureRecovery: { status: "passed" },
+      },
+    });
+  });
+
+  it("fails final-release mode on missing gates, binding mismatches, and external Mail gaps", async () => {
+    const fixture = await createFixture();
+    const base = [
+      "--workspace-dir",
+      fixture.workspace,
+      "--editors-dir",
+      fixture.editors,
+      "--evidence-dir",
+      fixture.evidence,
+      "--final-release",
+      "--image-digest",
+      `sha256:${"a".repeat(64)}`,
+      "--web-image-digest",
+      `sha256:${"b".repeat(64)}`,
+    ];
+    await expect(buildReleaseReadinessManifest(parseArgs(base, fixture.root, {}))).rejects.toThrow(
+      "--final-release requires all live evidence gates",
+    );
+
+    const workspaceSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace,
+      encoding: "utf8",
+    }).trim();
+    const editorsSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.editors,
+      encoding: "utf8",
+    }).trim();
+    const binding = createReleaseEvidenceBinding({
+      workspaceSha,
+      editorsSha,
+      applicationImageDigest: `sha256:${"a".repeat(64)}`,
+      webImageDigest: `sha256:${"b".repeat(64)}`,
+    });
+    await writeFinalReleaseEvidence(fixture, binding);
+    const args = [
+      ...base,
+      "--mail-live-evidence",
+      "mail-live-evidence.json",
+      "--drive-live-evidence",
+      "drive-live-evidence.json",
+      "--chat-live-evidence",
+      "chat-live-evidence.json",
+      "--agent-live-evidence",
+      "agent-live-evidence.json",
+      "--data-plane-live-evidence",
+      "data-plane-live-evidence.json",
+      "--restore-drill-evidence",
+      "restore-drill-evidence.json",
+      "--failure-recovery-evidence",
+      "failure-recovery-evidence.json",
+    ];
+
+    const mailPath = resolve(fixture.evidence, "mail-live-evidence.json");
+    const mail = JSON.parse(await readFile(mailPath, "utf8"));
+    mail.external.gmail = {
+      status: "not_run",
+      reason: "external account unavailable",
+    };
+    await writeFile(mailPath, `${JSON.stringify(mail)}\n`, "utf8");
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "external Mail evidence is incomplete: gmail",
+    );
+
+    await writeFinalReleaseEvidence(fixture, binding);
+    const drivePath = resolve(fixture.evidence, "drive-live-evidence.json");
+    const drive = JSON.parse(await readFile(drivePath, "utf8"));
+    drive.releaseBinding.workspaceSha = "d".repeat(40);
+    await writeFile(drivePath, `${JSON.stringify(drive)}\n`, "utf8");
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "does not match the promoted release",
+    );
+
+    await writeFinalReleaseEvidence(fixture, binding);
+    const editorsMismatch = JSON.parse(await readFile(drivePath, "utf8"));
+    editorsMismatch.releaseBinding.editorsSha = "f".repeat(40);
+    await writeFile(drivePath, `${JSON.stringify(editorsMismatch)}\n`, "utf8");
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "editorsSha does not match the promoted release",
+    );
+
+    await writeFinalReleaseEvidence(fixture, binding);
+    const imageMismatch = JSON.parse(await readFile(drivePath, "utf8"));
+    imageMismatch.releaseBinding.applicationImageDigest = `sha256:${"e".repeat(64)}`;
+    await writeFile(drivePath, `${JSON.stringify(imageMismatch)}\n`, "utf8");
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "applicationImageDigest does not match the promoted release",
+    );
+
+    await writeFinalReleaseEvidence(fixture, binding);
+    const secretBearing = JSON.parse(await readFile(drivePath, "utf8"));
+    secretBearing.releaseBinding.signingSecret = "must-not-persist";
+    await writeFile(drivePath, `${JSON.stringify(secretBearing)}\n`, "utf8");
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "unexpected, missing, or secret-like fields",
+    );
+  });
 });
 
 function liveEvidenceArgs(fixture, flag, path) {
@@ -518,6 +695,67 @@ function liveEvidenceArgs(fixture, flag, path) {
     "--web-image-digest",
     `sha256:${"b".repeat(64)}`,
   ];
+}
+
+async function writeFinalReleaseEvidence(fixture, binding) {
+  const reports = {
+    "mail-live-evidence.json": passedMailEvidence(),
+    "drive-live-evidence.json": passedDriveEvidence(),
+    "chat-live-evidence.json": passedChatEvidence(),
+    "agent-live-evidence.json": passedAgentEvidence(),
+    "data-plane-live-evidence.json": passedDataPlaneEvidence(),
+    "restore-drill-evidence.json": passedRestoreEvidence(),
+    "failure-recovery-evidence.json": passedFailureRecoveryEvidence(),
+  };
+  await Promise.all(
+    Object.entries(reports).map(([name, report]) => {
+      attachReleaseEvidenceBinding(report, binding);
+      return writeFile(resolve(fixture.evidence, name), `${JSON.stringify(report)}\n`, "utf8");
+    }),
+  );
+}
+
+function passedMailEvidence() {
+  const evidence = createEvidenceSkeleton(new Date("2026-07-28T20:00:00.000Z"));
+  evidence.mode = "local";
+  evidence.status = "passed";
+  for (const scenario of MAIL_LIVE_SCENARIOS) {
+    evidence.local[scenario] = passedLocalResult(scenario);
+  }
+  evidence.external.provider_sandbox = {
+    status: "passed",
+    provider: "approved-sandbox",
+    events: [
+      { type: "hard_bounce", eventIdHash: "a".repeat(20), suppressed: true },
+      { type: "complaint", eventIdHash: "b".repeat(20), suppressed: true },
+    ],
+  };
+  evidence.external.gmail = passedExternalMail("gmail.com", "c");
+  evidence.external.microsoft365 = passedExternalMail("outlook.com", "d");
+  return evidence;
+}
+
+function passedExternalMail(recipientDomain, hashCharacter) {
+  return {
+    status: "passed",
+    provider: "approved-sandbox",
+    recipientDomain,
+    messageIdHash: hashCharacter.repeat(20),
+    latencyMs: 100,
+    placement: "inbox",
+    finalStatus: "delivered",
+    authentication: { spf: "pass", dkim: "pass", dmarc: "pass" },
+  };
+}
+
+function passedAgentEvidence() {
+  const evidence = createAgentEvidenceSkeleton(new Date("2026-07-28T20:00:00.000Z"));
+  evidence.mode = "live";
+  evidence.status = "passed";
+  for (const scenario of AGENT_LIVE_SCENARIOS) {
+    evidence.scenarios[scenario] = passedAgentResult(scenario);
+  }
+  return evidence;
 }
 
 function passedDriveEvidence() {

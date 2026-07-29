@@ -13,6 +13,10 @@ import {
   validateDataPlaneEvidence,
 } from "./data-plane-live-evidence-contract.mjs";
 import {
+  attachReleaseEvidenceBinding,
+  releaseEvidenceBindingFromEnvironment,
+} from "./release-evidence-binding.mjs";
+import {
   composeArgs,
   installPki,
   natsArgs,
@@ -353,15 +357,17 @@ async function main(argv = process.argv.slice(2)) {
   if (args.length !== 1 || !["--static", "--local"].includes(args[0])) {
     throw new Error("usage: data-plane-live-evidence.mjs --static|--local");
   }
+  const bind = (evidence) =>
+    attachReleaseEvidenceBinding(evidence, releaseEvidenceBindingFromEnvironment(process.env));
   if (args[0] === "--static") {
-    emit(validateDataPlaneEvidence(createDataPlaneEvidenceSkeleton()));
+    emit(validateDataPlaneEvidence(bind(createDataPlaneEvidenceSkeleton())));
     return;
   }
   try {
-    emit(runLocalEvidence());
+    emit(bind(runLocalEvidence()));
   } catch (error) {
     const evidence = error?.evidence ?? createDataPlaneEvidenceSkeleton();
-    emit(evidence);
+    emit(bind(evidence));
     throw error;
   }
 }

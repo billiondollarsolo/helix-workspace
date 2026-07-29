@@ -18,6 +18,10 @@ import {
   evidenceHash,
   validateChatLiveEvidence,
 } from "./chat-live-evidence-contract.mjs";
+import {
+  attachReleaseEvidenceBinding,
+  releaseEvidenceBindingFromEnvironment,
+} from "./release-evidence-binding.mjs";
 
 export {
   CHAT_LIVE_EVIDENCE_SCHEMA,
@@ -63,6 +67,9 @@ async function main() {
       requirePass: options.requirePass,
       requireReleaseLoad: options.requireReleaseLoad,
     });
+  }
+  if (options.validate === undefined) {
+    attachReleaseEvidenceBinding(evidence, releaseEvidenceBindingFromEnvironment(process.env));
   }
 
   const serialized = `${JSON.stringify(evidence, null, 2)}\n`;

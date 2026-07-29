@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import {
+  attachReleaseEvidenceBinding,
+  releaseEvidenceBindingFromEnvironment,
+  validateOptionalReleaseEvidenceBinding,
+} from "./release-evidence-binding.mjs";
 
 export const DRIVE_EVIDENCE_CASES = [
   "clean_upload_hash",
@@ -65,10 +70,19 @@ export function validateDriveEvidence(report, { requirePass = false } = {}) {
           "completedAt",
           "durationMs",
           "cases",
+          ...(report.releaseBinding === undefined ? [] : ["releaseBinding"]),
         ]
-      : ["schemaVersion", "generatedAt", "mode", "status", "cases"],
+      : [
+          "schemaVersion",
+          "generatedAt",
+          "mode",
+          "status",
+          "cases",
+          ...(report.releaseBinding === undefined ? [] : ["releaseBinding"]),
+        ],
     "Drive evidence report",
   );
+  validateOptionalReleaseEvidenceBinding(report.releaseBinding);
   requireTimestamp(report.generatedAt, "Drive evidence generatedAt");
   if (!["not_run", "live"].includes(report.mode)) {
     throw new Error("Drive evidence mode must be not_run or live.");
@@ -279,10 +293,15 @@ function requireExactKeys(value, expected, label) {
 async function main(argv) {
   const reportPath = argv[0];
   if (reportPath === undefined) {
-    process.stdout.write(`${JSON.stringify(notRunDriveEvidence(), null, 2)}\n`);
+    const report = attachReleaseEvidenceBinding(
+      notRunDriveEvidence(),
+      releaseEvidenceBindingFromEnvironment(process.env),
+    );
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return;
   }
   const report = JSON.parse(await readFile(reportPath, "utf8"));
+  attachReleaseEvidenceBinding(report, releaseEvidenceBindingFromEnvironment(process.env));
   validateDriveEvidence(report, { requirePass: argv.includes("--require-pass") });
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }

@@ -7,6 +7,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { URL, pathToFileURL } from "node:url";
+import {
+  attachReleaseEvidenceBinding,
+  releaseEvidenceBindingFromEnvironment,
+  validateOptionalReleaseEvidenceBinding,
+} from "./release-evidence-binding.mjs";
 
 export const MAIL_LIVE_EVIDENCE_SCHEMA = "helix.mail-live-evidence.v1";
 export const MAIL_LIVE_SCENARIOS = [
@@ -85,6 +90,7 @@ export function validateMailLiveEvidence(evidence) {
   if (evidence?.schema !== MAIL_LIVE_EVIDENCE_SCHEMA) {
     throw new Error("invalid Mail live evidence schema");
   }
+  validateOptionalReleaseEvidenceBinding(evidence.releaseBinding);
   for (const scenario of MAIL_LIVE_SCENARIOS) {
     const result = evidence.local?.[scenario];
     validateResult(result, `local.${scenario}`);
@@ -158,6 +164,7 @@ async function main(argv = process.argv.slice(2)) {
     throw new Error(`invalid arguments: ${unknown.join(", ")}`);
   }
   let evidence;
+  const releaseBinding = releaseEvidenceBindingFromEnvironment(process.env);
   try {
     evidence = argv.includes("--static")
       ? createEvidenceSkeleton()
@@ -174,10 +181,12 @@ async function main(argv = process.argv.slice(2)) {
         reason: "live run aborted before this scenario was evidenced",
       };
     }
+    attachReleaseEvidenceBinding(evidence, releaseBinding);
     validateMailLiveEvidence(evidence);
     await emitEvidence(evidence);
     throw error;
   }
+  attachReleaseEvidenceBinding(evidence, releaseBinding);
   validateMailLiveEvidence(evidence);
   await emitEvidence(evidence);
 }

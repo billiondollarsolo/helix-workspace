@@ -15,6 +15,10 @@ import {
   validateFailureRecoveryEvidence,
   validateFailureRecoveryScenario,
 } from "./failure-recovery-contract.mjs";
+import {
+  attachReleaseEvidenceBinding,
+  releaseEvidenceBindingFromEnvironment,
+} from "./release-evidence-binding.mjs";
 
 const FAULT_ACKNOWLEDGEMENT = "I_ACKNOWLEDGE_DISPOSABLE_FAULT_INJECTION";
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -249,6 +253,7 @@ async function main(argv) {
     return;
   }
   const report = await runFailureRecoveryEvidence(options);
+  attachReleaseEvidenceBinding(report, releaseEvidenceBindingFromEnvironment(process.env));
   validateFailureRecoveryEvidence(report, { requirePass: options.requirePass });
   await writeReport(report, options.output);
   if (options.mode === "live" && report.status !== "passed") {

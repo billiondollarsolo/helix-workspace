@@ -5,6 +5,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import process from "node:process";
 import { pathToFileURL, URL, URLSearchParams } from "node:url";
+import {
+  attachReleaseEvidenceBinding,
+  releaseEvidenceBindingFromEnvironment,
+  validateOptionalReleaseEvidenceBinding,
+} from "./release-evidence-binding.mjs";
 
 export const AGENT_LIVE_EVIDENCE_SCHEMA = "helix.agent-live-evidence.v1";
 export const AGENT_LIVE_SCENARIOS = [
@@ -70,6 +75,7 @@ export function validateAgentLiveEvidence(evidence) {
   if (evidence?.schema !== AGENT_LIVE_EVIDENCE_SCHEMA) {
     throw new Error("invalid Agent live evidence schema");
   }
+  validateOptionalReleaseEvidenceBinding(evidence.releaseBinding);
   if (!["static_validated", "running", "passed", "failed"].includes(evidence.status)) {
     throw new Error("invalid Agent live evidence status");
   }
@@ -464,6 +470,7 @@ async function main(argv = process.argv.slice(2)) {
   const evidence = argv.includes("--live")
     ? await runAgentLiveEvidence(process.env)
     : createAgentEvidenceSkeleton();
+  attachReleaseEvidenceBinding(evidence, releaseEvidenceBindingFromEnvironment(process.env));
   validateAgentLiveEvidence(evidence);
   const serialized = `${JSON.stringify(evidence, null, 2)}\n`;
   const outputPath = process.env.HELIX_AGENT_LIVE_OUTPUT;

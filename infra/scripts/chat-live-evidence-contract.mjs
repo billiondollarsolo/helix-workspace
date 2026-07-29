@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { validateOptionalReleaseEvidenceBinding } from "./release-evidence-binding.mjs";
 
 export const CHAT_LIVE_EVIDENCE_SCHEMA = "helix.chat-live-evidence.v1";
 
@@ -79,6 +80,7 @@ export function validateChatLiveEvidence(
   if (evidence.schema !== CHAT_LIVE_EVIDENCE_SCHEMA) {
     throw new Error("unsupported Chat live evidence schema");
   }
+  validateOptionalReleaseEvidenceBinding(evidence.releaseBinding);
   canonicalTimestamp(evidence.generatedAt);
   if (!["not_run", "live"].includes(evidence.mode)) {
     throw new Error("Chat live evidence mode must be not_run or live");

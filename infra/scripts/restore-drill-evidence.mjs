@@ -5,6 +5,11 @@ import { dirname, resolve } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { BACKUP_MANIFEST_SCHEMA } from "./backup-manifest.mjs";
+import {
+  attachReleaseEvidenceBinding,
+  releaseEvidenceBindingFromEnvironment,
+  validateOptionalReleaseEvidenceBinding,
+} from "./release-evidence-binding.mjs";
 
 export const RESTORE_DRILL_EVIDENCE_SCHEMA = "helix.restore-drill-evidence.v1";
 export const RESTORE_DRILL_SCENARIOS = [
@@ -50,6 +55,7 @@ if (isMain()) {
     const options = parseArgs(process.argv.slice(2));
     const evidence =
       options.mode === "static" ? createStaticEvidence() : await createLiveEvidence(options);
+    attachReleaseEvidenceBinding(evidence, releaseEvidenceBindingFromEnvironment(process.env));
     validateRestoreDrillEvidence(evidence);
     const serialized = `${JSON.stringify(evidence, null, 2)}\n`;
     if (options.output !== undefined) {
@@ -215,6 +221,7 @@ export function validateRestoreDrillEvidence(evidence) {
   if (evidence?.schema !== RESTORE_DRILL_EVIDENCE_SCHEMA) {
     throw new Error(`unexpected restore drill evidence schema: ${String(evidence?.schema)}`);
   }
+  validateOptionalReleaseEvidenceBinding(evidence.releaseBinding);
   if (!["static", "live"].includes(evidence.mode)) throw new Error("invalid evidence mode");
   if (!["static_validated", "passed", "failed"].includes(evidence.status)) {
     throw new Error("invalid evidence status");

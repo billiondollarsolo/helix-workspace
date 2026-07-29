@@ -25,8 +25,10 @@ import {
   FAILURE_RECOVERY_SCENARIOS,
   validateFailureRecoveryEvidence,
 } from "./failure-recovery-contract.mjs";
+import { validateReleaseEvidenceBinding } from "./release-evidence-binding.mjs";
 
 const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|cookie|key|credential)/iu;
+const FINAL_RELEASE_GATES = ["M7", "D7", "C6", "A7", "O2", "O4", "V4"];
 
 const usage = `Usage: infra/scripts/release-readiness-manifest.mjs [options]
 
@@ -49,6 +51,8 @@ Options:
                                Validate and require passed O2 data-plane evidence
   --failure-recovery-evidence <path>
                                Validate and require passed V4 failure/recovery evidence
+  --final-release              Require every live M7/D7/C6/A7/O2/O4/V4 gate,
+                               external Mail evidence, and exact revision/image bindings
   --require-external-mail-evidence
                                Also require passed provider/Gmail/Microsoft evidence
   --image-digest <digest>      Application image digest (legacy option name)
@@ -111,6 +115,7 @@ export async function buildReleaseReadinessManifest(options) {
   if (!/^sha256:[a-f0-9]{64}$/u.test(options.webImageDigest)) {
     throw new Error("web image digest must be an OCI sha256 digest");
   }
+  validateFinalReleaseOptions(options);
   const workspace = collectRepository(options.workspaceDir, "helix-workspace");
   const editors = collectRepository(options.editorsDir, "helix-editors");
   const dirtyRepositories = [workspace, editors].filter((repository) => repository.dirty);
@@ -131,21 +136,48 @@ export async function buildReleaseReadinessManifest(options) {
   if (evidence.length === 0) {
     throw new Error(`evidence directory contains no files: ${options.evidenceDir}`);
   }
-  const mailEvidence = await validateRequiredMailEvidence(options, evidencePaths);
-  const agentEvidence = await validateRequiredAgentEvidence(options, evidencePaths);
-  const restoreEvidence = await validateRequiredRestoreEvidence(options, evidencePaths);
-  const chatEvidence = await validateRequiredChatEvidence(options, evidencePaths);
-  const driveEvidence = await validateRequiredDriveEvidence(options, evidencePaths);
-  const dataPlaneEvidence = await validateRequiredDataPlaneEvidence(options, evidencePaths);
+  const expectedBinding = {
+    workspaceSha: workspace.sha,
+    editorsSha: editors.sha,
+    applicationImageDigest: options.applicationImageDigest,
+    webImageDigest: options.webImageDigest,
+  };
+  const mailEvidence = await validateRequiredMailEvidence(options, evidencePaths, expectedBinding);
+  const agentEvidence = await validateRequiredAgentEvidence(
+    options,
+    evidencePaths,
+    expectedBinding,
+  );
+  const restoreEvidence = await validateRequiredRestoreEvidence(
+    options,
+    evidencePaths,
+    expectedBinding,
+  );
+  const chatEvidence = await validateRequiredChatEvidence(options, evidencePaths, expectedBinding);
+  const driveEvidence = await validateRequiredDriveEvidence(
+    options,
+    evidencePaths,
+    expectedBinding,
+  );
+  const dataPlaneEvidence = await validateRequiredDataPlaneEvidence(
+    options,
+    evidencePaths,
+    expectedBinding,
+  );
   const failureRecoveryEvidence = await validateRequiredFailureRecoveryEvidence(
     options,
     evidencePaths,
+    expectedBinding,
   );
 
   const timestamp = canonicalTimestamp(options.timestamp);
   const raw = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     generatedAt: timestamp,
+    release: {
+      mode: options.finalRelease ? "final" : "preflight",
+      requiredGates: options.finalRelease ? FINAL_RELEASE_GATES : [],
+    },
     repositories: { workspace, editors },
     runtime: {
       node: process.version,
@@ -198,6 +230,7 @@ export function parseArgs(args, cwd, environment = process.env) {
     driveLiveEvidence: undefined,
     dataPlaneLiveEvidence: undefined,
     failureRecoveryEvidence: undefined,
+    finalRelease: false,
     requireExternalMailEvidence: false,
     applicationImageDigest:
       environment.HELIX_APPLICATION_IMAGE_DIGEST ?? environment.HELIX_IMAGE_DIGEST,
@@ -215,6 +248,10 @@ export function parseArgs(args, cwd, environment = process.env) {
     }
     if (argument === "--require-external-mail-evidence") {
       options.requireExternalMailEvidence = true;
+      continue;
+    }
+    if (argument === "--final-release") {
+      options.finalRelease = true;
       continue;
     }
     const value = args[index + 1];
@@ -282,7 +319,40 @@ export function parseArgs(args, cwd, environment = process.env) {
   return options;
 }
 
-async function validateRequiredDriveEvidence(options, evidencePaths) {
+function validateFinalReleaseOptions(options) {
+  if (!options.finalRelease) return;
+  const required = [
+    ["--mail-live-evidence", options.mailLiveEvidence],
+    ["--drive-live-evidence", options.driveLiveEvidence],
+    ["--chat-live-evidence", options.chatLiveEvidence],
+    ["--agent-live-evidence", options.agentLiveEvidence],
+    ["--data-plane-live-evidence", options.dataPlaneLiveEvidence],
+    ["--restore-drill-evidence", options.restoreDrillEvidence],
+    ["--failure-recovery-evidence", options.failureRecoveryEvidence],
+  ];
+  const missing = required.filter(([, value]) => value === undefined).map(([flag]) => flag);
+  if (missing.length > 0) {
+    throw new Error(`--final-release requires all live evidence gates: ${missing.join(", ")}`);
+  }
+}
+
+function validateExpectedReleaseBinding(evidence, options, expected, label) {
+  if (evidence.releaseBinding === undefined) {
+    if (options.finalRelease) {
+      throw new Error(`${label} is missing its required release binding`);
+    }
+    return;
+  }
+  try {
+    validateReleaseEvidenceBinding(evidence.releaseBinding, expected);
+  } catch (error) {
+    throw new Error(
+      `${label} release binding is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function validateRequiredDriveEvidence(options, evidencePaths, expectedBinding) {
   if (options.driveLiveEvidence === undefined) return undefined;
   if (!evidencePaths.has(options.driveLiveEvidence)) {
     throw new Error(`required Drive live evidence missing: ${options.driveLiveEvidence}`);
@@ -300,6 +370,7 @@ async function validateRequiredDriveEvidence(options, evidencePaths) {
       }`,
     );
   }
+  validateExpectedReleaseBinding(evidence, options, expectedBinding, "Drive live evidence");
   return {
     path: options.driveLiveEvidence,
     status: evidence.status,
@@ -316,7 +387,7 @@ async function validateRequiredDriveEvidence(options, evidencePaths) {
   };
 }
 
-async function validateRequiredDataPlaneEvidence(options, evidencePaths) {
+async function validateRequiredDataPlaneEvidence(options, evidencePaths, expectedBinding) {
   if (options.dataPlaneLiveEvidence === undefined) return undefined;
   if (!evidencePaths.has(options.dataPlaneLiveEvidence)) {
     throw new Error(`required data-plane live evidence missing: ${options.dataPlaneLiveEvidence}`);
@@ -332,6 +403,7 @@ async function validateRequiredDataPlaneEvidence(options, evidencePaths) {
       }`,
     );
   }
+  validateExpectedReleaseBinding(evidence, options, expectedBinding, "data-plane live evidence");
   return {
     path: options.dataPlaneLiveEvidence,
     status: evidence.status,
@@ -344,7 +416,7 @@ async function validateRequiredDataPlaneEvidence(options, evidencePaths) {
   };
 }
 
-async function validateRequiredFailureRecoveryEvidence(options, evidencePaths) {
+async function validateRequiredFailureRecoveryEvidence(options, evidencePaths, expectedBinding) {
   if (options.failureRecoveryEvidence === undefined) return undefined;
   if (!evidencePaths.has(options.failureRecoveryEvidence)) {
     throw new Error(
@@ -364,6 +436,7 @@ async function validateRequiredFailureRecoveryEvidence(options, evidencePaths) {
       }`,
     );
   }
+  validateExpectedReleaseBinding(evidence, options, expectedBinding, "failure/recovery evidence");
   return {
     path: options.failureRecoveryEvidence,
     status: evidence.status,
@@ -389,7 +462,7 @@ async function validateRequiredFailureRecoveryEvidence(options, evidencePaths) {
   };
 }
 
-async function validateRequiredChatEvidence(options, evidencePaths) {
+async function validateRequiredChatEvidence(options, evidencePaths, expectedBinding) {
   if (options.chatLiveEvidence === undefined) return undefined;
   if (!evidencePaths.has(options.chatLiveEvidence)) {
     throw new Error(`required Chat live evidence missing: ${options.chatLiveEvidence}`);
@@ -408,6 +481,7 @@ async function validateRequiredChatEvidence(options, evidencePaths) {
       }`,
     );
   }
+  validateExpectedReleaseBinding(evidence, options, expectedBinding, "Chat live evidence");
   const load = evidence.scenarios.pilot_load.evidence;
   return {
     path: options.chatLiveEvidence,
@@ -432,7 +506,7 @@ async function validateRequiredChatEvidence(options, evidencePaths) {
   };
 }
 
-async function validateRequiredRestoreEvidence(options, evidencePaths) {
+async function validateRequiredRestoreEvidence(options, evidencePaths, expectedBinding) {
   if (options.restoreDrillEvidence === undefined) return undefined;
   if (!evidencePaths.has(options.restoreDrillEvidence)) {
     throw new Error(`required restore drill evidence missing: ${options.restoreDrillEvidence}`);
@@ -454,6 +528,7 @@ async function validateRequiredRestoreEvidence(options, evidencePaths) {
       `restore drill evidence is incomplete: ${incomplete.join(", ") || evidence.status}`,
     );
   }
+  validateExpectedReleaseBinding(evidence, options, expectedBinding, "restore drill evidence");
   return {
     path: options.restoreDrillEvidence,
     status: evidence.status,
@@ -466,7 +541,7 @@ async function validateRequiredRestoreEvidence(options, evidencePaths) {
   };
 }
 
-async function validateRequiredAgentEvidence(options, evidencePaths) {
+async function validateRequiredAgentEvidence(options, evidencePaths, expectedBinding) {
   if (options.agentLiveEvidence === undefined) return undefined;
   if (!evidencePaths.has(options.agentLiveEvidence)) {
     throw new Error(`required Agent live evidence missing: ${options.agentLiveEvidence}`);
@@ -483,11 +558,12 @@ async function validateRequiredAgentEvidence(options, evidencePaths) {
   const incomplete = AGENT_LIVE_SCENARIOS.filter(
     (scenario) => evidence.scenarios[scenario].status !== "passed",
   );
-  if (evidence.status !== "passed" || incomplete.length > 0) {
+  if (evidence.mode !== "live" || evidence.status !== "passed" || incomplete.length > 0) {
     throw new Error(
       `Agent live evidence is incomplete: ${incomplete.join(", ") || evidence.status}`,
     );
   }
+  validateExpectedReleaseBinding(evidence, options, expectedBinding, "Agent live evidence");
   return {
     path: options.agentLiveEvidence,
     status: evidence.status,
@@ -498,7 +574,7 @@ async function validateRequiredAgentEvidence(options, evidencePaths) {
   };
 }
 
-async function validateRequiredMailEvidence(options, evidencePaths) {
+async function validateRequiredMailEvidence(options, evidencePaths, expectedBinding) {
   if (options.mailLiveEvidence === undefined) return undefined;
   if (!evidencePaths.has(options.mailLiveEvidence)) {
     throw new Error(`required Mail live evidence missing: ${options.mailLiveEvidence}`);
@@ -515,12 +591,12 @@ async function validateRequiredMailEvidence(options, evidencePaths) {
   const failedLocal = MAIL_LIVE_SCENARIOS.filter(
     (scenario) => evidence.local[scenario].status !== "passed",
   );
-  if (evidence.status !== "passed" || failedLocal.length > 0) {
+  if (evidence.mode !== "local" || evidence.status !== "passed" || failedLocal.length > 0) {
     throw new Error(
       `Mail live evidence is incomplete: ${failedLocal.join(", ") || evidence.status}`,
     );
   }
-  if (options.requireExternalMailEvidence) {
+  if (options.requireExternalMailEvidence || options.finalRelease) {
     const incompleteExternal = MAIL_EXTERNAL_TARGETS.filter(
       (target) => evidence.external[target].status !== "passed",
     );
@@ -528,6 +604,7 @@ async function validateRequiredMailEvidence(options, evidencePaths) {
       throw new Error(`external Mail evidence is incomplete: ${incompleteExternal.join(", ")}`);
     }
   }
+  validateExpectedReleaseBinding(evidence, options, expectedBinding, "Mail live evidence");
   return {
     path: options.mailLiveEvidence,
     status: evidence.status,

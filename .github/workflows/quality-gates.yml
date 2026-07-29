@@ -60,6 +60,9 @@ jobs:
       - name: Prove quality gates fail closed
         run: pnpm quality:gates-contract:test
 
+      - name: Prove final-release evidence gates fail closed
+        run: pnpm quality:release-evidence-contract:test
+
       - name: Test launch documentation contract
         run: pnpm quality:launch-docs:test
 

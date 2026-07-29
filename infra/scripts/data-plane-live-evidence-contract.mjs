@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { validateOptionalReleaseEvidenceBinding } from "./release-evidence-binding.mjs";
 
 export const DATA_PLANE_EVIDENCE_SCHEMA = "helix.data-plane-live-evidence.v1";
 export const DATA_PLANE_SCENARIOS = [
@@ -33,6 +34,7 @@ export function validateDataPlaneEvidence(evidence, requirePassed = false) {
   if (evidence?.schema !== DATA_PLANE_EVIDENCE_SCHEMA) {
     throw new Error("invalid data-plane evidence schema");
   }
+  validateOptionalReleaseEvidenceBinding(evidence.releaseBinding);
   if (!["static", "local"].includes(evidence.mode)) {
     throw new Error("invalid data-plane evidence mode");
   }

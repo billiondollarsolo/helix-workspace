@@ -1,6 +1,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
+import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
 import { SurfaceFrame } from "@/components/shell";
 import { CalendarShell } from "@/features/calendar/calendar-shell";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@/features/calendar/route-state";
 
 export const Route = createFileRoute("/_shell/calendar/")({
+  beforeLoad: () => enforceFullWorkspaceRoute(),
   validateSearch: (search): CalendarRouteSearch => validateCalendarRouteSearch(search),
   component: CalendarRoute,
 });

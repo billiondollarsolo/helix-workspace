@@ -24,7 +24,7 @@ import {
   type DataClassification,
 } from "../ai/classification/index.js";
 import type { SearchEngine } from "../search/index.js";
-import { createScopedSearchRequest } from "../search/scope.js";
+import { createScopedSearchRequest, type GlobalSearchType } from "../search/scope.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import type { ConfirmationGate } from "../tools/registry.js";
 import {
@@ -66,6 +66,8 @@ export interface AssistantOrchestratorOptions {
   readonly ai: AICapability;
   readonly tools: RuntimeToolRegistry;
   readonly search?: SearchEngine;
+  /** Server-enabled application types eligible for retrieval context. */
+  readonly searchTypes?: readonly GlobalSearchType[];
   readonly memory?: MemoryStore;
   readonly confirmationGate?: ConfirmationGate;
   readonly slashCommands?: AssistantSlashCommandHooks;
@@ -871,6 +873,7 @@ export class AssistantOrchestrator {
     // own visibility="private" embeddings on top of every org-shared one.
     const request = createScopedSearchRequest(actor, {
       query: trimmed,
+      ...(this.options.searchTypes === undefined ? {} : { types: this.options.searchTypes }),
       limit: this.#searchLimit,
     });
     if (request === undefined) {

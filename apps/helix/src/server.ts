@@ -324,6 +324,7 @@ import {
   registerSearchAdminRoutes,
   registerSearchTools,
 } from "./platform/search/index.js";
+import type { GlobalSearchType } from "./platform/search/scope.js";
 import {
   PlatformConfigAdminService,
   PostgresPlatformConfigStore,
@@ -2461,6 +2462,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (coreApps.shouldRegister("drive")) {
     registerDriveTools(tools, {
       store: driveStore,
+      enablePdfEditing: coreApps.shouldRegister("editors"),
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
       ...(coreApps.shouldRegister("docs") ? { docsStore } : {}),
       ...(coreApps.shouldRegister("editors") ? { sheetsStore, slidesStore } : {}),
@@ -2575,14 +2577,31 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     });
     registerSlides(tools, { store: slidesStore, driveStore });
   }
+  const assistantSlashCommands = new AssistantSlashCommandHooks();
+  if (!coreApps.shouldRegister("calendar")) {
+    assistantSlashCommands.register("schedule", () => ({
+      instruction:
+        "Calendar scheduling is unavailable in this deployment. Explain that no calendar action was taken.",
+      searchQuery: "",
+      toolIds: [],
+    }));
+  }
+  const assistantSearchTypes: readonly GlobalSearchType[] = [
+    ...(coreApps.shouldRegister("mail") ? (["mail"] as const) : []),
+    ...(coreApps.shouldRegister("chat") ? (["chat"] as const) : []),
+    ...(coreApps.shouldRegister("docs") ? (["docs"] as const) : []),
+    ...(coreApps.shouldRegister("drive") ? (["drive"] as const) : []),
+    ...(coreApps.shouldRegister("calendar") ? (["calendar"] as const) : []),
+  ];
   const assistantOrchestrator = new AssistantOrchestrator({
     store: assistantStore,
     ai: assistantAi,
     tools,
     memory: assistantMemory,
     ...(runtimeSearchEngine === undefined ? {} : { search: runtimeSearchEngine }),
+    searchTypes: assistantSearchTypes,
     confirmationGate,
-    slashCommands: new AssistantSlashCommandHooks(),
+    slashCommands: assistantSlashCommands,
     classifyUserInput: async ({ content }) =>
       deriveClassification({ content, scanContent: true }).classification,
     blockHighRiskToolsWhenUntrusted: securityTier !== "personal",

@@ -12,7 +12,7 @@ const sql = createSqlClient(resolveMigrationDatabaseUrl(migrationEnv), {
 });
 
 try {
-  const sources = await resolvePlatformMigrationSources();
+  const sources = await resolvePlatformMigrationSources(migrationEnv);
   const result = await runMigrations(sql, sources);
   console.log(
     `Applied ${String(result.applied.length)} migrations, skipped ${String(result.skipped.length)} migrations.`,

@@ -31,8 +31,11 @@ Before enabling pilot users, operators must enforce and evidence all of the foll
   RPO of no more than 24 hours and an RTO of no more than 4 hours. These are pilot engineering
   objectives, not a contractual SLA.
 
-Native Docs, Sheets, and Slides editing is not part of this MVP. Drive file storage, versions,
-sharing, download, and WebDAV remain in scope.
+Native Docs, Sheets, Slides, and PDF editing are not part of this MVP. Drive file storage,
+read-only preview, versions, sharing, download, and WebDAV remain in scope. Calendar and Meet are
+also disabled. Any later commands in this guide that exercise Docs, Calendar, Meet, or editor
+workflows are development/full-workspace evidence only and are not pilot acceptance steps for the
+storage-only production profile.
 
 ## Quality Gate Responsibilities
 

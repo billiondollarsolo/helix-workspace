@@ -4,6 +4,7 @@
    replies come from the real assistant endpoint via `streamAssistantChat`. */
 
 import type { IconName } from "@/components/icons";
+import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 
 /** A conversation entry in the 240px thread list. */
 export interface AssistantThread {
@@ -52,7 +53,7 @@ export interface AssistantChatMessage {
   readonly errored?: boolean;
 }
 
-export const ASSISTANT_QUICK_PROMPTS: readonly AssistantQuickPrompt[] = [
+const FULL_WORKSPACE_QUICK_PROMPTS: readonly AssistantQuickPrompt[] = [
   {
     icon: "Mail",
     title: "Catch me up on mail",
@@ -85,6 +86,41 @@ export const ASSISTANT_QUICK_PROMPTS: readonly AssistantQuickPrompt[] = [
     color: "#db2777",
   },
 ];
+
+const STORAGE_ONLY_QUICK_PROMPTS: readonly AssistantQuickPrompt[] = [
+  {
+    icon: "Mail",
+    title: "Catch me up on mail",
+    sub: "Summarize unread threads",
+    color: "#dc2626",
+  },
+  {
+    icon: "Drive",
+    title: "Find a file",
+    sub: "Search Drive by name or topic",
+    color: "#7c3aed",
+  },
+  {
+    icon: "Chat",
+    title: "Catch me up on chat",
+    sub: "Summarize relevant conversations",
+    color: "#db2777",
+  },
+  {
+    icon: "Sparkles",
+    title: "Draft an email",
+    sub: "Turn a request into a clear message",
+    color: "#2563eb",
+  },
+];
+
+export function assistantQuickPromptsForBuild(
+  storageOnly: boolean,
+): readonly AssistantQuickPrompt[] {
+  return storageOnly ? STORAGE_ONLY_QUICK_PROMPTS : FULL_WORKSPACE_QUICK_PROMPTS;
+}
+
+export const ASSISTANT_QUICK_PROMPTS = assistantQuickPromptsForBuild(CORE_WORKSPACE_STORAGE_ONLY);
 
 /** Model options for the inline composer select. */
 export interface AssistantModelOption {

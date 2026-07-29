@@ -16,7 +16,7 @@ services:
       additional_contexts:
         helix_editors: ../helix-editors
     entrypoint:
-      - node
+      - /nodejs/bin/node
       - dist/db/migrate.js
     environment:
       NODE_ENV: production
@@ -24,6 +24,7 @@ services:
       DATABASE_URL_FILE: /run/secrets/migration_database_url
       POSTGRES_TLS_CA_FILE: /run/secrets/postgres_ca
       POSTGRES_POOL_MAX: "1"
+      HELIX_EDITORS_MIGRATIONS_ENABLED: "false"
     secrets:
       - migration_database_url
       - postgres_ca

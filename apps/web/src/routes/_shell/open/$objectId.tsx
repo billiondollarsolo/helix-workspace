@@ -10,6 +10,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
 import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
+import { drivePreviewUrl } from "@/components/mvp-boundary";
 import { fetchDriveBlob } from "@/features/_open/drive-fetcher";
 import type { LoaderResult } from "@/features/_open/universal-loader";
 import type { ConvertedTarget } from "@/features/_open/converters";
@@ -111,13 +112,17 @@ export function OpenObjectRouteContent({
     }
     // Read-only formats — bounce to the matching native viewer route.
     if (parsed.kind === "pdf") {
+      if (CORE_WORKSPACE_STORAGE_ONLY) {
+        window.location.replace(drivePreviewUrl(objectId));
+        return;
+      }
       void router.navigate({ to: "/pdf/$objectId", params: { objectId }, replace: true });
       return;
     }
     // Image / audio / video / ebook don't have dedicated SPA viewer routes yet;
     // surface them through the raw preview endpoint so the browser renders
     // them inline.
-    window.location.replace(`/api/drive/objects/${objectId}/preview`);
+    window.location.replace(drivePreviewUrl(objectId));
   }, [loadQuery.data, objectId, router]);
 
   // Navigate to the freshly-imported native helix entity.

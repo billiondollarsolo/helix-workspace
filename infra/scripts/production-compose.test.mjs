@@ -172,11 +172,12 @@ describe("production Compose overlay", () => {
     const migration = resolvedCompose.services["helix-migrate"];
     const helix = resolvedCompose.services.helix;
 
-    expect(migration.entrypoint).toEqual(["node", "dist/db/migrate.js"]);
+    expect(migration.entrypoint).toEqual(["/nodejs/bin/node", "dist/db/migrate.js"]);
     expect(migration.environment).toMatchObject({
       NODE_ENV: "production",
       DATABASE_URL_FILE: "/run/secrets/migration_database_url",
       POSTGRES_POOL_MAX: "1",
+      HELIX_EDITORS_MIGRATIONS_ENABLED: "false",
     });
     expect(migration.environment.DATABASE_URL).toBeUndefined();
     expect(migration.restart).toBe("no");
@@ -290,7 +291,7 @@ describe("production Compose overlay", () => {
 
     expect(appPackage.files).toEqual(["dist"]);
     expect(dockerfile).toContain("pnpm --filter @helix/app... run build");
-    expect(dockerfile).toContain('ENTRYPOINT ["node", "dist/index.js"]');
+    expect(dockerfile).toContain('ENTRYPOINT ["/nodejs/bin/node", "dist/index.js"]');
     expect(dockerfile).not.toContain("--legacy");
   });
 

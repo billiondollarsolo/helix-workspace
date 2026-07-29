@@ -225,6 +225,11 @@ const genericObjectJsonSchema = {
 export interface CreateDriveToolDefinitionsOptions {
   readonly store: DriveStore;
   /**
+   * Publishes native PDF form-draft tools. Disabled by default so ordinary
+   * Drive storage does not silently expose an editor mutation surface.
+   */
+  readonly enablePdfEditing?: boolean;
+  /**
    * Auto-classifies newly uploaded Drive files (PRD §8.4). When provided, the
    * `drive.upload` handler classifies the prepared file from its name (used as
    * the folder-derivation path). Best-effort: classification never fails the
@@ -860,67 +865,80 @@ export function createDriveToolDefinitions(
         return serializeComment(comment);
       },
     }),
-    defineTool<z.output<typeof objectIdSchema>, unknown>({
-      id: "drive.pdfFormState.get",
-      description: "Get the current actor's saved PDF form draft for a Drive object.",
-      permission: "drive.read",
-      sideEffects: "read",
-      inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(drivePdfFormStateGetOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if (options.store.getPdfFormState === undefined) {
-          throw new Error("drive.pdfFormState tools require DriveStore PDF form state methods.");
-        }
-        const state = await options.store.getPdfFormState({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          objectId: input.objectId,
-        });
-        return { state: state === null ? null : serializePdfFormState(state) };
-      },
-    }),
-    defineTool<z.output<typeof savePdfFormStateSchema>, unknown>({
-      id: "drive.pdfFormState.save",
-      description: "Save the current actor's PDF form draft for a Drive object.",
-      permission: "drive.write",
-      sideEffects: "write",
-      inputSchema: zodToolSchema(savePdfFormStateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(drivePdfFormStateOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if (options.store.savePdfFormState === undefined) {
-          throw new Error("drive.pdfFormState tools require DriveStore PDF form state methods.");
-        }
-        return serializePdfFormState(
-          await options.store.savePdfFormState({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            objectId: input.objectId,
-            fieldValues: input.fields.map((field) => toJsonObject(field)),
+    ...(options.enablePdfEditing === true
+      ? [
+          defineTool<z.output<typeof objectIdSchema>, unknown>({
+            id: "drive.pdfFormState.get",
+            description: "Get the current actor's saved PDF form draft for a Drive object.",
+            permission: "drive.read",
+            sideEffects: "read",
+            inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
+            outputSchema: zodToolSchema(drivePdfFormStateGetOutputSchema, genericObjectJsonSchema),
+            handler: async (input, ctx) => {
+              if (options.store.getPdfFormState === undefined) {
+                throw new Error(
+                  "drive.pdfFormState tools require DriveStore PDF form state methods.",
+                );
+              }
+              const state = await options.store.getPdfFormState({
+                orgId: ctx.actor.orgId,
+                actorId: ctx.actor.id,
+                objectId: input.objectId,
+              });
+              return { state: state === null ? null : serializePdfFormState(state) };
+            },
           }),
-        );
-      },
-    }),
-    defineTool<z.output<typeof objectIdSchema>, unknown>({
-      id: "drive.pdfFormState.clear",
-      description: "Clear the current actor's saved PDF form draft for a Drive object.",
-      permission: "drive.write",
-      sideEffects: "write",
-      inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(drivePdfFormStateClearOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if (options.store.clearPdfFormState === undefined) {
-          throw new Error("drive.pdfFormState tools require DriveStore PDF form state methods.");
-        }
-        return {
-          objectId: input.objectId,
-          cleared: await options.store.clearPdfFormState({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            objectId: input.objectId,
+          defineTool<z.output<typeof savePdfFormStateSchema>, unknown>({
+            id: "drive.pdfFormState.save",
+            description: "Save the current actor's PDF form draft for a Drive object.",
+            permission: "drive.write",
+            sideEffects: "write",
+            inputSchema: zodToolSchema(savePdfFormStateSchema, genericObjectJsonSchema),
+            outputSchema: zodToolSchema(drivePdfFormStateOutputSchema, genericObjectJsonSchema),
+            handler: async (input, ctx) => {
+              if (options.store.savePdfFormState === undefined) {
+                throw new Error(
+                  "drive.pdfFormState tools require DriveStore PDF form state methods.",
+                );
+              }
+              return serializePdfFormState(
+                await options.store.savePdfFormState({
+                  orgId: ctx.actor.orgId,
+                  actorId: ctx.actor.id,
+                  objectId: input.objectId,
+                  fieldValues: input.fields.map((field) => toJsonObject(field)),
+                }),
+              );
+            },
           }),
-        };
-      },
-    }),
+          defineTool<z.output<typeof objectIdSchema>, unknown>({
+            id: "drive.pdfFormState.clear",
+            description: "Clear the current actor's saved PDF form draft for a Drive object.",
+            permission: "drive.write",
+            sideEffects: "write",
+            inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
+            outputSchema: zodToolSchema(
+              drivePdfFormStateClearOutputSchema,
+              genericObjectJsonSchema,
+            ),
+            handler: async (input, ctx) => {
+              if (options.store.clearPdfFormState === undefined) {
+                throw new Error(
+                  "drive.pdfFormState tools require DriveStore PDF form state methods.",
+                );
+              }
+              return {
+                objectId: input.objectId,
+                cleared: await options.store.clearPdfFormState({
+                  orgId: ctx.actor.orgId,
+                  actorId: ctx.actor.id,
+                  objectId: input.objectId,
+                }),
+              };
+            },
+          }),
+        ]
+      : []),
 
     defineTool<z.output<typeof renameSchema>, z.output<typeof driveEntryOutputSchema>>({
       id: "drive.rename",

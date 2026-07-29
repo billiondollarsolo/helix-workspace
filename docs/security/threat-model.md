@@ -46,6 +46,12 @@ the runtime configuration, and disables editor migrations. The sibling `helix-ed
 used only as a reviewed build-time package-contract input. Existing editor source and routes in the
 development repository do not make native editing part of the Business MVP.
 
+Direct Docs, Sheets, Slides, Calendar, Meet, and native-PDF routes redirect to Drive in the
+storage-only build. PDFs open through the read-only Drive preview endpoint, and the backend omits
+PDF form-state mutation tools unless Editors are explicitly enabled. Assistant retrieval is
+restricted to server-enabled application indexes so stale Docs or Calendar scopes cannot bring
+disabled-module content back into an MVP prompt.
+
 ### Evidence vocabulary
 
 | Term                   | Meaning                                                                                                                            |

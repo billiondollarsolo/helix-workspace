@@ -23,6 +23,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { bucketThreadsByDate, type ThreadSidebarItem } from "./date-buckets";
 import { Icons } from "@/components/icons";
+import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
 import { Dialog } from "@/components/ui/helix-dialog";
 import { SurfaceFrame } from "@/components/shell";
@@ -183,9 +184,7 @@ export function AssistantSurface() {
           } else {
             patch({
               streaming: false,
-              ...(finalText !== undefined && finalText.length > 0
-                ? { text: finalText }
-                : {}),
+              ...(finalText !== undefined && finalText.length > 0 ? { text: finalText } : {}),
             });
           }
           invalidateConversations();
@@ -261,8 +260,7 @@ export function AssistantSurface() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (input: { readonly conversationId: string }) =>
-      deleteAssistantConversation(input),
+    mutationFn: (input: { readonly conversationId: string }) => deleteAssistantConversation(input),
     onMutate: clearNotice,
     onSuccess: (_result, input) => {
       setDeleteTarget(null);
@@ -285,9 +283,7 @@ export function AssistantSurface() {
       ),
     onMutate: clearNotice,
     onSuccess: (result) => {
-      setNotice(
-        `Forgot ${String(result.forgottenCount ?? 0)} saved memories. Memory is now off.`,
-      );
+      setNotice(`Forgot ${String(result.forgottenCount ?? 0)} saved memories. Memory is now off.`);
     },
     onError: () => {
       setNotice("Couldn't forget memory. Try again.");
@@ -305,11 +301,7 @@ export function AssistantSurface() {
   );
 
   return (
-    <SurfaceFrame
-      title="Helix AI"
-      icon={<Icons.Sparkles />}
-      searchPlaceholder="Search chats"
-    >
+    <SurfaceFrame title="Helix AI" icon={<Icons.Sparkles />} searchPlaceholder="Search chats">
       <AssistantThreadList
         threadId={threadId}
         threads={threads}
@@ -763,7 +755,9 @@ function ThreadItem({
           {thread.pinned === true ? "📌 " : ""}
           {thread.title}
         </span>
-        <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{thread.time}</span>
+        <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+          {thread.time}
+        </span>
       </button>
       <button
         type="button"
@@ -939,20 +933,15 @@ function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProp
           <button type="button" className="btn" onClick={onCancel}>
             Cancel
           </button>
-          <button
-            type="button"
-            className="btn danger"
-            disabled={pending}
-            onClick={onConfirm}
-          >
+          <button type="button" className="btn danger" disabled={pending} onClick={onConfirm}>
             {pending ? "Archiving…" : "Archive"}
           </button>
         </>
       }
     >
       <p style={{ fontSize: "var(--text-body-sm)", margin: 0 }}>
-        Archive <strong>{thread.title}</strong>? It will disappear from your
-        thread list. The conversation history is retained server-side.
+        Archive <strong>{thread.title}</strong>? It will disappear from your thread list. The
+        conversation history is retained server-side.
       </p>
     </Dialog>
   );
@@ -972,12 +961,12 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
           <Icons.Sparkles size={28} />
         </div>
         <h1 style={heroTitleStyle}>
-          What can I help you with,{" "}
-          <span style={{ color: "var(--accent)" }}>Alex</span>?
+          What can I help you with, <span style={{ color: "var(--accent)" }}>Alex</span>?
         </h1>
         <p style={heroSubheadStyle}>
-          Connected to Mail, Docs, Drive, Calendar, and Sheets. Ask anything,
-          draft anything, or pick a prompt below.
+          {CORE_WORKSPACE_STORAGE_ONLY
+            ? "Connected to Mail, Drive, and Chat. Ask about your workspace or pick a prompt below."
+            : "Connected to Mail, Docs, Drive, Calendar, and Sheets. Ask anything, draft anything, or pick a prompt below."}
         </p>
         <div style={heroGridStyle}>
           {ASSISTANT_QUICK_PROMPTS.map((prompt) => {
@@ -991,8 +980,7 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
                 }}
                 style={quickPromptStyle}
                 onMouseEnter={(event) => {
-                  event.currentTarget.style.borderColor =
-                    "var(--accent-soft-border)";
+                  event.currentTarget.style.borderColor = "var(--accent-soft-border)";
                 }}
                 onMouseLeave={(event) => {
                   event.currentTarget.style.borderColor = "var(--border)";
@@ -1008,7 +996,9 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
                   <PromptIcon />
                 </span>
                 <span>
-                  <span style={{ display: "block", fontSize: "var(--text-body-sm)", fontWeight: 600 }}>
+                  <span
+                    style={{ display: "block", fontSize: "var(--text-body-sm)", fontWeight: 600 }}
+                  >
                     {prompt.title}
                   </span>
                   <span
@@ -1098,11 +1088,7 @@ interface AssistantConversationProps {
   readonly onNavigate: (target: string) => void;
 }
 
-function AssistantConversation({
-  conversation,
-  pending,
-  onNavigate,
-}: AssistantConversationProps) {
+function AssistantConversation({ conversation, pending, onNavigate }: AssistantConversationProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingText = conversation
     .filter((message) => message.streaming === true)
@@ -1136,11 +1122,7 @@ function AssistantConversation({
   }, [virtualizer, totalRows, pending, streamingText]);
 
   return (
-    <div
-      ref={scrollRef}
-      style={conversationScrollStyle}
-      data-testid="assistant-conversation"
-    >
+    <div ref={scrollRef} style={conversationScrollStyle} data-testid="assistant-conversation">
       <div
         style={{
           position: "relative",
@@ -1170,15 +1152,12 @@ function AssistantConversation({
               {isFooter ? (
                 <div style={disclaimerRowStyle}>
                   <span style={disclaimerStyle}>
-                    <Icons.Sparkles /> Helix AI may produce inaccurate information.
-                    Verify important details.
+                    <Icons.Sparkles /> Helix AI may produce inaccurate information. Verify important
+                    details.
                   </span>
                 </div>
               ) : (
-                <ChatMessage
-                  message={message as AssistantChatMessage}
-                  onNavigate={onNavigate}
-                />
+                <ChatMessage message={message as AssistantChatMessage} onNavigate={onNavigate} />
               )}
             </div>
           );
@@ -1245,9 +1224,7 @@ function ChatMessage({ message, onNavigate }: ChatMessageProps) {
           <PendingDots />
         ) : (
           <>
-            {message.text.length > 0 && (
-              <div style={assistantTextStyle}>{message.text}</div>
-            )}
+            {message.text.length > 0 && <div style={assistantTextStyle}>{message.text}</div>}
             {message.blocks?.map((block, index) => (
               <MessageBlock
                 key={`${message.id}-block-${String(index)}`}
@@ -1496,8 +1473,7 @@ function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
             </select>
             <div style={{ flex: 1 }} />
             <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
-              <span className="kbd">↵</span> send · <span className="kbd">⇧↵</span>{" "}
-              newline
+              <span className="kbd">↵</span> send · <span className="kbd">⇧↵</span> newline
             </span>
             <button
               type="button"

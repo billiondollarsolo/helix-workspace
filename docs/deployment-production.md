@@ -4,6 +4,10 @@ Helix production startup fails closed when credentials or required Business-tier
 missing. This guide covers the Docker Compose production overlay. It is not a substitute for the
 backup, restore, monitoring, or pilot gates in the production-readiness plan.
 
+Production promotion requires the revision-bound seven-gate manifest described in
+[`final-release-readiness.md`](./final-release-readiness.md). Ordinary manifests and CI contract
+tests are preflight evidence only.
+
 ## Public surface
 
 Apply `docker-compose.production.yml` after the development Compose file. The resolved production
@@ -26,6 +30,13 @@ only explicit API, OAuth, MCP, realtime, WebDAV, and discovery paths to Helix. T
 shell advertises Mail, Drive, Chat, Assistant, and Admin; Docs, Sheets, Slides, Calendar, Meet, and
 native Editors are disabled for this MVP.
 
+The storage-only web contract also guards direct URLs for Docs, Sheets, Slides, Calendar, Meet, and
+the native PDF surface. Opening a PDF from Drive uses the read-only raw preview endpoint; PDF form
+draft tools are not registered. The right-side mini-app rail, editor-specific settings, prompts,
+and notifications are removed or safely rerouted in this build. These controls are
+defense-in-depth around server-side module and tool registration, not the primary authorization
+boundary.
+
 The paired `../helix-editors` checkout is supplied as a BuildKit named context solely to build the
 repository's existing file-linked package boundary reproducibly. `HELIX_EDITORS_MIGRATIONS_ENABLED`
 is false, the Editors core app is disabled, and no native editor implementation is enabled. For
@@ -45,11 +56,18 @@ docker buildx build \
   -t helix/workspace-web:production .
 ```
 
-Both final images run as fixed UID/GID `10001`. The application payload is limited by its package
-manifest to compiled output and production dependencies; it includes compiled database migrations
-but no source tree, package-manager cache, or source-control metadata. Promotion must pin all base
-images and both resulting application images by digest and record those digests in the
-release-readiness manifest.
+Both the application service and the one-shot `helix-migrate` job explicitly set
+`HELIX_EDITORS_MIGRATIONS_ENABLED=false`. The migrator resolves migration sources from its own
+minimal operational environment; it does not require application provider, listener, or MFA
+configuration merely to apply the platform schema.
+
+Both final images run as fixed UID/GID `10001`. The application uses a digest-pinned distroless
+Node.js runtime with no shell, package manager, or global npm installation. Its payload is limited
+to compiled output and production dependencies; a fail-closed reachability pass removes orphaned
+pnpm virtual-store entries and package-manager metadata after deployment. It includes compiled
+database migrations but no source tree, package-manager cache, or source-control metadata.
+Promotion must pin all base images and both resulting application images by digest and record
+those digests in the release-readiness manifest.
 
 After building, execute the same runtime contract used by CI:
 
@@ -62,7 +80,8 @@ node infra/scripts/validate-production-images.mjs \
 The check inspects both image configurations and then runs their payload assertions with a
 read-only root filesystem and no network. It requires UID/GID `10001`, the expected entrypoints and
 health checks, compiled migrations and SPA assets, a valid Caddy configuration, and rejects source,
-source-control, environment, and package-manager-cache payloads.
+source-control, environment, package-manager tooling, metadata, and unreachable build-only
+dependencies.
 
 The overlay enables the existing WORM-Postgres audit destination so the Business tier starts with
 an enforced audit sink and removes the development immutable-S3 credentials. This is a bootstrap

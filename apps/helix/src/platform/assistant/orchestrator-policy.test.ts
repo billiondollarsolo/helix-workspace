@@ -15,6 +15,39 @@ const actor: Actor = {
 };
 
 describe("Assistant A1-A3 policy integration", () => {
+  it("limits retrieval to server-enabled application types", async () => {
+    let observedRequest: SearchRequest | undefined;
+    const scopedActor: Actor = {
+      ...actor,
+      scopes: ["docs.read", "drive.read"],
+    };
+    const search: SearchEngine = {
+      id: "recording-search",
+      async index() {},
+      async upsert() {},
+      async delete() {},
+      async search(request) {
+        observedRequest = request;
+        return { hits: [], query: request.query };
+      },
+    };
+    const assistant = new AssistantOrchestrator({
+      store: new InMemoryAssistantStore(),
+      search,
+      searchTypes: ["drive"],
+      ai: {
+        async chat() {
+          return { message: "ok", model: "test", providerId: "test" };
+        },
+      },
+      tools: createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() }),
+    });
+
+    await assistant.sendMessage({ actor: scopedActor, content: "Find the launch plan" });
+
+    expect(observedRequest?.types).toEqual(["drive"]);
+  });
+
   it("lets a server-owned user-input classifier raise but not lower the turn", async () => {
     let observed = "";
     const assistant = new AssistantOrchestrator({

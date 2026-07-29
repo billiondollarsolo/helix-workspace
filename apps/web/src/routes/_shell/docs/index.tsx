@@ -1,6 +1,6 @@
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DocsShell } from "@/features/docs/docs-shell";
-import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
+import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
 
 /** `?doc=<id>` opens straight into that document's editor (used by Drive's New). */
 interface DocsRouteSearch {
@@ -23,13 +23,7 @@ function validateDocsRouteSearch(search: Record<string, unknown>): DocsRouteSear
 }
 
 export const Route = createFileRoute("/_shell/docs/")({
-  beforeLoad: () => {
-    if (CORE_WORKSPACE_STORAGE_ONLY) {
-      // TanStack Router signals navigation by throwing a redirect.
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: "/drive" });
-    }
-  },
+  beforeLoad: () => enforceFullWorkspaceRoute(),
   validateSearch: (search): DocsRouteSearch => validateDocsRouteSearch(search),
   component: DocsRoute,
 });

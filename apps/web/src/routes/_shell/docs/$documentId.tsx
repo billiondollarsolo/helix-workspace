@@ -1,10 +1,10 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { UniversalEditorRouter } from "@/features/_open/ui/UniversalEditorRouter";
 import { useEditorsAlpha } from "@/features/apps/editors-alpha";
 import { NativeDocumentShell } from "@/features/docs/native-document-shell";
 import { nativeDocumentSessionQueryOptions } from "@/features/docs/queries";
-import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
+import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
 
 interface DocumentRouteSearch {
   readonly open?: "office";
@@ -15,13 +15,7 @@ function validateDocumentRouteSearch(search: Record<string, unknown>): DocumentR
 }
 
 export const Route = createFileRoute("/_shell/docs/$documentId")({
-  beforeLoad: () => {
-    if (CORE_WORKSPACE_STORAGE_ONLY) {
-      // TanStack Router signals navigation by throwing a redirect.
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: "/drive" });
-    }
-  },
+  beforeLoad: () => enforceFullWorkspaceRoute(),
   validateSearch: (search): DocumentRouteSearch => validateDocumentRouteSearch(search),
   component: DocumentRoute,
 });

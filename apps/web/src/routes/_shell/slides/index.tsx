@@ -1,6 +1,6 @@
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { SlidesShell, type SlidesViewRouteState } from "@/features/slides/slides-shell";
-import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
+import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
 
 /** `?deck=<id>` opens straight into that deck's editor (used by Drive's New). */
 interface SlidesRouteSearch {
@@ -29,13 +29,7 @@ function validateSlidesRouteSearch(search: Record<string, unknown>): SlidesRoute
 }
 
 export const Route = createFileRoute("/_shell/slides/")({
-  beforeLoad: () => {
-    if (CORE_WORKSPACE_STORAGE_ONLY) {
-      // TanStack Router signals navigation by throwing a redirect.
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: "/drive" });
-    }
-  },
+  beforeLoad: () => enforceFullWorkspaceRoute(),
   validateSearch: (search): SlidesRouteSearch => validateSlidesRouteSearch(search),
   component: SlidesRoute,
 });

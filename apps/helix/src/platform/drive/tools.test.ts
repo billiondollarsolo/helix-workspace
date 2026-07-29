@@ -67,9 +67,6 @@ describe("drive tools", () => {
         "drive.link.revoke",
         "drive.list",
         "drive.move",
-        "drive.pdfFormState.clear",
-        "drive.pdfFormState.get",
-        "drive.pdfFormState.save",
         "drive.rename",
         "drive.restore",
         "drive.search",
@@ -86,6 +83,24 @@ describe("drive tools", () => {
     expect(registry.list().find((tool) => tool.id === "drive.comment.delete")).toMatchObject({
       confirmationRequired: true,
     });
+  });
+
+  it("only registers native PDF form tools when editor support is enabled", () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      enablePdfEditing: true,
+    });
+
+    expect(
+      registry
+        .list()
+        .filter((tool) => tool.id.startsWith("drive.pdfFormState."))
+        .map((tool) => tool.id)
+        .sort(),
+    ).toEqual(
+      ["drive.pdfFormState.clear", "drive.pdfFormState.get", "drive.pdfFormState.save"].sort(),
+    );
   });
 
   it("no drive tool ships an unknown/passthrough output schema", () => {
@@ -313,7 +328,7 @@ describe("drive tools", () => {
   it("gets, saves, and clears actor-scoped PDF form state", async () => {
     const store = new FakeDriveStore();
     const registry = createToolRegistry();
-    registerDriveTools(registry, { store });
+    registerDriveTools(registry, { store, enablePdfEditing: true });
     const actor = {
       id: actorId,
       orgId,

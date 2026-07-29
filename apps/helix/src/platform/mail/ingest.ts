@@ -694,15 +694,13 @@ function parsedMailToResolvedMessage(input: {
         ? []
         : [input.parsed.references],
     receivedAt: input.receivedAt,
-    attachments: input.parsed.attachments.map(
-      (attachment): MailAttachmentInput => ({
-        filename: attachment.filename,
-        mimeType: attachment.contentType,
-        content: attachment.content,
-        contentId: attachment.cid,
-        disposition: attachment.contentDisposition,
-      }),
-    ),
+    attachments: input.parsed.attachments.map((attachment): MailAttachmentInput => ({
+      filename: attachment.filename,
+      mimeType: attachment.contentType,
+      content: attachment.content,
+      contentId: attachment.cid,
+      disposition: attachment.contentDisposition,
+    })),
     metadata: {
       direction: "inbound",
       auth: { ...input.auth },
@@ -766,15 +764,13 @@ async function parsedMailToMessage(
         ? []
         : [parsed.references],
     receivedAt: input.receivedAt ?? new Date(),
-    attachments: parsed.attachments.map(
-      (attachment): MailAttachmentInput => ({
-        filename: attachment.filename,
-        mimeType: attachment.contentType,
-        content: attachment.content,
-        contentId: attachment.cid,
-        disposition: attachment.contentDisposition,
-      }),
-    ),
+    attachments: parsed.attachments.map((attachment): MailAttachmentInput => ({
+      filename: attachment.filename,
+      mimeType: attachment.contentType,
+      content: attachment.content,
+      contentId: attachment.cid,
+      disposition: attachment.contentDisposition,
+    })),
     metadata: {
       direction: "inbound",
       auth: { ...auth },

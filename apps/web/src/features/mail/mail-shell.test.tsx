@@ -235,8 +235,7 @@ describe("MailShell", () => {
         : HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
     const setter = Reflect.get(descriptor ?? {}, "set") as
-      | ((this: HTMLElement, value: string) => void)
-      | undefined;
+      ((this: HTMLElement, value: string) => void) | undefined;
     if (setter === undefined) {
       throw new Error("value setter not found");
     }
@@ -535,7 +534,9 @@ describe("MailShell", () => {
     };
     vi.stubGlobal(
       "FileReader",
-      vi.fn(() => fileReaderMock),
+      vi.fn(function FileReaderMock() {
+        return fileReaderMock;
+      }),
     );
 
     render();

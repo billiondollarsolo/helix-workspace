@@ -28,9 +28,20 @@ const securityScanEvidenceShape = {
   byteSize: z.number().int().nonnegative(),
 } as const;
 
-function completedAfterStart<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+function completedAfterStart<
+  T extends z.ZodRawShape & {
+    readonly startedAt: typeof scanTimestampSchema;
+    readonly completedAt: typeof scanTimestampSchema;
+  },
+>(schema: z.ZodObject<T>) {
   return schema.refine(
-    (value) => Date.parse(String(value.completedAt)) >= Date.parse(String(value.startedAt)),
+    (value) => {
+      const evidence = value as unknown as {
+        readonly completedAt: string;
+        readonly startedAt: string;
+      };
+      return Date.parse(evidence.completedAt) >= Date.parse(evidence.startedAt);
+    },
     {
       message: "completedAt must be at or after startedAt",
       path: ["completedAt"],

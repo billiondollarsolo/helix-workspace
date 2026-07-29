@@ -8,9 +8,9 @@ type JsonObject = { readonly [key: string]: JsonValue };
 type JsonArray = readonly JsonValue[];
 
 const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([jsonPrimitiveSchema, z.array(jsonValueSchema), z.record(jsonValueSchema)]),
+  z.union([jsonPrimitiveSchema, z.array(jsonValueSchema), z.record(z.string(), jsonValueSchema)]),
 );
-const jsonObjectSchema: z.ZodType<JsonObject> = z.record(jsonValueSchema);
+const jsonObjectSchema: z.ZodType<JsonObject> = z.record(z.string(), jsonValueSchema);
 
 export const commercialPlanIdSchema = z.enum([
   "personal",

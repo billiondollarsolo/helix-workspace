@@ -17,7 +17,7 @@ import type { SlideDeckVersionRecord, SlidesStore } from "./store.js";
 import type { SlideContent, SlideDeckSummaryRecord, SlideRecord } from "./types.js";
 
 const uuidSchema = z.string().uuid();
-const metadataSchema = z.record(z.unknown()).default({});
+const metadataSchema = z.record(z.string(), z.unknown()).default({});
 
 const listDecksSchema = z.object({
   query: z.string().max(512).optional(),

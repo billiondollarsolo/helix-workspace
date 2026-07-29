@@ -458,9 +458,7 @@ class FakeSocket {
   on(
     event: "message" | "close" | "error",
     handler:
-      | ((data: Buffer | ArrayBuffer | string) => void)
-      | (() => void)
-      | ((error: Error) => void),
+      ((data: Buffer | ArrayBuffer | string) => void) | (() => void) | ((error: Error) => void),
   ): void {
     if (event === "message") {
       this.#messageHandlers.push(handler as (data: Buffer | ArrayBuffer | string) => void);

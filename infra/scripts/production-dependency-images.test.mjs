@@ -9,6 +9,7 @@ const dockerfiles = Object.fromEntries(
   ]),
 );
 const spamassassinEntrypoint = readFileSync(resolve("infra/spamassassin/entrypoint.sh"), "utf8");
+const dataPlaneFixture = readFileSync(resolve("infra/scripts/data-plane-live-fixture.mjs"), "utf8");
 
 const SHA256 = "[a-f0-9]{64}";
 const COMMIT = "[a-f0-9]{40}";
@@ -17,7 +18,7 @@ describe("production dependency image build contracts", () => {
   it("pins the Dockerfile frontend and every external base or source image by digest", () => {
     for (const [name, dockerfile] of Object.entries(dockerfiles)) {
       expect(dockerfile, `${name} Dockerfile frontend`).toMatch(
-        new RegExp(`^# syntax=docker/dockerfile:1\\.7@sha256:${SHA256}$`, "mu"),
+        new RegExp(`^# syntax=docker/dockerfile:1\\.25\\.0@sha256:${SHA256}$`, "mu"),
       );
 
       for (const match of dockerfile.matchAll(/^ARG \S*(?:BASE|IMAGE)=([^\\s]+)$/gmu)) {
@@ -44,15 +45,22 @@ describe("production dependency image build contracts", () => {
   it("keeps patched security-sensitive dependency versions explicit", () => {
     expect(dockerfiles.postgres).toContain("go get golang.org/x/sys@v0.45.0");
     expect(dockerfiles.postgres).toContain(
-      "PGVECTOR_COMMIT=778dacf20c07caf904557a88705142631818d8cb",
+      "PGVECTOR_COMMIT=159b79aaad5983fb7459c1e3df2897fbb2d11788",
     );
     expect(dockerfiles.nats).toContain("go get golang.org/x/crypto@v0.52.0");
     expect(dockerfiles.cerbos).toContain("go get google.golang.org/grpc@v1.82.1");
   });
 
+  it("pins data-plane validation clients to the production service lines", () => {
+    expect(dataPlaneFixture).toContain("natsio/nats-box:0.19.7@sha256:");
+    expect(dataPlaneFixture).toContain("postgres:18.4-alpine3.24@sha256:");
+    expect(dataPlaneFixture).toContain("redis:8.8.1-alpine@sha256:");
+    expect(dataPlaneFixture).not.toMatch(/(?:postgres|redis):(?:17|7)-alpine/u);
+  });
+
   it("repackages Meilisearch into a minimal patched runtime from an immutable source image", () => {
-    expect(dockerfiles.meilisearch).toContain("SOURCE_IMAGE=getmeili/meilisearch:v1.45.1@sha256:");
-    expect(dockerfiles.meilisearch).toContain("RUNTIME_BASE=alpine:3.23.5@sha256:");
+    expect(dockerfiles.meilisearch).toContain("SOURCE_IMAGE=getmeili/meilisearch:v1.51.0@sha256:");
+    expect(dockerfiles.meilisearch).toContain("RUNTIME_BASE=alpine:3.24.0@sha256:");
     expect(dockerfiles.meilisearch).toContain("COPY --from=source /bin/meilisearch");
     expect(dockerfiles.meilisearch).not.toContain("getmeili/meilisearch:v1.10");
   });

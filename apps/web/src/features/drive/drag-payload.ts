@@ -45,7 +45,7 @@ function setDragData(
 export function parseHelixDriveItemDragData(
   dataTransfer: Pick<DataTransfer, "getData">,
 ): HelixDriveItemDragPayload | null {
-  let raw = "";
+  let raw: string;
   try {
     raw = dataTransfer.getData(HELIX_DRIVE_ITEM_DRAG_MIME);
   } catch {

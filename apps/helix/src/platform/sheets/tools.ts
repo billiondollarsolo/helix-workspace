@@ -26,7 +26,7 @@ import type {
 } from "./types.js";
 
 const uuidSchema = z.string().uuid();
-const metadataSchema = z.record(z.unknown()).default({});
+const metadataSchema = z.record(z.string(), z.unknown()).default({});
 const SUPPORTED_CUSTOM_NUMBER_FORMATS = [
   "#,##0",
   "#,##0.00",
@@ -189,7 +189,7 @@ const restoreVersionSchema = z.object({
 const updateSchema = z.object({
   sheetId: uuidSchema,
   title: z.string().min(1).max(255).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const deleteSchema = z.object({
@@ -207,7 +207,7 @@ const tabUpdateSchema = z.object({
   tabId: uuidSchema,
   name: z.string().min(1).max(120).optional(),
   position: z.number().int().nonnegative().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const tabDeleteSchema = z.object({
@@ -259,7 +259,7 @@ const createCommentSchema = z.object({
   sheetId: uuidSchema,
   parentCommentId: uuidSchema.optional(),
   body: z.string().trim().min(1).max(10_000),
-  anchor: z.record(z.unknown()).default({}),
+  anchor: z.record(z.string(), z.unknown()).default({}),
   metadata: metadataSchema,
 });
 
@@ -2959,7 +2959,9 @@ function titleFromTsvFilename(filename: string): string {
 }
 
 function titleFromWorkbookFilename(filename: string): string {
-  return filename.replace(/\.(xlsx|xlsm|xlsb|xltx|xltm|xls|ods)$/iu, "").trim() || "Imported workbook";
+  return (
+    filename.replace(/\.(xlsx|xlsm|xlsb|xltx|xltm|xls|ods)$/iu, "").trim() || "Imported workbook"
+  );
 }
 
 function spreadsheetWorkbookSourceFormat(filename: string): string {

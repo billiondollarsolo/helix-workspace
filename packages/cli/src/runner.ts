@@ -656,7 +656,7 @@ function formatError(error: unknown): string {
 
 function logout(env: HelixCliEnv, io: CliIo): number {
   const path = credentialFilePath(env);
-  let removed = false;
+  let removed: boolean;
   try {
     removed = existsSync(path);
     rmSync(path, { force: true });

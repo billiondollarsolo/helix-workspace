@@ -167,13 +167,7 @@ type DeckMediaPlaybackUpdate = Partial<
   Pick<SlideShape, "mediaAutoplay" | "mediaLoop" | "mediaMuted">
 >;
 type DeckMediaFilter =
-  | "all"
-  | "video"
-  | "audio"
-  | "needs-attention"
-  | "external"
-  | "missing-poster"
-  | "duplicate";
+  "all" | "video" | "audio" | "needs-attention" | "external" | "missing-poster" | "duplicate";
 
 interface DeckMediaAssetRow {
   readonly slide: SlidesApiSlide;
@@ -195,13 +189,7 @@ interface DeckMediaReadiness {
 }
 
 type PresentationRecordingStatus =
-  | "off"
-  | "requesting"
-  | "recording"
-  | "finalizing"
-  | "ready"
-  | "unsupported"
-  | "error";
+  "off" | "requesting" | "recording" | "finalizing" | "ready" | "unsupported" | "error";
 type PresentationCaptionPosition = "bottom" | "top";
 type PresentationCaptionSize = "standard" | "large";
 

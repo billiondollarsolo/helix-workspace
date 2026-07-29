@@ -24,7 +24,7 @@ export function requiredScopesForCall(tool: ToolDefinition, input: unknown): rea
       scopes.add(scope);
     }
     for (const conditional of composition.conditionalScopes ?? []) {
-      let matched = false;
+      let matched: boolean;
       try {
         matched = conditional.when(input);
       } catch {
@@ -43,8 +43,7 @@ export function requiredScopesForCall(tool: ToolDefinition, input: unknown): rea
 
 /** Outcome of a scope-composition check. */
 export type ScopeCompositionResult =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly missingScopes: readonly string[] };
+  { readonly ok: true } | { readonly ok: false; readonly missingScopes: readonly string[] };
 
 /**
  * Verify an actor holds ALL scopes required for a specific tool call, including

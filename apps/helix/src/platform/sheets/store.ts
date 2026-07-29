@@ -3084,18 +3084,17 @@ function rebaseSheetRangeAxis(
   const reversed = start > end;
   const low = Math.min(start, end);
   const high = Math.max(start, end);
-  let nextLow = low;
-  let nextHigh = high;
   if (change.kind === "insert-rows" || change.kind === "insert-columns") {
     if (high < change.index) {
       return { start, end };
     }
     if (low >= change.index) {
-      nextLow = low + change.count;
-      nextHigh = high + change.count;
-    } else {
-      nextHigh = high + change.count;
+      const nextLow = low + change.count;
+      const nextHigh = high + change.count;
+      return reversed ? { start: nextHigh, end: nextLow } : { start: nextLow, end: nextHigh };
     }
+    const nextLow = low;
+    const nextHigh = high + change.count;
     return reversed ? { start: nextHigh, end: nextLow } : { start: nextLow, end: nextHigh };
   }
   if (change.kind !== "delete-rows" && change.kind !== "delete-columns") {
@@ -3107,8 +3106,8 @@ function rebaseSheetRangeAxis(
     return { start, end };
   }
   if (low > deleteHigh) {
-    nextLow = low - change.count;
-    nextHigh = high - change.count;
+    const nextLow = low - change.count;
+    const nextHigh = high - change.count;
     return reversed ? { start: nextHigh, end: nextLow } : { start: nextLow, end: nextHigh };
   }
   const overlapLow = Math.max(low, deleteLow);
@@ -3118,8 +3117,8 @@ function rebaseSheetRangeAxis(
   if (remainingCount <= 0) {
     return null;
   }
-  nextLow = low < deleteLow ? low : deleteLow;
-  nextHigh = nextLow + remainingCount - 1;
+  const nextLow = low < deleteLow ? low : deleteLow;
+  const nextHigh = nextLow + remainingCount - 1;
   return reversed ? { start: nextHigh, end: nextLow } : { start: nextLow, end: nextHigh };
 }
 

@@ -6,7 +6,7 @@ existing paired package contract needed by the workspace.
 
 ## Dependency advisories
 
-`pnpm quality:production-dependency-audit` uses the repository-pinned `pnpm@9.15.9` to materialize
+`pnpm quality:production-dependency-audit` uses the repository-pinned `pnpm@11.18.0` to materialize
 the same `@helix/app` production deployment used by the API image, inventories only dependency
 versions reachable from that deployment, and evaluates them against the registry audit for the
 committed lockfile. This prevents optional framework peers and test-only tools that are absent from

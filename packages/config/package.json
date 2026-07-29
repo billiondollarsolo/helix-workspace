@@ -13,19 +13,19 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "eslint eslint vitest",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude='dist/**'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@eslint/js": "^9.15.0",
-    "eslint-plugin-react-hooks": "^5.1.0",
-    "typescript-eslint": "^8.16.0"
+    "@eslint/js": "^10.0.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript-eslint": "^8.65.0"
   },
   "peerDependencies": {
-    "eslint": "^9.15.0"
+    "eslint": "^10.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }

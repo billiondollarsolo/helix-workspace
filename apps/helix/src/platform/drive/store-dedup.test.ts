@@ -132,8 +132,7 @@ function createDedupSql(state: {
     // requireObjectAccess
     if (text.includes("from objects") && text.includes("kind in")) {
       const objectId = values.find((v) => typeof v === "string" && state.objects.has(v)) as
-        | string
-        | undefined;
+        string | undefined;
       if (objectId === undefined) return Promise.resolve([]);
       const row = state.objects.get(objectId);
       return Promise.resolve(row === undefined ? [] : [row]);

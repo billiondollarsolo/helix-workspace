@@ -55,14 +55,7 @@ export type SheetsHorizontalAlign = "left" | "center" | "right";
 export type SheetsVerticalAlign = "top" | "middle" | "bottom";
 export type SheetsSortDirection = "asc" | "desc";
 export type SheetsBorderPreset =
-  | "all"
-  | "outer"
-  | "inner"
-  | "top"
-  | "bottom"
-  | "left"
-  | "right"
-  | "none";
+  "all" | "outer" | "inner" | "top" | "bottom" | "left" | "right" | "none";
 
 export interface SheetsChromeContext {
   /* Cell selection / format state. */

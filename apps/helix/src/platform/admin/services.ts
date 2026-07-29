@@ -23,12 +23,7 @@ const serviceParamsSchema = z.object({
 
 export type AdminServiceStatus = "ready" | "configured" | "missing" | "degraded" | "disabled";
 export type AdminServiceCategory =
-  | "workspace"
-  | "communication"
-  | "platform"
-  | "security"
-  | "integrations"
-  | "ai";
+  "workspace" | "communication" | "platform" | "security" | "integrations" | "ai";
 export type AdminDependencyType =
   | "database"
   | "object-storage"

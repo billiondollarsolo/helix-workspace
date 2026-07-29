@@ -1,12 +1,12 @@
-# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+# syntax=docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
-ARG POSTGRES_BASE=postgres:17.10-alpine3.24@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
-ARG GOSU_BUILD_BASE=golang:1.26.5-alpine3.23@sha256:622e56dbc11a8cfe87cafa2331e9a201877271cbff918af53d3be315f3da88cc
+ARG POSTGRES_BASE=postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+ARG GOSU_BUILD_BASE=golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
 
 FROM ${POSTGRES_BASE} AS build
 
-ARG PGVECTOR_COMMIT=778dacf20c07caf904557a88705142631818d8cb
-ARG PGVECTOR_ARCHIVE_SHA256=4c33cf053329784ba6d992d05c9588b93789e907a7511f20ff5a5a5b8a0703c1
+ARG PGVECTOR_COMMIT=159b79aaad5983fb7459c1e3df2897fbb2d11788
+ARG PGVECTOR_ARCHIVE_SHA256=9a483fad70ae2e0a50b3dccb6c4b4931d9a07375a1d5815e82b57870448a7d52
 
 WORKDIR /src
 
@@ -47,11 +47,11 @@ RUN tar -xzf /tmp/gosu.tar.gz --strip-components=1 \
 FROM ${POSTGRES_BASE} AS runtime
 
 LABEL org.opencontainers.image.title="helix-postgres-pgvector" \
-      org.opencontainers.image.description="PostgreSQL 17 with pgvector 0.8.1 and a patched gosu runtime" \
+      org.opencontainers.image.description="PostgreSQL 18 with pgvector 0.8.5 and a patched gosu runtime" \
       org.opencontainers.image.vendor="Helix" \
       org.opencontainers.image.source="https://github.com/pgvector/pgvector" \
-      org.opencontainers.image.revision="778dacf20c07caf904557a88705142631818d8cb" \
-      org.opencontainers.image.version="0.8.1" \
+      org.opencontainers.image.revision="159b79aaad5983fb7459c1e3df2897fbb2d11788" \
+      org.opencontainers.image.version="0.8.5" \
       io.helix.gosu.revision="6456aaa0f3c854d199d0f037f068eb97515b7513"
 
 COPY --from=build /out/ /

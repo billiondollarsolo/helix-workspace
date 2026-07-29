@@ -234,9 +234,11 @@ export function validateFailureRecoveryScenario(observation, contractOrId) {
   );
   const recoveredAt = requireTimestamp(observation.recoveredAt, `${contract.id} recoveredAt`);
   const completedAt = requireTimestamp(observation.completedAt, `${contract.id} completedAt`);
-  if (
-    !(startedAt <= faultInjectedAt && faultInjectedAt <= recoveredAt && recoveredAt <= completedAt)
-  ) {
+  if (!(
+    startedAt <= faultInjectedAt &&
+    faultInjectedAt <= recoveredAt &&
+    recoveredAt <= completedAt
+  )) {
     throw new Error(`${contract.id} observation timestamps are out of order`);
   }
   if (

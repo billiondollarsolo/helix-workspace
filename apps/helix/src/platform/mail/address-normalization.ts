@@ -4,11 +4,7 @@ const ASCII_DOMAIN = /^[a-z0-9.-]+$/u;
 const ASCII_DOT_ATOM = /^[a-z0-9!#$%&'*+/=?^_`{|}~.-]+$/u;
 
 export type MailAddressNormalizationErrorCode =
-  | "control_character"
-  | "empty"
-  | "invalid_domain"
-  | "invalid_local_part"
-  | "oversized";
+  "control_character" | "empty" | "invalid_domain" | "invalid_local_part" | "oversized";
 
 export class MailAddressNormalizationError extends Error {
   constructor(

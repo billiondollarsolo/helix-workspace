@@ -12,11 +12,7 @@ import { dataClassifications, type DataClassification } from "./types.js";
 export const missingContextClassification: DataClassification = "restricted";
 
 export type ClassificationContextKind =
-  | "conversation"
-  | "history"
-  | "memory"
-  | "retrieved_source"
-  | "tool_result";
+  "conversation" | "history" | "memory" | "retrieved_source" | "tool_result";
 
 export interface ClassificationContext {
   readonly id: string;

@@ -50,11 +50,7 @@ export interface AdminErrorEnvelope {
 }
 
 export type AdminErrorCode =
-  | "forbidden"
-  | "invalid_request"
-  | "invalid_cursor"
-  | "not_found"
-  | "conflict";
+  "forbidden" | "invalid_request" | "invalid_cursor" | "not_found" | "conflict";
 
 /** Build a `403` envelope naming the scope the actor was missing. */
 export function forbidden(requiredScope: string): AdminErrorEnvelope {

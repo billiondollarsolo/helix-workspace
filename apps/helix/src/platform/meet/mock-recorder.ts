@@ -128,8 +128,7 @@ async function storageClientForOrg(
 ): Promise<S3CompatibleStorageClient | undefined> {
   if (options.storageResolver !== undefined) {
     return (await options.storageResolver({ orgId }))?.client as
-      | S3CompatibleStorageClient
-      | undefined;
+      S3CompatibleStorageClient | undefined;
   }
   if (options.storage !== undefined && options.bucket !== undefined) {
     return options.storage;

@@ -4,14 +4,10 @@ import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { mintJitsiJwt } from "./jwt.js";
 import type { MeetStore } from "./store.js";
-import type {
-  MeetMeetingRecord,
-  MeetRecordingArtifactRecord,
-  MeetRoomRecord,
-} from "./types.js";
+import type { MeetMeetingRecord, MeetRecordingArtifactRecord, MeetRoomRecord } from "./types.js";
 
 const uuidSchema = z.string().uuid();
-const metadataSchema = z.record(z.unknown()).default({});
+const metadataSchema = z.record(z.string(), z.unknown()).default({});
 
 const createRoomSchema = z
   .object({
@@ -193,7 +189,12 @@ export function createMeetToolDefinitions(
           roomName: room.roomName,
           jitsiDomain: room.jitsiDomain,
           token: minted.token,
-          joinUrl: buildJoinUrl(room.jitsiDomain, room.roomName, minted.token, options.jitsiPublicUrl),
+          joinUrl: buildJoinUrl(
+            room.jitsiDomain,
+            room.roomName,
+            minted.token,
+            options.jitsiPublicUrl,
+          ),
           expiresAt: minted.expiresAt.toISOString(),
         };
       },
@@ -240,7 +241,8 @@ export function buildJoinUrl(
   // which `jitsiDomain` alone doesn't. We append the room name to that
   // origin. Without publicUrl, we fall back to `https://<domain>/<room>`,
   // which drops the port and breaks dev where Jitsi runs on :28452.
-  const base = publicUrl !== undefined && publicUrl.length > 0 ? publicUrl : `https://${jitsiDomain}`;
+  const base =
+    publicUrl !== undefined && publicUrl.length > 0 ? publicUrl : `https://${jitsiDomain}`;
   const url = new URL(`${base.replace(/\/$/, "")}/${encodeURIComponent(roomName)}`);
   url.searchParams.set("jwt", token);
   return url.toString();

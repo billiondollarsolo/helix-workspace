@@ -46,10 +46,7 @@ const BLOCKED_PREVIEW_HOSTS = new Set([
  * - blocks link-local / loopback / cloud-metadata hosts unless explicitly allowlisted
  * - when `allowedHosts` is non-empty, requires the host to be in the list
  */
-export function assertPreviewUrlAllowed(
-  url: string,
-  allowedHosts: readonly string[] = [],
-): void {
+export function assertPreviewUrlAllowed(url: string, allowedHosts: readonly string[] = []): void {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -202,7 +199,11 @@ async function officePreviewHtml(input: OfficePreviewConversionInput): Promise<s
     const { value: html, messages } = await mammoth.convertToHtml({
       buffer: Buffer.from(input.content),
     });
-    return wrapOfficePreview(input.name, html, messages.map((message) => message.message));
+    return wrapOfficePreview(
+      input.name,
+      html,
+      messages.map((message) => message.message),
+    );
   }
 
   if (kind === "spreadsheet") {
@@ -211,7 +212,10 @@ async function officePreviewHtml(input: OfficePreviewConversionInput): Promise<s
 
   if (kind === "presentation") {
     const { importPptxDeck } = await import("../slides/import-pptx.js");
-    const deck = await importPptxDeck({ filename: input.name, content: Buffer.from(input.content) });
+    const deck = await importPptxDeck({
+      filename: input.name,
+      content: Buffer.from(input.content),
+    });
     return wrapOfficePreview(input.name, renderPresentationPreviewHtml(deck.slides), []);
   }
 
@@ -271,7 +275,10 @@ function renderPresentationPreviewHtml(
 function slidePreviewBody(content: SlidePreviewContent): string {
   const items = content.items ?? [];
   if (items.length > 0) {
-    return `<ul>${items.slice(0, 12).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+    return `<ul>${items
+      .slice(0, 12)
+      .map((item) => `<li>${escapeHtml(item)}</li>`)
+      .join("")}</ul>`;
   }
   const subtitle = typeof content.subtitle === "string" ? content.subtitle.trim() : "";
   if (subtitle.length > 0) {
@@ -311,6 +318,7 @@ async function renderOfficePreviewPdfWithChromium(input: {
       `Local Office preview PDF rendering failed for ${input.filename}: ${
         error instanceof Error ? error.message : String(error)
       }`,
+      { cause: error },
     );
   } finally {
     await browser?.close().catch(() => undefined);
@@ -322,10 +330,7 @@ type OfficePreviewKind = "document" | "spreadsheet" | "presentation";
 function officePreviewKind(mimeType: string, filename: string): OfficePreviewKind | null {
   const mime = mimeType.toLowerCase();
   const name = filename.toLowerCase();
-  if (
-    mime.includes("wordprocessingml") ||
-    /\.(docx|docm|dotx|dotm)$/iu.test(name)
-  ) {
+  if (mime.includes("wordprocessingml") || /\.(docx|docm|dotx|dotm)$/iu.test(name)) {
     return "document";
   }
   if (
@@ -336,10 +341,7 @@ function officePreviewKind(mimeType: string, filename: string): OfficePreviewKin
   ) {
     return "spreadsheet";
   }
-  if (
-    mime.includes("presentationml") ||
-    /\.(pptx|pptm|ppsx|ppsm|potx|potm)$/iu.test(name)
-  ) {
+  if (mime.includes("presentationml") || /\.(pptx|pptm|ppsx|ppsm|potx|potm)$/iu.test(name)) {
     return "presentation";
   }
   return null;
@@ -436,8 +438,9 @@ function sanitizeWorkbookPreviewText(value: string): string {
 
 function isWorkbookPreviewControlCharacter(char: string): boolean {
   const code = char.charCodeAt(0);
-  return (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) || (
-    code >= 0x7f && code <= 0x9f
+  return (
+    (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+    (code >= 0x7f && code <= 0x9f)
   );
 }
 

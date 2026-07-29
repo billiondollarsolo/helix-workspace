@@ -112,6 +112,7 @@ async function runReservedTransaction(
       throw new AggregateError(
         [error, rollbackError],
         "Migration failed and its reserved transaction could not be rolled back",
+        { cause: rollbackError },
       );
     }
     throw error;

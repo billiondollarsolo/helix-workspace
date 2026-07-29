@@ -55,7 +55,7 @@ const querySchema = z
   })
   .partial();
 
-const metadataSchema = z.record(z.unknown());
+const metadataSchema = z.record(z.string(), z.unknown());
 
 const operationSchema = z.union([
   z

@@ -12,7 +12,7 @@ gracefulShutdown:
 
 image:
   repository: ghcr.io/helix/helix
-  tag: latest
+  tag: "0.10.0"
   digest: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []

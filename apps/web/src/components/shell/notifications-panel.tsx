@@ -17,14 +17,7 @@ import {
 } from "@/features/notifications/api";
 
 type NotificationKind =
-  | "mention"
-  | "share"
-  | "comment"
-  | "calendar"
-  | "dm"
-  | "approval"
-  | "recording"
-  | "system";
+  "mention" | "share" | "comment" | "calendar" | "dm" | "approval" | "recording" | "system";
 
 const NOTIF_ICONS: Record<NotificationKind, { Icon: IconComponent; bg: string }> = {
   mention: { Icon: Icons.Comment, bg: "#7c3aed" },

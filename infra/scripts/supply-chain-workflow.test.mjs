@@ -17,13 +17,13 @@ const workflowSources = readdirSync(resolve(".github"), { recursive: true })
 
 describe("source supply-chain workflow", () => {
   it("runs the pinned, fail-closed production dependency audit", () => {
-    expect(source).toContain("uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683");
+    expect(source).toContain("uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1");
     expect(checkoutEditors).toContain(
-      "uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+      "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
     );
-    expect(source).toContain("uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1");
-    expect(source).toContain("version: 9.15.9");
-    expect(source).toContain("uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020");
+    expect(source).toContain("uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271");
+    expect(source).toContain("version: 11.18.0");
+    expect(source).toContain("uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020");
     expect(source).toContain("run: pnpm quality:production-dependency-audit");
     expect(source).not.toContain("--ignore-registry-errors");
     expect(source).not.toContain("continue-on-error");

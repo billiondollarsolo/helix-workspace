@@ -186,8 +186,7 @@ describe("buildSheetsMenus", () => {
     const menus = buildSheetsMenus(ctx);
     const edit = menus.find((menu) => menu.id === "edit");
     const undoItem = edit?.items.find((item) => (item as { id?: string }).id === "edit-undo") as
-      | { disabled?: boolean }
-      | undefined;
+      { disabled?: boolean } | undefined;
     expect(undoItem?.disabled).toBe(true);
   });
 
@@ -196,11 +195,9 @@ describe("buildSheetsMenus", () => {
     const menus = buildSheetsMenus(ctx);
     const edit = menus.find((menu) => menu.id === "edit");
     const undoItem = edit?.items.find((item) => (item as { id?: string }).id === "edit-undo") as
-      | { onSelect?: () => void }
-      | undefined;
+      { onSelect?: () => void } | undefined;
     const redoItem = edit?.items.find((item) => (item as { id?: string }).id === "edit-redo") as
-      | { onSelect?: () => void }
-      | undefined;
+      { onSelect?: () => void } | undefined;
 
     undoItem?.onSelect?.();
     redoItem?.onSelect?.();
@@ -215,8 +212,7 @@ describe("buildSheetsMenus", () => {
     const edit = menus.find((menu) => menu.id === "edit");
     const item = (id: string): { readonly onSelect: () => void } => {
       const found = edit?.items.find((candidate) => (candidate as { id?: string }).id === id) as
-        | { onSelect?: () => void }
-        | undefined;
+        { onSelect?: () => void } | undefined;
       if (found === undefined || found.onSelect === undefined) {
         throw new Error(`Missing ${id}`);
       }
@@ -237,8 +233,7 @@ describe("buildSheetsMenus", () => {
     const edit = menus.find((menu) => menu.id === "edit");
     const item = (id: string) =>
       edit?.items.find((candidate) => (candidate as { id?: string }).id === id) as
-        | { disabled?: boolean }
-        | undefined;
+        { disabled?: boolean } | undefined;
 
     expect(item("edit-cut")?.disabled).toBe(true);
     expect(item("edit-copy")?.disabled).toBe(true);

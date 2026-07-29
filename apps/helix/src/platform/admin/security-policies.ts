@@ -30,12 +30,7 @@ import {
  */
 
 export type SecurityPolicyType =
-  | "mfa"
-  | "sso"
-  | "session"
-  | "external_sharing"
-  | "dlp"
-  | "device_trust";
+  "mfa" | "sso" | "session" | "external_sharing" | "dlp" | "device_trust";
 
 export type PolicyEnforcement = "disabled" | "optional" | "required";
 
@@ -208,7 +203,7 @@ const updatePolicyBody = z
   .object({
     enabled: z.boolean().optional(),
     enforcement: enforcementSchema.optional(),
-    settings: z.record(z.unknown()).optional(),
+    settings: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {

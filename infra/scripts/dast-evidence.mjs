@@ -14,7 +14,7 @@ import {
 
 export const DAST_EVIDENCE_SCHEMA = "helix.dast-evidence.v1";
 export const ZAP_STABLE_IMAGE =
-  "ghcr.io/zaproxy/zaproxy:stable@sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2";
+  "ghcr.io/zaproxy/zaproxy:2.17.0@sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2";
 export const DAST_MAX_TIMEOUT_SECONDS = 1_800;
 
 const RAW_REPORT_NAME = "zap-report.json";

@@ -492,8 +492,7 @@ function assertMinimumTier(manifest: PluginManifest, tier: SecurityTier): void {
 
 function assertTierRestriction(manifest: PluginManifest, tier: SecurityTier): void {
   const restrictions = manifest.tierRequirements?.tierRestrictions as
-    | Partial<Record<SecurityTier, unknown>>
-    | undefined;
+    Partial<Record<SecurityTier, unknown>> | undefined;
   const restriction = restrictions?.[tier];
   if (restriction === undefined) {
     return;
@@ -670,7 +669,9 @@ function parseManifestJson(text: string, manifestPath: string): unknown {
     return JSON.parse(text);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new SyntaxError(`Invalid plugin manifest JSON at ${manifestPath}: ${message}`);
+    throw new SyntaxError(`Invalid plugin manifest JSON at ${manifestPath}: ${message}`, {
+      cause: error,
+    });
   }
 }
 

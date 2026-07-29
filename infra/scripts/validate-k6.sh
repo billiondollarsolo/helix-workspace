@@ -24,8 +24,8 @@ Options:
   -h, --help
 
 Environment:
-  K6_IMAGE                       Default: grafana/k6:latest
-  HELIX_K6_MOCK_IMAGE            Default: caddy:2-alpine
+  K6_IMAGE                       Default: grafana/k6:2.1.0@sha256:65c920dc067d5e2e00befbf982af6ad6ad0117034e8b1c65817c7975c52d4669
+  HELIX_K6_MOCK_IMAGE            Default: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
   WEB_BASE_URL, API_BASE_URL     Required when --no-mock is used
   HELIX_K6_DOCKER_WEB_BASE_URL   Docker-only WEB_BASE_URL override
   HELIX_K6_DOCKER_API_BASE_URL   Docker-only API_BASE_URL override
@@ -46,8 +46,8 @@ STATIC_ONLY=false
 WEB_PORT=${HELIX_K6_WEB_PORT:-39180}
 API_PORT=${HELIX_K6_API_PORT:-39181}
 DURATION=${HELIX_K6_DURATION:-3s}
-K6_IMAGE=${K6_IMAGE:-grafana/k6:latest}
-MOCK_IMAGE=${HELIX_K6_MOCK_IMAGE:-caddy:2-alpine}
+K6_IMAGE=${K6_IMAGE:-grafana/k6:2.1.0@sha256:65c920dc067d5e2e00befbf982af6ad6ad0117034e8b1c65817c7975c52d4669}
+MOCK_IMAGE=${HELIX_K6_MOCK_IMAGE:-caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648}
 MOCK_CONTAINER=${HELIX_K6_MOCK_CONTAINER:-helix-k6-mock}
 TMP_DIR=
 MOCK_PID=

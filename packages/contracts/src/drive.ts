@@ -39,7 +39,7 @@ export const drivePreviewSchema = z.object({
 });
 export type DrivePreview = z.infer<typeof drivePreviewSchema>;
 
-const jsonObjectSchema = z.record(z.unknown());
+const jsonObjectSchema = z.record(z.string(), z.unknown());
 
 export const driveEntrySchema = z.object({
   id: z.string().uuid(),
@@ -83,7 +83,7 @@ export const driveUploadResultSchema = z.object({
   sha256: z.string().nullable(),
   status: driveUploadStateSchema,
   uploadUrl: z.string().nullable(),
-  uploadHeaders: z.record(z.string()).default({}),
+  uploadHeaders: z.record(z.string(), z.string()).default({}),
   metadata: jsonObjectSchema.default({}),
   createdAt: z.string(),
   updatedAt: z.string(),

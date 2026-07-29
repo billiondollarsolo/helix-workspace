@@ -35,8 +35,8 @@ import {
 import { createDocsSuggestionSlotProviders, docsSuggestionSlotIds } from "./ai/suggestions.js";
 
 const uuidSchema = z.string().uuid();
-const metadataSchema = z.record(z.unknown()).default({});
-const anchorSchema = z.record(z.unknown()).default({});
+const metadataSchema = z.record(z.string(), z.unknown()).default({});
+const anchorSchema = z.record(z.string(), z.unknown()).default({});
 
 const createSchema = z.object({
   title: z.string().min(1).max(255),
@@ -1293,11 +1293,7 @@ function titleFromFilename(filename: string | undefined): string | undefined {
   if (trimmed === undefined || trimmed.length === 0) {
     return undefined;
   }
-  return (
-    trimmed
-      .replace(/\.(docx?|docm|dotx|dotm|rtf|odt)$/iu, "")
-      .trim() || undefined
-  );
+  return trimmed.replace(/\.(docx?|docm|dotx|dotm|rtf|odt)$/iu, "").trim() || undefined;
 }
 
 function docsImportSourceFormat(filename: string | undefined): string {
@@ -1418,11 +1414,11 @@ function requireStoreMethod(
   store: DocsToolStore,
   name: keyof DocsToolStore,
 ): (input: unknown) => Promise<unknown> {
-  const method = store[name];
+  const method: unknown = Reflect.get(store, name);
   if (typeof method !== "function") {
     throw new Error(`Docs store does not implement ${name}.`);
   }
-  return async (input: unknown) => method.call(store, input) as Promise<unknown>;
+  return async (input: unknown) => Reflect.apply(method, store, [input]) as Promise<unknown>;
 }
 
 function dateToIso(value: Date | string | null | undefined): string | undefined {

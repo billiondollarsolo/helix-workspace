@@ -3,12 +3,7 @@ import type { AttachmentObjectResolver } from "./outbound.js";
 import type { MailDraftRecord, MailOutboundRecord } from "./types.js";
 
 export type MailOutboundDisplayStatus =
-  | "queued"
-  | "sending"
-  | "sent"
-  | "delayed"
-  | "failed"
-  | "cancelled";
+  "queued" | "sending" | "sent" | "delayed" | "failed" | "cancelled";
 
 export function mailOutboundDisplayStatus(
   outbound: Pick<MailOutboundRecord, "status" | "deliveryMetadata">,

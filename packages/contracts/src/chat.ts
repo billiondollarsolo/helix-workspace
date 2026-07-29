@@ -28,7 +28,7 @@ export const chatBodySchema = z
   });
 
 export const chatMetadataSchema = z
-  .record(z.unknown())
+  .record(z.string(), z.unknown())
   .superRefine((value, context) => {
     const validation = validateMetadata(value);
     if (validation !== null) {
@@ -174,7 +174,7 @@ export const chatRoomSchema = z.object({
   kind: chatRoomKindSchema,
   subject: z.string().nullable(),
   createdByActorId: z.string().uuid().nullable(),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
   members: z.array(chatRoomMemberSchema).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -189,7 +189,7 @@ export const chatMessageSchema = z.object({
   body: z.string(),
   bodyFormat: chatBodyFormatSchema,
   renderedBodyHtml: z.string().optional(),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
   attachmentObjectIds: z.array(uuidSchema).default([]),
   parentMessageId: z.string().uuid().nullable().optional(),
   clientMessageId: z.string().optional(),

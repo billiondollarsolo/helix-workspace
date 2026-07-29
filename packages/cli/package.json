@@ -13,17 +13,19 @@
     }
   },
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "lint": "eslint src --max-warnings=0",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude='dist/**'",
     "typecheck": "tsc -b --noEmit"
   },
   "devDependencies": {
     "@helix/config": "workspace:*",
-    "@types/node": "^22.10.2",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }

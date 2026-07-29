@@ -126,10 +126,7 @@ export type DocsCommentStatusFilter = "open" | "resolved" | "all";
 
 export type DocsSuggestionStatus = "pending" | "accepted" | "rejected";
 export type DocsSuggestionSlotId =
-  | "docs.smart-write"
-  | "docs.summarize"
-  | "docs.translate"
-  | "docs.ask-document";
+  "docs.smart-write" | "docs.summarize" | "docs.translate" | "docs.ask-document";
 
 export interface DocsSuggestion {
   readonly id: string;

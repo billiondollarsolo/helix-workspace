@@ -163,7 +163,7 @@ const vacationSetSchema = z
     body: z.string().default(""),
     startsAt: z.string().datetime().nullable().default(null),
     endsAt: z.string().datetime().nullable().default(null),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .refine(
     (input) =>

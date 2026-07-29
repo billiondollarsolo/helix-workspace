@@ -218,7 +218,7 @@ describe("production image supply-chain workflow", () => {
       [
         "redis",
         "docker.io/library/redis",
-        "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2",
+        "sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb",
       ],
       [
         "rustfs",
@@ -272,7 +272,7 @@ describe("production image supply-chain workflow", () => {
 
   it("uses a pinned minimal application runtime and prunes unreachable build dependencies", () => {
     expect(dockerfile).toContain(
-      "ARG RUNTIME_BASE=gcr.io/distroless/nodejs22-debian13:nonroot@sha256:a2723a2817c5b01b8e7b98d567bc8b5a6b0e713e25bfb0a82b6ade4b9db06f50",
+      "ARG RUNTIME_BASE=gcr.io/distroless/nodejs24-debian13:nonroot@sha256:af85d11ce7ef10172855a6e3649e3e8125b1b9e3ca41849ec2918036f05cb212",
     );
     expect(dockerfile).toContain("node infra/scripts/prune-production-deploy.mjs /app/deploy");
     const runtime = dockerStage("runtime");

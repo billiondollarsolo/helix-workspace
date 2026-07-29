@@ -928,7 +928,7 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
       return null;
     }
     const folderIds = new Set<string>([input.folderId]);
-    for (let changed = true; changed; ) {
+    for (let changed = true; changed;) {
       changed = false;
       for (const candidate of this.folders) {
         if (

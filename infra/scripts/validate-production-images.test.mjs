@@ -48,8 +48,8 @@ describe("production image validation", () => {
       health: "fetch('http://127.0.0.1:3000/healthz')",
     });
     const web = metadata({
-      entrypoint: null,
-      command: ["caddy", "run"],
+      entrypoint: ["caddy"],
+      command: ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
       health: "wget http://127.0.0.1/healthz",
     });
     const run = vi.fn((command, args) => {
@@ -113,6 +113,51 @@ describe("production image validation", () => {
         name: "application",
         expectedEntrypoint: ["node", "dist/index.js"],
         requiredHealthFragment: "127.0.0.1:3000/healthz",
+      }),
+    ).toThrow(expected);
+  });
+
+  it.each([
+    [
+      "the executable is incorrectly placed in Cmd",
+      metadata({
+        entrypoint: null,
+        command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
+        health: "127.0.0.1/healthz",
+      }),
+      "entrypoint",
+    ],
+    [
+      "the subcommand is incorrectly placed in Entrypoint",
+      metadata({
+        entrypoint: ["caddy", "run"],
+        command: ["--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
+        health: "127.0.0.1/healthz",
+      }),
+      "entrypoint",
+    ],
+    [
+      "the Caddy configuration command is incomplete",
+      metadata({
+        entrypoint: ["caddy"],
+        command: ["run", "--config", "/tmp/untrusted.Caddyfile"],
+        health: "127.0.0.1/healthz",
+      }),
+      "command",
+    ],
+  ])("rejects web metadata when %s", (_case, candidate, expected) => {
+    expect(() =>
+      assertImageMetadata(candidate, {
+        name: "web",
+        expectedEntrypoint: ["caddy"],
+        expectedCommandPrefix: [
+          "run",
+          "--config",
+          "/etc/caddy/Caddyfile",
+          "--adapter",
+          "caddyfile",
+        ],
+        requiredHealthFragment: "127.0.0.1/healthz",
       }),
     ).toThrow(expected);
   });

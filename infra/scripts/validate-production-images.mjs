@@ -103,7 +103,8 @@ export function validateProductionImages(options, run = execFileSync) {
   });
   assertImageMetadata(webMetadata, {
     name: "web",
-    expectedCommandPrefix: ["caddy", "run"],
+    expectedEntrypoint: ["caddy"],
+    expectedCommandPrefix: ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
     requiredHealthFragment: "127.0.0.1/healthz",
   });
 

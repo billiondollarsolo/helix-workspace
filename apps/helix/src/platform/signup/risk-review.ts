@@ -6,8 +6,7 @@ export interface SignupRiskReviewInput {
 export type SignupRiskReviewReason = "configured_high_risk_country";
 
 export type SignupRiskReviewSmsGuidance =
-  | "consider_sms_mfa_review"
-  | "missing_phone_for_sms_review";
+  "consider_sms_mfa_review" | "missing_phone_for_sms_review";
 
 export type SignupRiskReviewDecision =
   | { readonly required: false }

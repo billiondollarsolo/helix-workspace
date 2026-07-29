@@ -12,14 +12,7 @@ import type {
 export type MailApiAddress = MailAddress;
 
 export type MailFolderKey =
-  | "inbox"
-  | "starred"
-  | "snoozed"
-  | "sent"
-  | "drafts"
-  | "archive"
-  | "spam"
-  | "trash";
+  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
 export type MailCategoryTab = "primary" | "updates" | "promotions" | "social";
 

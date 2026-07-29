@@ -7,7 +7,7 @@ import type { AssistantStore } from "./types.js";
 import { actorToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 
 const uuidSchema = z.string().uuid();
-const metadataSchema = z.record(z.unknown()).default({});
+const metadataSchema = z.record(z.string(), z.unknown()).default({});
 
 const createConversationSchema = z.object({
   title: z.string().min(1).max(200).optional(),

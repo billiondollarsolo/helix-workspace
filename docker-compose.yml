@@ -2,7 +2,7 @@ name: helix-infra
 
 services:
   helix:
-    image: ${HELIX_IMAGE:-ghcr.io/helix/helix:latest}
+    image: ${HELIX_IMAGE:-helix/workspace:0.10.0-dev}
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       HOST: 0.0.0.0
@@ -99,7 +99,7 @@ services:
   postgres:
     build:
       context: ./infra/postgres
-    image: helix/postgres-pgvector:17.10-pgvector0.8.1
+    image: helix/postgres-pgvector:18.4-pgvector0.8.5
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-helix}
       POSTGRES_USER: ${POSTGRES_USER:-helix}
@@ -107,7 +107,9 @@ services:
     ports:
       - "${POSTGRES_PORT:-28432}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      # PostgreSQL 18 stores versioned clusters beneath /var/lib/postgresql.
+      # Existing PostgreSQL 17 volumes require the documented dump/restore upgrade.
+      - postgres-data:/var/lib/postgresql
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -117,7 +119,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    image: redis:8.8.1-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "${REDIS_PORT:-28433}:6379"
@@ -133,7 +135,7 @@ services:
   nats:
     build:
       context: ./infra/nats
-    image: helix/nats-server:2.14.0-patched
+    image: helix/nats-server:2.14.3-patched
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
       - "${NATS_CLIENT_PORT:-28434}:4222"
@@ -145,7 +147,7 @@ services:
   meilisearch:
     build:
       context: ./infra/meilisearch
-    image: helix/meilisearch:1.45.1-patched
+    image: helix/meilisearch:1.51.0-patched
     environment:
       MEILI_ENV: ${MEILI_ENV:-development}
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-helix_dev_meili_master_key}
@@ -213,7 +215,7 @@ services:
     restart: unless-stopped
 
   mailpit:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.30.6@sha256:7f33095f80e901f6ad08028f06ca284aa58fe84942be5496008d041d3b9f4d4d
     ports:
       - "${MAILPIT_SMTP_PORT:-28457}:1025"
       - "${MAILPIT_WEB_PORT:-28458}:8025"
@@ -263,7 +265,7 @@ services:
   drive-preview-libreoffice:
     build:
       context: ./infra/drive-preview-libreoffice
-    image: helix/drive-preview-libreoffice:latest
+    image: helix/drive-preview-libreoffice:24.18.0
     profiles: ["drive-preview"]
     environment:
       PORT: 8080
@@ -284,7 +286,7 @@ services:
     restart: unless-stopped
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     environment:
       HELIX_DOMAIN: ${HELIX_DOMAIN:-localhost}
       HELIX_UPSTREAM: ${HELIX_UPSTREAM:-helix:3000}
@@ -304,7 +306,7 @@ services:
     restart: unless-stopped
 
   jitsi-web:
-    image: jitsi/web:stable
+    image: jitsi/web:stable-11031@sha256:2183593bbbe1b5e27c368e3737efc51915ce7742de93f594e5ca7950c864c233
     profiles: ["meet"]
     environment:
       ENABLE_AUTH: "1"
@@ -339,7 +341,7 @@ services:
     restart: unless-stopped
 
   jitsi-prosody:
-    image: jitsi/prosody:stable
+    image: jitsi/prosody:stable-11031@sha256:926c508c0d9198bf9d0b6adb88ce9092461e9a79e2895fb57fe4ef5f44ff3523
     profiles: ["meet"]
     environment:
       AUTH_TYPE: jwt
@@ -379,7 +381,7 @@ services:
     restart: unless-stopped
 
   jitsi-jicofo:
-    image: jitsi/jicofo:stable
+    image: jitsi/jicofo:stable-11031@sha256:1f78fb0c0548ae5efd83a2b488df6aabbae4a70bc6f64c74395b6937b3aceb98
     profiles: ["meet"]
     environment:
       TZ: ${TZ:-UTC}
@@ -405,7 +407,7 @@ services:
     restart: unless-stopped
 
   jitsi-jvb:
-    image: jitsi/jvb:stable
+    image: jitsi/jvb:stable-11031@sha256:3460de3541a8f96d007b8f2b4681ea8321cae64c17387338eabf776e73cd0f51
     profiles: ["meet"]
     environment:
       TZ: ${TZ:-UTC}
@@ -439,7 +441,7 @@ services:
   # sure `modprobe snd-aloop` succeeds on the host before bringing this
   # up.
   jitsi-jibri:
-    image: jitsi/jibri:stable
+    image: jitsi/jibri:stable-11031@sha256:40f5fd67517cdb6395ae642143f1a5c002ff80259c1c633a384ede5c7b0569f4
     profiles: ["meet", "recording"]
     environment:
       TZ: ${TZ:-UTC}
@@ -493,7 +495,7 @@ services:
   # apps/helix/src/platform/meet/mock-recorder.ts.
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.157.0@sha256:f2f01157055a9b2aab9df7118e1f1c9abf345e99b23bc7a2bc791db374a7d0f6
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     profiles: ["observability"]
     ports:
@@ -506,7 +508,7 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
     profiles: ["observability"]
     ports:
       - "${PROMETHEUS_PORT:-28446}:9090"
@@ -519,7 +521,7 @@ services:
     restart: unless-stopped
 
   alertmanager:
-    image: prom/alertmanager:latest
+    image: prom/alertmanager:v0.33.1@sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
@@ -533,7 +535,7 @@ services:
     restart: unless-stopped
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:3.0.2@sha256:cda87c212d8c584dc0b89e337e7ed648a5100feb657e5d528480ee4fa03dbbe3
     command: ["-config.file=/etc/tempo.yaml"]
     profiles: ["observability"]
     ports:
@@ -544,7 +546,7 @@ services:
     restart: unless-stopped
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.4@sha256:87f0a067673756a3cede1bcbf0c74875f7df9b09fddb53e399d0c576f756cfcc
     command: ["-config.file=/etc/loki/local-config.yaml"]
     profiles: ["observability"]
     ports:
@@ -555,7 +557,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.1.1@sha256:7cb8c64c4d57a57e734073f3cc94620adb24a0acb929bd80ba9f14017e3a975b
     profiles: ["observability"]
     environment:
       GF_ANALYTICS_REPORTING_ENABLED: "false"

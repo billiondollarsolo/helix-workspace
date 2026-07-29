@@ -13,7 +13,7 @@ import type {
 import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
 
 const uuidSchema = z.string().uuid();
-const metadataSchema = z.record(z.unknown()).default({});
+const metadataSchema = z.record(z.string(), z.unknown()).default({});
 const responseStatusSchema = z.enum(["needs_action", "accepted", "declined", "tentative"]);
 const attendeeSchema = z.object({
   actorId: uuidSchema.nullable().optional(),

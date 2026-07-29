@@ -15,6 +15,6 @@ export function zodToolSchema<TSchema extends ZodTypeAny>(
   };
 }
 
-export const stringRecordSchema = z.record(z.string());
+export const stringRecordSchema = z.record(z.string(), z.string());
 
-export const jsonRecordSchema = z.record(z.unknown());
+export const jsonRecordSchema = z.record(z.string(), z.unknown());

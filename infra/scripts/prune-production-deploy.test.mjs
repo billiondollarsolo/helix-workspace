@@ -13,15 +13,15 @@ import { describe, expect, it } from "vitest";
 
 import { pruneProductionDeploy } from "./prune-production-deploy.mjs";
 
-function writePackage(root, name, version) {
+function writePackage(root, name, version, manifest = {}) {
   mkdirSync(root, { recursive: true });
-  writeFileSync(join(root, "package.json"), JSON.stringify({ name, version }));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name, version, ...manifest }));
 }
 
-function writeHelixDeployRoot(root) {
+function writeHelixDeployRoot(root, dependencies = {}) {
   writeFileSync(
     join(root, "package.json"),
-    JSON.stringify({ name: "@helix/app", version: "1.0.0" }),
+    JSON.stringify({ name: "@helix/app", version: "1.0.0", dependencies }),
   );
   mkdirSync(join(root, "dist"), { recursive: true });
   writeFileSync(join(root, "dist/index.js"), "export {};\n");
@@ -35,8 +35,8 @@ describe("production deploy pruning", () => {
     const dependency = join(store, "dependency@2.0.0/node_modules/dependency");
     const orphan = join(store, "build-only@3.0.0/node_modules/build-only");
     try {
-      writeHelixDeployRoot(root);
-      writePackage(app, "app", "1.0.0");
+      writeHelixDeployRoot(root, { app: "1.0.0" });
+      writePackage(app, "app", "1.0.0", { dependencies: { dependency: "2.0.0" } });
       writePackage(dependency, "dependency", "2.0.0");
       writePackage(orphan, "build-only", "3.0.0");
       symlinkSync(".pnpm/app@1.0.0/node_modules/app", join(root, "node_modules/app"));
@@ -46,6 +46,10 @@ describe("production deploy pruning", () => {
       );
       writeFileSync(join(store, "lock.yaml"), "lockfileVersion: 9\n");
       writeFileSync(join(root, "node_modules/.modules.yaml"), "virtualStoreDir: .pnpm\n");
+      writeFileSync(join(root, "node_modules/.package-map.json"), "{}\n");
+      writeFileSync(join(root, "node_modules/.pnpm-workspace-state-v1.json"), "{}\n");
+      writeFileSync(join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n");
+      writeFileSync(join(root, "pnpm-workspace.yaml"), "packages: []\n");
 
       const result = pruneProductionDeploy(root);
 
@@ -53,13 +57,49 @@ describe("production deploy pruning", () => {
         reachablePackages: 2,
         reachableStoreEntries: 2,
         removedEntries: 1,
+        removedLinks: 0,
       });
       expect(existsSync(join(store, "app@1.0.0"))).toBe(true);
       expect(existsSync(join(store, "dependency@2.0.0"))).toBe(true);
       expect(existsSync(join(store, "build-only@3.0.0"))).toBe(false);
       expect(existsSync(join(store, "lock.yaml"))).toBe(false);
       expect(existsSync(join(root, "node_modules/.modules.yaml"))).toBe(false);
+      expect(existsSync(join(root, "node_modules/.package-map.json"))).toBe(false);
+      expect(existsSync(join(root, "node_modules/.pnpm-workspace-state-v1.json"))).toBe(false);
+      expect(existsSync(join(root, "pnpm-lock.yaml"))).toBe(false);
+      expect(existsSync(join(root, "pnpm-workspace.yaml"))).toBe(false);
       expect(readlinkSync(join(root, "node_modules/app"))).toContain("app@1.0.0");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes optional peers supplied only by the build graph", () => {
+    const root = mkdtempSync(join(tmpdir(), "helix-production-prune-peer-test-"));
+    const store = join(root, "node_modules/.pnpm");
+    const runtime = join(store, "runtime@1.0.0/node_modules/runtime");
+    const buildOnly = join(store, "build-only@2.0.0/node_modules/build-only");
+    try {
+      writeHelixDeployRoot(root, { runtime: "1.0.0" });
+      writePackage(runtime, "runtime", "1.0.0", {
+        peerDependencies: { "build-only": "*" },
+        peerDependenciesMeta: { "build-only": { optional: true } },
+      });
+      writePackage(buildOnly, "build-only", "2.0.0");
+      symlinkSync(".pnpm/runtime@1.0.0/node_modules/runtime", join(root, "node_modules/runtime"));
+      symlinkSync(
+        "../../build-only@2.0.0/node_modules/build-only",
+        join(store, "runtime@1.0.0/node_modules/build-only"),
+      );
+
+      const result = pruneProductionDeploy(root);
+
+      expect(result.reachablePackages).toBe(1);
+      expect(result.reachableStoreEntries).toBe(1);
+      expect(result.removedEntries).toBe(1);
+      expect(result.removedLinks).toBe(1);
+      expect(existsSync(join(store, "build-only@2.0.0"))).toBe(false);
+      expect(existsSync(join(store, "runtime@1.0.0/node_modules/build-only"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

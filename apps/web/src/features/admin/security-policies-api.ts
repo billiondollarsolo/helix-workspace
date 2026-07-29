@@ -52,7 +52,7 @@ const securityPolicySchema = z.object({
   policyType: z.enum(SECURITY_POLICY_TYPES),
   enabled: z.boolean(),
   enforcement: z.enum(POLICY_ENFORCEMENTS),
-  settings: z.record(z.unknown()),
+  settings: z.record(z.string(), z.unknown()),
   updatedBy: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),

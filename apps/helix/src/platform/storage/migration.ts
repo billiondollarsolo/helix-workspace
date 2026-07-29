@@ -45,12 +45,7 @@ export interface RunTenantStorageMigrationInput {
 }
 
 export type TenantStorageMigrationJobStatus =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "succeeded_with_errors"
-  | "failed"
-  | "dry_run";
+  "queued" | "running" | "succeeded" | "succeeded_with_errors" | "failed" | "dry_run";
 
 export interface TenantStorageMigrationStorageState {
   readonly managedBy: TenantStorageMigrationTarget;

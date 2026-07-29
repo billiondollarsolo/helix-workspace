@@ -161,14 +161,13 @@ describe("production dependency audit", () => {
   });
 
   it("uses the fixed brace expansion with narrow compatibility patches", () => {
-    const manifest = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
-    expect(manifest.pnpm.overrides["brace-expansion"]).toBe("5.0.8");
-    expect(manifest.pnpm.patchedDependencies).toEqual({
-      "minimatch@3.1.5": "patches/minimatch@3.1.5.patch",
-      "minimatch@5.1.9": "patches/minimatch@5.1.9.patch",
-    });
-
-    for (const patchPath of Object.values(manifest.pnpm.patchedDependencies)) {
+    const workspaceConfig = readFileSync(resolve("pnpm-workspace.yaml"), "utf8");
+    expect(workspaceConfig).toContain('"brace-expansion": "5.0.8"');
+    const patchPaths = ["patches/minimatch@3.1.5.patch", "patches/minimatch@5.1.9.patch"];
+    for (const patchPath of patchPaths) {
+      expect(workspaceConfig).toContain(
+        `"${patchPath.split("/").at(-1)?.replace(".patch", "")}": "${patchPath}"`,
+      );
       const patch = readFileSync(resolve(patchPath), "utf8");
       expect(patch).toContain("typeof braceExpansion === 'function'");
       expect(patch).not.toContain("deleted file mode");

@@ -209,9 +209,7 @@ export interface ToolInvocationMetrics {
 export type ToolFeatureFlagResolver = (tool: ToolDefinition) => string | undefined;
 
 export type AgentOperationalControlReason =
-  | "global_read_only"
-  | "org_agent_writes_disabled"
-  | "tool_disabled";
+  "global_read_only" | "org_agent_writes_disabled" | "tool_disabled";
 
 export type AgentOperationalControlDecision =
   | { readonly allowed: true }

@@ -56,8 +56,7 @@ export interface RegisterTenantConfigAdminRoutesOptions {
   readonly auditSink?: AdminConsoleAuditSink | undefined;
   readonly storageResolver?: TenantStorageResolver | undefined;
   readonly storageMigrationJobs?:
-    | Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg">
-    | undefined;
+    Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg"> | undefined;
   readonly plans?: Pick<PlanStore, "findById"> | undefined;
   readonly featureFlagEvents?: Pick<EventBus, "publish"> | undefined;
   readonly onFeatureFlagEventError?: ((error: unknown) => void) | undefined;

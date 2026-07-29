@@ -6,9 +6,12 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const natsBoxImage = "natsio/nats-box:0.17.0";
-const postgresClientImage = "postgres:17-alpine";
-const redisClientImage = "redis:7-alpine";
+const natsBoxImage =
+  "natsio/nats-box:0.19.7@sha256:ffce8bd103383f179f8c7f11cf645726acf5d17280706c530c3b342dbe16334c";
+const postgresClientImage =
+  "postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15";
+const redisClientImage =
+  "redis:8.8.1-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb";
 const secretNames = [
   "database_url",
   "migration_database_url",

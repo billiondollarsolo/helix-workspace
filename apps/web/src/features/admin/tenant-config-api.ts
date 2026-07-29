@@ -4,7 +4,7 @@ import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
 
-const jsonObjectSchema = z.record(z.unknown());
+const jsonObjectSchema = z.record(z.string(), z.unknown());
 
 const tenantConfigSchema = z.object({
   orgId: z.string(),

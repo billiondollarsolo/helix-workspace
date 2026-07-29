@@ -277,7 +277,7 @@ export const platformConfigUpdateSchema = z
       })
       .strict()
       .optional(),
-    modules: z.record(moduleConfigUpdateSchema).optional(),
+    modules: z.record(z.string(), moduleConfigUpdateSchema).optional(),
     ai: aiConfigUpdateSchema.optional(),
     observability: observabilityConfigUpdateSchema.optional(),
     platform: z
@@ -847,7 +847,7 @@ function normalizeModulesConfig(
   label: string,
 ): NonNullable<PartialHelixConfig["modules"]> {
   const object = normalizeJsonObject(value, label);
-  const parsed = z.record(moduleConfigUpdateSchema).parse(object);
+  const parsed = z.record(z.string(), moduleConfigUpdateSchema).parse(object);
   return jsonObjectFromDefined(parsed) as unknown as NonNullable<PartialHelixConfig["modules"]>;
 }
 
@@ -1243,8 +1243,7 @@ function requirementStatus(
 
 function isReady(
   state:
-    | { readonly enabled?: boolean | undefined; readonly status?: string | undefined }
-    | undefined,
+    { readonly enabled?: boolean | undefined; readonly status?: string | undefined } | undefined,
 ): boolean {
   return state?.status === "ready" || state?.enabled === true;
 }

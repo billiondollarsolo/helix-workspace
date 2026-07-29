@@ -31,6 +31,7 @@ import {
   nativeDocumentTokenDecorationAttributes,
   nativeDocumentTokenDecorationRanges,
   selectNativeDocumentAnchorRange,
+  type NativeDocumentCommandChain,
   type NativeDocumentEditorProps,
 } from "./native-document-editor";
 import {
@@ -441,7 +442,9 @@ describe("NativeDocumentEditor find and replace", () => {
   });
 
   it("rejects invalid or cross-document anchor ranges", () => {
-    const editor = { chain: vi.fn(() => chain) };
+    const editor = {
+      chain: vi.fn(() => chain),
+    } as unknown as { chain(): NativeDocumentCommandChain };
 
     expect(
       selectNativeDocumentAnchorRange(editor, "doc-1", {
@@ -741,13 +744,12 @@ describe("NativeDocumentEditor find and replace", () => {
   });
 
   it("stages smart compose drafts for explicit acceptance", async () => {
-    const generateSuggestionDraft = vi.fn(
-      (): Promise<DocsSuggestionDraft> =>
-        Promise.resolve({
-          slotId: "docs.smart-write",
-          text: "Polished session body",
-          metadata: { providerId: "test-ai" },
-        }),
+    const generateSuggestionDraft = vi.fn((): Promise<DocsSuggestionDraft> =>
+      Promise.resolve({
+        slotId: "docs.smart-write",
+        text: "Polished session body",
+        metadata: { providerId: "test-ai" },
+      }),
     );
     render({ generateSuggestionDraft });
     await settle();
@@ -1254,8 +1256,7 @@ describe("NativeDocumentEditor find and replace", () => {
     render();
     await settle();
     const editorOptions = useEditorMock.mock.calls[0]?.[0] as
-      | { readonly extensions?: readonly { readonly name?: string }[] }
-      | undefined;
+      { readonly extensions?: readonly { readonly name?: string }[] } | undefined;
     const extensionNames = new Set(editorOptions?.extensions?.map((extension) => extension.name));
     expect(extensionNames.has("nativeDocumentTextColor")).toBe(true);
     expect(extensionNames.has("nativeDocumentHighlight")).toBe(true);
@@ -1281,8 +1282,7 @@ describe("NativeDocumentEditor find and replace", () => {
     const editorOptions = useEditorMock.mock.calls[0]?.[0];
     expect(editorOptions?.editable).toBe(false);
     const editor = useEditorMock.mock.results[0]?.value as
-      | { readonly setEditable?: ReturnType<typeof vi.fn> }
-      | undefined;
+      { readonly setEditable?: ReturnType<typeof vi.fn> } | undefined;
     expect(editor?.setEditable).toHaveBeenCalledWith(false);
   });
 

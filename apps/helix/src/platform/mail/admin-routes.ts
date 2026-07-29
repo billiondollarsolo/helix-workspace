@@ -62,7 +62,7 @@ const idParams = z.object({ id: z.string().uuid() });
 const domainKeyParams = z.object({ id: z.string().uuid(), keyId: z.string().uuid() });
 
 const providerKindSchema = z.enum(OUTBOUND_MAIL_PROVIDER_KINDS);
-const jsonObjectSchema = z.record(z.unknown());
+const jsonObjectSchema = z.record(z.string(), z.unknown());
 const outboundSecretRefSchema = z.enum(OUTBOUND_MAIL_SECRET_REFERENCES).nullable();
 const webhookSecretRefSchema = z.enum(WEBHOOK_MAIL_SECRET_REFERENCES).nullable();
 

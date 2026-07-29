@@ -197,11 +197,7 @@ type DataValidationKind = "none" | "number" | "email" | "url" | "date" | "list" 
 type DataValidationMode = "warn" | "reject";
 type DataValidationDateLocale = "iso" | "en-US" | "en-GB" | "de-DE";
 type ConditionalFormatKind =
-  | "none"
-  | "greaterThan100"
-  | "lessThanZero"
-  | "textContains"
-  | "customFormula";
+  "none" | "greaterThan100" | "lessThanZero" | "textContains" | "customFormula";
 type FormulaHelperKind =
   | "sum"
   | "average"

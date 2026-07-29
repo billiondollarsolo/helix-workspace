@@ -48,7 +48,7 @@ import type { SheetsStore } from "../sheets/index.js";
 import type { SlidesStore } from "../slides/index.js";
 
 const uuidSchema = z.string().uuid();
-const metadataSchema = z.record(z.unknown()).default({});
+const metadataSchema = z.record(z.string(), z.unknown()).default({});
 
 const uploadSchema = z.object({
   name: z.string().min(1).max(255),

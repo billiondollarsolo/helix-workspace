@@ -31,7 +31,7 @@ const inboundSchema = z.object({
   type: z.literal("update"),
   updateBase64: z.string().min(1),
   stateBase64: z.string().min(1).optional(),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 });
 
 export interface RegisterDocsRoutesOptions {

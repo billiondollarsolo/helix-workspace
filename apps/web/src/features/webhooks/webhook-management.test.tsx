@@ -482,13 +482,11 @@ describe("WebhookManagement", () => {
   async function setFieldValue(label: string, value: string) {
     const field = findField(label);
     const input = field.querySelector("input, textarea, select");
-    if (
-      !(
-        input instanceof HTMLInputElement ||
-        input instanceof HTMLTextAreaElement ||
-        input instanceof HTMLSelectElement
-      )
-    ) {
+    if (!(
+      input instanceof HTMLInputElement ||
+      input instanceof HTMLTextAreaElement ||
+      input instanceof HTMLSelectElement
+    )) {
       throw new Error(`Input not found for field: ${label}`);
     }
     await setNativeValue(input, value);

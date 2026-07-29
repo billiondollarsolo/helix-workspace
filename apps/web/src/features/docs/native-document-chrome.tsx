@@ -73,12 +73,7 @@ export interface DocsChromeChain {
 }
 
 export type DocsParagraphStyle =
-  | "paragraph"
-  | "heading1"
-  | "heading2"
-  | "heading3"
-  | "blockquote"
-  | "codeBlock";
+  "paragraph" | "heading1" | "heading2" | "heading3" | "blockquote" | "codeBlock";
 
 export type DocsDocumentMode = "editing" | "viewing";
 

@@ -1,9 +1,9 @@
-# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+# syntax=docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
-ARG BUILD_BASE=node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
-ARG RUNTIME_BASE=gcr.io/distroless/nodejs22-debian13:nonroot@sha256:a2723a2817c5b01b8e7b98d567bc8b5a6b0e713e25bfb0a82b6ade4b9db06f50
-ARG GO_BUILD_BASE=golang:1.26.5-alpine3.23@sha256:622e56dbc11a8cfe87cafa2331e9a201877271cbff918af53d3be315f3da88cc
-ARG WEB_RUNTIME_BASE=alpine:3.23.5@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+ARG BUILD_BASE=node:24.18.0-trixie-slim@sha256:ae91dcc111a68c9d2d81ff2a17bda61be126426176fde6fe7d08ab13b7f50573
+ARG RUNTIME_BASE=gcr.io/distroless/nodejs24-debian13:nonroot@sha256:af85d11ce7ef10172855a6e3649e3e8125b1b9e3ca41849ec2918036f05cb212
+ARG GO_BUILD_BASE=golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
+ARG WEB_RUNTIME_BASE=alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 # Build the stock Caddy command with patched transitive modules and a patched Go
 # toolchain. The upstream binary image can lag fixed Go/library releases even
@@ -29,7 +29,7 @@ ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     CI=true
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
 
 # Build the existing paired package boundary from its reviewed checkout.
 # Production keeps the Editors module disabled; these artifacts only satisfy
@@ -63,7 +63,7 @@ ENV PNPM_HOME=/pnpm \
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
 
 COPY --from=editors-build /helix-editors/packages/ /helix-editors/packages/
 
@@ -117,7 +117,7 @@ ENV PNPM_HOME=/pnpm \
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
 
 COPY --from=editors-build /helix-editors/packages/ /helix-editors/packages/
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
@@ -139,7 +139,10 @@ LABEL org.opencontainers.image.title="helix-workspace-web" \
       org.opencontainers.image.vendor="Helix" \
       org.opencontainers.image.source="https://github.com/billiondollarsolo/helix-workspace"
 
-RUN addgroup -g 10001 -S helix \
+RUN apk add --no-cache \
+      libcrypto3=3.5.7-r0 \
+      libssl3=3.5.7-r0 \
+    && addgroup -g 10001 -S helix \
     && adduser -u 10001 -S -D -G helix helix \
     && mkdir -p /config /data /srv \
     && chown -R 10001:10001 /config /data /srv

@@ -89,8 +89,8 @@ The pinned Redis, RustFS, and ClamAV references remain checked into the base Com
 resolved production-config evidence must capture all ten active digests and the final release
 packet must bind each digest to its scan and SBOM.
 
-The checked-in stack also fixes the complete active dependency inventory: PostgreSQL 17.10 with
-pgvector 0.8.1, Redis 7.4.10, NATS 2.14.0, Meilisearch 1.45.1, RustFS 1.0.0-beta.11, Cerbos
+The checked-in stack also fixes the complete active dependency inventory: PostgreSQL 18.4 with
+pgvector 0.8.5, Redis 8.8.1, NATS 2.14.3, Meilisearch 1.51.0, RustFS 1.0.0-beta.11, Cerbos
 0.54.0, SpamAssassin 4.0.2, and ClamAV 1.5.3. Registry images use immutable manifest digests.
 Helix-built dependency images use digest-pinned build/runtime bases, immutable source revisions,
 and verified source archives. CI builds or pulls every one of these images, produces an SPDX SBOM,
@@ -109,15 +109,33 @@ mirror cannot leave the daemon without a valid baseline ruleset. Helix waits for
 ClamAV, PostgreSQL, Redis, NATS, Meilisearch, RustFS, and Cerbos health checks before starting the
 application.
 
-Meilisearch 1.10 data files are not an in-place upgrade source for Meilisearch 1.45.1. A new
+Meilisearch data directories must not be reused across incompatible versions. A new
 installation must start with an empty `meili-data` volume and rebuild indexes from PostgreSQL. For
 an existing deployment, create and download a dump with the old Meilisearch version, retain and
-checksum it, stop the old service, move the old volume aside without deleting it, start 1.45.1
+checksum it, stop the old service, move the old volume aside without deleting it, start 1.51.0
 against a new empty volume with `--import-dump /path/to/<dump-uid>.dump`, and then run the Helix
 full reindex. Promotion requires a count/sample comparison and search smoke before the old volume
 can be retired. Follow the version-specific warnings in the
 [official Meilisearch update guide](https://www.meilisearch.com/docs/resources/migration/updating).
-Never attach an existing 1.10 database directory directly to the 1.45.1 image.
+Never attach an older Meilisearch database directory directly to the 1.51.0 image.
+
+PostgreSQL 17 volumes are not binary-compatible with PostgreSQL 18. The Compose volume now mounts
+at `/var/lib/postgresql`, matching the PostgreSQL 18 version-specific cluster layout. An existing
+deployment must use a rehearsed logical dump/restore or `pg_upgrade`; changing only
+`HELIX_POSTGRES_IMAGE` is prohibited. Before promotion:
+
+1. Stop Helix writes and retain a filesystem/storage snapshot of the PostgreSQL 17 volume.
+2. Run the existing backup verification and restore drill, then create a fresh `pg_dumpall
+--globals-only` and `pg_dump --format=custom` application backup with the PostgreSQL 17 client.
+3. Start PostgreSQL 18.4 with pgvector 0.8.5 against a new empty volume. Restore globals first,
+   restore the application database, and run `ALTER EXTENSION vector UPDATE TO '0.8.5'`.
+4. Run every Helix migration, the migration compatibility check, tenant-isolation tests, row-count
+   and checksum sampling, a full search reindex, and the live data-plane smoke.
+5. Keep the PostgreSQL 17 snapshot read-only until the release rollback window closes. Rollback is
+   restore-based; a PostgreSQL 18 data directory must never be attached to PostgreSQL 17.
+
+Record the source and target versions, backup hashes, restore duration, verification results, and
+the exact promoted image digest in the release packet.
 
 After building, execute the same runtime contract used by CI:
 

@@ -343,8 +343,8 @@ function createProductionInventory() {
 
 function runPnpmAudit() {
   const packageDocument = parseJsonFile(resolve(REPO_ROOT, "package.json"), "package manifest");
-  if (packageDocument.packageManager !== "pnpm@9.15.9") {
-    throw new Error("The production audit runner requires packageManager pnpm@9.15.9");
+  if (packageDocument.packageManager !== "pnpm@11.18.0") {
+    throw new Error("The production audit runner requires packageManager pnpm@11.18.0");
   }
 
   const result = spawnSync("pnpm", ["audit", "--prod", "--audit-level", "high", "--json"], {

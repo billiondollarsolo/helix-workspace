@@ -24,10 +24,11 @@ Run the PRD hardening contract validation for every tier overlay:
 pnpm infra:helm:validate
 ```
 
-The script runs `helm lint` and `helm template` for the base, business, enterprise, and sovereign
-profiles, then verifies the rendered HPA, PDB, NetworkPolicy, CloudNativePG, Vault, SIEM,
-FIPS/STIG, air-gap, and opt-in PrometheusRule contracts. If `kubeconform` is installed it
-also validates rendered manifests against Kubernetes schemas.
+The script runs with Helm 4.2.3 and targets Kubernetes 1.34 through 1.36. It executes `helm lint`
+and `helm template` for the base, business, enterprise, and sovereign profiles, then verifies the
+rendered HPA, PDB, NetworkPolicy, CloudNativePG, Vault, SIEM, FIPS/STIG, air-gap, and opt-in
+PrometheusRule contracts. CI also requires kubeconform 0.8.0 and validates rendered manifests
+against Kubernetes schemas; local validation reports an explicit skip when kubeconform is absent.
 
 ## Signup SLO Alerts
 

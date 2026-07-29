@@ -1,6 +1,6 @@
 services:
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.157.0@sha256:f2f01157055a9b2aab9df7118e1f1c9abf345e99b23bc7a2bc791db374a7d0f6
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     ports:
       - "${OTEL_COLLECTOR_GRPC_PORT:-28444}:4317"
@@ -9,7 +9,7 @@ services:
       - ../../infra/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
     ports:
       - "${PROMETHEUS_PORT:-28446}:9090"
     volumes:
@@ -20,7 +20,7 @@ services:
       - alertmanager
 
   alertmanager:
-    image: prom/alertmanager:latest
+    image: prom/alertmanager:v0.33.1@sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
@@ -32,7 +32,7 @@ services:
       - alertmanager-data:/alertmanager
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:3.0.2@sha256:cda87c212d8c584dc0b89e337e7ed648a5100feb657e5d528480ee4fa03dbbe3
     command: ["-config.file=/etc/tempo.yaml"]
     ports:
       - "${TEMPO_HTTP_PORT:-28447}:3200"
@@ -41,7 +41,7 @@ services:
       - tempo-data:/var/tempo
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.4@sha256:87f0a067673756a3cede1bcbf0c74875f7df9b09fddb53e399d0c576f756cfcc
     command: ["-config.file=/etc/loki/local-config.yaml"]
     ports:
       - "${LOKI_PORT:-28448}:3100"
@@ -50,7 +50,7 @@ services:
       - loki-data:/loki
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.1.1@sha256:7cb8c64c4d57a57e734073f3cc94620adb24a0acb929bd80ba9f14017e3a975b
     ports:
       - "${GRAFANA_PORT:-28449}:3000"
     volumes:

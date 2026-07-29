@@ -23,7 +23,7 @@ const binding = createReleaseEvidenceBinding({
 describe("V5 DAST evidence contract", () => {
   it("pins the official stable ZAP image by immutable multiarch digest", () => {
     expect(ZAP_STABLE_IMAGE).toBe(
-      "ghcr.io/zaproxy/zaproxy:stable@sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2",
+      "ghcr.io/zaproxy/zaproxy:2.17.0@sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2",
     );
     expect(
       buildZapDockerArgs({

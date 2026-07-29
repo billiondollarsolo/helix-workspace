@@ -3,32 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "packageManager": "pnpm@9.15.9",
+  "packageManager": "pnpm@11.18.0",
   "engines": {
-    "node": ">=22.0.0",
-    "pnpm": ">=9.0.0 <10.0.0"
-  },
-  "pnpm": {
-    "overrides": {
-      "@grpc/grpc-js": "1.14.4",
-      "brace-expansion": "5.0.8",
-      "fast-uri@3.1.2": "3.1.4",
-      "fast-uri@4.1.0": "4.1.1",
-      "find-my-way": "9.7.0",
-      "linkify-it": "5.0.2",
-      "next": "16.2.11",
-      "nodemailer": "9.0.3",
-      "postcss": "8.5.24",
-      "protobufjs": "7.6.5",
-      "sharp": "0.35.3",
-      "tmp": "0.2.7",
-      "undici": "7.29.0",
-      "ws": "8.21.1"
-    },
-    "patchedDependencies": {
-      "minimatch@3.1.5": "patches/minimatch@3.1.5.patch",
-      "minimatch@5.1.9": "patches/minimatch@5.1.9.patch"
-    }
+    "node": ">=24.18.0 <25.0.0",
+    "pnpm": ">=11.18.0 <12.0.0"
   },
   "scripts": {
     "build": "turbo run build",
@@ -82,24 +60,27 @@
     "infra:demo:live-smoke": "bash infra/scripts/live-demo-data-smoke.sh",
     "infra:restore:validate": "bash infra/scripts/validate-restore-drill.sh",
     "infra:restore:live-smoke": "bash infra/scripts/live-restore-drill-smoke.sh",
-    "cerbos:compile": "docker run --rm -v \"$PWD/infra/cerbos/policies:/policies:ro\" ghcr.io/cerbos/cerbos:latest compile /policies",
+    "cerbos:compile": "docker run --rm -v \"$PWD/infra/cerbos/policies:/policies:ro\" ghcr.io/cerbos/cerbos:0.54.0@sha256:211c261f6031675522a35c6055b13fd719c4aff13747307e4bcb6907326537ef compile /policies",
     "format": "prettier --write .",
     "format:check": "node infra/scripts/check-format.mjs",
     "corpus:fetch": "tsx test-corpus/fetch.ts",
     "corpus:fetch:force": "tsx test-corpus/fetch.ts --force",
     "corpus:seed": "tsx test-corpus/seed.ts"
   },
+  "dependencies": {
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
   "devDependencies": {
-    "@eslint/js": "^9.15.0",
+    "@eslint/js": "^10.0.1",
     "@helix/config": "workspace:*",
-    "@types/node": "^22.10.2",
-    "eslint": "^9.15.0",
-    "eslint-plugin-react-hooks": "^5.1.0",
-    "prettier": "^3.4.2",
-    "tsx": "^4.19.2",
-    "turbo": "^2.5.0",
-    "typescript": "^5.7.2",
-    "typescript-eslint": "^8.16.0",
-    "vitest": "^2.1.8"
+    "@types/node": "^24.13.3",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.1",
+    "turbo": "^2.10.7",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
   }
 }

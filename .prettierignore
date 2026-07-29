@@ -13,6 +13,7 @@
 **/.playwright/
 **/reports/a11y/
 **/*.tsbuildinfo
+/pnpm-lock.yaml
 /data/
 /artifacts/
 /.tmp/

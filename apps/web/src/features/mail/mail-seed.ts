@@ -10,13 +10,7 @@
 import type { IconName } from "@/components/icons";
 
 export type MailFolderId =
-  | "inbox"
-  | "starred"
-  | "snoozed"
-  | "sent"
-  | "drafts"
-  | "archive"
-  | "trash";
+  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "trash";
 
 export type MailTabId = "primary" | "updates" | "promotions" | "social";
 

@@ -940,14 +940,7 @@ function ShortcutsSection() {
 /* ---------- shell ---------- */
 
 type SettingsSectionId =
-  | "profile"
-  | "appearance"
-  | "language"
-  | "notify"
-  | "signature"
-  | "ai"
-  | "security"
-  | "shortcuts";
+  "profile" | "appearance" | "language" | "notify" | "signature" | "ai" | "security" | "shortcuts";
 
 const SECTIONS: { id: SettingsSectionId; label: string; icon: IconName }[] = [
   { id: "profile", label: "Profile", icon: "Users" },

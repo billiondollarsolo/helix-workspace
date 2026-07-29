@@ -35,7 +35,7 @@ const jitsiWebhookSchema = z
     started_at: z.string().datetime().nullable().optional(),
     endedAt: z.string().datetime().nullable().optional(),
     ended_at: z.string().datetime().nullable().optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
     uploadId: z.string().uuid().optional(),
     upload_id: z.string().uuid().optional(),
   })
@@ -61,7 +61,7 @@ const recordingUploadPrepareSchema = z
     started_at: z.string().datetime().nullable().optional(),
     endedAt: z.string().datetime().nullable().optional(),
     ended_at: z.string().datetime().nullable().optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .passthrough();
 

@@ -9,14 +9,7 @@ export const mailPluginId = "com.helix.core.mail";
  * is "threads with starred = true", `archive` is "threads with archived_at set".
  */
 export type MailFolderId =
-  | "inbox"
-  | "starred"
-  | "snoozed"
-  | "sent"
-  | "drafts"
-  | "archive"
-  | "spam"
-  | "trash";
+  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
 export const MAIL_FOLDER_IDS = [
   "inbox",

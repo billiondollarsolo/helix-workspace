@@ -7,31 +7,6 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
-function packageDirectories(nodeModulesPath) {
-  let entries;
-  try {
-    entries = readdirSync(nodeModulesPath, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const packages = [];
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const path = join(nodeModulesPath, entry.name);
-    if (entry.name.startsWith("@") && entry.isDirectory()) {
-      for (const scopedEntry of readdirSync(path, { withFileTypes: true })) {
-        if (scopedEntry.isDirectory() || scopedEntry.isSymbolicLink()) {
-          packages.push(join(path, scopedEntry.name));
-        }
-      }
-      continue;
-    }
-    if (entry.isDirectory() || entry.isSymbolicLink()) packages.push(path);
-  }
-  return packages;
-}
-
 function readPackageManifest(packageRoot) {
   const path = join(packageRoot, "package.json");
   let manifest;
@@ -49,6 +24,69 @@ function readPackageManifest(packageRoot) {
   ) {
     throw new Error(`Deployed package manifest is missing name/version: ${path}`);
   }
+  return manifest;
+}
+
+function dependencyRequirements(manifest) {
+  const requirements = new Map();
+  for (const name of Object.keys(manifest.dependencies ?? {})) {
+    requirements.set(name, { optional: false });
+  }
+  for (const name of Object.keys(manifest.optionalDependencies ?? {})) {
+    requirements.set(name, { optional: true });
+  }
+  for (const name of Object.keys(manifest.peerDependencies ?? {})) {
+    if (manifest.peerDependenciesMeta?.[name]?.optional === true) continue;
+    if (!requirements.has(name)) requirements.set(name, { optional: false });
+  }
+  return requirements;
+}
+
+function dependencyDirectory(packageRoot) {
+  let path = dirname(packageRoot);
+  if (basename(path).startsWith("@")) path = dirname(path);
+  return path;
+}
+
+function resolveDependency(packageRoot, name) {
+  const candidates = [
+    join(packageRoot, "node_modules", name),
+    join(dependencyDirectory(packageRoot), name),
+  ];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function virtualStoreEntry(virtualStore, target) {
+  const relativeToStore = relative(virtualStore, target);
+  if (
+    relativeToStore.length === 0 ||
+    relativeToStore === ".." ||
+    relativeToStore.startsWith(`..${sep}`)
+  ) {
+    return undefined;
+  }
+  return relativeToStore.split(sep)[0];
+}
+
+function removeLinksToUnreachableEntries(root, virtualStore, reachableStoreEntries) {
+  let removedLinks = 0;
+
+  function visit(path) {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) {
+      const entry = virtualStoreEntry(virtualStore, realpathSync(path));
+      if (entry !== undefined && !reachableStoreEntries.has(entry)) {
+        rmSync(path, { force: true });
+        removedLinks += 1;
+      }
+      return;
+    }
+    if (!stat.isDirectory()) return;
+    for (const entry of readdirSync(path)) visit(join(path, entry));
+  }
+
+  visit(root);
+  return removedLinks;
 }
 
 function assertNoDanglingSymlinks(root) {
@@ -115,34 +153,38 @@ export function pruneProductionDeploy(deployRoot) {
     }
     if (visitedPackages.has(packageRoot)) return;
     visitedPackages.add(packageRoot);
-    readPackageManifest(packageRoot);
+    const manifest = readPackageManifest(packageRoot);
 
-    const relativeToStore = relative(virtualStore, packageRoot);
-    if (
-      relativeToStore.length > 0 &&
-      relativeToStore !== ".." &&
-      !relativeToStore.startsWith(`..${sep}`)
-    ) {
-      reachableStoreEntries.add(relativeToStore.split(sep)[0]);
-    }
+    const entry = virtualStoreEntry(virtualStore, packageRoot);
+    if (entry !== undefined) reachableStoreEntries.add(entry);
 
-    let dependencyDirectory = dirname(packageRoot);
-    if (basename(dependencyDirectory).startsWith("@")) {
-      dependencyDirectory = dirname(dependencyDirectory);
-    }
-    if (dependencyDirectory.includes(`${sep}node_modules${sep}.pnpm${sep}`)) {
-      for (const dependency of packageDirectories(dependencyDirectory)) visit(dependency);
-    }
-    for (const dependency of packageDirectories(join(packageRoot, "node_modules"))) {
+    for (const [name, requirement] of dependencyRequirements(manifest)) {
+      const dependency = resolveDependency(packageRoot, name);
+      if (dependency === undefined) {
+        if (requirement.optional) continue;
+        throw new Error(`Required production dependency ${name} is missing for ${manifest.name}`);
+      }
       visit(dependency);
     }
   }
 
-  for (const dependency of packageDirectories(nodeModules)) visit(dependency);
+  for (const [name, requirement] of dependencyRequirements(rootManifest)) {
+    const dependency = join(nodeModules, name);
+    if (!existsSync(dependency)) {
+      if (requirement.optional) continue;
+      throw new Error(`Required production dependency ${name} is missing for @helix/app`);
+    }
+    visit(dependency);
+  }
   if (visitedPackages.size === 0 || reachableStoreEntries.size === 0) {
     throw new Error("Production dependency graph is empty; refusing to prune");
   }
 
+  const removedLinks = removeLinksToUnreachableEntries(
+    nodeModules,
+    virtualStore,
+    reachableStoreEntries,
+  );
   let removedEntries = 0;
   for (const entry of readdirSync(virtualStore, { withFileTypes: true })) {
     if (!entry.isDirectory() || reachableStoreEntries.has(entry.name)) continue;
@@ -150,13 +192,22 @@ export function pruneProductionDeploy(deployRoot) {
     removedEntries += 1;
   }
   rmSync(join(virtualStore, "lock.yaml"), { force: true });
-  rmSync(join(nodeModules, ".modules.yaml"), { force: true });
+  for (const path of [
+    join(root, "pnpm-lock.yaml"),
+    join(root, "pnpm-workspace.yaml"),
+    join(nodeModules, ".modules.yaml"),
+    join(nodeModules, ".package-map.json"),
+    join(nodeModules, ".pnpm-workspace-state-v1.json"),
+  ]) {
+    rmSync(path, { force: true });
+  }
 
   assertNoDanglingSymlinks(nodeModules);
   return {
     reachablePackages: visitedPackages.size,
     reachableStoreEntries: reachableStoreEntries.size,
     removedEntries,
+    removedLinks,
   };
 }
 
@@ -167,7 +218,7 @@ function main() {
   }
   const result = pruneProductionDeploy(deployRoot);
   process.stdout.write(
-    `Pruned production deploy: retained ${result.reachablePackages} packages in ${result.reachableStoreEntries} virtual-store entries; removed ${result.removedEntries} unreachable entries\n`,
+    `Pruned production deploy: retained ${result.reachablePackages} packages in ${result.reachableStoreEntries} virtual-store entries; removed ${result.removedEntries} unreachable entries and ${result.removedLinks} links\n`,
   );
 }
 

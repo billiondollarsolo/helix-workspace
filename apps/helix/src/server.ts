@@ -967,8 +967,7 @@ export function registerAssistantStreamRoute(
 
 /** An assistant SSE frame: a stream event or a terminal error notice. */
 export type AssistantSseFrame =
-  | AssistantStreamEvent
-  | { readonly type: "error"; readonly message: string };
+  AssistantStreamEvent | { readonly type: "error"; readonly message: string };
 
 /** Serializes an assistant SSE frame to the `text/event-stream` wire format. */
 export function formatAssistantSseEvent(event: AssistantSseFrame): string {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, type ComponentProps } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,7 +22,7 @@ let container: HTMLDivElement;
 let root: Root;
 let queryClient: QueryClient;
 let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
-let onOpen: ReturnType<typeof vi.fn>;
+let onOpen: ComponentProps<typeof SlidesList>["onOpen"];
 let toolCalls: Array<{ readonly url: string; readonly body: unknown }>;
 let importShouldFail: boolean;
 let digestSpy: { mockRestore: () => void };
@@ -36,7 +36,7 @@ describe("SlidesList", () => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 0 } },
     });
-    onOpen = vi.fn();
+    onOpen = vi.fn<ComponentProps<typeof SlidesList>["onOpen"]>();
     navigateMock.mockClear();
     toolCalls = [];
     importShouldFail = false;

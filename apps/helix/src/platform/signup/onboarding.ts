@@ -3,20 +3,11 @@ import type { JsonObject } from "@helix/sdk-types";
 
 export type SignupOnboardingPlanChoice = "pro-trial" | "personal" | "sales";
 export type SignupOnboardingIdentityChoice =
-  | "local"
-  | "google"
-  | "microsoft"
-  | "okta"
-  | "oidc"
-  | "saml";
+  "local" | "google" | "microsoft" | "okta" | "oidc" | "saml";
 export type SignupOnboardingStep = "plan" | "invite" | "sso";
 export type SignupOnboardingSsoProvider = Exclude<SignupOnboardingIdentityChoice, "local">;
 export type SignupOnboardingSsoPolicyProvider =
-  | "google"
-  | "azure_ad"
-  | "okta"
-  | "generic_oidc"
-  | "generic_saml";
+  "google" | "azure_ad" | "okta" | "generic_oidc" | "generic_saml";
 export type SignupOnboardingSsoTestStatus = "configuration_required" | "runtime_pending";
 
 export interface SignupOnboardingSsoTestResult {

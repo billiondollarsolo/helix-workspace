@@ -101,7 +101,20 @@ assert_contains "$OBSERVABILITY" 'runbook_url: "?docs/specs/05-operations/runboo
 assert_not_contains "$OBSERVABILITY" 'org_id|actor_id|email_address|user_agent|ip_address' "signup SLO alerts must not carry private or high-cardinality labels"
 
 if command -v kubeconform >/dev/null 2>&1; then
-  kubeconform -strict -ignore-missing-schemas "$BASE" "$BUSINESS" "$ENTERPRISE" "$SOVEREIGN" "$OBSERVABILITY"
+  KUBECONFORM_REQUIRED_VERSION=${KUBECONFORM_REQUIRED_VERSION:-v0.8.0}
+  KUBECONFORM_ACTUAL_VERSION=$(kubeconform -v)
+  if [[ "$KUBECONFORM_ACTUAL_VERSION" != "$KUBECONFORM_REQUIRED_VERSION" ]]; then
+    echo "Helm validation failed: kubeconform ${KUBECONFORM_REQUIRED_VERSION} is required; found ${KUBECONFORM_ACTUAL_VERSION}." >&2
+    exit 1
+  fi
+  kubeconform \
+    -strict \
+    -kubernetes-version 1.36.3 \
+    -ignore-missing-schemas \
+    "$BASE" "$BUSINESS" "$ENTERPRISE" "$SOVEREIGN" "$OBSERVABILITY"
+elif [[ "${CI:-}" == "true" ]]; then
+  echo "Helm validation failed: kubeconform v0.8.0 is required in CI." >&2
+  exit 1
 else
   echo "kubeconform not found; skipped Kubernetes schema validation."
 fi

@@ -1,6 +1,6 @@
 services:
   jitsi-web:
-    image: jitsi/web:stable
+    image: jitsi/web:stable-11031@sha256:2183593bbbe1b5e27c368e3737efc51915ce7742de93f594e5ca7950c864c233
     environment:
       ENABLE_AUTH: "1"
       ENABLE_GUESTS: "0"
@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
 
   jitsi-prosody:
-    image: jitsi/prosody:stable
+    image: jitsi/prosody:stable-11031@sha256:926c508c0d9198bf9d0b6adb88ce9092461e9a79e2895fb57fe4ef5f44ff3523
     environment:
       AUTH_TYPE: jwt
       ENABLE_AUTH: "1"
@@ -60,7 +60,7 @@ services:
     restart: unless-stopped
 
   jitsi-jicofo:
-    image: jitsi/jicofo:stable
+    image: jitsi/jicofo:stable-11031@sha256:1f78fb0c0548ae5efd83a2b488df6aabbae4a70bc6f64c74395b6937b3aceb98
     environment:
       TZ: ${TZ:-UTC}
       XMPP_SERVER: jitsi-prosody
@@ -78,7 +78,7 @@ services:
     restart: unless-stopped
 
   jitsi-jvb:
-    image: jitsi/jvb:stable
+    image: jitsi/jvb:stable-11031@sha256:3460de3541a8f96d007b8f2b4681ea8321cae64c17387338eabf776e73cd0f51
     environment:
       TZ: ${TZ:-UTC}
       XMPP_SERVER: jitsi-prosody

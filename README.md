@@ -34,9 +34,13 @@ for the normative boundaries and release gates.
 
 Required local tools:
 
-- Node.js 22 LTS
-- pnpm 9.x
-- Docker with Compose v2
+- Node.js 24.18.0 LTS (the exact version is in `.node-version`)
+- pnpm 11.18.0 (activated from `packageManager` with Corepack)
+- Docker Engine 29.x with Compose 5.x for the fully validated local stack
+- Helm 4.2.3 and kubeconform 0.8.0 for Kubernetes chart validation
+
+See the [platform version policy](docs/platform-version-policy.md) for the complete runtime,
+container, Kubernetes, and compatibility matrix.
 
 Common commands:
 

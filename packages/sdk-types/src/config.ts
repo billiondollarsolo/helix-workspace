@@ -4,10 +4,7 @@ export type SecurityTier = "personal" | "business" | "enterprise" | "sovereign";
 export type HelixMode = "single-tenant" | "multi-tenant-saas";
 
 export type ToolConfirmationPolicy =
-  | "destructive"
-  | "destructive_and_external"
-  | "all_write"
-  | "all";
+  "destructive" | "destructive_and_external" | "all_write" | "all";
 
 export interface TierSecurityDefaults {
   readonly tier: SecurityTier;

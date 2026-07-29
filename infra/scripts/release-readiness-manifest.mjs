@@ -25,10 +25,11 @@ import {
   FAILURE_RECOVERY_SCENARIOS,
   validateFailureRecoveryEvidence,
 } from "./failure-recovery-contract.mjs";
+import { validateDastEvidence } from "./dast-evidence.mjs";
 import { validateReleaseEvidenceBinding } from "./release-evidence-binding.mjs";
 
 const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|cookie|key|credential)/iu;
-const FINAL_RELEASE_GATES = ["M7", "D7", "C6", "A7", "O2", "O4", "V4"];
+const FINAL_RELEASE_GATES = ["M7", "D7", "C6", "A7", "O2", "O4", "V4", "V5"];
 
 const usage = `Usage: infra/scripts/release-readiness-manifest.mjs [options]
 
@@ -51,7 +52,8 @@ Options:
                                Validate and require passed O2 data-plane evidence
   --failure-recovery-evidence <path>
                                Validate and require passed V4 failure/recovery evidence
-  --final-release              Require every live M7/D7/C6/A7/O2/O4/V4 gate,
+  --dast-evidence <path>       Validate and require passed V5 DAST evidence
+  --final-release              Require every live M7/D7/C6/A7/O2/O4/V4/V5 gate,
                                external Mail evidence, and exact revision/image bindings
   --require-external-mail-evidence
                                Also require passed provider/Gmail/Microsoft evidence
@@ -169,10 +171,11 @@ export async function buildReleaseReadinessManifest(options) {
     evidencePaths,
     expectedBinding,
   );
+  const dastEvidence = await validateRequiredDastEvidence(options, evidencePaths, expectedBinding);
 
   const timestamp = canonicalTimestamp(options.timestamp);
   const raw = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     generatedAt: timestamp,
     release: {
       mode: options.finalRelease ? "final" : "preflight",
@@ -209,6 +212,7 @@ export async function buildReleaseReadinessManifest(options) {
       ...(failureRecoveryEvidence === undefined
         ? {}
         : { failureRecovery: failureRecoveryEvidence }),
+      ...(dastEvidence === undefined ? {} : { dast: dastEvidence }),
     },
   };
   return redactSensitive(raw);
@@ -230,6 +234,7 @@ export function parseArgs(args, cwd, environment = process.env) {
     driveLiveEvidence: undefined,
     dataPlaneLiveEvidence: undefined,
     failureRecoveryEvidence: undefined,
+    dastEvidence: undefined,
     finalRelease: false,
     requireExternalMailEvidence: false,
     applicationImageDigest:
@@ -293,6 +298,9 @@ export function parseArgs(args, cwd, environment = process.env) {
       case "--failure-recovery-evidence":
         options.failureRecoveryEvidence = normalizeRelativePath(value);
         break;
+      case "--dast-evidence":
+        options.dastEvidence = normalizeRelativePath(value);
+        break;
       case "--image-digest":
       case "--application-image-digest":
         options.applicationImageDigest = value;
@@ -329,6 +337,7 @@ function validateFinalReleaseOptions(options) {
     ["--data-plane-live-evidence", options.dataPlaneLiveEvidence],
     ["--restore-drill-evidence", options.restoreDrillEvidence],
     ["--failure-recovery-evidence", options.failureRecoveryEvidence],
+    ["--dast-evidence", options.dastEvidence],
   ];
   const missing = required.filter(([, value]) => value === undefined).map(([flag]) => flag);
   if (missing.length > 0) {
@@ -459,6 +468,36 @@ async function validateRequiredFailureRecoveryEvidence(options, evidencePaths, e
         alertCount: observation.assertions.alert.rules.length,
       };
     }),
+  };
+}
+
+async function validateRequiredDastEvidence(options, evidencePaths, expectedBinding) {
+  if (options.dastEvidence === undefined) return undefined;
+  if (!evidencePaths.has(options.dastEvidence)) {
+    throw new Error(`required V5 DAST evidence missing: ${options.dastEvidence}`);
+  }
+  const path = resolve(options.evidenceDir, options.dastEvidence);
+  let evidence;
+  try {
+    evidence = validateDastEvidence(JSON.parse(await readFile(path, "utf8")), {
+      requirePass: true,
+      expectedBinding,
+    });
+  } catch (error) {
+    throw new Error(
+      `invalid or incomplete V5 DAST evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return {
+    path: options.dastEvidence,
+    status: evidence.status,
+    durationMs: evidence.durationMs,
+    scannerImage: evidence.scanner.image,
+    targetKind: evidence.target.kind,
+    summary: evidence.summary,
+    dispositions: evidence.dispositions.length,
   };
 }
 

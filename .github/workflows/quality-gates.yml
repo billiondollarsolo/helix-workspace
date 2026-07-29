@@ -63,6 +63,9 @@ jobs:
       - name: Prove final-release evidence gates fail closed
         run: pnpm quality:release-evidence-contract:test
 
+      - name: Prove V5 DAST evidence contract fails closed
+        run: pnpm quality:dast-contract:test
+
       - name: Test launch documentation contract
         run: pnpm quality:launch-docs:test
 

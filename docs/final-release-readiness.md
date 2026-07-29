@@ -2,7 +2,7 @@
 
 The ordinary release-readiness manifest remains a developer and operator preflight: it validates
 only the evidence explicitly supplied. A production promotion must add `--final-release`. That
-mode is fail-closed and requires all seven live gates from the production-readiness plan:
+mode is fail-closed and requires all eight live gates from the production-readiness plan:
 
 | Gate                | Manifest option               | Required result                                                                 |
 | ------------------- | ----------------------------- | ------------------------------------------------------------------------------- |
@@ -13,6 +13,7 @@ mode is fail-closed and requires all seven live gates from the production-readin
 | O2 data plane       | `--data-plane-live-evidence`  | All eight TLS/authentication/authorization/rotation scenarios passed            |
 | O4 restore          | `--restore-drill-evidence`    | Every restore scenario passed with RPO at most 24 hours and RTO at most 4 hours |
 | V4 failure/recovery | `--failure-recovery-evidence` | Every disposable fault scenario and recovery assertion passed                   |
+| V5 DAST             | `--dast-evidence`             | Bound ZAP scan passed; no High/Critical and all Medium/Low risks dispositioned  |
 
 Static, `not_run`, running, failed, partially passed, or missing reports cannot satisfy final mode.
 
@@ -29,7 +30,7 @@ export HELIX_RELEASE_WEB_IMAGE_DIGEST="sha256:<64 lowercase hex characters>"
 ```
 
 Set all four variables together. Supplying only part of the binding fails before evidence is
-written. The Mail, Agent, Chat, data-plane, restore, and failure/recovery CLIs add this canonical
+written. The Mail, Agent, Chat, data-plane, restore, failure/recovery, and DAST CLIs add this canonical
 object to generated reports:
 
 ```json
@@ -73,13 +74,14 @@ pnpm quality:release-readiness-manifest -- \
   --data-plane-live-evidence data-plane-live-evidence.json \
   --restore-drill-evidence restore-drill-evidence.json \
   --failure-recovery-evidence failure-recovery-evidence.json \
+  --dast-evidence dast-evidence.json \
   --application-image-digest "$HELIX_RELEASE_APPLICATION_IMAGE_DIGEST" \
   --web-image-digest "$HELIX_RELEASE_WEB_IMAGE_DIGEST" \
   --output "$evidence_dir/release-readiness-manifest.json"
 ```
 
 The command independently reads both clean repository Git SHAs and compares them and both supplied
-image digests with every report. Any mismatch blocks promotion. The resulting schema-version 4
+image digests with every report. Any mismatch blocks promotion. The resulting schema-version 5
 manifest records `release.mode: "final"`, all required gate IDs, repository revisions, immutable
 image digests, evidence-file hashes, and redacted timing/count summaries.
 
@@ -100,4 +102,4 @@ test runner. Quality CI invokes this command on pull requests and `main`.
 
 CI contract tests prove that the validators fail closed; they do not fabricate live evidence.
 Actual final-release manifest creation remains an explicit promotion-stage operation after all
-seven live reports exist.
+eight live reports exist.

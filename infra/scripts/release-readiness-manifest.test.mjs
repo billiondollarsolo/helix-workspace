@@ -31,6 +31,7 @@ import {
   createStaticFailureRecoveryEvidence,
   finalizeFailureRecoveryEvidence,
 } from "./failure-recovery-contract.mjs";
+import { buildDastEvidence, createStaticDastEvidence } from "./dast-evidence.mjs";
 import {
   attachReleaseEvidenceBinding,
   createReleaseEvidenceBinding,
@@ -442,6 +443,8 @@ describe("release-readiness manifest", () => {
       fixture,
       "--failure-recovery-evidence",
       "failure-recovery-evidence.json",
+      "--dast-evidence",
+      "dast-evidence.json",
     );
     await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
       "invalid or incomplete failure/recovery evidence",
@@ -468,6 +471,57 @@ describe("release-readiness manifest", () => {
     });
     expect(JSON.stringify(manifest.evidence.failureRecovery)).not.toContain("resourceId");
     expect(JSON.stringify(manifest.evidence.failureRecovery)).not.toContain("ref");
+  });
+
+  it("requires genuine passed and release-bound V5 DAST evidence", async () => {
+    const fixture = await createFixture();
+    const evidencePath = resolve(fixture.evidence, "dast-evidence.json");
+    await writeFile(
+      evidencePath,
+      `${JSON.stringify(createStaticDastEvidence(new Date("2026-07-28T20:00:00.000Z")))}\n`,
+      "utf8",
+    );
+    const args = liveEvidenceArgs(fixture, "--dast-evidence", "dast-evidence.json");
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "invalid or incomplete V5 DAST evidence",
+    );
+
+    const passed = passedDastEvidence();
+    delete passed.releaseBinding;
+    await writeFile(evidencePath, `${JSON.stringify(passed)}\n`, "utf8");
+    await expect(buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}))).rejects.toThrow(
+      "requires a release binding",
+    );
+
+    const binding = createReleaseEvidenceBinding({
+      workspaceSha: execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: fixture.workspace,
+        encoding: "utf8",
+      }).trim(),
+      editorsSha: execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: fixture.editors,
+        encoding: "utf8",
+      }).trim(),
+      applicationImageDigest: `sha256:${"a".repeat(64)}`,
+      webImageDigest: `sha256:${"b".repeat(64)}`,
+    });
+    await writeFile(evidencePath, `${JSON.stringify(passedDastEvidence(binding))}\n`, "utf8");
+    const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
+    expect(manifest.evidence.dast).toMatchObject({
+      path: "dast-evidence.json",
+      status: "passed",
+      durationMs: 900_000,
+      targetKind: "https",
+      summary: {
+        informational: 0,
+        low: 0,
+        medium: 0,
+        high: 0,
+        critical: 0,
+        total: 0,
+      },
+      dispositions: 0,
+    });
   });
 
   it("requires live passed restore evidence and publishes measured RPO/RTO", async () => {
@@ -538,6 +592,8 @@ describe("release-readiness manifest", () => {
       "restore-drill-evidence.json",
       "--failure-recovery-evidence",
       "failure-recovery-evidence.json",
+      "--dast-evidence",
+      "dast-evidence.json",
       "--image-digest",
       binding.applicationImageDigest,
       "--web-image-digest",
@@ -555,10 +611,10 @@ describe("release-readiness manifest", () => {
     await writeFinalReleaseEvidence(fixture, binding);
     const manifest = await buildReleaseReadinessManifest(parseArgs(args, fixture.root, {}));
     expect(manifest).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       release: {
         mode: "final",
-        requiredGates: ["M7", "D7", "C6", "A7", "O2", "O4", "V4"],
+        requiredGates: ["M7", "D7", "C6", "A7", "O2", "O4", "V4", "V5"],
       },
       repositories: {
         workspace: { sha: workspaceSha },
@@ -578,6 +634,7 @@ describe("release-readiness manifest", () => {
         dataPlane: { status: "passed" },
         restore: { status: "passed" },
         failureRecovery: { status: "passed" },
+        dast: { status: "passed" },
       },
     });
   });
@@ -632,6 +689,8 @@ describe("release-readiness manifest", () => {
       "restore-drill-evidence.json",
       "--failure-recovery-evidence",
       "failure-recovery-evidence.json",
+      "--dast-evidence",
+      "dast-evidence.json",
     ];
 
     const mailPath = resolve(fixture.evidence, "mail-live-evidence.json");
@@ -706,6 +765,7 @@ async function writeFinalReleaseEvidence(fixture, binding) {
     "data-plane-live-evidence.json": passedDataPlaneEvidence(),
     "restore-drill-evidence.json": passedRestoreEvidence(),
     "failure-recovery-evidence.json": passedFailureRecoveryEvidence(),
+    "dast-evidence.json": passedDastEvidence(),
   };
   await Promise.all(
     Object.entries(reports).map(([name, report]) => {
@@ -836,6 +896,22 @@ function passedFailureRecoveryEvidence() {
     report.scenarios[contract.id] = passedFailureRecoveryObservation(contract);
   }
   return finalizeFailureRecoveryEvidence(report, new Date("2026-07-28T20:03:00.000Z"));
+}
+
+function passedDastEvidence(releaseBinding) {
+  return buildDastEvidence({
+    started: new Date("2026-07-28T20:00:00.000Z"),
+    completed: new Date("2026-07-28T20:15:00.000Z"),
+    timeoutSeconds: 900,
+    target: {
+      kind: "https",
+      originSha256: `sha256:${"f".repeat(64)}`,
+    },
+    execution: { outcome: "completed", exitCode: 0, reportParsed: true },
+    findings: [],
+    dispositions: [],
+    binding: releaseBinding,
+  });
 }
 
 function passedFailureRecoveryObservation(contract) {

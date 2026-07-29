@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { link, lstat, mkdir, open, readFile, readdir, realpath, unlink } from "node:fs/promises";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 import process from "node:process";
@@ -27,9 +27,39 @@ import {
 } from "./failure-recovery-contract.mjs";
 import { validateDastEvidence } from "./dast-evidence.mjs";
 import { validateReleaseEvidenceBinding } from "./release-evidence-binding.mjs";
+import { evidenceSetDigest, validateFinalReleaseArtifacts } from "./final-release-artifacts.mjs";
 
 const SENSITIVE_KEY_PATTERN = /(password|secret|token|authorization|cookie|key|credential)/iu;
-const FINAL_RELEASE_GATES = ["M7", "D7", "C6", "A7", "O2", "O4", "V4", "V5"];
+const FINAL_RELEASE_GATES = [
+  "M7",
+  "D7",
+  "C6",
+  "A7",
+  "O2",
+  "O4",
+  "V4",
+  "V5",
+  "V6",
+  "R0",
+  "R1",
+  "R2",
+  "R3",
+];
+const FINAL_ARTIFACT_OPTIONS = Object.freeze([
+  ["--full-gates-evidence", "fullGatesEvidence", "fullGates"],
+  ["--migration-status-evidence", "migrationStatusEvidence", "migration"],
+  ["--production-config-evidence", "productionConfigEvidence", "productionConfig"],
+  ["--slo-soak-evidence", "sloSoakEvidence", "sloSoak"],
+  ["--security-review-evidence", "securityReviewEvidence", "securityReview"],
+  ["--support-readiness-evidence", "supportReadinessEvidence", "supportReadiness"],
+  ["--business-readiness-evidence", "businessReadinessEvidence", "businessReadiness"],
+  [
+    "--protected-repository-state-evidence",
+    "protectedRepositoryStateEvidence",
+    "protectedRepositoryState",
+  ],
+  ["--production-decision-evidence", "productionDecisionEvidence", "productionDecision"],
+]);
 
 const usage = `Usage: infra/scripts/release-readiness-manifest.mjs [options]
 
@@ -53,8 +83,24 @@ Options:
   --failure-recovery-evidence <path>
                                Validate and require passed V4 failure/recovery evidence
   --dast-evidence <path>       Validate and require passed V5 DAST evidence
-  --final-release              Require every live M7/D7/C6/A7/O2/O4/V4/V5 gate,
-                               external Mail evidence, and exact revision/image bindings
+  --full-gates-evidence <path> Validate and require exact V6/R0 full-gate evidence
+  --migration-status-evidence <path>
+                               Validate deployed migration and approved rollback evidence
+  --production-config-evidence <path>
+                               Validate the resolved, redacted production config digest
+  --slo-soak-evidence <path>   Validate SLO objectives and a real 24-hour soak
+  --security-review-evidence <path>
+                               Validate security scans, SBOMs, and finding dispositions
+  --support-readiness-evidence <path>
+                               Validate owners, runbooks, rollout periods, and incident history
+  --business-readiness-evidence <path>
+                               Validate cost model, MVP limits, and accepted risks
+  --protected-repository-state-evidence <path>
+                               Validate signed protected remote branch/tag observations
+  --production-decision-evidence <path>
+                               Validate the signed R3 go/conditional-go/no-go decision
+  --final-release              Require every M7/D7/C6/A7/O2/O4/V4/V5/V6/R0-R3 gate,
+                               supporting artifact, and exact revision/image binding
   --require-external-mail-evidence
                                Also require passed provider/Gmail/Microsoft evidence
   --image-digest <digest>      Application image digest (legacy option name)
@@ -62,7 +108,8 @@ Options:
                                Application image digest
   --web-image-digest <digest>  Web edge image digest
   --output <path>              Write JSON to this file as well as stdout
-  --timestamp <ISO-8601>       Explicit timestamp for reproducible automation/tests
+  --timestamp <ISO-8601>       Explicit timestamp for reproducible preflight only;
+                               prohibited in final-release mode
   --help                       Show this help
 
 Environment:
@@ -71,6 +118,32 @@ Environment:
   HELIX_IMAGE_DIGEST
   HELIX_APPLICATION_IMAGE_DIGEST
   HELIX_WEB_IMAGE_DIGEST
+  HELIX_RELEASE_TRUSTED_DECISION_PUBLIC_KEY
+                               Protected verifier-side Ed25519 public-key path
+  HELIX_RELEASE_TRUSTED_DECISION_SIGNER_FINGERPRINT
+                               Protected verifier-side sha256 SPKI fingerprint
+  HELIX_RELEASE_TRUSTED_GIT_STATE_PUBLIC_KEY
+  HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER_FINGERPRINT
+  HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER
+                               Protected remote-state verifier trust
+  HELIX_RELEASE_TRUSTED_FULCIO_ISSUER_CERTIFICATE
+                               Pinned Fulcio issuer for offline provenance verification
+  HELIX_RELEASE_TRUSTED_REKOR_PUBLIC_KEY
+  HELIX_RELEASE_TRUSTED_REKOR_LOG_ID
+  HELIX_RELEASE_TRUSTED_REKOR_CHECKPOINT_ORIGIN
+                               Protected Rekor trust for offline log verification
+  HELIX_RELEASE_TRUSTED_GITHUB_REPOSITORY
+  HELIX_RELEASE_TRUSTED_EDITORS_REPOSITORY
+  HELIX_RELEASE_TRUSTED_GITHUB_WORKFLOW_IDENTITY
+  HELIX_RELEASE_TRUSTED_APPLICATION_SUBJECT
+  HELIX_RELEASE_TRUSTED_WEB_SUBJECT
+                               Protected GitHub/Sigstore provenance identities
+  HELIX_RELEASE_PREVIOUS_EDITORS_SHA
+                               Trusted previous release editor revision
+  HELIX_RELEASE_REQUIRED_BRANCH
+                               Protected release branch name; default: main
+  HELIX_RELEASE_WORKSPACE_TAG  Protected workspace release tag
+  HELIX_RELEASE_EDITORS_TAG    Protected editor release tag
   HELIX_MODE
   HELIX_SECURITY_TIER
   HELIX_ENABLED_APPS           Comma-separated stable app IDs
@@ -91,8 +164,7 @@ async function main() {
     const manifest = await buildReleaseReadinessManifest(options);
     const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
     if (options.output !== undefined) {
-      await mkdir(dirname(options.output), { recursive: true });
-      await writeFile(options.output, serialized, "utf8");
+      await writeManifestOutput(options.output, serialized, options.evidenceDir);
     }
     process.stdout.write(serialized);
   } catch (error) {
@@ -102,7 +174,7 @@ async function main() {
   }
 }
 
-export async function buildReleaseReadinessManifest(options) {
+export async function buildReleaseReadinessManifest(options, dependencies = {}) {
   if (options.applicationImageDigest === undefined) {
     throw new Error(
       "--application-image-digest, --image-digest, HELIX_APPLICATION_IMAGE_DIGEST, or HELIX_IMAGE_DIGEST is required",
@@ -118,6 +190,7 @@ export async function buildReleaseReadinessManifest(options) {
     throw new Error("web image digest must be an OCI sha256 digest");
   }
   validateFinalReleaseOptions(options);
+  validateOutputOutsideEvidence(options.evidenceDir, options.output);
   const workspace = collectRepository(options.workspaceDir, "helix-workspace");
   const editors = collectRepository(options.editorsDir, "helix-editors");
   const dirtyRepositories = [workspace, editors].filter((repository) => repository.dirty);
@@ -128,8 +201,21 @@ export async function buildReleaseReadinessManifest(options) {
         .join(", ")}`,
     );
   }
+  if (options.finalRelease) {
+    if (!gitCommitExists(options.editorsDir, options.previousEditorsSha)) {
+      throw new Error(
+        "HELIX_RELEASE_PREVIOUS_EDITORS_SHA is not a commit in the trusted editor repository",
+      );
+    }
+  }
 
-  const evidence = await collectEvidence(options.evidenceDir, options.output);
+  const evidence = await collectEvidence(options.evidenceDir);
+  const evidenceFiles = evidence.map(({ path, bytes, sha256 }) => ({ path, bytes, sha256 }));
+  const evidenceByPath = new Map(evidence.map((entry) => [entry.path, entry]));
+  if (typeof dependencies.afterEvidenceSnapshot === "function") {
+    await dependencies.afterEvidenceSnapshot();
+  }
+  const runtimeOptions = { ...options, evidenceByPath };
   const evidencePaths = new Set(evidence.map((entry) => entry.path));
   const missingEvidence = options.requiredEvidence.filter((path) => !evidencePaths.has(path));
   if (missingEvidence.length > 0) {
@@ -143,43 +229,97 @@ export async function buildReleaseReadinessManifest(options) {
     editorsSha: editors.sha,
     applicationImageDigest: options.applicationImageDigest,
     webImageDigest: options.webImageDigest,
+    editorsChanged: options.previousEditorsSha !== editors.sha,
   };
-  const mailEvidence = await validateRequiredMailEvidence(options, evidencePaths, expectedBinding);
+  const now = typeof dependencies.now === "function" ? dependencies.now() : new Date();
+  const timestamp = canonicalTimestamp(options.finalRelease ? now : (options.timestamp ?? now));
+  if (options.finalRelease) {
+    for (const [label, path] of [
+      ["Mail live evidence", options.mailLiveEvidence],
+      ["Drive live evidence", options.driveLiveEvidence],
+      ["Chat live evidence", options.chatLiveEvidence],
+      ["Agent live evidence", options.agentLiveEvidence],
+      ["data-plane live evidence", options.dataPlaneLiveEvidence],
+      ["restore drill evidence", options.restoreDrillEvidence],
+      ["failure/recovery evidence", options.failureRecoveryEvidence],
+      ["DAST evidence", options.dastEvidence],
+    ]) {
+      if (evidenceByPath.has(path)) {
+        validateLiveEvidenceFreshness(
+          parseSnapshotJson(evidenceByPath, path, label),
+          label,
+          timestamp,
+        );
+      }
+    }
+  }
+  const mailEvidence = await validateRequiredMailEvidence(
+    runtimeOptions,
+    evidencePaths,
+    expectedBinding,
+  );
   const agentEvidence = await validateRequiredAgentEvidence(
-    options,
+    runtimeOptions,
     evidencePaths,
     expectedBinding,
   );
   const restoreEvidence = await validateRequiredRestoreEvidence(
-    options,
+    runtimeOptions,
     evidencePaths,
     expectedBinding,
   );
-  const chatEvidence = await validateRequiredChatEvidence(options, evidencePaths, expectedBinding);
+  const chatEvidence = await validateRequiredChatEvidence(
+    runtimeOptions,
+    evidencePaths,
+    expectedBinding,
+  );
   const driveEvidence = await validateRequiredDriveEvidence(
-    options,
+    runtimeOptions,
     evidencePaths,
     expectedBinding,
   );
   const dataPlaneEvidence = await validateRequiredDataPlaneEvidence(
-    options,
+    runtimeOptions,
     evidencePaths,
     expectedBinding,
   );
   const failureRecoveryEvidence = await validateRequiredFailureRecoveryEvidence(
-    options,
+    runtimeOptions,
     evidencePaths,
     expectedBinding,
   );
-  const dastEvidence = await validateRequiredDastEvidence(options, evidencePaths, expectedBinding);
+  const dastEvidence = await validateRequiredDastEvidence(
+    runtimeOptions,
+    evidencePaths,
+    expectedBinding,
+  );
+  const migrationHead = await discoverMigrationHead(options.workspaceDir);
+  const finalArtifacts = options.finalRelease
+    ? await loadAndValidateFinalArtifacts(
+        runtimeOptions,
+        evidence,
+        evidencePaths,
+        expectedBinding,
+        migrationHead,
+        timestamp,
+      )
+    : undefined;
 
-  const timestamp = canonicalTimestamp(options.timestamp);
   const raw = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     generatedAt: timestamp,
     release: {
       mode: options.finalRelease ? "final" : "preflight",
       requiredGates: options.finalRelease ? FINAL_RELEASE_GATES : [],
+      ...(options.finalRelease
+        ? {
+            protectedBranch: options.requiredBranch,
+            workspaceTag: options.workspaceReleaseTag,
+            editorsTag: options.editorsReleaseTag,
+            previousEditorsSha: options.previousEditorsSha,
+            editorsChanged: expectedBinding.editorsChanged,
+          }
+        : {}),
     },
     repositories: { workspace, editors },
     runtime: {
@@ -187,22 +327,35 @@ export async function buildReleaseReadinessManifest(options) {
       pnpm: commandOutput("pnpm", ["--version"], options.workspaceDir),
     },
     deployment: {
-      mode: options.environment.HELIX_MODE ?? "single-tenant",
-      securityTier: options.environment.HELIX_SECURITY_TIER ?? "personal",
-      enabledApps: csvList(options.environment.HELIX_ENABLED_APPS),
-      enabledFeatures: csvList(options.environment.HELIX_ENABLED_FEATURES),
-      images: {
+      mode:
+        finalArtifacts?.productionConfig.mode ?? options.environment.HELIX_MODE ?? "single-tenant",
+      securityTier:
+        finalArtifacts?.productionConfig.securityTier ??
+        options.environment.HELIX_SECURITY_TIER ??
+        "personal",
+      enabledApps:
+        finalArtifacts?.productionConfig.coreApps ??
+        csvList(options.environment.HELIX_ENABLED_APPS),
+      enabledFeatures:
+        finalArtifacts === undefined
+          ? csvList(options.environment.HELIX_ENABLED_FEATURES)
+          : Object.entries(finalArtifacts.productionConfig.featureControls)
+              .filter(([, enabled]) => enabled)
+              .map(([name]) => name)
+              .sort(),
+      disabledSurfaces: finalArtifacts?.productionConfig.disabledSurfaces ?? [],
+      images: finalArtifacts?.productionConfig.productionImages ?? {
         application: options.applicationImageDigest,
         web: options.webImageDigest,
       },
     },
     database: {
-      migrationHead: await discoverMigrationHead(options.workspaceDir),
+      migrationHead,
     },
     evidence: {
       root: basename(options.evidenceDir),
       required: [...options.requiredEvidence].sort(),
-      files: evidence,
+      files: evidenceFiles,
       ...(mailEvidence === undefined ? {} : { mail: mailEvidence }),
       ...(agentEvidence === undefined ? {} : { agent: agentEvidence }),
       ...(chatEvidence === undefined ? {} : { chat: chatEvidence }),
@@ -213,9 +366,48 @@ export async function buildReleaseReadinessManifest(options) {
         ? {}
         : { failureRecovery: failureRecoveryEvidence }),
       ...(dastEvidence === undefined ? {} : { dast: dastEvidence }),
+      ...(finalArtifacts === undefined ? {} : finalArtifacts),
     },
   };
-  return redactSensitive(raw);
+  const manifest = redactSensitive(raw);
+  await verifyEvidenceSnapshot(options.evidenceDir, evidence);
+  return manifest;
+}
+
+export async function writeManifestOutput(output, serialized, evidenceDir) {
+  validateOutputOutsideEvidence(evidenceDir, output);
+  const outputDirectory = dirname(output);
+  await mkdir(outputDirectory, { recursive: true });
+  const [resolvedEvidenceRoot, resolvedOutputDirectory] = await Promise.all([
+    realpath(evidenceDir),
+    realpath(outputDirectory),
+  ]);
+  validateOutputOutsideEvidence(
+    resolvedEvidenceRoot,
+    resolve(resolvedOutputDirectory, basename(output)),
+  );
+
+  const temporaryPath = resolve(
+    outputDirectory,
+    `.${basename(output)}.${randomUUID()}.release-readiness.tmp`,
+  );
+  let handle;
+  try {
+    handle = await open(temporaryPath, "wx", 0o600);
+    await handle.writeFile(serialized, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await link(temporaryPath, output);
+  } catch (error) {
+    if (error !== null && typeof error === "object" && "code" in error && error.code === "EEXIST") {
+      throw new Error("manifest output must not already exist or be a symbolic/hard link");
+    }
+    throw error;
+  } finally {
+    await handle?.close().catch(() => undefined);
+    await unlink(temporaryPath).catch(() => undefined);
+  }
 }
 
 export function parseArgs(args, cwd, environment = process.env) {
@@ -235,6 +427,45 @@ export function parseArgs(args, cwd, environment = process.env) {
     dataPlaneLiveEvidence: undefined,
     failureRecoveryEvidence: undefined,
     dastEvidence: undefined,
+    fullGatesEvidence: undefined,
+    migrationStatusEvidence: undefined,
+    productionConfigEvidence: undefined,
+    sloSoakEvidence: undefined,
+    securityReviewEvidence: undefined,
+    supportReadinessEvidence: undefined,
+    businessReadinessEvidence: undefined,
+    protectedRepositoryStateEvidence: undefined,
+    productionDecisionEvidence: undefined,
+    decisionPublicKey:
+      environment.HELIX_RELEASE_TRUSTED_DECISION_PUBLIC_KEY === undefined
+        ? undefined
+        : resolve(cwd, environment.HELIX_RELEASE_TRUSTED_DECISION_PUBLIC_KEY),
+    decisionSignerFingerprint: environment.HELIX_RELEASE_TRUSTED_DECISION_SIGNER_FINGERPRINT,
+    gitStatePublicKey:
+      environment.HELIX_RELEASE_TRUSTED_GIT_STATE_PUBLIC_KEY === undefined
+        ? undefined
+        : resolve(cwd, environment.HELIX_RELEASE_TRUSTED_GIT_STATE_PUBLIC_KEY),
+    gitStateSignerFingerprint: environment.HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER_FINGERPRINT,
+    gitStateSigner: environment.HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER,
+    fulcioIssuerCertificate:
+      environment.HELIX_RELEASE_TRUSTED_FULCIO_ISSUER_CERTIFICATE === undefined
+        ? undefined
+        : resolve(cwd, environment.HELIX_RELEASE_TRUSTED_FULCIO_ISSUER_CERTIFICATE),
+    rekorPublicKey:
+      environment.HELIX_RELEASE_TRUSTED_REKOR_PUBLIC_KEY === undefined
+        ? undefined
+        : resolve(cwd, environment.HELIX_RELEASE_TRUSTED_REKOR_PUBLIC_KEY),
+    rekorLogId: environment.HELIX_RELEASE_TRUSTED_REKOR_LOG_ID,
+    rekorCheckpointOrigin: environment.HELIX_RELEASE_TRUSTED_REKOR_CHECKPOINT_ORIGIN,
+    trustedGithubRepository: environment.HELIX_RELEASE_TRUSTED_GITHUB_REPOSITORY,
+    trustedEditorsRepository: environment.HELIX_RELEASE_TRUSTED_EDITORS_REPOSITORY,
+    trustedGithubWorkflowIdentity: environment.HELIX_RELEASE_TRUSTED_GITHUB_WORKFLOW_IDENTITY,
+    trustedApplicationSubject: environment.HELIX_RELEASE_TRUSTED_APPLICATION_SUBJECT,
+    trustedWebSubject: environment.HELIX_RELEASE_TRUSTED_WEB_SUBJECT,
+    previousEditorsSha: environment.HELIX_RELEASE_PREVIOUS_EDITORS_SHA,
+    requiredBranch: environment.HELIX_RELEASE_REQUIRED_BRANCH ?? "main",
+    workspaceReleaseTag: environment.HELIX_RELEASE_WORKSPACE_TAG,
+    editorsReleaseTag: environment.HELIX_RELEASE_EDITORS_TAG,
     finalRelease: false,
     requireExternalMailEvidence: false,
     applicationImageDigest:
@@ -301,6 +532,33 @@ export function parseArgs(args, cwd, environment = process.env) {
       case "--dast-evidence":
         options.dastEvidence = normalizeRelativePath(value);
         break;
+      case "--full-gates-evidence":
+        options.fullGatesEvidence = normalizeRelativePath(value);
+        break;
+      case "--migration-status-evidence":
+        options.migrationStatusEvidence = normalizeRelativePath(value);
+        break;
+      case "--production-config-evidence":
+        options.productionConfigEvidence = normalizeRelativePath(value);
+        break;
+      case "--slo-soak-evidence":
+        options.sloSoakEvidence = normalizeRelativePath(value);
+        break;
+      case "--security-review-evidence":
+        options.securityReviewEvidence = normalizeRelativePath(value);
+        break;
+      case "--support-readiness-evidence":
+        options.supportReadinessEvidence = normalizeRelativePath(value);
+        break;
+      case "--business-readiness-evidence":
+        options.businessReadinessEvidence = normalizeRelativePath(value);
+        break;
+      case "--protected-repository-state-evidence":
+        options.protectedRepositoryStateEvidence = normalizeRelativePath(value);
+        break;
+      case "--production-decision-evidence":
+        options.productionDecisionEvidence = normalizeRelativePath(value);
+        break;
       case "--image-digest":
       case "--application-image-digest":
         options.applicationImageDigest = value;
@@ -324,6 +582,9 @@ export function parseArgs(args, cwd, environment = process.env) {
   if (options.requireExternalMailEvidence && options.mailLiveEvidence === undefined) {
     throw new Error("--require-external-mail-evidence requires --mail-live-evidence");
   }
+  if (options.finalRelease && options.timestamp !== undefined) {
+    throw new Error("--timestamp is prohibited in --final-release mode");
+  }
   return options;
 }
 
@@ -338,11 +599,141 @@ function validateFinalReleaseOptions(options) {
     ["--restore-drill-evidence", options.restoreDrillEvidence],
     ["--failure-recovery-evidence", options.failureRecoveryEvidence],
     ["--dast-evidence", options.dastEvidence],
+    ...FINAL_ARTIFACT_OPTIONS.map(([flag, option]) => [flag, options[option]]),
+    ["HELIX_RELEASE_TRUSTED_DECISION_PUBLIC_KEY", options.decisionPublicKey],
+    ["HELIX_RELEASE_TRUSTED_DECISION_SIGNER_FINGERPRINT", options.decisionSignerFingerprint],
+    ["HELIX_RELEASE_TRUSTED_GIT_STATE_PUBLIC_KEY", options.gitStatePublicKey],
+    ["HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER_FINGERPRINT", options.gitStateSignerFingerprint],
+    ["HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER", options.gitStateSigner],
+    ["HELIX_RELEASE_TRUSTED_FULCIO_ISSUER_CERTIFICATE", options.fulcioIssuerCertificate],
+    ["HELIX_RELEASE_TRUSTED_REKOR_PUBLIC_KEY", options.rekorPublicKey],
+    ["HELIX_RELEASE_TRUSTED_REKOR_LOG_ID", options.rekorLogId],
+    ["HELIX_RELEASE_TRUSTED_REKOR_CHECKPOINT_ORIGIN", options.rekorCheckpointOrigin],
+    ["HELIX_RELEASE_TRUSTED_GITHUB_REPOSITORY", options.trustedGithubRepository],
+    ["HELIX_RELEASE_TRUSTED_EDITORS_REPOSITORY", options.trustedEditorsRepository],
+    ["HELIX_RELEASE_TRUSTED_GITHUB_WORKFLOW_IDENTITY", options.trustedGithubWorkflowIdentity],
+    ["HELIX_RELEASE_TRUSTED_APPLICATION_SUBJECT", options.trustedApplicationSubject],
+    ["HELIX_RELEASE_TRUSTED_WEB_SUBJECT", options.trustedWebSubject],
+    ["HELIX_RELEASE_PREVIOUS_EDITORS_SHA", options.previousEditorsSha],
+    ["HELIX_RELEASE_WORKSPACE_TAG", options.workspaceReleaseTag],
+    ["HELIX_RELEASE_EDITORS_TAG", options.editorsReleaseTag],
   ];
   const missing = required.filter(([, value]) => value === undefined).map(([flag]) => flag);
   if (missing.length > 0) {
-    throw new Error(`--final-release requires all live evidence gates: ${missing.join(", ")}`);
+    throw new Error(`--final-release requires all release evidence inputs: ${missing.join(", ")}`);
   }
+  if (!/^[a-f0-9]{40}$/u.test(options.previousEditorsSha)) {
+    throw new Error("HELIX_RELEASE_PREVIOUS_EDITORS_SHA must be a full Git SHA");
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u.test(options.requiredBranch)) {
+    throw new Error("HELIX_RELEASE_REQUIRED_BRANCH is invalid");
+  }
+  for (const [label, value] of [
+    ["HELIX_RELEASE_WORKSPACE_TAG", options.workspaceReleaseTag],
+    ["HELIX_RELEASE_EDITORS_TAG", options.editorsReleaseTag],
+  ]) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u.test(value)) {
+      throw new Error(`${label} is invalid`);
+    }
+  }
+}
+
+async function loadAndValidateFinalArtifacts(
+  options,
+  evidence,
+  evidencePaths,
+  expectedBinding,
+  migrationHead,
+  timestamp,
+) {
+  const reports = {};
+  for (const [, option, name] of FINAL_ARTIFACT_OPTIONS) {
+    const path = options[option];
+    if (!evidencePaths.has(path))
+      throw new Error(`required final-release evidence missing: ${path}`);
+    try {
+      reports[name] = parseSnapshotJson(
+        options.evidenceByPath,
+        path,
+        `${name} final-release evidence`,
+      );
+    } catch (error) {
+      throw new Error(
+        `invalid ${name} final-release evidence: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  const decisionInputs = evidence
+    .map(({ path }) => path)
+    .filter((path) => path !== options.productionDecisionEvidence)
+    .sort();
+  const hashes = new Map(evidence.map((entry) => [entry.path, entry.sha256]));
+  const evidenceSetSha256 = evidenceSetDigest(
+    decisionInputs.map((path) => ({
+      path,
+      sha256: `sha256:${hashes.get(path)}`,
+    })),
+  );
+  let summaries;
+  try {
+    summaries = await validateFinalReleaseArtifacts({
+      reports,
+      expectedBinding,
+      migrationHead,
+      decisionPublicKeyPath: options.decisionPublicKey,
+      decisionSignerFingerprint: options.decisionSignerFingerprint,
+      provenanceTrust: {
+        fulcioIssuerCertificatePath: options.fulcioIssuerCertificate,
+        rekorPublicKeyPath: options.rekorPublicKey,
+        rekorLogId: options.rekorLogId,
+        rekorCheckpointOrigin: options.rekorCheckpointOrigin,
+        repository: options.trustedGithubRepository,
+        editorsRepository: options.trustedEditorsRepository,
+        workflowIdentity: options.trustedGithubWorkflowIdentity,
+        sourceRef: `refs/heads/${options.requiredBranch}`,
+        subjectNames: {
+          application: options.trustedApplicationSubject,
+          web: options.trustedWebSubject,
+        },
+      },
+      protectedStateTrust: {
+        publicKeyPath: options.gitStatePublicKey,
+        signerFingerprint: options.gitStateSignerFingerprint,
+        signer: options.gitStateSigner,
+      },
+      expectedRepositoryState: {
+        branch: options.requiredBranch,
+        workspaceTag: options.workspaceReleaseTag,
+        editorsTag: options.editorsReleaseTag,
+        repositories: {
+          workspace: options.trustedGithubRepository,
+          editors: options.trustedEditorsRepository,
+        },
+      },
+      generatedAt: timestamp,
+      evidenceSetSha256,
+      availableEvidence: new Map(
+        evidence.map(({ path, sha256, content }) => [
+          path,
+          { sha256: `sha256:${sha256}`, content },
+        ]),
+      ),
+    });
+  } catch (error) {
+    throw new Error(
+      `invalid final-release supporting evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return Object.fromEntries(
+    FINAL_ARTIFACT_OPTIONS.map(([, option, name]) => [
+      name,
+      { path: options[option], ...summaries[name] },
+    ]),
+  );
 }
 
 function validateExpectedReleaseBinding(evidence, options, expected, label) {
@@ -366,12 +757,12 @@ async function validateRequiredDriveEvidence(options, evidencePaths, expectedBin
   if (!evidencePaths.has(options.driveLiveEvidence)) {
     throw new Error(`required Drive live evidence missing: ${options.driveLiveEvidence}`);
   }
-  const path = resolve(options.evidenceDir, options.driveLiveEvidence);
   let evidence;
   try {
-    evidence = validateDriveEvidence(JSON.parse(await readFile(path, "utf8")), {
-      requirePass: true,
-    });
+    evidence = validateDriveEvidence(
+      parseSnapshotJson(options.evidenceByPath, options.driveLiveEvidence, "Drive live evidence"),
+      { requirePass: true },
+    );
   } catch (error) {
     throw new Error(
       `invalid or incomplete Drive live evidence: ${
@@ -401,10 +792,16 @@ async function validateRequiredDataPlaneEvidence(options, evidencePaths, expecte
   if (!evidencePaths.has(options.dataPlaneLiveEvidence)) {
     throw new Error(`required data-plane live evidence missing: ${options.dataPlaneLiveEvidence}`);
   }
-  const path = resolve(options.evidenceDir, options.dataPlaneLiveEvidence);
   let evidence;
   try {
-    evidence = validateDataPlaneEvidence(JSON.parse(await readFile(path, "utf8")), true);
+    evidence = validateDataPlaneEvidence(
+      parseSnapshotJson(
+        options.evidenceByPath,
+        options.dataPlaneLiveEvidence,
+        "data-plane live evidence",
+      ),
+      true,
+    );
   } catch (error) {
     throw new Error(
       `invalid or incomplete data-plane live evidence: ${
@@ -432,12 +829,16 @@ async function validateRequiredFailureRecoveryEvidence(options, evidencePaths, e
       `required failure/recovery evidence missing: ${options.failureRecoveryEvidence}`,
     );
   }
-  const path = resolve(options.evidenceDir, options.failureRecoveryEvidence);
   let evidence;
   try {
-    evidence = validateFailureRecoveryEvidence(JSON.parse(await readFile(path, "utf8")), {
-      requirePass: true,
-    });
+    evidence = validateFailureRecoveryEvidence(
+      parseSnapshotJson(
+        options.evidenceByPath,
+        options.failureRecoveryEvidence,
+        "failure/recovery evidence",
+      ),
+      { requirePass: true },
+    );
   } catch (error) {
     throw new Error(
       `invalid or incomplete failure/recovery evidence: ${
@@ -476,13 +877,15 @@ async function validateRequiredDastEvidence(options, evidencePaths, expectedBind
   if (!evidencePaths.has(options.dastEvidence)) {
     throw new Error(`required V5 DAST evidence missing: ${options.dastEvidence}`);
   }
-  const path = resolve(options.evidenceDir, options.dastEvidence);
   let evidence;
   try {
-    evidence = validateDastEvidence(JSON.parse(await readFile(path, "utf8")), {
-      requirePass: true,
-      expectedBinding,
-    });
+    evidence = validateDastEvidence(
+      parseSnapshotJson(options.evidenceByPath, options.dastEvidence, "DAST evidence"),
+      {
+        requirePass: true,
+        expectedBinding,
+      },
+    );
   } catch (error) {
     throw new Error(
       `invalid or incomplete V5 DAST evidence: ${
@@ -506,13 +909,15 @@ async function validateRequiredChatEvidence(options, evidencePaths, expectedBind
   if (!evidencePaths.has(options.chatLiveEvidence)) {
     throw new Error(`required Chat live evidence missing: ${options.chatLiveEvidence}`);
   }
-  const path = resolve(options.evidenceDir, options.chatLiveEvidence);
   let evidence;
   try {
-    evidence = validateChatLiveEvidence(JSON.parse(await readFile(path, "utf8")), {
-      requirePass: true,
-      requireReleaseLoad: true,
-    });
+    evidence = validateChatLiveEvidence(
+      parseSnapshotJson(options.evidenceByPath, options.chatLiveEvidence, "Chat live evidence"),
+      {
+        requirePass: true,
+        requireReleaseLoad: true,
+      },
+    );
   } catch (error) {
     throw new Error(
       `invalid or incomplete Chat live evidence: ${
@@ -550,10 +955,15 @@ async function validateRequiredRestoreEvidence(options, evidencePaths, expectedB
   if (!evidencePaths.has(options.restoreDrillEvidence)) {
     throw new Error(`required restore drill evidence missing: ${options.restoreDrillEvidence}`);
   }
-  const path = resolve(options.evidenceDir, options.restoreDrillEvidence);
   let evidence;
   try {
-    evidence = validateRestoreDrillEvidence(JSON.parse(await readFile(path, "utf8")));
+    evidence = validateRestoreDrillEvidence(
+      parseSnapshotJson(
+        options.evidenceByPath,
+        options.restoreDrillEvidence,
+        "restore drill evidence",
+      ),
+    );
   } catch (error) {
     throw new Error(
       `invalid restore drill evidence: ${error instanceof Error ? error.message : String(error)}`,
@@ -585,10 +995,11 @@ async function validateRequiredAgentEvidence(options, evidencePaths, expectedBin
   if (!evidencePaths.has(options.agentLiveEvidence)) {
     throw new Error(`required Agent live evidence missing: ${options.agentLiveEvidence}`);
   }
-  const path = resolve(options.evidenceDir, options.agentLiveEvidence);
   let evidence;
   try {
-    evidence = validateAgentLiveEvidence(JSON.parse(await readFile(path, "utf8")));
+    evidence = validateAgentLiveEvidence(
+      parseSnapshotJson(options.evidenceByPath, options.agentLiveEvidence, "Agent live evidence"),
+    );
   } catch (error) {
     throw new Error(
       `invalid Agent live evidence: ${error instanceof Error ? error.message : String(error)}`,
@@ -618,10 +1029,11 @@ async function validateRequiredMailEvidence(options, evidencePaths, expectedBind
   if (!evidencePaths.has(options.mailLiveEvidence)) {
     throw new Error(`required Mail live evidence missing: ${options.mailLiveEvidence}`);
   }
-  const path = resolve(options.evidenceDir, options.mailLiveEvidence);
   let evidence;
   try {
-    evidence = validateMailLiveEvidence(JSON.parse(await readFile(path, "utf8")));
+    evidence = validateMailLiveEvidence(
+      parseSnapshotJson(options.evidenceByPath, options.mailLiveEvidence, "Mail live evidence"),
+    );
   } catch (error) {
     throw new Error(
       `invalid Mail live evidence: ${error instanceof Error ? error.message : String(error)}`,
@@ -687,25 +1099,51 @@ function collectRepository(directory, name) {
   };
 }
 
-async function collectEvidence(root, outputPath) {
-  const rootStat = await stat(root).catch(() => null);
+function validateOutputOutsideEvidence(evidenceDir, output) {
+  if (output === undefined) return;
+  const evidenceRoot = resolve(evidenceDir);
+  const outputPath = resolve(output);
+  const pathFromEvidence = relative(evidenceRoot, outputPath);
+  if (
+    pathFromEvidence === "" ||
+    (pathFromEvidence !== ".." && !pathFromEvidence.startsWith(`..${sep}`))
+  ) {
+    throw new Error("manifest output must be outside the source evidence directory");
+  }
+}
+
+async function collectEvidence(root) {
+  const rootStat = await lstat(root).catch(() => null);
   if (rootStat === null || !rootStat.isDirectory()) {
     throw new Error(`evidence directory does not exist: ${root}`);
   }
-  const output = outputPath === undefined ? null : resolve(outputPath);
   const files = [];
   await walk(root, async (absolutePath) => {
-    if (output !== null && resolve(absolutePath) === output) {
-      return;
-    }
     const bytes = await readFile(absolutePath);
     files.push({
       path: normalizeRelativePath(relative(root, absolutePath)),
       bytes: bytes.byteLength,
       sha256: createHash("sha256").update(bytes).digest("hex"),
+      content: bytes,
     });
   });
   return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+async function verifyEvidenceSnapshot(root, expected) {
+  const current = await collectEvidence(root);
+  if (current.length !== expected.length) {
+    throw new Error("source evidence changed while the release packet was being validated");
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    if (
+      current[index].path !== expected[index].path ||
+      current[index].bytes !== expected[index].bytes ||
+      current[index].sha256 !== expected[index].sha256
+    ) {
+      throw new Error("source evidence changed while the release packet was being validated");
+    }
+  }
 }
 
 async function walk(directory, visit) {
@@ -716,6 +1154,8 @@ async function walk(directory, visit) {
       await walk(path, visit);
     } else if (entry.isFile()) {
       await visit(path);
+    } else {
+      throw new Error(`evidence directory contains a symbolic link or non-file entry: ${path}`);
     }
   }
 }
@@ -767,11 +1207,13 @@ function csvList(value) {
 
 function normalizeRelativePath(value) {
   const normalized = value.split(sep).join("/");
+  const segments = normalized.split("/");
   if (
     normalized.length === 0 ||
+    normalized.length > 512 ||
     normalized.startsWith("/") ||
-    normalized === ".." ||
-    normalized.startsWith("../")
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..") ||
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(normalized)
   ) {
     throw new Error(`evidence path must be relative and stay inside the evidence root: ${value}`);
   }
@@ -779,11 +1221,55 @@ function normalizeRelativePath(value) {
 }
 
 function canonicalTimestamp(value) {
-  const date = value === undefined ? new Date() : new Date(value);
+  const date = value instanceof Date ? value : value === undefined ? new Date() : new Date(value);
   if (!Number.isFinite(date.getTime())) {
     throw new Error(`invalid timestamp: ${value}`);
   }
   return date.toISOString();
+}
+
+function parseSnapshotJson(evidenceByPath, path, label) {
+  const snapshot = evidenceByPath.get(path);
+  if (snapshot === undefined) {
+    throw new Error(`${label} is not retained in the immutable evidence snapshot`);
+  }
+  try {
+    return JSON.parse(snapshot.content.toString("utf8"));
+  } catch (error) {
+    throw new Error(
+      `${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function validateLiveEvidenceFreshness(evidence, label, manifestTimestamp) {
+  const timestamp = evidence.generatedAt ?? evidence.completedAt;
+  if (typeof timestamp !== "string") {
+    throw new Error(`${label} must contain generatedAt or completedAt`);
+  }
+  const completed = new Date(timestamp);
+  if (!Number.isFinite(completed.getTime()) || completed.toISOString() !== timestamp) {
+    throw new Error(`${label} completion must be a canonical ISO-8601 timestamp`);
+  }
+  const manifest = new Date(manifestTimestamp);
+  const age = manifest.getTime() - completed.getTime();
+  if (age < 0) throw new Error(`${label} cannot be generated in the future`);
+  if (age > 7 * 24 * 60 * 60 * 1_000) {
+    throw new Error(`${label} is stale for final release`);
+  }
+}
+
+function gitCommitExists(directory, sha) {
+  return commandSucceeds("git", ["cat-file", "-e", `${sha}^{commit}`], directory);
+}
+
+function commandSucceeds(command, args, cwd) {
+  try {
+    execFileSync(command, args, { cwd, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function elapsedMilliseconds(startedAt, completedAt) {

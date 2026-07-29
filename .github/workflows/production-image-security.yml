@@ -6,12 +6,20 @@ on:
       - "apps/helix/**"
       - "apps/web/**"
       - "packages/**"
+      - "patches/**"
       - ".github/actions/checkout-editors/**"
       - ".github/workflows/production-image-security.yml"
+      - "infra/cerbos/**"
       - "infra/docker/Dockerfile"
+      - "infra/meilisearch/**"
+      - "infra/nats/**"
+      - "infra/postgres/**"
+      - "infra/spamassassin/**"
       - "infra/caddy/Caddyfile.production"
+      - "infra/scripts/normalize-image-spdx.mjs"
       - "infra/scripts/validate-production-images.mjs"
       - ".dockerignore"
+      - "docker-compose.yml"
       - "docker-compose.production.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -23,12 +31,20 @@ on:
       - "apps/helix/**"
       - "apps/web/**"
       - "packages/**"
+      - "patches/**"
       - ".github/actions/checkout-editors/**"
       - ".github/workflows/production-image-security.yml"
+      - "infra/cerbos/**"
       - "infra/docker/Dockerfile"
+      - "infra/meilisearch/**"
+      - "infra/nats/**"
+      - "infra/postgres/**"
+      - "infra/spamassassin/**"
       - "infra/caddy/Caddyfile.production"
+      - "infra/scripts/normalize-image-spdx.mjs"
       - "infra/scripts/validate-production-images.mjs"
       - ".dockerignore"
+      - "docker-compose.yml"
       - "docker-compose.production.yml"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -61,6 +77,7 @@ jobs:
           path: helix-all/helix-workspace
 
       - name: Checkout paired helix-editors
+        id: checkout-editors
         uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
         with:
           requested-ref: ${{ inputs.helix_editors_ref }}
@@ -70,6 +87,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build reviewed production image
+        id: build-app
         run: >-
           docker buildx build
           --load
@@ -80,6 +98,7 @@ jobs:
           .
 
       - name: Build reviewed production web image
+        id: build-web
         run: >-
           docker buildx build
           --load
@@ -94,6 +113,13 @@ jobs:
           node infra/scripts/validate-production-images.mjs
           --application-image helix/workspace:ci
           --web-image helix/workspace-web:ci
+
+      - name: Record exact application images selected for review
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker image inspect --format '{{.Id}}' helix/workspace:ci > reviewed-app.image-id
+          docker image inspect --format '{{.Id}}' helix/workspace-web:ci > reviewed-web.image-id
 
       - name: Generate application SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
@@ -110,87 +136,98 @@ jobs:
           output-file: helix-all/helix-workspace/helix-workspace-web.spdx.json
 
       - name: Scan application image for high and critical vulnerabilities
+        if: ${{ !cancelled() && steps.build-app.outcome == 'success' && steps.build-web.outcome == 'success' }}
         uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
         with:
           image-ref: helix/workspace:ci
-          format: table
+          format: json
+          output: helix-all/helix-workspace/helix-workspace.trivy.json
           exit-code: "1"
           ignore-unfixed: false
           severity: HIGH,CRITICAL
 
       - name: Scan web image for high and critical vulnerabilities
+        if: ${{ !cancelled() && steps.build-app.outcome == 'success' && steps.build-web.outcome == 'success' }}
         uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
         with:
           image-ref: helix/workspace-web:ci
-          format: table
+          format: json
+          output: helix-all/helix-workspace/helix-workspace-web.trivy.json
           exit-code: "1"
           ignore-unfixed: false
           severity: HIGH,CRITICAL
 
-      - name: Log in to GitHub Container Registry
+      - name: Export exact reviewed application candidates
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push immutable reviewed images
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: push-images
         shell: bash
         run: |
           set -Eeuo pipefail
-          app_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/helix-workspace:${GITHUB_SHA}"
-          web_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/helix-workspace-web:${GITHUB_SHA}"
-          docker tag helix/workspace:ci "$app_image"
-          docker tag helix/workspace-web:ci "$web_image"
-          docker push "$app_image"
-          docker push "$web_image"
-          app_digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$app_image" | sed -n "s|^ghcr.io/${GITHUB_REPOSITORY_OWNER}/helix-workspace@||p" | head -n 1)"
-          web_digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$web_image" | sed -n "s|^ghcr.io/${GITHUB_REPOSITORY_OWNER}/helix-workspace-web@||p" | head -n 1)"
-          [[ "$app_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          [[ "$web_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          echo "app_digest=$app_digest" >> "$GITHUB_OUTPUT"
-          echo "web_digest=$web_digest" >> "$GITHUB_OUTPUT"
+          mkdir -p publication-candidates
+          cp infra/scripts/normalize-image-spdx.mjs publication-candidates/normalize-image-spdx.mjs
+          editors_sha="${{ steps.checkout-editors.outputs.sha }}"
+          [[ "$editors_sha" =~ ^[a-f0-9]{40}$ ]]
+          for candidate in app web; do
+            if [[ "$candidate" == "app" ]]; then
+              image_ref="helix/workspace:ci"
+              sbom_path="helix-workspace.spdx.json"
+              scan_path="helix-workspace.trivy.json"
+            else
+              image_ref="helix/workspace-web:ci"
+              sbom_path="helix-workspace-web.spdx.json"
+              scan_path="helix-workspace-web.trivy.json"
+            fi
+            reviewed_image_id="$(<"reviewed-${candidate}.image-id")"
+            current_image_id="$(docker image inspect --format '{{.Id}}' "$image_ref")"
+            [[ "$reviewed_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]
+            [[ "$current_image_id" == "$reviewed_image_id" ]]
+            printf '%s\n' "$reviewed_image_id" > "publication-candidates/${candidate}.image-id"
+            printf '%s\n' "$GITHUB_SHA" > "publication-candidates/${candidate}.source-sha"
+            printf '%s\n' "$editors_sha" > "publication-candidates/${candidate}.editors-sha"
+            PREDICATE_PATH="publication-candidates/${candidate}.paired-source.json" \
+              WORKSPACE_REPOSITORY="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+              WORKSPACE_SHA="$GITHUB_SHA" \
+              EDITORS_SHA="$editors_sha" \
+              node -e '
+                const { writeFileSync } = require("node:fs");
+                const predicate = {
+                  schemaVersion: 1,
+                  workspace: {
+                    repository: process.env.WORKSPACE_REPOSITORY,
+                    sha: process.env.WORKSPACE_SHA,
+                  },
+                  editors: {
+                    repository: "https://github.com/billiondollarsolo/helix-editors",
+                    sha: process.env.EDITORS_SHA,
+                  },
+                };
+                writeFileSync(process.env.PREDICATE_PATH, `${JSON.stringify(predicate, null, 2)}\n`);
+              '
+            docker save --output "publication-candidates/${candidate}.image.tar" "$image_ref"
+            cp "$sbom_path" "publication-candidates/${candidate}.spdx.json"
+            cp "$scan_path" "publication-candidates/${candidate}.trivy.json"
+            (
+              cd publication-candidates
+              sha256sum \
+                "${candidate}.image.tar" \
+                "${candidate}.image-id" \
+                "${candidate}.source-sha" \
+                "${candidate}.editors-sha" \
+                "${candidate}.paired-source.json" \
+                "${candidate}.spdx.json" \
+                "${candidate}.trivy.json" \
+                "normalize-image-spdx.mjs" \
+                > "${candidate}.files.sha256"
+            )
+          done
 
-      - name: Sign application image build provenance
+      - name: Upload exact reviewed application candidates
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: app-provenance
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/helix-workspace
-          subject-digest: ${{ steps.push-images.outputs.app_digest }}
-          push-to-registry: true
-
-      - name: Sign web image build provenance
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: web-provenance
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
-        with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/helix-workspace-web
-          subject-digest: ${{ steps.push-images.outputs.web_digest }}
-          push-to-registry: true
-
-      - name: Sign application image SBOM
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: app-sbom-attestation
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
-        with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/helix-workspace
-          subject-digest: ${{ steps.push-images.outputs.app_digest }}
-          sbom-path: helix-all/helix-workspace/helix-workspace.spdx.json
-          push-to-registry: true
-
-      - name: Sign web image SBOM
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: web-sbom-attestation
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
-        with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/helix-workspace-web
-          subject-digest: ${{ steps.push-images.outputs.web_digest }}
-          sbom-path: helix-all/helix-workspace/helix-workspace-web.spdx.json
-          push-to-registry: true
+          name: helix-workspace-application-publication-candidates-${{ github.sha }}
+          path: helix-all/helix-workspace/publication-candidates/
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload image supply-chain evidence
         if: always()
@@ -200,9 +237,423 @@ jobs:
           path: |
             helix-all/helix-workspace/helix-workspace.spdx.json
             helix-all/helix-workspace/helix-workspace-web.spdx.json
-            ${{ steps.app-provenance.outputs.bundle-path }}
-            ${{ steps.web-provenance.outputs.bundle-path }}
-            ${{ steps.app-sbom-attestation.outputs.bundle-path }}
-            ${{ steps.web-sbom-attestation.outputs.bundle-path }}
+            helix-all/helix-workspace/helix-workspace.trivy.json
+            helix-all/helix-workspace/helix-workspace-web.trivy.json
+          if-no-files-found: error
+          retention-days: 90
+
+  dependency-sbom-scan:
+    name: Dependency image / ${{ matrix.inventory_name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - inventory_name: postgres
+            source: build
+            image: helix/postgres-pgvector:17.10-pgvector0.8.1
+            context: infra/postgres
+          - inventory_name: redis
+            source: pull
+            image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+            registry_subject: docker.io/library/redis
+            digest: sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+          - inventory_name: nats
+            source: build
+            image: helix/nats-server:2.14.0-patched
+            context: infra/nats
+          - inventory_name: meilisearch
+            source: build
+            image: helix/meilisearch:1.45.1-patched
+            context: infra/meilisearch
+          - inventory_name: rustfs
+            source: pull
+            image: rustfs/rustfs:1.0.0-beta.11@sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c
+            registry_subject: docker.io/rustfs/rustfs
+            digest: sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c
+          - inventory_name: cerbos
+            source: build
+            image: helix/cerbos:0.54.0-patched
+            context: infra/cerbos
+          - inventory_name: spamassassin
+            source: build
+            image: helix/spamassassin:4.0.2-patched
+            context: infra/spamassassin
+          - inventory_name: clamav
+            source: pull
+            image: clamav/clamav:1.5.3@sha256:7f5389ccaa2368c383fa80e167ccfe44348d71e685f926fce4755eed1757673a
+            registry_subject: docker.io/clamav/clamav
+            digest: sha256:7f5389ccaa2368c383fa80e167ccfe44348d71e685f926fce4755eed1757673a
+
+    defaults:
+      run:
+        working-directory: helix-workspace
+
+    steps:
+      - name: Checkout helix-workspace
+        uses: actions/checkout@11d2dfd7550a76b50e8157d1e0e3c1b38a4f4d4d # v4
+        with:
+          path: helix-workspace
+
+      - name: Set up Docker Buildx
+        if: matrix.source == 'build'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build immutable dependency image
+        if: matrix.source == 'build'
+        run: >-
+          docker buildx build
+          --load
+          --tag "${{ matrix.image }}"
+          "${{ matrix.context }}"
+
+      - name: Pull immutable dependency image
+        if: matrix.source == 'pull'
+        run: docker pull "${{ matrix.image }}"
+
+      - name: Record exact dependency image selected for review
+        shell: bash
+        run: docker image inspect --format '{{.Id}}' "${{ matrix.image }}" > reviewed-image.id
+
+      - name: Generate dependency SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ matrix.image }}
+          format: spdx-json
+          output-file: helix-workspace/${{ matrix.inventory_name }}.spdx.json
+
+      - name: Scan dependency image for high and critical vulnerabilities
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        with:
+          image-ref: ${{ matrix.image }}
+          format: json
+          output: helix-workspace/${{ matrix.inventory_name }}.trivy.json
+          exit-code: "1"
+          ignore-unfixed: false
+          severity: HIGH,CRITICAL
+
+      - name: Normalize exact pulled dependency SPDX SBOM
+        if: ${{ !cancelled() && matrix.source == 'pull' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          candidate="${{ matrix.inventory_name }}"
+          node infra/scripts/normalize-image-spdx.mjs \
+            --input "${candidate}.spdx.json" \
+            --output "${candidate}.normalized.spdx.json" \
+            --image-subject "${{ matrix.registry_subject }}" \
+            --image-digest "${{ matrix.digest }}"
+          sha256sum "${candidate}.normalized.spdx.json" \
+            > "${candidate}.normalized.spdx.json.sha256"
+
+      - name: Export exact reviewed dependency candidate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.source == 'build'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          candidate="${{ matrix.inventory_name }}"
+          mkdir -p publication-candidate
+          cp infra/scripts/normalize-image-spdx.mjs publication-candidate/normalize-image-spdx.mjs
+          reviewed_image_id="$(<reviewed-image.id)"
+          current_image_id="$(docker image inspect --format '{{.Id}}' "${{ matrix.image }}")"
+          [[ "$reviewed_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$current_image_id" == "$reviewed_image_id" ]]
+          printf '%s\n' "$reviewed_image_id" > "publication-candidate/${candidate}.image-id"
+          printf '%s\n' "$GITHUB_SHA" > "publication-candidate/${candidate}.source-sha"
+          docker save --output "publication-candidate/${candidate}.image.tar" "${{ matrix.image }}"
+          cp "${candidate}.spdx.json" "publication-candidate/${candidate}.spdx.json"
+          cp "${candidate}.trivy.json" "publication-candidate/${candidate}.trivy.json"
+          (
+            cd publication-candidate
+            sha256sum \
+              "${candidate}.image.tar" \
+              "${candidate}.image-id" \
+              "${candidate}.source-sha" \
+              "${candidate}.spdx.json" \
+              "${candidate}.trivy.json" \
+              "normalize-image-spdx.mjs" \
+              > "${candidate}.files.sha256"
+          )
+
+      - name: Upload exact reviewed dependency candidate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.source == 'build'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: helix-workspace-${{ matrix.inventory_name }}-publication-candidate-${{ github.sha }}
+          path: helix-workspace/publication-candidate/
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload dependency supply-chain evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: helix-workspace-${{ matrix.inventory_name }}-supply-chain-evidence-${{ github.sha }}
+          path: |
+            helix-workspace/${{ matrix.inventory_name }}.spdx.json
+            helix-workspace/${{ matrix.inventory_name }}.normalized.spdx.json
+            helix-workspace/${{ matrix.inventory_name }}.normalized.spdx.json.sha256
+            helix-workspace/${{ matrix.inventory_name }}.trivy.json
+          if-no-files-found: error
+          retention-days: 90
+
+  publish-reviewed-images:
+    name: Publish reviewed image / ${{ matrix.candidate }}
+    needs:
+      - build-sbom-scan
+      - dependency-sbom-scan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - candidate: app
+            artifact: helix-workspace-application-publication-candidates
+            local_image: helix/workspace:ci
+            registry_name: helix-workspace
+            paired_source: true
+          - candidate: web
+            artifact: helix-workspace-application-publication-candidates
+            local_image: helix/workspace-web:ci
+            registry_name: helix-workspace-web
+            paired_source: true
+          - candidate: postgres
+            artifact: helix-workspace-postgres-publication-candidate
+            local_image: helix/postgres-pgvector:17.10-pgvector0.8.1
+            registry_name: helix-workspace-postgres
+            paired_source: false
+          - candidate: nats
+            artifact: helix-workspace-nats-publication-candidate
+            local_image: helix/nats-server:2.14.0-patched
+            registry_name: helix-workspace-nats
+            paired_source: false
+          - candidate: meilisearch
+            artifact: helix-workspace-meilisearch-publication-candidate
+            local_image: helix/meilisearch:1.45.1-patched
+            registry_name: helix-workspace-meilisearch
+            paired_source: false
+          - candidate: cerbos
+            artifact: helix-workspace-cerbos-publication-candidate
+            local_image: helix/cerbos:0.54.0-patched
+            registry_name: helix-workspace-cerbos
+            paired_source: false
+          - candidate: spamassassin
+            artifact: helix-workspace-spamassassin-publication-candidate
+            local_image: helix/spamassassin:4.0.2-patched
+            registry_name: helix-workspace-spamassassin
+            paired_source: false
+
+    steps:
+      - name: Download exact reviewed image candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ matrix.artifact }}-${{ github.sha }}
+          path: publication-candidate
+
+      - name: Verify exact reviewed image candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          candidate="${{ matrix.candidate }}"
+          candidate_dir="$GITHUB_WORKSPACE/publication-candidate"
+          [[ "$(<"${candidate_dir}/${candidate}.source-sha")" == "$GITHUB_SHA" ]]
+          (
+            cd "$candidate_dir"
+            sha256sum --check "${candidate}.files.sha256"
+          )
+          docker load --input "${candidate_dir}/${candidate}.image.tar"
+          expected_image_id="$(<"${candidate_dir}/${candidate}.image-id")"
+          loaded_image_id="$(docker image inspect --format '{{.Id}}' "${{ matrix.local_image }}")"
+          [[ "$expected_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$loaded_image_id" == "$expected_image_id" ]]
+
+      - name: Verify paired application source predicate
+        if: matrix.paired_source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          candidate="${{ matrix.candidate }}"
+          candidate_dir="$GITHUB_WORKSPACE/publication-candidate"
+          editors_sha="$(<"${candidate_dir}/${candidate}.editors-sha")"
+          [[ "$editors_sha" =~ ^[a-f0-9]{40}$ ]]
+          PREDICATE_PATH="${candidate_dir}/${candidate}.paired-source.json" \
+            WORKSPACE_REPOSITORY="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            WORKSPACE_SHA="$GITHUB_SHA" \
+            EDITORS_SHA="$editors_sha" \
+            node -e '
+              const { readFileSync } = require("node:fs");
+              const predicate = JSON.parse(readFileSync(process.env.PREDICATE_PATH, "utf8"));
+              const expected = {
+                schemaVersion: 1,
+                workspace: {
+                  repository: process.env.WORKSPACE_REPOSITORY,
+                  sha: process.env.WORKSPACE_SHA,
+                },
+                editors: {
+                  repository: "https://github.com/billiondollarsolo/helix-editors",
+                  sha: process.env.EDITORS_SHA,
+                },
+              };
+              if (JSON.stringify(predicate) !== JSON.stringify(expected)) process.exit(1);
+            '
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push exact reviewed image
+        id: push-image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          registry_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ matrix.registry_name }}"
+          commit_image="${registry_image}:${GITHUB_SHA}"
+          docker tag "${{ matrix.local_image }}" "$commit_image"
+          docker push "$commit_image"
+          image_digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$commit_image" | sed -n "s|^${registry_image}@||p" | head -n 1)"
+          [[ "$image_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "image_digest=$image_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Sign image build provenance
+        id: provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.registry_name }}
+          subject-digest: ${{ steps.push-image.outputs.image_digest }}
+          push-to-registry: true
+
+      - name: Normalize exact pushed image SPDX SBOM
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          candidate="${{ matrix.candidate }}"
+          registry_subject="ghcr.io/${GITHUB_REPOSITORY_OWNER}/${{ matrix.registry_name }}"
+          node publication-candidate/normalize-image-spdx.mjs \
+            --input "publication-candidate/${candidate}.spdx.json" \
+            --output "publication-candidate/${candidate}.normalized.spdx.json" \
+            --image-subject "$registry_subject" \
+            --image-digest "${{ steps.push-image.outputs.image_digest }}"
+          (
+            cd publication-candidate
+            sha256sum "${candidate}.normalized.spdx.json" \
+              > "${candidate}.normalized.spdx.json.sha256"
+          )
+
+      - name: Sign paired application source provenance
+        if: matrix.paired_source
+        id: paired-source-attestation
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.registry_name }}
+          subject-digest: ${{ steps.push-image.outputs.image_digest }}
+          predicate-type: https://helix.billiondollarsolo.com/attestations/paired-source/v1
+          predicate-path: publication-candidate/${{ matrix.candidate }}.paired-source.json
+          push-to-registry: true
+
+      - name: Wrap paired source provenance as release evidence
+        if: matrix.paired_source
+        shell: bash
+        env:
+          RAW_BUNDLE_PATH: ${{ steps.paired-source-attestation.outputs.bundle-path }}
+          SUBJECT_NAME: ghcr.io/${{ github.repository_owner }}/${{ matrix.registry_name }}
+          SUBJECT_DIGEST: ${{ steps.push-image.outputs.image_digest }}
+        run: |
+          set -Eeuo pipefail
+          candidate="${{ matrix.candidate }}"
+          if [[ "$candidate" == "app" ]]; then
+            release_name="application"
+          else
+            release_name="web"
+          fi
+          output_path="publication-candidate/${release_name}-image-provenance.json"
+          OUTPUT_PATH="$output_path" node -e '
+            const { X509Certificate } = require("node:crypto");
+            const { readFileSync, writeFileSync } = require("node:fs");
+            const bundle = JSON.parse(readFileSync(process.env.RAW_BUNDLE_PATH, "utf8"));
+            if (bundle.mediaType !== "application/vnd.dev.sigstore.bundle.v0.3+json") {
+              throw new Error("paired-source bundle is not Sigstore bundle v0.3");
+            }
+            const entries = bundle?.verificationMaterial?.tlogEntries;
+            if (!Array.isArray(entries) || entries.length === 0) {
+              throw new Error("paired-source bundle is missing transparency-log evidence");
+            }
+            const integratedTime = Number(entries[0].integratedTime);
+            if (!Number.isSafeInteger(integratedTime) || integratedTime <= 0) {
+              throw new Error("paired-source bundle has an invalid integrated timestamp");
+            }
+            const generatedAt = new Date(integratedTime * 1000);
+            const certificate = new X509Certificate(
+              Buffer.from(bundle.verificationMaterial.certificate.rawBytes, "base64"),
+            );
+            if (
+              generatedAt.getTime() < Date.parse(certificate.validFrom) ||
+              generatedAt.getTime() > Date.parse(certificate.validTo)
+            ) {
+              throw new Error("paired-source integrated timestamp is outside certificate validity");
+            }
+            const envelope = bundle.dsseEnvelope;
+            if (envelope?.payloadType !== "application/vnd.in-toto+json") {
+              throw new Error("paired-source bundle does not contain an in-toto envelope");
+            }
+            const statement = JSON.parse(Buffer.from(envelope.payload, "base64").toString("utf8"));
+            const subjects = statement.subject;
+            if (
+              statement.predicateType !==
+                "https://helix.billiondollarsolo.com/attestations/paired-source/v1" ||
+              !Array.isArray(subjects) ||
+              subjects.length !== 1 ||
+              subjects[0].name !== process.env.SUBJECT_NAME ||
+              subjects[0].digest?.sha256 !==
+                process.env.SUBJECT_DIGEST.slice("sha256:".length)
+            ) {
+              throw new Error("paired-source signed subject does not match the pushed image");
+            }
+            const document = {
+              schema: "helix.evidence.github-sigstore-image-provenance.v1",
+              generatedAt: generatedAt.toISOString(),
+              subjectName: process.env.SUBJECT_NAME,
+              subjectDigest: process.env.SUBJECT_DIGEST,
+              bundle,
+            };
+            writeFileSync(process.env.OUTPUT_PATH, `${JSON.stringify(document, null, 2)}\n`);
+          '
+          (
+            cd publication-candidate
+            sha256sum "${release_name}-image-provenance.json" \
+              > "${release_name}-image-provenance.json.sha256"
+          )
+
+      - name: Sign image SBOM
+        id: sbom-attestation
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.registry_name }}
+          subject-digest: ${{ steps.push-image.outputs.image_digest }}
+          sbom-path: publication-candidate/${{ matrix.candidate }}.normalized.spdx.json
+          push-to-registry: true
+
+      - name: Upload published image attestations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: helix-workspace-${{ matrix.candidate }}-attestations-${{ github.sha }}
+          path: |
+            publication-candidate/${{ matrix.candidate }}.spdx.json
+            publication-candidate/${{ matrix.candidate }}.normalized.spdx.json
+            publication-candidate/${{ matrix.candidate }}.normalized.spdx.json.sha256
+            publication-candidate/${{ matrix.candidate }}.trivy.json
+            publication-candidate/${{ matrix.candidate }}.paired-source.json
+            publication-candidate/*-image-provenance.json
+            publication-candidate/*-image-provenance.json.sha256
+            ${{ steps.provenance.outputs.bundle-path }}
+            ${{ steps.paired-source-attestation.outputs.bundle-path }}
+            ${{ steps.sbom-attestation.outputs.bundle-path }}
           if-no-files-found: error
           retention-days: 90

@@ -50,7 +50,29 @@ history remediation; never add a fingerprint merely to make CI green.
 
 The Production Image Security workflow builds the reviewed API and storage-only web runtime,
 validates their runtime contracts, generates SPDX JSON SBOMs, and blocks high/critical container
-findings before publication. Main-branch images are pushed by immutable commit tag. GitHub then
-creates Sigstore-backed provenance and SBOM attestations for each exact registry digest. The raw
-SBOMs and signed attestation bundles are retained together as the workflow's supply-chain evidence
-artifact. Any failed scan, push, or attestation keeps the workflow red.
+findings before publication. The two application images and all eight dependency images must
+complete their scans and SBOM inventory before any image is published. Successful scan jobs export
+the exact locally reviewed images as checksummed Docker image archives; the aggregate
+publication job verifies the workflow revision, archive checksum, and loaded image ID before
+pushing those same bits by immutable commit tag. It never rebuilds an image. Only the application,
+web, PostgreSQL, NATS, Meilisearch, Cerbos, and SpamAssassin images are published; digest-pinned
+Redis, RustFS, and ClamAV remain pull-and-scan inventory. GitHub then creates Sigstore-backed
+provenance and SBOM attestations for each exact registry digest. The raw SBOMs and signed
+attestation bundles are retained together as workflow supply-chain evidence. Because the
+application and web builds consume the paired `helix-editors` checkout, their candidate artifacts
+also bind its resolved commit SHA. Their pushed digests receive an additional signed paired-source
+predicate containing the exact `helix-workspace` and `helix-editors` repository URLs and commit
+SHAs. CI wraps each raw paired-source Sigstore bundle in the exact
+`helix.evidence.github-sigstore-image-provenance.v1` application/web evidence schema, using the
+bundle's transparency-log integrated time, registry subject, and pushed digest, and retains the
+wrapper with its SHA-256 checksum. Any failed scan, source-binding check, push, evidence wrapping,
+or attestation keeps the workflow red.
+
+Syft's raw SPDX output is retained as immutable scan evidence, but it is not promoted directly.
+After each Helix-built image has its pushed registry digest, CI derives a separate strict SPDX 2.3
+document that preserves the discovered package inventory and adds one `CONTAINER` package binding
+the exact repository subject and digest. The normalized document has a single `documentDescribes`
+root, unique SPDX identifiers, supported `creationInfo` fields, and a SHA-256 sidecar; that exact
+file is used for the SBOM attestation. The pull-only Redis, RustFS, and ClamAV documents are
+normalized the same way against their checked-in Docker Hub subjects and pinned digests before
+evidence upload.

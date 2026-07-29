@@ -2,7 +2,8 @@
 
 The ordinary release-readiness manifest remains a developer and operator preflight: it validates
 only the evidence explicitly supplied. A production promotion must add `--final-release`. That
-mode is fail-closed and requires all eight live gates from the production-readiness plan:
+mode is fail-closed and requires the eight live service gates plus the V6 and R0–R3 supporting
+artifacts. Passing service tests alone cannot produce a final manifest.
 
 | Gate                | Manifest option               | Required result                                                                 |
 | ------------------- | ----------------------------- | ------------------------------------------------------------------------------- |
@@ -16,6 +17,24 @@ mode is fail-closed and requires all eight live gates from the production-readin
 | V5 DAST             | `--dast-evidence`             | Bound ZAP scan passed; no High/Critical and all Medium/Low risks dispositioned  |
 
 Static, `not_run`, running, failed, partially passed, or missing reports cannot satisfy final mode.
+
+Final mode additionally requires:
+
+| Requirement                | Manifest option                         | Fail-closed proof                                                          |
+| -------------------------- | --------------------------------------- | -------------------------------------------------------------------------- |
+| V6/R0 engineering          | `--full-gates-evidence`                 | Exact revision and complete mandatory command set passed                   |
+| Deployed schema            | `--migration-status-evidence`           | Repository migration head deployed by one locked migrator                  |
+| Resolved production config | `--production-config-evidence`          | Digest-only, resolved production config with MVP mode enforced             |
+| SLO and soak               | `--slo-soak-evidence`                   | Objectives passed over a real window of at least 24 hours                  |
+| V5 security review         | `--security-review-evidence`            | Scans/SBOM/manual review passed; every finding safely dispositioned        |
+| R1/R2/support readiness    | `--support-readiness-evidence`          | Owners, runbooks, dogfood, pilot, and safe incident history                |
+| Cost, limits, risks        | `--business-readiness-evidence`         | Cost model, approved MVP limits, and owned/unexpired accepted risks        |
+| Protected remote Git state | `--protected-repository-state-evidence` | Trusted signed observation binds both protected branches/tags to both SHAs |
+| R3 decision                | `--production-decision-evidence`        | Signed exact-packet `go` or owned, unexpired `conditional_go` decision     |
+| Protected trust            | protected verifier configuration        | Decision/state keys and GitHub/Sigstore identities match pinned values     |
+
+See [Final release supporting artifacts](final-release-supporting-evidence.md) for exact schemas
+and the safe production procedure.
 
 ## Bind every live run to the promoted build
 
@@ -55,7 +74,8 @@ are rejected. If a report already contains a binding, a runner refuses to replac
 values.
 
 This binding is a consistency control, not a signature and not proof that an operator deployed the
-claimed digests. Retain image provenance attestations and deployment records alongside the packet.
+claimed digests. Final mode separately verifies retained GitHub/Sigstore provenance for the
+application and web digests and a signed observation of authoritative protected Git refs.
 
 ## Build the final manifest
 
@@ -63,6 +83,26 @@ Store all reports beneath the evidence directory, then run:
 
 ```sh
 evidence_dir="artifacts/release-readiness/$(date +%F)/$(git rev-parse HEAD)"
+manifest_path="${evidence_dir}.release-readiness-manifest.json"
+
+export HELIX_RELEASE_TRUSTED_DECISION_PUBLIC_KEY=/run/helix-release/trusted-decision-signer.pem
+export HELIX_RELEASE_TRUSTED_DECISION_SIGNER_FINGERPRINT=sha256:<trusted-spki-digest>
+export HELIX_RELEASE_TRUSTED_GIT_STATE_PUBLIC_KEY=/run/helix-release/trusted-git-state-observer.pem
+export HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER_FINGERPRINT=sha256:<trusted-spki-digest>
+export HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER=<trusted-observer-identity>
+export HELIX_RELEASE_TRUSTED_FULCIO_ISSUER_CERTIFICATE=/run/helix-release/fulcio-issuer.pem
+export HELIX_RELEASE_TRUSTED_REKOR_PUBLIC_KEY=/run/helix-release/rekor-public-key.pem
+export HELIX_RELEASE_TRUSTED_REKOR_LOG_ID=sha256:<trusted-rekor-spki-digest>
+export HELIX_RELEASE_TRUSTED_REKOR_CHECKPOINT_ORIGIN='rekor.sigstore.dev - <trusted-tree-id>'
+export HELIX_RELEASE_TRUSTED_GITHUB_REPOSITORY=billiondollarsolo/helix-workspace
+export HELIX_RELEASE_TRUSTED_EDITORS_REPOSITORY=billiondollarsolo/helix-editors
+export HELIX_RELEASE_TRUSTED_GITHUB_WORKFLOW_IDENTITY=https://github.com/billiondollarsolo/helix-workspace/.github/workflows/production-image-security.yml@refs/heads/main
+export HELIX_RELEASE_TRUSTED_APPLICATION_SUBJECT=ghcr.io/billiondollarsolo/helix-workspace
+export HELIX_RELEASE_TRUSTED_WEB_SUBJECT=ghcr.io/billiondollarsolo/helix-workspace-web
+export HELIX_RELEASE_PREVIOUS_EDITORS_SHA=<previous-release-editor-sha>
+export HELIX_RELEASE_REQUIRED_BRANCH=main
+export HELIX_RELEASE_WORKSPACE_TAG=<protected-workspace-release-tag>
+export HELIX_RELEASE_EDITORS_TAG=<protected-editor-release-tag>
 
 pnpm quality:release-readiness-manifest -- \
   --final-release \
@@ -75,18 +115,62 @@ pnpm quality:release-readiness-manifest -- \
   --restore-drill-evidence restore-drill-evidence.json \
   --failure-recovery-evidence failure-recovery-evidence.json \
   --dast-evidence dast-evidence.json \
+  --full-gates-evidence full-gates-evidence.json \
+  --migration-status-evidence migration-status-evidence.json \
+  --production-config-evidence production-config-evidence.json \
+  --slo-soak-evidence slo-soak-evidence.json \
+  --security-review-evidence security-review-evidence.json \
+  --support-readiness-evidence support-readiness-evidence.json \
+  --business-readiness-evidence business-readiness-evidence.json \
+  --protected-repository-state-evidence protected-repository-state-evidence.json \
+  --production-decision-evidence production-decision-evidence.json \
   --application-image-digest "$HELIX_RELEASE_APPLICATION_IMAGE_DIGEST" \
   --web-image-digest "$HELIX_RELEASE_WEB_IMAGE_DIGEST" \
-  --output "$evidence_dir/release-readiness-manifest.json"
+  --output "$manifest_path"
 ```
 
+Final mode deliberately has no public-key, signer-fingerprint, trusted identity, issuer, or
+timestamp CLI override. The promotion verifier supplies all trust anchors from protected
+configuration and uses its own wall clock. Evidence producers must not be able to modify those
+settings. `--timestamp` remains available only to deterministic preflight automation.
+
 The command independently reads both clean repository Git SHAs and compares them and both supplied
-image digests with every report. Any mismatch blocks promotion. The resulting schema-version 5
+image digests with every report. Any mismatch blocks promotion. It also verifies the application
+and web DSSE signatures offline, validates their Fulcio/GitHub identities, cryptographically
+verifies the Rekor body, signed-entry timestamp, inclusion proof, and checkpoint under protected
+log trust, and requires the signed paired-source predicate to bind the exact workspace and editor
+revisions. Rekor's authenticated integration time controls provenance freshness and certificate
+validity; an evidence author cannot backdate the unsigned wrapper. The resulting schema-version 6
 manifest records `release.mode: "final"`, all required gate IDs, repository revisions, immutable
-image digests, evidence-file hashes, and redacted timing/count summaries.
+image digests, evidence-file hashes, redacted timing/count summaries, signed protected-state
+observation, and the verified R3 decision.
 
 Do not regenerate or edit a report to repair a mismatch. Deploy the intended images from the
 intended revision and rerun the affected live evidence.
+
+The final verifier requires a separately trusted Ed25519-signed observation that both SHAs are the
+exact authoritative tips of the configured protected release branch and the exact commits named by
+their protected release tags. The observation must name the exact pinned GitHub repositories and
+be no more than one hour old. Local branch names, tags, and remotes do not satisfy this control.
+The previous editor release SHA determines whether editor gates are mandatory; an evidence author
+cannot skip them by setting `editors.changed: false`.
+
+The manifest output must be outside the source evidence directory and must not already exist.
+Creation follows filesystem aliases before enforcing that boundary and refuses symbolic-link or
+hard-link output targets, so output publication cannot overwrite evidence that was just validated.
+Keep the evidence directory quiescent for the complete verifier run; symbolic links and non-file
+entries are prohibited.
+
+Evidence is read into an immutable in-process snapshot. Hashing, JSON validation, signed-packet
+verification, and manifest inventory generation all use those same bytes, then the verifier
+re-reads the source tree and fails if any path, length, or digest changed during validation. The R3
+decision covers every file in that snapshot except the decision itself, including additional
+`--require-evidence` files and digest-referenced artifacts. Referenced JSON is semantically
+validated: the exact command/revision/completion, scan severity counts, image digest, SBOM
+format/package count, sensitive-data match count, finding disposition, and passed/approved state
+must agree with the outer summaries. Each SBOM summary must also retain and hash its unique actual
+SPDX 2.3 JSON document, whose described container package binds the fixed registry subject and
+exact digest.
 
 ## Contract CI versus production evidence
 
@@ -102,4 +186,4 @@ test runner. Quality CI invokes this command on pull requests and `main`.
 
 CI contract tests prove that the validators fail closed; they do not fabricate live evidence.
 Actual final-release manifest creation remains an explicit promotion-stage operation after all
-eight live reports exist.
+eight live reports and all nine supporting artifacts exist.

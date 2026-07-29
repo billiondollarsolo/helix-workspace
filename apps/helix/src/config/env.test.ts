@@ -2,11 +2,28 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadEnv } from "./env.js";
+import { loadEnv, loadMigrationEnv } from "./env.js";
 
 const base = {
   DATABASE_URL: "postgres://u:p@localhost:5432/helix",
   REDIS_URL: "redis://localhost:6379",
+};
+
+const productionImageEnvironment = {
+  HELIX_IMAGE:
+    "ghcr.io/billiondollarsolo/helix-workspace@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  HELIX_WEB_IMAGE:
+    "ghcr.io/billiondollarsolo/helix-workspace-web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  HELIX_POSTGRES_IMAGE:
+    "ghcr.io/billiondollarsolo/helix-workspace-postgres@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  HELIX_NATS_IMAGE:
+    "ghcr.io/billiondollarsolo/helix-workspace-nats@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  HELIX_MEILISEARCH_IMAGE:
+    "ghcr.io/billiondollarsolo/helix-workspace-meilisearch@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  HELIX_CERBOS_IMAGE:
+    "ghcr.io/billiondollarsolo/helix-workspace-cerbos@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  HELIX_SPAMD_IMAGE:
+    "ghcr.io/billiondollarsolo/helix-workspace-spamassassin@sha256:1111111111111111111111111111111111111111111111111111111111111111",
 };
 
 const temporaryDirectories: string[] = [];
@@ -131,4 +148,79 @@ describe("loadEnv", () => {
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).not.toContain(missingPath);
   });
+});
+
+describe("loadMigrationEnv", () => {
+  it("loads the production database URL from the dedicated secret file", () => {
+    const directory = mkdtempSync(join(tmpdir(), "helix-migration-env-test-"));
+    temporaryDirectories.push(directory);
+    const databaseUrlPath = join(directory, "migration-database-url");
+    const databaseUrl =
+      "postgres://helix_migrator:Migration-DB_Secret!2026-A1b2C3d4E5f6G7h8@postgres:5432/helix";
+    writeFileSync(databaseUrlPath, `${databaseUrl}\n`, { mode: 0o600 });
+
+    const loaded = loadMigrationEnv({
+      ...productionImageEnvironment,
+      NODE_ENV: "production",
+      DATABASE_URL_FILE: databaseUrlPath,
+      POSTGRES_TLS_CA_FILE: "/run/secrets/postgres_ca",
+      POSTGRES_POOL_MAX: "2",
+      HELIX_EDITORS_MIGRATIONS_ENABLED: "false",
+      PORT: "not-a-port",
+      REDIS_URL: "not-a-redis-url",
+    });
+
+    expect(loaded).toMatchObject({
+      NODE_ENV: "production",
+      DATABASE_URL: databaseUrl,
+      POSTGRES_TLS_CA_FILE: "/run/secrets/postgres_ca",
+      POSTGRES_POOL_MAX: 2,
+      HELIX_EDITORS_MIGRATIONS_ENABLED: "false",
+    });
+    expect(loaded).not.toHaveProperty("PORT");
+    expect(loaded).not.toHaveProperty("REDIS_URL");
+  });
+
+  it("rejects tag-only production image references", () => {
+    expect(() =>
+      loadMigrationEnv({
+        ...productionImageEnvironment,
+        NODE_ENV: "production",
+        DATABASE_URL:
+          "postgres://helix_migrator:Migration-DB_Secret!2026-A1b2C3d4E5f6G7h8@postgres:5432/helix",
+        POSTGRES_TLS_CA_FILE: "/run/secrets/postgres_ca",
+        HELIX_EDITORS_MIGRATIONS_ENABLED: "false",
+        HELIX_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace:latest",
+      }),
+    ).toThrow(/HELIX_IMAGE/u);
+  });
+
+  it("rejects conflicting inline and file-backed migration database credentials", () => {
+    const directory = mkdtempSync(join(tmpdir(), "helix-migration-env-test-"));
+    temporaryDirectories.push(directory);
+    const databaseUrlPath = join(directory, "migration-database-url");
+    writeFileSync(databaseUrlPath, "postgres://file:secret@postgres:5432/helix", { mode: 0o600 });
+
+    expect(() =>
+      loadMigrationEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://inline:secret@postgres:5432/helix",
+        DATABASE_URL_FILE: databaseUrlPath,
+        POSTGRES_TLS_CA_FILE: "/run/secrets/postgres_ca",
+      }),
+    ).toThrow(/DATABASE_URL_FILE/u);
+  });
+
+  it.each([undefined, "true", "FALSE", "0", " false "])(
+    "requires literal false for production editor migrations (%s)",
+    (editorsMigrationsEnabled) => {
+      expect(() =>
+        loadMigrationEnv({
+          NODE_ENV: "production",
+          DATABASE_URL: "postgres://helix_migrator:secret@postgres:5432/helix",
+          HELIX_EDITORS_MIGRATIONS_ENABLED: editorsMigrationsEnabled,
+        }),
+      ).toThrow(/HELIX_EDITORS_MIGRATIONS_ENABLED/u);
+    },
+  );
 });

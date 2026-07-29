@@ -15,7 +15,7 @@ on:
 jobs:
   source-and-helm-quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: helix-all/helix-workspace
@@ -51,11 +51,26 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
+
       - name: Check source formatting
         run: pnpm format:check
 
+      - name: Typecheck workspace
+        run: pnpm typecheck
+
+      - name: Lint workspace
+        run: pnpm lint
+
+      - name: Build workspace
+        run: pnpm build
+
       - name: Validate Helm chart
         run: pnpm infra:helm:validate
+
+      - name: Prove production-readiness contracts fail closed
+        run: pnpm quality:production-readiness-contract:test
 
       - name: Prove quality gates fail closed
         run: pnpm quality:gates-contract:test
@@ -209,6 +224,14 @@ jobs:
         env:
           DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
         run: pnpm --filter @helix/app db:migrate
+
+      - name: Prove live PostgreSQL tenant isolation
+        env:
+          DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
+        run: >-
+          pnpm --filter @helix/app exec vitest run
+          src/platform/tenancy/cross-tenant-isolation.test.ts
+          -t 'does not expose beta Drive data to an acme actor even with beta permission rows'
 
       - name: Disable tenant API rate limit for synthetic load
         run: |

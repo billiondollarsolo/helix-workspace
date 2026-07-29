@@ -10,6 +10,18 @@
 - Keep unrelated work in the workspace intact. Never edit generated dependencies or commit build
   output.
 
+## Current production MVP boundary
+
+- The production MVP is Mail, Drive file storage/management with read-only previews, secure
+  server-readable Chat, Assistant/agent workflows, and Admin.
+- Do not implement or enable native Docs, Sheets, Slides, PDF editing, Calendar, Meet, or editor
+  collaboration as part of MVP work.
+- Production must fail closed unless `HELIX_APPS` is exactly `mail,drive,chat,assistant`, the
+  disabled module configuration is explicit, editor migrations are false, and the web build uses
+  `VITE_HELIX_MVP_ONLY=true`.
+- `../helix-editors` remains a pinned compatibility/build input only. Do not broaden the active
+  product boundary merely because dormant integration code already exists.
+
 ## Implementation rules
 
 - Preserve the core-app boundary enforced by `infra/scripts/verify-workspace-editor-boundaries.mjs`.

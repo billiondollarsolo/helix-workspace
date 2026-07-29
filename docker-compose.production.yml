@@ -8,18 +8,21 @@ name: helix-production
 
 services:
   helix-migrate:
-    image: ${HELIX_IMAGE:-helix/workspace:production}
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile
-      target: runtime
-      additional_contexts:
-        helix_editors: ../helix-editors
+    image: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest is required}
+    build: !reset null
+    pull_policy: always
     entrypoint:
       - /nodejs/bin/node
       - dist/db/migrate.js
     environment:
       NODE_ENV: production
+      HELIX_IMAGE: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest is required}
+      HELIX_WEB_IMAGE: ${HELIX_WEB_IMAGE:?immutable HELIX_WEB_IMAGE registry reference with digest is required}
+      HELIX_POSTGRES_IMAGE: ${HELIX_POSTGRES_IMAGE:?immutable HELIX_POSTGRES_IMAGE registry reference with digest is required}
+      HELIX_NATS_IMAGE: ${HELIX_NATS_IMAGE:?immutable HELIX_NATS_IMAGE registry reference with digest is required}
+      HELIX_MEILISEARCH_IMAGE: ${HELIX_MEILISEARCH_IMAGE:?immutable HELIX_MEILISEARCH_IMAGE registry reference with digest is required}
+      HELIX_CERBOS_IMAGE: ${HELIX_CERBOS_IMAGE:?immutable HELIX_CERBOS_IMAGE registry reference with digest is required}
+      HELIX_SPAMD_IMAGE: ${HELIX_SPAMD_IMAGE:?immutable HELIX_SPAMD_IMAGE registry reference with digest is required}
       DATABASE_URL: !reset null
       DATABASE_URL_FILE: /run/secrets/migration_database_url
       POSTGRES_TLS_CA_FILE: /run/secrets/postgres_ca
@@ -57,15 +60,18 @@ services:
           memory: 128m
 
   helix:
-    image: ${HELIX_IMAGE:-helix/workspace:production}
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile
-      target: runtime
-      additional_contexts:
-        helix_editors: ../helix-editors
+    image: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest is required}
+    build: !reset null
+    pull_policy: always
     environment:
       NODE_ENV: production
+      HELIX_IMAGE: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest is required}
+      HELIX_WEB_IMAGE: ${HELIX_WEB_IMAGE:?immutable HELIX_WEB_IMAGE registry reference with digest is required}
+      HELIX_POSTGRES_IMAGE: ${HELIX_POSTGRES_IMAGE:?immutable HELIX_POSTGRES_IMAGE registry reference with digest is required}
+      HELIX_NATS_IMAGE: ${HELIX_NATS_IMAGE:?immutable HELIX_NATS_IMAGE registry reference with digest is required}
+      HELIX_MEILISEARCH_IMAGE: ${HELIX_MEILISEARCH_IMAGE:?immutable HELIX_MEILISEARCH_IMAGE registry reference with digest is required}
+      HELIX_CERBOS_IMAGE: ${HELIX_CERBOS_IMAGE:?immutable HELIX_CERBOS_IMAGE registry reference with digest is required}
+      HELIX_SPAMD_IMAGE: ${HELIX_SPAMD_IMAGE:?immutable HELIX_SPAMD_IMAGE registry reference with digest is required}
       HELIX_SECURITY_TIER: business
       HELIX_PUBLIC_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       PUBLIC_BASE_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
@@ -123,6 +129,11 @@ services:
       MAIL_SMTP_RECEIVER_ENABLED: "true"
       MAIL_SMTP_RECEIVER_HOST: 0.0.0.0
       MAIL_SMTP_RECEIVER_PORT: 2525
+      MAIL_SPAMD_ENABLED: "true"
+      MAIL_SPAMD_HOST: spamd
+      MAIL_SPAMD_PORT: 783
+      MAIL_SPAMD_THRESHOLD: ${MAIL_SPAMD_THRESHOLD:-5}
+      MAIL_SPAMD_TIMEOUT_MS: ${MAIL_SPAMD_TIMEOUT_MS:-10000}
       MAIL_CLAMAV_ENABLED: "true"
       MAIL_CLAMAV_HOST: clamav
       MAIL_CLAMAV_PORT: 3310
@@ -174,13 +185,15 @@ services:
       redis:
         condition: service_healthy
       nats:
-        condition: service_started
+        condition: service_healthy
       meilisearch:
-        condition: service_started
+        condition: service_healthy
       rustfs:
-        condition: service_started
+        condition: service_healthy
       cerbos:
-        condition: service_started
+        condition: service_healthy
+      spamd:
+        condition: service_healthy
       clamav:
         condition: service_healthy
     networks: !override
@@ -211,6 +224,9 @@ services:
           memory: 512m
 
   postgres:
+    image: ${HELIX_POSTGRES_IMAGE:?immutable HELIX_POSTGRES_IMAGE registry reference with digest is required}
+    build: !reset null
+    pull_policy: always
     environment:
       POSTGRES_PASSWORD: !reset null
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
@@ -306,6 +322,9 @@ services:
           memory: 512m
 
   nats:
+    image: ${HELIX_NATS_IMAGE:?immutable HELIX_NATS_IMAGE registry reference with digest is required}
+    build: !reset null
+    pull_policy: always
     entrypoint:
       - /bin/sh
       - -euc
@@ -344,6 +363,9 @@ services:
           memory: 512m
 
   meilisearch:
+    image: ${HELIX_MEILISEARCH_IMAGE:?immutable HELIX_MEILISEARCH_IMAGE registry reference with digest is required}
+    build: !reset null
+    pull_policy: always
     environment:
       MEILI_ENV: production
       MEILI_MASTER_KEY: !reset null
@@ -398,6 +420,9 @@ services:
           memory: 2g
 
   cerbos:
+    image: ${HELIX_CERBOS_IMAGE:?immutable HELIX_CERBOS_IMAGE registry reference with digest is required}
+    build: !reset null
+    pull_policy: always
     ports: !override []
     networks: !override
       - data-plane
@@ -422,6 +447,13 @@ services:
       - data-plane
 
   spamd:
+    image: ${HELIX_SPAMD_IMAGE:?immutable HELIX_SPAMD_IMAGE registry reference with digest is required}
+    build: !reset null
+    pull_policy: always
+    profiles: !override []
+    command: !reset []
+    environment:
+      DNS_CHECKS: "1"
     ports: !override []
     networks: !override
       - data-plane
@@ -459,13 +491,9 @@ services:
       - no-new-privileges:true
 
   caddy:
-    image: ${HELIX_WEB_IMAGE:-helix/workspace-web:production}
-    build:
-      context: .
-      dockerfile: infra/docker/Dockerfile
-      target: web-runtime
-      additional_contexts:
-        helix_editors: ../helix-editors
+    image: ${HELIX_WEB_IMAGE:?immutable HELIX_WEB_IMAGE registry reference with digest is required}
+    build: !reset null
+    pull_policy: always
     environment:
       HELIX_DOMAIN: ${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       HELIX_UPSTREAM: helix:3000

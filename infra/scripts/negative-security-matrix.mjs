@@ -330,7 +330,36 @@ export async function validateNegativeSecurityMatrix(root = process.cwd()) {
       }
     }
   }
+  validateNegativeSecurityCommandMappings(V2_NEGATIVE_SECURITY_MATRIX);
   return V2_NEGATIVE_SECURITY_MATRIX;
+}
+
+export function validateNegativeSecurityCommandMappings(matrix = V2_NEGATIVE_SECURITY_MATRIX) {
+  const supportedExecutions = new Set(["default", "live-postgres"]);
+  const expectedCommands = new Set();
+  for (const row of matrix) {
+    for (const entry of row.cases) {
+      if (entry.tests.length === 0) {
+        throw new Error(`V2 case ${entry.id} has no runnable command mapping.`);
+      }
+      for (const test of entry.tests) {
+        if (!supportedExecutions.has(test.execution)) {
+          throw new Error(
+            `V2 case ${entry.id} uses unsupported execution mode: ${test.execution}.`,
+          );
+        }
+        expectedCommands.add(`${test.file}\0${test.title}\0${test.execution}`);
+      }
+    }
+  }
+  const commands = negativeSecurityCommands(matrix);
+  if (
+    commands.length !== expectedCommands.size ||
+    commands.some(({ command }) => !command.trim())
+  ) {
+    throw new Error("V2 negative-security command mapping is incomplete.");
+  }
+  return commands;
 }
 
 export function negativeSecurityCommands(matrix = V2_NEGATIVE_SECURITY_MATRIX) {

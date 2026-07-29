@@ -22,6 +22,17 @@ const DISALLOWED_MAIL_HOSTS = new Set([
   "mailhog",
   "smtp4dev",
 ]);
+const PRODUCTION_MVP_APPS = "mail,drive,chat,assistant";
+const PRODUCTION_DISABLED_MODULES = ["docs", "calendar", "meet", "editors"] as const;
+const PRODUCTION_IMAGE_REPOSITORIES = {
+  HELIX_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace",
+  HELIX_WEB_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-web",
+  HELIX_POSTGRES_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-postgres",
+  HELIX_NATS_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-nats",
+  HELIX_MEILISEARCH_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-meilisearch",
+  HELIX_CERBOS_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-cerbos",
+  HELIX_SPAMD_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-spamassassin",
+} as const;
 
 const KNOWN_DEVELOPMENT_VALUES: Readonly<Record<string, readonly string[]>> = {
   BETTER_AUTH_SECRET: [
@@ -65,6 +76,25 @@ export class ProductionConfigurationError extends Error {
     this.name = "ProductionConfigurationError";
     this.issues = issues;
   }
+}
+
+export interface ProductionPostgresConfiguration {
+  readonly NODE_ENV?: string | undefined;
+  readonly POSTGRES_TLS_CA_FILE?: string | undefined;
+  readonly POSTGRES_TLS_CERT_FILE?: string | undefined;
+  readonly POSTGRES_TLS_KEY_FILE?: string | undefined;
+}
+
+export interface ProductionDeploymentConfiguration {
+  readonly NODE_ENV?: string | undefined;
+  readonly HELIX_EDITORS_MIGRATIONS_ENABLED?: string | undefined;
+  readonly HELIX_IMAGE?: string | undefined;
+  readonly HELIX_WEB_IMAGE?: string | undefined;
+  readonly HELIX_POSTGRES_IMAGE?: string | undefined;
+  readonly HELIX_NATS_IMAGE?: string | undefined;
+  readonly HELIX_MEILISEARCH_IMAGE?: string | undefined;
+  readonly HELIX_CERBOS_IMAGE?: string | undefined;
+  readonly HELIX_SPAMD_IMAGE?: string | undefined;
 }
 
 function normalized(value: string | undefined): string | undefined {
@@ -139,21 +169,7 @@ function validateProductionDataPlane(
   environment: Env,
   issues: ProductionConfigurationIssue[],
 ): void {
-  if (normalized(environment.POSTGRES_TLS_CA_FILE) === undefined) {
-    issues.push({
-      variable: "POSTGRES_TLS_CA_FILE",
-      message: "must pin the PostgreSQL server CA for encrypted production connections",
-    });
-  }
-  if (
-    (normalized(environment.POSTGRES_TLS_CERT_FILE) === undefined) !==
-    (normalized(environment.POSTGRES_TLS_KEY_FILE) === undefined)
-  ) {
-    issues.push({
-      variable: "POSTGRES_TLS_CERT_FILE",
-      message: "must be configured together with POSTGRES_TLS_KEY_FILE",
-    });
-  }
+  validateProductionPostgresTls(environment, issues);
 
   const redis = parsedUrl(environment.REDIS_URL);
   if (redis === undefined || redis.protocol !== "rediss:") {
@@ -230,6 +246,112 @@ function validateProductionDataPlane(
   }
 }
 
+function validateProductionPostgresTls(
+  environment: ProductionPostgresConfiguration,
+  issues: ProductionConfigurationIssue[],
+): void {
+  if (normalized(environment.POSTGRES_TLS_CA_FILE) === undefined) {
+    issues.push({
+      variable: "POSTGRES_TLS_CA_FILE",
+      message: "must pin the PostgreSQL server CA for encrypted production connections",
+    });
+  }
+  if (
+    (normalized(environment.POSTGRES_TLS_CERT_FILE) === undefined) !==
+    (normalized(environment.POSTGRES_TLS_KEY_FILE) === undefined)
+  ) {
+    issues.push({
+      variable: "POSTGRES_TLS_CERT_FILE",
+      message: "must be configured together with POSTGRES_TLS_KEY_FILE",
+    });
+  }
+}
+
+function validateProductionDatabaseCredential(
+  databaseUrl: string,
+  issues: ProductionConfigurationIssue[],
+): void {
+  const dbPassword = databasePassword(databaseUrl);
+  if (dbPassword === undefined || dbPassword.length === 0) {
+    issues.push({
+      variable: "DATABASE_URL",
+      message: "must be a postgres URL containing an authenticated database credential",
+    });
+  } else if (
+    isKnownDevelopmentValue("DATABASE_URL", dbPassword) ||
+    dbPassword === "helix_dev_password"
+  ) {
+    issues.push({ variable: "DATABASE_URL", message: "uses a known development/default password" });
+  } else if (secretIsWeak(dbPassword)) {
+    issues.push({
+      variable: "DATABASE_URL",
+      message: `database password must contain at least ${String(MIN_SECRET_LENGTH)} characters with at least ${String(MIN_SECRET_DISTINCT_CHARACTERS)} distinct characters`,
+    });
+  }
+}
+
+/**
+ * Apply only the production database and TLS policy needed by the dedicated
+ * migration process. Application replicas continue to use
+ * {@link assertProductionConfiguration}, which includes every provider and
+ * data-plane assertion.
+ */
+export function assertProductionPostgresConfiguration(
+  databaseUrl: string,
+  environment: ProductionPostgresConfiguration,
+): void {
+  if (environment.NODE_ENV !== "production") {
+    return;
+  }
+
+  const issues: ProductionConfigurationIssue[] = [];
+  validateProductionDatabaseCredential(databaseUrl, issues);
+  validateProductionPostgresTls(environment, issues);
+  if (issues.length > 0) {
+    throw new ProductionConfigurationError(issues);
+  }
+}
+
+function validateProductionDeploymentConfiguration(
+  environment: ProductionDeploymentConfiguration,
+  issues: ProductionConfigurationIssue[],
+): void {
+  if (environment.HELIX_EDITORS_MIGRATIONS_ENABLED !== "false") {
+    issues.push({
+      variable: "HELIX_EDITORS_MIGRATIONS_ENABLED",
+      message: "must be exactly false for the production MVP",
+    });
+  }
+
+  for (const [variable, repository] of Object.entries(PRODUCTION_IMAGE_REPOSITORIES)) {
+    const imageReference = environment[variable as keyof typeof PRODUCTION_IMAGE_REPOSITORIES];
+    const expectedPrefix = `${repository}@sha256:`;
+    if (
+      imageReference === undefined ||
+      !imageReference.startsWith(expectedPrefix) ||
+      !/^[a-f0-9]{64}$/u.test(imageReference.slice(expectedPrefix.length))
+    ) {
+      issues.push({
+        variable,
+        message: `must be the promoted ${repository} image pinned by an immutable sha256 digest`,
+      });
+    }
+  }
+}
+
+export function assertProductionDeploymentConfiguration(
+  environment: ProductionDeploymentConfiguration,
+): void {
+  if (environment.NODE_ENV !== "production") {
+    return;
+  }
+  const issues: ProductionConfigurationIssue[] = [];
+  validateProductionDeploymentConfiguration(environment, issues);
+  if (issues.length > 0) {
+    throw new ProductionConfigurationError(issues);
+  }
+}
+
 function configuredSecurityTier(environment: Env, issues: ProductionConfigurationIssue[]): string {
   const explicit = normalized(environment.HELIX_SECURITY_TIER)?.toLowerCase();
   if (explicit !== undefined) {
@@ -272,6 +394,51 @@ function configuredSecurityTier(environment: Env, issues: ProductionConfiguratio
       message: "must contain valid configuration with a recognized security tier",
     });
     return "personal";
+  }
+}
+
+function validateProductionMvpScope(
+  environment: Env,
+  issues: ProductionConfigurationIssue[],
+): void {
+  validateProductionDeploymentConfiguration(environment, issues);
+
+  if (normalized(environment.HELIX_APPS) !== PRODUCTION_MVP_APPS) {
+    issues.push({
+      variable: "HELIX_APPS",
+      message: "must exactly match the approved production MVP app allowlist",
+    });
+  }
+
+  const rawConfig = normalized(environment.HELIX_CONFIG_JSON);
+  let modules: Readonly<Record<string, unknown>> | undefined;
+  if (rawConfig !== undefined) {
+    try {
+      const parsed = JSON.parse(rawConfig) as unknown;
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        const candidate = (parsed as { readonly modules?: unknown }).modules;
+        if (typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)) {
+          modules = candidate as Readonly<Record<string, unknown>>;
+        }
+      }
+    } catch {
+      // The general HELIX_CONFIG_JSON validation below reports malformed JSON.
+    }
+  }
+
+  for (const moduleId of PRODUCTION_DISABLED_MODULES) {
+    const moduleConfig = modules?.[moduleId];
+    const explicitlyDisabled =
+      typeof moduleConfig === "object" &&
+      moduleConfig !== null &&
+      !Array.isArray(moduleConfig) &&
+      (moduleConfig as { readonly enabled?: unknown }).enabled === false;
+    if (!explicitlyDisabled) {
+      issues.push({
+        variable: "HELIX_CONFIG_JSON",
+        message: `must explicitly set modules.${moduleId}.enabled to false for the production MVP`,
+      });
+    }
   }
 }
 
@@ -414,6 +581,8 @@ export function assertProductionConfiguration(environment: Env): void {
     });
   }
 
+  validateProductionMvpScope(environment, issues);
+
   for (const [variable, candidates] of Object.entries(KNOWN_DEVELOPMENT_VALUES)) {
     const value = environmentRecord[variable];
     if (
@@ -435,23 +604,7 @@ export function assertProductionConfiguration(environment: Env): void {
     });
   }
 
-  const dbPassword = databasePassword(environment.DATABASE_URL);
-  if (dbPassword === undefined || dbPassword.length === 0) {
-    issues.push({
-      variable: "DATABASE_URL",
-      message: "must be a postgres URL containing an authenticated database credential",
-    });
-  } else if (
-    isKnownDevelopmentValue("DATABASE_URL", dbPassword) ||
-    dbPassword === "helix_dev_password"
-  ) {
-    issues.push({ variable: "DATABASE_URL", message: "uses a known development/default password" });
-  } else if (secretIsWeak(dbPassword)) {
-    issues.push({
-      variable: "DATABASE_URL",
-      message: `database password must contain at least ${String(MIN_SECRET_LENGTH)} characters with at least ${String(MIN_SECRET_DISTINCT_CHARACTERS)} distinct characters`,
-    });
-  }
+  validateProductionDatabaseCredential(environment.DATABASE_URL, issues);
 
   validateProductionDataPlane(environment, issues);
 
@@ -626,6 +779,18 @@ export function assertProductionConfiguration(environment: Env): void {
       issues.push({
         variable: "MAIL_CLAMAV_HOST",
         message: "must identify the clamd service used for Mail scanning",
+      });
+    }
+    if (flag(environment.MAIL_SPAMD_ENABLED) !== true) {
+      issues.push({
+        variable: "MAIL_SPAMD_ENABLED",
+        message: "must enable the real SpamAssassin spamd scanner",
+      });
+    }
+    if (normalized(environment.MAIL_SPAMD_HOST) === undefined) {
+      issues.push({
+        variable: "MAIL_SPAMD_HOST",
+        message: "must identify the spamd service used for Mail scanning",
       });
     }
   }

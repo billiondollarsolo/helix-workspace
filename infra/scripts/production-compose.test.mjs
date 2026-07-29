@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -9,6 +10,23 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 let secretsDirectory;
 let resolvedCompose;
 let resolvedAllProfilesCompose;
+let composeEnvironment;
+
+const composeArgs = ["compose", "-f", "docker-compose.yml", "-f", "docker-compose.production.yml"];
+const promotedImages = Object.freeze({
+  application:
+    "ghcr.io/billiondollarsolo/helix-workspace@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  web: "ghcr.io/billiondollarsolo/helix-workspace-web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  postgres:
+    "ghcr.io/billiondollarsolo/helix-workspace-postgres@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  nats: "ghcr.io/billiondollarsolo/helix-workspace-nats@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  meilisearch:
+    "ghcr.io/billiondollarsolo/helix-workspace-meilisearch@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  cerbos:
+    "ghcr.io/billiondollarsolo/helix-workspace-cerbos@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  spamassassin:
+    "ghcr.io/billiondollarsolo/helix-workspace-spamassassin@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+});
 
 const secretNames = [
   "database_url",
@@ -65,9 +83,16 @@ beforeAll(() => {
     { mode: 0o600 },
   );
 
-  const composeEnvironment = {
+  composeEnvironment = {
     ...process.env,
     HELIX_PRODUCTION_SECRETS_DIR: secretsDirectory,
+    HELIX_IMAGE: promotedImages.application,
+    HELIX_WEB_IMAGE: promotedImages.web,
+    HELIX_POSTGRES_IMAGE: promotedImages.postgres,
+    HELIX_NATS_IMAGE: promotedImages.nats,
+    HELIX_MEILISEARCH_IMAGE: promotedImages.meilisearch,
+    HELIX_CERBOS_IMAGE: promotedImages.cerbos,
+    HELIX_SPAMD_IMAGE: promotedImages.spamassassin,
     HELIX_DOMAIN: "workspace.example.test",
     HELIX_MFA_ASSERTION_ISSUER: "https://auth.example.test",
     HELIX_MFA_ASSERTION_AUDIENCE: "helix-workspace",
@@ -79,13 +104,6 @@ beforeAll(() => {
     HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED: "true",
     HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED: "true",
   };
-  const composeArgs = [
-    "compose",
-    "-f",
-    "docker-compose.yml",
-    "-f",
-    "docker-compose.production.yml",
-  ];
   const resolveCompose = (extraArgs = []) =>
     JSON.parse(
       execFileSync("docker", [...composeArgs, ...extraArgs, "config", "--format", "json"], {
@@ -132,19 +150,60 @@ describe("production Compose overlay", () => {
       "meilisearch",
       "rustfs",
       "cerbos",
+      "spamd",
       "clamav",
     ]) {
       expect(resolvedCompose.services[service].ports).toBeUndefined();
       expect(resolvedCompose.services[service].networks).toHaveProperty("data-plane");
     }
     expect(resolvedCompose.services.clamav.networks).toEqual({ "data-plane": null });
+    expect(resolvedCompose.services.spamd.networks).toEqual({ "data-plane": null });
     expect(resolvedCompose.networks["data-plane"].internal).toBe(true);
   });
 
   it("removes Mailpit from active production and Helix dependencies", () => {
     expect(resolvedCompose.services.mailpit).toBeUndefined();
     expect(resolvedCompose.services.helix.depends_on).not.toHaveProperty("mailpit");
+    expect(resolvedCompose.services.helix.depends_on).toHaveProperty("spamd");
     expect(resolvedCompose.services.helix.depends_on).toHaveProperty("clamav");
+  });
+
+  it("uses the exact reviewed production dependency image inventory and waits for readiness", () => {
+    expect(
+      Object.fromEntries(
+        ["postgres", "redis", "nats", "meilisearch", "rustfs", "cerbos", "spamd", "clamav"].map(
+          (service) => [service, resolvedCompose.services[service].image],
+        ),
+      ),
+    ).toEqual({
+      postgres: promotedImages.postgres,
+      redis:
+        "redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2",
+      nats: promotedImages.nats,
+      meilisearch: promotedImages.meilisearch,
+      rustfs:
+        "rustfs/rustfs:1.0.0-beta.11@sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c",
+      cerbos: promotedImages.cerbos,
+      spamd: promotedImages.spamassassin,
+      clamav:
+        "clamav/clamav:1.5.3@sha256:7f5389ccaa2368c383fa80e167ccfe44348d71e685f926fce4755eed1757673a",
+    });
+    expect(resolvedCompose.services.clamav.platform).toBe("linux/amd64");
+    for (const dependency of [
+      "postgres",
+      "redis",
+      "nats",
+      "meilisearch",
+      "rustfs",
+      "cerbos",
+      "spamd",
+      "clamav",
+    ]) {
+      expect(resolvedCompose.services[dependency].healthcheck).toBeDefined();
+      expect(resolvedCompose.services.helix.depends_on[dependency].condition).toBe(
+        "service_healthy",
+      );
+    }
   });
 
   it("uses mounted file-backed application secrets without inline fallbacks", () => {
@@ -204,6 +263,8 @@ describe("production Compose overlay", () => {
   it("enables real Mail and Drive scanning in the Business fixture", () => {
     const environment = resolvedCompose.services.helix.environment;
     expect(environment.HELIX_SECURITY_TIER).toBe("business");
+    expect(environment.MAIL_SPAMD_ENABLED).toBe("true");
+    expect(environment.MAIL_SPAMD_HOST).toBe("spamd");
     expect(environment.MAIL_CLAMAV_ENABLED).toBe("true");
     expect(environment.MAIL_CLAMAV_HOST).toBe("clamav");
     expect(environment.DRIVE_CLAMAV_ENABLED).toBe("true");
@@ -269,20 +330,39 @@ describe("production Compose overlay", () => {
     });
   });
 
-  it("builds the reviewed non-root Workspace images with the paired package context", () => {
+  it("pulls only immutable promoted Workspace images in production", () => {
     const helix = resolvedCompose.services.helix;
-    expect(helix.image).toBe("helix/workspace:production");
-    expect(helix.build.context).toBe(root);
-    expect(helix.build.dockerfile).toBe("infra/docker/Dockerfile");
-    expect(helix.build.target).toBe("runtime");
-    expect(helix.build.additional_contexts.helix_editors).toBe(resolve(root, "../helix-editors"));
+    expect(helix.image).toBe(promotedImages.application);
+    expect(helix.build).toBeUndefined();
+    expect(helix.pull_policy).toBe("always");
+    expect(resolvedCompose.services["helix-migrate"].image).toBe(promotedImages.application);
+    expect(resolvedCompose.services["helix-migrate"].build).toBeUndefined();
 
     const caddy = resolvedCompose.services.caddy;
-    expect(caddy.image).toBe("helix/workspace-web:production");
-    expect(caddy.build.context).toBe(root);
-    expect(caddy.build.dockerfile).toBe("infra/docker/Dockerfile");
-    expect(caddy.build.target).toBe("web-runtime");
-    expect(caddy.build.additional_contexts.helix_editors).toBe(resolve(root, "../helix-editors"));
+    expect(caddy.image).toBe(promotedImages.web);
+    expect(caddy.build).toBeUndefined();
+    expect(caddy.pull_policy).toBe("always");
+
+    for (const service of ["postgres", "nats", "meilisearch", "cerbos", "spamd"]) {
+      expect(resolvedCompose.services[service].build).toBeUndefined();
+      expect(resolvedCompose.services[service].pull_policy).toBe("always");
+      expect(resolvedCompose.services[service].image).toMatch(
+        /^ghcr[.]io\/billiondollarsolo\/[a-z0-9-]+@sha256:[a-f0-9]{64}$/u,
+      );
+    }
+  });
+
+  it("fails closed when a promoted image digest is omitted", () => {
+    const environment = { ...composeEnvironment };
+    delete environment.HELIX_CERBOS_IMAGE;
+    expect(() =>
+      execFileSync("docker", [...composeArgs, "config", "--quiet"], {
+        cwd: root,
+        encoding: "utf8",
+        env: environment,
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    ).toThrow(/HELIX_CERBOS_IMAGE/u);
   });
 
   it("limits the runtime payload to compiled application output", () => {

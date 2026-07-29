@@ -99,7 +99,7 @@ services:
   postgres:
     build:
       context: ./infra/postgres
-    image: helix/postgres-pgvector:17-alpine
+    image: helix/postgres-pgvector:17.10-pgvector0.8.1
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-helix}
       POSTGRES_USER: ${POSTGRES_USER:-helix}
@@ -117,7 +117,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "${REDIS_PORT:-28433}:6379"
@@ -131,7 +131,9 @@ services:
     restart: unless-stopped
 
   nats:
-    image: nats:2.10-alpine
+    build:
+      context: ./infra/nats
+    image: helix/nats-server:2.14.0-patched
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
       - "${NATS_CLIENT_PORT:-28434}:4222"
@@ -141,7 +143,9 @@ services:
     restart: unless-stopped
 
   meilisearch:
-    image: getmeili/meilisearch:v1.10
+    build:
+      context: ./infra/meilisearch
+    image: helix/meilisearch:1.45.1-patched
     environment:
       MEILI_ENV: ${MEILI_ENV:-development}
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-helix_dev_meili_master_key}
@@ -150,10 +154,16 @@ services:
       - "${MEILI_PORT:-28436}:7700"
     volumes:
       - meili-data:/meili_data
+    healthcheck:
+      test:
+        ["CMD-SHELL", 'wget -qO- http://127.0.0.1:7700/health | grep -q ''"status":"available"''']
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   rustfs:
-    image: rustfs/rustfs:latest
+    image: rustfs/rustfs:1.0.0-beta.11@sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c
     command: ["/data"]
     environment:
       RUSTFS_ADDRESS: ":9000"
@@ -172,10 +182,22 @@ services:
       - "${RUSTFS_CONSOLE_PORT:-28438}:9001"
     volumes:
       - rustfs-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'curl -fsS http://127.0.0.1:9000/minio/health/live | grep -q ''"ready":true''',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     restart: unless-stopped
 
   cerbos:
-    image: ghcr.io/cerbos/cerbos:latest
+    build:
+      context: ./infra/cerbos
+    image: helix/cerbos:0.54.0-patched
     command: ["server", "--config=/config/.cerbos.yaml"]
     ports:
       - "${CERBOS_HTTP_PORT:-28439}:3592"
@@ -183,6 +205,11 @@ services:
     volumes:
       - ./infra/cerbos/.cerbos.yaml:/config/.cerbos.yaml:ro
       - ./infra/cerbos/policies:/policies:ro
+    healthcheck:
+      test: ["CMD", "/cerbos", "healthcheck"]
+      interval: 10s
+      timeout: 2s
+      retries: 5
     restart: unless-stopped
 
   mailpit:
@@ -196,20 +223,30 @@ services:
   # over the spamd TCP protocol when MAIL_SPAMD_ENABLED=true. Opt-in via the
   # `mail-security` compose profile.
   spamd:
-    image: instantlinux/spamassassin:latest
+    build:
+      context: ./infra/spamassassin
+    image: helix/spamassassin:4.0.2-patched
     profiles: ["mail-security"]
     command: ["spamd", "--allowed-ips=0.0.0.0/0", "--listen=0.0.0.0:783", "--max-children=4"]
     ports:
       - "${MAIL_SPAMD_PORT_PUBLISHED:-28459}:783"
     volumes:
       - spamd-data:/var/lib/spamassassin
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -ltn | grep -q ':783'"]
+      interval: 10s
+      timeout: 2s
+      retries: 12
+      start_period: 15s
     restart: unless-stopped
 
   # ClamAV clamd daemon. Inbound mail ingest scans each message over the clamd
   # INSTREAM TCP protocol when MAIL_CLAMAV_ENABLED=true. Opt-in via the
   # `mail-security` compose profile.
   clamav:
-    image: clamav/clamav:latest
+    image: clamav/clamav:1.5.3@sha256:7f5389ccaa2368c383fa80e167ccfe44348d71e685f926fce4755eed1757673a
+    # Cisco's official ClamAV image is currently published for amd64 only.
+    platform: linux/amd64
     profiles: ["mail-security"]
     ports:
       - "${MAIL_CLAMAV_PORT_PUBLISHED:-28460}:3310"

@@ -811,8 +811,10 @@ export async function scanInboundMail(
   const spam = spamOutcome.result;
   const antivirus = antivirusOutcome.result;
   const virusRouted = antivirus !== null && antivirus.infected;
-  const scannerUnavailable =
+  const spamScannerUnavailable = scanners.spam === undefined || spamOutcome.failed;
+  const antivirusScannerUnavailable =
     scanners.antivirus === undefined || antivirusOutcome.failed || antivirus?.scanned === false;
+  const scannerUnavailable = spamScannerUnavailable || antivirusScannerUnavailable;
   const policyQuarantined =
     virusRouted ||
     antivirus?.disposition === "quarantine" ||

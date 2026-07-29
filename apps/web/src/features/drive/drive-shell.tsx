@@ -49,8 +49,6 @@ import {
   editableCopyUnavailableMessage,
 } from "@/features/_open/conversion-capabilities";
 import { Avatar } from "@/components/ui/avatar";
-import { slidesQueryKeys } from "@/features/slides/query-keys";
-import { sheetsQueryKeys } from "@/features/sheets/query-keys";
 import {
   createDriveEntry,
   deleteDriveObject,
@@ -357,8 +355,8 @@ export function DriveShell() {
   );
 
   const invalidateDrive = () => queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
-  const invalidateSheets = () => queryClient.invalidateQueries({ queryKey: sheetsQueryKeys.all });
-  const invalidateSlides = () => queryClient.invalidateQueries({ queryKey: slidesQueryKeys.all });
+  const invalidateSheets = () => queryClient.invalidateQueries({ queryKey: ["sheets"] });
+  const invalidateSlides = () => queryClient.invalidateQueries({ queryKey: ["slides"] });
   const invalidateDocs = () => queryClient.invalidateQueries({ queryKey: ["docs"] });
 
   const uploadMutation = useMutation({

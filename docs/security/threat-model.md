@@ -323,12 +323,17 @@ editor enablement out of the final runtime payloads. `validate-production-images
 runs both images with a read-only filesystem and no network.
 
 The production-image workflow generates SPDX SBOMs, runs fail-closed High/Critical Trivy scans,
-publishes only commit-addressed images from `main`, and attaches signed GitHub build-provenance and
-SBOM attestations to the exact pushed digests. This describes workflow enforcement, not a claim
-that the current revision's images passed remotely. The final release packet must retain the
-reviewed main-run digests, scans, SBOMs, and attestation bundles. Production dependency-advisory
-and full-history secret-scan gates remain pending validation and must not be inferred from the
-container scan.
+and waits for the complete application/web plus eight-dependency inventory to succeed before
+publishing anything. On `main`, publication loads and verifies checksummed archives exported by the
+scan jobs instead of rebuilding, publishes only commit-addressed Helix-built images, and attaches
+signed GitHub build-provenance and SBOM attestations to the exact pushed digests. Digest-pinned
+Redis, RustFS, and ClamAV images remain pull-and-scan inputs and are not republished. Application
+and web artifacts additionally bind the exact paired `helix-editors` commit and attach a signed
+paired-source predicate containing both repository URLs and commit SHAs. This describes workflow
+enforcement, not a claim that the current revision's images passed remotely. The final release
+packet must retain the reviewed main-run digests, scans, SBOMs, and attestation bundles. Production
+dependency-advisory and full-history secret-scan gates remain pending validation and must not be
+inferred from the container scan.
 
 Public or untrusted plugins are not a Business MVP feature. If that boundary changes, in-process
 plugin execution, cryptographic publisher verification, migration authority, filesystem/network
@@ -412,7 +417,8 @@ Business pilot is not yet proven production-ready. The following remain:
 
 1. Deploy and validate the trusted upstream MFA producer; Helix verifies assertions but does not
    enroll factors or perform the challenge.
-2. Produce retained live M7, D7, C6, A7, O2, O4, and V4 evidence from production-like services.
+2. Produce retained live M7, D7, C6, A7, O2, O4, V4, and V5 evidence from production-like
+   services.
 3. Attest real Postgres/object/backup encryption and complete the strict off-host restore drill.
 4. Implement deterministic AI PII redaction before provider transmission or formally accept and
    constrain the privacy risk.

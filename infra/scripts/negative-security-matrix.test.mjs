@@ -6,6 +6,7 @@ import {
   negativeSecurityCommands,
   V2_NEGATIVE_SECURITY_MATRIX,
   V2_PLAN_PATH,
+  validateNegativeSecurityCommandMappings,
   validateNegativeSecurityMatrix,
 } from "./negative-security-matrix.mjs";
 
@@ -37,6 +38,24 @@ describe("V2 negative-security requirement index", () => {
           requiredEnvironment: ["DATABASE_URL"],
         }),
       ]),
+    );
+  });
+
+  it("fails closed when a test has no supported execution command", () => {
+    const matrix = JSON.parse(JSON.stringify(V2_NEGATIVE_SECURITY_MATRIX));
+    matrix[0].cases[0].tests[0].execution = "manual";
+
+    expect(() => validateNegativeSecurityCommandMappings(matrix)).toThrow(
+      "uses unsupported execution mode",
+    );
+  });
+
+  it("fails closed when a case loses every runnable command mapping", () => {
+    const matrix = JSON.parse(JSON.stringify(V2_NEGATIVE_SECURITY_MATRIX));
+    matrix[0].cases[0].tests = [];
+
+    expect(() => validateNegativeSecurityCommandMappings(matrix)).toThrow(
+      "has no runnable command mapping",
     );
   });
 

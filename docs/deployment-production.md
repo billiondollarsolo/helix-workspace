@@ -4,7 +4,7 @@ Helix production startup fails closed when credentials or required Business-tier
 missing. This guide covers the Docker Compose production overlay. It is not a substitute for the
 backup, restore, monitoring, or pilot gates in the production-readiness plan.
 
-Production promotion requires the revision-bound seven-gate manifest described in
+Production promotion requires the revision-bound eight-gate manifest described in
 [`final-release-readiness.md`](./final-release-readiness.md). Ordinary manifests and CI contract
 tests are preflight evidence only.
 
@@ -24,11 +24,13 @@ Mailpit is placed behind a development-only profile and is not a Helix productio
 Outbound Internet mail must use `ses`, `postmark`, `mailgun`, `managed-smtp`, or `smtp-relay`.
 Direct-to-MX delivery is not supported.
 
-The overlay builds two targets from `infra/docker/Dockerfile`: the Helix API/worker runtime and a
-non-root Caddy edge containing the compiled web client. The web edge serves the SPA and proxies
-only explicit API, OAuth, MCP, realtime, WebDAV, and discovery paths to Helix. The production web
-shell advertises Mail, Drive, Chat, Assistant, and Admin; Docs, Sheets, Slides, Calendar, Meet, and
-native Editors are disabled for this MVP.
+CI builds two targets from `infra/docker/Dockerfile`: the Helix API/worker runtime and a non-root
+Caddy edge containing the compiled web client. The production overlay deliberately removes all
+local `build` sections and pulls only operator-supplied, digest-qualified promoted images. This
+prevents a deployment host from silently rebuilding or substituting unreviewed source. The web
+edge serves the SPA and proxies only explicit API, OAuth, MCP, realtime, WebDAV, and discovery
+paths to Helix. The production web shell advertises Mail, Drive, Chat, Assistant, and Admin; Docs,
+Sheets, Slides, Calendar, Meet, and native Editors are disabled for this MVP.
 
 The storage-only web contract also guards direct URLs for Docs, Sheets, Slides, Calendar, Meet, and
 the native PDF surface. Opening a PDF from Drive uses the read-only raw preview endpoint; PDF form
@@ -40,7 +42,7 @@ boundary.
 The paired `../helix-editors` checkout is supplied as a BuildKit named context solely to build the
 repository's existing file-linked package boundary reproducibly. `HELIX_EDITORS_MIGRATIONS_ENABLED`
 is false, the Editors core app is disabled, and no native editor implementation is enabled. For
-standalone builds, use:
+a local review build that will later be scanned, signed, pushed, and selected by digest, use:
 
 ```sh
 docker buildx build \
@@ -68,6 +70,54 @@ pnpm virtual-store entries and package-manager metadata after deployment. It inc
 database migrations but no source tree, package-manager cache, or source-control metadata.
 Promotion must pin all base images and both resulting application images by digest and record
 those digests in the release-readiness manifest.
+
+Production Compose requires the exact promoted registry references below. Every value must include
+an OCI digest (`registry/repository@sha256:<64 hex>`); human-readable tags and local image names are
+not deployment inputs:
+
+| Variable                  | Promoted image                    |
+| ------------------------- | --------------------------------- |
+| `HELIX_IMAGE`             | Application runtime               |
+| `HELIX_WEB_IMAGE`         | Caddy/web runtime                 |
+| `HELIX_POSTGRES_IMAGE`    | Helix PostgreSQL + pgvector image |
+| `HELIX_NATS_IMAGE`        | Helix NATS image                  |
+| `HELIX_MEILISEARCH_IMAGE` | Helix Meilisearch image           |
+| `HELIX_CERBOS_IMAGE`      | Helix Cerbos image                |
+| `HELIX_SPAMD_IMAGE`       | Helix SpamAssassin image          |
+
+The pinned Redis, RustFS, and ClamAV references remain checked into the base Compose file. The
+resolved production-config evidence must capture all ten active digests and the final release
+packet must bind each digest to its scan and SBOM.
+
+The checked-in stack also fixes the complete active dependency inventory: PostgreSQL 17.10 with
+pgvector 0.8.1, Redis 7.4.10, NATS 2.14.0, Meilisearch 1.45.1, RustFS 1.0.0-beta.11, Cerbos
+0.54.0, SpamAssassin 4.0.2, and ClamAV 1.5.3. Registry images use immutable manifest digests.
+Helix-built dependency images use digest-pinned build/runtime bases, immutable source revisions,
+and verified source archives. CI builds or pulls every one of these images, produces an SPDX SBOM,
+runs a fail-closed High/Critical Trivy scan, and retains the machine-readable result. No locally
+built image is pushed until both application scans and all eight dependency scans succeed. The
+publication job loads checksummed archives exported by the scan jobs, verifies their source
+revision and image IDs, and publishes those exact images without rebuilding. Redis, RustFS, and
+ClamAV remain digest-pinned pull-and-scan inputs and are not republished by Helix. A release packet
+must bind the exact resolved image digests—not merely these human-readable tags—to its corresponding
+scan and SBOM. The official ClamAV 1.5.3 container is amd64-only, so this Compose deployment targets
+`linux/amd64` for that service.
+
+SpamAssassin's image contains the Apache-published 4.0.2 rules archive, verified against Apache's
+published SHA-256 during the build. Its startup update remains enabled, but an unavailable update
+mirror cannot leave the daemon without a valid baseline ruleset. Helix waits for SpamAssassin,
+ClamAV, PostgreSQL, Redis, NATS, Meilisearch, RustFS, and Cerbos health checks before starting the
+application.
+
+Meilisearch 1.10 data files are not an in-place upgrade source for Meilisearch 1.45.1. A new
+installation must start with an empty `meili-data` volume and rebuild indexes from PostgreSQL. For
+an existing deployment, create and download a dump with the old Meilisearch version, retain and
+checksum it, stop the old service, move the old volume aside without deleting it, start 1.45.1
+against a new empty volume with `--import-dump /path/to/<dump-uid>.dump`, and then run the Helix
+full reindex. Promotion requires a count/sample comparison and search smoke before the old volume
+can be retired. Follow the version-specific warnings in the
+[official Meilisearch update guide](https://www.meilisearch.com/docs/resources/migration/updating).
+Never attach an existing 1.10 database directory directly to the 1.45.1 image.
 
 After building, execute the same runtime contract used by CI:
 
@@ -238,14 +288,15 @@ must set `RUSTFS_SERVER_SIDE_ENCRYPTION=AES256` or `aws:kms`. Backup evidence mu
 encryption, key custody, off-host location, and a successful decryption/restore drill. These flags
 do not implement encryption; false attestations are a release-blocking operational defect.
 
-Business production also requires both `MAIL_CLAMAV_ENABLED=true` and
-`DRIVE_CLAMAV_ENABLED=true`, with a reachable clamd host. Scanner errors and timeouts remain
+Business production requires `MAIL_SPAMD_ENABLED=true`, `MAIL_CLAMAV_ENABLED=true`, and
+`DRIVE_CLAMAV_ENABLED=true`, with reachable spamd and clamd services. A missing, failed, or timed
+out Mail spam/antivirus scan and a missing, failed, or timed out Drive antivirus scan remain
 fail-closed under the Mail and Drive quarantine policies.
 
 ## Validate before starting
 
-Start from `.env.production.example`, provide the secret directory, then resolve and inspect the
-merged configuration:
+Start from `.env.production.example`, provide the secret directory and every required promoted
+image reference above, then resolve and inspect the merged configuration:
 
 ```sh
 docker compose \

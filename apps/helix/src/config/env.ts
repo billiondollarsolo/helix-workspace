@@ -1,6 +1,9 @@
 import { readFileSync, statSync } from "node:fs";
 import { z } from "zod3";
-import { assertProductionConfiguration } from "./production-assertions.js";
+import {
+  assertProductionConfiguration,
+  assertProductionDeploymentConfiguration,
+} from "./production-assertions.js";
 
 /**
  * Optional URL that accepts empty string as undefined (common for unset docker env).
@@ -52,6 +55,13 @@ const envSchema = z.object({
   HELIX_BODY_LIMIT_BYTES: coercePositiveInt(134_217_728),
   HELIX_ROLE: optionalString,
   HELIX_APPS: optionalString,
+  HELIX_IMAGE: optionalString,
+  HELIX_WEB_IMAGE: optionalString,
+  HELIX_POSTGRES_IMAGE: optionalString,
+  HELIX_NATS_IMAGE: optionalString,
+  HELIX_MEILISEARCH_IMAGE: optionalString,
+  HELIX_CERBOS_IMAGE: optionalString,
+  HELIX_SPAMD_IMAGE: optionalString,
   LOG_LEVEL: z.string().default("info"),
   POSTGRES_POOL_MAX: coercePositiveInt(10),
   HELIX_POSTGRES_APP_ROLE: z.string().default("helix_app_role"),
@@ -324,10 +334,11 @@ const MAX_SECRET_FILE_BYTES = 64 * 1024;
  */
 function resolveFileBackedEnvironment(
   source: Record<string, string | undefined>,
+  fileBackedEnv: Readonly<Record<string, string>> = FILE_BACKED_ENV,
 ): Record<string, string | undefined> {
   const resolved = { ...source };
 
-  for (const [fileKey, valueKey] of Object.entries(FILE_BACKED_ENV)) {
+  for (const [fileKey, valueKey] of Object.entries(fileBackedEnv)) {
     const filePath = source[fileKey]?.trim();
     const directValue = source[valueKey];
     if (filePath === undefined || filePath.length === 0) {
@@ -383,6 +394,77 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     throw new Error(`Invalid environment configuration:\n${details}`);
   }
   return Object.freeze(result.data);
+}
+
+const migrationEnvSchema = envSchema.pick({
+  NODE_ENV: true,
+  DATABASE_URL: true,
+  HELIX_MIGRATION_DATABASE_URL: true,
+  MIGRATION_DATABASE_URL: true,
+  POSTGRES_TLS_CA_FILE: true,
+  POSTGRES_TLS_CERT_FILE: true,
+  POSTGRES_TLS_KEY_FILE: true,
+  POSTGRES_POOL_MAX: true,
+  HELIX_EDITORS_MIGRATIONS_ENABLED: true,
+  HELIX_EDITORS_CORE_APP_ENTRY: true,
+  HELIX_EDITORS_CORE_APP_MODULE: true,
+  HELIX_IMAGE: true,
+  HELIX_WEB_IMAGE: true,
+  HELIX_POSTGRES_IMAGE: true,
+  HELIX_NATS_IMAGE: true,
+  HELIX_MEILISEARCH_IMAGE: true,
+  HELIX_CERBOS_IMAGE: true,
+  HELIX_SPAMD_IMAGE: true,
+});
+
+export type MigrationEnv = z.infer<typeof migrationEnvSchema>;
+
+const MIGRATION_FILE_BACKED_ENV = {
+  DATABASE_URL_FILE: "DATABASE_URL",
+} as const;
+
+/**
+ * Parse only the settings consumed by the one-shot migration process.
+ *
+ * A production migrator deliberately does not receive application-provider
+ * credentials. Keeping this schema separate prevents application-only
+ * assertions and malformed unrelated settings from blocking migrations while
+ * retaining the same validated field types and defaults as {@link loadEnv}.
+ */
+export function loadMigrationEnv(
+  source: Record<string, string | undefined> = process.env,
+): MigrationEnv {
+  const resolvedSource = resolveFileBackedEnvironment(source, MIGRATION_FILE_BACKED_ENV);
+  const nodeEnv = resolvedSource.NODE_ENV ?? "development";
+  const configuredDatabaseUrl =
+    optionalEnvironmentValue(resolvedSource.HELIX_MIGRATION_DATABASE_URL) ??
+    optionalEnvironmentValue(resolvedSource.MIGRATION_DATABASE_URL) ??
+    optionalEnvironmentValue(resolvedSource.DATABASE_URL);
+  if (nodeEnv === "production" && configuredDatabaseUrl === undefined) {
+    throw new Error(
+      "Invalid migration environment configuration:\n  - DATABASE_URL: Required in production",
+    );
+  }
+  if (nodeEnv === "production" && resolvedSource.HELIX_EDITORS_MIGRATIONS_ENABLED !== "false") {
+    throw new Error(
+      "Invalid migration environment configuration:\n  - HELIX_EDITORS_MIGRATIONS_ENABLED: must be exactly false in production",
+    );
+  }
+
+  const result = migrationEnvSchema.safeParse(resolvedSource);
+  if (!result.success) {
+    const details = result.error.issues
+      .map((issue) => `  - ${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("\n");
+    throw new Error(`Invalid migration environment configuration:\n${details}`);
+  }
+  assertProductionDeploymentConfiguration(result.data);
+  return Object.freeze(result.data);
+}
+
+function optionalEnvironmentValue(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized === undefined || normalized.length === 0 ? undefined : normalized;
 }
 
 let cached: Env | undefined;

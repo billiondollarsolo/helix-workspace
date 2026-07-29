@@ -47,12 +47,38 @@ function productionFixture(): Record<string, string> {
     MAIL_SMTP_PASS: secret(),
     MAIL_PROVIDER_WEBHOOK_ENABLED: "true",
     MAIL_PROVIDER_WEBHOOK_SECRET: secret(),
+    MAIL_SPAMD_ENABLED: "true",
+    MAIL_SPAMD_HOST: "spamd",
     MAIL_CLAMAV_ENABLED: "true",
     MAIL_CLAMAV_HOST: "clamav",
     DRIVE_CLAMAV_ENABLED: "true",
     DRIVE_CLAMAV_HOST: "clamav",
     DRIVE_CLAMAV_MAX_BYTES: "1073741824",
     HELIX_STARTUP_MIGRATION_CHECK: "true",
+    HELIX_EDITORS_MIGRATIONS_ENABLED: "false",
+    HELIX_IMAGE:
+      "ghcr.io/billiondollarsolo/helix-workspace@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    HELIX_WEB_IMAGE:
+      "ghcr.io/billiondollarsolo/helix-workspace-web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    HELIX_POSTGRES_IMAGE:
+      "ghcr.io/billiondollarsolo/helix-workspace-postgres@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    HELIX_NATS_IMAGE:
+      "ghcr.io/billiondollarsolo/helix-workspace-nats@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    HELIX_MEILISEARCH_IMAGE:
+      "ghcr.io/billiondollarsolo/helix-workspace-meilisearch@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    HELIX_CERBOS_IMAGE:
+      "ghcr.io/billiondollarsolo/helix-workspace-cerbos@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    HELIX_SPAMD_IMAGE:
+      "ghcr.io/billiondollarsolo/helix-workspace-spamassassin@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    HELIX_APPS: "mail,drive,chat,assistant",
+    HELIX_CONFIG_JSON: JSON.stringify({
+      modules: {
+        docs: { enabled: false },
+        calendar: { enabled: false },
+        meet: { enabled: false },
+        editors: { enabled: false },
+      },
+    }),
   };
 }
 
@@ -95,6 +121,63 @@ describe("assertProductionConfiguration", () => {
       );
     }).not.toThrow();
   });
+
+  it.each([
+    undefined,
+    "mail,drive,chat",
+    "mail,drive,chat,assistant,editors",
+    "assistant,chat,drive,mail",
+    "mail, drive, chat, assistant",
+  ])("requires the exact production MVP HELIX_APPS boundary (%s)", (apps) => {
+    assertRejected({ HELIX_APPS: apps }, "HELIX_APPS");
+  });
+
+  it("requires editor migrations to remain disabled in every production process", () => {
+    assertRejected(
+      { HELIX_EDITORS_MIGRATIONS_ENABLED: undefined },
+      "HELIX_EDITORS_MIGRATIONS_ENABLED",
+    );
+    assertRejected(
+      { HELIX_EDITORS_MIGRATIONS_ENABLED: "true" },
+      "HELIX_EDITORS_MIGRATIONS_ENABLED",
+    );
+  });
+
+  it.each([
+    ["HELIX_IMAGE", "ghcr.io/billiondollarsolo/helix-workspace:latest"],
+    ["HELIX_WEB_IMAGE", "ghcr.io/billiondollarsolo/helix-workspace-web:latest"],
+    [
+      "HELIX_POSTGRES_IMAGE",
+      "ghcr.io/billiondollarsolo/helix-workspace-postgres@sha256:not-a-digest",
+    ],
+    [
+      "HELIX_NATS_IMAGE",
+      "ghcr.io/attacker/helix-workspace-nats@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    ],
+    ["HELIX_MEILISEARCH_IMAGE", undefined],
+    ["HELIX_CERBOS_IMAGE", ""],
+    [
+      "HELIX_SPAMD_IMAGE",
+      "ghcr.io/billiondollarsolo/helix-workspace-spamassassin@sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    ],
+  ])("requires an exact promoted digest via %s", (variable, value) => {
+    assertRejected({ [variable]: value }, variable);
+  });
+
+  it.each(["docs", "calendar", "meet", "editors"] as const)(
+    "requires modules.%s.enabled to be explicitly false",
+    (moduleId) => {
+      const fixture = productionFixture();
+      const config = JSON.parse(fixture.HELIX_CONFIG_JSON ?? "{}") as {
+        modules: Record<string, { enabled: boolean }>;
+      };
+      Reflect.deleteProperty(config.modules, moduleId);
+      assertRejected({ HELIX_CONFIG_JSON: JSON.stringify(config) }, "HELIX_CONFIG_JSON");
+
+      config.modules[moduleId] = { enabled: true };
+      assertRejected({ HELIX_CONFIG_JSON: JSON.stringify(config) }, "HELIX_CONFIG_JSON");
+    },
+  );
 
   it.each([
     ["DATABASE_URL", "postgres://helix:helix_dev_password@postgres:5432/helix"],
@@ -280,6 +363,8 @@ describe("assertProductionConfiguration", () => {
     ["DRIVE_CLAMAV_HOST", undefined],
     ["MAIL_CLAMAV_ENABLED", "false"],
     ["MAIL_CLAMAV_HOST", undefined],
+    ["MAIL_SPAMD_ENABLED", "false"],
+    ["MAIL_SPAMD_HOST", undefined],
   ])("requires real Business malware scanning via %s", (variable, value) => {
     assertRejected({ [variable]: value }, variable);
   });

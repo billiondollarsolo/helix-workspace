@@ -304,6 +304,46 @@ describe("scanInboundMail", () => {
     });
   });
 
+  it("quarantines a Business-tier spamd outage even when antivirus is clean", async () => {
+    const result = await scanInboundMail(
+      {
+        tier: "business",
+        spam: {
+          async scan() {
+            throw new Error("spamd unreachable");
+          },
+        },
+        antivirus: {
+          async scan() {
+            return {
+              infected: false,
+              signature: null,
+              scanned: true,
+              evidence: {
+                scannerName: "clamav",
+                scannerVersion: "test",
+                startedAt: "2026-07-28T12:00:00.000Z",
+                completedAt: "2026-07-28T12:00:01.000Z",
+                byteSize: 7,
+              },
+            };
+          },
+        },
+      },
+      "message",
+    );
+
+    expect(result).toMatchObject({
+      spam: null,
+      antivirus: { infected: false, scanned: true },
+      routedToSpam: true,
+      quarantined: true,
+      scannerUnavailable: true,
+      spamReason: "scanner-policy",
+      quarantineReasons: ["scanner_unavailable"],
+    });
+  });
+
   it("keeps a Personal-tier scanner failure explicitly unscanned without quarantine", async () => {
     const result = await scanInboundMail(
       {

@@ -1,7 +1,9 @@
 # Helix Core Workspace Production-Readiness Plan
 
-> **Status:** The seven launch decisions were approved on 2026-07-28. This implementation plan
-> remains subject to final owner review; decision approval does not authorize implementation.
+> **Status:** The seven launch decisions were approved on 2026-07-28, and the owner subsequently
+> authorized implementation. Engineering completion does not itself authorize production
+> promotion: the live-service, security, recovery, soak, dogfood, pilot, and signed R3 gates below
+> remain fail-closed.
 >
 > **Target product:** A deliberately smaller, self-hostable Google Workspace alternative providing
 > reliable web email, secure team file storage, authenticated team chat, and least-privilege

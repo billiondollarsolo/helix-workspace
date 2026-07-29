@@ -48,7 +48,33 @@ describe(
       await sql.end();
     });
 
-    it("does not expose beta Drive data to an acme actor even with beta permission rows", async () => {
+    it("rejects permission rows that assign an actor to another tenant", async () => {
+      await expect(
+        sql`
+          insert into permissions (
+            org_id,
+            actor_id,
+            resource_type,
+            resource_id,
+            role,
+            granted_by_actor_id
+          )
+          values (
+            ${BETA_ORG_ID},
+            ${ACME_ACTOR_ID},
+            'object',
+            ${BETA_OBJECT_ID},
+            'reader',
+            ${BETA_ACTOR_ID}
+          )
+        `,
+      ).rejects.toMatchObject({
+        code: "23503",
+        constraint_name: "permissions_chat_actor_org_fk",
+      });
+    });
+
+    it("does not expose beta Drive data to an acme actor", async () => {
       const readError = await captureError(() =>
         store.readFile({
           orgId: ACME_ORG_ID,
@@ -105,13 +131,13 @@ describe(
         }),
       ).rejects.toThrow("Unknown or inaccessible Drive object");
 
-      expect(
-        await store.trash({
+      await expect(
+        store.trash({
           orgId: ACME_ORG_ID,
           actorId: ACME_ACTOR_ID,
           objectId: BETA_OBJECT_ID,
         }),
-      ).toBeNull();
+      ).rejects.toThrow("Unknown or inaccessible Drive object");
 
       await expect(
         store.delete({
@@ -249,9 +275,7 @@ async function seedFixture(sql: postgres.Sql): Promise<void> {
     values
       (${ACME_ORG_ID}, ${ACME_ACTOR_ID}, 'object', ${ACME_OBJECT_ID}, 'owner', ${ACME_ACTOR_ID}),
       (${BETA_ORG_ID}, ${BETA_ACTOR_ID}, 'object', ${BETA_OBJECT_ID}, 'owner', ${BETA_ACTOR_ID}),
-      (${BETA_ORG_ID}, ${BETA_ACTOR_ID}, 'drive_folder', ${BETA_FOLDER_ID}, 'owner', ${BETA_ACTOR_ID}),
-      (${BETA_ORG_ID}, ${ACME_ACTOR_ID}, 'object', ${BETA_OBJECT_ID}, 'reader', ${BETA_ACTOR_ID}),
-      (${BETA_ORG_ID}, ${ACME_ACTOR_ID}, 'drive_folder', ${BETA_FOLDER_ID}, 'reader', ${BETA_ACTOR_ID})
+      (${BETA_ORG_ID}, ${BETA_ACTOR_ID}, 'drive_folder', ${BETA_FOLDER_ID}, 'owner', ${BETA_ACTOR_ID})
   `;
 }
 

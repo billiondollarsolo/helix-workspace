@@ -44,7 +44,7 @@ describe("source supply-chain workflow", () => {
   });
 
   it("uses only exact secret fingerprints in the historical baseline", () => {
-    expect(secretBaseline).toHaveLength(36);
+    expect(secretBaseline).toHaveLength(65);
     expect(new Set(secretBaseline).size).toBe(secretBaseline.length);
     for (const fingerprint of secretBaseline) {
       expect(fingerprint).toMatch(/^[0-9a-f]{40}:[^:*?\n]+:[a-z0-9-]+:[1-9][0-9]*$/u);

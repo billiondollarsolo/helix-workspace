@@ -17,9 +17,9 @@ const workflowSources = readdirSync(resolve(".github"), { recursive: true })
 
 describe("source supply-chain workflow", () => {
   it("runs the pinned, fail-closed production dependency audit", () => {
-    expect(source).toContain("uses: actions/checkout@11d2dfd7550a76b50e8157d1e0e3c1b38a4f4d4d");
+    expect(source).toContain("uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683");
     expect(checkoutEditors).toContain(
-      "uses: actions/checkout@11d2dfd7550a76b50e8157d1e0e3c1b38a4f4d4d",
+      "uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
     );
     expect(source).toContain("uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1");
     expect(source).toContain("version: 9.15.9");

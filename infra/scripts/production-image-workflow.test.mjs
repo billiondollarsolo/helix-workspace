@@ -100,4 +100,18 @@ describe("production image supply-chain workflow", () => {
     expect(copyIndex).toBeGreaterThan(-1);
     expect(installIndex).toBeGreaterThan(copyIndex);
   });
+
+  it("uses a pinned minimal application runtime and prunes unreachable build dependencies", () => {
+    expect(dockerfile).toContain(
+      "ARG RUNTIME_BASE=gcr.io/distroless/nodejs22-debian13:nonroot@sha256:a2723a2817c5b01b8e7b98d567bc8b5a6b0e713e25bfb0a82b6ade4b9db06f50",
+    );
+    expect(dockerfile).toContain("node infra/scripts/prune-production-deploy.mjs /app/deploy");
+    const runtime = dockerStage("runtime");
+    expect(runtime).toContain('ENTRYPOINT ["/nodejs/bin/node", "dist/index.js"]');
+    expect(runtime).toContain("USER 10001:10001");
+    expect(runtime).not.toContain("groupadd");
+    expect(runtime).not.toContain("useradd");
+    expect(runtime).not.toContain("npm ");
+    expect(runtime).not.toContain("pnpm ");
+  });
 });

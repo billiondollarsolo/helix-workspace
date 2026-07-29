@@ -44,7 +44,7 @@ describe("production image validation", () => {
 
   it("accepts the required non-root metadata and executes read-only payload checks", () => {
     const app = metadata({
-      entrypoint: ["node", "dist/index.js"],
+      entrypoint: ["/nodejs/bin/node", "dist/index.js"],
       health: "fetch('http://127.0.0.1:3000/healthz')",
     });
     const web = metadata({
@@ -65,11 +65,17 @@ describe("production image validation", () => {
     validateProductionImages({ applicationImage: "app:test", webImage: "web:test" }, run);
 
     const containerRuns = run.mock.calls.filter(([, args]) => args[0] === "run");
-    expect(containerRuns).toHaveLength(2);
+    expect(containerRuns).toHaveLength(3);
     for (const [, args] of containerRuns) {
       expect(args).toContain("--read-only");
       expect(args).toContain("none");
       expect(args).toContain("--rm");
+    }
+    const applicationRuns = containerRuns.filter(([, args]) => args.includes("app:test"));
+    expect(applicationRuns).toHaveLength(2);
+    for (const [, args] of applicationRuns) {
+      expect(args).toContain("/nodejs/bin/node");
+      expect(args).not.toContain("sh");
     }
   });
 
@@ -78,12 +84,12 @@ describe("production image validation", () => {
       "root user",
       {
         ...metadata({
-          entrypoint: ["node", "dist/index.js"],
+          entrypoint: ["/nodejs/bin/node", "dist/index.js"],
           health: "127.0.0.1:3000/healthz",
         }),
         Config: {
           ...metadata({
-            entrypoint: ["node", "dist/index.js"],
+            entrypoint: ["/nodejs/bin/node", "dist/index.js"],
             health: "127.0.0.1:3000/healthz",
           }).Config,
           User: "0",
@@ -102,7 +108,7 @@ describe("production image validation", () => {
     [
       "missing health check",
       metadata({
-        entrypoint: ["node", "dist/index.js"],
+        entrypoint: ["/nodejs/bin/node", "dist/index.js"],
         health: "unrelated",
       }),
       "health check",
@@ -111,7 +117,7 @@ describe("production image validation", () => {
     expect(() =>
       assertImageMetadata(candidate, {
         name: "application",
-        expectedEntrypoint: ["node", "dist/index.js"],
+        expectedEntrypoint: ["/nodejs/bin/node", "dist/index.js"],
         requiredHealthFragment: "127.0.0.1:3000/healthz",
       }),
     ).toThrow(expected);

@@ -15,19 +15,45 @@ Options:
 `;
 
 const applicationPayloadCheck = `
-set -eu
-test "$(id -u)" = "10001"
-test "$(id -g)" = "10001"
-test -f /app/dist/index.js
-test -f /app/dist/db/migrate.js
-test -d /app/dist/db/migrations
-test "$(find /app/dist/db/migrations -maxdepth 1 -type f -name '*.sql' | wc -l)" -gt 0
-test ! -e /app/src
-test ! -e /app/.git
-test ! -e /app/.env
-test ! -e /app/pnpm-lock.yaml
-test ! -e /app/node_modules/.pnpm-store
-node --check /app/dist/index.js
+import { existsSync, readdirSync, statSync } from "node:fs";
+
+function requireCondition(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+requireCondition(process.getuid?.() === 10001, "application UID must be 10001");
+requireCondition(process.getgid?.() === 10001, "application GID must be 10001");
+for (const path of ["/app/dist/index.js", "/app/dist/db/migrate.js"]) {
+  requireCondition(existsSync(path) && statSync(path).isFile(), \`missing runtime file: \${path}\`);
+}
+requireCondition(
+  readdirSync("/app/dist/db/migrations").some((name) => name.endsWith(".sql")),
+  "compiled migrations are missing",
+);
+for (const path of [
+  "/app/src",
+  "/app/.git",
+  "/app/.env",
+  "/app/pnpm-lock.yaml",
+  "/app/node_modules/.pnpm-store",
+  "/app/node_modules/.pnpm/lock.yaml",
+  "/app/node_modules/.modules.yaml",
+  "/usr/local/bin/npm",
+  "/usr/local/bin/npx",
+  "/usr/local/bin/corepack",
+  "/usr/bin/npm",
+  "/usr/bin/npx",
+  "/usr/bin/corepack",
+]) {
+  requireCondition(!existsSync(path), \`forbidden runtime payload: \${path}\`);
+}
+const virtualStoreEntries = readdirSync("/app/node_modules/.pnpm");
+for (const prefix of ["vite@", "vitest@", "esbuild@", "@esbuild+"]) {
+  requireCondition(
+    !virtualStoreEntries.some((entry) => entry.startsWith(prefix)),
+    \`unreachable build dependency remains in runtime: \${prefix}\`,
+  );
+}
 `.trim();
 
 const webPayloadCheck = `
@@ -98,7 +124,7 @@ export function validateProductionImages(options, run = execFileSync) {
 
   assertImageMetadata(applicationMetadata, {
     name: "application",
-    expectedEntrypoint: ["node", "dist/index.js"],
+    expectedEntrypoint: ["/nodejs/bin/node", "dist/index.js"],
     requiredHealthFragment: "127.0.0.1:3000/healthz",
   });
   assertImageMetadata(webMetadata, {
@@ -108,7 +134,7 @@ export function validateProductionImages(options, run = execFileSync) {
     requiredHealthFragment: "127.0.0.1/healthz",
   });
 
-  runContainerCheck(options.applicationImage, applicationPayloadCheck, ["/tmp"], {}, run);
+  runApplicationContainerChecks(options.applicationImage, run);
   runContainerCheck(
     options.webImage,
     webPayloadCheck,
@@ -118,6 +144,35 @@ export function validateProductionImages(options, run = execFileSync) {
       HELIX_UPSTREAM: "http://127.0.0.1:3000",
     },
     run,
+  );
+}
+
+function runApplicationContainerChecks(image, run) {
+  const baseArgs = ["run", "--rm", "--read-only", "--network", "none"];
+  baseArgs.push("--tmpfs", "/tmp:rw,noexec,nosuid,size=64m");
+  run(
+    "docker",
+    [
+      ...baseArgs,
+      "--entrypoint",
+      "/nodejs/bin/node",
+      image,
+      "--input-type=module",
+      "--eval",
+      applicationPayloadCheck,
+    ],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  run(
+    "docker",
+    [...baseArgs, "--entrypoint", "/nodejs/bin/node", image, "--check", "/app/dist/index.js"],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   );
 }
 

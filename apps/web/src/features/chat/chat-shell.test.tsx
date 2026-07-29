@@ -362,6 +362,38 @@ describe("ChatShell", () => {
     );
   });
 
+  it("renders only server-sanitized Markdown HTML and keeps plain text inert", async () => {
+    fetchMock = makeFetch({
+      "chat.message.list": {
+        messages: [
+          {
+            ...message,
+            body: "**Safe** [link](https://example.com)",
+            bodyFormat: "markdown",
+            renderedBodyHtml:
+              '<p><strong>Safe</strong> <a href="https://example.com" target="_blank" rel="noopener noreferrer nofollow">link ↗</a></p>',
+          },
+          {
+            ...message,
+            id: "plain-inert",
+            body: "<img src=x onerror=alert(1)>",
+            bodyFormat: "plain",
+            renderedBodyHtml: '<img src=x onerror="alert(1)">',
+          },
+        ],
+      },
+    });
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    await flush();
+
+    expect(container.querySelector(".chat-msg-line strong")?.textContent).toBe("Safe");
+    expect(container.querySelector(".chat-msg-line a")?.getAttribute("rel")).toBe(
+      "noopener noreferrer nofollow",
+    );
+    expect(container.querySelector(".chat-msg-line img")).toBeNull();
+    expect(container.querySelector(".chat-messages")?.textContent).toContain("<img src=x");
+  });
+
   it("opens the thread panel from a message reply action", async () => {
     await renderShell(FakeWebSocket as unknown as typeof WebSocket);
     await flush();

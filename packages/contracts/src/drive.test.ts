@@ -3,6 +3,8 @@ import {
   DRIVE_ROLES,
   driveEntrySchema,
   driveRoleSchema,
+  driveUploadStateSchema,
+  driveUploadStatusSchema,
   driveUploadResultSchema,
 } from "./drive.js";
 
@@ -55,7 +57,7 @@ describe("drive contracts", () => {
       mimeType: "application/octet-stream",
       byteSize: 3,
       sha256: null,
-      status: "prepared",
+      status: "pending_upload",
       uploadUrl: null,
       uploadHeaders: {},
       metadata: {},
@@ -63,5 +65,20 @@ describe("drive contracts", () => {
       updatedAt: "2026-07-18T00:00:00.000Z",
     });
     expect(parsed.uploadUrl).toBeNull();
+  });
+
+  it("exposes only explicit upload lifecycle states and a status-only DTO", () => {
+    expect(driveUploadStateSchema.parse("scanning")).toBe("scanning");
+    expect(() => driveUploadStateSchema.parse("ready")).toThrow();
+    expect(
+      driveUploadStatusSchema.parse({
+        objectId: "33333333-3333-4333-8333-333333333333",
+        state: "quarantined",
+        label: "Quarantined",
+        available: false,
+        terminal: true,
+        updatedAt: "2026-07-28T00:00:00.000Z",
+      }).available,
+    ).toBe(false);
   });
 });

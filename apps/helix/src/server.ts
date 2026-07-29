@@ -5,7 +5,6 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -20,9 +19,8 @@ import { ZodError, z } from "zod3";
 import { ContractValidationError } from "@helix/contracts";
 import { createMeteringClient } from "@helix/sdk";
 import {
-  actorFromRequestWithAccessTokenAndSession,
-  resolveCredentialAuthenticatedActor,
   systemActor,
+  toolInvocationPrincipalFromRequest,
   type SessionActorResolver,
 } from "./api/actor.js";
 import { ApiError, NotFoundError } from "./api/api-error.js";
@@ -42,6 +40,7 @@ import { buildErrorEnvelope, toolErrorEnvelope } from "./api/error-envelope.js";
 import {
   DEFAULT_IDEMPOTENCY_TTL_MS,
   InMemoryIdempotencyStore,
+  RedisIdempotencyStore,
   fingerprintRequestPayload,
   idempotencyStorageKey,
   resolveIdempotency,
@@ -52,6 +51,12 @@ import { createResourceClassifier } from "./api/classify-resource.js";
 import { createHelixTRPCRouter } from "./api/trpc.js";
 import { createSqlClient } from "./db/client.js";
 import { env } from "./config/env.js";
+import { resolveRedisConnection } from "./config/redis-connection.js";
+import { helixLoggerOptions } from "./platform/security/logger-redaction.js";
+import {
+  installTrustedOriginPolicy,
+  parseTrustedOrigins,
+} from "./platform/security/origin-policy.js";
 import { OAuthClientManager, OAuthTokenService } from "./platform/auth/oauth.js";
 import { PostgresAdminServiceStatusStore } from "./platform/admin/service-status.js";
 import { AdminServicesCatalog, registerAdminServicesRoutes } from "./platform/admin/services.js";
@@ -76,6 +81,10 @@ import {
   agentCredentialScopeCatalog,
   registerAgentCredentialTools,
 } from "./platform/auth/tools.js";
+import {
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "./platform/auth/tool-invocation-principal.js";
 import {
   PostgresAdminUsersStore,
   registerAdminUsersRoutes,
@@ -114,6 +123,7 @@ import {
   createOpenAICompatibleEmbeddingProvider,
   createOpenAICompatibleProvider,
   createVertexProvider,
+  deriveClassification,
   ioredisAICostClient,
   PostgresAICostLimitStore,
   PostgresAIProvenanceStore,
@@ -139,8 +149,11 @@ import {
 import { PostgresCardDavContactStore, registerCardDavRoutes } from "./platform/carddav/index.js";
 import {
   EventBusChatRoomBus,
+  ChatRetentionWorker,
   PostgresChatStore,
+  PostgresChatRetentionOrganizationSource,
   RedisChatPresenceStore,
+  createChatNatsSecurityPolicy,
   registerChatEnrichments,
   registerChatIndexer,
   registerChatRoutes,
@@ -155,6 +168,11 @@ import {
   registerDocsTools,
 } from "./platform/docs/index.js";
 import {
+  assertDriveMalwareScannerReady,
+  createClamAvVirusScanner,
+  createDriveUploadScanWorker,
+  DriveLifecycleGcWorker,
+  driveStorageEncryptionPolicyForTenant,
   createLocalOfficePreviewConverter,
   createLibreOfficePreviewClient,
   type DrivePreview,
@@ -192,27 +210,40 @@ import type { SiemAuditFormat } from "./platform/audit/siem-format.js";
 import type { SiemSyslogTransport } from "./platform/audit/siem-syslog.js";
 import {
   ClamavScanner,
+  createDispatchAuthorizedAttachmentResolver,
+  DispatchTimeTransportResolver,
+  ingestResolvedRawMail,
+  MailQuarantineService,
+  MailDeliveryAlertMonitor,
   NodemailerMailTransport,
   OutboundMailDispatcher,
   OutboundMailWorker,
+  PostgresMailDeliveryEventStore,
+  PostgresMailQuarantineStore,
   PostgresMailStore,
   PostgresMailDkimKeyStore,
   PostgresMailDmarcReportStore,
   PostgresMailRoutingRuleStore,
   PostgresOutboundProviderStore,
+  PostgresReceivingDomainStore,
   PostgresSendingDomainStore,
   MailAdminStatusService,
   registerMailAdminRoutes,
   registerMailDeliveryAdminRoutes,
+  registerMailDeliveryEventAdminRoutes,
   registerMailEnrichments,
   registerMailIndexer,
+  registerMailProviderWebhookRoutes,
+  registerMailQuarantineAdminRoutes,
   registerMailStreamRoutes,
   registerMailTools,
-  resolveOutboundTransport,
+  createSmtpRecipientResolver,
   SmtpMailReceiver,
   SpamdScanner,
-  type SmtpReceiverOptions,
+  quarantineReleaseScannerFromAntivirus,
+  withOutboundRoutingInvalidation,
 } from "./platform/mail/index.js";
+import { isAllowedMailSecretReference } from "./platform/mail/secret-policy.js";
 import { mailConfig } from "./platform/mail/config.js";
 import {
   PostgresMeetStore,
@@ -295,6 +326,7 @@ import {
   registerSearchAdminRoutes,
   registerSearchTools,
 } from "./platform/search/index.js";
+import type { GlobalSearchType } from "./platform/search/scope.js";
 import {
   PlatformConfigAdminService,
   PostgresPlatformConfigStore,
@@ -345,8 +377,8 @@ import { createEditorsRuntimeHost } from "./platform/editors/core-app.js";
 import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
 import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
 import {
+  createMfaAssertionVerificationResolver,
   evaluateAdminMfa,
-  headerMfaVerificationResolver,
   type MfaVerificationResolver,
 } from "./platform/auth/mfa.js";
 import {
@@ -393,8 +425,9 @@ import {
 import type { PlatformMetrics } from "./api/metrics.js";
 import type { CreateFastifyContextOptions } from "@trpc/server/adapters/fastify";
 import type { AccessTokenStore } from "./platform/auth/oauth.js";
-import type { AgentCredentialStore } from "./platform/auth/credentials.js";
+import { enforceCredentialPolicy, type AgentCredentialStore } from "./platform/auth/credentials.js";
 import type {
+  Actor,
   AiConfig,
   AiProviderConfig,
   ChatRequest,
@@ -444,37 +477,23 @@ export class CredentialAuthError extends Error {
  * (PRD §9.2) and falling back to bearer access tokens and sessions. Shared by
  * the tool REST routes so credential enforcement is live on every surface.
  */
-async function resolveRequestActor(
+async function resolveRequestPrincipal(
   request: FastifyRequest,
   tokenStore: AccessTokenStore,
   sessionResolver: SessionActorResolver | undefined,
   credentialStore: AgentCredentialStore | undefined,
-) {
-  if (credentialStore !== undefined) {
-    const credentialResolution = await resolveCredentialAuthenticatedActor(
-      request,
-      credentialStore,
-    );
-    if (credentialResolution !== null) {
-      if (!credentialResolution.ok) {
-        throw new CredentialAuthError(
-          credentialResolution.statusCode,
-          credentialResolution.code,
-          credentialResolution.message,
-        );
-      }
-      const actor = credentialResolution.actor;
-      assertActorMatchesRequestTenant(request, actor);
-      return actor;
-    }
-  }
-  const actor = await actorFromRequestWithAccessTokenAndSession(
+): Promise<ToolInvocationPrincipal> {
+  const resolution = await toolInvocationPrincipalFromRequest(
     request,
     tokenStore,
     sessionResolver,
+    credentialStore,
   );
-  assertActorMatchesRequestTenant(request, actor);
-  return actor;
+  if (!resolution.ok) {
+    throw new CredentialAuthError(resolution.statusCode, resolution.code, resolution.message);
+  }
+  assertActorMatchesRequestTenant(request, resolution.principal.actor);
+  return resolution.principal;
 }
 
 export interface ToolRestRoutesOptions {
@@ -597,6 +616,8 @@ export interface ActionStatusRoutesOptions {
   readonly credentialStore?: AgentCredentialStore;
 }
 
+export type PendingActionMutationRoutesOptions = ActionStatusRoutesOptions;
+
 type ToolRestRouteMethod = "GET" | "POST";
 
 export function registerToolRestRoutes(
@@ -609,6 +630,12 @@ export function registerToolRestRoutes(
       const params = toolParamsSchema.parse(request.params);
       const traceId = traceIdForRequest(request);
       const tool = options.tools.get(params.toolId);
+      const principal = await resolveRequestPrincipal(
+        request,
+        options.tokenStore,
+        options.sessionResolver,
+        options.credentialStore,
+      );
 
       // P1-10: Idempotency-Key replay for mutating (non-read) tool calls. Read
       // tools are naturally idempotent so the key is ignored for them.
@@ -622,17 +649,11 @@ export function registerToolRestRoutes(
         tool !== undefined &&
         tool.sideEffects !== "read"
           ? await (async () => {
-              const actor = await resolveRequestActor(
-                request,
-                options.tokenStore,
-                options.sessionResolver,
-                options.credentialStore,
-              );
               return {
                 store: idempotencyStore,
                 key: idempotencyStorageKey({
-                  orgId: actor.orgId,
-                  actorId: actor.id,
+                  orgId: principal.actor.orgId,
+                  actorId: principal.actor.id,
                   toolId: params.toolId,
                   idempotencyKey,
                 }),
@@ -672,9 +693,7 @@ export function registerToolRestRoutes(
 
       const result = await invokeTool(
         options.tools,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
+        principal,
         params.toolId,
         request.body,
         request,
@@ -736,9 +755,12 @@ export function registerToolRestRoutes(
 
       const result = await invokeTool(
         options.tools,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
+        await resolveRequestPrincipal(
+          request,
+          options.tokenStore,
+          options.sessionResolver,
+          options.credentialStore,
+        ),
         params.toolId,
         request.query,
         request,
@@ -760,13 +782,14 @@ export function registerActionStatusRoutes(
 ): void {
   const actionStatusHandler = async (request: FastifyRequest, reply: FastifyReply) => {
     const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
     const result = await options.tools.getPendingAction(params.pendingId, {
-      actor: await resolveRequestActor(
-        request,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
-      ),
+      actor: principal.actor,
     });
     if (!result.ok) {
       return sendToolInvokeError(reply, result, traceIdForRequest(request));
@@ -776,6 +799,49 @@ export function registerActionStatusRoutes(
 
   app.get("/actions/:pendingId", actionStatusHandler);
   app.get("/api/actions/:pendingId", actionStatusHandler);
+}
+
+/** Register authenticated approval/cancellation routes with fresh credential policy resolution. */
+export function registerPendingActionMutationRoutes(
+  app: FastifyInstance,
+  options: PendingActionMutationRoutesOptions,
+): void {
+  app.post("/api/tools/pending/:pendingId/approve", async (request, reply) => {
+    const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
+    const result = await options.tools.approvePending(params.pendingId, {
+      ...toolInvocationOptions(principal, createRequestContext(request)),
+    });
+    if (!result.ok) {
+      return sendToolInvokeError(reply, result, traceIdForRequest(request));
+    }
+    if (result.status === "pending_confirmation") {
+      return reply.code(202).send({ status: result.status, pending: result.pending });
+    }
+    return { status: "executed", output: result.output };
+  });
+
+  app.post("/api/tools/pending/:pendingId/cancel", async (request, reply) => {
+    const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
+    const result = await options.tools.cancelPending(params.pendingId, {
+      ...toolInvocationOptions(principal, createRequestContext(request)),
+    });
+    if (!result.ok) {
+      return sendToolInvokeError(reply, result, traceIdForRequest(request));
+    }
+    return { status: result.status, pending: result.pending };
+  });
 }
 
 const assistantChatStreamBodySchema = z.object({
@@ -822,9 +888,12 @@ export function registerAssistantStreamRoute(
       const traceId = traceIdForRequest(request);
       const result = await invokeTool(
         options.tools,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
+        await resolveRequestPrincipal(
+          request,
+          options.tokenStore,
+          options.sessionResolver,
+          options.credentialStore,
+        ),
         "assistant.chat",
         request.body,
         request,
@@ -855,7 +924,7 @@ export function registerAssistantStreamRoute(
       );
     }
     const body = parsedBody.data;
-    const actor = await resolveRequestActor(
+    const principal = await resolveRequestPrincipal(
       request,
       options.tokenStore,
       options.sessionResolver,
@@ -870,7 +939,8 @@ export function registerAssistantStreamRoute(
     });
     try {
       const stream = options.orchestrator.sendMessageStream({
-        actor,
+        actor: principal.actor,
+        principal,
         content: body.message,
         request: createRequestContext(request),
         ...(body.conversationId === undefined ? {} : { conversationId: body.conversationId }),
@@ -935,11 +1005,9 @@ export async function verifyDefaultOrgAtBoot(input: {
 
 export async function createHelixServer(): Promise<FastifyInstance> {
   const bootEnv = env();
+  const trustedOrigins = parseTrustedOrigins(bootEnv.BETTER_AUTH_TRUSTED_ORIGINS);
   const app = fastify({
-    logger: {
-      level: bootEnv.LOG_LEVEL,
-      redact: ["req.headers.authorization", "password", "secret", "token"],
-    },
+    logger: helixLoggerOptions(bootEnv.LOG_LEVEL),
     // P1-10: API versioning. `/v1/...` requests are rewritten to the canonical
     // unprefixed path before routing, so a single handler set serves both the
     // versioned surface and the legacy unprefixed aliases.
@@ -1072,10 +1140,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       }),
     );
   });
-  // P1-10: process-local idempotency store for mutating tool calls.
-  const idempotencyStore: IdempotencyStore = new InMemoryIdempotencyStore();
   const sql = createSqlClient();
-  const redis = bootEnv.REDIS_URL === undefined ? undefined : new Redis(bootEnv.REDIS_URL);
+  const redisConnection = resolveRedisConnection(bootEnv);
+  const redis =
+    redisConnection === undefined
+      ? undefined
+      : new Redis(redisConnection.url, redisConnection.options);
+  const idempotencyStore: IdempotencyStore =
+    redis === undefined ? new InMemoryIdempotencyStore() : new RedisIdempotencyStore(redis);
   const tenantApiRpsLimiter: TenantApiRpsLimiter =
     redis === undefined ? new InMemoryTenantApiRpsLimiter() : new RedisTenantApiRpsLimiter(redis);
   const tenantHourlyQuotaLimiter: TenantHourlyQuotaLimiter =
@@ -1253,14 +1325,30 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const assistantStore = new PostgresAssistantStore(sql);
   const outboxStore = new PostgresOutboxStore(sql);
   const pluginLifecycleStore = new PostgresPluginLifecycleStore(sql);
-  const eventBus =
+  const natsSecurityPolicy =
     bootEnv.NATS_URL === undefined
+      ? undefined
+      : createChatNatsSecurityPolicy(
+          {
+            NATS_URL: bootEnv.NATS_URL,
+            NATS_USER: bootEnv.NATS_USER,
+            NATS_PASSWORD: bootEnv.NATS_PASSWORD,
+            NATS_TOKEN: bootEnv.NATS_TOKEN,
+            NATS_TLS_CA_FILE: bootEnv.NATS_TLS_CA_FILE,
+            NATS_TLS_CERT_FILE: bootEnv.NATS_TLS_CERT_FILE,
+            NATS_TLS_KEY_FILE: bootEnv.NATS_TLS_KEY_FILE,
+            NODE_ENV: bootEnv.NODE_ENV,
+          },
+          [defaultOrg.id],
+        );
+  const eventBus =
+    natsSecurityPolicy === undefined
       ? new InMemoryEventBus({
           onError: (error) => {
             app.log.error({ error }, "In-memory event bus subscriber error");
           },
         })
-      : await NatsEventBus.connect({ servers: bootEnv.NATS_URL }, { subjectPrefix: "helix" });
+      : await NatsEventBus.connect(natsSecurityPolicy.connection, { subjectPrefix: "helix" });
   const meteringEventStore = new PostgresMeteringEventStore(sql);
   const meteringRollupStore = new PostgresMeteringRollupStore(sql);
   const meteringClient = createMeteringClient(eventBus);
@@ -1375,30 +1463,21 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // surface. A presented-but-rejected credential raises `CredentialAuthError`,
   // which the error handler maps to the appropriate 401/403 response. When no
   // credential is presented, falls back to bearer access tokens and sessions.
-  const actorFromAuthenticatedRequest = async (request: FastifyRequest) => {
-    const credentialResolution = await resolveCredentialAuthenticatedActor(
-      request,
-      agentCredentialStore,
-    );
-    if (credentialResolution !== null) {
-      if (!credentialResolution.ok) {
-        throw new CredentialAuthError(
-          credentialResolution.statusCode,
-          credentialResolution.code,
-          credentialResolution.message,
-        );
-      }
-      assertActorMatchesRequestTenant(request, credentialResolution.actor);
-      return credentialResolution.actor;
-    }
-    const actor = await actorFromRequestWithAccessTokenAndSession(
+  const principalFromAuthenticatedRequest = async (request: FastifyRequest) => {
+    const resolution = await toolInvocationPrincipalFromRequest(
       request,
       oauthStore,
       sessionActorResolver,
+      agentCredentialStore,
     );
-    assertActorMatchesRequestTenant(request, actor);
-    return actor;
+    if (!resolution.ok) {
+      throw new CredentialAuthError(resolution.statusCode, resolution.code, resolution.message);
+    }
+    assertActorMatchesRequestTenant(request, resolution.principal.actor);
+    return resolution.principal;
   };
+  const actorFromAuthenticatedRequest = async (request: FastifyRequest) =>
+    (await principalFromAuthenticatedRequest(request)).actor;
 
   // Confirmed Helix architecture model: core apps (mail, chat, drive, docs,
   // calendar, meet, assistant) are toggleable platform modules — not plugins.
@@ -1424,6 +1503,20 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     },
     "Resolved core-app registration plan",
   );
+  const chatRetentionWorker = coreApps.shouldRegister("chat")
+    ? new ChatRetentionWorker({
+        store: chatStore,
+        organizations: new PostgresChatRetentionOrganizationSource(sql),
+        onResult: (result) => {
+          if (result.tombstonedMessages > 0 || result.saturatedOrganizations.length > 0) {
+            app.log.info(result, "Chat retention sweep completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Chat retention sweep failed");
+        },
+      })
+    : undefined;
   const aiProvenance = new PostgresAIProvenanceStore(sql);
   // P0-6: durable, replica-shared resource classification tags. The Postgres
   // store replaces the restart-volatile in-memory store; derivation applies
@@ -1473,7 +1566,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // P2-1: MFA-required-for-admins enforcement. On tiers that require admin MFA
   // (Tier 2+), admin-scoped requests from an actor without a verified MFA
   // factor are rejected before the route handler runs.
-  const mfaResolver: MfaVerificationResolver = headerMfaVerificationResolver;
+  const mfaResolver: MfaVerificationResolver = createMfaAssertionVerificationResolver({
+    secret: bootEnv.HELIX_MFA_ASSERTION_SECRET,
+    issuer: bootEnv.HELIX_MFA_ASSERTION_ISSUER,
+    audience: bootEnv.HELIX_MFA_ASSERTION_AUDIENCE,
+  });
   // P0-7: durable AI cost limiting. Backed by Redis when available so budgets
   // survive restarts and are shared across replicas; the in-memory limiter
   // remains the single-process fallback.
@@ -1539,6 +1636,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
                 serverSideEncryption: parseS3ServerSideEncryption(
                   driveConfig.storage.serverSideEncryption,
                 ),
+                ...(driveConfig.storage.serverSideEncryptionAwsKmsKeyId === undefined
+                  ? {}
+                  : {
+                      serverSideEncryptionAwsKmsKeyId:
+                        driveConfig.storage.serverSideEncryptionAwsKmsKeyId,
+                    }),
               }),
           forcePathStyle: driveConfig.storage.forcePathStyle,
         });
@@ -1612,6 +1715,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const mailStore = new PostgresMailStore(sql, {
     storageResolver: driveStorageResolver,
   });
+  const mailQuarantineStore = new PostgresMailQuarantineStore(sql);
   const officePreviewConverter =
     driveConfig.officePreview.url === undefined
       ? driveConfig.officePreview.localFallback
@@ -1635,6 +1739,19 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     contentAddressedDedup: driveConfig.contentAddressedDedup,
     multipartThresholdBytes: driveConfig.multipartThresholdBytes,
     multipartPartSizeBytes: driveConfig.multipartPartSizeBytes,
+    storageEncryptionPolicy: async (orgId) =>
+      driveStorageEncryptionPolicyForTenant({
+        byoConfig: (await orgStore.findById(orgId))?.byoConfig,
+        defaultPolicy:
+          driveConfig.storage.serverSideEncryption === undefined
+            ? undefined
+            : {
+                mode: driveConfig.storage.serverSideEncryption,
+                ...(driveConfig.storage.serverSideEncryptionAwsKmsKeyId === undefined
+                  ? {}
+                  : { kmsKeyId: driveConfig.storage.serverSideEncryptionAwsKmsKeyId }),
+              },
+      }),
     onMeteringError: (error: unknown) => {
       app.log.error({ error }, "Drive storage metering emission failed");
     },
@@ -1642,6 +1759,47 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       app.log.error({ error }, "Drive storage quota event emission failed");
     },
   });
+  const driveLifecycleGcWorker = driveConfig.gc.enabled
+    ? new DriveLifecycleGcWorker({
+        store: driveStore,
+        intervalMs: driveConfig.gc.intervalMs,
+        orphanGraceHours: driveConfig.gc.orphanGraceHours,
+        batchSize: driveConfig.gc.batchSize,
+        onResult: (result) => {
+          if (result.candidates > 0) {
+            app.log.info(result, "Drive lifecycle garbage collection completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Drive lifecycle garbage collection error");
+        },
+      })
+    : undefined;
+  const driveVirusScanner =
+    driveConfig.malwareScanner === undefined
+      ? undefined
+      : createClamAvVirusScanner({
+          ...driveConfig.malwareScanner,
+          tier: securityTier,
+          metrics,
+        });
+  if (driveConfig.isProduction) {
+    assertDriveMalwareScannerReady(securityTier, driveVirusScanner);
+  }
+  const driveUploadScanWorker =
+    driveVirusScanner === undefined || !coreApps.shouldRegister("drive")
+      ? undefined
+      : createDriveUploadScanWorker({
+          sql,
+          scanner: driveVirusScanner,
+          tier: securityTier,
+          ...(driveStorage === undefined ? {} : { storage: driveStorage }),
+          storageResolver: driveStorageResolver,
+          metrics,
+          onError: (error) => {
+            app.log.error({ error }, "Drive upload scan worker error");
+          },
+        });
   const searchEngine = await createSearchEngine();
   const semanticEmbeddingProvider = createSemanticSearchEmbeddingProvider(runtimeConfig.ai);
   const vectorStore = createConfiguredVectorStore(runtimeConfig.ai, { sql });
@@ -1741,40 +1899,57 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // Mail background workers run only when the mail app is registered in this
   // process (enabled org-wide AND in the booting role's app set).
   const mailAppRegistered = coreApps.shouldRegister("mail");
-  const mailCfg = mailConfig(bootEnv);
+  const mailCfg = mailConfig(bootEnv, securityTier);
   const outboundMailConfig = mailAppRegistered ? mailCfg.outbound : undefined;
-  // Resolve the org's configured outbound provider (SES/Mailgun/SMTP/Postmark)
-  // when one is set; otherwise fall back to the env-configured SMTP relay.
-  const outboundMailOrgId = mailCfg.defaultOrgId;
-  const outboundMailTransport =
-    outboundMailConfig === undefined
-      ? undefined
-      : await resolveOutboundTransport({
-          orgId: outboundMailOrgId,
-          providerStore: new PostgresOutboundProviderStore(sql),
-          fallbackTransport: new NodemailerMailTransport(outboundMailConfig),
-          // Pass validated env as the secret lookup table (no process.env in mail/*).
-          env: bootEnv as unknown as Record<string, string | undefined>,
+  const outboundProviderStore = new PostgresOutboundProviderStore(sql);
+  const sendingDomainStore = new PostgresSendingDomainStore(sql);
+  const mailDeliveryEventStore = new PostgresMailDeliveryEventStore(sql);
+  const validatedMailSecrets = bootEnv as unknown as Readonly<Record<string, string | undefined>>;
+  const mailSecretProvider = {
+    resolveSecret: async (reference: string): Promise<string | undefined> =>
+      isAllowedMailSecretReference(reference) ? validatedMailSecrets[reference] : undefined,
+  };
+  const environmentOutboundTransport =
+    outboundMailConfig === undefined ? undefined : new NodemailerMailTransport(outboundMailConfig);
+  const outboundTransportResolver = !mailAppRegistered
+    ? undefined
+    : new DispatchTimeTransportResolver({
+        providerStore: outboundProviderStore,
+        domainStore: sendingDomainStore,
+        secrets: mailSecretProvider,
+        ...(outboundMailConfig === undefined
+          ? {}
+          : {
+              environmentFallback: {
+                id: "validated-smtp-relay",
+                kind: "smtp",
+                managed: true,
+                buildTransport: async () => new NodemailerMailTransport(outboundMailConfig),
+              },
+            }),
+      });
+  const mailAdminRoutingStores =
+    outboundTransportResolver === undefined
+      ? { providerStore: outboundProviderStore, domainStore: sendingDomainStore }
+      : withOutboundRoutingInvalidation(outboundProviderStore, sendingDomainStore, (orgId) => {
+          outboundTransportResolver.invalidateOrg(orgId);
         });
   const outboundMailWorker =
-    outboundMailTransport === undefined
+    outboundTransportResolver === undefined
       ? undefined
       : new OutboundMailWorker({
           events: eventBus,
-          dispatcher: new OutboundMailDispatcher(mailStore, outboundMailTransport, {
-            // Stream/large attachments referenced by Drive objectId (G8 / Mail A2.5).
-            resolveAttachment: async (objectId, context) => {
-              const file = await driveStore.readFile({
-                orgId: context.orgId,
-                actorId: context.actorId,
-                objectId,
-              });
-              if (file?.content == null) {
-                throw new Error(`Drive attachment ${objectId} is unavailable.`);
-              }
-              return Buffer.from(file.content);
+          dispatcher: new OutboundMailDispatcher(
+            mailStore,
+            outboundTransportResolver.transportFor,
+            {
+              // Stream/large attachments referenced by Drive objectId (G8 / Mail A2.5).
+              resolveAttachment: createDispatchAuthorizedAttachmentResolver({
+                readFile: (input) => driveStore.readFile(input),
+              }),
+              suppressionStore: mailDeliveryEventStore,
             },
-          }),
+          ),
           onError: (error) => {
             app.log.error({ error }, "Outbound mail dispatch error");
           },
@@ -1784,22 +1959,22 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     name: mailCfg.signupFrom.name,
   };
   const signupVerificationEmailWorker =
-    outboundMailTransport === undefined
+    environmentOutboundTransport === undefined
       ? undefined
       : new SignupVerificationEmailWorker({
           events: eventBus,
-          transport: outboundMailTransport,
+          transport: environmentOutboundTransport,
           from: signupFromAddress,
           onError: (error) => {
             app.log.error({ error }, "Signup verification email delivery error");
           },
         });
   const signupOnboardingInviteEmailWorker =
-    outboundMailTransport === undefined
+    environmentOutboundTransport === undefined
       ? undefined
       : new SignupOnboardingInviteEmailWorker({
           events: eventBus,
-          transport: outboundMailTransport,
+          transport: environmentOutboundTransport,
           from: signupFromAddress,
           onError: (error) => {
             app.log.error({ error }, "Signup onboarding invite email delivery error");
@@ -1809,17 +1984,60 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // Config-gated inbound content scanners: spamd (SpamAssassin) and ClamAV.
   const spamdScannerConfig = mailCfg.spamd;
   const clamavScannerConfig = mailCfg.clamav;
+  const smtpRecipientResolver = createSmtpRecipientResolver({
+    receivingDomains: new PostgresReceivingDomainStore(sql),
+  });
+  const mailAntivirusScanner =
+    clamavScannerConfig === undefined
+      ? undefined
+      : new ClamavScanner({
+          ...clamavScannerConfig,
+          tier: securityTier,
+          metrics,
+        });
   const smtpMailReceiver =
     smtpMailReceiverConfig === undefined
       ? undefined
       : new SmtpMailReceiver({
           store: mailStore,
-          orgId: smtpMailReceiverConfig.orgId,
+          recipientResolver: smtpRecipientResolver,
+          transportSecurity: smtpMailReceiverConfig.transportSecurity,
+          limits: smtpMailReceiverConfig.limits,
           logger: app.log,
           scanners: {
             ...(spamdScannerConfig ? { spam: new SpamdScanner(spamdScannerConfig) } : {}),
-            ...(clamavScannerConfig ? { antivirus: new ClamavScanner(clamavScannerConfig) } : {}),
+            ...(mailAntivirusScanner === undefined ? {} : { antivirus: mailAntivirusScanner }),
+            tier: securityTier,
           },
+          quarantineStore: mailQuarantineStore,
+        });
+  const mailQuarantineService =
+    mailAntivirusScanner === undefined
+      ? undefined
+      : new MailQuarantineService({
+          store: mailQuarantineStore,
+          scanner: quarantineReleaseScannerFromAntivirus(mailAntivirusScanner),
+          deliver: async (record, rawMessage) => {
+            const recipients = await Promise.all(
+              record.envelopeTo.map((address) => smtpRecipientResolver.resolveRecipient(address)),
+            );
+            if (
+              recipients.some((recipient) => recipient === null || recipient.orgId !== record.orgId)
+            ) {
+              throw new Error(
+                "One or more quarantined recipients are no longer active in the organization.",
+              );
+            }
+            await ingestResolvedRawMail({
+              store: mailStore,
+              input: {
+                raw: rawMessage,
+                recipients: recipients.filter((recipient) => recipient !== null),
+                ...(record.envelopeFrom === null ? {} : { envelopeFrom: record.envelopeFrom }),
+              },
+            });
+          },
+          auditSink: auditStore,
         });
   const outboundWebhookWorker = new OutboundWebhookWorker({
     store: webhookStore,
@@ -1909,8 +2127,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     {
       id: "platform.pending_action.created",
       subject: "platform.pending_action.created",
-      title: "Pending action created",
-      description: "A tool invocation is awaiting confirmation.",
+      title: "Pending action status",
+      description: "A pending tool invocation was created or changed state.",
       direction: "publish",
       tags: ["Tools"],
       payloadSchema: {
@@ -1996,6 +2214,25 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         );
       }
     },
+    onPendingActionChanged: async (record) => {
+      try {
+        await eventBus.publish("platform.pending_action.created", {
+          id: record.id,
+          orgId: record.orgId,
+          actorId: record.requesterActorId,
+          toolId: record.toolId,
+          status: record.status,
+          createdAt: record.createdAt.toISOString(),
+          expiresAt: record.expiresAt.toISOString(),
+          ...(record.traceId === null ? {} : { traceId: record.traceId }),
+        });
+      } catch (error) {
+        app.log.error(
+          { error, pendingActionId: record.id, status: record.status },
+          "Failed to publish pending action status notification",
+        );
+      }
+    },
   });
   // P0-4(b): leader-gated worker that transitions stale pending_confirmation
   // actions to `expired` once their per-tier timeout elapses.
@@ -2004,8 +2241,33 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     intervalMs: bootEnv.PENDING_ACTION_EXPIRY_INTERVAL_MS,
     batchSize: bootEnv.PENDING_ACTION_EXPIRY_BATCH_SIZE,
     onResult: (result) => {
-      if (result.expiredCount > 0) {
-        app.log.info({ expiredCount: result.expiredCount }, "Expired stale pending tool actions");
+      if (result.expiredCount > 0 || result.recoveredUnknownCount > 0) {
+        app.log.info(
+          {
+            expiredCount: result.expiredCount,
+            recoveredUnknownCount: result.recoveredUnknownCount,
+          },
+          "Recovered stale pending tool actions",
+        );
+        for (const record of [...result.expired, ...result.recoveredUnknown]) {
+          void eventBus
+            .publish("platform.pending_action.created", {
+              id: record.id,
+              orgId: record.orgId,
+              actorId: record.requesterActorId,
+              toolId: record.toolId,
+              status: record.status,
+              createdAt: record.createdAt.toISOString(),
+              expiresAt: record.expiresAt.toISOString(),
+              ...(record.traceId === null ? {} : { traceId: record.traceId }),
+            })
+            .catch((error: unknown) => {
+              app.log.error(
+                { error, pendingActionId: record.id },
+                "Failed to publish expired pending action notification",
+              );
+            });
+        }
       }
     },
     onError: (error) => {
@@ -2069,6 +2331,70 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       : { agentLimitBudget: agentLimitBudgetOverride }),
     metrics,
     featureFlags: runtimeFeatureFlags,
+    resolvePendingPrincipal: async (record) => {
+      if (record.requesterCredentialId === null) {
+        const rows = (await sql`
+          select id, org_id, type, display_name, email, scopes
+          from actors
+          where id = ${record.requesterActorId}
+            and org_id = ${record.orgId}
+            and disabled_at is null
+          limit 1
+        `) as unknown as readonly {
+          readonly id: string;
+          readonly org_id: string;
+          readonly type: Actor["type"];
+          readonly display_name: string;
+          readonly email: string | null;
+          readonly scopes: readonly string[];
+        }[];
+        const requester = rows[0];
+        if (requester === undefined) {
+          return null;
+        }
+        return {
+          actor: {
+            id: requester.id,
+            orgId: requester.org_id,
+            type: requester.type,
+            displayName: requester.display_name,
+            ...(requester.email === null ? {} : { email: requester.email }),
+            scopes: requester.scopes,
+          },
+        };
+      }
+      const credential = await agentCredentialStore.findById(record.requesterCredentialId);
+      if (
+        credential === null ||
+        credential.actorId !== record.requesterActorId ||
+        credential.orgId !== record.orgId
+      ) {
+        return null;
+      }
+      const enforcement = enforceCredentialPolicy(credential, {
+        ...(record.requesterIp === null ? {} : { ip: record.requesterIp }),
+        ...(credential.certFingerprint === null
+          ? {}
+          : { certFingerprint: credential.certFingerprint }),
+      });
+      if (!enforcement.ok) {
+        return null;
+      }
+      return {
+        actor: {
+          id: credential.actorId,
+          orgId: credential.orgId,
+          type: "agent",
+          scopes: credential.scopes,
+        },
+        credentialId: credential.id,
+        ...(credential.approvalOwnerActorId === undefined ||
+        credential.approvalOwnerActorId === null
+          ? {}
+          : { credentialOwnerActorId: credential.approvalOwnerActorId }),
+        credentialPolicy: credential.policy,
+      };
+    },
   });
   // P0-6 / PRD §8.4: auto-classify newly created resources. The feature tool
   // create / send / upload handlers call this classifier so mail messages,
@@ -2138,10 +2464,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (coreApps.shouldRegister("drive")) {
     registerDriveTools(tools, {
       store: driveStore,
+      enablePdfEditing: coreApps.shouldRegister("editors"),
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
-      docsStore: docsStore,
-      sheetsStore: sheetsStore,
-      slidesStore: slidesStore,
+      ...(coreApps.shouldRegister("docs") ? { docsStore } : {}),
+      ...(coreApps.shouldRegister("editors") ? { sheetsStore, slidesStore } : {}),
       // Owner-display resolver for drive.list responses. Batches actor
       // id → display_name + email lookups against the actors table so
       // the UI shows "Avery Park" / "leo@helix.local" instead of raw
@@ -2245,21 +2571,42 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (runtimeSearchEngine !== undefined) {
     registerSearchTools(tools, { engine: runtimeSearchEngine });
   }
-  // Register the Sheets and Slides domain tools using the stores instantiated above.
-  registerSheets({
-    registry: tools,
-    store: sheetsStore,
-    ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
-  });
-  registerSlides(tools, { store: slidesStore, driveStore });
+  if (coreApps.shouldRegister("editors")) {
+    registerSheets({
+      registry: tools,
+      store: sheetsStore,
+      ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
+    });
+    registerSlides(tools, { store: slidesStore, driveStore });
+  }
+  const assistantSlashCommands = new AssistantSlashCommandHooks();
+  if (!coreApps.shouldRegister("calendar")) {
+    assistantSlashCommands.register("schedule", () => ({
+      instruction:
+        "Calendar scheduling is unavailable in this deployment. Explain that no calendar action was taken.",
+      searchQuery: "",
+      toolIds: [],
+    }));
+  }
+  const assistantSearchTypes: readonly GlobalSearchType[] = [
+    ...(coreApps.shouldRegister("mail") ? (["mail"] as const) : []),
+    ...(coreApps.shouldRegister("chat") ? (["chat"] as const) : []),
+    ...(coreApps.shouldRegister("docs") ? (["docs"] as const) : []),
+    ...(coreApps.shouldRegister("drive") ? (["drive"] as const) : []),
+    ...(coreApps.shouldRegister("calendar") ? (["calendar"] as const) : []),
+  ];
   const assistantOrchestrator = new AssistantOrchestrator({
     store: assistantStore,
     ai: assistantAi,
     tools,
     memory: assistantMemory,
     ...(runtimeSearchEngine === undefined ? {} : { search: runtimeSearchEngine }),
+    searchTypes: assistantSearchTypes,
     confirmationGate,
-    slashCommands: new AssistantSlashCommandHooks(),
+    slashCommands: assistantSlashCommands,
+    classifyUserInput: async ({ content }) =>
+      deriveClassification({ content, scanContent: true }).classification,
+    blockHighRiskToolsWhenUntrusted: securityTier !== "personal",
   });
   if (coreApps.shouldRegister("assistant")) {
     registerAssistantTools(tools, {
@@ -2363,14 +2710,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // rejects admin-scoped actors that have not presented a verified MFA factor.
   app.addHook("preHandler", async (request, reply) => {
     const url = request.url.split("?")[0] ?? "";
-    if (!url.startsWith("/api/admin/")) {
+    if (!isAdminMfaProtectedPath(url)) {
       return;
     }
     const actor = await actorFromAuthenticatedRequest(request);
     const decision = evaluateAdminMfa({
       tier: securityTier,
       actor,
-      mfaVerified: await mfaResolver.isMfaVerified(request),
+      mfaVerified: await mfaResolver.isMfaVerified(request, actor),
     });
     if (!decision.allowed) {
       const traceId = traceIdForRequest(request);
@@ -2389,7 +2736,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     }
   });
 
-  await app.register(cors, { origin: true, credentials: true });
+  await installTrustedOriginPolicy(app, trustedOrigins);
   await app.register(cookie);
   registerBetterAuthRoutes(app, betterAuthRuntime?.auth);
   await app.register(websocket);
@@ -2410,7 +2757,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       router: trpcRouter,
       createContext: async ({ req }: CreateFastifyContextOptions) => ({
         request: createRequestContext(req),
-        actor: await actorFromAuthenticatedRequest(req),
+        principal: await principalFromAuthenticatedRequest(req),
       }),
     },
   });
@@ -2479,14 +2826,49 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     });
     await registerMailDeliveryAdminRoutes(app, {
-      providerStore: new PostgresOutboundProviderStore(sql),
-      domainStore: new PostgresSendingDomainStore(sql),
+      providerStore: mailAdminRoutingStores.providerStore,
+      domainStore: mailAdminRoutingStores.domainStore,
       dkimStore: new PostgresMailDkimKeyStore(sql),
       dmarcStore: new PostgresMailDmarcReportStore(sql),
       routingStore: new PostgresMailRoutingRuleStore(sql),
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
       auditSink: auditStore,
     });
+    const mailDeliveryAlertMonitor = new MailDeliveryAlertMonitor({
+      store: mailDeliveryEventStore,
+      emit: (alert) => {
+        app.log.warn(
+          {
+            orgId: alert.orgId,
+            category: alert.category,
+            count: alert.count,
+            threshold: alert.threshold,
+            windowMinutes: alert.windowMinutes,
+          },
+          "Managed mail provider delivery threshold reached",
+        );
+      },
+    });
+    await registerMailProviderWebhookRoutes(app, {
+      providerStore: mailAdminRoutingStores.providerStore,
+      deliveryStore: mailDeliveryEventStore,
+      secrets: mailSecretProvider,
+      alertMonitor: mailDeliveryAlertMonitor,
+      onSignatureFailure: ({ orgId, providerId }) => {
+        app.log.warn({ orgId, providerId }, "Rejected managed mail provider webhook signature");
+      },
+    });
+    await registerMailDeliveryEventAdminRoutes(app, {
+      store: mailDeliveryEventStore,
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      auditSink: auditStore,
+    });
+    if (mailQuarantineService !== undefined) {
+      await registerMailQuarantineAdminRoutes(app, {
+        service: mailQuarantineService,
+        actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      });
+    }
   }
   // Core-app enablement admin API: org admins view/toggle which core apps are
   // enabled org-wide. Toggling writes `config.modules[appId].enabled` through
@@ -2641,7 +3023,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ? await registerChatRoutes(app, {
         store: chatStore,
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-        bus: new EventBusChatRoomBus(eventBus, { subjectPrefix: "chat.room" }),
+        trustedOrigins,
+        bus: new EventBusChatRoomBus(eventBus, { subjectPrefix: "chat" }),
         metrics,
         rateLimit: {
           capacity: bootEnv.CHAT_WS_RATE_LIMIT_CAPACITY,
@@ -2709,6 +3092,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     await registerDriveRoutes(app, {
       store: driveStore,
       appPasswords: appPasswordStore,
+      requireTls: driveConfig.isProduction,
     });
     await registerDriveShareLinkRoute(app, { store: driveStore });
 
@@ -3038,6 +3422,24 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       worker: tenantStorageMigrationWorker,
     });
   }
+  if (driveUploadScanWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "drive-upload-scan-worker",
+      worker: driveUploadScanWorker,
+    });
+  }
+  if (driveLifecycleGcWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "drive-lifecycle-gc-worker",
+      worker: driveLifecycleGcWorker,
+    });
+  }
+  if (chatRetentionWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "chat-retention-worker",
+      worker: chatRetentionWorker,
+    });
+  }
   if (smtpMailReceiver !== undefined && smtpMailReceiverConfig !== undefined) {
     const receiver = smtpMailReceiver;
     const receiverConfig = smtpMailReceiverConfig;
@@ -3243,30 +3645,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ...(sessionActorResolver === undefined ? {} : { sessionResolver: sessionActorResolver }),
   });
 
-  app.post("/api/tools/pending/:pendingId/approve", async (request, reply) => {
-    const params = pendingActionParamsSchema.parse(request.params);
-    const result = await tools.approvePending(params.pendingId, {
-      actor: await actorFromAuthenticatedRequest(request),
-      request: createRequestContext(request),
-    });
-    if (!result.ok) {
-      return sendToolInvokeError(reply, result, traceIdForRequest(request));
-    }
-    if (result.status === "pending_confirmation") {
-      return reply.code(202).send({ status: result.status, pending: result.pending });
-    }
-    return { status: "executed", output: result.output };
-  });
-
-  app.post("/api/tools/pending/:pendingId/cancel", async (request, reply) => {
-    const params = pendingActionParamsSchema.parse(request.params);
-    const result = await tools.cancelPending(params.pendingId, {
-      actor: await actorFromAuthenticatedRequest(request),
-    });
-    if (!result.ok) {
-      return sendToolInvokeError(reply, result, traceIdForRequest(request));
-    }
-    return { status: result.status, pending: result.pending };
+  registerPendingActionMutationRoutes(app, {
+    tools,
+    tokenStore: oauthStore,
+    credentialStore: agentCredentialStore,
+    ...(sessionActorResolver === undefined ? {} : { sessionResolver: sessionActorResolver }),
   });
 
   registerToolRestRoutes(
@@ -3312,7 +3695,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     });
 
   app.post("/mcp", async (request, reply) => {
-    const actor = await actorFromAuthenticatedRequest(request);
+    const principal = await principalFromAuthenticatedRequest(request);
+    const requestContext = createRequestContext(request);
     // PRD §9.5: when the client negotiates SSE, stream the JSON-RPC response
     // over text/event-stream so long-running tool calls keep the connection
     // warm; otherwise fall back to a plain JSON-RPC POST response.
@@ -3325,9 +3709,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       });
       for await (const event of handleMcpStreamingRequest({
         tools,
-        actor,
+        principal,
+        request: requestContext,
         body: request.body,
         resources: mcpResourceProvider(request),
+        idempotencyStore,
       })) {
         reply.raw.write(formatSseEvent(event));
       }
@@ -3336,13 +3722,24 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     }
     return handleMcpJsonRpcRequest({
       tools,
-      actor,
+      principal,
+      request: requestContext,
       body: request.body,
       resources: mcpResourceProvider(request),
+      idempotencyStore,
     });
   });
 
   return app;
+}
+
+export function isAdminMfaProtectedPath(url: string): boolean {
+  const path = url.split("?")[0] ?? "";
+  return (
+    path.startsWith("/api/admin/") ||
+    path === "/trpc/tools.explain" ||
+    path.startsWith("/trpc/admin.")
+  );
 }
 
 function nativeDocumentLayoutSettingsFromMetadata(metadata: JsonObject):
@@ -3550,16 +3947,13 @@ function assignLimitOverride(
 
 async function invokeTool(
   tools: RuntimeToolRegistry,
-  tokenStore: AccessTokenStore,
-  sessionResolver: SessionActorResolver | undefined,
-  credentialStore: AgentCredentialStore | undefined,
+  principal: ToolInvocationPrincipal,
   toolId: string,
   input: unknown,
   request: FastifyRequest,
 ) {
   const result = await tools.invoke(toolId, input, {
-    request: createRequestContext(request),
-    actor: await resolveRequestActor(request, tokenStore, sessionResolver, credentialStore),
+    ...toolInvocationOptions(principal, createRequestContext(request)),
     enforceConfirmation: true,
   });
   return result;
@@ -3651,9 +4045,9 @@ async function createSearchEngine(): Promise<MeilisearchSearchEngine | undefined
   return engine;
 }
 
-function parseS3ServerSideEncryption(value: string): "AES256" {
-  if (value !== "AES256") {
-    throw new TypeError("RUSTFS_SERVER_SIDE_ENCRYPTION must be AES256");
+function parseS3ServerSideEncryption(value: string): "AES256" | "aws:kms" {
+  if (value !== "AES256" && value !== "aws:kms") {
+    throw new TypeError("RUSTFS_SERVER_SIDE_ENCRYPTION must be AES256 or aws:kms");
   }
   return value;
 }
@@ -3700,7 +4094,7 @@ export function getBetterAuthRuntimeConfig(
     throw new TypeError("BETTER_AUTH_SECRET must be at least 32 characters");
   }
 
-  const trustedOrigins = parseCsv(env.BETTER_AUTH_TRUSTED_ORIGINS ?? env.CLIENT_ORIGIN);
+  const trustedOrigins = parseTrustedOrigins(env.BETTER_AUTH_TRUSTED_ORIGINS);
   return {
     databaseUrl,
     secret,
@@ -3905,16 +4299,13 @@ export function getOutboundMailConfig(
 /** @deprecated Prefer mailConfig(loadEnv(...)).receiver — kept for server.test.ts. */
 export function getSmtpMailReceiverConfig(
   source: NodeJS.ProcessEnv | Record<string, string | undefined>,
-):
-  | { readonly orgId: SmtpReceiverOptions["orgId"]; readonly port: number; readonly host?: string }
-  | undefined {
+): { readonly port: number; readonly host?: string } | undefined {
   if (!envValueFlag(source.MAIL_SMTP_RECEIVER_ENABLED ?? "", false)) {
     return undefined;
   }
 
   const host = source.MAIL_SMTP_RECEIVER_HOST;
   return {
-    orgId: source.HELIX_DEFAULT_ORG_ID ?? "00000000-0000-0000-0000-000000000000",
     port: Number.parseInt(source.MAIL_SMTP_RECEIVER_PORT ?? "2525", 10),
     ...(host === undefined || host.length === 0 ? {} : { host }),
   };
@@ -3963,16 +4354,6 @@ function resolveConfirmationTimeoutMs(tier: SecurityTier, env: NodeJS.ProcessEnv
     case "sovereign":
       return 3 * minute;
   }
-}
-
-function parseCsv(value: string | undefined): readonly string[] {
-  if (value === undefined || value.trim().length === 0) {
-    return [];
-  }
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
 }
 
 export function createAssistantProviders(

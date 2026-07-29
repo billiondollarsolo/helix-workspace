@@ -12,6 +12,12 @@ import type {
 } from "./store.js";
 import type { DriveEntryRecord } from "./types.js";
 import { sendBytesWithRangeSupport } from "./range-response.js";
+import { safeDriveDownloadPolicy } from "./share-link-security.js";
+import {
+  createWebDavRateLimiter,
+  isSecureWebDavRequest,
+  type WebDavRateLimiter,
+} from "./webdav-security.js";
 
 export interface WebDavDriveStore extends DriveStore {
   createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord>;
@@ -26,6 +32,8 @@ export interface WebDavDriveStore extends DriveStore {
 export interface RegisterDriveRoutesOptions {
   readonly store: WebDavDriveStore;
   readonly appPasswords: AppPasswordAuthenticator;
+  readonly requireTls?: boolean;
+  readonly rateLimiter?: WebDavRateLimiter;
 }
 
 export interface RegisterDriveShareLinkRouteOptions {
@@ -52,7 +60,11 @@ export async function registerDriveShareLinkRoute(
       // No dedicated not_implemented code in the envelope taxonomy; 500 is honest.
       throw new ApiError("internal_error", "Share links are not configured.");
     }
-    const file = await options.store.readFileByShareToken(token);
+    const password = headerString(request.headers["x-helix-share-password"]);
+    const file = await options.store.readFileByShareToken({
+      token,
+      ...(password === undefined ? {} : { password }),
+    });
     if (file === null) {
       throw new NotFoundError("Share link not found.");
     }
@@ -61,14 +73,22 @@ export async function registerDriveShareLinkRoute(
     const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
     const utf8Encoded = encodeURIComponent(filename);
     const download = (request.query as { download?: string }).download === "1";
-    const disposition = `${download ? "attachment" : "inline"}; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+    const policy = safeDriveDownloadPolicy({
+      mimeType: file.entry.mimeType,
+      requestedInline: !download,
+    });
+    const disposition = `${policy.disposition}; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
 
     if (file.content !== null) {
+      reply
+        .header("X-Content-Type-Options", "nosniff")
+        .header("Content-Security-Policy", "sandbox; default-src 'none'")
+        .header("Cross-Origin-Resource-Policy", "cross-origin");
       return sendBytesWithRangeSupport({
         reply,
         request,
         bytes: Buffer.from(file.content),
-        mimeType: file.entry.mimeType ?? "application/octet-stream",
+        mimeType: policy.mimeType,
         disposition,
       });
     }
@@ -97,6 +117,7 @@ export async function registerDriveRoutes(
   safeAddContentTypeParser(app, "text/xml");
 
   const locks = new Map<string, WebDavLock>();
+  const rateLimiter = options.rateLimiter ?? createWebDavRateLimiter();
 
   app.route({
     method: "OPTIONS",
@@ -114,12 +135,42 @@ export async function registerDriveRoutes(
     url: "/dav/files/*",
     handler: async (request, reply) => {
       const method = request.method as WebDavMethod;
+      const forwardedProto = headerString(request.headers["x-forwarded-proto"]);
+      if (
+        options.requireTls !== false &&
+        !isSecureWebDavRequest({
+          protocol: request.protocol,
+          ...(forwardedProto === undefined ? {} : { forwardedProto }),
+        })
+      ) {
+        return reply.code(426).header("Upgrade", "TLS/1.2").send("WebDAV requires HTTPS.");
+      }
+      const authLimit = rateLimiter.consume(`auth:${request.ip}`, 20, 60_000);
+      if (!authLimit.allowed) {
+        return reply
+          .code(429)
+          .header("Retry-After", String(authLimit.retryAfterSeconds))
+          .send("WebDAV authentication rate limit exceeded.");
+      }
       const actor = await authenticateWebDav(request, options.appPasswords, requiredScope(method));
       if (actor === null) {
         return reply
           .header("www-authenticate", 'Basic realm="Helix WebDAV"')
           .code(401)
           .send("WebDAV app password required.");
+      }
+      if (method !== "GET" && method !== "PROPFIND") {
+        const mutationLimit = rateLimiter.consume(
+          `mutation:${actor.orgId}:${actor.id}`,
+          120,
+          60_000,
+        );
+        if (!mutationLimit.allowed) {
+          return reply
+            .code(429)
+            .header("Retry-After", String(mutationLimit.retryAfterSeconds))
+            .send("WebDAV mutation rate limit exceeded.");
+        }
       }
 
       const path = parseDavFilePath(request.url);

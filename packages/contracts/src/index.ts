@@ -4,3 +4,4 @@ export * from "./tenant-config.js";
 export * from "./drive.js";
 export * from "./mail.js";
 export * from "./chat.js";
+export * from "./security-scanning.js";

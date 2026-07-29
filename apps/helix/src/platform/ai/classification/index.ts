@@ -1,4 +1,5 @@
 export * from "./gating.js";
+export * from "./effective.js";
 export * from "./policy.js";
 export * from "./postgres-store.js";
 export * from "./provider-tags.js";

@@ -44,10 +44,16 @@ import type {
 } from "../search/index.js";
 import { createToolRegistry } from "../tool-registry.js";
 import { InMemoryConfirmationGate } from "../tools/registry.js";
+import { EMPTY_CREDENTIAL_POLICY } from "../auth/credentials.js";
+import { credentialToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 import { AssistantOrchestrator } from "./orchestrator.js";
 import { InMemoryAssistantStore } from "./store.js";
 import { registerAssistantTools } from "./tools.js";
 import type { AssistantTurnResponse } from "./types.js";
+
+const resolveAssistantTestPendingPrincipal = async (record: {
+  readonly requesterPrincipal: Actor;
+}) => ({ actor: record.requesterPrincipal });
 
 describe("AssistantOrchestrator", () => {
   it("covers the PRD assistant share flow across drive search, chat search, pending confirmation, and approved execution", async () => {
@@ -69,17 +75,23 @@ describe("AssistantOrchestrator", () => {
         type: "drive",
         title: "Q3 Launch PRD",
         body: "The Q3 Launch PRD should be shared with Bruno for review.",
+        attributes: { orgId: actor.orgId, classification: "standard" },
       },
       {
         id: "chat:share-request",
         type: "chat",
         title: "Launch room",
         body: "Bruno asked Ada to share the Q3 Launch PRD.",
+        attributes: { orgId: actor.orgId, classification: "standard" },
       },
     ]);
     const ai = new ShareFlowAI({ prdObjectId, targetActorId });
-    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const confirmationGate = new InMemoryConfirmationGate();
+    const tools = createToolRegistry({
+      accessPolicy: new AllowAllToolAccessPolicy(),
+      confirmationGate,
+      resolvePendingPrincipal: resolveAssistantTestPendingPrincipal,
+    });
     registerDriveTools(tools, { store: drive });
     registerChatTools(tools, { store: chat });
 
@@ -115,10 +127,9 @@ describe("AssistantOrchestrator", () => {
     expect(turn.pendingConfirmations[0]).toMatchObject({
       toolId: "drive.share",
       actorId: actor.id,
-      input: {
-        objectId: prdObjectId,
-        actorIds: [targetActorId],
-        role: "commenter",
+      preview: {
+        resourceIds: [prdObjectId],
+        targets: [targetActorId],
       },
       status: "pending_confirmation",
     });
@@ -136,20 +147,22 @@ describe("AssistantOrchestrator", () => {
         request: { requestId: "req-share-approve", traceId: "trace-share-approve" },
       },
     );
-    expect(resumeResult.ok).toBe(true);
     if (!resumeResult.ok) {
       throw new Error(resumeResult.error);
     }
+    expect(resumeResult.ok).toBe(true);
     const resumed = resumeResult.output;
 
-    expect(resumed.toolCalls).toEqual([
+    expect(resumed.toolCalls).toMatchObject([
       {
         toolCallId: turn.pendingConfirmations[0]?.id,
         toolId: "drive.share",
         input: {
-          objectId: prdObjectId,
-          actorIds: [targetActorId],
-          role: "commenter",
+          preview: {
+            toolId: "drive.share",
+            resourceIds: [prdObjectId],
+            targets: [targetActorId],
+          },
         },
         status: "executed",
         output: {
@@ -197,8 +210,12 @@ describe("AssistantOrchestrator", () => {
     };
     const store = new InMemoryAssistantStore();
     const ai = new CancelFlowAI();
-    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const confirmationGate = new InMemoryConfirmationGate();
+    const tools = createToolRegistry({
+      accessPolicy: new AllowAllToolAccessPolicy(),
+      confirmationGate,
+      resolvePendingPrincipal: resolveAssistantTestPendingPrincipal,
+    });
     let destructiveInvoked = false;
 
     tools.register(
@@ -262,7 +279,16 @@ describe("AssistantOrchestrator", () => {
       {
         toolCallId: pendingId,
         toolId: "demo.delete",
-        input: { id: "launch-note" },
+        input: {
+          preview: {
+            toolId: "demo.delete",
+            action: "demo.delete",
+            resourceIds: [],
+            recipients: [],
+            targets: [],
+            consequence: "Permanently change or remove data using demo.delete.",
+          },
+        },
         status: "skipped",
         error: "Pending assistant tool action was cancelled by the actor.",
       },
@@ -355,11 +381,16 @@ describe("AssistantOrchestrator", () => {
         type: "docs",
         title: "Launch Plan",
         body: "Launch owner is Ada and the ship date is Friday.",
+        attributes: { orgId: actor.orgId, classification: "standard" },
       },
     ]);
     const ai = new FakeAssistantAI();
-    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const confirmationGate = new InMemoryConfirmationGate();
+    const tools = createToolRegistry({
+      accessPolicy: new AllowAllToolAccessPolicy(),
+      confirmationGate,
+      resolvePendingPrincipal: resolveAssistantTestPendingPrincipal,
+    });
     let destructiveInvoked = false;
 
     tools.register(
@@ -525,6 +556,7 @@ describe("AssistantOrchestrator", () => {
           type: "docs",
           title: "Slash command context",
           body: "Actor-visible context for slash command routing.",
+          attributes: { orgId: actor.orgId, classification: "standard" },
         },
       ]);
       const ai = new SlashRouteAI(testCase);
@@ -555,6 +587,72 @@ describe("AssistantOrchestrator", () => {
       });
     }
   });
+
+  it.each([
+    {
+      override: "always" as const,
+      sideEffects: "write" as const,
+      expected: "pending_confirmation" as const,
+    },
+    {
+      override: "never" as const,
+      sideEffects: "destructive" as const,
+      expected: "pending_confirmation" as const,
+    },
+  ])(
+    "propagates confirmationOverride=$override through Assistant tool calls",
+    async ({ override, sideEffects, expected }) => {
+      const actor: Actor = {
+        id: "00000000-0000-4000-8000-000000000091",
+        orgId: "00000000-0000-4000-8000-000000000092",
+        type: "agent",
+        scopes: ["policy.invoke"],
+      };
+      const store = new InMemoryAssistantStore();
+      const confirmationGate = new InMemoryConfirmationGate();
+      const tools = createToolRegistry({
+        accessPolicy: new AllowAllToolAccessPolicy(),
+        confirmationGate,
+        resolvePendingPrincipal: resolveAssistantTestPendingPrincipal,
+      });
+      let executions = 0;
+      tools.register(
+        readTool({
+          id: "policy.invoke",
+          description: "Exercise Assistant credential policy.",
+          permission: "policy.invoke",
+          sideEffects,
+          handler: async () => {
+            executions += 1;
+            return { executed: true };
+          },
+        }),
+      );
+      const assistant = new AssistantOrchestrator({
+        store,
+        ai: new PolicyToolAI(),
+        tools,
+        confirmationGate,
+      });
+      const principal = credentialToolInvocationPrincipal({
+        actor,
+        credentialId: "00000000-0000-4000-8000-000000000093",
+        credentialPolicy: {
+          ...EMPTY_CREDENTIAL_POLICY,
+          confirmationOverride: override,
+        },
+      });
+
+      const turn = await assistant.sendMessage({
+        actor,
+        principal,
+        content: "Run the policy tool.",
+      });
+
+      expect(turn.toolCalls[0]?.status).toBe(expected);
+      expect(executions).toBe(0);
+    },
+  );
 });
 
 class ShareFlowAI implements AICapability {
@@ -670,6 +768,26 @@ class CancelFlowAI implements AICapability {
       model: "fake-model",
       message: "Cancelled the delete request. I did not delete the launch note.",
     };
+  }
+}
+
+class PolicyToolAI implements AICapability {
+  #calls = 0;
+
+  async chat(): Promise<ChatResponse> {
+    this.#calls += 1;
+    return this.#calls === 1
+      ? {
+          providerId: "fake",
+          model: "fake-model",
+          message: "I will run the policy tool.",
+          toolCalls: [{ id: "policy.invoke", input: {} }],
+        }
+      : {
+          providerId: "fake",
+          model: "fake-model",
+          message: "The policy tool completed.",
+        };
   }
 }
 

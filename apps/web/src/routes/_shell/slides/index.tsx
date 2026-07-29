@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { SlidesShell, type SlidesViewRouteState } from "@/features/slides/slides-shell";
+import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
 
 /** `?deck=<id>` opens straight into that deck's editor (used by Drive's New). */
 interface SlidesRouteSearch {
@@ -28,6 +29,7 @@ function validateSlidesRouteSearch(search: Record<string, unknown>): SlidesRoute
 }
 
 export const Route = createFileRoute("/_shell/slides/")({
+  beforeLoad: () => enforceFullWorkspaceRoute(),
   validateSearch: (search): SlidesRouteSearch => validateSlidesRouteSearch(search),
   component: SlidesRoute,
 });

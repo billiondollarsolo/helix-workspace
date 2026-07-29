@@ -130,6 +130,7 @@ export interface CreateOutboundProviderInput {
   readonly isDefault: boolean;
   readonly config: JsonObject;
   readonly secretRef: string | null;
+  readonly webhookSecretRef?: string | null;
   readonly createdBy: string;
 }
 
@@ -141,6 +142,7 @@ export interface UpdateOutboundProviderInput {
   readonly isDefault?: boolean;
   readonly config?: JsonObject;
   readonly secretRef?: string | null;
+  readonly webhookSecretRef?: string | null;
 }
 
 export interface OutboundProviderStore {
@@ -286,6 +288,7 @@ interface OutboundProviderRow {
   readonly is_default: boolean;
   readonly config: JsonObject;
   readonly secret_ref: string | null;
+  readonly webhook_secret_ref?: string | null;
   readonly created_at: Date;
   readonly updated_at: Date;
 }
@@ -300,6 +303,7 @@ function mapProviderRow(row: OutboundProviderRow): OutboundProviderConfig {
     isDefault: row.is_default,
     config: row.config,
     secretRef: row.secret_ref,
+    webhookSecretRef: row.webhook_secret_ref ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -343,11 +347,14 @@ export class PostgresOutboundProviderStore implements OutboundProviderStore {
       }
       const rows = (await tx`
         insert into mail_outbound_providers
-          (org_id, name, kind, enabled, is_default, config, secret_ref, created_by)
+          (
+            org_id, name, kind, enabled, is_default, config, secret_ref,
+            webhook_secret_ref, created_by
+          )
         values (
           ${input.orgId}, ${input.name}, ${input.kind}, ${input.enabled},
           ${input.isDefault}, ${tx.json(toSqlJson(input.config))}, ${input.secretRef},
-          ${input.createdBy}
+          ${input.webhookSecretRef ?? null}, ${input.createdBy}
         )
         on conflict do nothing
         returning *
@@ -361,9 +368,7 @@ export class PostgresOutboundProviderStore implements OutboundProviderStore {
     });
   }
 
-  async updateProvider(
-    input: UpdateOutboundProviderInput,
-  ): Promise<OutboundProviderConfig | null> {
+  async updateProvider(input: UpdateOutboundProviderInput): Promise<OutboundProviderConfig | null> {
     return this.sql.begin(async (tx) => {
       const existing = (await tx`
         select * from mail_outbound_providers where org_id = ${input.orgId} and id = ${input.id}
@@ -386,6 +391,11 @@ export class PostgresOutboundProviderStore implements OutboundProviderStore {
           is_default = ${input.isDefault ?? current.is_default},
           config = ${tx.json(toSqlJson(input.config ?? current.config))},
           secret_ref = ${input.secretRef === undefined ? current.secret_ref : input.secretRef},
+          webhook_secret_ref = ${
+            input.webhookSecretRef === undefined
+              ? (current.webhook_secret_ref ?? null)
+              : input.webhookSecretRef
+          },
           updated_at = now()
         where org_id = ${input.orgId} and id = ${input.id}
         returning *
@@ -682,10 +692,7 @@ export class PostgresMailDmarcReportStore implements MailDmarcReportStore {
     });
   }
 
-  async listReports(
-    orgId: string,
-    domain?: string,
-  ): Promise<readonly MailDmarcReportRecord[]> {
+  async listReports(orgId: string, domain?: string): Promise<readonly MailDmarcReportRecord[]> {
     const rows = (await this.sql`
       select * from mail_dmarc_reports
       where org_id = ${orgId}
@@ -802,9 +809,7 @@ export class PostgresMailRoutingRuleStore implements MailRoutingRuleStore {
       returning *
     `) as unknown as readonly RoutingRuleRow[];
     if (rows[0] === undefined) {
-      throw new MailAdminConflictError(
-        `A routing rule named "${input.name}" already exists.`,
-      );
+      throw new MailAdminConflictError(`A routing rule named "${input.name}" already exists.`);
     }
     return mapRoutingRow(rows[0]);
   }
@@ -877,11 +882,7 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
     return [...this.#providers.values()]
       .filter((provider) => provider.orgId === orgId)
       .sort((a, b) =>
-        a.isDefault === b.isDefault
-          ? a.createdAt.localeCompare(b.createdAt)
-          : a.isDefault
-            ? -1
-            : 1,
+        a.isDefault === b.isDefault ? a.createdAt.localeCompare(b.createdAt) : a.isDefault ? -1 : 1,
       );
   }
 
@@ -901,8 +902,7 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
   async createProvider(input: CreateOutboundProviderInput): Promise<OutboundProviderConfig> {
     const clash = [...this.#providers.values()].some(
       (provider) =>
-        provider.orgId === input.orgId &&
-        provider.name.toLowerCase() === input.name.toLowerCase(),
+        provider.orgId === input.orgId && provider.name.toLowerCase() === input.name.toLowerCase(),
     );
     if (clash) {
       throw new MailAdminConflictError(
@@ -927,6 +927,7 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
       isDefault: input.isDefault,
       config: input.config,
       secretRef: input.secretRef,
+      webhookSecretRef: input.webhookSecretRef ?? null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -934,9 +935,7 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
     return provider;
   }
 
-  async updateProvider(
-    input: UpdateOutboundProviderInput,
-  ): Promise<OutboundProviderConfig | null> {
+  async updateProvider(input: UpdateOutboundProviderInput): Promise<OutboundProviderConfig | null> {
     const current = this.#providers.get(input.id);
     if (current === undefined || current.orgId !== input.orgId) {
       return null;
@@ -955,6 +954,10 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
       isDefault: input.isDefault ?? current.isDefault,
       config: input.config ?? current.config,
       secretRef: input.secretRef === undefined ? current.secretRef : input.secretRef,
+      webhookSecretRef:
+        input.webhookSecretRef === undefined
+          ? (current.webhookSecretRef ?? null)
+          : input.webhookSecretRef,
       updatedAt: isoNow(this.now),
     };
     this.#providers.set(updated.id, updated);
@@ -993,8 +996,7 @@ export class InMemorySendingDomainStore implements SendingDomainStore {
   async createDomain(input: CreateSendingDomainInput): Promise<MailSendingDomainRecord> {
     const clash = [...this.#domains.values()].some(
       (domain) =>
-        domain.orgId === input.orgId &&
-        domain.domain.toLowerCase() === input.domain.toLowerCase(),
+        domain.orgId === input.orgId && domain.domain.toLowerCase() === input.domain.toLowerCase(),
     );
     if (clash) {
       throw new MailAdminConflictError(
@@ -1144,10 +1146,12 @@ export class InMemoryMailDmarcReportStore implements MailDmarcReportStore {
         report.orgName === input.orgName &&
         report.reportId === input.reportId,
     );
-    const id = existing?.id ?? (() => {
-      this.#seq += 1;
-      return genId(this.#seq);
-    })();
+    const id =
+      existing?.id ??
+      (() => {
+        this.#seq += 1;
+        return genId(this.#seq);
+      })();
     const report: MailDmarcReportRecord = {
       id,
       orgId: input.orgId,
@@ -1169,10 +1173,7 @@ export class InMemoryMailDmarcReportStore implements MailDmarcReportStore {
     return report;
   }
 
-  async listReports(
-    orgId: string,
-    domain?: string,
-  ): Promise<readonly MailDmarcReportRecord[]> {
+  async listReports(orgId: string, domain?: string): Promise<readonly MailDmarcReportRecord[]> {
     return [...this.#reports.values()]
       .filter(
         (report) =>
@@ -1192,10 +1193,7 @@ export class InMemoryMailDmarcReportStore implements MailDmarcReportStore {
       passMessages += report.passMessages;
       for (const record of this.#records.get(report.id) ?? []) {
         if (record.dkimResult !== "pass" && record.spfResult !== "pass") {
-          bySource.set(
-            record.sourceIp,
-            (bySource.get(record.sourceIp) ?? 0) + record.messageCount,
-          );
+          bySource.set(record.sourceIp, (bySource.get(record.sourceIp) ?? 0) + record.messageCount);
         }
       }
     }
@@ -1224,7 +1222,9 @@ export class InMemoryMailRoutingRuleStore implements MailRoutingRuleStore {
     return [...this.#rules.values()]
       .filter((rule) => rule.orgId === orgId)
       .sort((a, b) =>
-        a.priority === b.priority ? a.createdAt.localeCompare(b.createdAt) : a.priority - b.priority,
+        a.priority === b.priority
+          ? a.createdAt.localeCompare(b.createdAt)
+          : a.priority - b.priority,
       );
   }
 
@@ -1235,8 +1235,7 @@ export class InMemoryMailRoutingRuleStore implements MailRoutingRuleStore {
 
   async createRule(input: CreateRoutingRuleInput): Promise<MailRoutingRuleRecord> {
     const clash = [...this.#rules.values()].some(
-      (rule) =>
-        rule.orgId === input.orgId && rule.name.toLowerCase() === input.name.toLowerCase(),
+      (rule) => rule.orgId === input.orgId && rule.name.toLowerCase() === input.name.toLowerCase(),
     );
     if (clash) {
       throw new MailAdminConflictError(`A routing rule named "${input.name}" already exists.`);

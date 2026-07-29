@@ -68,6 +68,13 @@ export interface BetterAuthActorResolution {
   readonly user: BetterAuthUser;
 }
 
+export class BetterAuthVerifiedEmailRequiredError extends Error {
+  constructor() {
+    super("A verified email is required to link this sign-in to an existing user.");
+    this.name = "BetterAuthVerifiedEmailRequiredError";
+  }
+}
+
 export class BetterAuthPlatformModule {
   constructor(private readonly options: BetterAuthPlatformModuleOptions) {}
 
@@ -87,6 +94,9 @@ export class BetterAuthPlatformModule {
     const metadata = betterAuthMetadata(user);
 
     if (existing !== null) {
+      if (user.emailVerified !== true) {
+        throw new BetterAuthVerifiedEmailRequiredError();
+      }
       const linkedActor = await this.options.actorStore.linkBetterAuthUser({
         actorId: existing.id,
         authUserId: user.id,
@@ -416,6 +426,7 @@ export interface BetterAuthRuntime {
 
 export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): BetterAuthRuntime {
   const pool = new Pool({ connectionString: config.databaseUrl });
+  const cookiePolicy = sessionCookiePolicyForBaseUrl(config.baseUrl);
   const auth = betterAuth({
     database: pool,
     secret: config.secret,
@@ -435,10 +446,13 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
       },
     },
     advanced: {
+      useSecureCookies: cookiePolicy.secure,
+      defaultCookieAttributes: cookiePolicy,
       cookiePrefix: "helix",
       cookies: {
         session_token: {
           name: "helix_session",
+          attributes: cookiePolicy,
         },
       },
     },
@@ -447,6 +461,20 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
     auth,
     pool,
     sessionVerifier: new BetterAuthApiSessionVerifier(auth),
+  };
+}
+
+export function sessionCookiePolicyForBaseUrl(baseUrl: string): {
+  readonly secure: boolean;
+  readonly httpOnly: true;
+  readonly sameSite: "lax";
+  readonly path: "/";
+} {
+  return {
+    secure: isSecureBaseUrl(baseUrl),
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
   };
 }
 
@@ -461,8 +489,15 @@ export function createBetterAuthSessionActorResolver(
       return null;
     }
     const orgId = await options.resolveOrgId?.(request);
-    const resolved = await module.resolveUserActor(user, orgId);
-    return resolved.actor;
+    try {
+      const resolved = await module.resolveUserActor(user, orgId);
+      return resolved.actor;
+    } catch (error) {
+      if (error instanceof BetterAuthVerifiedEmailRequiredError) {
+        return null;
+      }
+      throw error;
+    }
   };
 }
 

@@ -169,6 +169,34 @@ describe("PostgresMailStore attachment storage", () => {
   });
 });
 
+describe("PostgresMailStore mailbox visibility", () => {
+  it("authorizes every mailbox read by message ownership or inbound recipient", async () => {
+    const recording = createRecordingSql([]);
+    const store = new PostgresMailStore(recording.sql);
+    const actorId = "77777777-7777-4777-8777-777777777777";
+
+    await store.search({ orgId, actorId });
+    await store.getThread({ orgId, actorId, threadId });
+    await store.listThreads({ orgId, actorId });
+    await store.listFolders({ orgId, actorId });
+
+    const mailboxReadQueries = recording.calls.filter(
+      (call) =>
+        (call.text.includes("join threads t") || call.text.includes("from threads t")) &&
+        call.text.includes("visible_message"),
+    );
+    expect(mailboxReadQueries).toHaveLength(5);
+    for (const query of mailboxReadQueries) {
+      expect(query.text).toContain("visible_message.actor_id = ?");
+      expect(query.text).toContain("join mail_inbound_deliveries visible_delivery");
+      expect(query.text).toContain("join mail_inbound_recipients visible_recipient");
+      expect(query.text).toContain("visible_recipient.actor_id = ?");
+      expect(query.values).toContain(actorId);
+      expect(query.values).toContain(orgId);
+    }
+  });
+});
+
 function createRecordingSql(responses: readonly (readonly unknown[])[]): {
   readonly sql: postgres.Sql;
   readonly calls: readonly RecordedQuery[];

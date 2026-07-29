@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
 import { NativePdfViewer, type NativePdfViewRouteState } from "@/features/pdf/native-pdf-viewer";
 
 interface PdfRouteSearch {
@@ -10,6 +11,7 @@ interface PdfRouteSearch {
 }
 
 export const Route = createFileRoute("/_shell/pdf/$objectId")({
+  beforeLoad: () => enforceFullWorkspaceRoute(),
   validateSearch: (search): PdfRouteSearch => validatePdfRouteSearch(search),
   component: PdfRoute,
 });

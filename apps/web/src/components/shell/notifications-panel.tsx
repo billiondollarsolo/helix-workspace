@@ -7,6 +7,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Icons, type IconComponent } from "@/components/icons";
+import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
 import {
   notificationsListQueryOptions,
@@ -26,14 +27,14 @@ type NotificationKind =
   | "system";
 
 const NOTIF_ICONS: Record<NotificationKind, { Icon: IconComponent; bg: string }> = {
-  mention:   { Icon: Icons.Comment,  bg: "#7c3aed" },
-  share:     { Icon: Icons.Drive,    bg: "#7c3aed" },
-  comment:   { Icon: Icons.Comment,  bg: "#0891b2" },
-  calendar:  { Icon: Icons.Calendar, bg: "#ea580c" },
-  dm:        { Icon: Icons.Chat,     bg: "#db2777" },
-  approval:  { Icon: Icons.Shield,   bg: "#dc2626" },
-  recording: { Icon: Icons.Drive,    bg: "#dc2626" },
-  system:    { Icon: Icons.Bell,     bg: "#475569" },
+  mention: { Icon: Icons.Comment, bg: "#7c3aed" },
+  share: { Icon: Icons.Drive, bg: "#7c3aed" },
+  comment: { Icon: Icons.Comment, bg: "#0891b2" },
+  calendar: { Icon: Icons.Calendar, bg: "#ea580c" },
+  dm: { Icon: Icons.Chat, bg: "#db2777" },
+  approval: { Icon: Icons.Shield, bg: "#dc2626" },
+  recording: { Icon: Icons.Drive, bg: "#dc2626" },
+  system: { Icon: Icons.Bell, bg: "#475569" },
 };
 
 /** Map server-side verbs to the icon kind and the in-app route to open. */
@@ -49,12 +50,26 @@ function kindForVerb(verb: string): NotificationKind {
   return "system";
 }
 
-function routeForNotification(item: NotificationItem): string | null {
+export function notificationVisibleForBuild(
+  item: Pick<NotificationItem, "verb">,
+  storageOnly: boolean,
+): boolean {
+  if (!storageOnly) return true;
+  if (item.verb.startsWith("calendar.")) return false;
+  if (item.verb.startsWith("meet.") && !item.verb.startsWith("meet.recording")) return false;
+  if (item.verb.startsWith("docs.")) return false;
+  return true;
+}
+
+export function routeForNotification(
+  item: Pick<NotificationItem, "verb">,
+  storageOnly: boolean = CORE_WORKSPACE_STORAGE_ONLY,
+): string | null {
   if (item.verb.startsWith("meet.")) {
-    return "/meet";
+    return storageOnly ? "/drive" : "/meet";
   }
-  if (item.verb.startsWith("calendar.")) return "/calendar";
-  if (item.verb.startsWith("docs.")) return "/docs";
+  if (item.verb.startsWith("calendar.")) return storageOnly ? null : "/calendar";
+  if (item.verb.startsWith("docs.")) return storageOnly ? "/drive" : "/docs";
   if (item.verb.startsWith("drive.")) return "/drive";
   if (item.verb.startsWith("chat.")) return "/chat";
   if (item.verb.startsWith("mail.")) return "/mail";
@@ -93,7 +108,9 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
 
   if (!open) return null;
 
-  const all = data?.items ?? [];
+  const all = (data?.items ?? []).filter((item) =>
+    notificationVisibleForBuild(item, CORE_WORKSPACE_STORAGE_ONLY),
+  );
   const items = filter === "all" ? all : all.filter((n) => n.unread);
   const unreadCount = all.filter((n) => n.unread).length;
   const tabs = [
@@ -256,7 +273,9 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
                     {notification.body}
                   </div>
                 ) : null}
-                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}>
+                <div
+                  style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}
+                >
                   {relativeTime(notification.createdAt)} ago
                 </div>
               </div>

@@ -112,7 +112,7 @@ describe("DocsShell", () => {
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             byteSize: (body as { byteSize?: number }).byteSize ?? 3,
             sha256: "0".repeat(64),
-            status: "prepared",
+            status: "pending_upload",
             uploadUrl: null,
             uploadHeaders: {},
             metadata: {},
@@ -492,11 +492,15 @@ function dispatchDocumentFile(filename: string, bytes: readonly number[], mimeTy
 
 function clickButton(label: string): void {
   const target =
-    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((candidate) =>
-      candidate.textContent?.includes(label) || candidate.getAttribute("aria-label")?.includes(label),
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) =>
+        candidate.textContent?.includes(label) ||
+        candidate.getAttribute("aria-label")?.includes(label),
     ) ??
-    Array.from(container.querySelectorAll<HTMLElement>('[role="button"]')).find((candidate) =>
-      candidate.textContent?.includes(label) || candidate.getAttribute("aria-label")?.includes(label),
+    Array.from(container.querySelectorAll<HTMLElement>('[role="button"]')).find(
+      (candidate) =>
+        candidate.textContent?.includes(label) ||
+        candidate.getAttribute("aria-label")?.includes(label),
     );
   if (target === undefined) {
     throw new Error(`Missing button: ${label}`);
@@ -507,9 +511,9 @@ function clickButton(label: string): void {
 }
 
 function clickMenuItem(label: string): void {
-  const target = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menu"] button')).find(
-    (candidate) => candidate.textContent?.trim().includes(label),
-  );
+  const target = Array.from(
+    container.querySelectorAll<HTMLButtonElement>('[role="menu"] button'),
+  ).find((candidate) => candidate.textContent?.trim().includes(label));
   if (target === undefined) {
     throw new Error(`Missing menu item: ${label}`);
   }

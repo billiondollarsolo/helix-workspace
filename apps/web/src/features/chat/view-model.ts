@@ -49,6 +49,8 @@ export interface ChatMessageView {
   readonly authorName: string;
   readonly time: string;
   readonly body: string;
+  readonly bodyFormat: "plain" | "markdown";
+  readonly renderedBodyHtml?: string;
   readonly isMine: boolean;
   readonly editedAt: string | null;
   readonly reactions: readonly ChatReactionView[];
@@ -146,9 +148,7 @@ export function partitionRooms(
         id: room.id,
         name: roomDisplayName(room, selfActorId),
         presence:
-          peer !== undefined && presenceByActor.get(peer.actorId) === true
-            ? "active"
-            : "offline",
+          peer !== undefined && presenceByActor.get(peer.actorId) === true ? "active" : "offline",
         unread: 0,
       });
     } else {
@@ -175,15 +175,11 @@ export function roomAbout(room: ChatRoomRecord | undefined): ChatAboutView {
       memberCount: 0,
     };
   }
-  const creator = (room.members ?? []).find(
-    (m) => m.actorId === room.createdByActorId,
-  );
+  const creator = (room.members ?? []).find((m) => m.actorId === room.createdByActorId);
   return {
     description:
       room.settings?.topic ??
-      (room.kind === "chat_dm"
-        ? "Direct message conversation."
-        : "A Helix chat space."),
+      (room.kind === "chat_dm" ? "Direct message conversation." : "A Helix chat space."),
     createdBy: creator !== undefined ? memberDisplayName(creator) : "Helix",
     createdAt: formatChatDate(room.createdAt),
     memberCount: room.members?.length ?? 0,
@@ -222,6 +218,8 @@ export function toMessageView(input: {
     authorName: nameForActor(record.actorId),
     time: formatChatTime(record.sentAt),
     body: record.body,
+    bodyFormat: record.bodyFormat,
+    ...(record.renderedBodyHtml === undefined ? {} : { renderedBodyHtml: record.renderedBodyHtml }),
     isMine: record.actorId !== null && record.actorId === selfActorId,
     editedAt: record.editedAt,
     reactions,
@@ -229,9 +227,7 @@ export function toMessageView(input: {
     seenByActorIds: input.seenByActorIds ?? [],
     ...(input.pending === undefined ? {} : { pending: input.pending }),
     ...(input.failed === undefined ? {} : { failed: input.failed }),
-    ...(input.clientMessageId === undefined
-      ? {}
-      : { clientMessageId: input.clientMessageId }),
+    ...(input.clientMessageId === undefined ? {} : { clientMessageId: input.clientMessageId }),
   };
 }
 
@@ -318,9 +314,7 @@ export function readCountFor(
 }
 
 /** Map a presence roster to a `actorId -> online` lookup. */
-export function presenceMap(
-  entries: readonly ChatPresenceEntry[],
-): ReadonlyMap<string, boolean> {
+export function presenceMap(entries: readonly ChatPresenceEntry[]): ReadonlyMap<string, boolean> {
   const map = new Map<string, boolean>();
   for (const entry of entries) {
     map.set(entry.actorId, true);

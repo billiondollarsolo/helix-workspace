@@ -1,4 +1,9 @@
+import { readFileSync, statSync } from "node:fs";
 import { z } from "zod3";
+import {
+  assertProductionConfiguration,
+  assertProductionDeploymentConfiguration,
+} from "./production-assertions.js";
 
 /**
  * Optional URL that accepts empty string as undefined (common for unset docker env).
@@ -30,12 +35,19 @@ const coerceNonNegInt = (fallback: number) =>
  */
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  DATABASE_URL: z.string().min(1).default(
-    "postgres://helix:helix_dev_password@localhost:28432/helix",
-  ),
+  DATABASE_URL: z
+    .string()
+    .min(1)
+    .default("postgres://helix:helix_dev_password@localhost:28432/helix"),
   HELIX_MIGRATION_DATABASE_URL: optionalString,
   MIGRATION_DATABASE_URL: optionalString,
   REDIS_URL: optionalUrl,
+  REDIS_TLS_CA_FILE: optionalString,
+  REDIS_TLS_CERT_FILE: optionalString,
+  REDIS_TLS_KEY_FILE: optionalString,
+  POSTGRES_TLS_CA_FILE: optionalString,
+  POSTGRES_TLS_CERT_FILE: optionalString,
+  POSTGRES_TLS_KEY_FILE: optionalString,
   PORT: coercePositiveInt(3000),
   HOST: z.string().default("0.0.0.0"),
   SHUTDOWN_TIMEOUT_MS: coerceNonNegInt(50_000),
@@ -43,6 +55,13 @@ const envSchema = z.object({
   HELIX_BODY_LIMIT_BYTES: coercePositiveInt(134_217_728),
   HELIX_ROLE: optionalString,
   HELIX_APPS: optionalString,
+  HELIX_IMAGE: optionalString,
+  HELIX_WEB_IMAGE: optionalString,
+  HELIX_POSTGRES_IMAGE: optionalString,
+  HELIX_NATS_IMAGE: optionalString,
+  HELIX_MEILISEARCH_IMAGE: optionalString,
+  HELIX_CERBOS_IMAGE: optionalString,
+  HELIX_SPAMD_IMAGE: optionalString,
   LOG_LEVEL: z.string().default("info"),
   POSTGRES_POOL_MAX: coercePositiveInt(10),
   HELIX_POSTGRES_APP_ROLE: z.string().default("helix_app_role"),
@@ -52,7 +71,17 @@ const envSchema = z.object({
   HELIX_API_BASE_URL: optionalUrl,
   HELIX_APP_VERSION: optionalString,
   HELIX_SECURITY_TIER: optionalString,
+  HELIX_CONFIG_JSON: optionalString,
   HELIX_PLUGINS_DIR: optionalString,
+  HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED: optionalString,
+  HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED: optionalString,
+  HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED: optionalString,
+  HELIX_DATA_ENCRYPTION_KEY: optionalString,
+  HELIX_STARTUP_MIGRATION_CHECK: optionalString,
+  HELIX_AGENT_WRITES_ENABLED: optionalString,
+  HELIX_AGENT_WRITES_DISABLED_ORGS: optionalString,
+  HELIX_DISABLED_TOOLS: optionalString,
+  HELIX_GLOBAL_READ_ONLY: optionalString,
 
   // Storage (RustFS / S3-compatible)
   RUSTFS_ENDPOINT: optionalUrl,
@@ -62,6 +91,10 @@ const envSchema = z.object({
   RUSTFS_BUCKET: z.string().default("helix-objects"),
   RUSTFS_REGION: z.string().default("us-east-1"),
   RUSTFS_SERVER_SIDE_ENCRYPTION: optionalString,
+  RUSTFS_SSE_KMS_KEY_ID: optionalString,
+  AUDIT_IMMUTABLE_S3_ENABLED: optionalString,
+  AUDIT_IMMUTABLE_S3_ACCESS_KEY: optionalString,
+  AUDIT_IMMUTABLE_S3_SECRET_KEY: optionalString,
 
   // Drive preview / enrichment
   HELIX_DRIVE_OFFICE_PREVIEW_URL: optionalUrl,
@@ -71,14 +104,31 @@ const envSchema = z.object({
   HELIX_DRIVE_CONTENT_DEDUP: optionalString,
   HELIX_DRIVE_MULTIPART_THRESHOLD_BYTES: coercePositiveInt(8 * 1024 * 1024),
   HELIX_DRIVE_MULTIPART_PART_SIZE_BYTES: coercePositiveInt(8 * 1024 * 1024),
+  HELIX_DRIVE_GC_ENABLED: optionalString,
+  HELIX_DRIVE_GC_INTERVAL_MS: coercePositiveInt(60 * 60 * 1000),
+  HELIX_DRIVE_GC_ORPHAN_GRACE_HOURS: coercePositiveInt(24),
+  HELIX_DRIVE_GC_BATCH_SIZE: coercePositiveInt(100),
   HELIX_DRIVE_OFFICE_PREVIEW_ALLOWED_HOSTS: optionalString,
   DRIVE_AUTO_TAG_ENRICHMENT: optionalString,
+  DRIVE_CLAMAV_ENABLED: optionalString,
+  DRIVE_CLAMAV_HOST: optionalString,
+  DRIVE_CLAMAV_PORT: optionalString,
+  DRIVE_CLAMAV_TIMEOUT_MS: optionalString,
+  DRIVE_CLAMAV_MAX_BYTES: optionalString,
+  DRIVE_CLAMAV_CHUNK_SIZE_BYTES: optionalString,
+  DRIVE_CLAMAV_SCANNER_VERSION: optionalString,
   HELIX_CHROMIUM_PATH: optionalString,
   HELIX_DOCS_PDF_RENDERER: optionalString,
   HELIX_DOCS_PDF_RENDER_TIMEOUT_MS: coercePositiveInt(15_000),
 
   // Event bus / workers
   NATS_URL: optionalUrl,
+  NATS_USER: optionalString,
+  NATS_PASSWORD: optionalString,
+  NATS_TOKEN: optionalString,
+  NATS_TLS_CA_FILE: optionalString,
+  NATS_TLS_CERT_FILE: optionalString,
+  NATS_TLS_KEY_FILE: optionalString,
   OUTBOX_BATCH_SIZE: coercePositiveInt(100),
   OUTBOX_POLL_INTERVAL_MS: coercePositiveInt(1000),
   SEARCH_EVENT_SUBJECT: z.string().default(">"),
@@ -87,6 +137,7 @@ const envSchema = z.object({
   WEBHOOK_RETRY_BATCH_SIZE: coercePositiveInt(100),
   WEBHOOK_RETRY_INTERVAL_MS: coercePositiveInt(1000),
   AUDIT_VERIFIER_INTERVAL_MS: coercePositiveInt(86_400_000),
+  AUDIT_WORM_POSTGRES_ENABLED: optionalString,
   PENDING_ACTION_EXPIRY_INTERVAL_MS: coercePositiveInt(60_000),
   PENDING_ACTION_EXPIRY_BATCH_SIZE: coercePositiveInt(500),
   TENANT_PROVISIONING_BATCH_SIZE: coercePositiveInt(10),
@@ -108,9 +159,13 @@ const envSchema = z.object({
 
   // Auth / signup
   BETTER_AUTH_SECRET: optionalString,
+  BETTER_AUTH_ENABLED: optionalString,
   BETTER_AUTH_URL: optionalUrl,
   BETTER_AUTH_DATABASE_URL: optionalUrl,
   BETTER_AUTH_TRUSTED_ORIGINS: optionalString,
+  HELIX_MFA_ASSERTION_SECRET: optionalString,
+  HELIX_MFA_ASSERTION_ISSUER: optionalString,
+  HELIX_MFA_ASSERTION_AUDIENCE: optionalString,
   HELIX_SIGNUP_RATE_LIMIT_PER_HOUR: coercePositiveInt(5),
   HELIX_SIGNUP_BLOCKED_EMAIL_DOMAINS: optionalString,
   HELIX_SIGNUP_MANUAL_REVIEW_COUNTRIES: optionalString,
@@ -125,10 +180,15 @@ const envSchema = z.object({
 
   // Mail
   MAIL_PROVIDER: optionalString,
+  MAIL_OUTBOUND_ENABLED: optionalString,
+  MAIL_PROVIDER_WEBHOOK_ENABLED: optionalString,
+  MAIL_PROVIDER_WEBHOOK_SECRET: optionalString,
   MAIL_SMTP_HOST: optionalString,
   MAIL_SMTP_PORT: optionalString,
   MAIL_SMTP_USER: optionalString,
   MAIL_SMTP_PASS: optionalString,
+  MAILGUN_API_KEY: optionalString,
+  POSTMARK_SERVER_TOKEN: optionalString,
   MAIL_SMTP_SECURE: optionalString,
   SES_SMTP_HOST: optionalString,
   SES_SMTP_PORT: optionalString,
@@ -139,6 +199,26 @@ const envSchema = z.object({
   MAIL_SMTP_RECEIVER_ENABLED: optionalString,
   MAIL_SMTP_RECEIVER_HOST: optionalString,
   MAIL_SMTP_RECEIVER_PORT: optionalString,
+  MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY: z
+    .enum(["starttls", "trusted-proxy", "development-plaintext"])
+    .optional(),
+  MAIL_SMTP_RECEIVER_TLS_KEY: optionalString,
+  MAIL_SMTP_RECEIVER_TLS_CERT: optionalString,
+  MAIL_SMTP_RECEIVER_TLS_CA: optionalString,
+  MAIL_SMTP_RECEIVER_PROXY_PROTOCOL: optionalString,
+  MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS: optionalString,
+  MAIL_SMTP_RECEIVER_MAX_MESSAGE_BYTES: optionalString,
+  MAIL_SMTP_RECEIVER_MAX_RECIPIENTS: optionalString,
+  MAIL_SMTP_RECEIVER_MAX_MESSAGES_PER_CONNECTION: optionalString,
+  MAIL_SMTP_RECEIVER_MAX_COMMANDS_PER_CONNECTION: optionalString,
+  MAIL_SMTP_RECEIVER_MAX_CONCURRENT_CONNECTIONS: optionalString,
+  MAIL_SMTP_RECEIVER_MAX_CONNECTIONS_PER_IP: optionalString,
+  MAIL_SMTP_RECEIVER_CONNECTIONS_PER_WINDOW: optionalString,
+  MAIL_SMTP_RECEIVER_CONNECTION_WINDOW_MS: optionalString,
+  MAIL_SMTP_RECEIVER_MESSAGES_PER_WINDOW: optionalString,
+  MAIL_SMTP_RECEIVER_MESSAGE_WINDOW_MS: optionalString,
+  MAIL_SMTP_RECEIVER_RECIPIENT_TIMEOUT_MS: optionalString,
+  MAIL_SMTP_RECEIVER_SOCKET_TIMEOUT_MS: optionalString,
   MAIL_SPAMD_ENABLED: optionalString,
   MAIL_SPAMD_HOST: optionalString,
   MAIL_SPAMD_PORT: optionalString,
@@ -177,6 +257,7 @@ const envSchema = z.object({
 
   // Meet / Jitsi
   MEET_JITSI_DOMAIN: optionalString,
+  MEET_JITSI_ENABLED: optionalString,
   MEET_JITSI_PUBLIC_URL: optionalUrl,
   MEET_JITSI_JWT_SECRET: optionalString,
   MEET_JITSI_JWT_APP_ID: optionalString,
@@ -218,16 +299,99 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-export function loadEnv(source: Record<string, string | undefined> = process.env): Env {
-  // In production, require DATABASE_URL explicitly (no silent localhost default).
-  const nodeEnv = source.NODE_ENV ?? "development";
-  if (nodeEnv === "production" && (source.DATABASE_URL === undefined || source.DATABASE_URL.trim() === "")) {
-    throw new Error(
-      "Invalid environment configuration:\n  - DATABASE_URL: Required in production",
-    );
+const FILE_BACKED_ENV = {
+  DATABASE_URL_FILE: "DATABASE_URL",
+  REDIS_URL_FILE: "REDIS_URL",
+  NATS_PASSWORD_FILE: "NATS_PASSWORD",
+  NATS_TOKEN_FILE: "NATS_TOKEN",
+  BETTER_AUTH_SECRET_FILE: "BETTER_AUTH_SECRET",
+  HELIX_MFA_ASSERTION_SECRET_FILE: "HELIX_MFA_ASSERTION_SECRET",
+  RUSTFS_ACCESS_KEY_FILE: "RUSTFS_ACCESS_KEY",
+  RUSTFS_SECRET_KEY_FILE: "RUSTFS_SECRET_KEY",
+  MEILI_MASTER_KEY_FILE: "MEILI_MASTER_KEY",
+  MEILI_API_KEY_FILE: "MEILI_API_KEY",
+  MEILISEARCH_API_KEY_FILE: "MEILISEARCH_API_KEY",
+  MAIL_SMTP_PASS_FILE: "MAIL_SMTP_PASS",
+  MAILGUN_API_KEY_FILE: "MAILGUN_API_KEY",
+  POSTMARK_SERVER_TOKEN_FILE: "POSTMARK_SERVER_TOKEN",
+  SES_SMTP_PASS_FILE: "SES_SMTP_PASS",
+  MAIL_SMTP_RECEIVER_TLS_KEY_FILE: "MAIL_SMTP_RECEIVER_TLS_KEY",
+  MAIL_SMTP_RECEIVER_TLS_CERT_FILE: "MAIL_SMTP_RECEIVER_TLS_CERT",
+  MAIL_SMTP_RECEIVER_TLS_CA_FILE: "MAIL_SMTP_RECEIVER_TLS_CA",
+  MAIL_PROVIDER_WEBHOOK_SECRET_FILE: "MAIL_PROVIDER_WEBHOOK_SECRET",
+  HELIX_DATA_ENCRYPTION_KEY_FILE: "HELIX_DATA_ENCRYPTION_KEY",
+  MEET_JITSI_JWT_SECRET_FILE: "MEET_JITSI_JWT_SECRET",
+  MEET_JITSI_WEBHOOK_SHARED_SECRET_FILE: "MEET_JITSI_WEBHOOK_SHARED_SECRET",
+  JITSI_JWT_SECRET_FILE: "JITSI_JWT_SECRET",
+  JITSI_WEBHOOK_SECRET_FILE: "JITSI_WEBHOOK_SECRET",
+} as const;
+
+const MAX_SECRET_FILE_BYTES = 64 * 1024;
+
+/**
+ * Resolve the small, explicit allowlist of `*_FILE` inputs used by Docker
+ * secrets and secret-manager CSI mounts.
+ *
+ * Arbitrary environment keys are intentionally not file-resolved. A direct
+ * value and its file-backed equivalent are mutually exclusive so a stale
+ * inline secret cannot silently win. Errors name only the environment
+ * variable; file paths and secret contents are never included.
+ */
+function resolveFileBackedEnvironment(
+  source: Record<string, string | undefined>,
+  fileBackedEnv: Readonly<Record<string, string>> = FILE_BACKED_ENV,
+): Record<string, string | undefined> {
+  const resolved = { ...source };
+
+  for (const [fileKey, valueKey] of Object.entries(fileBackedEnv)) {
+    const filePath = source[fileKey]?.trim();
+    const directValue = source[valueKey];
+    if (filePath === undefined || filePath.length === 0) {
+      continue;
+    }
+    if (directValue !== undefined && directValue.trim().length > 0) {
+      throw new Error(
+        `Invalid environment configuration:\n  - ${valueKey}: set either ${valueKey} or ${fileKey}, not both`,
+      );
+    }
+    if (!filePath.startsWith("/") || filePath.includes("\0")) {
+      throw new Error(
+        `Invalid environment configuration:\n  - ${fileKey}: must reference an absolute file path`,
+      );
+    }
+
+    try {
+      const stat = statSync(filePath);
+      if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_SECRET_FILE_BYTES) {
+        throw new Error("invalid secret file");
+      }
+      const value = readFileSync(filePath, "utf8").replace(/(?:\r?\n)+$/u, "");
+      if (value.length === 0) {
+        throw new Error("empty secret file");
+      }
+      resolved[valueKey] = value;
+    } catch {
+      throw new Error(
+        `Invalid environment configuration:\n  - ${fileKey}: cannot read a non-empty regular secret file of at most ${String(MAX_SECRET_FILE_BYTES)} bytes`,
+      );
+    }
   }
 
-  const result = envSchema.safeParse(source);
+  return resolved;
+}
+
+export function loadEnv(source: Record<string, string | undefined> = process.env): Env {
+  const resolvedSource = resolveFileBackedEnvironment(source);
+  // In production, require DATABASE_URL explicitly (no silent localhost default).
+  const nodeEnv = resolvedSource.NODE_ENV ?? "development";
+  if (
+    nodeEnv === "production" &&
+    (resolvedSource.DATABASE_URL === undefined || resolvedSource.DATABASE_URL.trim() === "")
+  ) {
+    throw new Error("Invalid environment configuration:\n  - DATABASE_URL: Required in production");
+  }
+
+  const result = envSchema.safeParse(resolvedSource);
   if (!result.success) {
     const details = result.error.issues
       .map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`)
@@ -237,14 +401,113 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
   return Object.freeze(result.data);
 }
 
+const migrationEnvSchema = envSchema.pick({
+  NODE_ENV: true,
+  DATABASE_URL: true,
+  HELIX_MIGRATION_DATABASE_URL: true,
+  MIGRATION_DATABASE_URL: true,
+  POSTGRES_TLS_CA_FILE: true,
+  POSTGRES_TLS_CERT_FILE: true,
+  POSTGRES_TLS_KEY_FILE: true,
+  POSTGRES_POOL_MAX: true,
+  HELIX_EDITORS_MIGRATIONS_ENABLED: true,
+  HELIX_EDITORS_CORE_APP_ENTRY: true,
+  HELIX_EDITORS_CORE_APP_MODULE: true,
+  HELIX_IMAGE: true,
+  HELIX_WEB_IMAGE: true,
+  HELIX_POSTGRES_IMAGE: true,
+  HELIX_NATS_IMAGE: true,
+  HELIX_MEILISEARCH_IMAGE: true,
+  HELIX_CERBOS_IMAGE: true,
+  HELIX_SPAMD_IMAGE: true,
+});
+
+export type MigrationEnv = z.infer<typeof migrationEnvSchema>;
+
+const MIGRATION_FILE_BACKED_ENV = {
+  DATABASE_URL_FILE: "DATABASE_URL",
+} as const;
+
+/**
+ * Parse only the settings consumed by the one-shot migration process.
+ *
+ * A production migrator deliberately does not receive application-provider
+ * credentials. Keeping this schema separate prevents application-only
+ * assertions and malformed unrelated settings from blocking migrations while
+ * retaining the same validated field types and defaults as {@link loadEnv}.
+ */
+export function loadMigrationEnv(
+  source: Record<string, string | undefined> = process.env,
+): MigrationEnv {
+  const resolvedSource = resolveFileBackedEnvironment(source, MIGRATION_FILE_BACKED_ENV);
+  const nodeEnv = resolvedSource.NODE_ENV ?? "development";
+  const configuredDatabaseUrl =
+    optionalEnvironmentValue(resolvedSource.HELIX_MIGRATION_DATABASE_URL) ??
+    optionalEnvironmentValue(resolvedSource.MIGRATION_DATABASE_URL) ??
+    optionalEnvironmentValue(resolvedSource.DATABASE_URL);
+  if (nodeEnv === "production" && configuredDatabaseUrl === undefined) {
+    throw new Error(
+      "Invalid migration environment configuration:\n  - DATABASE_URL: Required in production",
+    );
+  }
+  if (nodeEnv === "production" && resolvedSource.HELIX_EDITORS_MIGRATIONS_ENABLED !== "false") {
+    throw new Error(
+      "Invalid migration environment configuration:\n  - HELIX_EDITORS_MIGRATIONS_ENABLED: must be exactly false in production",
+    );
+  }
+
+  const result = migrationEnvSchema.safeParse(resolvedSource);
+  if (!result.success) {
+    const details = result.error.issues
+      .map((issue) => `  - ${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("\n");
+    throw new Error(`Invalid migration environment configuration:\n${details}`);
+  }
+  assertProductionDeploymentConfiguration(result.data);
+  return Object.freeze(result.data);
+}
+
+function optionalEnvironmentValue(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized === undefined || normalized.length === 0 ? undefined : normalized;
+}
+
 let cached: Env | undefined;
 
 /** Memoized validated env for app code. Prefer injecting `loadEnv` in tests. */
 export function env(): Env {
-  return (cached ??= loadEnv());
+  if (cached !== undefined) {
+    return cached;
+  }
+  const loaded = loadEnv();
+  assertProductionConfiguration(loaded);
+  cached = loaded;
+  return cached;
 }
 
 /** Test helper — clears the memoized env so subsequent `env()` re-parses. */
 export function resetEnvCacheForTests(): void {
   cached = undefined;
+}
+
+const operationalControlEnvSchema = envSchema.pick({
+  HELIX_AGENT_WRITES_ENABLED: true,
+  HELIX_AGENT_WRITES_DISABLED_ORGS: true,
+  HELIX_DISABLED_TOOLS: true,
+  HELIX_GLOBAL_READ_ONLY: true,
+});
+
+export type OperationalControlEnv = z.infer<typeof operationalControlEnvSchema>;
+
+/**
+ * Read emergency controls without the normal environment cache.
+ *
+ * Operators may change these kill switches while a process is running, so the
+ * invocation boundary must observe the current values rather than the startup
+ * snapshot returned by {@link env}.
+ */
+export function operationalControlEnv(
+  source: Record<string, string | undefined> = process.env,
+): OperationalControlEnv {
+  return operationalControlEnvSchema.parse(source);
 }

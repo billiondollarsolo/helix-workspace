@@ -1,0 +1,360 @@
+groups:
+  - name: helix.workspace.platform
+    rules:
+      - alert: HelixHttpAvailabilityLow
+        expr: sum(rate(helix_http_requests_total{status_code!~"5.."}[10m])) / clamp_min(sum(rate(helix_http_requests_total[10m])), 1) < 0.995
+        for: 10m
+        labels: { severity: critical, priority: p1, service: platform, slo: http_availability }
+        annotations:
+          runbook_url: docs/runbooks/platform-dependency-outage.md
+          resource_id: service:helix-api
+          trace_query: '{ resource.service.name = "helix" && status = error }'
+          summary: HTTP availability is below the 99.5% objective
+      - alert: HelixHttpP95LatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(helix_http_request_duration_seconds_bucket[10m])) by (le)) > 0.75
+        for: 15m
+        labels: { severity: warning, priority: p2, service: platform, slo: http_latency }
+        annotations:
+          runbook_url: docs/runbooks/platform-dependency-outage.md
+          resource_id: service:helix-api
+          trace_query: '{ resource.service.name = "helix" && duration > 750ms }'
+          summary: HTTP p95 latency is above 750 milliseconds
+      - alert: HelixHttpErrorRateHigh
+        expr: sum(rate(helix_http_requests_total{status_code=~"5.."}[10m])) / clamp_min(sum(rate(helix_http_requests_total[10m])), 1) > 0.01
+        for: 10m
+        labels: { severity: critical, priority: p1, service: platform, slo: http_errors }
+        annotations:
+          runbook_url: docs/runbooks/platform-dependency-outage.md
+          resource_id: service:helix-api
+          trace_query: '{ resource.service.name = "helix" && status = error }'
+          summary: HTTP server error rate exceeds one percent
+      - alert: HelixAuthFailureRateHigh
+        expr: sum(rate(helix_permission_checks_total{decision=~"deny|error"}[10m])) / clamp_min(sum(rate(helix_permission_checks_total[10m])), 1) > 0.10
+        for: 10m
+        labels: { severity: warning, priority: p2, service: auth, slo: auth_decisions }
+        annotations:
+          runbook_url: docs/runbooks/platform-dependency-outage.md
+          resource_id: service:authorization
+          trace_query: '{ resource.service.name = "helix" && helix.policy.decision != "allow" }'
+          summary: Authentication or authorization failures exceed 10 percent
+      - alert: HelixRateLimitDenialsSpike
+        expr: sum(rate(helix_auth_rate_limit_decisions_total{decision="deny"}[10m])) > 2
+        for: 10m
+        labels: { severity: warning, priority: p2, service: auth, slo: rate_limits }
+        annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: service:auth-rate-limiter
+          trace_query: '{ resource.service.name = "helix" && helix.policy.decision = "deny" }'
+          summary: Agent rate-limit denials are elevated
+      - alert: HelixDependencyUnavailable
+        expr: min by (dependency) (helix_dependency_up) == 0
+        for: 5m
+        labels: { severity: critical, priority: p1, service: dependencies, slo: dependency_health }
+        annotations:
+          runbook_url: docs/runbooks/platform-dependency-outage.md
+          resource_id: dependency:{{ $labels.dependency }}
+          trace_query: '{ resource.service.name = "helix" && status = error }'
+          summary: A required dependency is unavailable
+      - alert: HelixDependencyTelemetryMissing
+        expr: absent(helix_dependency_up)
+        for: 5m
+        labels: { severity: critical, priority: p1, service: dependencies, slo: dependency_health }
+        annotations:
+          runbook_url: docs/runbooks/platform-dependency-outage.md
+          resource_id: telemetry:dependencies
+          trace_query: '{ resource.service.name = "helix" && status = error }'
+          summary: Required dependency telemetry is missing
+      - alert: HelixNodeFilesystemLowSpace
+        expr: min by (instance, mountpoint) (node_filesystem_avail_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs"} / clamp_min(node_filesystem_size_bytes{fstype!~"tmpfs|devtmpfs|overlay|squashfs"}, 1)) < 0.10
+        for: 10m
+        labels: { severity: critical, priority: p1, service: platform, slo: storage_capacity }
+        annotations:
+          runbook_url: docs/runbooks/node-filesystem-low-space.md
+          resource_id: node:{{ $labels.instance }}:filesystem
+          trace_query: '{ resource.service.name = "helix" && status = error }'
+          summary: A persistent node filesystem has less than ten percent free space
+      - alert: HelixOutboxBacklogHigh
+        expr: sum(helix_outbox_depth) > 1000 or max(helix_outbox_oldest_age_seconds) > 300
+        for: 10m
+        labels: { severity: critical, priority: p1, service: workers, slo: outbox_delivery }
+        annotations:
+          runbook_url: docs/runbooks/outbox-worker-backlog.md
+          resource_id: queue:outbox
+          trace_query: '{ resource.service.name = "helix" && name = "outbox.dispatch" }'
+          summary: Outbox depth or oldest-item age is above the operating limit
+      - alert: HelixWorkerFailureRateHigh
+        expr: sum by (worker) (rate(helix_worker_failures_total[10m])) > 0.1
+        for: 10m
+        labels: { severity: warning, priority: p2, service: workers, slo: worker_success }
+        annotations:
+          runbook_url: docs/runbooks/outbox-worker-backlog.md
+          resource_id: worker:{{ $labels.worker }}
+          trace_query: '{ resource.service.name = "helix" && status = error }'
+          summary: A background worker has a sustained failure rate
+
+  - name: helix.workspace.mail
+    rules:
+      - alert: HelixMailReceiveLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(helix_mail_receive_duration_seconds_bucket[10m])) by (le)) > 30
+        for: 10m
+        labels: { severity: warning, priority: p2, service: mail, slo: inbound_acceptance }
+        annotations:
+          runbook_url: docs/runbooks/mail-provider-outage.md
+          resource_id: service:mail-inbound
+          trace_query: '{ resource.service.name = "helix" && name = "smtp.receive" }'
+          summary: Mail receive p95 latency is above 30 seconds
+      - alert: HelixMailProviderOutage
+        expr: histogram_quantile(0.95, sum(rate(helix_mail_send_duration_seconds_bucket[10m])) by (le)) > 60 or sum(rate(helix_mail_send_total{status="failed"}[10m])) > 0.1
+        for: 10m
+        labels: { severity: critical, priority: p1, service: mail, slo: provider_acceptance }
+        annotations:
+          runbook_url: docs/runbooks/mail-provider-outage.md
+          resource_id: service:mail-outbound
+          trace_query: '{ resource.service.name = "helix" && name = "smtp.send" }'
+          summary: Mail provider acceptance latency or failure rate is elevated
+      - alert: HelixMailBounceComplaintSpike
+        expr: sum(rate(helix_mail_delivery_events_total{event_type=~"hard_bounce|complaint"}[15m])) > 0.05
+        for: 10m
+        labels: { severity: critical, priority: p1, service: mail, slo: sender_reputation }
+        annotations:
+          runbook_url: docs/runbooks/mail-bounce-complaint-spike.md
+          resource_id: service:mail-delivery-events
+          trace_query: '{ resource.service.name = "helix" && name = "mail.provider_webhook" }'
+          summary: Hard-bounce or complaint events are spiking
+      - alert: HelixMailSuppressionGrowthHigh
+        expr: deriv(helix_mail_suppressions_active[30m]) > 1
+        for: 15m
+        labels: { severity: warning, priority: p2, service: mail, slo: sender_reputation }
+        annotations:
+          runbook_url: docs/runbooks/mail-bounce-complaint-spike.md
+          resource_id: resource:mail-suppressions
+          trace_query: '{ resource.service.name = "helix" && name = "mail.provider_webhook" }'
+          summary: Active mail suppressions are growing unusually quickly
+      - alert: HelixInboundMalwareSurge
+        expr: sum(rate(helix_security_scans_total{scanner="clamav",state=~"infected|scan_failed"}[10m])) > 0.2
+        for: 10m
+        labels: { severity: critical, priority: p1, service: mail, slo: inbound_safety }
+        annotations:
+          runbook_url: docs/runbooks/mail-inbound-malware-surge.md
+          resource_id: scanner:clamav
+          trace_query: '{ resource.service.name = "helix" && name = "clamav.instream" }'
+          summary: Inbound malware or scanner failures are elevated
+      - alert: HelixMailQuarantineBacklogHigh
+        expr: sum(helix_mail_quarantine_messages) > 100 or max(helix_mail_quarantine_oldest_age_seconds) > 3600
+        for: 15m
+        labels: { severity: warning, priority: p2, service: mail, slo: quarantine_review }
+        annotations:
+          runbook_url: docs/runbooks/mail-inbound-malware-surge.md
+          resource_id: queue:mail-quarantine
+          trace_query: '{ resource.service.name = "helix" && name = "smtp.receive" }'
+          summary: Mail quarantine review backlog is high
+
+  - name: helix.workspace.drive
+    rules:
+      - alert: HelixDriveUploadFailureRateHigh
+        expr: sum(rate(helix_drive_uploads_total{status="failed"}[10m])) / clamp_min(sum(rate(helix_drive_uploads_total[10m])), 1) > 0.05
+        for: 10m
+        labels: { severity: critical, priority: p1, service: drive, slo: upload_success }
+        annotations:
+          runbook_url: docs/runbooks/object-store-data-mismatch.md
+          resource_id: service:drive-upload
+          trace_query: '{ resource.service.name = "helix" && name = "drive.upload" && status = error }'
+          summary: Drive upload failure rate exceeds five percent
+      - alert: HelixDriveScannerUnavailable
+        expr: min(helix_security_scanner_available{scanner="clamav"}) == 0 or absent(helix_security_scanner_available{scanner="clamav"})
+        for: 5m
+        labels: { severity: critical, priority: p1, service: drive, slo: malware_scanning }
+        annotations:
+          runbook_url: docs/runbooks/drive-scanner-outage.md
+          resource_id: scanner:clamav
+          trace_query: '{ resource.service.name = "helix" && name = "drive.scan" }'
+          summary: Drive malware scanning is unavailable
+      - alert: HelixDriveScanBacklogHigh
+        expr: sum(helix_security_scan_backlog_items{scanner="clamav"}) > 100 or histogram_quantile(0.95, sum(rate(helix_security_scan_duration_seconds_bucket{scanner="clamav"}[15m])) by (le)) > 60
+        for: 15m
+        labels: { severity: warning, priority: p2, service: drive, slo: malware_scanning }
+        annotations:
+          runbook_url: docs/runbooks/drive-scanner-outage.md
+          resource_id: queue:drive-scan
+          trace_query: '{ resource.service.name = "helix" && name = "drive.scan" }'
+          summary: Drive scan backlog or p95 scan latency is high
+      - alert: HelixDriveQuarantinedBytesSpike
+        expr: sum(rate(helix_security_quarantined_bytes_total{scanner="clamav"}[15m])) > 1048576
+        for: 10m
+        labels: { severity: warning, priority: p2, service: drive, slo: malware_scanning }
+        annotations:
+          runbook_url: docs/runbooks/drive-scanner-outage.md
+          resource_id: resource:drive-quarantine
+          trace_query: '{ resource.service.name = "helix" && name = "drive.scan" }'
+          summary: Drive quarantined byte volume is elevated
+      - alert: HelixDriveInfectedVerdictSpike
+        expr: sum(rate(helix_security_scans_total{scanner="clamav",state="infected"}[15m])) > 0.1
+        for: 10m
+        labels: { severity: warning, priority: p2, service: drive, slo: malware_scanning }
+        annotations:
+          runbook_url: docs/runbooks/drive-scanner-outage.md
+          resource_id: resource:drive-quarantine
+          trace_query: '{ resource.service.name = "helix" && name = "drive.scan" }'
+          summary: Drive infected scan verdicts are elevated
+      - alert: HelixObjectStoreUnavailable
+        expr: helix_dependency_up{dependency="object_store"} == 0
+        for: 5m
+        labels: { severity: critical, priority: p1, service: drive, slo: object_availability }
+        annotations:
+          runbook_url: docs/runbooks/object-store-data-mismatch.md
+          resource_id: dependency:object-store
+          trace_query: '{ resource.service.name = "helix" && name = "object.read" }'
+          summary: Object storage is unavailable
+      - alert: HelixObjectIntegrityMismatch
+        expr: increase(helix_object_integrity_mismatches_total[10m]) > 0
+        for: 0m
+        labels: { severity: critical, priority: p1, service: drive, slo: object_integrity }
+        annotations:
+          runbook_url: docs/runbooks/object-store-data-mismatch.md
+          resource_id: resource:object-integrity
+          trace_query: '{ resource.service.name = "helix" && name = "object.verify" }'
+          summary: Stored object bytes do not match recorded integrity metadata
+
+  - name: helix.workspace.chat
+    rules:
+      - alert: HelixChatSocketTelemetryMissing
+        expr: absent(helix_websocket_connections_active{route=~".*chat.*"})
+        for: 15m
+        labels: { severity: warning, priority: p2, service: chat, slo: realtime_connections }
+        annotations:
+          runbook_url: docs/runbooks/chat-nats-redis-outage.md
+          resource_id: service:chat-websocket
+          trace_query: '{ resource.service.name = "helix" && name = "chat.websocket" }'
+          summary: Chat active-socket telemetry is missing
+      - alert: HelixChatRealtimeDeliverySlow
+        expr: histogram_quantile(0.95, sum(rate(helix_chat_publish_duration_seconds_bucket[10m])) by (le)) > 2
+        for: 10m
+        labels: { severity: warning, priority: p2, service: chat, slo: realtime_delivery }
+        annotations:
+          runbook_url: docs/runbooks/chat-nats-redis-outage.md
+          resource_id: service:chat-realtime
+          trace_query: '{ resource.service.name = "helix" && name = "chat.publish" }'
+          summary: Chat publish p95 is above two seconds
+      - alert: HelixChatReconnectSpike
+        expr: sum(rate(helix_chat_reconnects_total[10m])) > 1
+        for: 10m
+        labels: { severity: warning, priority: p2, service: chat, slo: realtime_connections }
+        annotations:
+          runbook_url: docs/runbooks/chat-nats-redis-outage.md
+          resource_id: service:chat-websocket
+          trace_query: '{ resource.service.name = "helix" && name = "chat.websocket" }'
+          summary: Chat reconnects are elevated
+      - alert: HelixChatRejectedFramesSpike
+        expr: sum(rate(helix_chat_rejected_frames_total[10m])) > 0.2
+        for: 10m
+        labels: { severity: warning, priority: p2, service: chat, slo: realtime_safety }
+        annotations:
+          runbook_url: docs/runbooks/chat-nats-redis-outage.md
+          resource_id: service:chat-websocket
+          trace_query: '{ resource.service.name = "helix" && name = "chat.websocket" }'
+          summary: Chat rejected WebSocket frames are elevated
+
+  - name: helix.workspace.agents
+    rules:
+      - alert: HelixAgentCallFailureRateHigh
+        expr: sum(rate(helix_llm_errors_total[10m])) / clamp_min(sum(rate(helix_llm_calls_total[10m])), 1) > 0.05
+        for: 10m
+        labels: { severity: warning, priority: p2, service: agents, slo: model_calls }
+        annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: service:agent-runtime
+          trace_query: '{ resource.service.name = "helix" && name = "assistant.chat" && status = error }'
+          summary: Agent model-call failure rate exceeds five percent
+      - alert: HelixAgentApprovalBacklogHigh
+        expr: sum(helix_agent_pending_approvals) > 100 or max(helix_agent_oldest_pending_approval_seconds) > 900
+        for: 10m
+        labels: { severity: warning, priority: p2, service: agents, slo: approvals }
+        annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: queue:agent-approvals
+          trace_query: '{ resource.service.name = "helix" && name = "tool.pending" }'
+          summary: Agent approval backlog is high
+      - alert: HelixAgentDeniedFailedSpike
+        expr: sum(rate(helix_tool_invocations_total{status="error"}[10m])) + sum(rate(helix_agent_tool_limiter_denials_total[10m])) > 1
+        for: 10m
+        labels: { severity: warning, priority: p2, service: agents, slo: tool_execution }
+        annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: service:agent-tools
+          trace_query: '{ resource.service.name = "helix" && status = error }'
+          summary: Agent tool denials or failures are elevated
+      - alert: HelixAgentCostRateHigh
+        expr: sum(rate(helix_llm_cost_usd_micros_total[1h])) > 1000000
+        for: 15m
+        labels: { severity: warning, priority: p2, service: agents, slo: cost_control }
+        annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: service:agent-runtime
+          trace_query: '{ resource.service.name = "helix" && name = "assistant.chat" }'
+          summary: Agent and assistant estimated cost rate exceeds the operating threshold
+      - alert: HelixAgentOperationalControlDenials
+        expr: sum(rate(helix_agent_operational_control_denials_total[10m])) > 0
+        for: 5m
+        labels: { severity: warning, priority: p2, service: agents, slo: operational_controls }
+        annotations:
+          runbook_url: docs/runbooks/agent-security-incident.md
+          resource_id: service:agent-controls
+          trace_query: '{ resource.service.name = "helix" && helix.policy.decision = "deny" }'
+          summary: Emergency agent controls are actively denying operations
+
+  - name: helix.workspace.audit_backup
+    rules:
+      - alert: HelixAuditVerificationStale
+        expr: time() - max(helix_audit_hash_chain_last_verified_timestamp_seconds) > 86400 or absent(helix_audit_hash_chain_last_verified_timestamp_seconds)
+        for: 15m
+        labels: { severity: critical, priority: p1, service: audit, slo: audit_integrity }
+        annotations:
+          runbook_url: docs/runbooks/audit-integrity-shipping-failure.md
+          resource_id: job:audit-verification
+          trace_query: '{ resource.service.name = "helix" && name = "audit.verify" }'
+          summary: Audit hash-chain verification is stale or unreported
+      - alert: HelixAuditHashChainFailure
+        expr: increase(helix_audit_hash_chain_failures_total[10m]) > 0
+        for: 0m
+        labels: { severity: critical, priority: p1, service: audit, slo: audit_integrity }
+        annotations:
+          runbook_url: docs/runbooks/audit-integrity-shipping-failure.md
+          resource_id: resource:audit-chain
+          trace_query: '{ resource.service.name = "helix" && name = "audit.verify" }'
+          summary: Audit hash-chain verification failed
+      - alert: HelixAuditShippingFailure
+        expr: increase(helix_audit_shipping_failures_total[10m]) > 0 or max(helix_audit_shipping_lag_seconds) > 900
+        for: 10m
+        labels: { severity: critical, priority: p1, service: audit, slo: audit_shipping }
+        annotations:
+          runbook_url: docs/runbooks/audit-integrity-shipping-failure.md
+          resource_id: queue:audit-shipping
+          trace_query: '{ resource.service.name = "helix" && name = "audit.ship" }'
+          summary: Audit shipping is failing or delayed
+      - alert: HelixBackupStale
+        expr: time() - max(helix_backup_last_success_timestamp_seconds) > 86400 or absent(helix_backup_last_success_timestamp_seconds)
+        for: 15m
+        labels: { severity: critical, priority: p1, service: backup, slo: recovery_point }
+        annotations:
+          runbook_url: docs/runbooks/backup-restore-recovery.md
+          resource_id: job:workspace-backup
+          trace_query: '{ resource.service.name = "helix-backup" && status = error }'
+          summary: No successful backup has been observed within 24 hours
+      - alert: HelixRestoreDrillStale
+        expr: time() - max(helix_restore_drill_last_success_timestamp_seconds) > 2592000 or absent(helix_restore_drill_last_success_timestamp_seconds)
+        for: 1h
+        labels: { severity: warning, priority: p2, service: backup, slo: recovery_time }
+        annotations:
+          runbook_url: docs/runbooks/backup-restore-recovery.md
+          resource_id: job:restore-drill
+          trace_query: '{ resource.service.name = "helix-restore" && status = error }'
+          summary: No successful restore drill has been observed within 30 days
+      - alert: HelixCertificateExpirySoon
+        expr: min(helix_certificate_expiry_timestamp_seconds) - time() < 1209600
+        for: 1h
+        labels: { severity: warning, priority: p2, service: security, slo: certificate_rotation }
+        annotations:
+          runbook_url: docs/runbooks/secret-certificate-rotation.md
+          resource_id: resource:certificate
+          trace_query: '{ resource.service.name = "helix" && status = error }'
+          summary: A Helix certificate expires within 14 days

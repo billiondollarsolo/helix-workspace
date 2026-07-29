@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { handleChatSocket, registerChatRoutes } from "./routes.js";
+import { unauthenticatedActor } from "../../api/actor.js";
+import {
+  bearerTokenFromSecWebSocketProtocol,
+  handleChatSocket,
+  registerChatRoutes,
+} from "./routes.js";
 import { InMemoryChatPresenceStore, InMemoryChatRoomBus, roomSubject } from "./realtime.js";
 import type { ChatStore } from "./store.js";
 import type {
@@ -28,15 +33,18 @@ const otherActor: Actor = {
 };
 const roomId = "33333333-3333-4333-8333-333333333333";
 const messageId = "44444444-4444-4444-8444-444444444444";
+const trustedOrigins = ["https://app.helix.test"];
 const emptyWebSocketRequest = {
-  headers: {},
+  headers: { origin: trustedOrigins[0] },
   query: {},
 } as unknown as FastifyRequest;
 
 describe("chat realtime", () => {
   it("builds stable per-room subjects for the NATS abstraction", () => {
-    expect(roomSubject(roomId)).toBe(`chat.room.${roomId}.events`);
-    expect(roomSubject("room.with.dots")).toBe("chat.room.room_with_dots.events");
+    expect(roomSubject(actor.orgId, roomId)).toBe(`chat.org.${actor.orgId}.room.${roomId}.events`);
+    expect(roomSubject("org.with.dots", "room.with.dots")).toBe(
+      "chat.org.org_with_dots.room.room_with_dots.events",
+    );
   });
 
   it("handles subscribe, typing, send, and read websocket messages", async () => {
@@ -48,6 +56,7 @@ describe("chat realtime", () => {
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => actor,
+      trustedOrigins,
       bus,
       presence,
     });
@@ -81,6 +90,7 @@ describe("chat realtime", () => {
     await handleChatSocket(receiverSocket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => otherActor,
+      trustedOrigins,
       bus,
       presence,
     });
@@ -91,6 +101,7 @@ describe("chat realtime", () => {
     await handleChatSocket(senderSocket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => actor,
+      trustedOrigins,
       bus,
       presence,
     });
@@ -140,6 +151,7 @@ describe("chat realtime", () => {
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => actor,
+      trustedOrigins,
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
     });
@@ -161,6 +173,7 @@ describe("chat realtime", () => {
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
       actorFromRequest: () => actor,
+      trustedOrigins,
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
     });
@@ -172,10 +185,89 @@ describe("chat realtime", () => {
     expect(socket.messages).toContainEqual(
       expect.objectContaining({
         type: "error",
-        code: "forbidden",
-        message: `Unknown or inaccessible chat room: ${roomId}`,
+        code: "not_found",
+        message: "Chat room was not found.",
       }),
     );
+  });
+
+  it("rejects a non-member subscribe frame before fanout or presence", async () => {
+    const socket = new FakeSocket();
+    const store = new FakeChatStore({ inaccessibleRoomIds: [roomId] });
+    const bus = new InMemoryChatRoomBus();
+
+    await handleChatSocket(socket, emptyWebSocketRequest, {
+      store,
+      actorFromRequest: () => actor,
+      trustedOrigins,
+      bus,
+      presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
+    });
+
+    socket.receive({ type: "subscribe", roomId });
+    await settle();
+
+    expect(store.getRoomForActorCalls).toEqual([{ orgId: actor.orgId, actorId: actor.id, roomId }]);
+    expect(store.sentBodies).toEqual([]);
+    expect(socket.messages.filter((message) => message.type === "error")).toHaveLength(1);
+  });
+
+  it("stops realtime fanout and presence immediately after membership revocation", async () => {
+    const socket = new FakeSocket();
+    const store = new FakeChatStore();
+    const bus = new InMemoryChatRoomBus();
+    const presence = new InMemoryChatPresenceStore({ ttlSeconds: 30 });
+    await handleChatSocket(socket, emptyWebSocketRequest, {
+      store,
+      actorFromRequest: () => actor,
+      trustedOrigins,
+      bus,
+      presence,
+    });
+    socket.receive({ type: "subscribe", roomId });
+    await settle();
+    socket.messages.length = 0;
+
+    store.denyRoom(roomId);
+    await bus.publish(actor.orgId, roomId, {
+      type: "typing",
+      eventId: "revoked-event",
+      orgId: actor.orgId,
+      roomId,
+      actorId: otherActor.id,
+      isTyping: true,
+    });
+    await settle();
+
+    expect(socket.messages).toEqual([]);
+    expect(await presence.list(roomId)).toEqual([]);
+  });
+
+  it("closes and unsubscribes a slow socket before its buffer grows without bound", async () => {
+    const socket = new FakeSocket();
+    const bus = new InMemoryChatRoomBus();
+    const presence = new InMemoryChatPresenceStore({ ttlSeconds: 30 });
+    await handleChatSocket(socket, emptyWebSocketRequest, {
+      store: new FakeChatStore(),
+      actorFromRequest: () => actor,
+      trustedOrigins,
+      bus,
+      presence,
+    });
+    socket.receive({ type: "subscribe", roomId });
+    await settle();
+    socket.bufferedAmount = 2 * 1024 * 1024;
+    await bus.publish(actor.orgId, roomId, {
+      type: "typing",
+      eventId: "slow-event",
+      orgId: actor.orgId,
+      roomId,
+      actorId: otherActor.id,
+      isTyping: true,
+    });
+    await settle();
+    expect(socket.closed).toEqual({ code: 1013, reason: "slow consumer" });
+    expect(await presence.list(roomId)).toEqual([]);
   });
 
   it("honors presence status busy on touch and lists it", async () => {
@@ -209,6 +301,7 @@ describe("chat realtime", () => {
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store: new FakeChatStore(),
       actorFromRequest: () => actor,
+      trustedOrigins,
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
       rateLimit: { capacity: 2, refillPerSecond: 0 },
@@ -225,6 +318,131 @@ describe("chat realtime", () => {
     expect(socket.messages).toContainEqual(
       expect.objectContaining({ type: "error", code: "rate_limited" }),
     );
+  });
+});
+
+describe("chat websocket handshake security", () => {
+  it("rejects cross-site websocket hijacking with a valid session cookie", async () => {
+    const socket = new FakeSocket();
+    let resolverCalls = 0;
+
+    await handleChatSocket(
+      socket,
+      request({
+        origin: "https://app.helix.test.evil.invalid",
+        cookie: "helix_session=valid-but-cross-site",
+      }),
+      secureSocketOptions({
+        actorFromRequest: () => {
+          resolverCalls += 1;
+          return actor;
+        },
+      }),
+    );
+
+    expect(socket.closed).toEqual({ code: 4403, reason: "origin rejected" });
+    expect(socket.messages).toEqual([]);
+    expect(resolverCalls).toBe(0);
+  });
+
+  it("requires Origin when a browser session cookie is present", async () => {
+    const socket = new FakeSocket();
+
+    await handleChatSocket(
+      socket,
+      request({ cookie: "helix_session=valid-but-originless" }),
+      secureSocketOptions(),
+    );
+
+    expect(socket.closed).toEqual({ code: 4403, reason: "origin rejected" });
+  });
+
+  it("accepts cookie-free non-browser Authorization authentication without Origin", async () => {
+    const socket = new FakeSocket();
+
+    await handleChatSocket(
+      socket,
+      request({ authorization: "Bearer service-token" }),
+      secureSocketOptions(),
+    );
+
+    expect(socket.messages).toContainEqual({ type: "ready", actorId: actor.id });
+    expect(socket.closed).toBeNull();
+  });
+
+  it("bounds the missing-Origin first-frame service bearer handshake", async () => {
+    const socket = new FakeSocket();
+    const tokens: string[] = [];
+
+    await handleChatSocket(
+      socket,
+      request({}),
+      secureSocketOptions({
+        actorFromRequest: () => unauthenticatedActor,
+        actorFromToken: (token) => {
+          tokens.push(token);
+          return actor;
+        },
+        authGraceMs: 500,
+      }),
+    );
+    socket.receive({ type: "auth", token: "service-token" });
+    await settle();
+
+    expect(tokens).toEqual(["service-token"]);
+    expect(socket.messages).toContainEqual({ type: "ready", actorId: actor.id });
+  });
+
+  it("rejects an oversized first-frame bearer credential", async () => {
+    const socket = new FakeSocket();
+    let resolverCalls = 0;
+
+    await handleChatSocket(
+      socket,
+      request({}),
+      secureSocketOptions({
+        actorFromRequest: () => unauthenticatedActor,
+        actorFromToken: () => {
+          resolverCalls += 1;
+          return actor;
+        },
+        authGraceMs: 500,
+      }),
+    );
+    socket.receive({ type: "auth", token: "x".repeat(5_000) });
+    await settle();
+
+    expect(resolverCalls).toBe(0);
+    expect(socket.closed).toEqual({ code: 4401, reason: "auth failed" });
+  });
+
+  it("does not report token-bearing authentication adapter errors", async () => {
+    const socket = new FakeSocket();
+    const errors: unknown[] = [];
+
+    await handleChatSocket(
+      socket,
+      request({ "sec-websocket-protocol": "helix-bearer, reusable-secret" }),
+      secureSocketOptions({
+        actorFromRequest: () => unauthenticatedActor,
+        actorFromToken: () => {
+          throw new Error("adapter included reusable-secret");
+        },
+        onError: (error) => errors.push(error),
+      }),
+    );
+
+    expect(socket.closed).toEqual({ code: 4401, reason: "auth failed" });
+    expect(errors).toEqual([]);
+    expect(JSON.stringify(socket.messages)).not.toContain("reusable-secret");
+  });
+
+  it("rejects the token-echoing dotted websocket subprotocol form", () => {
+    expect(
+      bearerTokenFromSecWebSocketProtocol(
+        request({ "sec-websocket-protocol": "helix-bearer.reusable-secret" }),
+      ),
+    ).toBeNull();
   });
 });
 
@@ -254,12 +472,30 @@ function captureWebsocketApp(): {
   };
 }
 
+function request(headers: Record<string, string>): FastifyRequest {
+  return { headers, query: {} } as unknown as FastifyRequest;
+}
+
+function secureSocketOptions(
+  overrides: Partial<Parameters<typeof handleChatSocket>[2]> = {},
+): Parameters<typeof handleChatSocket>[2] {
+  return {
+    store: new FakeChatStore(),
+    actorFromRequest: () => actor,
+    trustedOrigins,
+    bus: new InMemoryChatRoomBus(),
+    presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
+    ...overrides,
+  };
+}
+
 describe("chat graceful-shutdown broadcast (PRD §16.3 step 5)", () => {
   it("sends a reconnect-required frame and closes connected chat sockets", async () => {
     const { app, connect } = captureWebsocketApp();
     const handle = await registerChatRoutes(app, {
       store: new FakeChatStore(),
       actorFromRequest: () => actor,
+      trustedOrigins,
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
     });
@@ -285,6 +521,7 @@ describe("chat graceful-shutdown broadcast (PRD §16.3 step 5)", () => {
     const handle = await registerChatRoutes(app, {
       store: new FakeChatStore(),
       actorFromRequest: () => actor,
+      trustedOrigins,
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
     });
@@ -304,6 +541,7 @@ describe("chat graceful-shutdown broadcast (PRD §16.3 step 5)", () => {
 
 class FakeSocket {
   readonly messages: Record<string, unknown>[] = [];
+  bufferedAmount = 0;
   closed: { readonly code?: number; readonly reason?: string } | null = null;
   #messageHandlers: ((data: string) => void)[] = [];
   #closeHandlers: (() => void)[] = [];
@@ -360,6 +598,10 @@ class FakeChatStore implements ChatStore {
 
   constructor(options: { readonly inaccessibleRoomIds?: readonly string[] } = {}) {
     this.#inaccessibleRoomIds = new Set(options.inaccessibleRoomIds ?? []);
+  }
+
+  denyRoom(deniedRoomId: string): void {
+    this.#inaccessibleRoomIds.add(deniedRoomId);
   }
 
   async createRoom(): Promise<ChatRoomRecord> {
@@ -471,13 +713,14 @@ class PresenceRecordingRoomBus extends InMemoryChatRoomBus {
   }
 
   override async publish(
+    orgId: string,
     roomId: string,
-    event: Parameters<InMemoryChatRoomBus["publish"]>[1],
+    event: Parameters<InMemoryChatRoomBus["publish"]>[2],
   ): Promise<void> {
     if (event.type === "read") {
       this.readRostersAtPublish.push([...(await this.presence.list(roomId))]);
     }
-    await super.publish(roomId, event);
+    await super.publish(orgId, roomId, event);
   }
 }
 

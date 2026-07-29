@@ -1,4 +1,5 @@
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
+import type { ChatBodyFormat } from "@helix/contracts";
 
 export const chatPluginId = "com.helix.core.chat";
 
@@ -49,7 +50,8 @@ export interface ChatMessageRecord {
   readonly roomId: string;
   readonly actorId: string | null;
   readonly body: string;
-  readonly bodyFormat: string;
+  readonly bodyFormat: ChatBodyFormat;
+  readonly renderedBodyHtml?: string;
   readonly metadata: JsonObject;
   readonly attachmentObjectIds: readonly string[];
   readonly parentMessageId?: string | null;
@@ -84,6 +86,35 @@ export interface ChatReadReceiptRecord {
   readonly lastReadMessageId: string | null;
   readonly lastReadAt: Date;
   readonly updatedAt: Date;
+}
+
+export interface ChatRetentionPolicyRecord {
+  readonly orgId: string;
+  readonly roomId: string | null;
+  readonly retentionDays: number;
+  readonly editWindowSeconds: number;
+  readonly deleteWindowSeconds: number;
+  readonly legalHold: boolean;
+  readonly updatedAt: Date;
+}
+
+export interface ChatExportMessageRecord {
+  readonly id: string;
+  readonly roomId: string;
+  readonly actorId: string | null;
+  readonly body: string | null;
+  readonly bodyFormat: "plain" | "markdown";
+  readonly sentAt: Date;
+  readonly editedAt: Date | null;
+  readonly deletedAt: Date | null;
+}
+
+export interface ChatOrganizationExportRecord {
+  readonly exportId: string;
+  readonly orgId: string;
+  readonly generatedAt: Date;
+  readonly messages: readonly ChatExportMessageRecord[];
+  readonly truncated: boolean;
 }
 
 export interface ChatSearchRequest {

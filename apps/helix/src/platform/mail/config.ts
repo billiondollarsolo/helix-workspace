@@ -1,12 +1,17 @@
 import type { Env } from "../../config/env.js";
+import { isIP } from "node:net";
+import type { SecurityTier } from "@helix/sdk-types";
 import type { OutboundMailConfig } from "./outbound.js";
 import type { SpamdScannerOptions } from "./spam.js";
 import type { ClamavScannerOptions } from "./antivirus.js";
+import type { SmtpReceiverLimits } from "./ingest.js";
+import type { SmtpTransportSecurity } from "./smtp-transport-security.js";
 
 export interface MailReceiverConfig {
-  readonly orgId: string;
   readonly port: number;
   readonly host?: string;
+  readonly transportSecurity: SmtpTransportSecurity;
+  readonly limits: Partial<SmtpReceiverLimits>;
 }
 
 export interface MailSignupFrom {
@@ -75,11 +80,104 @@ export function buildReceiverConfig(env: Env): MailReceiverConfig | undefined {
   }
   const host = env.MAIL_SMTP_RECEIVER_HOST;
   const port = parsePositiveInt(env.MAIL_SMTP_RECEIVER_PORT) ?? 2525;
+  const transportSecurity = buildReceiverTransportSecurity(env);
   return {
-    orgId: env.HELIX_DEFAULT_ORG_ID,
     port,
     ...(host === undefined || host.length === 0 ? {} : { host }),
+    transportSecurity,
+    limits: compactReceiverLimits({
+      maxMessageBytes: parsePositiveInt(env.MAIL_SMTP_RECEIVER_MAX_MESSAGE_BYTES),
+      maxRecipientsPerMessage: parsePositiveInt(env.MAIL_SMTP_RECEIVER_MAX_RECIPIENTS),
+      maxMessagesPerConnection: parsePositiveInt(
+        env.MAIL_SMTP_RECEIVER_MAX_MESSAGES_PER_CONNECTION,
+      ),
+      maxCommandsPerConnection: parsePositiveInt(
+        env.MAIL_SMTP_RECEIVER_MAX_COMMANDS_PER_CONNECTION,
+      ),
+      maxConcurrentConnections: parsePositiveInt(env.MAIL_SMTP_RECEIVER_MAX_CONCURRENT_CONNECTIONS),
+      maxConcurrentConnectionsPerIp: parsePositiveInt(
+        env.MAIL_SMTP_RECEIVER_MAX_CONNECTIONS_PER_IP,
+      ),
+      connectionsPerWindow: parsePositiveInt(env.MAIL_SMTP_RECEIVER_CONNECTIONS_PER_WINDOW),
+      connectionWindowMs: parsePositiveInt(env.MAIL_SMTP_RECEIVER_CONNECTION_WINDOW_MS),
+      messagesPerWindow: parsePositiveInt(env.MAIL_SMTP_RECEIVER_MESSAGES_PER_WINDOW),
+      messageWindowMs: parsePositiveInt(env.MAIL_SMTP_RECEIVER_MESSAGE_WINDOW_MS),
+      recipientResolutionTimeoutMs: parsePositiveInt(env.MAIL_SMTP_RECEIVER_RECIPIENT_TIMEOUT_MS),
+      socketTimeoutMs: parsePositiveInt(env.MAIL_SMTP_RECEIVER_SOCKET_TIMEOUT_MS),
+    }),
   };
+}
+
+function buildReceiverTransportSecurity(env: Env): SmtpTransportSecurity {
+  const configuredMode = env.MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY;
+  const mode =
+    configuredMode ??
+    (env.NODE_ENV === "production" ? undefined : ("development-plaintext" as const));
+  if (mode === undefined) {
+    throw new Error(
+      "MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY must select starttls or trusted-proxy in production.",
+    );
+  }
+  switch (mode) {
+    case "starttls": {
+      const key = env.MAIL_SMTP_RECEIVER_TLS_KEY;
+      const cert = env.MAIL_SMTP_RECEIVER_TLS_CERT;
+      if (key === undefined || cert === undefined) {
+        throw new Error(
+          "STARTTLS requires MAIL_SMTP_RECEIVER_TLS_KEY and MAIL_SMTP_RECEIVER_TLS_CERT.",
+        );
+      }
+      return {
+        mode,
+        key,
+        cert,
+        ...(env.MAIL_SMTP_RECEIVER_TLS_CA === undefined
+          ? {}
+          : { ca: env.MAIL_SMTP_RECEIVER_TLS_CA }),
+      };
+    }
+    case "trusted-proxy":
+      if (!envFlag(env.MAIL_SMTP_RECEIVER_PROXY_PROTOCOL)) {
+        throw new Error("Trusted SMTP proxy mode requires PROXY protocol.");
+      }
+      return {
+        mode,
+        proxyProtocol: true,
+        trustedProxyIps: parseTrustedProxyIps(env.MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS),
+      };
+    case "development-plaintext":
+      if (env.NODE_ENV === "production") {
+        throw new Error("Plaintext SMTP receipt is forbidden in production.");
+      }
+      return { mode };
+  }
+}
+
+function parseTrustedProxyIps(value: string | undefined): readonly string[] {
+  const addresses = [
+    ...new Set(
+      (value ?? "")
+        .split(",")
+        .map((address) => address.trim())
+        .filter((address) => address.length > 0),
+    ),
+  ];
+  if (addresses.length === 0 || addresses.some((address) => isIP(address) === 0)) {
+    throw new Error(
+      "Trusted SMTP proxy mode requires MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS with explicit IP addresses.",
+    );
+  }
+  return addresses;
+}
+
+function compactReceiverLimits(input: {
+  readonly [K in keyof SmtpReceiverLimits]: number | undefined;
+}): Partial<SmtpReceiverLimits> {
+  return Object.fromEntries(
+    Object.entries(input).filter(
+      (entry): entry is [keyof SmtpReceiverLimits, number] => entry[1] !== undefined,
+    ),
+  );
 }
 
 /** Build spamd scanner options from validated env. */
@@ -100,7 +198,10 @@ export function buildSpamdConfig(env: Env): SpamdScannerOptions | undefined {
 }
 
 /** Build ClamAV scanner options from validated env. */
-export function buildClamavConfig(env: Env): ClamavScannerOptions | undefined {
+export function buildClamavConfig(
+  env: Env,
+  tier: SecurityTier = "personal",
+): ClamavScannerOptions | undefined {
   if (!envFlag(env.MAIL_CLAMAV_ENABLED)) {
     return undefined;
   }
@@ -110,6 +211,7 @@ export function buildClamavConfig(env: Env): ClamavScannerOptions | undefined {
   return {
     host,
     port,
+    tier,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
   };
 }
@@ -118,7 +220,7 @@ export function buildClamavConfig(env: Env): ClamavScannerOptions | undefined {
  * Assemble the full mail config struct from a validated {@link Env}.
  * Zero raw `process.env` reads — call sites pass `env()` / `loadEnv(...)`.
  */
-export function mailConfig(env: Env): MailConfig {
+export function mailConfig(env: Env, securityTier: SecurityTier = "personal"): MailConfig {
   const fromDomain = env.MAIL_FROM_DOMAIN;
   return {
     fromDomain,
@@ -126,7 +228,7 @@ export function mailConfig(env: Env): MailConfig {
     outbound: buildOutboundConfig(env),
     receiver: buildReceiverConfig(env),
     spamd: buildSpamdConfig(env),
-    clamav: buildClamavConfig(env),
+    clamav: buildClamavConfig(env, securityTier),
     signupFrom: {
       address: env.HELIX_SIGNUP_EMAIL_FROM ?? `no-reply@${fromDomain}`,
       name: env.HELIX_SIGNUP_EMAIL_FROM_NAME,

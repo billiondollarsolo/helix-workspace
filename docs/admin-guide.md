@@ -2,6 +2,41 @@
 
 Phase 9 documentation pass for TASK-A09.
 
+## Supported Business pilot profile
+
+The first supported production profile is one organization with 5–50 trusted users on the
+`business` security tier. Tenant-aware internals and cross-organization tests remain mandatory, but
+public multi-tenant SaaS is not a supported pilot configuration. The accepted constraints and
+reversal triggers are indexed in the
+[architecture decision records](architecture/README.md).
+
+Before enabling pilot users, operators must enforce and evidence all of the following:
+
+- Configure a supported managed outbound email provider. Mailpit is for local evidence only, and
+  Helix does not operate direct-to-MX outbound delivery for the pilot.
+- Present Mail through the Helix web UI and supported APIs. The pilot does not include a
+  Helix-hosted IMAP server.
+- Describe Chat accurately: it uses encrypted transport, organization and room authorization,
+  retention, audited administrative access, and deployment-attested storage encryption. Chat is
+  **not end-to-end encrypted**, and authorized server administrators can technically access stored
+  messages.
+- Allow authorized agent reads immediately, but require authenticated human confirmation for every
+  agent write by default. An unattended write requires an explicit, audited automation policy
+  bounded by exact action, resource, target, time window or expiry, and rate.
+- Untrusted Business-tier uploads remain unavailable to download, preview, share, attach, index,
+  WebDAV, and agent reads until integrity checks and a real malware scanner return a clean verdict.
+  Scanner failure, timeout, or unsupported results remain quarantined. A no-op scanner is not a
+  valid Business configuration.
+- Monitor the 99.5% monthly availability objective and rehearse encrypted backup restoration to an
+  RPO of no more than 24 hours and an RTO of no more than 4 hours. These are pilot engineering
+  objectives, not a contractual SLA.
+
+Native Docs, Sheets, Slides, and PDF editing are not part of this MVP. Drive file storage,
+read-only preview, versions, sharing, download, and WebDAV remain in scope. Calendar and Meet are
+also disabled. Any later commands in this guide that exercise Docs, Calendar, Meet, or editor
+workflows are development/full-workspace evidence only and are not pilot acceptance steps for the
+storage-only production profile.
+
 ## Quality Gate Responsibilities
 
 Admins own release readiness for:
@@ -283,12 +318,22 @@ to a generated non-organizer `example.net` address so the backend queues a real
 attendee invite. Compose defaults are Helix SMTP `127.0.0.1:28456` and Mailpit
 `http://127.0.0.1:28458`.
 Add `pnpm quality:mail-deliverability-smoke` only for approved external
-deliverability evidence. It sends through the configured production-like Helix
-SMTP provider path to a controlled recipient, approves the real `mail.send`
-pending action, verifies mailbox receipt over IMAP, and records recipient
-domain, marker, pending id, persisted outbound provider message id/metadata when
-the provider returns it, timestamps, latency, and trace-correlatable output.
-Do not point this smoke at Mailpit.
+deliverability evidence. It sends through the configured managed outbound email
+provider path to a controlled recipient, approves the real `mail.send` pending
+action, and records recipient domain, marker, pending id, persisted outbound
+provider message id/metadata, timestamps, latency, and trace-correlatable
+output. The smoke reads that controlled third-party recipient mailbox through
+the recipient provider's IMAP endpoint. This is test infrastructure and does
+not provide or imply a Helix-hosted IMAP server. Do not point this smoke at
+Mailpit.
+
+For the complete M7 local release flow, run
+`pnpm quality:mail-live-evidence -- --local` after configuring two tenant
+mailboxes, ClamAV, SpamAssassin, Mailpit, and a test-only signed provider webhook.
+The machine-readable report distinguishes real local evidence from the
+explicitly `not_run` provider-sandbox, Gmail, and Microsoft 365 checks. See
+[`mail-live-evidence.md`](mail-live-evidence.md) for the required environment
+and evidence-handling rules.
 
 ```sh
 HELIX_BASE_URL=http://127.0.0.1:28431 \
@@ -417,6 +462,19 @@ Local route delivery proof remains:
 ```sh
 pnpm quality:alertmanager-signup-routing
 ```
+
+## Workspace incident operations
+
+The provisioned `Helix Workspace Operations` dashboard covers the production
+signals for HTTP, auth, dependencies, workers, Mail, Drive, Chat, agents, audit,
+and recovery. The metric and safe-label contract is documented in
+[Workspace observability](observability.md).
+
+When an alert fires, page the owning service operator, open the alert's linked
+runbook, and use only its opaque `resource_id` and `trace_query` to correlate
+evidence. Do not copy user content or secrets into the incident record. The
+[incident runbook index](RUNBOOK.md#workspace-incident-runbooks) lists all
+supported failure procedures.
 
 ## Release Hold Criteria
 

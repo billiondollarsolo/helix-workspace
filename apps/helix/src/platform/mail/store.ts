@@ -38,6 +38,8 @@ import type {
 } from "./types.js";
 import { MAIL_FOLDER_IDS } from "./types.js";
 import { classifyMailCategory, coerceMailCategory } from "./category.js";
+import { sanitizeMailHtml } from "./content-safety.js";
+import { MailDraftVersionConflictError } from "./errors.js";
 // ponytail: store.ts is the mail IO adapter surface (~1700 LOC). Split list/folder
 // projection into store-threads when next touching listThreads; keep god-file note
 // until that extraction lands fully (G9).
@@ -79,6 +81,7 @@ export interface CreateOutboundMailInput {
   readonly envelope: MailOutboundEnvelope;
   readonly undoUntil: Date;
   readonly outboxSubject: string;
+  readonly idempotencyKey?: string;
 }
 
 export type MarkOutboundSentInput = MailOutboundDeliveryResult & {
@@ -86,15 +89,60 @@ export type MarkOutboundSentInput = MailOutboundDeliveryResult & {
   readonly sentAt?: Date | undefined;
 };
 
+export interface BindOutboundProviderDecisionInput {
+  readonly id: string;
+  readonly orgId: string;
+  readonly providerId: string;
+  readonly providerKind: string;
+  readonly source: "sending_domain" | "org_default" | "environment";
+  readonly decidedAt?: Date;
+}
+
+export interface MailInboundDedupInput {
+  readonly key: string;
+  readonly normalizedMessageId: string | null;
+  readonly rawSha256: string;
+  readonly envelopeFrom: string | null;
+  readonly envelopeTo: readonly string[];
+  readonly receivedAt: Date;
+}
+
+export interface MailInboundResolvedRecipient {
+  readonly actorId: string;
+  readonly address: string;
+  readonly match: "primary" | "alias" | "catch_all";
+}
+
+export interface InsertInboundMessageIdempotentInput {
+  readonly message: MailMessageInput;
+  readonly dedup: MailInboundDedupInput;
+  readonly recipients: readonly MailInboundResolvedRecipient[];
+}
+
+export interface IdempotentStoredMailMessage extends StoredMailMessage {
+  readonly deliveryId: string;
+  readonly duplicate: boolean;
+}
+
 export interface MailStore {
   findActorByAddress(
     orgId: string,
     address: string,
   ): Promise<{ readonly actorId: string; readonly email: string } | null>;
   insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage>;
+  insertInboundMessageIdempotent?(
+    input: InsertInboundMessageIdempotentInput,
+  ): Promise<IdempotentStoredMailMessage>;
   createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord>;
   getOutbound(id: string): Promise<MailOutboundRecord | null>;
   markOutboundSending(id: string): Promise<MailOutboundRecord | null>;
+  /**
+   * Atomically bind the first provider decision. A retry may read the same
+   * decision, but cannot silently replace it.
+   */
+  bindOutboundProviderDecision?(
+    input: BindOutboundProviderDecisionInput,
+  ): Promise<MailOutboundRecord | null>;
   markOutboundSent(input: MarkOutboundSentInput): Promise<MailOutboundRecord | null>;
   markOutboundFailed(
     id: string,
@@ -171,6 +219,7 @@ export interface MailStore {
     readonly id?: string;
     readonly threadId?: string | null;
     readonly envelope: JsonObject;
+    readonly expectedVersion?: number;
   }): Promise<MailDraftRecord>;
   getDraft?(input: {
     readonly orgId: string;
@@ -186,6 +235,12 @@ export interface MailStore {
     readonly actorId: string;
     readonly id: string;
   }): Promise<boolean>;
+  retryOutbound?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+    readonly outboxSubject?: string;
+  }): Promise<MailOutboundRecord | null>;
   listAliases?(orgId: string, actorId?: string): Promise<readonly MailAliasRecord[]>;
   createAlias?(input: {
     readonly orgId: string;
@@ -194,11 +249,11 @@ export interface MailStore {
     readonly displayName?: string | null;
     readonly isPrimary?: boolean;
   }): Promise<MailAliasRecord>;
-  deleteAlias?(input: {
-    readonly orgId: string;
-    readonly id: string;
-  }): Promise<boolean>;
+  deleteAlias?(input: { readonly orgId: string; readonly id: string }): Promise<boolean>;
 }
+
+export type RecipientAwareMailStore = MailStore &
+  Required<Pick<MailStore, "insertInboundMessageIdempotent">>;
 
 export interface PostgresMailStoreOptions {
   readonly storageResolver?: TenantStorageResolver | undefined;
@@ -246,6 +301,10 @@ interface MailOutboundRow {
   readonly failed_at: Date | null;
   readonly last_error: string | null;
   readonly provider_message_id: string | null;
+  readonly provider_id?: string | null;
+  readonly provider_kind?: string | null;
+  readonly provider_decision_source?: "sending_domain" | "org_default" | "environment" | null;
+  readonly provider_decided_at?: Date | null;
   readonly attempt_count?: number;
   readonly next_attempt_at?: Date | null;
   readonly dead_lettered_at?: Date | null;
@@ -382,8 +441,26 @@ export class PostgresMailStore
     return this.sql.begin(async (tx) => insertMailMessage(tx, input, this.options));
   }
 
+  async insertInboundMessageIdempotent(
+    input: InsertInboundMessageIdempotentInput,
+  ): Promise<IdempotentStoredMailMessage> {
+    return this.sql.begin(async (tx) => insertInboundMessageIdempotent(tx, input, this.options));
+  }
+
   async createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord> {
     return this.sql.begin(async (tx) => {
+      if (input.idempotencyKey !== undefined) {
+        const lockKey = `${input.orgId}:${input.actorId}:${input.idempotencyKey}`;
+        await tx`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+        const existing = (await tx`
+          select * from mail_outbound_messages
+          where org_id = ${input.orgId}
+            and actor_id = ${input.actorId}
+            and idempotency_key = ${input.idempotencyKey}
+          limit 1
+        `) as unknown as readonly MailOutboundRow[];
+        if (existing[0] !== undefined) return mapOutbound(existing[0]);
+      }
       const message = await insertMailMessage(
         tx,
         {
@@ -422,7 +499,8 @@ export class PostgresMailStore
 
       const outboundRows = (await tx`
         insert into mail_outbound_messages (
-          id, org_id, actor_id, message_id, thread_id, outbox_id, status, envelope, undo_until
+          id, org_id, actor_id, message_id, thread_id, outbox_id, status, envelope,
+          undo_until, idempotency_key
         )
         values (
           ${outboundId},
@@ -433,7 +511,8 @@ export class PostgresMailStore
           ${outboxId},
           'queued',
           ${tx.json(toSqlJson(input.envelope))},
-          ${input.undoUntil}
+          ${input.undoUntil},
+          ${input.idempotencyKey ?? null}
         )
         returning *
       `) as unknown as readonly MailOutboundRow[];
@@ -491,6 +570,25 @@ export class PostgresMailStore
       update mail_outbound_messages
       set status = 'sending', updated_at = now()
       where id = ${id} and status = 'queued' and undo_until <= now()
+      returning *
+    `) as unknown as readonly MailOutboundRow[];
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
+  async bindOutboundProviderDecision(
+    input: BindOutboundProviderDecisionInput,
+  ): Promise<MailOutboundRecord | null> {
+    const rows = (await this.sql`
+      update mail_outbound_messages
+      set
+        provider_id = ${input.providerId},
+        provider_kind = ${input.providerKind},
+        provider_decision_source = ${input.source},
+        provider_decided_at = coalesce(provider_decided_at, ${input.decidedAt ?? new Date()}),
+        updated_at = now()
+      where id = ${input.id}
+        and org_id = ${input.orgId}
+        and (provider_id is null or provider_id = ${input.providerId})
       returning *
     `) as unknown as readonly MailOutboundRow[];
     return rows[0] === undefined ? null : mapOutbound(rows[0]);
@@ -833,6 +931,29 @@ export class PostgresMailStore
       where m.org_id = ${input.orgId}
         and m.kind = 'mail'
         and m.deleted_at is null
+        and (
+          exists (
+            select 1 from messages visible_message
+            where visible_message.thread_id = t.id
+              and visible_message.org_id = ${input.orgId}
+              and visible_message.kind = 'mail'
+              and visible_message.actor_id = ${input.actorId}
+          )
+          or exists (
+            select 1
+            from messages recipient_message
+            join mail_inbound_deliveries visible_delivery
+              on visible_delivery.message_id = recipient_message.id
+              and visible_delivery.org_id = ${input.orgId}
+            join mail_inbound_recipients visible_recipient
+              on visible_recipient.delivery_id = visible_delivery.id
+              and visible_recipient.org_id = ${input.orgId}
+              and visible_recipient.actor_id = ${input.actorId}
+            where recipient_message.thread_id = t.id
+              and recipient_message.org_id = ${input.orgId}
+              and recipient_message.kind = 'mail'
+          )
+        )
         and coalesce(mts.deleted_at, t.archived_at) is null
         and (mts.snoozed_until is null or mts.snoozed_until <= now())
         and (${input.query ?? ""} = '' or t.subject ilike ${`%${input.query ?? ""}%`} or m.body ilike ${`%${input.query ?? ""}%`})
@@ -962,6 +1083,29 @@ export class PostgresMailStore
       where t.org_id = ${input.orgId}
         and t.kind = 'mail'
         and t.id = ${input.threadId}
+        and (
+          exists (
+            select 1 from messages visible_message
+            where visible_message.thread_id = t.id
+              and visible_message.org_id = ${input.orgId}
+              and visible_message.kind = 'mail'
+              and visible_message.actor_id = ${input.actorId}
+          )
+          or exists (
+            select 1
+            from messages recipient_message
+            join mail_inbound_deliveries visible_delivery
+              on visible_delivery.message_id = recipient_message.id
+              and visible_delivery.org_id = ${input.orgId}
+            join mail_inbound_recipients visible_recipient
+              on visible_recipient.delivery_id = visible_delivery.id
+              and visible_recipient.org_id = ${input.orgId}
+              and visible_recipient.actor_id = ${input.actorId}
+            where recipient_message.thread_id = t.id
+              and recipient_message.org_id = ${input.orgId}
+              and recipient_message.kind = 'mail'
+          )
+        )
         and m.kind = 'mail'
         and m.deleted_at is null
         and coalesce(mts.deleted_at, t.archived_at) is null
@@ -1045,6 +1189,29 @@ export class PostgresMailStore
           and m.kind = 'mail'
           and m.deleted_at is null
           and t.kind = 'mail'
+          and (
+            exists (
+              select 1 from messages visible_message
+              where visible_message.thread_id = t.id
+                and visible_message.org_id = ${input.orgId}
+                and visible_message.kind = 'mail'
+                and visible_message.actor_id = ${input.actorId}
+            )
+            or exists (
+              select 1
+              from messages recipient_message
+              join mail_inbound_deliveries visible_delivery
+                on visible_delivery.message_id = recipient_message.id
+                and visible_delivery.org_id = ${input.orgId}
+              join mail_inbound_recipients visible_recipient
+                on visible_recipient.delivery_id = visible_delivery.id
+                and visible_recipient.org_id = ${input.orgId}
+                and visible_recipient.actor_id = ${input.actorId}
+              where recipient_message.thread_id = t.id
+                and recipient_message.org_id = ${input.orgId}
+                and recipient_message.kind = 'mail'
+            )
+          )
         order by m.thread_id, m.sent_at desc, m.id desc
       ),
       filtered as (
@@ -1122,6 +1289,29 @@ export class PostgresMailStore
           and m.kind = 'mail'
           and m.deleted_at is null
           and t.kind = 'mail'
+          and (
+            exists (
+              select 1 from messages visible_message
+              where visible_message.thread_id = t.id
+                and visible_message.org_id = ${input.orgId}
+                and visible_message.kind = 'mail'
+                and visible_message.actor_id = ${input.actorId}
+            )
+            or exists (
+              select 1
+              from messages recipient_message
+              join mail_inbound_deliveries visible_delivery
+                on visible_delivery.message_id = recipient_message.id
+                and visible_delivery.org_id = ${input.orgId}
+              join mail_inbound_recipients visible_recipient
+                on visible_recipient.delivery_id = visible_delivery.id
+                and visible_recipient.org_id = ${input.orgId}
+                and visible_recipient.actor_id = ${input.actorId}
+              where recipient_message.thread_id = t.id
+                and recipient_message.org_id = ${input.orgId}
+                and recipient_message.kind = 'mail'
+            )
+          )
         order by m.thread_id, m.sent_at desc, m.id desc
       )
       select count(*)::int as total from latest
@@ -1196,6 +1386,29 @@ export class PostgresMailStore
           and m.kind = 'mail'
           and m.deleted_at is null
           and t.kind = 'mail'
+          and (
+            exists (
+              select 1 from messages visible_message
+              where visible_message.thread_id = t.id
+                and visible_message.org_id = ${input.orgId}
+                and visible_message.kind = 'mail'
+                and visible_message.actor_id = ${input.actorId}
+            )
+            or exists (
+              select 1
+              from messages recipient_message
+              join mail_inbound_deliveries visible_delivery
+                on visible_delivery.message_id = recipient_message.id
+                and visible_delivery.org_id = ${input.orgId}
+              join mail_inbound_recipients visible_recipient
+                on visible_recipient.delivery_id = visible_delivery.id
+                and visible_recipient.org_id = ${input.orgId}
+                and visible_recipient.actor_id = ${input.actorId}
+              where recipient_message.thread_id = t.id
+                and recipient_message.org_id = ${input.orgId}
+                and recipient_message.kind = 'mail'
+            )
+          )
         order by m.thread_id, m.sent_at desc, m.id desc
       ),
       classified as (
@@ -1289,6 +1502,7 @@ export class PostgresMailStore
     readonly id?: string;
     readonly threadId?: string | null;
     readonly envelope: JsonObject;
+    readonly expectedVersion?: number;
   }): Promise<MailDraftRecord> {
     if (input.id !== undefined) {
       const updated = (await this.sql`
@@ -1296,14 +1510,24 @@ export class PostgresMailStore
         set
           thread_id = ${input.threadId ?? null},
           envelope = ${this.sql.json(toSqlJson(input.envelope))},
+          version = version + 1,
           updated_at = now()
         where id = ${input.id}
           and org_id = ${input.orgId}
           and actor_id = ${input.actorId}
+          and version = ${input.expectedVersion ?? -1}
         returning *
       `) as unknown as readonly MailDraftRow[];
       if (updated[0] !== undefined) {
         return mapDraft(updated[0]);
+      }
+      const current = (await this.sql`
+        select version from mail_drafts
+        where id = ${input.id} and org_id = ${input.orgId} and actor_id = ${input.actorId}
+        limit 1
+      `) as unknown as readonly { readonly version: number }[];
+      if (current[0] !== undefined) {
+        throw new MailDraftVersionConflictError(input.id, current[0].version);
       }
     }
     const rows = (await this.sql`
@@ -1469,6 +1693,55 @@ export class PostgresMailStore
     return rows[0] !== undefined;
   }
 
+  async retryOutbound(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+    readonly outboxSubject?: string;
+  }): Promise<MailOutboundRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const current = (await tx`
+        select id from mail_outbound_messages
+        where id = ${input.id}
+          and org_id = ${input.orgId}
+          and actor_id = ${input.actorId}
+          and status = 'failed'
+        for update
+      `) as unknown as readonly { readonly id: string }[];
+      if (current[0] === undefined) return null;
+      const outbox = (await tx`
+        insert into outbox (subject, payload, deliver_after)
+        values (
+          ${input.outboxSubject ?? "mail.send"},
+          ${tx.json(
+            toSqlJson({
+              mailOutboundId: input.id,
+              orgId: input.orgId,
+              actorId: input.actorId,
+            }),
+          )},
+          now()
+        )
+        returning id
+      `) as unknown as readonly { readonly id: string }[];
+      const rows = (await tx`
+        update mail_outbound_messages
+        set
+          outbox_id = ${outbox[0]?.id ?? null},
+          status = 'queued',
+          failed_at = null,
+          dead_lettered_at = null,
+          last_error = null,
+          attempt_count = 0,
+          next_attempt_at = now(),
+          updated_at = now()
+        where id = ${input.id} and org_id = ${input.orgId} and actor_id = ${input.actorId}
+        returning *
+      `) as unknown as readonly MailOutboundRow[];
+      return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    });
+  }
+
   async listAliases(orgId: string, actorId?: string): Promise<readonly MailAliasRecord[]> {
     const rows =
       actorId === undefined
@@ -1514,10 +1787,7 @@ export class PostgresMailStore
     return mapAlias(row);
   }
 
-  async deleteAlias(input: {
-    readonly orgId: string;
-    readonly id: string;
-  }): Promise<boolean> {
+  async deleteAlias(input: { readonly orgId: string; readonly id: string }): Promise<boolean> {
     const rows = (await this.sql`
       update mail_aliases
       set disabled_at = now(), enabled = false, updated_at = now()
@@ -1536,6 +1806,7 @@ interface MailDraftRow {
   readonly actor_id: string;
   readonly thread_id: string | null;
   readonly envelope: JsonObject;
+  readonly version?: number;
   readonly created_at: Date;
   readonly updated_at: Date;
 }
@@ -1557,6 +1828,7 @@ function mapDraft(row: MailDraftRow): MailDraftRecord {
     actorId: row.actor_id,
     threadId: row.thread_id,
     envelope: row.envelope,
+    version: row.version ?? 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1586,6 +1858,126 @@ const MAIL_FOLDER_LABELS: Readonly<Record<MailFolderId, string>> = {
 };
 
 type SqlLike = postgres.Sql | postgres.TransactionSql;
+
+async function insertInboundMessageIdempotent(
+  sql: postgres.TransactionSql,
+  input: InsertInboundMessageIdempotentInput,
+  options: PostgresMailStoreOptions,
+): Promise<IdempotentStoredMailMessage> {
+  assertInboundDedupInput(input);
+  const deliveryRows = (await sql`
+    insert into mail_inbound_deliveries (
+      org_id, dedup_key, normalized_message_id, raw_sha256,
+      envelope_from, envelope_to, received_at
+    )
+    values (
+      ${input.message.orgId},
+      ${input.dedup.key},
+      ${input.dedup.normalizedMessageId},
+      ${input.dedup.rawSha256},
+      ${input.dedup.envelopeFrom},
+      ${sql.array([...input.dedup.envelopeTo])},
+      ${input.dedup.receivedAt}
+    )
+    on conflict (org_id, dedup_key) do nothing
+    returning id
+  `) as unknown as readonly { readonly id: string }[];
+  const deliveryId = deliveryRows[0]?.id;
+
+  if (deliveryId === undefined) {
+    const existing = (await sql`
+      select d.id as delivery_id, d.message_id, m.thread_id
+      from mail_inbound_deliveries d
+      join messages m on m.id = d.message_id and m.org_id = d.org_id
+      where d.org_id = ${input.message.orgId}
+        and d.dedup_key = ${input.dedup.key}
+      limit 1
+    `) as unknown as readonly {
+      readonly delivery_id: string;
+      readonly message_id: string;
+      readonly thread_id: string;
+    }[];
+    const stored = existing[0];
+    if (stored === undefined) {
+      throw new Error("Existing inbound delivery is incomplete.");
+    }
+    const attachments = (await sql`
+      select object_id
+      from message_attachments
+      where message_id = ${stored.message_id}
+      order by object_id
+    `) as unknown as readonly { readonly object_id: string }[];
+    return {
+      deliveryId: stored.delivery_id,
+      duplicate: true,
+      threadId: stored.thread_id,
+      messageId: stored.message_id,
+      attachmentObjectIds: attachments.map((row) => row.object_id),
+    };
+  }
+
+  const stored = await insertMailMessage(sql, input.message, options);
+  await sql`
+    update mail_inbound_deliveries
+    set message_id = ${stored.messageId}, updated_at = now()
+    where id = ${deliveryId} and org_id = ${input.message.orgId}
+  `;
+  for (const recipient of input.recipients) {
+    await sql`
+      insert into mail_inbound_recipients (
+        delivery_id, org_id, actor_id, address, match_kind
+      )
+      values (
+        ${deliveryId},
+        ${input.message.orgId},
+        ${recipient.actorId},
+        ${recipient.address},
+        ${recipient.match}
+      )
+      on conflict (delivery_id, address) do nothing
+    `;
+  }
+
+  const recipientActorIds = [...new Set(input.recipients.map((recipient) => recipient.actorId))];
+  const category = classifyMailCategory({
+    fromAddress: input.message.from.address,
+    ...(input.message.from.name === undefined ? {} : { fromName: input.message.from.name }),
+    subject: input.message.subject,
+    hasListUnsubscribe: headerHasListUnsubscribe(input.message.metadata ?? {}),
+  });
+  for (const actorId of recipientActorIds) {
+    await sql`
+      insert into mail_thread_state (actor_id, thread_id, org_id, category)
+      values (${actorId}, ${stored.threadId}, ${input.message.orgId}, ${category})
+      on conflict (actor_id, thread_id) do nothing
+    `;
+  }
+
+  return {
+    ...stored,
+    deliveryId,
+    duplicate: false,
+  };
+}
+
+function assertInboundDedupInput(input: InsertInboundMessageIdempotentInput): void {
+  if (!/^[a-f0-9]{64}$/u.test(input.dedup.key)) {
+    throw new TypeError("Inbound dedup key must be SHA-256 hex.");
+  }
+  if (!/^[a-f0-9]{64}$/u.test(input.dedup.rawSha256)) {
+    throw new TypeError("Inbound raw digest must be SHA-256 hex.");
+  }
+  if (input.recipients.length === 0 || input.dedup.envelopeTo.length === 0) {
+    throw new TypeError("Inbound delivery requires at least one resolved recipient.");
+  }
+  const recipientAddresses = new Set(input.recipients.map((recipient) => recipient.address));
+  if (
+    input.dedup.envelopeTo.some((address) => !recipientAddresses.has(address)) ||
+    input.recipients.some((recipient) => recipient.address.length === 0)
+  ) {
+    throw new TypeError("Inbound dedup envelope must contain only resolved tenant recipients.");
+  }
+}
 
 async function insertMailMessage(
   sql: SqlLike,
@@ -1791,6 +2183,10 @@ function mapOutbound(row: MailOutboundRow | undefined): MailOutboundRecord {
     failedAt: row.failed_at,
     lastError: row.last_error,
     providerMessageId: row.provider_message_id,
+    providerId: row.provider_id ?? null,
+    providerKind: row.provider_kind ?? null,
+    providerDecisionSource: row.provider_decision_source ?? null,
+    providerDecidedAt: row.provider_decided_at ?? null,
     deliveryMetadata: row.delivery_metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1962,6 +2358,7 @@ function mapThreadDetail(rows: readonly MailThreadRow[]): MailThreadDetail {
 }
 
 function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
+  const html = row.body_format === "html" ? sanitizeMailHtml(row.body).html : row.body;
   return {
     id: row.message_id,
     from: mailAddress(row.metadata.from),
@@ -1969,7 +2366,7 @@ function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
     cc: mailAddressArray(row.metadata.cc),
     bcc: mailAddressArray(row.metadata.bcc),
     sentAt: row.sent_at,
-    body: row.body,
+    body: html,
     bodyFormat: row.body_format === "html" ? "html" : "plain",
     hasAttachment: row.has_attachment,
     attachments: mailThreadAttachments(row.attachments),

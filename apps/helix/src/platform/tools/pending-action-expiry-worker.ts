@@ -6,6 +6,8 @@ export interface PendingActionExpiryRunResult {
   readonly completedAt: string;
   readonly expiredCount: number;
   readonly expired: readonly PendingActionRecord[];
+  readonly recoveredUnknownCount: number;
+  readonly recoveredUnknown: readonly PendingActionRecord[];
 }
 
 export interface PendingActionExpiryWorkerOptions {
@@ -79,11 +81,17 @@ export class PendingActionExpiryWorker {
         now: startedAt,
         limit: this.batchSize,
       });
+      const recoveredUnknown = await this.store.recoverStaleExecutions({
+        now: startedAt,
+        limit: this.batchSize,
+      });
       return {
         startedAt: startedAt.toISOString(),
         completedAt: this.now().toISOString(),
         expiredCount: expired.length,
         expired,
+        recoveredUnknownCount: recoveredUnknown.length,
+        recoveredUnknown,
       };
     });
   }
@@ -105,6 +113,8 @@ export class PendingActionExpiryWorker {
           completedAt: now,
           expiredCount: 0,
           expired: [] as readonly PendingActionRecord[],
+          recoveredUnknownCount: 0,
+          recoveredUnknown: [] as readonly PendingActionRecord[],
         } satisfies PendingActionExpiryRunResult;
       })
       .finally(() => {

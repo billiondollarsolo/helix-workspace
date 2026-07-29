@@ -4,6 +4,7 @@ import type { FeatureFlagProvider } from "@helix/sdk";
 import type {
   AuditRecord,
   Actor,
+  AIClassification,
   JsonObject,
   JsonValue,
   PendingToolInvocation,
@@ -21,6 +22,14 @@ import {
 } from "./permissions/tool-access.js";
 import { confirmationRequiredForSideEffect, tierDefaults } from "./config/tier.js";
 import type { ConfirmationGate } from "./tools/registry.js";
+import type { PendingActionRecord } from "./tools/registry.js";
+import type { AgentAutomationPolicy, AgentCredentialPolicy } from "./auth/credentials.js";
+import { evaluateAutomationPolicy, hashToolInput } from "./tools/automation-policy.js";
+import {
+  evaluateToolPolicyFirewall,
+  type ToolPolicyDecision,
+  type ToolPolicyRequestChannel,
+} from "./tools/policy-firewall.js";
 import type { TierSecurityDefaults } from "@helix/sdk-types";
 import {
   resolveAgentLimitBudget,
@@ -28,6 +37,7 @@ import {
   type AgentLimitExceeded,
   type AgentRateCostLimiter,
 } from "./limits/index.js";
+import { operationalControlEnv } from "../config/env.js";
 
 export type ToolInvokeResult<Output = unknown> =
   | { readonly ok: true; readonly status?: "executed"; readonly output: Output }
@@ -65,9 +75,40 @@ export interface ToolQuotaLimitMetadata {
 export interface ToolInvokeOptions {
   readonly request?: RequestContext;
   readonly actor?: Actor;
+  /**
+   * Identifier of the credential used to authenticate this call. This is
+   * deliberately separate from the actor so registry-level audit records can
+   * correlate credential revocation without serializing credential policy or
+   * token material.
+   */
+  readonly credentialId?: string;
+  /** Human actor that owns the authenticating credential and may approve its actions. */
+  readonly credentialOwnerActorId?: string;
+  /**
+   * A caller-computed SHA-256 fingerprint, never the raw idempotency key.
+   * Invalid/non-fingerprint values are omitted from audit records.
+   */
+  readonly idempotencyFingerprint?: string;
+  /**
+   * Opaque server-side idempotency key supplied to the tool handler. Unlike
+   * {@link idempotencyFingerprint}, this value is never copied into telemetry
+   * or audit records.
+   */
+  readonly executionIdempotencyKey?: string;
+  /**
+   * Internal correlation for execution of an already-approved pending action.
+   */
+  readonly pendingActionId?: string;
+  /** Registry-authored reason when an emergency operational control denies a call. */
+  readonly operationalControlReason?: AgentOperationalControlReason;
   readonly skipConfirmation?: boolean;
   readonly enforceConfirmation?: boolean;
   readonly estimatedCostUsdMicros?: number;
+  /**
+   * Server-derived AI/tool policy context. Source IDs are safe provenance
+   * identifiers only; retrieved contents must never be placed here.
+   */
+  readonly policyContext?: ToolInvocationPolicyContext;
   /**
    * Per-credential policy overrides (PRD §9.2) resolved from the credential
    * that authenticated the request. When present, `confirmationOverride`
@@ -75,6 +116,23 @@ export interface ToolInvokeOptions {
    * the agent rate / cost budget for this invocation.
    */
   readonly credentialPolicy?: CredentialPolicyOverrides;
+}
+
+export interface ToolInvocationPolicyContext {
+  readonly effectiveClassification: AIClassification;
+  readonly sourceIds: readonly string[];
+  readonly containsUntrustedContext: boolean;
+  readonly requestChannel: ToolPolicyRequestChannel;
+  readonly tenantId?: string;
+  readonly blockHighRiskWhenUntrusted?: boolean;
+}
+
+export interface ToolPolicyExplanation {
+  readonly toolId: string;
+  readonly effectiveClassification: AIClassification;
+  readonly requestChannel: ToolPolicyRequestChannel;
+  readonly sourceIds: readonly string[];
+  readonly decision: ToolPolicyDecision;
 }
 
 /**
@@ -89,10 +147,36 @@ export interface CredentialPolicyOverrides {
     readonly requestsPerDay?: number | null;
     readonly costPerDayUsdMicros?: number | null;
   };
+  readonly automationPolicy?: AgentAutomationPolicy | null;
+  readonly version?: string;
 }
 
 export interface ToolAuditSink {
   append(record: AuditRecord & { readonly orgId: string }): Promise<unknown>;
+}
+
+export type ToolInvocationAuditVerb =
+  | "tool.invocation.denied"
+  | "tool.invocation.pending"
+  | "tool.invocation.executed"
+  | "tool.invocation.failed"
+  | "tool.invocation.cancelled";
+
+export type ToolInvocationAuditStatus = "denied" | "pending" | "executed" | "failed" | "cancelled";
+
+export interface PendingToolActionOptions {
+  readonly actor: Actor;
+  readonly request?: RequestContext;
+  readonly credentialId?: string;
+  readonly credentialPolicy?: CredentialPolicyOverrides;
+  readonly idempotencyFingerprint?: string;
+}
+
+export interface PendingExecutionPrincipal {
+  readonly actor: Actor;
+  readonly credentialId?: string;
+  readonly credentialOwnerActorId?: string;
+  readonly credentialPolicy?: AgentCredentialPolicy;
 }
 
 export type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
@@ -109,9 +193,41 @@ export interface ToolInvocationMetrics {
     readonly actorType: string;
     readonly reason: string;
   }): void;
+  recordAgentOperationalControlDenial?(input: {
+    readonly toolId: string;
+    readonly actorType: string;
+    readonly reason: AgentOperationalControlReason;
+  }): void;
+  recordToolPolicyDenial?(input: {
+    readonly toolId: string;
+    readonly reason: Extract<ToolPolicyDecision, { readonly outcome: "deny" }>["reason"];
+    readonly requestChannel: ToolPolicyRequestChannel;
+    readonly effectiveClassification: AIClassification;
+  }): void;
 }
 
 export type ToolFeatureFlagResolver = (tool: ToolDefinition) => string | undefined;
+
+export type AgentOperationalControlReason =
+  | "global_read_only"
+  | "org_agent_writes_disabled"
+  | "tool_disabled";
+
+export type AgentOperationalControlDecision =
+  | { readonly allowed: true }
+  | {
+      readonly allowed: false;
+      readonly reason: AgentOperationalControlReason;
+      readonly controlId: string;
+    };
+
+export interface AgentOperationalControlProvider {
+  evaluate(input: {
+    readonly actor: Actor;
+    readonly credentialId?: string;
+    readonly tool: ToolDefinition;
+  }): Promise<AgentOperationalControlDecision>;
+}
 
 export interface RuntimeToolRegistry {
   register(tool: ToolDefinition): void;
@@ -119,6 +235,11 @@ export interface RuntimeToolRegistry {
   get(toolId: string): ToolDefinition | undefined;
   list(): readonly ToolDefinition[];
   listVisible(actor: Actor): Promise<readonly ToolDefinition[]>;
+  explainPolicy(
+    toolId: string,
+    rawInput: unknown,
+    options: ToolInvokeOptions,
+  ): Promise<ToolPolicyExplanation>;
   invoke<Output = unknown>(
     toolId: string,
     rawInput: unknown,
@@ -126,7 +247,7 @@ export interface RuntimeToolRegistry {
   ): Promise<ToolInvokeResult<Output>>;
   approvePending<Output = unknown>(
     pendingId: string,
-    options: { readonly actor: Actor; readonly request?: RequestContext },
+    options: PendingToolActionOptions,
   ): Promise<ToolInvokeResult<Output>>;
   getPendingAction(
     pendingId: string,
@@ -137,7 +258,7 @@ export interface RuntimeToolRegistry {
   >;
   cancelPending(
     pendingId: string,
-    options: { readonly actor: Actor },
+    options: PendingToolActionOptions,
   ): Promise<
     | { readonly ok: true; readonly status: "cancelled"; readonly pending: PendingToolInvocation }
     | { readonly ok: false; readonly statusCode: number; readonly error: string }
@@ -170,6 +291,14 @@ export interface ToolRegistryOptions {
   readonly accessPolicy?: ToolAccessPolicy;
   readonly confirmationGate?: ConfirmationGate;
   readonly confirmationDefaults?: TierSecurityDefaults;
+  /**
+   * Generic invocation outcomes use the same durable sink as domain audit
+   * events. Personal-tier and non-critical Business-tier outcomes are
+   * best-effort during a sink outage. In Business and higher tiers, pending
+   * actions, approved-pending executions, cancellations, destructive/external
+   * calls, and credential/permission/policy mutations fail before a success
+   * response can be returned unless their outcome append succeeds.
+   */
   readonly auditSink?: ToolAuditSink;
   readonly agentRateCostLimiter?: AgentRateCostLimiter;
   readonly agentLimitTier?: TierSecurityDefaults["tier"];
@@ -177,6 +306,20 @@ export interface ToolRegistryOptions {
   readonly metrics?: ToolInvocationMetrics;
   readonly featureFlags?: FeatureFlagProvider;
   readonly toolFeatureFlag?: ToolFeatureFlagResolver;
+  /**
+   * Emergency controls evaluated for every invocation immediately before
+   * ordinary feature flags and policy checks.
+   */
+  readonly operationalControls?: AgentOperationalControlProvider;
+  /**
+   * Re-resolves the requesting principal immediately before approved work
+   * executes. Credential-backed actions fail closed when this resolver is
+   * absent or returns null.
+   */
+  readonly resolvePendingPrincipal?: (
+    record: PendingActionRecord,
+    approval: PendingToolActionOptions,
+  ) => Promise<PendingExecutionPrincipal | null>;
 }
 
 export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeToolRegistry {
@@ -204,178 +347,508 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
       const visible = await filterToolsForActor(this.list(), actor, accessPolicy);
       return filterToolsByFeatureFlags(visible, actor);
     },
+    async explainPolicy(toolId, rawInput, explainOptions) {
+      const actor = explainOptions.actor ?? unauthenticatedActor;
+      const tool = tools.get(toolId);
+      const effectiveClassification =
+        explainOptions.policyContext?.effectiveClassification ?? "standard";
+      const requestChannel = explainOptions.policyContext?.requestChannel ?? "internal";
+      const sourceIds = explainOptions.policyContext?.sourceIds ?? [];
+      if (tool === undefined) {
+        return {
+          toolId,
+          effectiveClassification,
+          requestChannel,
+          sourceIds,
+          decision: evaluateToolPolicyFirewall({
+            actor,
+            tenantId: explainOptions.policyContext?.tenantId ?? actor.orgId,
+            effectiveClassification,
+            sourceProvenance: {
+              sourceIds,
+              containsUntrustedContext:
+                explainOptions.policyContext?.containsUntrustedContext ?? false,
+            },
+            requestChannel,
+            tier: agentLimitTier,
+            scopeAllowed: false,
+            featureEnabled: false,
+            confirmationRequired: true,
+          }),
+        };
+      }
+      const scopeAllowed = await accessPolicy.can(actor, tool.permission, toolResource(tool));
+      const featureEnabled = (await evaluateToolFeatureFlag(tool, actor)).enabled;
+      let parsedInput: unknown = rawInput;
+      let inputAllowed = true;
+      try {
+        parsedInput = tool.inputSchema.parse(rawInput);
+      } catch {
+        inputAllowed = false;
+      }
+      const compositionAllowed = inputAllowed && checkScopeComposition(actor, tool, parsedInput).ok;
+      const automationDecision =
+        actor.type === "agent" && tool.sideEffects !== "read" && inputAllowed
+          ? evaluateAutomationPolicy({
+              policy:
+                explainOptions.credentialId === undefined
+                  ? null
+                  : explainOptions.credentialPolicy?.automationPolicy,
+              tool,
+              parsedInput,
+            })
+          : null;
+      const confirmationRequired =
+        (actor.type === "agent" ||
+          explainOptions.enforceConfirmation === true ||
+          requestChannel === "assistant") &&
+        shouldQueueConfirmation({
+          tool,
+          actor,
+          defaults: confirmationDefaults,
+          skipConfirmation: explainOptions.skipConfirmation,
+          approvedPendingExecution: explainOptions.pendingActionId !== undefined,
+          confirmationOverride: explainOptions.credentialPolicy?.confirmationOverride,
+          automationAllowed: automationDecision?.allowed === true,
+        });
+      return {
+        toolId,
+        effectiveClassification,
+        requestChannel,
+        sourceIds,
+        decision: evaluateToolPolicyFirewall({
+          actor,
+          tenantId: explainOptions.policyContext?.tenantId ?? actor.orgId,
+          tool,
+          effectiveClassification,
+          sourceProvenance: {
+            sourceIds,
+            containsUntrustedContext:
+              explainOptions.policyContext?.containsUntrustedContext ?? false,
+          },
+          requestChannel,
+          tier: agentLimitTier,
+          scopeAllowed: scopeAllowed && compositionAllowed,
+          featureEnabled,
+          confirmationRequired,
+          automationDecision,
+          approvedPendingExecution: explainOptions.pendingActionId !== undefined,
+          blockHighRiskWhenUntrusted:
+            explainOptions.policyContext?.blockHighRiskWhenUntrusted ?? false,
+        }),
+      };
+    },
     async invoke<Output = unknown>(
       toolId: string,
       rawInput: unknown,
-      options?: ToolInvokeOptions,
+      invokeOptions?: ToolInvokeOptions,
     ): Promise<ToolInvokeResult<Output>> {
       const tool = tools.get(toolId);
-      if (!tool) {
-        return { ok: false, statusCode: 404, error: `Unknown tool: ${toolId}` };
-      }
-      const actor = options?.actor ?? unauthenticatedActor;
+      const actor = invokeOptions?.actor ?? unauthenticatedActor;
       const start = process.hrtime.bigint();
-      const span = trace.getTracer("helix.tools").startSpan(`tool.${tool.id}`, {
+      const span = trace.getTracer("helix.tools").startSpan(`tool.${toolId}`, {
         attributes: {
           "helix.tool.actor_type": actor.type,
-          "helix.tool.id": tool.id,
-          "helix.tool.permission": tool.permission,
-          "helix.tool.side_effects": tool.sideEffects,
+          "helix.tool.id": toolId,
+          ...(tool === undefined
+            ? {}
+            : {
+                "helix.tool.permission": tool.permission,
+                "helix.tool.side_effects": tool.sideEffects,
+              }),
         },
       });
       try {
+        if (tool === undefined) {
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 404,
+              error: `Unknown tool: ${toolId}`,
+            },
+            {
+              actor,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
+          );
+        }
         if (!(await accessPolicy.can(actor, tool.permission, toolResource(tool)))) {
-          return toolInvokeResultWithSpan(
+          return await completeInvocation(
             span,
             {
               ok: false,
               statusCode: 403,
               error: `Actor cannot invoke tool: ${toolId}`,
             },
-            tool.id,
-            start,
-            invocationMetrics,
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
+          );
+        }
+        const operationalControl = await evaluateOperationalControl(
+          tool,
+          actor,
+          invokeOptions?.credentialId,
+        );
+        if (!operationalControl.allowed) {
+          span.setAttribute("helix.tool.operational_control", operationalControl.controlId);
+          span.setAttribute("helix.tool.operational_control_reason", operationalControl.reason);
+          invocationMetrics?.recordAgentOperationalControlDenial?.({
+            toolId,
+            actorType: actor.type,
+            reason: operationalControl.reason,
+          });
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 503,
+              error: operationalControlMessage(operationalControl.reason),
+            },
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions: {
+                ...invokeOptions,
+                operationalControlReason: operationalControl.reason,
+              },
+            },
           );
         }
         const featureFlagDecision = await evaluateToolFeatureFlag(tool, actor);
         if (!featureFlagDecision.enabled) {
           span.setAttribute("helix.tool.feature_flag", featureFlagDecision.flag);
           span.setAttribute("helix.tool.feature_flag_enabled", false);
-          return toolInvokeResultWithSpan(
+          return await completeInvocation(
             span,
             {
               ok: false,
               statusCode: 403,
               error: `Tool ${toolId} is disabled by tenant feature flag: ${featureFlagDecision.flag}`,
             },
-            tool.id,
-            start,
-            invocationMetrics,
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
           );
         }
         const estimatedCostUsdMicros = estimateToolInvocationCost(
           tool,
-          options?.estimatedCostUsdMicros,
+          invokeOptions?.estimatedCostUsdMicros,
         );
+
+        let input: unknown;
+        try {
+          input = tool.inputSchema.parse(rawInput);
+        } catch (error) {
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 400,
+              error: error instanceof Error ? error.message : "Tool input validation failed",
+            },
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
+          );
+        }
+
+        const compositionResult = checkScopeComposition(actor, tool, input);
+        if (!compositionResult.ok) {
+          span.setAttribute("helix.tool.missing_scopes", compositionResult.missingScopes.join(","));
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 403,
+              error: `Actor is missing required scopes for tool ${toolId}: ${compositionResult.missingScopes.join(", ")}`,
+            },
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "denied",
+              invokeOptions,
+            },
+          );
+        }
+        const automationDecision =
+          actor.type === "agent" && tool.sideEffects !== "read"
+            ? evaluateAutomationPolicy({
+                policy:
+                  invokeOptions?.credentialId === undefined
+                    ? null
+                    : invokeOptions.credentialPolicy?.automationPolicy,
+                tool,
+                parsedInput: input,
+              })
+            : null;
+        if (
+          automationDecision?.allowed === false &&
+          automationDecision.reason === "policy_self_modification"
+        ) {
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 403,
+              error: `Agent credentials cannot modify their own authorization policy: ${toolId}`,
+            },
+            { actor, tool, toolId, start, status: "denied", invokeOptions },
+          );
+        }
+        const policyExplanation = await registry.explainPolicy(toolId, input, {
+          ...(invokeOptions ?? {}),
+          actor,
+        });
+        if (policyExplanation.decision.outcome === "deny") {
+          invocationMetrics?.recordToolPolicyDenial?.({
+            toolId,
+            reason: policyExplanation.decision.reason,
+            requestChannel: policyExplanation.requestChannel,
+            effectiveClassification: policyExplanation.effectiveClassification,
+          });
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 403,
+              error: `Tool policy denied invocation: ${policyExplanation.decision.reason}`,
+            },
+            { actor, tool, toolId, start, status: "denied", invokeOptions },
+          );
+        }
+        const rateLimitOverrides =
+          automationDecision?.allowed === true
+            ? automationRateLimitOverrides(
+                invokeOptions?.credentialPolicy?.rateLimitOverrides,
+                automationDecision.requestsPerMinute,
+                automationDecision.requestsPerDay,
+              )
+            : invokeOptions?.credentialPolicy?.rateLimitOverrides;
         const limitDecision = await consumeAgentLimit(
           tool.id,
           actor,
           estimatedCostUsdMicros,
-          options?.credentialPolicy?.rateLimitOverrides,
+          rateLimitOverrides,
         );
         if (limitDecision !== null) {
-          return toolInvokeResultWithSpan(span, limitDecision, tool.id, start, invocationMetrics);
+          return await completeInvocation(span, limitDecision, {
+            actor,
+            tool,
+            toolId,
+            start,
+            status: "denied",
+            invokeOptions,
+          });
+        }
+        const context = createToolContext(
+          invokeOptions?.request,
+          actor,
+          accessPolicy,
+          tool,
+          optionsAuditSink(),
+          invokeOptions?.executionIdempotencyKey,
+        );
+        const confirmationGate = registryOptionsConfirmationGate();
+        const queueRequired =
+          policyExplanation.decision.outcome === "queue-confirmation" ||
+          (invokeOptions?.enforceConfirmation === true &&
+            shouldQueueConfirmation({
+              tool,
+              actor,
+              defaults: confirmationDefaults,
+              skipConfirmation: invokeOptions.skipConfirmation,
+              approvedPendingExecution: invokeOptions.pendingActionId !== undefined,
+              confirmationOverride: invokeOptions.credentialPolicy?.confirmationOverride,
+              automationAllowed: automationDecision?.allowed === true,
+            }));
+        if (queueRequired && confirmationGate === undefined) {
+          return await completeInvocation(
+            span,
+            {
+              ok: false,
+              statusCode: 503,
+              error: "Confirmation gate is required for this tool invocation.",
+            },
+            { actor, tool, toolId, start, status: "denied", invokeOptions },
+          );
+        }
+        if (queueRequired && confirmationGate !== undefined) {
+          const pending = await confirmationGate.queue({
+            tool,
+            actor,
+            ...(invokeOptions?.credentialId === undefined
+              ? {}
+              : { requesterCredentialId: invokeOptions.credentialId }),
+            ...(invokeOptions?.credentialOwnerActorId === undefined
+              ? {}
+              : { approvalOwnerActorId: invokeOptions.credentialOwnerActorId }),
+            ...(invokeOptions?.credentialPolicy === undefined
+              ? {}
+              : { credentialPolicy: invokeOptions.credentialPolicy as AgentCredentialPolicy }),
+            input: toJsonValue(input),
+            ...(invokeOptions?.request === undefined ? {} : { request: invokeOptions.request }),
+            ...(invokeOptions?.request?.traceId === undefined
+              ? {}
+              : { traceId: invokeOptions.request.traceId }),
+          });
+          const pendingResult: ToolInvokeResult<Output> = {
+            ok: true,
+            status: "pending_confirmation",
+            output: { status: "pending_confirmation", pending } as Output,
+            pending,
+          };
+          const completed = await completeInvocation(span, pendingResult, {
+            actor,
+            tool,
+            toolId,
+            start,
+            status: "pending",
+            invokeOptions: {
+              ...invokeOptions,
+              pendingActionId: pending.id,
+            },
+          });
+          if (!completed.ok) {
+            // Do not leave an unaudited pending action available for later
+            // execution when fail-closed audit persistence rejects the call.
+            await confirmationGate.deny({ id: pending.id, actor }).catch(() => undefined);
+          }
+          return completed;
         }
 
         try {
-          const input = tool.inputSchema.parse(rawInput);
-          const compositionResult = checkScopeComposition(actor, tool, input);
-          if (!compositionResult.ok) {
-            span.setAttribute(
-              "helix.tool.missing_scopes",
-              compositionResult.missingScopes.join(","),
-            );
-            return toolInvokeResultWithSpan(
-              span,
-              {
-                ok: false,
-                statusCode: 403,
-                error: `Actor is missing required scopes for tool ${toolId}: ${compositionResult.missingScopes.join(", ")}`,
-              },
-              tool.id,
-              start,
-              invocationMetrics,
-            );
-          }
-          const context = createToolContext(
-            options?.request,
-            actor,
-            accessPolicy,
-            tool,
-            optionsAuditSink(),
-          );
-          const confirmationGate = registryOptionsConfirmationGate();
-          if (
-            options?.enforceConfirmation === true &&
-            confirmationGate !== undefined &&
-            shouldQueueConfirmation(
-              tool,
-              confirmationDefaults,
-              options.skipConfirmation,
-              options.credentialPolicy?.confirmationOverride,
-            )
-          ) {
-            const pending = await confirmationGate.queue({
-              tool,
-              actor,
-              input: toJsonValue(input),
-              ...(options.request === undefined ? {} : { request: options.request }),
-              ...(options.request?.traceId === undefined
-                ? {}
-                : { traceId: options.request.traceId }),
-            });
-            return toolInvokeResultWithSpan(
-              span,
-              {
-                ok: true,
-                status: "pending_confirmation",
-                output: { status: "pending_confirmation", pending } as Output,
-                pending,
-              },
-              tool.id,
-              start,
-              invocationMetrics,
-            );
-          }
           const output = await tool.handler(input, context);
           const parsedOutput = tool.outputSchema.parse(output) as Output;
           await recordAgentCost(
             actor,
             estimatedCostUsdMicros,
-            options?.credentialPolicy?.rateLimitOverrides,
+            invokeOptions?.credentialPolicy?.rateLimitOverrides,
           );
-          return toolInvokeResultWithSpan(
+          return await completeInvocation(
             span,
             {
               ok: true,
               output: parsedOutput,
             },
-            tool.id,
-            start,
-            invocationMetrics,
+            {
+              actor,
+              tool,
+              toolId,
+              start,
+              status: "executed",
+              invokeOptions,
+            },
           );
         } catch (error) {
           const httpError = toolHttpError(error);
           const result: ToolInvokeErrorResult = {
             ok: false,
             statusCode:
-              httpError?.statusCode ??
-              (error instanceof PermissionDeniedError ? 403 : isInputError(error) ? 400 : 500),
+              httpError?.statusCode ?? (error instanceof PermissionDeniedError ? 403 : 500),
             error: error instanceof Error ? error.message : "Tool invocation failed",
             ...(httpError?.retryAfterSeconds === undefined
               ? {}
               : { retryAfterSeconds: httpError.retryAfterSeconds }),
             ...(httpError?.quotaLimit === undefined ? {} : { quotaLimit: httpError.quotaLimit }),
           };
-          return toolInvokeResultWithSpan(span, result, tool.id, start, invocationMetrics);
+          return await completeInvocation(span, result, {
+            actor,
+            tool,
+            toolId,
+            start,
+            status:
+              error instanceof PermissionDeniedError || result.statusCode === 403
+                ? "denied"
+                : "failed",
+            invokeOptions,
+          });
         }
+      } catch (error) {
+        return await completeInvocation(
+          span,
+          {
+            ok: false,
+            statusCode: 500,
+            error: error instanceof Error ? error.message : "Tool invocation failed",
+          },
+          {
+            actor,
+            ...(tool === undefined ? {} : { tool }),
+            toolId,
+            start,
+            status: "failed",
+            invokeOptions,
+          },
+        );
       } finally {
         span.end();
       }
     },
     async approvePending<Output = unknown>(
       pendingId: string,
-      approvalOptions: { readonly actor: Actor; readonly request?: RequestContext },
+      approvalOptions: PendingToolActionOptions,
     ): Promise<ToolInvokeResult<Output>> {
       const gate = registryOptionsConfirmationGate();
       if (gate === undefined) {
+        await auditPendingDecision({
+          actor: approvalOptions.actor,
+          pendingId,
+          status: "denied",
+          invokeOptions: approvalOptions,
+        });
         return { ok: false, statusCode: 400, error: "Confirmation gate is not configured." };
       }
-      const approved = await gate.approve({
-        id: pendingId,
-        actor: approvalOptions.actor,
-      });
-      if (approved === null || approved.status !== "confirmed") {
+      let approved: PendingToolInvocation | null;
+      try {
+        approved = await gate.approve({
+          id: pendingId,
+          actor: approvalOptions.actor,
+        });
+      } catch {
+        await auditPendingDecision({
+          actor: approvalOptions.actor,
+          pendingId,
+          status: "failed",
+          invokeOptions: approvalOptions,
+        });
+        return {
+          ok: false,
+          statusCode: 500,
+          error: "Pending tool action approval failed.",
+        };
+      }
+      if (approved === null || approved.status !== "approved") {
+        await auditPendingDecision({
+          actor: approvalOptions.actor,
+          pendingId,
+          status: "denied",
+          invokeOptions: approvalOptions,
+        });
         return {
           ok: false,
           statusCode: 404,
@@ -383,17 +856,89 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         };
       }
 
-      const result = await this.invoke<Output>(approved.toolId, approved.input, {
-        actor: approvalOptions.actor,
-        ...(approvalOptions.request === undefined ? {} : { request: approvalOptions.request }),
-        skipConfirmation: true,
-      });
-      await gate.recordExecution({
+      const pendingRecord = await gate.getRecord({
         id: pendingId,
         actor: approvalOptions.actor,
-        ...(approvalOptions.request?.traceId === undefined
+      });
+      if (
+        pendingRecord === null ||
+        hashToolInput(pendingRecord.input) !== pendingRecord.inputHash
+      ) {
+        return {
+          ok: false,
+          statusCode: 409,
+          error: "Pending action input integrity check failed.",
+        };
+      }
+      const requestingPrincipal = await options.resolvePendingPrincipal?.(
+        pendingRecord,
+        approvalOptions,
+      );
+      if (
+        requestingPrincipal === null ||
+        requestingPrincipal === undefined ||
+        requestingPrincipal.actor.id !== pendingRecord.requesterActorId ||
+        requestingPrincipal.actor.orgId !== pendingRecord.orgId ||
+        (pendingRecord.requesterCredentialId !== null &&
+          requestingPrincipal.credentialId !== pendingRecord.requesterCredentialId) ||
+        (requestingPrincipal.credentialPolicy?.version ?? "actor-session") !==
+          pendingRecord.policyVersion ||
+        (pendingRecord.requesterCredentialId !== null &&
+          requestingPrincipal.credentialOwnerActorId !== approvalOptions.actor.id &&
+          !actorIsOrgAdmin(approvalOptions.actor))
+      ) {
+        return {
+          ok: false,
+          statusCode: 403,
+          error: "Requesting credential, policy, owner, or tenant changed before execution.",
+        };
+      }
+      const claim = await gate.claimExecution({
+        id: pendingId,
+        approver: approvalOptions.actor,
+        executionActorId: requestingPrincipal.actor.id,
+      });
+      if (claim === null) {
+        return {
+          ok: false,
+          statusCode: 409,
+          error: `Pending tool action execution was already claimed: ${pendingId}`,
+        };
+      }
+      const executionRequest: RequestContext = {
+        requestId: `pending:${pendingId}`,
+        ...(claim.record.traceId === null ? {} : { traceId: claim.record.traceId }),
+        ...(claim.record.requesterIp === null ? {} : { ip: claim.record.requesterIp }),
+      };
+      const result = await this.invoke<Output>(claim.record.toolId, claim.record.input, {
+        actor: requestingPrincipal.actor,
+        request: executionRequest,
+        ...(requestingPrincipal.credentialId === undefined
           ? {}
-          : { traceId: approvalOptions.request.traceId }),
+          : { credentialId: requestingPrincipal.credentialId }),
+        ...(requestingPrincipal.credentialOwnerActorId === undefined
+          ? {}
+          : { credentialOwnerActorId: requestingPrincipal.credentialOwnerActorId }),
+        ...(requestingPrincipal.credentialPolicy === undefined
+          ? {}
+          : { credentialPolicy: requestingPrincipal.credentialPolicy }),
+        idempotencyFingerprint: claim.record.inputHash,
+        executionIdempotencyKey: claim.record.executionIdempotencyKey,
+        pendingActionId: pendingId,
+        policyContext: {
+          effectiveClassification: "restricted",
+          sourceIds: [],
+          containsUntrustedContext: false,
+          requestChannel: "pending_execution",
+          tenantId: claim.record.orgId,
+        },
+        enforceConfirmation: true,
+        skipConfirmation: true,
+      });
+      await gate.completeExecution({
+        id: pendingId,
+        executionActorId: requestingPrincipal.actor.id,
+        ...(executionRequest.traceId === undefined ? {} : { traceId: executionRequest.traceId }),
         ...(result.ok && result.status === "executed"
           ? { result: toJsonValue(result.output) }
           : { error: result.ok ? "Pending action did not execute." : result.error }),
@@ -418,20 +963,62 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
       }
       return { ok: true, pending };
     },
-    async cancelPending(pendingId: string, cancelOptions: { readonly actor: Actor }) {
+    async cancelPending(pendingId: string, cancelOptions: PendingToolActionOptions) {
       const gate = registryOptionsConfirmationGate();
       if (gate === undefined) {
+        await auditPendingDecision({
+          actor: cancelOptions.actor,
+          pendingId,
+          status: "denied",
+          invokeOptions: cancelOptions,
+        });
         return { ok: false, statusCode: 400, error: "Confirmation gate is not configured." };
       }
-      const pending = await gate.deny({
-        id: pendingId,
-        actor: cancelOptions.actor,
-      });
+      let pending: PendingToolInvocation | null;
+      try {
+        pending = await gate.deny({
+          id: pendingId,
+          actor: cancelOptions.actor,
+        });
+      } catch {
+        await auditPendingDecision({
+          actor: cancelOptions.actor,
+          pendingId,
+          status: "failed",
+          invokeOptions: cancelOptions,
+        });
+        return {
+          ok: false,
+          statusCode: 500,
+          error: "Pending tool action cancellation failed.",
+        };
+      }
       if (pending === null || pending.status !== "cancelled") {
+        await auditPendingDecision({
+          actor: cancelOptions.actor,
+          pendingId,
+          status: "denied",
+          invokeOptions: cancelOptions,
+        });
         return {
           ok: false,
           statusCode: 404,
           error: `Pending tool action is not cancellable: ${pendingId}`,
+        };
+      }
+      const audited = await auditPendingDecision({
+        actor: cancelOptions.actor,
+        pendingId,
+        status: "cancelled",
+        tool: tools.get(pending.toolId),
+        toolId: pending.toolId,
+        invokeOptions: cancelOptions,
+      });
+      if (!audited && auditMustFailClosed()) {
+        return {
+          ok: false,
+          statusCode: 503,
+          error: criticalAuditFailureMessage,
         };
       }
       return { ok: true, status: "cancelled", pending };
@@ -462,6 +1049,134 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
 
   function optionsAuditSink(): ToolAuditSink | undefined {
     return options.auditSink;
+  }
+
+  async function completeInvocation<Output>(
+    span: Span,
+    result: ToolInvokeResult<Output>,
+    audit: {
+      readonly actor: Actor;
+      readonly tool?: ToolDefinition | undefined;
+      readonly toolId: string;
+      readonly start: bigint;
+      readonly status: ToolInvocationAuditStatus;
+      readonly invokeOptions?: ToolInvokeOptions | undefined;
+    },
+  ): Promise<ToolInvokeResult<Output>> {
+    const durationNanoseconds = process.hrtime.bigint() - audit.start;
+    const persisted = await appendInvocationAudit({
+      actor: audit.actor,
+      ...(audit.tool === undefined ? {} : { tool: audit.tool }),
+      toolId: audit.toolId,
+      status: audit.status,
+      durationNanoseconds,
+      ...(audit.invokeOptions === undefined ? {} : { invokeOptions: audit.invokeOptions }),
+    });
+    const mustPersist =
+      result.ok &&
+      auditMustFailClosed() &&
+      requiresDurableOutcome(audit.tool, audit.status, audit.invokeOptions?.pendingActionId);
+    const finalResult: ToolInvokeResult<Output> =
+      persisted || !mustPersist
+        ? result
+        : {
+            ok: false,
+            statusCode: 503,
+            error: criticalAuditFailureMessage,
+          };
+    if (!persisted) {
+      span.setAttribute("helix.tool.audit_persisted", false);
+    }
+    return toolInvokeResultWithSpan(
+      span,
+      finalResult,
+      audit.toolId,
+      audit.start,
+      invocationMetrics,
+    );
+  }
+
+  async function auditPendingDecision(input: {
+    readonly actor: Actor;
+    readonly pendingId: string;
+    readonly status: Extract<ToolInvocationAuditStatus, "denied" | "failed" | "cancelled">;
+    readonly tool?: ToolDefinition | undefined;
+    readonly toolId?: string;
+    readonly invokeOptions: PendingToolActionOptions;
+  }): Promise<boolean> {
+    return appendInvocationAudit({
+      actor: input.actor,
+      ...(input.tool === undefined ? {} : { tool: input.tool }),
+      toolId: input.toolId ?? "pending-action",
+      status: input.status,
+      durationNanoseconds: 0n,
+      invokeOptions: {
+        ...input.invokeOptions,
+        pendingActionId: input.pendingId,
+      },
+    });
+  }
+
+  async function appendInvocationAudit(input: {
+    readonly actor: Actor;
+    readonly tool?: ToolDefinition | undefined;
+    readonly toolId: string;
+    readonly status: ToolInvocationAuditStatus;
+    readonly durationNanoseconds: bigint;
+    readonly invokeOptions?: ToolInvokeOptions | undefined;
+  }): Promise<boolean> {
+    const auditSink = optionsAuditSink();
+    if (auditSink === undefined) {
+      return false;
+    }
+    const credentialId = input.invokeOptions?.credentialId;
+    const idempotencyFingerprint = safeSha256Fingerprint(
+      input.invokeOptions?.idempotencyFingerprint,
+    );
+    try {
+      await auditSink.append({
+        orgId: input.actor.orgId,
+        actorId: input.actor.id,
+        verb: invocationAuditVerb(input.status),
+        objectType: "tool_invocation",
+        toolId: input.toolId,
+        ...auditTraceFromRequest(input.invokeOptions?.request),
+        metadata: {
+          orgId: input.actor.orgId,
+          actorType: input.actor.type,
+          ...(credentialId === undefined ? {} : { credentialId }),
+          toolId: input.toolId,
+          toolPermission: input.tool?.permission ?? "unknown",
+          sideEffectClass: input.tool?.sideEffects ?? "unknown",
+          status: input.status,
+          durationBucket: durationBucket(input.durationNanoseconds),
+          ...(idempotencyFingerprint === undefined ? {} : { idempotencyFingerprint }),
+          ...(input.invokeOptions?.pendingActionId === undefined
+            ? {}
+            : { pendingActionId: input.invokeOptions.pendingActionId }),
+          ...(input.invokeOptions?.operationalControlReason === undefined
+            ? {}
+            : { operationalControlReason: input.invokeOptions.operationalControlReason }),
+          ...(input.invokeOptions?.policyContext === undefined
+            ? {}
+            : {
+                effectiveClassification: input.invokeOptions.policyContext.effectiveClassification,
+                requestChannel: input.invokeOptions.policyContext.requestChannel,
+                sourceIds: [...input.invokeOptions.policyContext.sourceIds],
+                containsUntrustedContext:
+                  input.invokeOptions.policyContext.containsUntrustedContext,
+              }),
+        },
+        createdAt: new Date().toISOString(),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function auditMustFailClosed(): boolean {
+    return confirmationDefaults.tier !== "personal";
   }
 
   async function consumeAgentLimit(
@@ -542,6 +1257,58 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     return filtered;
   }
 
+  async function evaluateOperationalControl(
+    tool: ToolDefinition,
+    actor: Actor,
+    credentialId: string | undefined,
+  ): Promise<AgentOperationalControlDecision> {
+    if (tool.sideEffects === "read") {
+      return { allowed: true };
+    }
+    const external = await options.operationalControls?.evaluate({
+      actor,
+      tool,
+      ...(credentialId === undefined ? {} : { credentialId }),
+    });
+    if (external !== undefined && !external.allowed) {
+      return external;
+    }
+    const controlEnv = operationalControlEnv();
+    const disabledTools = parseDisabledToolControls(controlEnv.HELIX_DISABLED_TOOLS);
+    if (disabledTools.has(tool.id)) {
+      return {
+        allowed: false,
+        reason: "tool_disabled",
+        controlId: `environment:tool:${tool.id}`,
+      };
+    }
+    if (environmentControlEnabled(controlEnv.HELIX_GLOBAL_READ_ONLY)) {
+      return {
+        allowed: false,
+        reason: "global_read_only",
+        controlId: "environment:global-read-only",
+      };
+    }
+    if (actor.type === "agent") {
+      const disabledAgentWriteOrgs = parseDisabledToolControls(
+        controlEnv.HELIX_AGENT_WRITES_DISABLED_ORGS,
+      );
+      if (
+        environmentControlDisabled(controlEnv.HELIX_AGENT_WRITES_ENABLED) ||
+        disabledAgentWriteOrgs.has(actor.orgId)
+      ) {
+        return {
+          allowed: false,
+          reason: "org_agent_writes_disabled",
+          controlId: disabledAgentWriteOrgs.has(actor.orgId)
+            ? `environment:org:${actor.orgId}:agent-writes`
+            : "environment:agent-writes",
+        };
+      }
+    }
+    return external ?? { allowed: true };
+  }
+
   async function evaluateToolFeatureFlag(
     tool: ToolDefinition,
     actor: Actor,
@@ -578,6 +1345,37 @@ export function featureFlagForTool(tool: Pick<ToolDefinition, "id">): string | u
   return undefined;
 }
 
+function parseDisabledToolControls(value: string | undefined): ReadonlySet<string> {
+  if (value === undefined) {
+    return new Set();
+  }
+  return new Set(
+    value
+      .split(",")
+      .map((toolId) => toolId.trim())
+      .filter((toolId) => toolId.length > 0),
+  );
+}
+
+function environmentControlEnabled(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === "true" || value?.trim() === "1";
+}
+
+function environmentControlDisabled(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === "false" || value?.trim() === "0";
+}
+
+function operationalControlMessage(reason: AgentOperationalControlReason): string {
+  switch (reason) {
+    case "global_read_only":
+      return "Tool mutations are temporarily disabled by global read-only mode.";
+    case "org_agent_writes_disabled":
+      return "Agent tool mutations are temporarily disabled for this organization.";
+    case "tool_disabled":
+      return "This tool is temporarily disabled by an operational control.";
+  }
+}
+
 /**
  * Apply a credential's rate-limit overrides (PRD §9.2) on top of the tier
  * budget. `undefined` fields inherit the tier value; explicit `null` removes
@@ -611,6 +1409,7 @@ function createToolContext(
   accessPolicy: ToolAccessPolicy,
   tool: ToolDefinition,
   auditSink: ToolAuditSink | undefined,
+  executionIdempotencyKey: string | undefined,
 ): ToolContext {
   const defaultResource = toolResource(tool);
   return {
@@ -618,6 +1417,7 @@ function createToolContext(
     actor,
     ...(request === undefined ? {} : { request }),
     ...(request?.traceId === undefined ? {} : { traceId: request.traceId }),
+    ...(executionIdempotencyKey === undefined ? {} : { idempotencyKey: executionIdempotencyKey }),
     can: (action: string, resource?: ResourceRef) =>
       accessPolicy.can(actor, action, resource ?? defaultResource),
     requirePermission: async (action: string, resource?: ResourceRef) => {
@@ -649,6 +1449,73 @@ function createToolContext(
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const sha256HexPattern = /^[0-9a-f]{64}$/u;
+const criticalControlChangePattern = /(?:credential|permission|policy|role|scope)/iu;
+const criticalAuditFailureMessage =
+  "Critical tool outcome could not be durably audited; retry only with the same idempotency key.";
+
+function invocationAuditVerb(status: ToolInvocationAuditStatus): ToolInvocationAuditVerb {
+  switch (status) {
+    case "denied":
+      return "tool.invocation.denied";
+    case "pending":
+      return "tool.invocation.pending";
+    case "executed":
+      return "tool.invocation.executed";
+    case "failed":
+      return "tool.invocation.failed";
+    case "cancelled":
+      return "tool.invocation.cancelled";
+  }
+}
+
+function durationBucket(durationNanoseconds: bigint): string {
+  const durationMilliseconds = Number(durationNanoseconds) / 1_000_000;
+  if (durationMilliseconds < 10) {
+    return "lt_10ms";
+  }
+  if (durationMilliseconds < 100) {
+    return "10ms_to_99ms";
+  }
+  if (durationMilliseconds < 1_000) {
+    return "100ms_to_999ms";
+  }
+  if (durationMilliseconds < 10_000) {
+    return "1s_to_9s";
+  }
+  return "gte_10s";
+}
+
+function safeSha256Fingerprint(value: string | undefined): string | undefined {
+  return value !== undefined && sha256HexPattern.test(value) ? value : undefined;
+}
+
+function requiresDurableOutcome(
+  tool: ToolDefinition | undefined,
+  status: ToolInvocationAuditStatus,
+  pendingActionId: string | undefined,
+): boolean {
+  if (status === "pending" || status === "cancelled" || pendingActionId !== undefined) {
+    return true;
+  }
+  if (status !== "executed" || tool === undefined) {
+    return false;
+  }
+  return (
+    tool.sideEffects === "destructive" ||
+    tool.sideEffects === "external_communication" ||
+    isCriticalControlChange(tool)
+  );
+}
+
+function isCriticalControlChange(
+  tool: Pick<ToolDefinition, "id" | "permission" | "sideEffects">,
+): boolean {
+  return (
+    tool.sideEffects !== "read" &&
+    criticalControlChangePattern.test(`${tool.id} ${tool.permission}`)
+  );
+}
 
 function toolInvokeResultWithSpan<Output>(
   span: Span,
@@ -688,23 +1555,32 @@ class PermissionDeniedError extends Error {
   }
 }
 
-function shouldQueueConfirmation(
-  tool: ToolDefinition,
-  defaults: TierSecurityDefaults,
-  skipConfirmation: boolean | undefined,
-  confirmationOverride: CredentialPolicyOverrides["confirmationOverride"],
-): boolean {
-  if (skipConfirmation === true) {
+function shouldQueueConfirmation(input: {
+  readonly tool: ToolDefinition;
+  readonly actor: Actor;
+  readonly defaults: TierSecurityDefaults;
+  readonly skipConfirmation: boolean | undefined;
+  readonly approvedPendingExecution: boolean;
+  readonly confirmationOverride: CredentialPolicyOverrides["confirmationOverride"];
+  readonly automationAllowed: boolean;
+}): boolean {
+  if (input.skipConfirmation === true && input.approvedPendingExecution) {
     return false;
   }
+  // RD-5: reads are immediate for agents, while every agent-originated
+  // mutation is confirmation-gated unless a separately validated, bounded
+  // automation policy authorizes this exact action. The legacy credential-wide
+  // "never" value is not sufficiently narrow and therefore fails closed.
+  if (input.actor.type === "agent") {
+    return input.tool.sideEffects !== "read" && !input.automationAllowed;
+  }
   const tierDecision = confirmationRequiredForSideEffect(
-    tool.sideEffects,
-    defaults,
-    tool.confirmationRequired,
+    input.tool.sideEffects,
+    input.defaults,
+    input.tool.confirmationRequired,
   );
-  // A per-credential confirmation override (PRD §9.2) takes precedence over
-  // the tier default. `"always"` forces a confirmation; `"never"` bypasses it.
-  switch (confirmationOverride) {
+  // Human session behavior retains the configured tier/override semantics.
+  switch (input.confirmationOverride) {
     case "always":
       return true;
     case "never":
@@ -715,15 +1591,39 @@ function shouldQueueConfirmation(
   }
 }
 
-function toJsonValue(value: unknown): JsonValue {
-  return JSON.parse(JSON.stringify(value)) as JsonValue;
+function automationRateLimitOverrides(
+  credential: CredentialPolicyOverrides["rateLimitOverrides"],
+  requestsPerMinute: number,
+  requestsPerDay: number,
+): NonNullable<CredentialPolicyOverrides["rateLimitOverrides"]> {
+  return {
+    requestsPerMinute: strictestLimit(credential?.requestsPerMinute, requestsPerMinute),
+    requestsPerDay: strictestLimit(credential?.requestsPerDay, requestsPerDay),
+    ...(credential?.costPerDayUsdMicros === undefined
+      ? {}
+      : { costPerDayUsdMicros: credential.costPerDayUsdMicros }),
+  };
 }
 
-function isInputError(error: unknown): boolean {
+function strictestLimit(current: number | null | undefined, policy: number): number {
+  return current === null || current === undefined ? policy : Math.min(current, policy);
+}
+
+function actorIsOrgAdmin(actor: Actor): boolean {
   return (
-    error instanceof Error &&
-    (error.name === "ZodError" || error.name === "SyntaxError" || error.name === "TypeError")
+    actor.type === "user" &&
+    (actor.scopes ?? []).some(
+      (scope) =>
+        scope === "*" ||
+        scope === "admin.*" ||
+        scope === "admin.agents" ||
+        scope === "admin.console.write",
+    )
   );
+}
+
+function toJsonValue(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
 function toolHttpError(error: unknown): {

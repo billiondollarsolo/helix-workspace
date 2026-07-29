@@ -33,10 +33,7 @@ function objectRow(overrides: { owner?: string } = {}) {
  * Nested canReadObjectSql fragments surface the actorId; the outer select
  * uses that actor to decide visibility.
  */
-function createAuthzSql(options: {
-  grants: Readonly<Record<string, string>>;
-  ownerId?: string;
-}) {
+function createAuthzSql(options: { grants: Readonly<Record<string, string>>; ownerId?: string }) {
   const owner = options.ownerId ?? ownerId;
   let lastAclActorId: string | undefined;
 
@@ -79,6 +76,12 @@ function createAuthzSql(options: {
         return Promise.resolve([]);
       }
       return Promise.resolve([{ role: options.grants[actor] }]);
+    }
+
+    // Share-recipient validation: the target actor exists in this organization.
+    if (text.includes("from actors") && text.includes("disabled_at is null")) {
+      const actor = resolveActor(values);
+      return Promise.resolve(actor === undefined ? [] : [{ id: actor }]);
     }
 
     // App trash-sync lookup

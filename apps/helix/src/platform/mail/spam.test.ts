@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SpamdScanner, getSpamdScannerConfig, parseSpamdResponse } from "./spam.js";
 import { ClamavScanner, getClamavScannerConfig, parseClamavResponse } from "./antivirus.js";
 import { ingestRawMail, scanInboundMail } from "./ingest.js";
+import { InMemoryMailQuarantineStore } from "./quarantine.js";
 import type { MailMessageInput, MailThreadStatePatch, StoredMailMessage } from "./types.js";
 
 /**
@@ -14,7 +15,7 @@ import type { MailMessageInput, MailThreadStatePatch, StoredMailMessage } from "
  */
 function fakeDaemon(reply: string | Buffer): Promise<{ port: number; close: () => Promise<void> }> {
   return new Promise((resolve, reject) => {
-    const server: Server = createServer((socket) => {
+    const server: Server = createServer({ allowHalfOpen: true }, (socket) => {
       let timer: NodeJS.Timeout | undefined;
       const replyOnce = (): void => {
         if (timer !== undefined) {
@@ -67,9 +68,7 @@ describe("spamd protocol parsing", () => {
   });
 
   it("parses a clean verdict with a negative score", () => {
-    const parsed = parseSpamdResponse(
-      "SPAMD/1.1 0 EX_OK\nSpam: False ; -1.2 / 5.0\n\nBAYES_00\n",
-    );
+    const parsed = parseSpamdResponse("SPAMD/1.1 0 EX_OK\nSpam: False ; -1.2 / 5.0\n\nBAYES_00\n");
     expect(parsed.score).toBe(-1.2);
     expect(parsed.symbols).toEqual(["BAYES_00"]);
   });
@@ -145,12 +144,47 @@ describe("ClamavScanner", () => {
     const result = await scanner.scan(Buffer.from("benign payload"));
     expect(result.infected).toBe(false);
   });
+
+  it("maps a daemon failure into the shared Business quarantine policy", async () => {
+    const daemon = await fakeDaemon("INSTREAM read error. ERROR\0");
+    servers.push(daemon);
+    const scanner = new ClamavScanner({
+      host: "127.0.0.1",
+      port: daemon.port,
+      tier: "business",
+    });
+    const result = await scanner.scan(Buffer.from("private message"));
+
+    expect(result).toMatchObject({
+      infected: false,
+      scanned: false,
+      disposition: "quarantine",
+      securityScan: {
+        state: "scan_failed",
+        evidence: {
+          scannerName: "clamav",
+          scannerVersion: "unknown",
+          byteSize: 15,
+        },
+      },
+    });
+    expect(Object.keys(result.evidence).sort()).toEqual([
+      "byteSize",
+      "completedAt",
+      "scannerName",
+      "scannerVersion",
+      "startedAt",
+    ]);
+    expect(JSON.stringify(result)).not.toContain("private message");
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
 });
 
 describe("scanInboundMail", () => {
   it("returns a no-op result when scanners are absent", async () => {
     const result = await scanInboundMail(undefined, "hello");
     expect(result.routedToSpam).toBe(false);
+    expect(result.quarantined).toBe(false);
     expect(result.spam).toBeNull();
     expect(result.antivirus).toBeNull();
   });
@@ -204,6 +238,7 @@ describe("scanInboundMail", () => {
       "infected",
     );
     expect(result.routedToSpam).toBe(true);
+    expect(result.quarantined).toBe(true);
     expect(result.spamReason).toBe("virus");
   });
 
@@ -219,7 +254,120 @@ describe("scanInboundMail", () => {
       "message",
     );
     expect(result.routedToSpam).toBe(false);
+    expect(result.quarantined).toBe(false);
     expect(result.spam).toBeNull();
+  });
+
+  it("quarantines a Business-tier scanner failure instead of delivering it to Inbox", async () => {
+    const result = await scanInboundMail(
+      {
+        antivirus: {
+          async scan() {
+            return {
+              infected: false,
+              signature: null,
+              scanned: false,
+              evidence: {
+                scannerName: "clamav",
+                scannerVersion: "unknown",
+                startedAt: "2026-07-28T12:00:00.000Z",
+                completedAt: "2026-07-28T12:00:01.000Z",
+                byteSize: 7,
+              },
+              securityScan: {
+                state: "scan_failed",
+                evidence: {
+                  scannerName: "clamav",
+                  scannerVersion: "unknown",
+                  startedAt: "2026-07-28T12:00:00.000Z",
+                  completedAt: "2026-07-28T12:00:01.000Z",
+                  byteSize: 7,
+                },
+              },
+              disposition: "quarantine",
+            };
+          },
+        },
+      },
+      "message",
+    );
+
+    expect(result).toMatchObject({
+      routedToSpam: true,
+      quarantined: true,
+      spamReason: "scanner-policy",
+      antivirus: {
+        infected: false,
+        scanned: false,
+        disposition: "quarantine",
+      },
+    });
+  });
+
+  it("quarantines a Business-tier spamd outage even when antivirus is clean", async () => {
+    const result = await scanInboundMail(
+      {
+        tier: "business",
+        spam: {
+          async scan() {
+            throw new Error("spamd unreachable");
+          },
+        },
+        antivirus: {
+          async scan() {
+            return {
+              infected: false,
+              signature: null,
+              scanned: true,
+              evidence: {
+                scannerName: "clamav",
+                scannerVersion: "test",
+                startedAt: "2026-07-28T12:00:00.000Z",
+                completedAt: "2026-07-28T12:00:01.000Z",
+                byteSize: 7,
+              },
+            };
+          },
+        },
+      },
+      "message",
+    );
+
+    expect(result).toMatchObject({
+      spam: null,
+      antivirus: { infected: false, scanned: true },
+      routedToSpam: true,
+      quarantined: true,
+      scannerUnavailable: true,
+      spamReason: "scanner-policy",
+      quarantineReasons: ["scanner_unavailable"],
+    });
+  });
+
+  it("keeps a Personal-tier scanner failure explicitly unscanned without quarantine", async () => {
+    const result = await scanInboundMail(
+      {
+        antivirus: {
+          async scan() {
+            return {
+              infected: false,
+              signature: null,
+              scanned: false,
+              evidence: { scannerName: "clamav", byteSize: 7 },
+              disposition: "allow_unscanned",
+            };
+          },
+        },
+      },
+      "message",
+    );
+
+    expect(result).toMatchObject({
+      routedToSpam: false,
+      quarantined: false,
+      spamReason: null,
+      antivirus: { scanned: false, disposition: "allow_unscanned" },
+    });
   });
 });
 
@@ -331,31 +479,36 @@ describe("ingest spam routing", () => {
     expect(store.patches.some((entry) => entry.patch.spamAt !== undefined)).toBe(false);
   });
 
-  it("routes an infected message to Spam via the antivirus scanner", async () => {
+  it("quarantines an infected message instead of inserting it into Spam", async () => {
     const store = new RecordingMailStore();
-    const result = await ingestRawMail({
-      store: store as never,
-      authenticator: trustedAuthenticator,
-      scanners: {
-        antivirus: {
-          async scan() {
-            return {
-              infected: true,
-              signature: "Eicar-Test-Signature",
-              scanned: true,
-              evidence: { scanned: true },
-            };
+    const quarantineStore = new InMemoryMailQuarantineStore();
+    await expect(
+      ingestRawMail({
+        store: store as never,
+        quarantineStore,
+        authenticator: trustedAuthenticator,
+        scanners: {
+          antivirus: {
+            async scan() {
+              return {
+                infected: true,
+                signature: "Eicar-Test-Signature",
+                scanned: true,
+                evidence: { scanned: true },
+              };
+            },
           },
         },
-      },
-      input: {
-        orgId: "org-1",
-        raw: rawMessage,
-        envelopeTo: ["user@helix.test"],
-      },
-    });
-    expect(result.scan.spamReason).toBe("virus");
-    expect(store.patches.some((entry) => entry.patch.spamAt !== undefined)).toBe(true);
+        input: {
+          orgId: "org-1",
+          raw: rawMessage,
+          envelopeTo: ["user@helix.test"],
+        },
+      }),
+    ).rejects.toMatchObject({ name: "MailInboundQuarantinedError" });
+    expect(await quarantineStore.list("org-1")).toHaveLength(1);
+    expect(store.inserted).toHaveLength(0);
+    expect(store.patches).toHaveLength(0);
   });
 });
 

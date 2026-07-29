@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DocsShell } from "@/features/docs/docs-shell";
+import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
 
 /** `?doc=<id>` opens straight into that document's editor (used by Drive's New). */
 interface DocsRouteSearch {
@@ -22,6 +23,7 @@ function validateDocsRouteSearch(search: Record<string, unknown>): DocsRouteSear
 }
 
 export const Route = createFileRoute("/_shell/docs/")({
+  beforeLoad: () => enforceFullWorkspaceRoute(),
   validateSearch: (search): DocsRouteSearch => validateDocsRouteSearch(search),
   component: DocsRoute,
 });

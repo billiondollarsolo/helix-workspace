@@ -377,6 +377,7 @@ describe("mail tools", () => {
       "mail.labels.list",
       "mail.outbound.cancel",
       "mail.outbound.get",
+      "mail.outbound.retry",
       "mail.read.set",
       "mail.reply",
       "mail.search",
@@ -1009,7 +1010,12 @@ describe("mail tools", () => {
     const folders = await registry.invoke("mail.folders.list", {}, { actor });
     expect(folders).toMatchObject({
       ok: true,
-      output: { folders: [{ id: "inbox", total: 24, unread: 6 }, { id: "starred", total: 7 }] },
+      output: {
+        folders: [
+          { id: "inbox", total: 24, unread: 6 },
+          { id: "starred", total: 7 },
+        ],
+      },
     });
 
     const labels = await registry.invoke("mail.labels.list", {}, { actor });
@@ -1024,15 +1030,15 @@ describe("mail tools", () => {
 
 describe("mail category classification", () => {
   it("buckets senders into Primary / Updates / Promotions / Social", () => {
-    expect(
-      classifyMailCategory({ fromAddress: "mira@helix.io", subject: "Q3 roadmap" }),
-    ).toBe("primary");
+    expect(classifyMailCategory({ fromAddress: "mira@helix.io", subject: "Q3 roadmap" })).toBe(
+      "primary",
+    );
     expect(
       classifyMailCategory({ fromAddress: "notifications@github.com", subject: "PR merged" }),
     ).toBe("updates");
-    expect(
-      classifyMailCategory({ fromAddress: "no-reply@helix.io", subject: "Receipt" }),
-    ).toBe("updates");
+    expect(classifyMailCategory({ fromAddress: "no-reply@helix.io", subject: "Receipt" })).toBe(
+      "updates",
+    );
     expect(
       classifyMailCategory({ fromAddress: "hello@figma.com", subject: "Config 2026 — early bird" }),
     ).toBe("primary");
@@ -1486,9 +1492,7 @@ function now(): Date {
 
 describe("SMTP span coverage (P2-6)", () => {
   it("emits an smtp.receive span for inbound mail ingestion", async () => {
-    const { installSpanCapture } = await import(
-      "../observability/span-testing.js"
-    );
+    const { installSpanCapture } = await import("../observability/span-testing.js");
     const harness = installSpanCapture();
     try {
       const store = new InMemoryMailStore();
@@ -1521,9 +1525,7 @@ describe("SMTP span coverage (P2-6)", () => {
   });
 
   it("emits an smtp.send span for outbound dispatch", async () => {
-    const { installSpanCapture } = await import(
-      "../observability/span-testing.js"
-    );
+    const { installSpanCapture } = await import("../observability/span-testing.js");
     const harness = installSpanCapture();
     try {
       const store = new InMemoryMailStore();

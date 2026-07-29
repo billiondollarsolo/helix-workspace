@@ -2,14 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import type postgres from "postgres";
 import {
   assertNoPendingStartupMigrations,
+  IncompatibleStartupMigrationsError,
   shouldCheckStartupMigrations,
 } from "./startup-migration-check.js";
 
 describe("startup migration check", () => {
-  it("defaults on for local/dev and off for production", () => {
+  it("defaults on in every environment, including production", () => {
     expect(shouldCheckStartupMigrations({ NODE_ENV: "development" })).toBe(true);
     expect(shouldCheckStartupMigrations({ NODE_ENV: "test" })).toBe(true);
-    expect(shouldCheckStartupMigrations({ NODE_ENV: "production" })).toBe(false);
+    expect(shouldCheckStartupMigrations({ NODE_ENV: "production" })).toBe(true);
   });
 
   it("honors explicit overrides", () => {
@@ -39,6 +40,7 @@ describe("startup migration check", () => {
         listPending: async () => [
           { namespace: "platform", name: "0062_slides_per_slide_revision.sql" },
         ],
+        listUnknownApplied: async () => [],
       }),
     ).rejects.toMatchObject({
       name: "PendingStartupMigrationsError",
@@ -53,8 +55,9 @@ describe("startup migration check", () => {
         listPending: async () => [
           { namespace: "platform", name: "0062_slides_per_slide_revision.sql" },
         ],
+        listUnknownApplied: async () => [],
       }),
-    ).rejects.toThrow("pnpm --filter @helix/app db:migrate");
+    ).rejects.toThrow("dedicated Helix migration job");
     expect(end).toHaveBeenCalledWith({ timeout: 5 });
   });
 
@@ -66,7 +69,7 @@ describe("startup migration check", () => {
         env: { NODE_ENV: "development", HELIX_STARTUP_MIGRATION_CHECK: "false" },
         createSql,
       }),
-    ).resolves.toEqual({ checked: false, pending: [] });
+    ).resolves.toEqual({ checked: false, pending: [], unknown: [] });
     expect(createSql).not.toHaveBeenCalled();
   });
 
@@ -77,8 +80,32 @@ describe("startup migration check", () => {
         createSql: () => fakeSql(),
         resolveSources: async () => [{ namespace: "platform", migrations: [] }],
         listPending: async () => [],
+        listUnknownApplied: async () => [],
       }),
-    ).resolves.toEqual({ checked: true, pending: [] });
+    ).resolves.toEqual({ checked: true, pending: [], unknown: [] });
+  });
+
+  it("rejects a database newer than the application migration range", async () => {
+    const unknown = [{ namespace: "platform", name: "9999_future_schema.sql" }];
+    await expect(
+      assertNoPendingStartupMigrations({
+        env: { NODE_ENV: "production" },
+        createSql: () => fakeSql(),
+        resolveSources: async () => [{ namespace: "platform", migrations: [] }],
+        listPending: async () => [],
+        listUnknownApplied: async () => unknown,
+      }),
+    ).rejects.toEqual(new IncompatibleStartupMigrationsError(unknown));
+
+    await expect(
+      assertNoPendingStartupMigrations({
+        env: { NODE_ENV: "production" },
+        createSql: () => fakeSql(),
+        resolveSources: async () => [{ namespace: "platform", migrations: [] }],
+        listPending: async () => [],
+        listUnknownApplied: async () => unknown,
+      }),
+    ).rejects.toThrow("Deploy a compatible image");
   });
 });
 

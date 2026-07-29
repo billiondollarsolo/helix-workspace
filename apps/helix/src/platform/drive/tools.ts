@@ -25,6 +25,7 @@ import {
   driveShareLinkRevokeOutputSchema,
   driveShareOutputSchema,
   driveUploadOutputSchema,
+  driveUploadStatusOutputSchema,
   driveVersionOutputSchema,
   driveVersionsListOutputSchema,
 } from "./tool-output-schemas.js";
@@ -38,6 +39,7 @@ import type {
   DriveCommentRecord,
   DriveSearchHit,
   DriveUploadRecord,
+  DriveUploadStatusRecord,
   DriveVersionRecord,
 } from "./types.js";
 import type { DocsStore } from "../docs/index.js";
@@ -52,7 +54,7 @@ const uploadSchema = z.object({
   name: z.string().min(1).max(255),
   folderId: uuidSchema.nullable().optional(),
   mimeType: z.string().min(1).default("application/octet-stream"),
-  byteSize: z.number().int().min(0).optional(),
+  byteSize: z.number().int().min(0),
   sha256: z
     .string()
     .regex(/^[a-f0-9]{64}$/i)
@@ -160,6 +162,9 @@ const createShareLinkSchema = z.object({
   objectId: uuidSchema,
   role: z.enum(["reader", "commenter", "editor"]).default("reader"),
   expiresAt: z.string().datetime().nullable().optional(),
+  password: z.string().min(8).max(200).optional(),
+  maxDownloads: z.number().int().positive().max(1_000_000).nullable().optional(),
+  rateLimitPerHour: z.number().int().positive().max(10_000).default(120),
 });
 
 const revokeShareLinkSchema = z.object({
@@ -210,11 +215,7 @@ const searchSchema = z.object({
   limit: z.number().int().positive().max(100).default(50),
 });
 
-const createSchema = z.object({
-  kind: z.enum(["folder", "document", "spreadsheet", "presentation"]),
-  folderId: uuidSchema.nullable().optional(),
-  name: z.string().min(1).max(255),
-});
+type DriveCreateKind = "folder" | "document" | "spreadsheet" | "presentation";
 
 const genericObjectJsonSchema = {
   type: "object",
@@ -223,6 +224,11 @@ const genericObjectJsonSchema = {
 
 export interface CreateDriveToolDefinitionsOptions {
   readonly store: DriveStore;
+  /**
+   * Publishes native PDF form-draft tools. Disabled by default so ordinary
+   * Drive storage does not silently expose an editor mutation surface.
+   */
+  readonly enablePdfEditing?: boolean;
   /**
    * Auto-classifies newly uploaded Drive files (PRD §8.4). When provided, the
    * `drive.upload` handler classifies the prepared file from its name (used as
@@ -269,10 +275,24 @@ export interface CreateDriveToolDefinitionsOptions {
 export function createDriveToolDefinitions(
   options: CreateDriveToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
+  const allowedCreateKinds: [DriveCreateKind, ...DriveCreateKind[]] = [
+    "folder",
+    ...(options.docsStore === undefined ? [] : (["document"] as const)),
+    ...(options.sheetsStore === undefined ? [] : (["spreadsheet"] as const)),
+    ...(options.slidesStore === undefined ? [] : (["presentation"] as const)),
+  ];
+  const createSchema = z.object({
+    kind: z.enum(allowedCreateKinds),
+    folderId: uuidSchema.nullable().optional(),
+    name: z.string().min(1).max(255),
+  });
   return [
     defineTool<z.output<typeof createSchema>, unknown>({
       id: "drive.create",
-      description: "Create a new Drive folder, document, spreadsheet, or presentation.",
+      description:
+        allowedCreateKinds.length === 1
+          ? "Create a new Drive folder."
+          : `Create a new Drive ${allowedCreateKinds.join(", ")}.`,
       permission: "drive.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(createSchema, genericObjectJsonSchema),
@@ -349,7 +369,7 @@ export function createDriveToolDefinitions(
           name: input.name,
           folderId: input.folderId ?? null,
           mimeType: input.mimeType,
-          ...(input.byteSize === undefined ? {} : { byteSize: input.byteSize }),
+          byteSize: input.byteSize,
           ...(input.sha256 === undefined ? {} : { sha256: input.sha256.toLowerCase() }),
           metadata: toJsonObject(input.metadata),
         });
@@ -385,6 +405,29 @@ export function createDriveToolDefinitions(
             metadata: toJsonObject(input.metadata),
           }),
         ),
+    }),
+    defineTool<z.output<typeof objectIdSchema>, unknown>({
+      id: "drive.upload.status",
+      description:
+        "Read the processing, quarantine, or availability state of a prepared Drive upload.",
+      permission: "drive.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveUploadStatusOutputSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.getUploadStatus === undefined) {
+          throw new Error("drive.upload.status requires DriveStore.getUploadStatus.");
+        }
+        const status = await options.store.getUploadStatus({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.objectId,
+        });
+        if (status === null) {
+          throw new NotFoundError(`Unknown Drive upload: ${input.objectId}`);
+        }
+        return serializeUploadStatus(status);
+      },
     }),
     defineTool<z.output<typeof uploadCompleteSchema>, unknown>({
       id: "drive.upload.complete",
@@ -559,7 +602,11 @@ export function createDriveToolDefinitions(
               ? null
               : new Date(input.expiresAt),
         });
-        return { objectId: input.objectId, actorId: input.actorId, grant: serializeNullableGrant(grant) };
+        return {
+          objectId: input.objectId,
+          actorId: input.actorId,
+          grant: serializeNullableGrant(grant),
+        };
       },
     }),
     defineTool<z.output<typeof moveSchema>, unknown>({
@@ -818,67 +865,80 @@ export function createDriveToolDefinitions(
         return serializeComment(comment);
       },
     }),
-    defineTool<z.output<typeof objectIdSchema>, unknown>({
-      id: "drive.pdfFormState.get",
-      description: "Get the current actor's saved PDF form draft for a Drive object.",
-      permission: "drive.read",
-      sideEffects: "read",
-      inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(drivePdfFormStateGetOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if (options.store.getPdfFormState === undefined) {
-          throw new Error("drive.pdfFormState tools require DriveStore PDF form state methods.");
-        }
-        const state = await options.store.getPdfFormState({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          objectId: input.objectId,
-        });
-        return { state: state === null ? null : serializePdfFormState(state) };
-      },
-    }),
-    defineTool<z.output<typeof savePdfFormStateSchema>, unknown>({
-      id: "drive.pdfFormState.save",
-      description: "Save the current actor's PDF form draft for a Drive object.",
-      permission: "drive.write",
-      sideEffects: "write",
-      inputSchema: zodToolSchema(savePdfFormStateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(drivePdfFormStateOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if (options.store.savePdfFormState === undefined) {
-          throw new Error("drive.pdfFormState tools require DriveStore PDF form state methods.");
-        }
-        return serializePdfFormState(
-          await options.store.savePdfFormState({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            objectId: input.objectId,
-            fieldValues: input.fields.map((field) => toJsonObject(field)),
+    ...(options.enablePdfEditing === true
+      ? [
+          defineTool<z.output<typeof objectIdSchema>, unknown>({
+            id: "drive.pdfFormState.get",
+            description: "Get the current actor's saved PDF form draft for a Drive object.",
+            permission: "drive.read",
+            sideEffects: "read",
+            inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
+            outputSchema: zodToolSchema(drivePdfFormStateGetOutputSchema, genericObjectJsonSchema),
+            handler: async (input, ctx) => {
+              if (options.store.getPdfFormState === undefined) {
+                throw new Error(
+                  "drive.pdfFormState tools require DriveStore PDF form state methods.",
+                );
+              }
+              const state = await options.store.getPdfFormState({
+                orgId: ctx.actor.orgId,
+                actorId: ctx.actor.id,
+                objectId: input.objectId,
+              });
+              return { state: state === null ? null : serializePdfFormState(state) };
+            },
           }),
-        );
-      },
-    }),
-    defineTool<z.output<typeof objectIdSchema>, unknown>({
-      id: "drive.pdfFormState.clear",
-      description: "Clear the current actor's saved PDF form draft for a Drive object.",
-      permission: "drive.write",
-      sideEffects: "write",
-      inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(drivePdfFormStateClearOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if (options.store.clearPdfFormState === undefined) {
-          throw new Error("drive.pdfFormState tools require DriveStore PDF form state methods.");
-        }
-        return {
-          objectId: input.objectId,
-          cleared: await options.store.clearPdfFormState({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            objectId: input.objectId,
+          defineTool<z.output<typeof savePdfFormStateSchema>, unknown>({
+            id: "drive.pdfFormState.save",
+            description: "Save the current actor's PDF form draft for a Drive object.",
+            permission: "drive.write",
+            sideEffects: "write",
+            inputSchema: zodToolSchema(savePdfFormStateSchema, genericObjectJsonSchema),
+            outputSchema: zodToolSchema(drivePdfFormStateOutputSchema, genericObjectJsonSchema),
+            handler: async (input, ctx) => {
+              if (options.store.savePdfFormState === undefined) {
+                throw new Error(
+                  "drive.pdfFormState tools require DriveStore PDF form state methods.",
+                );
+              }
+              return serializePdfFormState(
+                await options.store.savePdfFormState({
+                  orgId: ctx.actor.orgId,
+                  actorId: ctx.actor.id,
+                  objectId: input.objectId,
+                  fieldValues: input.fields.map((field) => toJsonObject(field)),
+                }),
+              );
+            },
           }),
-        };
-      },
-    }),
+          defineTool<z.output<typeof objectIdSchema>, unknown>({
+            id: "drive.pdfFormState.clear",
+            description: "Clear the current actor's saved PDF form draft for a Drive object.",
+            permission: "drive.write",
+            sideEffects: "write",
+            inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
+            outputSchema: zodToolSchema(
+              drivePdfFormStateClearOutputSchema,
+              genericObjectJsonSchema,
+            ),
+            handler: async (input, ctx) => {
+              if (options.store.clearPdfFormState === undefined) {
+                throw new Error(
+                  "drive.pdfFormState tools require DriveStore PDF form state methods.",
+                );
+              }
+              return {
+                objectId: input.objectId,
+                cleared: await options.store.clearPdfFormState({
+                  orgId: ctx.actor.orgId,
+                  actorId: ctx.actor.id,
+                  objectId: input.objectId,
+                }),
+              };
+            },
+          }),
+        ]
+      : []),
 
     defineTool<z.output<typeof renameSchema>, z.output<typeof driveEntryOutputSchema>>({
       id: "drive.rename",
@@ -927,7 +987,8 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof revertVersionSchema>, z.output<typeof driveVersionOutputSchema>>({
       id: "drive.versions.revert",
-      description: "Create a new version that restores bytes from a prior version (history is append-only).",
+      description:
+        "Create a new version that restores bytes from a prior version (history is append-only).",
       permission: "drive.write",
       sideEffects: "write",
       confirmationRequired: true,
@@ -947,32 +1008,37 @@ export function createDriveToolDefinitions(
         );
       },
     }),
-    defineTool<z.output<typeof createShareLinkSchema>, z.output<typeof driveShareLinkOutputSchema>>({
-      id: "drive.link.create",
-      description: "Create a public/anonymous share link for a Drive object (owner only).",
-      permission: "drive.write",
-      sideEffects: "write",
-      confirmationRequired: true,
-      inputSchema: zodToolSchema(createShareLinkSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(driveShareLinkOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if (options.store.createShareLink === undefined) {
-          throw new Error("drive.link.create requires DriveStore.createShareLink.");
-        }
-        return serializeShareLink(
-          await options.store.createShareLink({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            objectId: input.objectId,
-            role: input.role,
-            expiresAt:
-              input.expiresAt === undefined || input.expiresAt === null
-                ? null
-                : new Date(input.expiresAt),
-          }),
-        );
+    defineTool<z.output<typeof createShareLinkSchema>, z.output<typeof driveShareLinkOutputSchema>>(
+      {
+        id: "drive.link.create",
+        description: "Create a public/anonymous share link for a Drive object (owner only).",
+        permission: "drive.write",
+        sideEffects: "write",
+        confirmationRequired: true,
+        inputSchema: zodToolSchema(createShareLinkSchema, genericObjectJsonSchema),
+        outputSchema: zodToolSchema(driveShareLinkOutputSchema, genericObjectJsonSchema),
+        handler: async (input, ctx) => {
+          if (options.store.createShareLink === undefined) {
+            throw new Error("drive.link.create requires DriveStore.createShareLink.");
+          }
+          return serializeShareLink(
+            await options.store.createShareLink({
+              orgId: ctx.actor.orgId,
+              actorId: ctx.actor.id,
+              objectId: input.objectId,
+              role: input.role,
+              expiresAt:
+                input.expiresAt === undefined || input.expiresAt === null
+                  ? null
+                  : new Date(input.expiresAt),
+              ...(input.password === undefined ? {} : { password: input.password }),
+              maxDownloads: input.maxDownloads ?? null,
+              rateLimitPerHour: input.rateLimitPerHour,
+            }),
+          );
+        },
       },
-    }),
+    ),
     defineTool<z.output<typeof objectIdSchema>, z.output<typeof driveShareLinkListOutputSchema>>({
       id: "drive.link.list",
       description: "List active public share links for a Drive object.",
@@ -995,7 +1061,10 @@ export function createDriveToolDefinitions(
         };
       },
     }),
-    defineTool<z.output<typeof revokeShareLinkSchema>, z.output<typeof driveShareLinkRevokeOutputSchema>>({
+    defineTool<
+      z.output<typeof revokeShareLinkSchema>,
+      z.output<typeof driveShareLinkRevokeOutputSchema>
+    >({
       id: "drive.link.revoke",
       description: "Revoke a public share link.",
       permission: "drive.write",
@@ -1017,7 +1086,6 @@ export function createDriveToolDefinitions(
         };
       },
     }),
-
   ];
 }
 
@@ -1068,6 +1136,13 @@ function serializeVersion(version: DriveVersionRecord) {
   };
 }
 
+function serializeUploadStatus(status: DriveUploadStatusRecord) {
+  return {
+    ...status,
+    updatedAt: status.updatedAt.toISOString(),
+  };
+}
+
 function serializeEntry(entry: DriveEntryRecord) {
   return {
     ...entry,
@@ -1110,12 +1185,16 @@ function serializeShareLink(link: {
   readonly id: string;
   readonly orgId: string;
   readonly objectId: string;
-  readonly token: string;
+  readonly token: string | null;
   readonly role: string;
   readonly expiresAt: Date | null;
   readonly createdByActorId: string | null;
   readonly createdAt: Date;
   readonly revokedAt: Date | null;
+  readonly maxDownloads: number | null;
+  readonly downloadCount: number;
+  readonly rateLimitPerHour: number;
+  readonly lastUsedAt: Date | null;
 }) {
   return {
     ...link,
@@ -1123,6 +1202,10 @@ function serializeShareLink(link: {
     expiresAt: link.expiresAt?.toISOString() ?? null,
     createdAt: link.createdAt.toISOString(),
     revokedAt: link.revokedAt?.toISOString() ?? null,
+    maxDownloads: link.maxDownloads,
+    downloadCount: link.downloadCount,
+    rateLimitPerHour: link.rateLimitPerHour,
+    lastUsedAt: link.lastUsedAt?.toISOString() ?? null,
   };
 }
 

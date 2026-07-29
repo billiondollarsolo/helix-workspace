@@ -32,6 +32,14 @@ export interface S3CompatiblePresignedPutUpload {
   readonly headers: Record<string, string>;
 }
 
+export interface S3CompatibleObjectEvidence {
+  readonly byteSize: number | null;
+  readonly etag: string | null;
+  readonly serverSideEncryption: string | null;
+  readonly serverSideEncryptionAwsKmsKeyId: string | null;
+  readonly metadata: Record<string, string>;
+}
+
 export interface S3MultipartCompletedPart {
   readonly partNumber: number;
   readonly etag: string;
@@ -39,6 +47,7 @@ export interface S3MultipartCompletedPart {
 
 export interface S3CompatibleStorageClient extends StorageClient {
   ensureBucket(): Promise<void>;
+  headObject(key: string): Promise<S3CompatibleObjectEvidence | null>;
   presignGetUrl(key: string, options?: S3CompatiblePresignOptions): Promise<string>;
   presignPutUrl(key: string, options?: S3CompatiblePresignOptions): Promise<string>;
   presignPutRequest(
@@ -61,6 +70,7 @@ export interface S3CompatibleStorageClient extends StorageClient {
     parts: readonly S3MultipartCompletedPart[],
   ): Promise<void>;
   abortMultipartUpload(key: string, uploadId: string): Promise<void>;
+  copyObject(sourceKey: string, destinationKey: string): Promise<void>;
 }
 
 export class S3CompatibleStorageError extends Error {
@@ -129,7 +139,7 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
     }
     await expectOk(response, "get", key);
 
-    const body = new Uint8Array(await response.arrayBuffer());
+    const body = responseBodyChunks(response);
     const contentType = response.headers.get("content-type") ?? undefined;
     const metadata = responseMetadata(response.headers);
     return {
@@ -137,6 +147,30 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
       body,
       ...(contentType === undefined ? {} : { contentType }),
       ...(metadata === undefined ? {} : { metadata }),
+    };
+  }
+
+  async headObject(key: string): Promise<S3CompatibleObjectEvidence | null> {
+    const response = await this.#request(
+      "HEAD",
+      key,
+      { "x-amz-content-sha256": emptyBodyHash },
+      undefined,
+    );
+    if (response.status === 404) {
+      return null;
+    }
+    await expectOk(response, "head", key);
+    const contentLength = response.headers.get("content-length");
+    return {
+      byteSize:
+        contentLength === null || !/^\d+$/u.test(contentLength) ? null : Number(contentLength),
+      etag: response.headers.get("etag"),
+      serverSideEncryption: response.headers.get("x-amz-server-side-encryption"),
+      serverSideEncryptionAwsKmsKeyId: response.headers.get(
+        "x-amz-server-side-encryption-aws-kms-key-id",
+      ),
+      metadata: responseMetadata(response.headers) ?? {},
     };
   }
 
@@ -252,6 +286,21 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
     await expectOk(response, "abort multipart upload", key);
   }
 
+  async copyObject(sourceKey: string, destinationKey: string): Promise<void> {
+    const sourceUrl = objectUrl(this.#config, sourceKey);
+    const response = await this.#request(
+      "PUT",
+      destinationKey,
+      {
+        "x-amz-content-sha256": emptyBodyHash,
+        "x-amz-copy-source": sourceUrl.pathname,
+        ...serverSideEncryptionHeaders(this.#config),
+      },
+      undefined,
+    );
+    await expectOk(response, "copy", destinationKey);
+  }
+
   async #request(
     method: S3Method,
     key: string,
@@ -360,7 +409,25 @@ class FetchS3CompatibleStorageClient implements S3CompatibleStorageClient {
   }
 }
 
-type S3Method = "DELETE" | "GET" | "POST" | "PUT";
+async function* responseBodyChunks(response: Response): AsyncIterable<Uint8Array> {
+  const stream = response.body;
+  if (stream === null) {
+    return;
+  }
+  const reader = stream.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    let result = await reader.read();
+    while (!result.done) {
+      const chunk = result.value;
+      if (chunk.byteLength > 0) yield chunk;
+      result = await reader.read();
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+type S3Method = "DELETE" | "GET" | "HEAD" | "POST" | "PUT";
 
 function escapeXml(value: string): string {
   return value
@@ -469,8 +536,7 @@ function serverSideEncryptionHeaders(config: NormalizedS3Config): Record<string,
         ...(config.serverSideEncryptionAwsKmsKeyId === undefined
           ? {}
           : {
-              "x-amz-server-side-encryption-aws-kms-key-id":
-                config.serverSideEncryptionAwsKmsKeyId,
+              "x-amz-server-side-encryption-aws-kms-key-id": config.serverSideEncryptionAwsKmsKeyId,
             }),
       };
 }

@@ -4,6 +4,7 @@ import { UniversalEditorRouter } from "@/features/_open/ui/UniversalEditorRouter
 import { useEditorsAlpha } from "@/features/apps/editors-alpha";
 import { NativeDocumentShell } from "@/features/docs/native-document-shell";
 import { nativeDocumentSessionQueryOptions } from "@/features/docs/queries";
+import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
 
 interface DocumentRouteSearch {
   readonly open?: "office";
@@ -14,6 +15,7 @@ function validateDocumentRouteSearch(search: Record<string, unknown>): DocumentR
 }
 
 export const Route = createFileRoute("/_shell/docs/$documentId")({
+  beforeLoad: () => enforceFullWorkspaceRoute(),
   validateSearch: (search): DocumentRouteSearch => validateDocumentRouteSearch(search),
   component: DocumentRoute,
 });

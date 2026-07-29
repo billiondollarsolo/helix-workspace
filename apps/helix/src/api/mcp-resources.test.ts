@@ -161,7 +161,7 @@ describe("createStoreBackedMcpResourceProvider", () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const response = await handleMcpJsonRpcRequest({
       tools,
-      actor: agentActor,
+      principal: { actor: agentActor },
       resources: createStoreBackedMcpResourceProvider({
         mail: new FakeMailStore(),
       }),
@@ -286,10 +286,12 @@ describe("createStoreBackedMcpResourceProvider", () => {
       docsExportJobLimit: () => 0,
     });
 
-    await expect(resources.read(agentActor, "helix://mail/thread/thread-1")).resolves.toMatchObject({
-      uri: "helix://mail/thread/thread-1",
-      mimeType: "text/markdown",
-    });
+    await expect(resources.read(agentActor, "helix://mail/thread/thread-1")).resolves.toMatchObject(
+      {
+        uri: "helix://mail/thread/thread-1",
+        mimeType: "text/markdown",
+      },
+    );
     expect(mail.threadReads).toHaveLength(1);
   });
 

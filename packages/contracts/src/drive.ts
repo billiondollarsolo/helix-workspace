@@ -7,6 +7,18 @@ export type DriveRole = z.infer<typeof driveRoleSchema>;
 export const driveItemKindSchema = z.enum(["file", "folder"]);
 export type DriveItemKind = z.infer<typeof driveItemKindSchema>;
 
+export const DRIVE_UPLOAD_STATES = [
+  "pending_upload",
+  "uploaded",
+  "scanning",
+  "active",
+  "quarantined",
+  "scan_failed",
+  "trashed",
+] as const;
+export const driveUploadStateSchema = z.enum(DRIVE_UPLOAD_STATES);
+export type DriveUploadState = z.infer<typeof driveUploadStateSchema>;
+
 export const drivePreviewKindSchema = z.enum(["text", "image", "pdf", "office", "unsupported"]);
 export type DrivePreviewKind = z.infer<typeof drivePreviewKindSchema>;
 export const drivePreviewStatusSchema = z.enum(["available", "unsupported"]);
@@ -69,7 +81,7 @@ export const driveUploadResultSchema = z.object({
   mimeType: z.string(),
   byteSize: z.number().int().nonnegative(),
   sha256: z.string().nullable(),
-  status: z.string(),
+  status: driveUploadStateSchema,
   uploadUrl: z.string().nullable(),
   uploadHeaders: z.record(z.string()).default({}),
   metadata: jsonObjectSchema.default({}),
@@ -78,6 +90,16 @@ export const driveUploadResultSchema = z.object({
   multipart: driveMultipartInfoSchema.optional(),
 });
 export type DriveUploadResult = z.infer<typeof driveUploadResultSchema>;
+
+export const driveUploadStatusSchema = z.object({
+  objectId: z.string().uuid(),
+  state: driveUploadStateSchema,
+  label: z.string().min(1),
+  available: z.boolean(),
+  terminal: z.boolean(),
+  updatedAt: z.string(),
+});
+export type DriveUploadStatus = z.infer<typeof driveUploadStatusSchema>;
 
 export const driveUploadCompleteInputSchema = z.object({
   objectId: z.string().uuid(),
@@ -178,12 +200,16 @@ export const driveShareLinkSchema = z.object({
   id: z.string().uuid(),
   orgId: z.string().uuid(),
   objectId: z.string().uuid(),
-  token: z.string().min(1),
+  token: z.string().min(1).nullable(),
   role: driveRoleSchema,
   expiresAt: z.string().nullable(),
   createdByActorId: z.string().uuid().nullable(),
   createdAt: z.string(),
   revokedAt: z.string().nullable(),
+  maxDownloads: z.number().int().positive().nullable(),
+  downloadCount: z.number().int().nonnegative(),
+  rateLimitPerHour: z.number().int().positive(),
+  lastUsedAt: z.string().nullable(),
 });
 export type DriveShareLink = z.infer<typeof driveShareLinkSchema>;
 

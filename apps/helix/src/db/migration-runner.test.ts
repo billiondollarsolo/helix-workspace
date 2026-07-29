@@ -95,6 +95,28 @@ describe("platform foundation migration", () => {
     expect(sql).toContain("references objects(id)");
   });
 
+  it("declares the durable Drive upload state and leased scan queue", async () => {
+    const sql = await readFile(
+      new URL("./migrations/0076_drive_upload_state.sql", import.meta.url),
+      "utf8",
+    );
+    const rollback = await readFile(
+      new URL("./migrations/rollbacks/0076_drive_upload_state.sql", import.meta.url),
+      "utf8",
+    );
+
+    expect(sql).toContain("create type drive_upload_state");
+    expect(sql).toContain("add column if not exists upload_state");
+    expect(sql).toContain("create table if not exists drive_scan_jobs");
+    expect(sql).toContain("lease_expires_at timestamptz");
+    expect(sql).toContain("constraint drive_scan_jobs_version_unique unique (version_id)");
+    expect(sql).toContain("message_attachments_require_active_object");
+    expect(sql).toContain("upload_state = 'active'");
+    expect(rollback).toContain("refusing 0076 rollback");
+    expect(rollback).toContain("where deleted_at is null");
+    expect(rollback).toContain("drop table if exists drive_scan_jobs");
+  });
+
   it("installs tenant RLS policies for all public tables with org_id", async () => {
     const sql = await readFile(
       new URL("./migrations/0033_tenant_rls_foundation.sql", import.meta.url),

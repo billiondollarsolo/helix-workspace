@@ -1,0 +1,42 @@
+{
+	admin off
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+{$HELIX_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	@health path /healthz /readyz
+	handle @health {
+		reverse_proxy {$HELIX_UPSTREAM} {
+			header_up -X-Helix-Mfa-Verified
+		}
+	}
+
+	@backend {
+		path /api/* /oauth /oauth/* /trpc /trpc/* /mcp /mcp/* /v1 /v1/*
+		path /openapi.json /openapi.yaml /asyncapi.json
+		path /events /events/* /ws /ws/* /sync /sync/* /dav /dav/* /.well-known/*
+	}
+	handle @backend {
+		reverse_proxy {$HELIX_UPSTREAM} {
+			header_up -X-Helix-Mfa-Verified
+		}
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

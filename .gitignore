@@ -20,6 +20,7 @@ test-results
 playwright-report
 .playwright
 **/reports/a11y/
+/artifacts/release-readiness/
 .tmp/
 .codex-artifacts/
 .claude/
@@ -30,6 +31,7 @@ New
 .env
 .env.*
 !.env.example
+!.env.production.example
 !**/.env.example
 
 # Local runtime data / volumes

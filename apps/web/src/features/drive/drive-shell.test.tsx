@@ -1014,7 +1014,7 @@ describe("DriveShell", () => {
               mimeType: "text/plain",
               byteSize: 4,
               sha256: "a".repeat(64),
-              status: "prepared",
+              status: "pending_upload",
               uploadUrl: null,
               uploadHeaders: {},
               metadata: {},
@@ -1037,6 +1037,18 @@ describe("DriveShell", () => {
               metadata: {},
               createdByActorId: "actor-1",
               createdAt: "2026-05-21T00:00:00.000Z",
+            }),
+          );
+        }
+        if (url === "/api/tools/drive.upload.status") {
+          return Promise.resolve(
+            Response.json({
+              objectId: (body as { objectId?: string }).objectId ?? "uploaded",
+              state: "active",
+              label: "Available",
+              available: true,
+              terminal: true,
+              updatedAt: "2026-05-21T00:00:01.000Z",
             }),
           );
         }
@@ -1107,7 +1119,7 @@ describe("DriveShell", () => {
               mimeType: (body as { mimeType?: string }).mimeType ?? "application/octet-stream",
               byteSize: (body as { byteSize?: number }).byteSize ?? 0,
               sha256: "a".repeat(64),
-              status: "prepared",
+              status: "pending_upload",
               uploadUrl: null,
               uploadHeaders: {},
               metadata: {},
@@ -1130,6 +1142,18 @@ describe("DriveShell", () => {
               metadata: {},
               createdByActorId: "actor-1",
               createdAt: "2026-05-21T00:00:00.000Z",
+            }),
+          );
+        }
+        if (url === "/api/tools/drive.upload.status") {
+          return Promise.resolve(
+            Response.json({
+              objectId: (body as { objectId?: string }).objectId ?? "uploaded",
+              state: "active",
+              label: "Available",
+              available: true,
+              terminal: true,
+              updatedAt: "2026-05-21T00:00:01.000Z",
             }),
           );
         }
@@ -1173,9 +1197,11 @@ describe("DriveShell", () => {
 
         const objectId = uploadedIds.get(file.name);
         expect(objectId).toBeDefined();
-        expect(navigateMock).toHaveBeenCalledWith({
-          to: "/open/$objectId",
-          params: { objectId },
+        await vi.waitFor(() => {
+          expect(navigateMock).toHaveBeenCalledWith({
+            to: "/open/$objectId",
+            params: { objectId },
+          });
         });
       }
 

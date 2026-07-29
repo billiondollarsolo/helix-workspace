@@ -2,6 +2,10 @@ import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod3";
 import {
+  OUTBOUND_MAIL_SECRET_REFERENCES,
+  WEBHOOK_MAIL_SECRET_REFERENCES,
+} from "./secret-policy.js";
+import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
   auditAdminAction,
@@ -59,6 +63,8 @@ const domainKeyParams = z.object({ id: z.string().uuid(), keyId: z.string().uuid
 
 const providerKindSchema = z.enum(OUTBOUND_MAIL_PROVIDER_KINDS);
 const jsonObjectSchema = z.record(z.unknown());
+const outboundSecretRefSchema = z.enum(OUTBOUND_MAIL_SECRET_REFERENCES).nullable();
+const webhookSecretRefSchema = z.enum(WEBHOOK_MAIL_SECRET_REFERENCES).nullable();
 
 const createProviderBody = z
   .object({
@@ -67,7 +73,8 @@ const createProviderBody = z
     enabled: z.boolean().default(true),
     isDefault: z.boolean().default(false),
     config: jsonObjectSchema.default({}),
-    secretRef: z.string().trim().min(1).max(200).nullable().default(null),
+    secretRef: outboundSecretRefSchema.default(null),
+    webhookSecretRef: webhookSecretRefSchema.default(null),
   })
   .strict();
 
@@ -77,7 +84,8 @@ const updateProviderBody = z
     enabled: z.boolean().optional(),
     isDefault: z.boolean().optional(),
     config: jsonObjectSchema.optional(),
-    secretRef: z.string().trim().min(1).max(200).nullable().optional(),
+    secretRef: outboundSecretRefSchema.optional(),
+    webhookSecretRef: webhookSecretRefSchema.optional(),
   })
   .strict();
 
@@ -210,6 +218,8 @@ function serializeProvider(provider: OutboundProviderConfig): Record<string, unk
     // Only the env-var *name* is surfaced; the secret value never leaves the host.
     secretRef: provider.secretRef,
     hasSecret: provider.secretRef !== null,
+    webhookSecretRef: provider.webhookSecretRef ?? null,
+    hasWebhookSecret: provider.webhookSecretRef !== null && provider.webhookSecretRef !== undefined,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
   };
@@ -232,6 +242,8 @@ function serializeDkimKey(key: MailDkimKeyRecord): Record<string, unknown> {
     dnsRecord: key.dnsRecord,
     dnsHost: `${key.selector}._domainkey`,
     privateKeyStored: key.privateKeyPem.length > 0,
+    signingMode: "legacy_local_key_not_used",
+    usedForOutboundSigning: false,
     rotatedAt: key.rotatedAt,
     retiredAt: key.retiredAt,
     createdAt: key.createdAt,
@@ -279,8 +291,15 @@ export async function registerMailDeliveryAdminRoutes(
   app: FastifyInstance,
   options: RegisterMailDeliveryAdminRoutesOptions,
 ): Promise<void> {
-  const { providerStore, domainStore, dkimStore, dmarcStore, routingStore, actorFromRequest, auditSink } =
-    options;
+  const {
+    providerStore,
+    domainStore,
+    dkimStore,
+    dmarcStore,
+    routingStore,
+    actorFromRequest,
+    auditSink,
+  } = options;
 
   // ---- Outbound providers -------------------------------------------------
 
@@ -311,6 +330,7 @@ export async function registerMailDeliveryAdminRoutes(
         isDefault: body.data.isDefault,
         config: compactJson(body.data.config),
         secretRef: body.data.secretRef,
+        webhookSecretRef: body.data.webhookSecretRef,
         createdBy: actor.id,
       });
     } catch (error) {
@@ -351,6 +371,9 @@ export async function registerMailDeliveryAdminRoutes(
       ...(body.data.isDefault === undefined ? {} : { isDefault: body.data.isDefault }),
       ...(body.data.config === undefined ? {} : { config: compactJson(body.data.config) }),
       ...(body.data.secretRef === undefined ? {} : { secretRef: body.data.secretRef }),
+      ...(body.data.webhookSecretRef === undefined
+        ? {}
+        : { webhookSecretRef: body.data.webhookSecretRef }),
     });
     if (provider === null) {
       return reply.code(404).send(notFound("Provider not found."));

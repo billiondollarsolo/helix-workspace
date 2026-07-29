@@ -41,7 +41,7 @@ export type MailThreadsListResult = Omit<MailThreadsListResultContract, "threads
   readonly threads: readonly MailThreadRow[];
   readonly limit: number;
   readonly offset: number;
-}
+};
 
 export interface MailFolderSummary {
   readonly id: MailFolderKey;
@@ -129,6 +129,23 @@ export interface MailSendResult {
   readonly status?: string;
   readonly undoUntil?: string;
   readonly queuedAt?: string;
+}
+
+export interface MailDraftResult {
+  readonly id: string;
+  readonly version: number;
+  readonly updatedAt: string;
+}
+
+export interface MailDraftSaveInput {
+  readonly id?: string;
+  readonly expectedVersion?: number;
+  readonly to: readonly MailApiAddress[];
+  readonly cc: readonly MailApiAddress[];
+  readonly bcc: readonly MailApiAddress[];
+  readonly subject: string;
+  readonly bodyText: string;
+  readonly attachments: readonly MailAttachment[];
 }
 
 export interface MailFilterCriteria {
@@ -340,10 +357,10 @@ export async function listMailDrafts(
 }
 
 export async function saveMailDraft(
-  input: Record<string, unknown>,
+  input: MailDraftSaveInput,
   fetchImpl: MailApiFetch = authenticatedFetch,
-): Promise<unknown> {
-  return callMailTool("mail.draft.save", input, fetchImpl);
+): Promise<MailDraftResult> {
+  return callMailTool<MailDraftResult>("mail.draft.save", input, fetchImpl);
 }
 
 export async function discardMailDraft(

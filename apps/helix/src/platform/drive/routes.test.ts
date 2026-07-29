@@ -5,8 +5,9 @@ import type { Actor } from "@helix/sdk-types";
 import { ApiError } from "../../api/api-error.js";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
 import {
-  registerDriveRoutes,
+  registerDriveRoutes as registerDriveRoutesStrict,
   registerDriveShareLinkRoute,
+  type RegisterDriveRoutesOptions,
   type WebDavDriveStore,
 } from "./routes.js";
 
@@ -36,6 +37,13 @@ import type {
   DriveVersionRecord,
 } from "./types.js";
 
+function registerDriveRoutes(
+  app: FastifyInstance,
+  options: RegisterDriveRoutesOptions,
+): Promise<void> {
+  return registerDriveRoutesStrict(app, { ...options, requireTls: false });
+}
+
 const now = new Date("2026-05-20T12:00:00.000Z");
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
@@ -46,6 +54,43 @@ const reportId = "44444444-4444-4444-8444-444444444444";
 const uploadId = "55555555-5555-4555-8555-555555555555";
 
 describe("Drive WebDAV routes", () => {
+  it("rejects plaintext WebDAV before checking app-password credentials", async () => {
+    const app = fastify();
+    await registerDriveRoutesStrict(app, {
+      store: new FakeWebDavDriveStore(),
+      appPasswords: new FakeAppPasswordAuthenticator(),
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/dav/files/report.txt",
+      headers: { authorization: basic("ada@example.test", "read") },
+    });
+
+    expect(response.statusCode).toBe(426);
+    expect(response.headers.upgrade).toBe("TLS/1.2");
+  });
+
+  it("rate-limits WebDAV authentication before password verification", async () => {
+    const app = fastify();
+    await registerDriveRoutes(app, {
+      store: new FakeWebDavDriveStore(),
+      appPasswords: new FakeAppPasswordAuthenticator(),
+      rateLimiter: {
+        consume: () => ({ allowed: false, retryAfterSeconds: 30 }),
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/dav/files/report.txt",
+      headers: { authorization: basic("ada@example.test", "wrong") },
+    });
+
+    expect(response.statusCode).toBe(429);
+    expect(response.headers["retry-after"]).toBe("30");
+  });
+
   it("advertises WebDAV methods and challenges unauthenticated clients", async () => {
     const app = fastify();
     await registerDriveRoutes(app, {
@@ -559,8 +604,8 @@ describe("Drive public share-link route", () => {
     const app = withApiErrorHandler(fastify());
     await registerDriveShareLinkRoute(app, {
       store: {
-        readFileByShareToken: async (token) => {
-          if (token !== "goodtoken") {
+        readFileByShareToken: async (input) => {
+          if (input.token !== "goodtoken") {
             return null;
           }
           return {
@@ -610,6 +655,33 @@ describe("Drive public share-link route", () => {
     expect(response.statusCode).toBe(206);
     expect(response.headers["content-range"]).toBe("bytes 0-5/12");
     expect(response.body).toBe("public");
+  });
+
+  it("forces same-origin active content to an opaque attachment", async () => {
+    const app = withApiErrorHandler(fastify());
+    await registerDriveShareLinkRoute(app, {
+      store: {
+        readFileByShareToken: async () => ({
+          entry: fileEntry({
+            id: reportId,
+            name: "payload.svg",
+            content: "<svg><script>alert(1)</script></svg>",
+            mimeType: "image/svg+xml",
+          }),
+          content: Buffer.from("<svg><script>alert(1)</script></svg>"),
+        }),
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/drive/share/goodtoken",
+    });
+
+    expect(response.headers["content-type"]).toContain("application/octet-stream");
+    expect(response.headers["content-disposition"]).toContain("attachment");
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["content-security-policy"]).toContain("sandbox");
   });
 
   it("returns 404 for unknown/revoked/expired tokens", async () => {

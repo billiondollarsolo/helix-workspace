@@ -7,10 +7,11 @@ import {
   collectDefaultMetrics,
   type LabelValues,
 } from "prom-client";
+import type { SecurityScanningMetrics } from "../platform/security/scanning/metrics.js";
 
 export type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
 
-export interface PlatformMetrics {
+export interface PlatformMetrics extends SecurityScanningMetrics {
   readonly registry: Registry;
   recordLLMChat(input: {
     readonly feature: string;
@@ -32,6 +33,17 @@ export interface PlatformMetrics {
     readonly tier: string;
     readonly actorType: string;
     readonly reason: string;
+  }): void;
+  recordAgentOperationalControlDenial(input: {
+    readonly toolId: string;
+    readonly actorType: string;
+    readonly reason: string;
+  }): void;
+  recordToolPolicyDenial(input: {
+    readonly toolId: string;
+    readonly reason: string;
+    readonly requestChannel: string;
+    readonly effectiveClassification: string;
   }): void;
   recordSignupFunnelEvent(input: {
     readonly step: string;
@@ -103,6 +115,18 @@ export function createPlatformMetrics(): PlatformMetrics {
     name: "helix_agent_tool_limiter_denials_total",
     help: "Total denied agent or service-account tool invocations by limiter reason.",
     labelNames: ["tool_id", "tier", "actor_type", "reason"],
+    registers: [registry],
+  });
+  const agentOperationalControlDenials = new Counter({
+    name: "helix_agent_operational_control_denials_total",
+    help: "Total content-free tool denials caused by emergency operational controls.",
+    labelNames: ["tool_id", "actor_type", "reason"],
+    registers: [registry],
+  });
+  const toolPolicyDenials = new Counter({
+    name: "helix_tool_policy_denials_total",
+    help: "Total content-free policy-firewall denials by tool, reason, channel, and classification.",
+    labelNames: ["tool_id", "reason", "request_channel", "classification"],
     registers: [registry],
   });
   const signupFunnelEvents = new Counter({
@@ -218,6 +242,43 @@ export function createPlatformMetrics(): PlatformMetrics {
     buckets: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
     registers: [registry],
   });
+  const securityScans = new Counter({
+    name: "helix_security_scans_total",
+    help: "Total terminal malware scan results by scanner and state.",
+    labelNames: ["scanner", "state"],
+    registers: [registry],
+  });
+  const securityScanDuration = new Histogram({
+    name: "helix_security_scan_duration_seconds",
+    help: "Malware scan duration in seconds by scanner and terminal state.",
+    labelNames: ["scanner", "state"],
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+    registers: [registry],
+  });
+  const securityScannedBytes = new Counter({
+    name: "helix_security_scanned_bytes_total",
+    help: "Total bytes submitted to malware scanners by scanner and terminal state.",
+    labelNames: ["scanner", "state"],
+    registers: [registry],
+  });
+  const securityScannerAvailable = new Gauge({
+    name: "helix_security_scanner_available",
+    help: "Whether the malware scanner is currently available (1) or unavailable (0).",
+    labelNames: ["scanner"],
+    registers: [registry],
+  });
+  const securityScanBacklog = new Gauge({
+    name: "helix_security_scan_backlog_items",
+    help: "Content items waiting for malware scanning.",
+    labelNames: ["scanner"],
+    registers: [registry],
+  });
+  const securityQuarantinedBytes = new Counter({
+    name: "helix_security_quarantined_bytes_total",
+    help: "Total bytes quarantined by malware scan policy.",
+    labelNames: ["scanner"],
+    registers: [registry],
+  });
 
   return {
     registry,
@@ -268,6 +329,23 @@ export function createPlatformMetrics(): PlatformMetrics {
         reason: input.reason,
       };
       agentToolLimiterDenials.inc(labels);
+    },
+    recordAgentOperationalControlDenial(input) {
+      const labels: LabelValues<"tool_id" | "actor_type" | "reason"> = {
+        tool_id: input.toolId,
+        actor_type: input.actorType,
+        reason: input.reason,
+      };
+      agentOperationalControlDenials.inc(labels);
+    },
+    recordToolPolicyDenial(input) {
+      const labels: LabelValues<"tool_id" | "reason" | "request_channel" | "classification"> = {
+        tool_id: input.toolId,
+        reason: input.reason,
+        request_channel: input.requestChannel,
+        classification: input.effectiveClassification,
+      };
+      toolPolicyDenials.inc(labels);
     },
     recordSignupFunnelEvent(input) {
       const labels: LabelValues<"step" | "tier" | "plan_id" | "region"> = {
@@ -336,6 +414,24 @@ export function createPlatformMetrics(): PlatformMetrics {
     },
     recordStoragePoolEviction() {
       storagePoolEvictions.inc();
+    },
+    recordSecurityScan(input) {
+      const labels: LabelValues<"scanner" | "state"> = {
+        scanner: input.scannerName,
+        state: input.state,
+      };
+      securityScans.inc(labels);
+      securityScanDuration.observe(labels, input.durationSeconds);
+      securityScannedBytes.inc(labels, input.byteSize);
+    },
+    setSecurityScannerAvailable(input) {
+      securityScannerAvailable.set({ scanner: input.scannerName }, input.available ? 1 : 0);
+    },
+    setSecurityScanBacklog(input) {
+      securityScanBacklog.set({ scanner: input.scannerName }, input.pendingItems);
+    },
+    recordSecurityQuarantinedBytes(input) {
+      securityQuarantinedBytes.inc({ scanner: input.scannerName }, input.byteSize);
     },
   };
 }

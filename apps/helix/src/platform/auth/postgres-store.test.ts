@@ -48,6 +48,7 @@ describe("Postgres OAuth stores", () => {
       redirectUris: [],
       expiresAt,
       revokedAt: null,
+      lastUsedAt: null,
     });
     expect(recording.calls[0]?.text).toContain("insert into agent_credentials");
     expect(recording.calls[0]?.text).toContain("where id =");
@@ -197,6 +198,7 @@ describe("Postgres OAuth stores", () => {
         redirectUris: [],
         expiresAt: null,
         revokedAt,
+        lastUsedAt: null,
       },
     ]);
     expect(recording.calls[0]?.text).toContain("where a.org_id =");

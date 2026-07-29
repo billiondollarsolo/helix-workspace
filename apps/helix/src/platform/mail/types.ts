@@ -237,6 +237,11 @@ export interface MailOutboundRecord {
   readonly failedAt: Date | null;
   readonly lastError: string | null;
   readonly providerMessageId: string | null;
+  /** Stable dispatch-time provider choice. Secrets are never persisted here. */
+  readonly providerId?: string | null;
+  readonly providerKind?: string | null;
+  readonly providerDecisionSource?: "sending_domain" | "org_default" | "environment" | null;
+  readonly providerDecidedAt?: Date | null;
   readonly deliveryMetadata: JsonObject;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -253,6 +258,7 @@ export interface MailDraftRecord {
   readonly actorId: string;
   readonly threadId: string | null;
   readonly envelope: JsonObject;
+  readonly version: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

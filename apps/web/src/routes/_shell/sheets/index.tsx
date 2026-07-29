@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { SheetsShell } from "@/features/sheets/sheets-shell";
+import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
 
 /** `?sheet=<id>` opens straight into that spreadsheet's editor (used by Drive's New). */
 interface SheetsRouteSearch {
@@ -22,6 +23,7 @@ function validateSheetsRouteSearch(search: Record<string, unknown>): SheetsRoute
 }
 
 export const Route = createFileRoute("/_shell/sheets/")({
+  beforeLoad: () => enforceFullWorkspaceRoute(),
   validateSearch: (search): SheetsRouteSearch => validateSheetsRouteSearch(search),
   component: SheetsRoute,
 });

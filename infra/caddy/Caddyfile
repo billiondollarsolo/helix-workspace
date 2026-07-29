@@ -25,5 +25,7 @@
 		reverse_proxy rustfs:9001
 	}
 
-	reverse_proxy {$HELIX_UPSTREAM:host.docker.internal:3000}
+	reverse_proxy {$HELIX_UPSTREAM:host.docker.internal:3000} {
+		header_up -X-Helix-Mfa-Verified
+	}
 }

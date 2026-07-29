@@ -16,8 +16,14 @@ Options:
   --execute                    Start/run Docker-backed commands
   --dry-run                    Print commands only
   --backup-dir <path>          Default: ./data/restore-drill/backups
+  --backup <path>              Restore a pre-existing encrypted backup
   --backup-id <id>             Default: live-restore-drill-<UTC timestamp>
   --target-db <name>           Default: helix_restore_drill_smoke
+  --target-object-bucket <n>   Isolated object-store restore target
+  --target-database-url <url>  Host URL for strict restored-DB reindex
+  --age-identity <path>        age identity for an encrypted backup
+  --kms-datakey <path>         KMS-wrapped data key for an encrypted backup
+  --evidence-output <path>     Require strict live RPO/RTO evidence
   --compose-project <name>     Optional isolated Docker Compose project
   --skip-postgres-up           Do not run docker compose up -d postgres first
   --skip-migrate               Do not run app migrations before backup
@@ -36,8 +42,13 @@ EOF
 
 DRY_RUN=1
 BACKUP_DIR=${HELIX_LIVE_RESTORE_BACKUP_DIR:-./data/restore-drill/backups}
+BACKUP_PATH=${HELIX_LIVE_RESTORE_BACKUP:-}
 BACKUP_ID=${HELIX_LIVE_RESTORE_BACKUP_ID:-live-restore-drill-$(date -u +%Y%m%dT%H%M%SZ)}
 TARGET_DB=${HELIX_LIVE_RESTORE_TARGET_DB:-helix_restore_drill_smoke}
+TARGET_OBJECT_BUCKET=${HELIX_LIVE_RESTORE_TARGET_OBJECT_BUCKET:-}
+AGE_IDENTITY=${AGE_IDENTITY_FILE:-}
+KMS_DATAKEY=${HELIX_BACKUP_KMS_DATAKEY:-}
+EVIDENCE_OUTPUT=${HELIX_LIVE_RESTORE_EVIDENCE_OUTPUT:-}
 START_POSTGRES=${HELIX_LIVE_RESTORE_START_POSTGRES:-true}
 RUN_MIGRATIONS=${HELIX_LIVE_RESTORE_MIGRATE:-true}
 SEED_OAUTH=${HELIX_LIVE_RESTORE_SEED_OAUTH:-true}
@@ -50,14 +61,21 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-helix_dev_password}
 POSTGRES_PORT=${POSTGRES_PORT:-28432}
 POSTGRES_SERVICE=${POSTGRES_SERVICE:-postgres}
 DATABASE_URL=${DATABASE_URL:-postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB}
+TARGET_DATABASE_URL=${HELIX_RESTORE_DRILL_TARGET_DATABASE_URL:-postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$TARGET_DB}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --execute) DRY_RUN=0; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --backup-dir) BACKUP_DIR=${2:?missing backup dir}; shift 2 ;;
+    --backup) BACKUP_PATH=${2:?missing backup path}; shift 2 ;;
     --backup-id) BACKUP_ID=${2:?missing backup id}; shift 2 ;;
     --target-db) TARGET_DB=${2:?missing target db}; shift 2 ;;
+    --target-object-bucket) TARGET_OBJECT_BUCKET=${2:?missing target object bucket}; shift 2 ;;
+    --target-database-url) TARGET_DATABASE_URL=${2:?missing target database URL}; shift 2 ;;
+    --age-identity) AGE_IDENTITY=${2:?missing age identity}; shift 2 ;;
+    --kms-datakey) KMS_DATAKEY=${2:?missing KMS datakey}; shift 2 ;;
+    --evidence-output) EVIDENCE_OUTPUT=${2:?missing evidence output}; shift 2 ;;
     --compose-project) COMPOSE_PROJECT=${2:?missing compose project}; shift 2 ;;
     --skip-postgres-up) START_POSTGRES=false; shift ;;
     --skip-migrate) RUN_MIGRATIONS=false; shift ;;
@@ -159,8 +177,18 @@ compose_args=${HELIX_COMPOSE_ARGS:-}
 if [[ -n "$COMPOSE_PROJECT" ]]; then
   compose_args="-p $COMPOSE_PROJECT"
 fi
-restore_drill_cmd=$(printf 'POSTGRES_DB=%q POSTGRES_USER=%q POSTGRES_SERVICE=%q HELIX_COMPOSE_ARGS=%q HELIX_BACKUP_DIR=%q infra/scripts/restore-drill.sh --create-backup --backup-dir %q --backup-id %q --target-db %q' \
-  "$POSTGRES_DB" "$POSTGRES_USER" "$POSTGRES_SERVICE" "$compose_args" "$BACKUP_DIR" "$BACKUP_DIR" "$BACKUP_ID" "$TARGET_DB")
+if [[ -n "$BACKUP_PATH" ]]; then
+  drill_source=$(printf '%q %q' --backup "$BACKUP_PATH")
+else
+  drill_source=$(printf '%q %q %q' --create-backup --backup-id "$BACKUP_ID")
+fi
+restore_drill_cmd=$(printf 'POSTGRES_DB=%q POSTGRES_USER=%q POSTGRES_SERVICE=%q HELIX_COMPOSE_ARGS=%q HELIX_BACKUP_DIR=%q infra/scripts/restore-drill.sh %s --backup-dir %q --target-db %q' \
+  "$POSTGRES_DB" "$POSTGRES_USER" "$POSTGRES_SERVICE" "$compose_args" "$BACKUP_DIR" "$drill_source" "$BACKUP_DIR" "$TARGET_DB")
+[[ -n "$TARGET_OBJECT_BUCKET" ]] && restore_drill_cmd+=" $(printf '%q %q' --target-object-bucket "$TARGET_OBJECT_BUCKET")"
+[[ -n "$AGE_IDENTITY" ]] && restore_drill_cmd+=" $(printf '%q %q' --age-identity "$AGE_IDENTITY")"
+[[ -n "$KMS_DATAKEY" ]] && restore_drill_cmd+=" $(printf '%q %q' --kms-datakey "$KMS_DATAKEY")"
+[[ -n "$EVIDENCE_OUTPUT" ]] && restore_drill_cmd+=" $(printf '%q %q' --evidence-output "$EVIDENCE_OUTPUT")"
+[[ -n "$EVIDENCE_OUTPUT" ]] && restore_drill_cmd+=" $(printf '%q %q' --target-database-url "$TARGET_DATABASE_URL")"
 if [[ "$DRY_RUN" == "0" ]]; then
   restore_drill_cmd+=" --execute"
 else

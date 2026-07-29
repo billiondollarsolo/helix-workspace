@@ -123,7 +123,8 @@ describe("buildOpenApiDocument", () => {
                           "id",
                           "toolId",
                           "actorId",
-                          "input",
+                          "requesterActorId",
+                          "preview",
                           "status",
                           "createdAt",
                           "expiresAt",
@@ -132,7 +133,10 @@ describe("buildOpenApiDocument", () => {
                           status: {
                             enum: [
                               "pending_confirmation",
-                              "confirmed",
+                              "approved",
+                              "executing",
+                              "executed",
+                              "failed",
                               "cancelled",
                               "expired",
                             ],

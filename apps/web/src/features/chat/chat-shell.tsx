@@ -1135,7 +1135,7 @@ function ChatMessageRow({
             </div>
           </div>
         ) : (
-          <p className="chat-msg-line">{message.body}</p>
+          <ChatMessageBody className="chat-msg-line" message={message} />
         )}
 
         {message.reactions.length > 0 ? (
@@ -1470,7 +1470,7 @@ function ChatThreadPanel({ spaceName, parent, onClose, onReply }: ChatThreadPane
               <span className="chat-thread-author">{parent.authorName}</span>
               <span className="chat-thread-time">{parent.time}</span>
             </div>
-            <p className="chat-thread-line">{parent.body}</p>
+            <ChatMessageBody className="chat-thread-line" message={parent} />
           </div>
         </div>
 
@@ -1517,6 +1517,21 @@ function ChatThreadPanel({ spaceName, parent, onClose, onReply }: ChatThreadPane
       </div>
     </aside>
   );
+}
+
+function ChatMessageBody(input: {
+  readonly className: string;
+  readonly message: Pick<ChatMessageView, "body" | "bodyFormat" | "renderedBodyHtml">;
+}) {
+  if (input.message.bodyFormat === "markdown" && input.message.renderedBodyHtml !== undefined) {
+    return (
+      <div
+        className={input.className}
+        dangerouslySetInnerHTML={{ __html: input.message.renderedBodyHtml }}
+      />
+    );
+  }
+  return <p className={input.className}>{input.message.body}</p>;
 }
 
 /* ----------------------------------------------------------------

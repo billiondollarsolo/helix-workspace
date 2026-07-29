@@ -7,6 +7,7 @@ import {
   driveSearchHitSchema,
   driveShareLinkSchema,
   driveUploadResultSchema,
+  driveUploadStatusSchema,
   driveVersionSchema,
 } from "@helix/contracts";
 
@@ -17,6 +18,7 @@ export const driveCreateOutputSchema = z.union([
 ]);
 
 export const driveUploadOutputSchema = driveUploadResultSchema;
+export const driveUploadStatusOutputSchema = driveUploadStatusSchema;
 export const driveFinalizeOutputSchema = driveVersionSchema;
 export const driveListOutputSchema = z.object({ entries: driveEntrySchema.array() });
 export const driveShareOutputSchema = z.object({

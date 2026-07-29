@@ -11,17 +11,23 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  sha:
+    description: Exact checked-out helix-editors commit.
+    value: ${{ steps.select-ref.outputs.sha }}
+
 runs:
   using: composite
   steps:
     - name: Checkout helix-editors main
-      uses: actions/checkout@v4
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       with:
         repository: billiondollarsolo/helix-editors
         ref: main
         path: helix-all/helix-editors
 
     - name: Select coordinated helix-editors ref
+      id: select-ref
       shell: bash
       working-directory: helix-all/helix-editors
       env:
@@ -43,5 +49,6 @@ runs:
           echo "No paired helix-editors branch found; using main."
         fi
 
-        printf 'helix-editors SHA: '
-        git rev-parse HEAD
+        editors_sha="$(git rev-parse HEAD)"
+        printf 'helix-editors SHA: %s\n' "$editors_sha"
+        echo "sha=$editors_sha" >> "$GITHUB_OUTPUT"

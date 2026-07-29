@@ -192,6 +192,37 @@ describe("outbound provider admin routes", () => {
     expect(response.statusCode).toBe(400);
   });
 
+  it("rejects arbitrary application secret references on create and update", async () => {
+    const rejectedCreate = await inject({
+      method: "POST",
+      url: "/api/admin/mail/providers",
+      payload: {
+        name: "Unsafe",
+        kind: "postmark",
+        config: { baseUrl: "https://attacker.invalid" },
+        secretRef: "BETTER_AUTH_SECRET",
+      },
+    });
+    expect(rejectedCreate.statusCode).toBe(400);
+
+    const created = await inject({
+      method: "POST",
+      url: "/api/admin/mail/providers",
+      payload: {
+        name: "Safe",
+        kind: "postmark",
+        secretRef: "POSTMARK_SERVER_TOKEN",
+      },
+    });
+    const provider = created.body<{ provider: ProviderView }>().provider;
+    const rejectedUpdate = await inject({
+      method: "PATCH",
+      url: `/api/admin/mail/providers/${provider.id}`,
+      payload: { webhookSecretRef: "HELIX_DATA_ENCRYPTION_KEY" },
+    });
+    expect(rejectedUpdate.statusCode).toBe(400);
+  });
+
   it("denies a read-only actor a write and an unprivileged actor a read", async () => {
     currentActor = readerActor;
     const write = await inject({
@@ -256,7 +287,9 @@ describe("sending domain and DKIM admin routes", () => {
     );
     expect(byStatus).toEqual({ s1: "retiring", s2: "active" });
 
-    const retiring = keys.body<{ keys: readonly DkimKeyView[] }>().keys.find((key) => key.status === "retiring");
+    const retiring = keys
+      .body<{ keys: readonly DkimKeyView[] }>()
+      .keys.find((key) => key.status === "retiring");
     const retired = await inject({
       method: "POST",
       url: `/api/admin/mail/sending-domains/${domain.id}/dkim/${retiring?.id ?? ""}/retire`,
@@ -338,7 +371,9 @@ describe("DMARC admin routes", () => {
     });
     expect(summary.statusCode).toBe(200);
     expect(summary.body<{ summary: DmarcSummaryView }>().summary.passRate).toBeCloseTo(0.8);
-    expect(summary.body<{ summary: DmarcSummaryView }>().summary.topFailingSources[0]?.sourceIp).toBe("198.51.100.7");
+    expect(
+      summary.body<{ summary: DmarcSummaryView }>().summary.topFailingSources[0]?.sourceIp,
+    ).toBe("198.51.100.7");
 
     const reports = await inject({
       method: "GET",
@@ -407,4 +442,3 @@ describe("inbound routing rule admin routes", () => {
     expect(response.statusCode).toBe(400);
   });
 });
-

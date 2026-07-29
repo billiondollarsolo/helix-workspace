@@ -1,15 +1,20 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import {
   chatCreateRoomInputSchema,
+  chatBodyFormatSchema,
   chatDeleteInputSchema,
   chatEditInputSchema,
+  chatExportInputSchema,
   chatInviteInputSchema,
+  chatLegalHoldInputSchema,
   chatListMessagesInputSchema,
   chatMessageSchema,
+  chatRemoveMemberInputSchema,
   chatPinInputSchema,
   chatReactInputSchema,
   chatReactionSchema,
   chatReplyInThreadInputSchema,
+  chatRetentionPolicyInputSchema,
   chatRoomSchema,
   chatSearchHitSchema,
   chatSearchInputSchema,
@@ -65,6 +70,41 @@ const chatSearchResultSchema = z.object({
 const chatInviteResultSchema = z.object({
   roomId: z.string().uuid(),
   invitedActorIds: z.array(z.string()),
+});
+
+const chatRemoveMemberResultSchema = z.object({
+  roomId: z.string().uuid(),
+  removedActorId: z.string().uuid(),
+  removed: z.literal(true),
+});
+
+const chatRetentionPolicyResultSchema = z.object({
+  orgId: z.string().uuid(),
+  roomId: z.string().uuid().nullable(),
+  retentionDays: z.number().int(),
+  editWindowSeconds: z.number().int(),
+  deleteWindowSeconds: z.number().int(),
+  legalHold: z.boolean(),
+  updatedAt: z.string(),
+});
+
+const chatExportResultSchema = z.object({
+  exportId: z.string().uuid(),
+  orgId: z.string().uuid(),
+  generatedAt: z.string(),
+  truncated: z.boolean(),
+  messages: z.array(
+    z.object({
+      id: z.string().uuid(),
+      roomId: z.string().uuid(),
+      actorId: z.string().uuid().nullable(),
+      body: z.string().nullable(),
+      bodyFormat: chatBodyFormatSchema,
+      sentAt: z.string(),
+      editedAt: z.string().nullable(),
+      deletedAt: z.string().nullable(),
+    }),
+  ),
 });
 
 const chatPinRecordSchema = z.object({
@@ -132,10 +172,7 @@ export function createChatToolDefinitions(
         return serializeMessage(message);
       },
     }),
-    defineTool<
-      z.output<typeof chatReplyInThreadInputSchema>,
-      z.output<typeof chatMessageSchema>
-    >({
+    defineTool<z.output<typeof chatReplyInThreadInputSchema>, z.output<typeof chatMessageSchema>>({
       id: "chat.reply_in_thread",
       description: "Reply to a chat message in a thread.",
       permission: "chat.post",
@@ -227,10 +264,7 @@ export function createChatToolDefinitions(
         ).map(serializePin),
       }),
     }),
-    defineTool<
-      z.output<typeof chatReactInputSchema>,
-      z.output<typeof chatReactResultSchema>
-    >({
+    defineTool<z.output<typeof chatReactInputSchema>, z.output<typeof chatReactResultSchema>>({
       id: "chat.react",
       description: "Add or remove a reaction on a chat message.",
       permission: "chat.post",
@@ -301,6 +335,7 @@ export function createChatToolDefinitions(
           actorId: ctx.actor.id,
           messageId: input.messageId,
           body: input.body,
+          ...(input.bodyFormat === undefined ? {} : { bodyFormat: input.bodyFormat }),
         });
         if (message === null) {
           throw new ChatMessageNotFoundError(input.messageId);
@@ -369,6 +404,29 @@ export function createChatToolDefinitions(
         };
       },
     }),
+    defineTool<
+      z.output<typeof chatRemoveMemberInputSchema>,
+      z.output<typeof chatRemoveMemberResultSchema>
+    >({
+      id: "chat.member.remove",
+      description: "Remove a member from a chat room.",
+      permission: "chat.create",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(chatRemoveMemberInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRemoveMemberResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.removeMember === undefined) {
+          throw new Error("This Chat store does not support member removal.");
+        }
+        return options.store.removeMember({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          roomId: input.roomId,
+          removedActorId: input.actorId,
+        });
+      },
+    }),
     defineTool<z.output<typeof chatSearchInputSchema>, z.output<typeof chatSearchResultSchema>>({
       id: "chat.search",
       description: "Search chat messages visible to the current actor.",
@@ -387,6 +445,93 @@ export function createChatToolDefinitions(
           })
         ).map(serializeSearchHit),
       }),
+    }),
+    defineTool<
+      z.output<typeof chatRetentionPolicyInputSchema>,
+      z.output<typeof chatRetentionPolicyResultSchema>
+    >({
+      id: "chat.retention.set",
+      description: "Set organization-default or room-specific Chat retention windows.",
+      permission: "admin.chat",
+      sideEffects: "write",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(chatRetentionPolicyInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRetentionPolicyResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.setRetentionPolicy === undefined) {
+          throw new Error("This Chat store does not support retention policies.");
+        }
+        return serializeRetentionPolicy(
+          await options.store.setRetentionPolicy({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            ...(input.roomId === undefined ? {} : { roomId: input.roomId }),
+            retentionDays: input.retentionDays,
+            editWindowSeconds: input.editWindowSeconds,
+            deleteWindowSeconds: input.deleteWindowSeconds,
+          }),
+        );
+      },
+    }),
+    defineTool<
+      z.output<typeof chatLegalHoldInputSchema>,
+      z.output<typeof chatRetentionPolicyResultSchema>
+    >({
+      id: "chat.legal_hold.set",
+      description: "Enable or disable an organization or room Chat legal hold.",
+      permission: "admin.chat",
+      sideEffects: "write",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(chatLegalHoldInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRetentionPolicyResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.setLegalHold === undefined) {
+          throw new Error("This Chat store does not support legal holds.");
+        }
+        return serializeRetentionPolicy(
+          await options.store.setLegalHold({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            ...(input.roomId === undefined ? {} : { roomId: input.roomId }),
+            enabled: input.enabled,
+          }),
+        );
+      },
+    }),
+    defineTool<z.output<typeof chatExportInputSchema>, z.output<typeof chatExportResultSchema>>({
+      id: "chat.export.organization",
+      description: "Export stored Chat messages for the current organization.",
+      permission: "admin.chat",
+      sideEffects: "read",
+      confirmationRequired: true,
+      rateLimit: { perActor: { perHour: 2, perDay: 4 } },
+      inputSchema: zodToolSchema(chatExportInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatExportResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.exportOrganization === undefined) {
+          throw new Error("This Chat store does not support organization exports.");
+        }
+        const exported = await options.store.exportOrganization({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          roomIds: input.roomIds,
+          ...(input.from === undefined ? {} : { from: new Date(input.from) }),
+          ...(input.to === undefined ? {} : { to: new Date(input.to) }),
+          limit: input.limit,
+        });
+        return {
+          exportId: exported.exportId,
+          orgId: exported.orgId,
+          generatedAt: exported.generatedAt.toISOString(),
+          truncated: exported.truncated,
+          messages: exported.messages.map((message) => ({
+            ...message,
+            sentAt: message.sentAt.toISOString(),
+            editedAt: message.editedAt?.toISOString() ?? null,
+            deletedAt: message.deletedAt?.toISOString() ?? null,
+          })),
+        };
+      },
     }),
   ];
 }
@@ -441,13 +586,12 @@ function serializeMessage(message: ChatMessageRecord) {
     roomId: message.roomId,
     actorId: message.actorId,
     body: message.body,
-    bodyFormat: message.bodyFormat,
+    bodyFormat: chatBodyFormatSchema.parse(message.bodyFormat),
+    renderedBodyHtml: message.renderedBodyHtml,
     metadata: message.metadata,
     attachmentObjectIds: [...message.attachmentObjectIds],
     parentMessageId: message.parentMessageId ?? null,
-    ...(message.clientMessageId === undefined
-      ? {}
-      : { clientMessageId: message.clientMessageId }),
+    ...(message.clientMessageId === undefined ? {} : { clientMessageId: message.clientMessageId }),
     sentAt: message.sentAt.toISOString(),
     editedAt: message.editedAt?.toISOString() ?? null,
     deletedAt: message.deletedAt?.toISOString() ?? null,
@@ -498,8 +642,15 @@ function serializeSearchHit(hit: ChatSearchHit) {
   };
 }
 
+function serializeRetentionPolicy(
+  policy: Awaited<ReturnType<NonNullable<ChatStore["setRetentionPolicy"]>>>,
+) {
+  return {
+    ...policy,
+    updatedAt: policy.updatedAt.toISOString(),
+  };
+}
+
 function toJsonObject(value: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
-
-

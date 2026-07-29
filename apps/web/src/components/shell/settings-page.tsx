@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useDebouncedCallback } from "@tanstack/react-pacer";
 import { useQuery } from "@tanstack/react-query";
 import { Icons, type IconName } from "@/components/icons";
+import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
 import { sessionUserQueryOptions } from "@/lib/auth";
 import {
@@ -93,7 +94,11 @@ function Toggle({ defaultOn }: { defaultOn: boolean }) {
 }
 
 const h1Style = { fontSize: "var(--text-h2)", fontWeight: 600, margin: "0 0 4px" } as const;
-const subStyle = { fontSize: "var(--text-body-sm)", color: "var(--text-3)", marginBottom: 8 } as const;
+const subStyle = {
+  fontSize: "var(--text-body-sm)",
+  color: "var(--text-3)",
+  marginBottom: 8,
+} as const;
 
 /* ---------- Profile ---------- */
 
@@ -306,10 +311,7 @@ function AppearanceSection() {
           ))}
         </div>
       </SettingsField>
-      <SettingsField
-        label="Accent color"
-        hint="Used for buttons, selections, and highlights"
-      >
+      <SettingsField label="Accent color" hint="Used for buttons, selections, and highlights">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {ACCENT_OPTIONS.map((color) => (
             <button
@@ -388,17 +390,25 @@ function LanguageSection() {
 function NotifySection() {
   const rows = [
     { label: "@mentions and DMs", desc: "Always notify", on: true },
-    {
-      label: "Document comments",
-      desc: "Notify when someone replies to your comment",
-      on: true,
-    },
+    ...(CORE_WORKSPACE_STORAGE_ONLY
+      ? []
+      : [
+          {
+            label: "Document comments",
+            desc: "Notify when someone replies to your comment",
+            on: true,
+          },
+        ]),
     {
       label: "Shared with you",
-      desc: "When a doc, sheet, or deck is shared with you",
+      desc: CORE_WORKSPACE_STORAGE_ONLY
+        ? "When a file or folder is shared with you"
+        : "When a doc, sheet, or deck is shared with you",
       on: true,
     },
-    { label: "Calendar reminders", desc: "10 minutes before events", on: true },
+    ...(CORE_WORKSPACE_STORAGE_ONLY
+      ? []
+      : [{ label: "Calendar reminders", desc: "10 minutes before events", on: true }]),
     { label: "Weekly digest", desc: "Monday morning summary", on: false },
     { label: "Marketing emails", desc: "Product updates and tips", on: false },
   ];
@@ -490,10 +500,7 @@ function SecuritySection() {
     <>
       <h1 style={h1Style}>Security</h1>
       <div style={subStyle}>Authentication and active sessions</div>
-      <SettingsField
-        label="Multi-factor authentication"
-        hint="Required by your organization"
-      >
+      <SettingsField label="Multi-factor authentication" hint="Required by your organization">
         <span className="chip success">
           <span className="chip-dot" />
           Enrolled · YubiKey + TOTP
@@ -654,10 +661,7 @@ function AISection() {
 
   // Mock connection test: surface agents wire this to POST /api/ai/config.
   // The debounced callback simulates the round-trip latency.
-  const settleTest = useDebouncedCallback(
-    () => setTestStatus("ok"),
-    { wait: 900 },
-  );
+  const settleTest = useDebouncedCallback(() => setTestStatus("ok"), { wait: 900 });
   const runTest = () => {
     setTestStatus("testing");
     settleTest();
@@ -669,17 +673,21 @@ function AISection() {
       desc: "Inline writing suggestions and draft replies",
       on: true,
     },
-    { label: "Slash commands in Docs", desc: "/ai prompt inside any document", on: true },
-    {
-      label: "Formula generation in Sheets",
-      desc: "Natural language → spreadsheet formulas",
-      on: true,
-    },
-    {
-      label: "Meeting summaries in Meet",
-      desc: "Post-call recap with action items",
-      on: true,
-    },
+    ...(CORE_WORKSPACE_STORAGE_ONLY
+      ? []
+      : [
+          { label: "Slash commands in Docs", desc: "/ai prompt inside any document", on: true },
+          {
+            label: "Formula generation in Sheets",
+            desc: "Natural language → spreadsheet formulas",
+            on: true,
+          },
+          {
+            label: "Meeting summaries in Meet",
+            desc: "Post-call recap with action items",
+            on: true,
+          },
+        ]),
     { label: "Smart replies in Chat", desc: "Suggested replies in DMs and spaces", on: false },
   ];
 
@@ -703,8 +711,7 @@ function AISection() {
                 textAlign: "left",
                 border: `1px solid ${provider === option.id ? "var(--accent)" : "var(--border)"}`,
                 borderRadius: 8,
-                background:
-                  provider === option.id ? "var(--accent-soft)" : "var(--surface)",
+                background: provider === option.id ? "var(--accent-soft)" : "var(--surface)",
                 cursor: "pointer",
               }}
             >
@@ -724,8 +731,12 @@ function AISection() {
                 }}
               />
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>{option.name}</div>
-                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}>
+                <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>
+                  {option.name}
+                </div>
+                <div
+                  style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}
+                >
                   {option.desc}
                 </div>
               </div>
@@ -739,10 +750,7 @@ function AISection() {
           <SettingsField label="Endpoint" hint="Base URL for API requests">
             <input className="input mono" defaultValue={selected.host} />
           </SettingsField>
-          <SettingsField
-            label="API key"
-            hint="Stored encrypted. Never sent to Helix servers."
-          >
+          <SettingsField label="API key" hint="Stored encrypted. Never sent to Helix servers.">
             <div style={{ display: "flex", gap: 8 }}>
               <input
                 className="input mono"
@@ -787,8 +795,12 @@ function AISection() {
             }}
           >
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{feature.label}</div>
-              <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}>
+              <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>
+                {feature.label}
+              </div>
+              <div
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}
+              >
                 {feature.desc}
               </div>
             </div>
@@ -797,10 +809,7 @@ function AISection() {
         ))}
       </SettingsField>
 
-      <SettingsField
-        label="Privacy"
-        hint="Control what data is shared with the provider"
-      >
+      <SettingsField label="Privacy" hint="Control what data is shared with the provider">
         <div style={{ display: "grid", gap: 8 }}>
           <label
             style={{
@@ -819,7 +828,9 @@ function AISection() {
             <div>
               <div style={{ fontWeight: 500 }}>Use my workspace content for context</div>
               <div style={{ color: "var(--text-3)", marginTop: 2 }}>
-                Mail, docs, and files referenced in prompts.
+                {CORE_WORKSPACE_STORAGE_ONLY
+                  ? "Mail, Drive files, and Chat messages referenced in prompts."
+                  : "Mail, docs, and files referenced in prompts."}
               </div>
             </div>
           </label>
@@ -832,10 +843,7 @@ function AISection() {
               cursor: "pointer",
             }}
           >
-            <input
-              type="checkbox"
-              style={{ accentColor: "var(--accent)", marginTop: 2 }}
-            />
+            <input type="checkbox" style={{ accentColor: "var(--accent)", marginTop: 2 }} />
             <div>
               <div style={{ fontWeight: 500 }}>Allow provider to train on my data</div>
               <div style={{ color: "var(--text-3)", marginTop: 2 }}>
@@ -859,8 +867,12 @@ function ShortcutsSection() {
         ["⌘ K", "Open command palette"],
         ["⌘ /", "Show keyboard shortcuts"],
         ["G then M", "Go to Mail"],
-        ["G then D", "Go to Docs"],
-        ["G then C", "Go to Calendar"],
+        ...(CORE_WORKSPACE_STORAGE_ONLY
+          ? ([["G then D", "Go to Drive"]] as const)
+          : ([
+              ["G then D", "Go to Docs"],
+              ["G then C", "Go to Calendar"],
+            ] as const)),
       ],
     },
     {
@@ -876,17 +888,21 @@ function ShortcutsSection() {
         ["B", "Snooze"],
       ],
     },
-    {
-      name: "Docs",
-      shortcuts: [
-        ["⌘ B", "Bold"],
-        ["⌘ I", "Italic"],
-        ["⌘ ⇧ K", "Insert link"],
-        ["⌘ ⇧ M", "Add comment"],
-        ["⌘ ⇧ S", "Share"],
-        ["/", "Slash menu"],
-      ],
-    },
+    ...(CORE_WORKSPACE_STORAGE_ONLY
+      ? []
+      : [
+          {
+            name: "Docs",
+            shortcuts: [
+              ["⌘ B", "Bold"],
+              ["⌘ I", "Italic"],
+              ["⌘ ⇧ K", "Insert link"],
+              ["⌘ ⇧ M", "Add comment"],
+              ["⌘ ⇧ S", "Share"],
+              ["/", "Slash menu"],
+            ],
+          },
+        ]),
   ];
   return (
     <>

@@ -15,6 +15,8 @@ import {
   mailFiltersListResultSchema,
   mailOutboundCancelInputSchema,
   mailOutboundCancelResultSchema,
+  mailOutboundRetryInputSchema,
+  mailOutboundRetryResultSchema,
   mailSpamInputSchema,
   mailSpamResultSchema,
   mailThreadsListResultSchema,
@@ -39,6 +41,7 @@ import type {
   MailThreadRowRecord,
 } from "./types.js";
 import { MAIL_FOLDER_IDS } from "./types.js";
+import { mailOutboundDisplayStatus } from "./reliability.js";
 
 // ponytail: tools.ts is the mail tool surface (~1100 LOC). Split draft/alias
 // tool groups into tools-drafts.ts / tools-aliases.ts when next expanding (G9).
@@ -72,6 +75,7 @@ const sendSchema = z.object({
   bodyHtml: z.string().optional(),
   attachments: z.array(attachmentSchema).default([]),
   undoWindowMs: z.number().int().min(0).max(300_000).optional(),
+  idempotencyKey: z.string().trim().min(8).max(200).optional(),
 });
 
 const headerValueSchema = z
@@ -362,6 +366,8 @@ export function createMailToolDefinitions(
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           envelope: toEnvelope(input, actorFrom(ctx.actor, options.defaultFromDomain)),
+          source: ctx.actor.type === "agent" ? "agent" : "interactive",
+          ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
         });
         await options.classifyResource?.({
           actor: ctx.actor,
@@ -388,6 +394,8 @@ export function createMailToolDefinitions(
           threadId: input.threadId,
           ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
           references: input.references,
+          source: ctx.actor.type === "agent" ? "agent" : "interactive",
+          ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
           envelope: toEnvelope(
             {
               ...input,
@@ -817,6 +825,26 @@ export function createMailToolDefinitions(
         };
       },
     }),
+    defineTool<
+      z.output<typeof mailOutboundRetryInputSchema>,
+      z.output<typeof mailOutboundRetryResultSchema>
+    >({
+      id: "mail.outbound.retry",
+      description: "Explicitly retry a failed outbound message through its bound provider.",
+      permission: "mail.send",
+      sideEffects: "external_communication",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(mailOutboundRetryInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailOutboundRetryResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const retried = await sendService.retry({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          id: input.outboundId,
+        });
+        return { outbound: retried === null ? null : serializeOutboundDetail(retried) };
+      },
+    }),
     defineTool<z.output<typeof mailDraftSaveInputSchema>, z.output<typeof mailDraftSchema>>({
       id: "mail.draft.save",
       description: "Create or update a mail draft for the current actor.",
@@ -842,6 +870,9 @@ export function createMailToolDefinitions(
             ...(input.bodyHtml === undefined ? {} : { bodyHtml: input.bodyHtml }),
             attachments: input.attachments,
           } as JsonObject,
+          ...(input.expectedVersion === undefined
+            ? {}
+            : { expectedVersion: input.expectedVersion }),
         });
         return serializeDraft(draft, input);
       },
@@ -1119,19 +1150,18 @@ function actorFrom(
   };
 }
 
-function serializeOutbound(outbound: {
-  readonly id: string;
-  readonly messageId: string;
-  readonly threadId: string;
-  readonly status: string;
-  readonly undoUntil: Date;
-  readonly createdAt: Date;
-}) {
+function serializeOutbound(
+  outbound: Pick<
+    MailOutboundRecord,
+    "id" | "messageId" | "threadId" | "status" | "undoUntil" | "createdAt" | "deliveryMetadata"
+  >,
+) {
   return {
     id: outbound.id,
     messageId: outbound.messageId,
     threadId: outbound.threadId,
     status: outbound.status,
+    deliveryStatus: mailOutboundDisplayStatus(outbound),
     undoUntil: outbound.undoUntil.toISOString(),
     queuedAt: outbound.createdAt.toISOString(),
   };
@@ -1246,6 +1276,7 @@ function serializeDraft(
     readonly actorId: string;
     readonly threadId: string | null;
     readonly envelope: JsonObject;
+    readonly version: number;
     readonly createdAt: Date;
     readonly updatedAt: Date;
   },
@@ -1278,6 +1309,7 @@ function serializeDraft(
     bodyText,
     ...(bodyHtml === undefined ? {} : { bodyHtml }),
     attachments: attachments as z.output<typeof mailDraftSchema>["attachments"],
+    version: draft.version,
     createdAt: draft.createdAt.toISOString(),
     updatedAt: draft.updatedAt.toISOString(),
   };

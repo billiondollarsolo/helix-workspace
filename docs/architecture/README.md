@@ -1,0 +1,37 @@
+# Architecture decision records
+
+Architecture decision records (ADRs) capture decisions that constrain the Helix Business pilot.
+They are normative for implementation and product documentation until superseded by a later,
+owner-approved ADR.
+
+## Status vocabulary
+
+- **Accepted:** approved and required for the current implementation.
+- **Superseded:** replaced by a newer ADR; the replacement must be linked.
+- **Proposed:** under review and not yet an implementation requirement.
+- **Deprecated:** retained for historical context but no longer applicable.
+
+## Accepted Business-pilot decisions
+
+| Plan decision | ADR                                                             | Summary                                                                                    |
+| ------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| RD-1          | [ADR-0001](adr-0001-single-organization-business-pilot.md)      | Launch one organization with 5–50 trusted users while preserving tenant-safe internals.    |
+| RD-2          | [ADR-0002](adr-0002-managed-outbound-mail-provider.md)          | Use a managed provider for production outbound Internet mail; do not operate direct-to-MX. |
+| RD-3          | [ADR-0003](adr-0003-web-and-api-mail-clients.md)                | Support web and API mail clients; do not ship a Helix-hosted IMAP server.                  |
+| RD-4          | [ADR-0004](adr-0004-secure-server-readable-chat.md)             | Provide secure organization chat that is explicitly not end-to-end encrypted.              |
+| RD-5          | [ADR-0005](adr-0005-agent-write-confirmation-and-allowlists.md) | Confirm agent writes by default and permit only bounded, audited automation exceptions.    |
+| RD-6          | [ADR-0006](adr-0006-business-pilot-recovery-targets.md)         | Target 99.5% monthly availability, RPO ≤ 24 hours, and RTO ≤ 4 hours.                      |
+| RD-7          | [ADR-0007](adr-0007-fail-closed-untrusted-uploads.md)           | Keep untrusted uploads unavailable until a real malware scanner returns a clean verdict.   |
+
+## Maintenance
+
+When an accepted decision changes:
+
+1. create a new ADR explaining the new context and migration;
+2. mark the old ADR `Superseded by ADR-NNNN` without rewriting its history;
+3. update this index, the production-readiness plan, `README.md`, `docs/admin-guide.md`, and
+   `docs/security/threat-model.md`; and
+4. update the launch-documentation fidelity test.
+
+The source decision set is the
+[core workspace production-readiness plan](../superpowers/plans/2026-07-28-core-workspace-production-readiness.md).

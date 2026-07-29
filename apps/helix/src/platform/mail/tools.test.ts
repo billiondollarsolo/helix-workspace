@@ -152,6 +152,55 @@ describe("mail.outbound.cancel tool", () => {
   });
 });
 
+describe("mail.outbound.retry tool", () => {
+  it("requires confirmation and retries only the actor-owned failed record", async () => {
+    const retryOutbound = vi.fn().mockResolvedValue({
+      id: "out-1",
+      messageId: "m1",
+      threadId: "t1",
+      status: "queued",
+      undoUntil: new Date("2026-01-01T00:00:30.000Z"),
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      orgId: "o1",
+      actorId: "a1",
+      outboxId: "ob2",
+      envelope: {
+        from: { address: "a@b.com" },
+        to: [{ address: "c@d.com" }],
+        cc: [],
+        bcc: [],
+        subject: "s",
+        text: "t",
+        attachments: [],
+      },
+      sentAt: null,
+      cancelledAt: null,
+      failedAt: null,
+      lastError: null,
+      providerMessageId: null,
+      deliveryMetadata: {},
+      updatedAt: new Date(),
+    });
+    const { tool } = toolById("mail.outbound.retry", { retryOutbound });
+    expect(tool.permission).toBe("mail.send");
+    expect(tool.confirmationRequired).toBe(true);
+    const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
+
+    const out = (await tool.handler(
+      { outboundId: "11111111-1111-1111-1111-111111111111" },
+      ctx,
+    )) as { outbound: { status: string } | null };
+
+    expect(retryOutbound).toHaveBeenCalledWith({
+      orgId: "o1",
+      actorId: "a1",
+      id: "11111111-1111-1111-1111-111111111111",
+      outboxSubject: "mail.send",
+    });
+    expect(out.outbound?.status).toBe("queued");
+  });
+});
+
 describe("mail.alias tools", () => {
   it("registers list/create/delete with least-privilege scopes", () => {
     const tools = createMailToolDefinitions({ store: {} as MailStore });
@@ -175,6 +224,44 @@ describe("mail.draft tools", () => {
         "mail.draft.discard",
       ]),
     );
+  });
+
+  it("passes the authoritative expected version and returns the incremented version", async () => {
+    const savedAt = new Date("2026-07-28T12:00:00.000Z");
+    const saveDraft = vi.fn().mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      orgId: "o1",
+      actorId: "a1",
+      threadId: null,
+      envelope: { subject: "Edited" },
+      version: 5,
+      createdAt: savedAt,
+      updatedAt: savedAt,
+    });
+    const { tool } = toolById("mail.draft.save", { saveDraft });
+    const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
+
+    const out = (await tool.handler(
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        expectedVersion: 4,
+        to: [],
+        cc: [],
+        bcc: [],
+        subject: "Edited",
+        bodyText: "",
+        attachments: [],
+      },
+      ctx,
+    )) as { version: number };
+
+    expect(saveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "11111111-1111-4111-8111-111111111111",
+        expectedVersion: 4,
+      }),
+    );
+    expect(out.version).toBe(5);
   });
 });
 

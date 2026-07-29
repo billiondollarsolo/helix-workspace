@@ -2,7 +2,12 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
+import {
+  isMvpOnlyBuild,
+  mvpBundleBoundaryViolation,
+  MVP_ROUTE_FILE_IGNORE_PATTERN,
+} from "./src/packaging/mvp-packaging";
 
 const standardChunkBudgetBytes = 500_000;
 const initialGraphBudgetBytes = 450_000;
@@ -10,62 +15,116 @@ const passwordStrengthChunkBudgetBytes = 850_000;
 const devApiTarget =
   process.env.HELIX_E2E_API_BASE_URL ?? process.env.HELIX_API_BASE_URL ?? "http://localhost:3000";
 
-export default defineConfig({
-  plugins: [
-    tanstackRouter({
-      target: "react",
-      autoCodeSplitting: true,
-    }),
-    react(),
-    tailwindcss(),
-    enforceBundleBudgets(),
-  ],
-  resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-      "@helix/sdk-types": fileURLToPath(
-        new URL("../../packages/sdk-types/src/index.ts", import.meta.url),
-      ),
-      "@helix/sdk-web": fileURLToPath(
-        new URL("../../packages/sdk-web/src/index.ts", import.meta.url),
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, fileURLToPath(new URL(".", import.meta.url)), "");
+  const mvpOnly = isMvpOnlyBuild(env.VITE_HELIX_MVP_ONLY);
+
+  return {
+    plugins: [
+      tanstackRouter({
+        target: "react",
+        autoCodeSplitting: true,
+        ...(mvpOnly ? { routeFileIgnorePattern: MVP_ROUTE_FILE_IGNORE_PATTERN } : {}),
+      }),
+      react(),
+      tailwindcss(),
+      enforceMvpBundleBoundary(mvpOnly),
+      enforceBundleBudgets(),
+    ],
+    resolve: {
+      alias: [
+        ...(mvpOnly
+          ? [
+              {
+                find: "@/features/_open/converters",
+                replacement: fileURLToPath(
+                  new URL("./src/packaging/mvp-disabled-converters.ts", import.meta.url),
+                ),
+              },
+            ]
+          : []),
+        { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
+        {
+          find: "@helix/sdk-types",
+          replacement: fileURLToPath(
+            new URL("../../packages/sdk-types/src/index.ts", import.meta.url),
+          ),
+        },
+        {
+          find: "@helix/sdk-web",
+          replacement: fileURLToPath(
+            new URL("../../packages/sdk-web/src/index.ts", import.meta.url),
+          ),
+        },
+      ],
+    },
+    server: {
+      // Dev: proxy the Helix backend surfaces to the local API server (:3000)
+      // so the SPA's relative `/api`, `/oauth`, `/trpc`, … calls reach it.
+      proxy: Object.fromEntries(
+        [
+          "/api",
+          "/oauth",
+          "/trpc",
+          "/mcp",
+          "/v1",
+          "/healthz",
+          "/openapi.json",
+          "/openapi.yaml",
+          "/asyncapi.json",
+          "/metrics",
+          "/events",
+          "/ws",
+          "/sync",
+          "/dav",
+          "/.well-known",
+        ].map((path) => [path, { target: devApiTarget, changeOrigin: true, ws: true }]),
       ),
     },
-  },
-  server: {
-    // Dev: proxy the Helix backend surfaces to the local API server (:3000)
-    // so the SPA's relative `/api`, `/oauth`, `/trpc`, … calls reach it.
-    proxy: Object.fromEntries(
-      [
-        "/api",
-        "/oauth",
-        "/trpc",
-        "/mcp",
-        "/v1",
-        "/healthz",
-        "/openapi.json",
-        "/openapi.yaml",
-        "/asyncapi.json",
-        "/metrics",
-        "/events",
-        "/ws",
-        "/sync",
-        "/dav",
-        "/.well-known",
-      ].map((path) => [path, { target: devApiTarget, changeOrigin: true, ws: true }]),
-    ),
-  },
-  build: {
-    // The only intentionally larger lazy chunk is zxcvbn's password corpus.
-    // `enforceBundleBudgets` applies stricter graph-aware limits to every
-    // initial and non-password chunk.
-    chunkSizeWarningLimit: passwordStrengthChunkBudgetBytes / 1_000,
-    rollupOptions: {
-      output: {
-        manualChunks: semanticVendorChunk,
+    build: {
+      // The only intentionally larger lazy chunk is zxcvbn's password corpus.
+      // `enforceBundleBudgets` applies stricter graph-aware limits to every
+      // initial and non-password chunk.
+      chunkSizeWarningLimit: passwordStrengthChunkBudgetBytes / 1_000,
+      rollupOptions: {
+        output: {
+          manualChunks: semanticVendorChunk,
+        },
       },
     },
-  },
+  };
 });
+
+function enforceMvpBundleBoundary(mvpOnly: boolean): Plugin {
+  return {
+    name: "helix-mvp-bundle-boundary",
+    apply: "build",
+    generateBundle(_outputOptions, bundle) {
+      if (!mvpOnly) {
+        return;
+      }
+
+      const violations = new Set<string>();
+      for (const entry of Object.values(bundle)) {
+        if (entry.type !== "chunk") {
+          continue;
+        }
+        for (const moduleId of Object.keys(entry.modules)) {
+          const violation = mvpBundleBoundaryViolation(moduleId);
+          if (violation !== null) {
+            violations.add(violation);
+          }
+        }
+      }
+
+      if (violations.size > 0) {
+        this.error(
+          `Production MVP bundle contains forbidden editor modules:\n- ${[...violations].sort().join("\n- ")}`,
+        );
+      }
+    },
+  };
+}
 
 function semanticVendorChunk(moduleId: string): string | undefined {
   if (isDependency(moduleId, "react") || isDependency(moduleId, "react-dom")) {

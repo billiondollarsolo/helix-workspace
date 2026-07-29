@@ -67,9 +67,6 @@ describe("drive tools", () => {
         "drive.link.revoke",
         "drive.list",
         "drive.move",
-        "drive.pdfFormState.clear",
-        "drive.pdfFormState.get",
-        "drive.pdfFormState.save",
         "drive.rename",
         "drive.restore",
         "drive.search",
@@ -78,6 +75,7 @@ describe("drive tools", () => {
         "drive.trash",
         "drive.upload",
         "drive.upload.complete",
+        "drive.upload.status",
         "drive.versions.list",
         "drive.versions.revert",
       ].sort(),
@@ -85,6 +83,24 @@ describe("drive tools", () => {
     expect(registry.list().find((tool) => tool.id === "drive.comment.delete")).toMatchObject({
       confirmationRequired: true,
     });
+  });
+
+  it("only registers native PDF form tools when editor support is enabled", () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      enablePdfEditing: true,
+    });
+
+    expect(
+      registry
+        .list()
+        .filter((tool) => tool.id.startsWith("drive.pdfFormState."))
+        .map((tool) => tool.id)
+        .sort(),
+    ).toEqual(
+      ["drive.pdfFormState.clear", "drive.pdfFormState.get", "drive.pdfFormState.save"].sort(),
+    );
   });
 
   it("no drive tool ships an unknown/passthrough output schema", () => {
@@ -312,7 +328,7 @@ describe("drive tools", () => {
   it("gets, saves, and clears actor-scoped PDF form state", async () => {
     const store = new FakeDriveStore();
     const registry = createToolRegistry();
-    registerDriveTools(registry, { store });
+    registerDriveTools(registry, { store, enablePdfEditing: true });
     const actor = {
       id: actorId,
       orgId,
@@ -747,6 +763,27 @@ describe("drive tools", () => {
     expect(toolIds).toContain("drive.create");
   });
 
+  it("does not advertise native authoring kinds when editor stores are disabled", async () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store: new FakeDriveStore() });
+    const create = registry.list().find((tool) => tool.id === "drive.create");
+    if (create === undefined) throw new Error("Missing drive.create tool");
+
+    expect(() =>
+      create.inputSchema.parse({
+        kind: "document",
+        name: "Native document",
+      }),
+    ).toThrow();
+    expect(() =>
+      create.inputSchema.parse({
+        kind: "folder",
+        name: "Storage folder",
+      }),
+    ).not.toThrow();
+    expect(create.description).toBe("Create a new Drive folder.");
+  });
+
   it("drive.list returns app field on each entry and supports app filter", async () => {
     const registry = createToolRegistry();
     registerDriveTools(registry, { store: new AppFilterFakeDriveStore() });
@@ -1170,6 +1207,10 @@ class FakeDriveStore implements DriveStore {
       createdByActorId: input.actorId,
       createdAt: now,
       revokedAt: null,
+      maxDownloads: input.maxDownloads ?? null,
+      downloadCount: 0,
+      rateLimitPerHour: input.rateLimitPerHour ?? 120,
+      lastUsedAt: null,
     };
   }
 

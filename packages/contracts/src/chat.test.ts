@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  CHAT_BODY_MAX_BYTES,
+  CHAT_MAX_ATTACHMENTS,
+  CHAT_METADATA_MAX_BYTES,
   chatInboundFrameSchema,
+  chatExportInputSchema,
   chatOutboundFrameSchema,
   chatSendInputSchema,
 } from "./chat.js";
@@ -47,6 +51,24 @@ describe("chat contracts", () => {
     ).toBe("ok");
   });
 
+  it("enforces UTF-8, Unicode, format, metadata, and attachment bounds", () => {
+    const roomId = "11111111-1111-4111-8111-111111111111";
+    const objectId = "22222222-2222-4222-8222-222222222222";
+    for (const unsafe of [
+      { roomId, body: "é".repeat(CHAT_BODY_MAX_BYTES / 2 + 1) },
+      { roomId, body: "bad \ud800 value" },
+      { roomId, body: "ok", bodyFormat: "html" },
+      { roomId, body: "ok", metadata: { value: "x".repeat(CHAT_METADATA_MAX_BYTES) } },
+      {
+        roomId,
+        body: "ok",
+        attachmentObjectIds: Array.from({ length: CHAT_MAX_ATTACHMENTS + 1 }, () => objectId),
+      },
+    ]) {
+      expect(chatSendInputSchema.safeParse(unsafe).success).toBe(false);
+    }
+  });
+
   it("validates outbound message.created and error frames", () => {
     const created = chatOutboundFrameSchema.parse({
       type: "message.created",
@@ -75,5 +97,15 @@ describe("chat contracts", () => {
       message: "no access",
     });
     expect(err.type).toBe("error");
+  });
+
+  it("bounds organization exports and rejects inverted date ranges", () => {
+    expect(
+      chatExportInputSchema.safeParse({
+        from: "2026-07-29T00:00:00.000Z",
+        to: "2026-07-28T00:00:00.000Z",
+      }).success,
+    ).toBe(false);
+    expect(chatExportInputSchema.safeParse({ limit: 10001 }).success).toBe(false);
   });
 });

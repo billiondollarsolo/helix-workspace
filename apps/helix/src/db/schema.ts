@@ -34,6 +34,23 @@ export const objectKind = pgEnum("object_kind", [
   "recording",
   "other",
 ]);
+export const driveUploadState = pgEnum("drive_upload_state", [
+  "pending_upload",
+  "uploaded",
+  "scanning",
+  "active",
+  "quarantined",
+  "scan_failed",
+  "trashed",
+]);
+export const driveScanJobStatus = pgEnum("drive_scan_job_status", [
+  "pending",
+  "running",
+  "retry_scheduled",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 export const threadKind = pgEnum("thread_kind", [
   "mail",
   "chat_room",
@@ -45,7 +62,10 @@ export const threadKind = pgEnum("thread_kind", [
 export const messageKind = pgEnum("message_kind", ["mail", "chat", "comment", "system"]);
 export const pendingActionStatus = pgEnum("pending_action_status", [
   "pending_confirmation",
-  "confirmed",
+  "approved",
+  "executing",
+  "executed",
+  "failed",
   "cancelled",
   "expired",
 ]);
@@ -71,6 +91,12 @@ export const mailOutboundProviderKind = pgEnum("mail_outbound_provider_kind", [
   "postmark",
 ]);
 export const mailDkimKeyStatus = pgEnum("mail_dkim_key_status", ["active", "retiring", "retired"]);
+export const mailReceivingDomainStatus = pgEnum("mail_receiving_domain_status", [
+  "pending",
+  "verified",
+  "active",
+  "disabled",
+]);
 export const mailRoutingActionKind = pgEnum("mail_routing_action_kind", [
   "forward",
   "alias",
@@ -356,6 +382,9 @@ export const objects = pgTable(
     mimeType: text("mime_type").notNull(),
     byteSize: integer("byte_size").notNull(),
     sha256: text("sha256"),
+    uploadState: driveUploadState("upload_state").default("active").notNull(),
+    uploadDeclaredByteSize: numeric("upload_declared_byte_size"),
+    uploadDeclaredSha256: text("upload_declared_sha256"),
     classification: text("classification").default("internal").notNull(),
     metadata: jsonb("metadata").default({}).notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -364,6 +393,39 @@ export const objects = pgTable(
   (table) => ({
     orgKindIdx: index("objects_org_kind_idx").on(table.orgId, table.kind),
     ownerIdx: index("objects_owner_actor_idx").on(table.ownerActorId),
+  }),
+);
+
+export const driveScanJobs = pgTable(
+  "drive_scan_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    objectId: uuid("object_id")
+      .notNull()
+      .references(() => objects.id, { onDelete: "cascade" }),
+    versionId: uuid("version_id")
+      .notNull()
+      .references(() => driveVersions.id, { onDelete: "cascade" }),
+    requestedByActorId: uuid("requested_by_actor_id").references(() => actors.id),
+    status: driveScanJobStatus("status").default("pending").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(5).notNull(),
+    availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    scanEvidence: jsonb("scan_evidence").default({}).notNull(),
+    lastErrorCode: text("last_error_code"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => ({
+    versionIdx: uniqueIndex("drive_scan_jobs_version_unique").on(table.versionId),
+    orgObjectIdx: index("drive_scan_jobs_org_object_idx").on(
+      table.orgId,
+      table.objectId,
+      table.createdAt,
+    ),
   }),
 );
 
@@ -405,6 +467,63 @@ export const messages = pgTable(
   (table) => ({
     threadSentIdx: index("messages_thread_sent_idx").on(table.threadId, table.sentAt),
     orgKindIdx: index("messages_org_kind_idx").on(table.orgId, table.kind),
+  }),
+);
+
+export const mailInboundDeliveries = pgTable(
+  "mail_inbound_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    dedupKey: text("dedup_key").notNull(),
+    normalizedMessageId: text("normalized_message_id"),
+    rawSha256: text("raw_sha256").notNull(),
+    envelopeFrom: text("envelope_from"),
+    envelopeTo: text("envelope_to").array().notNull(),
+    messageId: uuid("message_id").references(() => messages.id, { onDelete: "cascade" }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+    ...timestamps,
+  },
+  (table) => ({
+    orgDedupIdx: uniqueIndex("mail_inbound_deliveries_org_dedup_idx").on(
+      table.orgId,
+      table.dedupKey,
+    ),
+    messageIdx: uniqueIndex("mail_inbound_deliveries_message_idx")
+      .on(table.messageId)
+      .where(sql`${table.messageId} is not null`),
+    orgReceivedIdx: index("mail_inbound_deliveries_org_received_idx").on(
+      table.orgId,
+      table.receivedAt,
+    ),
+  }),
+);
+
+export const mailInboundRecipients = pgTable(
+  "mail_inbound_recipients",
+  {
+    deliveryId: uuid("delivery_id")
+      .notNull()
+      .references(() => mailInboundDeliveries.id, { onDelete: "cascade" }),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => actors.id),
+    address: text("address").notNull(),
+    matchKind: text("match_kind").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.deliveryId, table.address] }),
+    actorIdx: index("mail_inbound_recipients_actor_idx").on(
+      table.orgId,
+      table.actorId,
+      table.createdAt,
+    ),
   }),
 );
 
@@ -570,12 +689,28 @@ export const pendingActions = pgTable("pending_actions", {
   actorId: uuid("actor_id")
     .references(() => actors.id)
     .notNull(),
+  requesterCredentialId: uuid("requester_credential_id"),
+  requesterPrincipal: jsonb("requester_principal").default({}).notNull(),
+  requesterIp: text("requester_ip"),
+  approvalOwnerActorId: uuid("approval_owner_actor_id").references(() => actors.id),
+  approverActorId: uuid("approver_actor_id").references(() => actors.id),
+  executionActorId: uuid("execution_actor_id").references(() => actors.id),
   toolId: text("tool_id").notNull(),
   input: jsonb("input").notNull(),
+  inputHash: text("input_hash").notNull(),
+  policySnapshot: jsonb("policy_snapshot").default({}).notNull(),
+  policyVersion: text("policy_version").notNull(),
+  preview: jsonb("preview").default({}).notNull(),
   status: pendingActionStatus("status").default("pending_confirmation").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   decidedAt: timestamp("decided_at", { withTimezone: true }),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  executionStartedAt: timestamp("execution_started_at", { withTimezone: true }),
+  executionCompletedAt: timestamp("execution_completed_at", { withTimezone: true }),
+  executionLeaseExpiresAt: timestamp("execution_lease_expires_at", { withTimezone: true }),
+  executionAttempts: integer("execution_attempts").default(0).notNull(),
+  executionIdempotencyKey: text("execution_idempotency_key").notNull(),
   traceId: text("trace_id"),
   result: jsonb("result"),
   error: text("error"),
@@ -725,6 +860,9 @@ export const agentCredentials = pgTable(
     ipAllowlist: cidr("ip_allowlist").array(),
     allowedHours: jsonb("allowed_hours"),
     confirmationOverride: jsonb("confirmation_override"),
+    approvalOwnerActorId: uuid("approval_owner_actor_id").references(() => actors.id),
+    automationPolicy: jsonb("automation_policy"),
+    policyVersion: text("policy_version").default("1").notNull(),
     createdBy: uuid("created_by").references(() => actors.id),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -985,7 +1123,13 @@ export const mailOutboundMessages = pgTable(
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     failedAt: timestamp("failed_at", { withTimezone: true }),
     lastError: text("last_error"),
+    providerId: text("provider_id"),
+    providerKind: text("provider_kind"),
+    providerDecisionSource: text("provider_decision_source"),
+    providerDecidedAt: timestamp("provider_decided_at", { withTimezone: true }),
     providerMessageId: text("provider_message_id"),
+    deliveryStatus: text("delivery_status"),
+    deliveryEventAt: timestamp("delivery_event_at", { withTimezone: true }),
     deliveryMetadata: jsonb("delivery_metadata").default({}).notNull(),
     ...timestamps,
   },
@@ -1006,6 +1150,7 @@ export const mailOutboundProviders = pgTable(
     isDefault: boolean("is_default").default(false).notNull(),
     config: jsonb("config").default({}).notNull(),
     secretRef: text("secret_ref"),
+    webhookSecretRef: text("webhook_secret_ref"),
     createdBy: uuid("created_by"),
     ...timestamps,
   },
@@ -1038,6 +1183,108 @@ export const mailSendingDomains = pgTable(
     orgDefaultIdx: uniqueIndex("mail_sending_domains_org_default_idx")
       .on(table.orgId)
       .where(sql`${table.isDefault}`),
+  }),
+);
+
+export const mailProviderDeliveryEvents = pgTable(
+  "mail_provider_delivery_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    providerId: uuid("provider_id")
+      .notNull()
+      .references(() => mailOutboundProviders.id, { onDelete: "restrict" }),
+    outboundId: uuid("outbound_id").references(() => mailOutboundMessages.id, {
+      onDelete: "set null",
+    }),
+    providerEventId: text("provider_event_id").notNull(),
+    providerMessageId: text("provider_message_id").notNull(),
+    normalizedRecipient: text("normalized_recipient").notNull(),
+    eventType: text("event_type").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idempotencyIdx: uniqueIndex("mail_provider_delivery_events_idempotency_idx").on(
+      table.orgId,
+      table.providerId,
+      table.providerEventId,
+    ),
+    outboundIdx: index("mail_provider_delivery_events_outbound_idx").on(
+      table.orgId,
+      table.outboundId,
+      table.occurredAt,
+      table.id,
+    ),
+    thresholdIdx: index("mail_provider_delivery_events_threshold_idx").on(
+      table.orgId,
+      table.eventType,
+      table.occurredAt,
+    ),
+  }),
+);
+
+export const mailSuppressions = pgTable(
+  "mail_suppressions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    normalizedRecipient: text("normalized_recipient").notNull(),
+    reason: text("reason").notNull(),
+    sourceEventId: uuid("source_event_id")
+      .notNull()
+      .references(() => mailProviderDeliveryEvents.id, { onDelete: "restrict" }),
+    clearedAt: timestamp("cleared_at", { withTimezone: true }),
+    clearedBy: uuid("cleared_by").references(() => actors.id),
+    clearReason: text("clear_reason"),
+    ...timestamps,
+  },
+  (table) => ({
+    activeRecipientIdx: uniqueIndex("mail_suppressions_org_recipient_active_idx")
+      .on(table.orgId, table.normalizedRecipient)
+      .where(sql`${table.clearedAt} is null`),
+    orgCreatedIdx: index("mail_suppressions_org_created_idx").on(table.orgId, table.createdAt),
+  }),
+);
+
+export const mailReceivingDomains = pgTable(
+  "mail_receiving_domains",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    domain: text("domain").notNull(),
+    status: mailReceivingDomainStatus("status").default("pending").notNull(),
+    verificationTokenHash: text("verification_token_hash").notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    catchAllActorId: uuid("catch_all_actor_id").references(() => actors.id, {
+      onDelete: "set null",
+    }),
+    createdBy: uuid("created_by").references(() => actors.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (table) => ({
+    orgDomainIdx: uniqueIndex("mail_receiving_domains_org_domain_idx").on(
+      table.orgId,
+      table.domain,
+    ),
+    activeDomainIdx: uniqueIndex("mail_receiving_domains_active_domain_idx")
+      .on(table.domain)
+      .where(sql`${table.status} = 'active'`),
+    tokenHashIdx: uniqueIndex("mail_receiving_domains_token_hash_idx").on(
+      table.verificationTokenHash,
+    ),
+    orgStatusIdx: index("mail_receiving_domains_org_status_idx").on(
+      table.orgId,
+      table.status,
+      table.createdAt,
+    ),
   }),
 );
 

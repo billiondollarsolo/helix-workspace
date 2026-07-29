@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ToolContext } from "@helix/sdk-types";
 import { createToolRegistry } from "../tool-registry.js";
 import { createChatToolDefinitions, registerChatTools } from "./tools.js";
 import type { ChatStore } from "./store.js";
@@ -22,16 +23,25 @@ describe("chat tools", () => {
     const registry = createToolRegistry();
     registerChatTools(registry, { store: new FakeChatStore() });
 
-    expect(registry.list().map((tool) => tool.id).sort()).toEqual([
+    expect(
+      registry
+        .list()
+        .map((tool) => tool.id)
+        .sort(),
+    ).toEqual([
       "chat.create_room",
       "chat.delete",
       "chat.edit",
+      "chat.export.organization",
       "chat.invite",
+      "chat.legal_hold.set",
+      "chat.member.remove",
       "chat.message.list",
       "chat.pin",
       "chat.pins.list",
       "chat.react",
       "chat.reply_in_thread",
+      "chat.retention.set",
       "chat.room.list",
       "chat.search",
       "chat.send",
@@ -53,6 +63,54 @@ describe("chat tools", () => {
       (t) => t.id === "chat.pin",
     );
     expect(tool?.permission).toBe("chat.post");
+  });
+
+  it("requires confirmation before removing a room member", () => {
+    const tool = createChatToolDefinitions({ store: new FakeChatStore() }).find(
+      (candidate) => candidate.id === "chat.member.remove",
+    );
+    expect(tool).toMatchObject({
+      permission: "chat.create",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+    });
+  });
+
+  it("gates retention, legal hold, and exports behind confirmed admin tools", () => {
+    const tools = createChatToolDefinitions({ store: new FakeChatStore() });
+    for (const id of ["chat.retention.set", "chat.legal_hold.set", "chat.export.organization"]) {
+      expect(tools.find((candidate) => candidate.id === id)).toMatchObject({
+        permission: "admin.chat",
+        confirmationRequired: true,
+      });
+    }
+    expect(tools.find((candidate) => candidate.id === "chat.export.organization")).toMatchObject({
+      sideEffects: "read",
+      rateLimit: { perActor: { perHour: 2, perDay: 4 } },
+    });
+  });
+
+  it("exports only the authenticated actor organization after confirmation", async () => {
+    const store = new FakeChatStore();
+    const requestingActor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      scopes: ["admin.chat"],
+    };
+    const tool = createChatToolDefinitions({ store }).find(
+      (candidate) => candidate.id === "chat.export.organization",
+    );
+    if (tool === undefined) throw new Error("Expected Chat export tool.");
+    const context: ToolContext = {
+      actor: requestingActor,
+      can: async () => true,
+      requirePermission: async () => {},
+      audit: async () => {},
+    };
+    const output = await tool.handler(tool.inputSchema.parse({ roomIds: [], limit: 10 }), context);
+    expect(output).toMatchObject({ orgId });
+    expect(store.exportInputs).toEqual([expect.objectContaining({ orgId, actorId, limit: 10 })]);
   });
 
   it("sends messages through the shared store contract", async () => {
@@ -222,6 +280,20 @@ describe("chat tools", () => {
 
 class FakeChatStore implements ChatStore {
   readonly sent: unknown[] = [];
+  readonly exportInputs: unknown[] = [];
+
+  async exportOrganization(
+    input: Parameters<NonNullable<ChatStore["exportOrganization"]>>[0],
+  ): Promise<Awaited<ReturnType<NonNullable<ChatStore["exportOrganization"]>>>> {
+    this.exportInputs.push(input);
+    return {
+      exportId: "66666666-6666-4666-8666-666666666666",
+      orgId: input.orgId,
+      generatedAt: now,
+      messages: [],
+      truncated: false,
+    };
+  }
 
   async createRoom(): Promise<ChatRoomRecord> {
     return {

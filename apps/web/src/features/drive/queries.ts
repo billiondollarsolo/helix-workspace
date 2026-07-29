@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import {
   listDrive,
   listDriveAccess,
+  getDriveUploadStatus,
   searchDrive,
   type DriveApiEntry,
   type DriveApiSearchHit,
@@ -85,6 +86,7 @@ export const defaultDriveItemsInput = {
 
 export const driveQueryKeys = {
   access: (objectId: string) => ["drive", "access", objectId] as const,
+  uploadStatus: (objectId: string | null) => ["drive", "upload-status", objectId] as const,
   items: (input: DriveItemsQueryInput = defaultDriveItemsInput) =>
     [
       "drive",
@@ -97,6 +99,19 @@ export const driveQueryKeys = {
     ] as const,
   all: ["drive"] as const,
 };
+
+export function driveUploadStatusQueryOptions(objectId: string | null) {
+  return queryOptions({
+    queryKey: driveQueryKeys.uploadStatus(objectId),
+    queryFn: () => {
+      if (objectId === null) throw new Error("No Drive upload is being processed.");
+      return getDriveUploadStatus(objectId);
+    },
+    enabled: objectId !== null,
+    refetchInterval: (query) => (query.state.data?.terminal === true ? false : 1_500),
+    throwOnError: false,
+  });
+}
 
 export function driveAccessQueryOptions(objectId: string, enabled = true) {
   return queryOptions({

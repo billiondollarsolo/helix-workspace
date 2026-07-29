@@ -3,11 +3,14 @@ import { env } from "./config/env.js";
 import { createHelixServer } from "./server.js";
 import { initTelemetry } from "./telemetry.js";
 
+// Parse and assert the complete production configuration before telemetry,
+// migration checks, workers, or network listeners can perform side effects.
+const bootEnv = env();
+
 initTelemetry();
 
 await assertNoPendingStartupMigrations();
 const server = await createHelixServer();
-const bootEnv = env();
 const port = bootEnv.PORT;
 const host = bootEnv.HOST;
 
@@ -36,10 +39,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   server.log.info({ signal }, "Received shutdown signal; draining Helix platform app");
 
   const forceExit = setTimeout(() => {
-    server.log.error(
-      { timeoutMs: shutdownTimeoutMs },
-      "Graceful shutdown timed out; forcing exit",
-    );
+    server.log.error({ timeoutMs: shutdownTimeoutMs }, "Graceful shutdown timed out; forcing exit");
     process.exit(1);
   }, shutdownTimeoutMs);
   forceExit.unref();

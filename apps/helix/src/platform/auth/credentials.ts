@@ -42,11 +42,31 @@ export interface AllowedHoursWindow {
   readonly days?: readonly number[];
 }
 
+export interface AgentAutomationPolicyRule {
+  readonly id: string;
+  readonly toolId: string;
+  readonly action: string;
+  readonly resourceIds: readonly string[];
+  readonly recipients: readonly string[];
+  readonly targets: readonly string[];
+  readonly activeFrom: string;
+  readonly expiresAt: string;
+  readonly requestsPerMinute: number;
+  readonly requestsPerDay: number;
+}
+
+export interface AgentAutomationPolicy {
+  readonly version: string;
+  readonly rules: readonly AgentAutomationPolicyRule[];
+}
+
 export interface AgentCredentialPolicy {
   readonly ipAllowlist: readonly string[];
   readonly allowedHours: AllowedHoursWindow | null;
   readonly confirmationOverride: ConfirmationOverride;
   readonly rateLimitOverrides: RateLimitOverrides;
+  readonly automationPolicy: AgentAutomationPolicy | null;
+  readonly version: string;
 }
 
 export interface AgentCredentialRecord {
@@ -64,7 +84,9 @@ export interface AgentCredentialRecord {
   /** Present for `mtls_cert` credentials (lowercase hex SHA-256 fingerprint). */
   readonly certFingerprint: string | null;
   readonly label: string | null;
+  readonly approvalOwnerActorId?: string | null;
   readonly policy: AgentCredentialPolicy;
+  readonly lastUsedAt?: Date | null;
   readonly expiresAt: Date | null;
   readonly revokedAt: Date | null;
 }
@@ -74,6 +96,8 @@ export const EMPTY_CREDENTIAL_POLICY: AgentCredentialPolicy = {
   allowedHours: null,
   confirmationOverride: "inherit",
   rateLimitOverrides: {},
+  automationPolicy: null,
+  version: "1",
 };
 
 // --- credential store -------------------------------------------------------
@@ -81,6 +105,14 @@ export const EMPTY_CREDENTIAL_POLICY: AgentCredentialPolicy = {
 export interface AgentCredentialStore {
   findByApiKeyHash(apiKeyHash: string): Promise<AgentCredentialRecord | null>;
   findByCertFingerprint(fingerprint: string): Promise<AgentCredentialRecord | null>;
+  /**
+   * Resolve the credential behind an already-issued OAuth access token so
+   * revocation, expiry and policy changes take effect without waiting for the
+   * token to expire. Optional only for compatibility with non-production
+   * stores that predate policy-bearing OAuth credentials.
+   */
+  findByClientId?(clientId: string): Promise<AgentCredentialRecord | null>;
+  findById?(credentialId: string): Promise<AgentCredentialRecord | null>;
 }
 
 // --- API key hashing --------------------------------------------------------
@@ -181,7 +213,10 @@ export function enforceCredentialPolicy(
   }
 
   if (credential.policy.ipAllowlist.length > 0) {
-    if (context.ip === undefined || !ipMatchesAllowlist(context.ip, credential.policy.ipAllowlist)) {
+    if (
+      context.ip === undefined ||
+      !ipMatchesAllowlist(context.ip, credential.policy.ipAllowlist)
+    ) {
       return {
         ok: false,
         code: "ip_not_allowed",
@@ -214,7 +249,11 @@ export async function authenticateApiKey(
   context: CredentialRequestContext,
 ): Promise<
   | { readonly ok: true; readonly credential: AgentCredentialRecord }
-  | { readonly ok: false; readonly code: CredentialEnforcementCode | "invalid_api_key"; readonly message: string }
+  | {
+      readonly ok: false;
+      readonly code: CredentialEnforcementCode | "invalid_api_key";
+      readonly message: string;
+    }
 > {
   const credential = await store.findByApiKeyHash(hashApiKey(apiKey));
   if (credential === null || credential.credentialType !== "api_key") {
@@ -237,7 +276,11 @@ export async function authenticateMtlsCertificate(
   context: CredentialRequestContext,
 ): Promise<
   | { readonly ok: true; readonly credential: AgentCredentialRecord }
-  | { readonly ok: false; readonly code: CredentialEnforcementCode | "invalid_certificate"; readonly message: string }
+  | {
+      readonly ok: false;
+      readonly code: CredentialEnforcementCode | "invalid_certificate";
+      readonly message: string;
+    }
 > {
   const normalized = normalizeCertFingerprint(fingerprint);
   if (normalized.length === 0) {
@@ -444,8 +487,5 @@ export function createApiKeyMaterial(): ApiKeyCreateResult {
 }
 
 function timingSafeStringEquals(left: string, right: string): boolean {
-  return getCryptoProvider().timingSafeEqual(
-    Buffer.from(left, "utf8"),
-    Buffer.from(right, "utf8"),
-  );
+  return getCryptoProvider().timingSafeEqual(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }

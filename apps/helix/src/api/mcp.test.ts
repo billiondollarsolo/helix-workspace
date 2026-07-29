@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Actor, ToolDefinition } from "@helix/sdk-types";
-import { systemActor } from "./actor.js";
+import { systemActor, unauthenticatedActor } from "./actor.js";
 import {
   createSearchMcpResourceProvider,
   formatSseEvent,
@@ -12,6 +12,7 @@ import { HELIX_SERVER_VERSION, MCP_PROTOCOL_VERSION } from "./version.js";
 import { InMemoryAgentRateCostLimiter, type AgentLimitBudget } from "../platform/limits/index.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
 import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
+import { InMemoryConfirmationGate } from "../platform/tools/registry.js";
 import type {
   IndexDocument,
   SearchEngine,
@@ -26,7 +27,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
       }),
     ).resolves.toMatchObject({
@@ -53,7 +54,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: { jsonrpc: "2.0", id: "init", method: "initialize" },
       }),
     ).resolves.toMatchObject({
@@ -72,7 +73,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const response = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: {
         jsonrpc: "2.0",
         id: "call-1",
@@ -106,7 +107,7 @@ describe("handleMcpJsonRpcRequest", () => {
 
     const response = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
     });
 
@@ -153,7 +154,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         body: {
           jsonrpc: "2.0",
           id: "first",
@@ -172,7 +173,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         body: {
           jsonrpc: "2.0",
           id: "blocked",
@@ -222,7 +223,7 @@ describe("handleMcpJsonRpcRequest", () => {
 
     const listResponse = await handleMcpJsonRpcRequest({
       tools,
-      actor: agentActor,
+      principal: { actor: agentActor },
       resources,
       body: { jsonrpc: "2.0", id: "resources", method: "resources/list" },
     });
@@ -249,7 +250,7 @@ describe("handleMcpJsonRpcRequest", () => {
 
     const readResponse = await handleMcpJsonRpcRequest({
       tools,
-      actor: agentActor,
+      principal: { actor: agentActor },
       resources,
       body: {
         jsonrpc: "2.0",
@@ -286,7 +287,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const response = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: { jsonrpc: "2.0", id: "init", method: "initialize" },
     });
 
@@ -305,7 +306,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const listResponse = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: { jsonrpc: "2.0", id: "prompts", method: "prompts/list" },
     });
     expect(listResponse).toMatchObject({
@@ -316,7 +317,7 @@ describe("handleMcpJsonRpcRequest", () => {
 
     const getResponse = await handleMcpJsonRpcRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: {
         jsonrpc: "2.0",
         id: "prompt-get",
@@ -336,7 +337,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: {
           jsonrpc: "2.0",
           id: "missing-prompt",
@@ -354,7 +355,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const events: McpStreamEvent[] = [];
     for await (const event of handleMcpStreamingRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: {
         jsonrpc: "2.0",
         id: "stream-call",
@@ -379,7 +380,7 @@ describe("handleMcpJsonRpcRequest", () => {
     const events: McpStreamEvent[] = [];
     for await (const event of handleMcpStreamingRequest({
       tools,
-      actor: systemActor,
+      principal: { actor: systemActor },
       body: { jsonrpc: "2.0", id: "stream-list", method: "tools/list" },
     })) {
       events.push(event);
@@ -394,7 +395,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         resources,
         body: { jsonrpc: "2.0", id: "bad", method: "resources/read", params: {} },
       }),
@@ -410,7 +411,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         resources,
         body: {
           jsonrpc: "2.0",
@@ -443,7 +444,7 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        actor: agentActor,
+        principal: { actor: agentActor },
         resources,
         body: {
           jsonrpc: "2.0",
@@ -458,6 +459,159 @@ describe("handleMcpJsonRpcRequest", () => {
       error: {
         code: -32029,
         message: "Tenant export job quota exceeded.",
+      },
+    });
+  });
+
+  it("rejects anonymous, batched, and oversized requests before dispatch", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal: { actor: unauthenticatedActor },
+        body: { jsonrpc: "2.0", id: "anonymous", method: "initialize" },
+      }),
+    ).resolves.toMatchObject({
+      error: { code: -32001, message: "MCP authentication is required." },
+    });
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal: { actor: agentActor },
+        body: [{ jsonrpc: "2.0", id: "batch", method: "ping" }],
+      }),
+    ).resolves.toMatchObject({
+      error: { code: -32600, message: "MCP JSON-RPC batch requests are not supported." },
+    });
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal: { actor: agentActor },
+        limits: { maxBodyBytes: 64 },
+        body: {
+          jsonrpc: "2.0",
+          id: "large",
+          method: "ping",
+          params: { padding: "x".repeat(128) },
+        },
+      }),
+    ).resolves.toMatchObject({
+      error: { code: -32600, message: "MCP request body exceeds the allowed size." },
+    });
+  });
+
+  it("requires and replays idempotency keys for agent mutations", async () => {
+    const tools = createToolRegistry({
+      accessPolicy: new AllowAllToolAccessPolicy(),
+      confirmationGate: new InMemoryConfirmationGate(),
+    });
+    let calls = 0;
+    tools.register(
+      tool({
+        id: "mail.mutate",
+        permission: "mail.write",
+        sideEffects: "write",
+        handler: async () => {
+          calls += 1;
+          return { call: calls };
+        },
+      }),
+    );
+    const principal = {
+      actor: { ...agentActor, scopes: [...(agentActor.scopes ?? []), "mail.write"] },
+    };
+    const body = {
+      jsonrpc: "2.0",
+      id: "mutate",
+      method: "tools/call",
+      params: {
+        name: "mail.mutate",
+        arguments: { value: 1 },
+        _meta: { idempotencyKey: "mutation-0001" },
+      },
+    };
+
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal,
+        body: {
+          ...body,
+          params: { name: "mail.mutate", arguments: { value: 1 } },
+        },
+      }),
+    ).resolves.toMatchObject({
+      error: {
+        code: -32602,
+        message: "Agent tools/call mutations require params._meta.idempotencyKey.",
+      },
+    });
+
+    const [first, duplicate] = await Promise.all([
+      handleMcpJsonRpcRequest({ tools, principal, body }),
+      handleMcpJsonRpcRequest({ tools, principal, body }),
+    ]);
+    expect(first).toMatchObject({
+      result: {
+        structuredContent: {
+          status: "pending_confirmation",
+          pending: { status: "pending_confirmation" },
+        },
+      },
+    });
+    expect(duplicate).toEqual(first);
+    expect(calls).toBe(0);
+
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal,
+        body: {
+          ...body,
+          params: {
+            name: "mail.mutate",
+            arguments: { value: 2 },
+            _meta: { idempotencyKey: "mutation-0001" },
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      error: {
+        code: -32009,
+        message: "MCP idempotency key was reused with different arguments.",
+      },
+    });
+    expect(calls).toBe(0);
+  });
+
+  it("bounds MCP request execution time", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+    tools.register(
+      tool({
+        id: "slow.read",
+        permission: "platform.read",
+        handler: async () => new Promise<never>(() => undefined),
+      }),
+    );
+
+    await expect(
+      handleMcpJsonRpcRequest({
+        tools,
+        principal: { actor: agentActor },
+        limits: { requestTimeoutMs: 5 },
+        body: {
+          jsonrpc: "2.0",
+          id: "slow",
+          method: "tools/call",
+          params: { name: "slow.read", arguments: {} },
+        },
+      }),
+    ).resolves.toMatchObject({
+      id: "slow",
+      error: {
+        code: -32008,
+        message: "MCP request exceeded its execution deadline.",
       },
     });
   });
@@ -563,20 +717,16 @@ function tool(
 
 describe("MCP method span coverage (P2-6)", () => {
   it("emits an mcp.<method> span for each JSON-RPC request", async () => {
-    const { installSpanCapture } = await import(
-      "../platform/observability/span-testing.js"
-    );
+    const { installSpanCapture } = await import("../platform/observability/span-testing.js");
     const harness = installSpanCapture();
     try {
       const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
       await handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: { jsonrpc: "2.0", id: 7, method: "tools/list" },
       });
-      const span = harness
-        .spans()
-        .find((candidate) => candidate.name === "mcp.tools/list");
+      const span = harness.spans().find((candidate) => candidate.name === "mcp.tools/list");
       expect(span).toBeDefined();
       expect(span?.attributes["helix.mcp.method"]).toBe("tools/list");
     } finally {
@@ -585,20 +735,16 @@ describe("MCP method span coverage (P2-6)", () => {
   });
 
   it("marks the span as errored for an unsupported method", async () => {
-    const { installSpanCapture } = await import(
-      "../platform/observability/span-testing.js"
-    );
+    const { installSpanCapture } = await import("../platform/observability/span-testing.js");
     const harness = installSpanCapture();
     try {
       const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
       await handleMcpJsonRpcRequest({
         tools,
-        actor: systemActor,
+        principal: { actor: systemActor },
         body: { jsonrpc: "2.0", id: 8, method: "does/not-exist" },
       });
-      const span = harness
-        .spans()
-        .find((candidate) => candidate.name === "mcp.does/not-exist");
+      const span = harness.spans().find((candidate) => candidate.name === "mcp.does/not-exist");
       expect(span?.status.code).toBe(2 /* SpanStatusCode.ERROR */);
     } finally {
       await harness.dispose();

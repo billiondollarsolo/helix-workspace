@@ -3,13 +3,19 @@ import type { ChatPresenceStatus } from "./types.js";
 
 export type ChatRoomEvent = JsonObject & {
   readonly type: string;
+  readonly eventId: string;
+  readonly orgId: string;
   readonly roomId: string;
   readonly actorId?: string;
 };
 
 export interface ChatRoomBus {
-  publish(roomId: string, event: ChatRoomEvent): Promise<void>;
-  subscribe(roomId: string, handler: (event: ChatRoomEvent) => Promise<void>): Promise<Unsubscribe>;
+  publish(orgId: string, roomId: string, event: ChatRoomEvent): Promise<void>;
+  subscribe(
+    orgId: string,
+    roomId: string,
+    handler: (event: ChatRoomEvent) => Promise<void>,
+  ): Promise<Unsubscribe>;
 }
 
 export type PresenceEntry = JsonObject & {
@@ -57,40 +63,143 @@ export interface ChatPresenceOptions {
 }
 
 export class EventBusChatRoomBus implements ChatRoomBus {
+  readonly #maxPendingEvents: number;
+
   constructor(
     private readonly eventBus: EventBus,
-    private readonly options: { readonly subjectPrefix?: string } = {},
-  ) {}
-
-  async publish(roomId: string, event: ChatRoomEvent): Promise<void> {
-    await this.eventBus.publish(roomSubject(roomId, this.options.subjectPrefix), event);
+    private readonly options: {
+      readonly subjectPrefix?: string;
+      readonly maxPendingEvents?: number;
+      readonly onSlowConsumer?: (input: {
+        readonly orgId: string;
+        readonly roomId: string;
+      }) => void;
+      readonly onError?: (error: unknown) => void;
+    } = {},
+  ) {
+    this.#maxPendingEvents = positiveInteger(options.maxPendingEvents ?? 256);
   }
 
-  async subscribe(roomId: string, handler: (event: ChatRoomEvent) => Promise<void>): Promise<Unsubscribe> {
-    return this.eventBus.subscribe(roomSubject(roomId, this.options.subjectPrefix), async (event) => {
-      if (isChatRoomEvent(event.payload)) {
-        await handler(event.payload);
+  async publish(orgId: string, roomId: string, event: ChatRoomEvent): Promise<void> {
+    assertEventScope(event, orgId, roomId);
+    await this.eventBus.publish(roomSubject(orgId, roomId, this.options.subjectPrefix), event);
+  }
+
+  async subscribe(
+    orgId: string,
+    roomId: string,
+    handler: (event: ChatRoomEvent) => Promise<void>,
+  ): Promise<Unsubscribe> {
+    const delivery = createOrderedDelivery(
+      handler,
+      this.#maxPendingEvents,
+      () => {
+        this.options.onSlowConsumer?.({ orgId, roomId });
+      },
+      this.options.onError,
+    );
+    const unsubscribe = await this.eventBus.subscribe(
+      roomSubject(orgId, roomId, this.options.subjectPrefix),
+      async (event) => {
+        if (
+          isChatRoomEvent(event.payload) &&
+          event.payload.orgId === orgId &&
+          event.payload.roomId === roomId
+        ) {
+          delivery.accept(event.payload);
+        }
+      },
+    );
+    return async () => {
+      await unsubscribe();
+      await delivery.drain();
+    };
+  }
+}
+
+export class ChatSlowConsumerError extends Error {
+  constructor() {
+    super("Chat realtime consumer exceeded its pending-event limit.");
+    this.name = "ChatSlowConsumerError";
+  }
+}
+
+interface OrderedDelivery {
+  accept(event: ChatRoomEvent): void;
+  drain(): Promise<void>;
+}
+
+function createOrderedDelivery(
+  handler: (event: ChatRoomEvent) => Promise<void>,
+  maxPendingEvents: number,
+  onSlowConsumer: () => void,
+  onError: ((error: unknown) => void) | undefined,
+): OrderedDelivery {
+  let pending = 0;
+  let tail = Promise.resolve();
+  const recentEventIds = new Set<string>();
+  const recentOrder: string[] = [];
+  return {
+    accept(event) {
+      if (recentEventIds.has(event.eventId)) return;
+      if (pending >= maxPendingEvents) {
+        onSlowConsumer();
+        return;
       }
-    });
+      recentEventIds.add(event.eventId);
+      recentOrder.push(event.eventId);
+      if (recentOrder.length > 4_096) {
+        const oldest = recentOrder.shift();
+        if (oldest !== undefined) recentEventIds.delete(oldest);
+      }
+      pending += 1;
+      tail = tail
+        .catch((error: unknown) => {
+          onError?.(error);
+        })
+        .then(() => handler(event))
+        .catch((error: unknown) => {
+          onError?.(error);
+        })
+        .finally(() => {
+          pending -= 1;
+        });
+    },
+    async drain() {
+      await tail;
+    },
+  };
+}
+
+function positiveInteger(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError("Chat maxPendingEvents must be a positive integer.");
   }
+  return value;
 }
 
 export class InMemoryChatRoomBus implements ChatRoomBus {
   readonly #handlers = new Map<string, Set<(event: ChatRoomEvent) => Promise<void>>>();
 
-  async publish(roomId: string, event: ChatRoomEvent): Promise<void> {
-    const handlers = [...(this.#handlers.get(roomId) ?? [])];
+  async publish(orgId: string, roomId: string, event: ChatRoomEvent): Promise<void> {
+    assertEventScope(event, orgId, roomId);
+    const handlers = [...(this.#handlers.get(memoryKey(orgId, roomId)) ?? [])];
     await Promise.all(handlers.map((handler) => handler(event)));
   }
 
-  async subscribe(roomId: string, handler: (event: ChatRoomEvent) => Promise<void>): Promise<Unsubscribe> {
-    const handlers = this.#handlers.get(roomId) ?? new Set<(event: ChatRoomEvent) => Promise<void>>();
+  async subscribe(
+    orgId: string,
+    roomId: string,
+    handler: (event: ChatRoomEvent) => Promise<void>,
+  ): Promise<Unsubscribe> {
+    const key = memoryKey(orgId, roomId);
+    const handlers = this.#handlers.get(key) ?? new Set<(event: ChatRoomEvent) => Promise<void>>();
     handlers.add(handler);
-    this.#handlers.set(roomId, handlers);
+    this.#handlers.set(key, handlers);
     return () => {
       handlers.delete(handler);
       if (handlers.size === 0) {
-        this.#handlers.delete(roomId);
+        this.#handlers.delete(key);
       }
     };
   }
@@ -108,14 +217,18 @@ export class RedisChatPresenceStore implements ChatPresenceStore {
   ) {
     this.#keyPrefix = options.keyPrefix ?? "helix:chat:presence";
     this.#ttlSeconds = options.ttlSeconds ?? 45;
-    this.#awayThresholdMs =
-      this.#ttlSeconds * 1000 * (options.awayThresholdFraction ?? 0.5);
+    this.#awayThresholdMs = this.#ttlSeconds * 1000 * (options.awayThresholdFraction ?? 0.5);
     this.#now = options.now ?? Date.now;
   }
 
   async touch(input: ChatPresenceTouchInput): Promise<PresenceEntry> {
     const entry = presenceEntry(input.actor, input.at ?? new Date(), input.status ?? "available");
-    await this.redis.set(this.#actorKey(input.roomId, input.actor.id), JSON.stringify(entry), "EX", this.#ttlSeconds);
+    await this.redis.set(
+      this.#actorKey(input.roomId, input.actor.id),
+      JSON.stringify(entry),
+      "EX",
+      this.#ttlSeconds,
+    );
     await this.redis.sadd(this.#roomKey(input.roomId), input.actor.id);
     await this.redis.expire(this.#roomKey(input.roomId), this.#ttlSeconds * 2);
     return entry;
@@ -130,17 +243,19 @@ export class RedisChatPresenceStore implements ChatPresenceStore {
     const actorIds = await this.redis.smembers(this.#roomKey(roomId));
     const entries: PresenceEntry[] = [];
     const now = this.#now();
-    await Promise.all(actorIds.map(async (actorId) => {
-      const raw = await this.redis.get(this.#actorKey(roomId, actorId));
-      if (raw === null) {
-        await this.redis.srem(this.#roomKey(roomId), actorId);
-        return;
-      }
-      const parsed = safePresenceEntry(raw);
-      if (parsed !== null) {
-        entries.push(applyAwayThreshold(parsed, now, this.#awayThresholdMs));
-      }
-    }));
+    await Promise.all(
+      actorIds.map(async (actorId) => {
+        const raw = await this.redis.get(this.#actorKey(roomId, actorId));
+        if (raw === null) {
+          await this.redis.srem(this.#roomKey(roomId), actorId);
+          return;
+        }
+        const parsed = safePresenceEntry(raw);
+        if (parsed !== null) {
+          entries.push(applyAwayThreshold(parsed, now, this.#awayThresholdMs));
+        }
+      }),
+    );
     return entries.sort((left, right) => left.actorId.localeCompare(right.actorId));
   }
 
@@ -192,15 +307,11 @@ export class InMemoryChatPresenceStore implements ChatPresenceStore {
   }
 }
 
-export function roomSubject(roomId: string, prefix = "chat.room"): string {
-  return `${prefix}.${keyPart(roomId)}.events`;
+export function roomSubject(orgId: string, roomId: string, prefix = "chat"): string {
+  return `${prefix}.org.${keyPart(orgId)}.room.${keyPart(roomId)}.events`;
 }
 
-function presenceEntry(
-  actor: Actor,
-  at: Date,
-  status: ChatPresenceStatus,
-): PresenceEntry {
+function presenceEntry(actor: Actor, at: Date, status: ChatPresenceStatus): PresenceEntry {
   const effective: ChatPresenceStatus = status === "offline" ? "available" : status;
   return {
     actorId: actor.id,
@@ -252,9 +363,7 @@ function safePresenceEntry(raw: string): PresenceEntry | null {
       const status = (parsed as { readonly status: string }).status;
       // Legacy "online" → available
       const normalized: ChatPresenceStatus =
-        status === "online"
-          ? "available"
-          : (status as ChatPresenceStatus);
+        status === "online" ? "available" : (status as ChatPresenceStatus);
       return {
         ...(parsed as PresenceEntry),
         status: normalized,
@@ -272,8 +381,16 @@ function isChatRoomEvent(value: JsonValue): value is ChatRoomEvent {
     value !== null &&
     !Array.isArray(value) &&
     typeof (value as { readonly type?: unknown }).type === "string" &&
+    typeof (value as { readonly eventId?: unknown }).eventId === "string" &&
+    typeof (value as { readonly orgId?: unknown }).orgId === "string" &&
     typeof (value as { readonly roomId?: unknown }).roomId === "string"
   );
+}
+
+function assertEventScope(event: ChatRoomEvent, orgId: string, roomId: string): void {
+  if (event.orgId !== orgId || event.roomId !== roomId) {
+    throw new TypeError("Chat room event scope does not match its subject.");
+  }
 }
 
 function keyPart(value: string): string {

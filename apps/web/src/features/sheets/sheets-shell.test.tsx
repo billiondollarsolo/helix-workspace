@@ -87,7 +87,7 @@ describe("SheetsShell", () => {
             mimeType: (body as { mimeType?: string }).mimeType ?? "application/octet-stream",
             byteSize: (body as { byteSize?: number }).byteSize ?? 0,
             sha256: "0".repeat(64),
-            status: "prepared",
+            status: "pending_upload",
             uploadUrl: null,
             uploadHeaders: {},
             metadata: {},

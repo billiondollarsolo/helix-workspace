@@ -4,6 +4,7 @@
    explicitly from the rail. */
 
 import { useState, type ReactNode } from "react";
+import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { Icons, type IconName } from "@/components/icons";
 
 export type SideTool = "calendar" | "tasks" | "notes" | "contacts" | "ai";
@@ -121,8 +122,8 @@ function MiniCalendar() {
             textAlign: "center",
           }}
         >
-          Today&rsquo;s events will appear here once the calendar mini-panel is
-          wired to the live agenda.
+          Today&rsquo;s events will appear here once the calendar mini-panel is wired to the live
+          agenda.
         </div>
         <button type="button" className="btn sm" style={{ width: "100%", marginTop: 12 }}>
           <Icons.Plus /> New event
@@ -153,10 +154,7 @@ function MiniTasks() {
       setAdding(false);
       return;
     }
-    setTasks((prev) => [
-      ...prev,
-      { id: Date.now(), text: newText, done: false, list: "Today" },
-    ]);
+    setTasks((prev) => [...prev, { id: Date.now(), text: newText, done: false, list: "Today" }]);
     setNewText("");
     setAdding(false);
   };
@@ -306,9 +304,7 @@ function MiniNotes() {
                   value={note.title}
                   onChange={(event) =>
                     setNotes((prev) =>
-                      prev.map((n) =>
-                        n.id === note.id ? { ...n, title: event.target.value } : n,
-                      ),
+                      prev.map((n) => (n.id === note.id ? { ...n, title: event.target.value } : n)),
                     )
                   }
                   style={{ marginBottom: 6, fontWeight: 600 }}
@@ -319,9 +315,7 @@ function MiniNotes() {
                   rows={4}
                   onChange={(event) =>
                     setNotes((prev) =>
-                      prev.map((n) =>
-                        n.id === note.id ? { ...n, body: event.target.value } : n,
-                      ),
+                      prev.map((n) => (n.id === note.id ? { ...n, body: event.target.value } : n)),
                     )
                   }
                   onBlur={() => setEditing(null)}
@@ -347,7 +341,13 @@ function MiniNotes() {
                 <div style={{ fontWeight: 600, fontSize: "var(--text-meta)", marginBottom: 4 }}>
                   {note.title}
                 </div>
-                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>
+                <div
+                  style={{
+                    fontSize: "var(--text-caption)",
+                    color: "var(--text-2)",
+                    lineHeight: 1.5,
+                  }}
+                >
                   {note.body || <span style={{ color: "var(--text-3)" }}>Empty note</span>}
                 </div>
               </button>
@@ -493,6 +493,9 @@ export interface SidePanelRailProps {
 }
 
 export function SidePanelRail({ activeTool, onToggle }: SidePanelRailProps) {
+  if (CORE_WORKSPACE_STORAGE_ONLY) {
+    return null;
+  }
   return (
     <div
       style={{
@@ -569,7 +572,7 @@ export interface SidePanelProps {
 }
 
 export function SidePanel({ activeTool, onClose }: SidePanelProps) {
-  if (!activeTool) {
+  if (CORE_WORKSPACE_STORAGE_ONLY || !activeTool) {
     return null;
   }
   const view = MINI_VIEWS[activeTool];
@@ -604,12 +607,7 @@ export function SidePanel({ activeTool, onClose }: SidePanelProps) {
           <button type="button" className="icon-btn" title="Open full" aria-label="Open full">
             <Icons.Grid />
           </button>
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={onClose}
-            aria-label="Close panel"
-          >
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close panel">
             <Icons.X />
           </button>
         </div>

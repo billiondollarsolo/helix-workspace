@@ -32,6 +32,7 @@ import {
   registerActionStatusRoutes,
   registerAssistantStreamRoute,
   installTenantApiRpsLimitHook,
+  isAdminMfaProtectedPath,
   registerToolRestRoutes,
   rewriteVersionedApiUrl,
   verifyDefaultOrgAtBoot,
@@ -65,13 +66,11 @@ describe("mail server env config", () => {
     expect(getSmtpMailReceiverConfig({})).toBeUndefined();
     expect(
       getSmtpMailReceiverConfig({
-        HELIX_DEFAULT_ORG_ID: "org-local",
         MAIL_SMTP_RECEIVER_ENABLED: "true",
         MAIL_SMTP_RECEIVER_HOST: "0.0.0.0",
         MAIL_SMTP_RECEIVER_PORT: "2525",
       }),
     ).toEqual({
-      orgId: "org-local",
       host: "0.0.0.0",
       port: 2525,
     });
@@ -103,6 +102,24 @@ describe("BetterAuth server env config", () => {
       }),
     ).toThrow("BETTER_AUTH_SECRET must be at least 32 characters");
   });
+});
+
+describe("admin MFA route coverage", () => {
+  it.each([
+    "/api/admin/platform-config",
+    "/trpc/tools.explain",
+    "/trpc/tools.explain?batch=1",
+    "/trpc/admin.platformConfig.get",
+  ])("protects every admin-scoped HTTP and tRPC path (%s)", (url) => {
+    expect(isAdminMfaProtectedPath(url)).toBe(true);
+  });
+
+  it.each(["/api/tools/platform.ping", "/trpc/tools.list", "/trpc/tools.invoke"])(
+    "does not classify ordinary tool paths as admin MFA surfaces (%s)",
+    (url) => {
+      expect(isAdminMfaProtectedPath(url)).toBe(false);
+    },
+  );
 });
 
 describe("default org boot verification", () => {
@@ -925,9 +942,8 @@ describe("tool REST idempotency (P1-10)", () => {
     await tokenStore.saveToken(
       accessToken({
         token: "idem-token",
-        actorId: "agent-idem",
+        actorId: "user-idem",
         orgId: "org-idem",
-        actorType: "agent",
         scopes: ["platform.read"],
       }),
     );
@@ -979,9 +995,8 @@ describe("tool REST idempotency (P1-10)", () => {
     await tokenStore.saveToken(
       accessToken({
         token: "idem-token-2",
-        actorId: "agent-idem-2",
+        actorId: "user-idem-2",
         orgId: "org-idem",
-        actorType: "agent",
         scopes: ["platform.read"],
       }),
     );
@@ -1052,7 +1067,7 @@ describe("action status routes", () => {
         type: "agent",
         scopes: actorToken.scopes,
       },
-      input: { value: true },
+      input: { value: true, secret: "sensitive-action-input" },
       traceId: "trace-action-1",
     });
     const app = fastify();
@@ -1071,9 +1086,17 @@ describe("action status routes", () => {
       actorId: "agent-action",
       toolId: "external.write",
       status: "pending_confirmation",
-      input: { value: true },
+      preview: {
+        toolId: "external.write",
+        action: "platform.read",
+        resourceIds: [],
+        recipients: [],
+        targets: [],
+      },
       traceId: "trace-action-1",
     });
+    expect(body.action).not.toHaveProperty("input");
+    expect(response.body).not.toContain("sensitive-action-input");
     await app.close();
   });
 
@@ -1241,7 +1264,13 @@ interface ActionStatusBody {
     readonly actorId: string;
     readonly toolId: string;
     readonly status: string;
-    readonly input: unknown;
+    readonly preview: {
+      readonly toolId: string;
+      readonly action: string;
+      readonly resourceIds: readonly string[];
+      readonly recipients: readonly string[];
+      readonly targets: readonly string[];
+    };
     readonly traceId?: string;
   };
 }

@@ -60,7 +60,7 @@ describe("events websocket routes", () => {
     const tokenStore = await tokenStoreWithAccessToken("token-3");
     const socket = new FakeSocket();
 
-    await handleEventSocket(socket, requestFor({ subject: ">", token: "token-3" }), {
+    await handleEventSocket(socket, requestFor({ subject: "platform.>", token: "token-3" }), {
       actorFromRequest: (request) => actorFromRequestWithAccessToken(request, tokenStore),
     });
 
@@ -103,6 +103,26 @@ describe("events websocket routes", () => {
     });
     expect(bus.subjects).toEqual([]);
   });
+
+  it.each(["chat.>", `chat.org.${orgId}.room.victim-room.events`, ">", "*.>"])(
+    "rejects Chat-capable generic event subscriptions: %s",
+    async (subject) => {
+      const tokenStore = await tokenStoreWithAccessToken("token-chat");
+      const socket = new FakeSocket();
+      const bus = new FakeEventBus();
+
+      await handleEventSocket(socket, requestFor({ subject, token: "token-chat" }), {
+        bus,
+        actorFromRequest: (request) => actorFromRequestWithAccessToken(request, tokenStore),
+      });
+
+      expect(socket.closed).toEqual({
+        code: 1008,
+        reason: "Chat events require the room-authorized Chat WebSocket",
+      });
+      expect(bus.subjects).toEqual([]);
+    },
+  );
 });
 
 async function tokenStoreWithAccessToken(token: string): Promise<InMemoryOAuthClientStore> {

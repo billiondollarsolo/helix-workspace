@@ -26,6 +26,7 @@ import type {
   DriveSearchHit,
   DriveSearchRecord,
   DriveUploadRecord,
+  DriveUploadStatusRecord,
   DriveVersionRecord,
 } from "./types.js";
 import { BadRequestError } from "../../api/api-error.js";
@@ -64,16 +65,34 @@ import {
   stringMetadata,
 } from "./core/mappers.js";
 import { officePreviewStorageKey, type OfficePreviewConverter } from "./preview.js";
+import { resolveEffectiveMime, sniffMimeType } from "./scanning.js";
 import {
-  createNoopVirusScanner,
-  resolveEffectiveMime,
-  sniffMimeType,
-  type VirusScanner,
-} from "./scanning.js";
+  isDriveFileAvailable,
+  isDriveUploadState,
+  userFacingDriveUploadState,
+  type DriveUploadState,
+} from "./upload-state.js";
+import {
+  assertDriveStorageEncryption,
+  type DriveStorageEncryptionPolicy,
+} from "./storage-policy.js";
+import {
+  hashDriveSharePassword,
+  hashDriveShareToken,
+  verifyDriveSharePassword,
+} from "./share-link-security.js";
+import { driveHardDeleteBlockers } from "./lifecycle.js";
 
 export { DriveStorageQuotaExceededError } from "./errors.js";
 
 export interface DriveStorageClient extends StorageClient {
+  headObject?(key: string): Promise<{
+    readonly byteSize: number | null;
+    readonly etag: string | null;
+    readonly serverSideEncryption: string | null;
+    readonly serverSideEncryptionAwsKmsKeyId: string | null;
+    readonly metadata: Record<string, string>;
+  } | null>;
   presignGetUrl?(
     key: string,
     options?: {
@@ -155,6 +174,11 @@ export interface DriveStore {
   prepareUpload(input: PrepareDriveUploadInput): Promise<DriveUploadRecord>;
   finalizeUpload(input: FinalizeDriveUploadInput): Promise<DriveVersionRecord>;
   completeMultipartUpload?(input: CompleteMultipartUploadInput): Promise<DriveVersionRecord>;
+  getUploadStatus?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<DriveUploadStatusRecord | null>;
   list(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -309,6 +333,9 @@ export interface DriveStore {
     readonly objectId: string;
     readonly role: string;
     readonly expiresAt?: Date | null;
+    readonly password?: string;
+    readonly maxDownloads?: number | null;
+    readonly rateLimitPerHour?: number;
   }): Promise<DriveShareLinkRecord>;
   listShareLinks?(input: {
     readonly orgId: string;
@@ -320,25 +347,39 @@ export interface DriveStore {
     readonly actorId: string;
     readonly linkId: string;
   }): Promise<boolean>;
-  resolveShareLink?(token: string): Promise<{
+  resolveShareLink?(input: { readonly token: string; readonly password?: string }): Promise<{
     readonly orgId: string;
     readonly objectId: string;
     readonly role: string;
+    readonly auditActorId: string | null;
   } | null>;
   /** Anonymous public-link content access (no actor ACL; token is the credential). */
-  readFileByShareToken?(token: string): Promise<DriveFileReadResult | null>;
+  readFileByShareToken?(input: {
+    readonly token: string;
+    readonly password?: string;
+  }): Promise<DriveFileReadResult | null>;
+  collectOrphans?(input: {
+    readonly olderThan: Date;
+    readonly dryRun: boolean;
+    readonly limit?: number;
+  }): Promise<{ readonly candidates: number; readonly collected: number }>;
 }
 
 export interface DriveShareLinkRecord {
   readonly id: string;
   readonly orgId: string;
   readonly objectId: string;
-  readonly token: string;
+  /** Raw token is returned exactly once at creation; list operations return null. */
+  readonly token: string | null;
   readonly role: string;
   readonly expiresAt: Date | null;
   readonly createdByActorId: string | null;
   readonly createdAt: Date;
   readonly revokedAt: Date | null;
+  readonly maxDownloads: number | null;
+  readonly downloadCount: number;
+  readonly rateLimitPerHour: number;
+  readonly lastUsedAt: Date | null;
 }
 
 export interface DriveFolderCreateInput {
@@ -368,8 +409,6 @@ export interface PostgresDriveStoreOptions {
   readonly events?: Pick<EventBus, "publish">;
   readonly onQuotaEventError?: (error: unknown) => void;
   readonly storageResolver?: TenantStorageResolver;
-  /** Pluggable AV; defaults to no-op. Sniff/scan runs at finalize when bytes are present. */
-  readonly virusScanner?: VirusScanner;
   /**
    * Cross-app trash/restore cascade registry (docs/sheets/slides handlers).
    * Defaults to {@link createDefaultTrashSyncRegistry}.
@@ -380,6 +419,9 @@ export interface PostgresDriveStoreOptions {
   /** Multipart threshold in bytes (default 8 MiB). */
   readonly multipartThresholdBytes?: number;
   readonly multipartPartSizeBytes?: number;
+  readonly storageEncryptionPolicy?: (
+    orgId: string,
+  ) => DriveStorageEncryptionPolicy | undefined | Promise<DriveStorageEncryptionPolicy | undefined>;
 }
 
 interface ObjectRow {
@@ -391,10 +433,15 @@ interface ObjectRow {
   readonly mime_type: string;
   readonly byte_size: number;
   readonly sha256: string | null;
+  readonly upload_state?: DriveUploadState;
+  readonly upload_declared_byte_size?: string | number | null;
+  readonly upload_declared_sha256?: string | null;
   readonly metadata: JsonObject;
   readonly deleted_at: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
+  readonly drive_legal_hold?: boolean;
+  readonly trash_expires_at?: Date | null;
 }
 
 interface DriveVersionRow {
@@ -470,13 +517,21 @@ interface DriveCommentRow {
 interface DriveShareLinkRow {
   readonly id: string;
   readonly org_id: string;
-  readonly token: string;
+  readonly token: string | null;
+  readonly token_hash: Uint8Array;
+  readonly password_hash: string | null;
   readonly object_id: string;
   readonly role: string;
   readonly expires_at: Date | null;
   readonly created_by_actor_id: string | null;
   readonly created_at: Date;
   readonly revoked_at: Date | null;
+  readonly max_downloads: number | null;
+  readonly download_count: number;
+  readonly rate_limit_per_hour: number;
+  readonly rate_window_started_at: Date;
+  readonly rate_window_count: number;
+  readonly last_used_at: Date | null;
 }
 
 interface DriveCommentProjectionRow extends DriveCommentRow {
@@ -538,7 +593,10 @@ export class PostgresDriveStore
         status: "pending_upload",
       });
       const rows = (await tx`
-        insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
+        insert into objects (
+          id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256,
+          upload_state, upload_declared_byte_size, upload_declared_sha256, metadata
+        )
         values (
           ${objectId},
           ${input.orgId},
@@ -547,6 +605,9 @@ export class PostgresDriveStore
           ${storageKey},
           ${input.mimeType},
           ${input.byteSize ?? 0},
+          ${input.sha256 ?? null},
+          'pending_upload',
+          ${input.byteSize ?? null},
           ${input.sha256 ?? null},
           ${tx.json(toSqlJson(metadata))}
         )
@@ -593,6 +654,16 @@ export class PostgresDriveStore
             }),
           );
         }
+        await tx`
+          update objects
+          set metadata = metadata || ${tx.json(
+            toSqlJson({
+              multipartUploadId: uploadId,
+              multipartInitiatedAt: new Date().toISOString(),
+            }),
+          )}::jsonb
+          where id = ${objectId} and org_id = ${input.orgId}
+        `;
         return {
           ...mapUpload(rows[0]),
           uploadUrl: null,
@@ -620,7 +691,12 @@ export class PostgresDriveStore
     if (storage?.completeMultipartUpload === undefined) {
       throw new Error("Drive multipart upload is not configured for this storage client.");
     }
-    const object = await requireObjectAccess(this.sql, input.orgId, input.actorId, input.objectId);
+    const object = await requireUploadOwnerAccess(
+      this.sql,
+      input.orgId,
+      input.actorId,
+      input.objectId,
+    );
     const expectedParts = planMultipartParts(
       input.byteSize,
       this.options.multipartPartSizeBytes ?? DEFAULT_MULTIPART_PART_SIZE,
@@ -645,9 +721,40 @@ export class PostgresDriveStore
   async finalizeUpload(input: FinalizeDriveUploadInput): Promise<DriveVersionRecord> {
     let storageDelta = 0;
     const version = await this.sql.begin(async (tx) => {
-      const current = await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
+      const current = await requireUploadOwnerAccess(
+        tx,
+        input.orgId,
+        input.actorId,
+        input.objectId,
+        true,
+      );
+      const currentState = objectUploadState(current);
+      if (currentState !== "pending_upload") {
+        const existing = await latestDriveVersion(tx, input.orgId, input.objectId);
+        if (
+          existing !== null &&
+          existing.byte_size === input.byteSize &&
+          existing.sha256 === input.sha256
+        ) {
+          return mapVersion(existing);
+        }
+        throw new DriveConflictError(
+          `Drive upload cannot be finalized from state '${currentState}'.`,
+        );
+      }
+
+      const declaredByteSize = declaredUploadByteSize(current);
+      if (declaredByteSize !== null && declaredByteSize !== input.byteSize) {
+        throw new DriveConflictError(
+          `Drive upload declared ${String(declaredByteSize)} bytes but finalize supplied ${String(input.byteSize)}.`,
+        );
+      }
+      const declaredSha256 = current.upload_declared_sha256 ?? current.sha256;
+      if (declaredSha256 !== null && declaredSha256 !== input.sha256) {
+        throw new DriveConflictError("Drive upload SHA-256 differs from the prepared declaration.");
+      }
+
       const dedup = this.options.contentAddressedDedup === true;
-      // Reserved key is where prepare/presign/multipart wrote (or will write).
       const reservedKey = input.storageKey ?? current.storage_key;
       if (input.storageKey !== undefined && !dedup) {
         assertProvidedFinalizeStorageKey(input.storageKey, current.storage_key);
@@ -661,14 +768,8 @@ export class PostgresDriveStore
       });
       let mimeType = input.mimeType ?? current.mime_type;
       storageDelta = finalizedStorageDelta(current, storageKey, input.byteSize);
-      if (input.content !== undefined) {
-        const actualSha256 = createHash("sha256").update(input.content).digest("hex");
-        if (actualSha256 !== input.sha256) {
-          throw new Error("Drive upload sha256 does not match provided content.");
-        }
-      }
       const storage = await this.storageForOrg(input.orgId);
-      if (input.content !== undefined && storage === undefined) {
+      if (storage === undefined) {
         throw new Error("Drive upload content storage is not configured.");
       }
       await assertStorageQuotaAvailable(tx, input.orgId, storageDelta, (event) => {
@@ -677,6 +778,11 @@ export class PostgresDriveStore
       const content = input.content;
 
       if (dedup) {
+        if (content === undefined) {
+          await verifyStoredDriveObject(storage, reservedKey, input.byteSize, input.sha256);
+        } else {
+          assertInlineUploadMatches(content, input.byteSize, input.sha256);
+        }
         const inserted = await upsertDriveBlobRef(tx, {
           orgId: input.orgId,
           sha256: input.sha256,
@@ -684,22 +790,18 @@ export class PostgresDriveStore
           byteSize: input.byteSize,
         });
         if (shouldWriteBlobBytes({ dedup: true, blobRowInserted: inserted })) {
-          if (storage === undefined) {
-            throw new Error("Drive upload content storage is not configured.");
-          }
           const source = resolveBlobByteSource({ content, reservedKey });
-          let body: Uint8Array;
+          let body: Uint8Array | AsyncIterable<Uint8Array>;
           if (source.kind === "inline") {
             body = source.content;
           } else if (source.kind === "reserved") {
-            // Presigned/multipart already wrote to the reserved object key — copy into the blob key.
-            const reservedBytes = await this.readObjectBytes(input.orgId, source.reservedKey);
-            if (reservedBytes === undefined) {
+            const reservedObject = await storage.get(source.reservedKey);
+            if (reservedObject === null) {
               throw new Error(
                 "Drive upload content not found at reserved key for content-addressed copy.",
               );
             }
-            body = reservedBytes;
+            body = reservedObject.body;
           } else {
             throw new Error("Drive upload content is missing for content-addressed blob write.");
           }
@@ -711,9 +813,7 @@ export class PostgresDriveStore
           });
         }
       } else if (content !== undefined) {
-        if (storage === undefined) {
-          throw new Error("Drive upload content storage is not configured.");
-        }
+        assertInlineUploadMatches(content, input.byteSize, input.sha256);
         await storage.put({
           key: storageKey,
           body: content,
@@ -722,44 +822,36 @@ export class PostgresDriveStore
         });
       }
 
-      // ponytail: sniff/scan post-PUT when bytes are present (inline content or
-      // read-back). Quarantine marks metadata rather than blocking the storage write.
-      let bytesForScan: Buffer | null = null;
-      if (content !== undefined) {
-        bytesForScan = Buffer.from(content);
-      } else {
-        // Prefer final key; fall back to reserved key (pre-copy) for scan bytes.
-        const stored =
-          (await this.readObjectBytes(input.orgId, storageKey)) ??
-          (dedup ? await this.readObjectBytes(input.orgId, reservedKey) : undefined);
-        if (stored !== undefined) {
-          bytesForScan = Buffer.from(stored);
+      const verified = await verifyStoredDriveObject(
+        storage,
+        storageKey,
+        input.byteSize,
+        input.sha256,
+      );
+      const encryptionPolicy = await this.options.storageEncryptionPolicy?.(input.orgId);
+      const encryptionEvidence =
+        encryptionPolicy === undefined ? undefined : await storage.headObject?.(storageKey);
+      if (encryptionPolicy !== undefined) {
+        if (storage.headObject === undefined) {
+          throw new DriveConflictError(
+            "Drive storage provider cannot evidence the required encryption policy.",
+          );
         }
+        assertDriveStorageEncryption(encryptionPolicy, encryptionEvidence ?? null);
       }
-      if (bytesForScan !== null) {
-        const sniffed = sniffMimeType(bytesForScan);
-        mimeType = resolveEffectiveMime(mimeType, sniffed);
-        const scanner = this.options.virusScanner ?? createNoopVirusScanner();
-        const scan = await scanner.scan(bytesForScan);
-        if (!scan.clean) {
-          await tx`
-            update objects
-            set
-              metadata = ${tx.json(
-                toSqlJson({
-                  ...current.metadata,
-                  status: "infected",
-                  avSignature: scan.signature ?? "unknown",
-                }),
-              )},
-              updated_at = now()
-            where id = ${input.objectId} and org_id = ${input.orgId}
-          `;
-          throw new DriveConflictError("File failed virus scan.", {
-            details: { signature: scan.signature ?? "unknown" },
-          });
-        }
-      }
+      mimeType = resolveEffectiveMime(mimeType, sniffMimeType(verified.prefix));
+      const versionMetadata = {
+        ...(input.metadata ?? {}),
+        ...(encryptionEvidence === undefined
+          ? {}
+          : {
+              storageEncryption: {
+                mode: encryptionEvidence?.serverSideEncryption,
+                kmsKeyId: encryptionEvidence?.serverSideEncryptionAwsKmsKeyId,
+                verifiedAt: new Date().toISOString(),
+              },
+            }),
+      };
 
       const versionRows = (await tx`
         insert into drive_versions (
@@ -773,21 +865,12 @@ export class PostgresDriveStore
           ${mimeType},
           ${input.byteSize},
           ${input.sha256},
-          ${tx.json(toSqlJson(input.metadata ?? {}))},
+          ${tx.json(toSqlJson(versionMetadata))},
           ${input.actorId}
         )
         returning *
       `) as unknown as readonly DriveVersionRow[];
       const version = mapVersion(versionRows[0]);
-      const preview = await this.generatePreview({
-        orgId: input.orgId,
-        objectId: input.objectId,
-        name: stringMetadata(current.metadata, "name") ?? current.storage_key,
-        storageKey,
-        mimeType,
-        versionNumber: version.versionNumber,
-        ...(input.content === undefined ? {} : { inlineContent: input.content }),
-      });
 
       await tx`
         update objects
@@ -796,24 +879,56 @@ export class PostgresDriveStore
           mime_type = ${mimeType},
           byte_size = ${input.byteSize},
           sha256 = ${input.sha256},
+          upload_state = 'uploaded',
           metadata = ${tx.json(
             toSqlJson({
               ...current.metadata,
-              status: "ready",
+              status: "uploaded",
               latestVersionId: version.id,
               versionNumber: version.versionNumber,
-              ...preview,
+              multipartUploadId: null,
+              multipartInitiatedAt: null,
             }),
           )},
           updated_at = now()
         where id = ${input.objectId} and org_id = ${input.orgId}
       `;
+      const jobRows = (await tx`
+        insert into drive_scan_jobs (
+          org_id, object_id, version_id, requested_by_actor_id, status
+        )
+        values (
+          ${input.orgId}, ${input.objectId}, ${version.id}, ${input.actorId}, 'pending'
+        )
+        on conflict (version_id) do update
+          set updated_at = drive_scan_jobs.updated_at
+        returning id
+      `) as unknown as readonly { readonly id: string }[];
+      const scanJobId = jobRows[0]?.id;
+      if (scanJobId === undefined) {
+        throw new DriveConflictError("Drive scan job could not be persisted.");
+      }
+      await tx`
+        insert into outbox (subject, payload)
+        values (
+          'drive.scan.requested',
+          ${tx.json(
+            toSqlJson({
+              jobId: scanJobId,
+              orgId: input.orgId,
+              objectId: input.objectId,
+              versionId: version.id,
+            }),
+          )}
+        )
+      `;
       await appendDriveActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
-        verb: "drive.upload.finalized",
+        verb: "drive.upload.verified",
         objectId: input.objectId,
         payload: {
+          scanJobId,
           versionId: version.id,
           versionNumber: version.versionNumber,
           byteSize: input.byteSize,
@@ -825,6 +940,47 @@ export class PostgresDriveStore
     });
     this.emitStorageDelta(input.orgId, storageDelta);
     return version;
+  }
+
+  async getUploadStatus(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<DriveUploadStatusRecord | null> {
+    const rows = (await this.sql`
+      select id, upload_state, updated_at
+      from objects
+      where id = ${input.objectId}
+        and org_id = ${input.orgId}
+        and kind = 'file'
+        and (
+          owner_actor_id = ${input.actorId}
+          or exists (
+            select 1 from permissions p
+            where p.resource_type = 'object'
+              and p.resource_id = objects.id
+              and p.org_id = ${input.orgId}
+              and p.actor_id = ${input.actorId}
+              and (p.expires_at is null or p.expires_at > now())
+          )
+        )
+      limit 1
+    `) as unknown as readonly {
+      readonly id: string;
+      readonly upload_state: DriveUploadState;
+      readonly updated_at: Date;
+    }[];
+    const row = rows[0];
+    if (row === undefined) {
+      return null;
+    }
+    const userFacing = userFacingDriveUploadState(row.upload_state);
+    return {
+      objectId: row.id,
+      state: row.upload_state,
+      ...userFacing,
+      updatedAt: row.updated_at,
+    };
   }
 
   async list(input: {
@@ -886,6 +1042,10 @@ export class PostgresDriveStore
       where o.org_id = ${input.orgId}
         and o.kind = ${kind}
         and (
+          o.upload_state = 'active'
+          or (${input.includeTrashed ?? false} and o.upload_state = 'trashed')
+        )
+        and (
           ${acrossFolders}
           or coalesce(o.metadata->>'folderId', '') = coalesce(${input.folderId ?? null}::text, '')
         )
@@ -939,10 +1099,17 @@ export class PostgresDriveStore
       limit ${input.limit ?? 100}
     `) as unknown as readonly DriveSearchRow[];
 
-    return [...folderRows.map(mapFolderEntry), ...fileRows.map(mapObjectEntry)].slice(
-      0,
-      input.limit ?? 100,
-    );
+    return [
+      ...folderRows.map(mapFolderEntry),
+      ...fileRows
+        .filter((row) => {
+          const state = objectUploadState(row);
+          return (
+            isDriveFileAvailable(state) || (input.includeTrashed === true && state === "trashed")
+          );
+        })
+        .map(mapObjectEntry),
+    ].slice(0, input.limit ?? 100);
   }
 
   async createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord> {
@@ -1011,7 +1178,7 @@ export class PostgresDriveStore
         ),
         trashed_files as (
           update objects
-          set deleted_at = now(), updated_at = now()
+          set deleted_at = now(), upload_state = 'trashed', updated_at = now()
           where org_id = ${input.orgId}
             and kind = 'file'
             and deleted_at is null
@@ -1076,6 +1243,16 @@ export class PostgresDriveStore
       entry.preview.storageKey !== undefined
         ? ((await this.readObjectBytes(input.orgId, entry.preview.storageKey)) ?? null)
         : null;
+    await appendDriveActivity(this.sql, {
+      orgId: input.orgId,
+      actorId: input.actorId,
+      verb: "drive.object.downloaded",
+      objectId: input.objectId,
+      payload: {
+        versionNumber: entry.versionNumber ?? null,
+        byteSize: entry.byteSize ?? 0,
+      },
+    });
     return {
       entry,
       content: content ?? null,
@@ -1100,6 +1277,17 @@ export class PostgresDriveStore
       const role = normalizeDriveRole(input.role);
       const sharedWithActorIds = [...new Set(input.targetActorIds)];
       for (const targetActorId of sharedWithActorIds) {
+        const actorRows = (await tx`
+          select id
+          from actors
+          where id = ${targetActorId}
+            and org_id = ${input.orgId}
+            and disabled_at is null
+          limit 1
+        `) as unknown as readonly { readonly id: string }[];
+        if (actorRows.length === 0) {
+          throw new DriveNotFoundError("One or more Drive share recipients are unavailable.");
+        }
         await tx`
           insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id, expires_at)
           values (${input.orgId}, ${targetActorId}, 'object', ${input.objectId}, ${role}, ${input.actorId}, ${input.expiresAt ?? null})
@@ -1138,6 +1326,7 @@ export class PostgresDriveStore
         on o.org_id = p.org_id
         and o.id = p.resource_id
         and o.kind in ('file', 'recording')
+        and o.upload_state = 'active'
         and o.deleted_at is null
       left join actors a on a.id = p.actor_id and a.org_id = p.org_id
       where p.org_id = ${input.orgId}
@@ -1448,6 +1637,9 @@ export class PostgresDriveStore
     readonly objectId: string;
     readonly role: string;
     readonly expiresAt?: Date | null;
+    readonly password?: string;
+    readonly maxDownloads?: number | null;
+    readonly rateLimitPerHour?: number;
   }): Promise<DriveShareLinkRecord> {
     return this.sql.begin(async (tx) => {
       await requireObjectRole(tx, input.orgId, input.actorId, input.objectId, "owner");
@@ -1456,16 +1648,23 @@ export class PostgresDriveStore
         throw new DriveForbiddenError("Anonymous share links cannot grant owner role.");
       }
       const token = randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", "");
+      const tokenHash = hashDriveShareToken(token);
+      const passwordHash =
+        input.password === undefined ? null : await hashDriveSharePassword(input.password);
       const rows = (await tx`
         insert into drive_share_links (
-          org_id, token, object_id, role, expires_at, created_by_actor_id
+          org_id, token_hash, password_hash, object_id, role, expires_at,
+          max_downloads, rate_limit_per_hour, created_by_actor_id
         )
         values (
           ${input.orgId},
-          ${token},
+          decode(${tokenHash}, 'hex'),
+          ${passwordHash},
           ${input.objectId},
           ${role},
           ${input.expiresAt ?? null},
+          ${input.maxDownloads ?? null},
+          ${input.rateLimitPerHour ?? 120},
           ${input.actorId}
         )
         returning *
@@ -1481,7 +1680,7 @@ export class PostgresDriveStore
         objectId: input.objectId,
         payload: { linkId: row.id, role },
       });
-      return mapShareLink(row);
+      return { ...mapShareLink(row), token };
     });
   }
 
@@ -1528,26 +1727,88 @@ export class PostgresDriveStore
           and revoked_at is null
         returning id
       `) as unknown as readonly { readonly id: string }[];
-      return rows.length > 0;
+      const revoked = rows.length > 0;
+      if (revoked) {
+        await appendDriveActivity(tx, {
+          orgId: input.orgId,
+          actorId: input.actorId,
+          verb: "drive.link.revoked",
+          objectId: link.object_id,
+          payload: { linkId: input.linkId },
+        });
+      }
+      return revoked;
     });
   }
 
-  async resolveShareLink(token: string): Promise<{
+  async resolveShareLink(input: { readonly token: string; readonly password?: string }): Promise<{
     readonly orgId: string;
     readonly objectId: string;
     readonly role: string;
+    readonly auditActorId: string | null;
   } | null> {
-    const rows = (await this.sql`
-      select org_id, object_id, role
+    const candidates = (await this.sql`
+      select *
       from drive_share_links
-      where token = ${token}
+      where token_hash = decode(${hashDriveShareToken(input.token)}, 'hex')
         and revoked_at is null
         and (expires_at is null or expires_at > now())
       limit 1
+    `) as unknown as readonly DriveShareLinkRow[];
+    const candidate = candidates[0];
+    if (candidate === undefined) {
+      return null;
+    }
+
+    // Consume the per-link attempt budget before password verification. Failed
+    // and missing passwords therefore cannot bypass throttling, and the KDF
+    // cannot be invoked after the hourly window is exhausted.
+    const admitted = (await this.sql`
+      update drive_share_links
+      set
+        rate_window_count = case
+          when rate_window_started_at <= now() - interval '1 hour' then 1
+          else rate_window_count + 1
+        end,
+        rate_window_started_at = case
+          when rate_window_started_at <= now() - interval '1 hour' then now()
+          else rate_window_started_at
+        end
+      where id = ${candidate.id}
+        and revoked_at is null
+        and (expires_at is null or expires_at > now())
+        and (max_downloads is null or download_count < max_downloads)
+        and (
+          rate_window_started_at <= now() - interval '1 hour'
+          or rate_window_count < rate_limit_per_hour
+        )
+      returning password_hash
+    `) as unknown as readonly { readonly password_hash: string | null }[];
+    const admittedCandidate = admitted[0];
+    if (
+      admittedCandidate === undefined ||
+      (admittedCandidate.password_hash !== null &&
+        (input.password === undefined ||
+          !(await verifyDriveSharePassword(input.password, admittedCandidate.password_hash))))
+    ) {
+      return null;
+    }
+
+    const rows = (await this.sql`
+      update drive_share_links
+      set
+        download_count = download_count + 1,
+        last_used_at = now()
+      where id = ${candidate.id}
+        and revoked_at is null
+        and (expires_at is null or expires_at > now())
+        and (max_downloads is null or download_count < max_downloads)
+      returning org_id, object_id, role, created_by_actor_id
     `) as unknown as readonly {
       readonly org_id: string;
       readonly object_id: string;
       readonly role: string;
+      readonly created_by_actor_id: string | null;
     }[];
     const row = rows[0];
     if (row === undefined) {
@@ -1555,13 +1816,26 @@ export class PostgresDriveStore
     }
     const role = normalizeDriveRole(row.role);
     if (role === "owner") {
-      return { orgId: row.org_id, objectId: row.object_id, role: "reader" };
+      return {
+        orgId: row.org_id,
+        objectId: row.object_id,
+        role: "reader",
+        auditActorId: row.created_by_actor_id,
+      };
     }
-    return { orgId: row.org_id, objectId: row.object_id, role };
+    return {
+      orgId: row.org_id,
+      objectId: row.object_id,
+      role,
+      auditActorId: row.created_by_actor_id,
+    };
   }
 
-  async readFileByShareToken(token: string): Promise<DriveFileReadResult | null> {
-    const resolved = await this.resolveShareLink(token);
+  async readFileByShareToken(input: {
+    readonly token: string;
+    readonly password?: string;
+  }): Promise<DriveFileReadResult | null> {
+    const resolved = await this.resolveShareLink(input);
     if (resolved === null) {
       return null;
     }
@@ -1571,11 +1845,12 @@ export class PostgresDriveStore
       where id = ${resolved.objectId}
         and org_id = ${resolved.orgId}
         and kind in ('file', 'recording')
+        and upload_state = 'active'
         and deleted_at is null
       limit 1
     `) as unknown as readonly ObjectRow[];
     const object = rows[0];
-    if (object === undefined) {
+    if (object === undefined || !isDriveFileAvailable(objectUploadState(object))) {
       return null;
     }
     const versionRows = (await this.sql`
@@ -1584,6 +1859,26 @@ export class PostgresDriveStore
       where object_id = ${resolved.objectId}
     `) as unknown as readonly { readonly version_number: number | null }[];
     const content = await this.readObjectBytes(resolved.orgId, object.storage_key);
+    const stillActive = (await this.sql`
+      select 1
+      from drive_share_links
+      where token_hash = decode(${hashDriveShareToken(input.token)}, 'hex')
+        and revoked_at is null
+        and (expires_at is null or expires_at > now())
+      limit 1
+    `) as unknown as readonly unknown[];
+    if (stillActive.length === 0) {
+      return null;
+    }
+    if (resolved.auditActorId !== null) {
+      await appendDriveActivity(this.sql, {
+        orgId: resolved.orgId,
+        actorId: resolved.auditActorId,
+        verb: "drive.link.downloaded",
+        objectId: resolved.objectId,
+        payload: {},
+      });
+    }
     const entry = mapObjectEntry({
       ...object,
       version_number: versionRows[0]?.version_number ?? null,
@@ -1603,7 +1898,18 @@ export class PostgresDriveStore
       await requireObjectRole(tx, input.orgId, input.actorId, input.objectId, "editor");
       const rows = (await tx`
         update objects
-        set deleted_at = now(), updated_at = now()
+        set
+          deleted_at = now(),
+          trash_expires_at = now() + make_interval(days => coalesce(
+            (
+              select trash_retention_days
+              from drive_lifecycle_policies
+              where org_id = ${input.orgId}
+            ),
+            30
+          )),
+          upload_state = 'trashed',
+          updated_at = now()
         where id = ${input.objectId}
           and org_id = ${input.orgId}
           and kind = 'file'
@@ -1651,7 +1957,9 @@ export class PostgresDriveStore
         input.actorId,
         input.objectId,
         "owner",
+        true,
       );
+      await assertDriveHardDeleteAllowed(tx, input.orgId, input.objectId, object);
       const versionRows = (await tx`
         select storage_key, byte_size from drive_versions
         where object_id = ${input.objectId} and org_id = ${input.orgId}
@@ -1714,6 +2022,102 @@ export class PostgresDriveStore
     return deletedObject;
   }
 
+  async collectOrphans(input: {
+    readonly olderThan: Date;
+    readonly dryRun: boolean;
+    readonly limit?: number;
+  }): Promise<{ readonly candidates: number; readonly collected: number }> {
+    return this.sql.begin(async (tx) => {
+      const rows = (await tx`
+        (
+          select
+            o.id::text as id,
+            o.org_id,
+            o.storage_key,
+            case
+              when o.metadata->>'multipartUploadId' is null then 'single'
+              else 'multipart'
+            end as kind,
+            o.metadata->>'multipartUploadId' as upload_id
+          from objects o
+          where o.kind = 'file'
+            and o.upload_state = 'pending_upload'
+            and o.updated_at < ${input.olderThan}
+          order by o.updated_at
+          limit ${Math.min(Math.max(input.limit ?? 100, 1), 1_000)}
+          for update skip locked
+        )
+        union all
+        (
+          select
+            b.sha256 as id,
+            b.org_id,
+            b.storage_key,
+            'blob'::text as kind,
+            null::text as upload_id
+          from drive_blobs b
+          where b.refcount <= 0
+            and b.updated_at < ${input.olderThan}
+          order by b.updated_at
+          limit ${Math.min(Math.max(input.limit ?? 100, 1), 1_000)}
+          for update skip locked
+        )
+      `) as unknown as readonly {
+        readonly id: string;
+        readonly org_id: string;
+        readonly storage_key: string;
+        readonly kind: "blob" | "multipart" | "single";
+        readonly upload_id: string | null;
+      }[];
+      if (input.dryRun) {
+        return { candidates: rows.length, collected: 0 };
+      }
+      let collected = 0;
+      for (const row of rows) {
+        const storage = await this.storageForOrg(row.org_id);
+        if (storage === undefined) continue;
+        if (row.kind === "multipart") {
+          if (row.upload_id === null || storage.abortMultipartUpload === undefined) continue;
+          await storage.abortMultipartUpload(row.storage_key, row.upload_id);
+          await tx`
+            update objects
+            set
+              upload_state = 'scan_failed',
+              metadata = (metadata - 'multipartUploadId' - 'multipartInitiatedAt')
+                || '{"status":"scan_failed","failureReason":"orphaned_upload"}'::jsonb,
+              updated_at = now()
+            where id = ${row.id}::uuid
+              and org_id = ${row.org_id}
+              and upload_state = 'pending_upload'
+          `;
+        } else if (row.kind === "single") {
+          await storage.delete(row.storage_key);
+          await tx`
+            update objects
+            set
+              upload_state = 'scan_failed',
+              metadata = metadata
+                || '{"status":"scan_failed","failureReason":"orphaned_upload"}'::jsonb,
+              updated_at = now()
+            where id = ${row.id}::uuid
+              and org_id = ${row.org_id}
+              and upload_state = 'pending_upload'
+          `;
+        } else {
+          await storage.delete(row.storage_key);
+          await tx`
+            delete from drive_blobs
+            where org_id = ${row.org_id}
+              and sha256 = ${row.id}
+              and refcount <= 0
+          `;
+        }
+        collected += 1;
+      }
+      return { candidates: rows.length, collected };
+    });
+  }
+
   async search(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -1727,6 +2131,7 @@ export class PostgresDriveStore
       from objects o
       where o.org_id = ${input.orgId}
         and o.kind = 'file'
+        and o.upload_state = 'active'
         and o.deleted_at is null
         and (${input.folderId ?? null}::uuid is null or o.metadata->>'folderId' = ${input.folderId ?? null})
         and (${query} = '' or coalesce(o.metadata->>'name', o.storage_key) ilike ${`%${query}%`} or o.mime_type ilike ${`%${query}%`})
@@ -1744,7 +2149,7 @@ export class PostgresDriveStore
       order by o.updated_at desc
       limit ${input.limit ?? 50}
     `) as unknown as readonly DriveSearchRow[];
-    return rows.map(mapSearchHit);
+    return rows.filter((row) => isDriveFileAvailable(objectUploadState(row))).map(mapSearchHit);
   }
 
   async createComment(input: {
@@ -2092,6 +2497,7 @@ export class PostgresDriveStore
         from objects
         where id = ${fileId}
           and kind = 'file'
+          and upload_state = 'active'
         limit 1
       ),
       folder_path as (
@@ -2114,7 +2520,10 @@ export class PostgresDriveStore
       from target t
       left join actors a on a.id = t.owner_actor_id and a.org_id = t.org_id
     `) as unknown as readonly DriveSearchProjectionRow[];
-    return rows[0] === undefined ? null : mapDriveSearchRecord(rows[0]);
+    const row = rows[0];
+    return row === undefined || !isDriveFileAvailable(objectUploadState(row))
+      ? null
+      : mapDriveSearchRecord(row);
   }
 
   getDriveEnrichmentRecord(fileId: string): Promise<DriveSearchRecord | null> {
@@ -2321,7 +2730,14 @@ export class PostgresDriveStore
     readonly restore: boolean;
   }): Promise<DriveEntryRecord | null> {
     return this.sql.begin(async (tx) => {
-      await requireObjectRole(tx, input.orgId, input.actorId, input.objectId, "editor");
+      await requireObjectRole(
+        tx,
+        input.orgId,
+        input.actorId,
+        input.objectId,
+        "editor",
+        input.restore,
+      );
       if (input.folderId !== undefined && input.folderId !== null) {
         await requireFolderAccess(tx, input.orgId, input.actorId, input.folderId);
       }
@@ -2330,6 +2746,11 @@ export class PostgresDriveStore
         update objects
         set
           deleted_at = ${input.restore ? null : current.deleted_at},
+          trash_expires_at = case
+            when ${input.restore} then null
+            else trash_expires_at
+          end,
+          upload_state = ${input.restore ? "active" : objectUploadState(current)},
           metadata = ${tx.json(
             toSqlJson({
               ...current.metadata,
@@ -2393,7 +2814,10 @@ async function assertStorageQuotaAvailable(
             where obj.org_id = ${orgId}
               and obj.kind in ('file', 'recording')
               and obj.deleted_at is null
-              and coalesce(obj.metadata->>'status', 'ready') = 'ready'
+              and (
+                coalesce(obj.metadata->>'status', 'ready') = 'ready'
+                or obj.upload_state = 'pending_upload'
+              )
             union all
             select v.storage_key, v.byte_size, 1 as source_rank
             from drive_versions v
@@ -2439,11 +2863,61 @@ async function assertStorageQuotaAvailable(
   }
 }
 
+async function assertDriveHardDeleteAllowed(
+  sql: SqlLike,
+  orgId: string,
+  objectId: string,
+  object: ObjectRow,
+): Promise<void> {
+  const rows = (await sql`
+    select
+      (
+        select count(*)::int
+        from permissions
+        where org_id = ${orgId}
+          and resource_type = 'object'
+          and resource_id = ${objectId}
+          and (expires_at is null or expires_at > now())
+      ) + (
+        select count(*)::int
+        from drive_share_links
+        where org_id = ${orgId}
+          and object_id = ${objectId}
+          and revoked_at is null
+          and (expires_at is null or expires_at > now())
+      ) as active_share_count,
+      (
+        select count(*)::int
+        from drive_scan_jobs
+        where org_id = ${orgId}
+          and object_id = ${objectId}
+          and status in ('pending', 'leased')
+      ) as pending_job_count
+  `) as unknown as readonly {
+    readonly active_share_count: number | string;
+    readonly pending_job_count: number | string;
+  }[];
+  const blockers = driveHardDeleteBlockers(
+    {
+      trashedAt: object.deleted_at,
+      trashExpiresAt: object.trash_expires_at ?? null,
+      legalHold: object.drive_legal_hold === true,
+      activeShareCount: Number(rows[0]?.active_share_count ?? 0),
+      pendingJobCount: Number(rows[0]?.pending_job_count ?? 0),
+    },
+    new Date(),
+  );
+  if (blockers.length > 0) {
+    throw new DriveConflictError(`Drive hard delete blocked: ${blockers.join(", ")}.`);
+  }
+}
+
 async function requireObjectAccess(
   sql: SqlLike,
   orgId: string,
   actorId: string,
   objectId: string,
+  allowTrashed = false,
 ): Promise<ObjectRow> {
   // Drive surfaces 'file' (uploaded files / app-created docs) and
   // 'recording' (meet recordings). Both go through the same /content
@@ -2455,14 +2929,69 @@ async function requireObjectAccess(
     where id = ${objectId}
       and org_id = ${orgId}
       and kind in ('file', 'recording')
+      and (upload_state = 'active' or (${allowTrashed} and upload_state = 'trashed'))
       and ${canReadObjectSql(sql, orgId, actorId)}
     limit 1
   `) as unknown as readonly ObjectRow[];
   const object = rows[0];
-  if (object === undefined) {
+  const state = object === undefined ? undefined : objectUploadState(object);
+  if (
+    object === undefined ||
+    (state !== undefined && !isDriveFileAvailable(state) && !(allowTrashed && state === "trashed"))
+  ) {
     throw new DriveNotFoundError(`Unknown or inaccessible Drive object: ${objectId}`);
   }
   return object;
+}
+
+async function requireUploadOwnerAccess(
+  sql: SqlLike,
+  orgId: string,
+  actorId: string,
+  objectId: string,
+  lock = false,
+): Promise<ObjectRow> {
+  const rows = lock
+    ? ((await sql`
+        select *
+        from objects
+        where id = ${objectId}
+          and org_id = ${orgId}
+          and kind in ('file')
+          and owner_actor_id = ${actorId}
+        limit 1
+        for update
+      `) as unknown as readonly ObjectRow[])
+    : ((await sql`
+        select *
+        from objects
+        where id = ${objectId}
+          and org_id = ${orgId}
+          and kind in ('file')
+          and owner_actor_id = ${actorId}
+        limit 1
+      `) as unknown as readonly ObjectRow[]);
+  const object = rows[0];
+  if (object === undefined) {
+    throw new DriveNotFoundError(`Unknown or inaccessible Drive upload: ${objectId}`);
+  }
+  return object;
+}
+
+async function latestDriveVersion(
+  sql: SqlLike,
+  orgId: string,
+  objectId: string,
+): Promise<DriveVersionRow | null> {
+  const rows = (await sql`
+    select *
+    from drive_versions
+    where org_id = ${orgId}
+      and object_id = ${objectId}
+    order by version_number desc
+    limit 1
+  `) as unknown as readonly DriveVersionRow[];
+  return rows[0] ?? null;
 }
 
 /**
@@ -2476,8 +3005,9 @@ async function requireObjectRole(
   actorId: string,
   objectId: string,
   minRole: DriveRole,
+  allowTrashed = false,
 ): Promise<ObjectRow> {
-  const object = await requireObjectAccess(sql, orgId, actorId, objectId);
+  const object = await requireObjectAccess(sql, orgId, actorId, objectId, allowTrashed);
   if (object.owner_actor_id === actorId) return object;
   const rows = (await sql`
     select role
@@ -2707,7 +3237,7 @@ async function grantFolderAccess(
   `;
 }
 
-async function appendDriveActivity(
+export async function appendDriveActivity(
   sql: SqlLike,
   input: {
     readonly orgId: string;
@@ -2854,11 +3384,25 @@ function mapUpload(
     mimeType: row.mime_type,
     byteSize: row.byte_size,
     sha256: row.sha256,
-    status: stringMetadata(metadata, "status") ?? "ready",
+    status: objectUploadState(row),
     metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function objectUploadState(row: ObjectRow): DriveUploadState {
+  if (isDriveUploadState(row.upload_state)) {
+    return row.upload_state;
+  }
+  const legacy = stringMetadata(row.metadata, "status");
+  if (legacy === "pending_upload") return "pending_upload";
+  if (legacy === "uploaded") return "uploaded";
+  if (legacy === "scanning") return "scanning";
+  if (legacy === "infected" || legacy === "quarantined") return "quarantined";
+  if (legacy === "scan_failed") return "scan_failed";
+  if (row.deleted_at !== null) return "trashed";
+  return "active";
 }
 
 function mapVersion(row: DriveVersionRow | undefined): DriveVersionRecord {
@@ -2879,6 +3423,10 @@ function mapShareLink(row: DriveShareLinkRow): DriveShareLinkRecord {
     createdByActorId: row.created_by_actor_id,
     createdAt: row.created_at,
     revokedAt: row.revoked_at,
+    maxDownloads: row.max_downloads,
+    downloadCount: row.download_count,
+    rateLimitPerHour: row.rate_limit_per_hour,
+    lastUsedAt: row.last_used_at,
   };
 }
 
@@ -3048,14 +3596,83 @@ function driveObjectMetadata(value: JsonObject): JsonObject {
 }
 
 function finalizedStorageDelta(current: ObjectRow, storageKey: string, byteSize: number): number {
-  const status = stringMetadata(current.metadata, "status");
-  if (status !== "ready") {
+  if (!isDriveFileAvailable(objectUploadState(current))) {
     return byteSize;
   }
   if (storageKey === current.storage_key) {
     return byteSize - current.byte_size;
   }
   return byteSize;
+}
+
+function declaredUploadByteSize(current: ObjectRow): number | null {
+  if (current.upload_declared_byte_size === null) {
+    return null;
+  }
+  if (current.upload_declared_byte_size !== undefined) {
+    return bytesFromDatabase(current.upload_declared_byte_size);
+  }
+  return current.byte_size;
+}
+
+function assertInlineUploadMatches(
+  content: Uint8Array,
+  expectedByteSize: number,
+  expectedSha256: string,
+): void {
+  if (content.byteLength !== expectedByteSize) {
+    throw new DriveConflictError(
+      `Drive upload has ${String(content.byteLength)} bytes; expected ${String(expectedByteSize)}.`,
+    );
+  }
+  const actualSha256 = createHash("sha256").update(content).digest("hex");
+  if (actualSha256 !== expectedSha256) {
+    throw new DriveConflictError("Drive upload SHA-256 does not match stored content.");
+  }
+}
+
+async function verifyStoredDriveObject(
+  storage: DriveStorageClient,
+  storageKey: string,
+  expectedByteSize: number,
+  expectedSha256: string,
+): Promise<{ readonly prefix: Uint8Array }> {
+  const object = await storage.get(storageKey);
+  if (object === null) {
+    throw new DriveConflictError("Drive upload object does not exist in storage.");
+  }
+  const hash = createHash("sha256");
+  const prefix = new Uint8Array(Math.min(expectedByteSize, 512));
+  let prefixLength = 0;
+  let byteSize = 0;
+  const chunks =
+    object.body instanceof Uint8Array ? ([object.body] as readonly Uint8Array[]) : object.body;
+  for await (const chunk of chunks) {
+    if (!(chunk instanceof Uint8Array)) {
+      throw new DriveConflictError("Drive storage returned an invalid byte stream.");
+    }
+    byteSize += chunk.byteLength;
+    if (byteSize > expectedByteSize) {
+      throw new DriveConflictError(
+        `Drive upload exceeds its declared size of ${String(expectedByteSize)} bytes.`,
+      );
+    }
+    hash.update(chunk);
+    if (prefixLength < prefix.byteLength) {
+      const length = Math.min(chunk.byteLength, prefix.byteLength - prefixLength);
+      prefix.set(chunk.subarray(0, length), prefixLength);
+      prefixLength += length;
+    }
+  }
+  if (byteSize !== expectedByteSize) {
+    throw new DriveConflictError(
+      `Drive upload has ${String(byteSize)} stored bytes; expected ${String(expectedByteSize)}.`,
+    );
+  }
+  if (hash.digest("hex") !== expectedSha256) {
+    throw new DriveConflictError("Drive upload SHA-256 does not match stored content.");
+  }
+  return { prefix: prefix.subarray(0, prefixLength) };
 }
 
 function storageLimitFromJson(value: JsonValue | null): number | null {

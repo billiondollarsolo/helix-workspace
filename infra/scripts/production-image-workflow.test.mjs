@@ -189,6 +189,10 @@ describe("production image supply-chain workflow", () => {
     expect(source.match(/steps\.build-web\.outcome == 'success'/gu)).toHaveLength(2);
   });
 
+  it("reruns image security when production deployment pruning changes", () => {
+    expect(source.match(/"infra\/scripts\/prune-production-deploy\.mjs"/gu)).toHaveLength(2);
+  });
+
   it("builds or pulls, scans, and retains an SBOM for the exact production dependency inventory", () => {
     const inventory = [...source.matchAll(/^\s+- inventory_name: (\S+)$/gmu)].map(
       (match) => match[1],

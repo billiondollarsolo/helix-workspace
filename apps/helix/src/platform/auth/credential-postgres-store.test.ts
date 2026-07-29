@@ -59,6 +59,7 @@ describe("PostgresAgentCredentialStore", () => {
     expect(credential?.policy.confirmationOverride).toBe("always");
     expect(credential?.policy.rateLimitOverrides).toEqual({ requestsPerMinute: 5 });
     expect(recording.calls[0]?.text).toContain("credential_type = 'api_key'");
+    expect(recording.calls[0]?.text).toContain("a.disabled_at is null");
     expect(recording.calls[0]?.values).toContain(hashApiKey("helix_ak_test"));
   });
 
@@ -93,6 +94,7 @@ describe("PostgresAgentCredentialStore", () => {
     expect(credential?.policy.ipAllowlist).toEqual([]);
     expect(credential?.policy.confirmationOverride).toBe("inherit");
     expect(recording.calls[0]?.text).toContain("credential_type = 'mtls_cert'");
+    expect(recording.calls[0]?.text).toContain("a.disabled_at is null");
   });
 
   it("resolves a revoked OAuth credential so issued tokens can be denied immediately", async () => {
@@ -128,6 +130,16 @@ describe("PostgresAgentCredentialStore", () => {
     });
     expect(recording.calls[0]?.text).toContain("credential_type = 'oauth_client'");
     expect(recording.calls[0]?.text).not.toContain("revoked_at is null");
+    expect(recording.calls[0]?.text).toContain("a.disabled_at is null");
+  });
+
+  it("requires an active actor when resolving a queued credential by id", async () => {
+    const recording = createRecordingSql([[]]);
+    const store = new PostgresAgentCredentialStore(recording.sql);
+
+    await expect(store.findById("cred-pending")).resolves.toBeNull();
+    expect(recording.calls[0]?.text).toContain("where c.id =");
+    expect(recording.calls[0]?.text).toContain("a.disabled_at is null");
   });
 
   it("returns null when no credential matches", async () => {

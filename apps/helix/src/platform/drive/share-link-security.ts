@@ -1,18 +1,23 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 
 const passwordKeyBytes = 32;
+const deriveScrypt = promisify(scrypt);
 
 export function hashDriveShareToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
-export function hashDriveSharePassword(password: string): string {
+export async function hashDriveSharePassword(password: string): Promise<string> {
   const salt = randomBytes(16);
-  const derived = scryptSync(password, salt, passwordKeyBytes);
+  const derived = (await deriveScrypt(password, salt, passwordKeyBytes)) as Buffer;
   return `scrypt:${salt.toString("base64url")}:${derived.toString("base64url")}`;
 }
 
-export function verifyDriveSharePassword(password: string, encoded: string): boolean {
+export async function verifyDriveSharePassword(
+  password: string,
+  encoded: string,
+): Promise<boolean> {
   const [algorithm, saltText, digestText] = encoded.split(":");
   if (algorithm !== "scrypt" || saltText === undefined || digestText === undefined) {
     return false;
@@ -20,7 +25,7 @@ export function verifyDriveSharePassword(password: string, encoded: string): boo
   try {
     const salt = Buffer.from(saltText, "base64url");
     const expected = Buffer.from(digestText, "base64url");
-    const actual = scryptSync(password, salt, expected.byteLength);
+    const actual = (await deriveScrypt(password, salt, expected.byteLength)) as Buffer;
     return expected.byteLength === actual.byteLength && timingSafeEqual(expected, actual);
   } catch {
     return false;

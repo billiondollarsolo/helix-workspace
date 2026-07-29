@@ -155,6 +155,26 @@ export async function registerReceivingDomainAdminRoutes(
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid receiving-domain id."));
     }
+    const current = await store.getDomain(actor.orgId, params.data.id);
+    if (current === null) {
+      return reply.code(404).send(notFound("Receiving domain not found."));
+    }
+    if (current.status !== "active") {
+      let owned: boolean;
+      try {
+        owned = await ownershipVerifier.verify(current);
+      } catch {
+        return reply.code(503).send({
+          error: "Domain ownership verification is temporarily unavailable.",
+          code: "service_unavailable",
+        });
+      }
+      if (!owned) {
+        return reply
+          .code(409)
+          .send(conflict("A current domain ownership TXT challenge is required to enable mail."));
+      }
+    }
     try {
       const domain = await store.enableDomain(actor.orgId, params.data.id);
       if (domain === null) {

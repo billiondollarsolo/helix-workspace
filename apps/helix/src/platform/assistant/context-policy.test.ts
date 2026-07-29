@@ -69,6 +69,25 @@ describe("Assistant untrusted context policy", () => {
     expect(sanitized).not.toContain("localhost");
   });
 
+  it("preserves malformed or out-of-range numeric entities without throwing", () => {
+    expect(() =>
+      sanitizeUntrustedText(
+        "oversized &#999999999999; hex &#xFFFFFFFFFFFF; surrogate &#xD800;",
+        1_000,
+      ),
+    ).not.toThrow();
+    expect(
+      sanitizeUntrustedText(
+        "oversized &#999999999999; hex &#xFFFFFFFFFFFF; surrogate &#xD800;",
+        1_000,
+      ),
+    ).toBe("oversized &#999999999999; hex &#xFFFFFFFFFFFF; surrogate &#xD800;");
+  });
+
+  it("continues decoding valid decimal and hexadecimal numeric entities", () => {
+    expect(sanitizeUntrustedText("&#73;&#x67;nore", 1_000)).toBe("Ignore");
+  });
+
   it("caps per-source and total retrieved context", () => {
     const body = "x".repeat(assistantContextLimits.sourceCharacters * 2);
     const prepared = prepareSearchContext(

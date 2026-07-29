@@ -1,8 +1,9 @@
 import type { JsonObject, MeteringClient, MeteringEvent, TraceContext } from "@helix/sdk";
 import type postgres from "postgres";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ActorQuotaExceededError,
+  BetterAuthVerifiedEmailRequiredError,
   createBetterAuthPlatformModule,
   createBetterAuthSessionActorResolver,
   PostgresBetterAuthActorStore,
@@ -361,6 +362,83 @@ describe("PostgresBetterAuthActorStore", () => {
     ]);
     expect(JSON.stringify(metering)).not.toContain("created@example.com");
     expect(JSON.stringify(metering)).not.toContain("Created User");
+  });
+
+  it("does not link an unverified email identity to an existing actor", async () => {
+    const linkBetterAuthUser = vi.fn();
+    const existing = {
+      id: "actor-existing",
+      orgId: "22222222-2222-4222-8222-222222222222",
+      type: "user" as const,
+      email: "victim@example.com",
+      displayName: "Victim",
+      scopes: ["admin.config.write"],
+      metadata: {},
+    };
+    const module = createBetterAuthPlatformModule({
+      actorStore: {
+        async findUserActorByBetterAuthId() {
+          return null;
+        },
+        async findUserActorByEmail() {
+          return existing;
+        },
+        async createUserActor() {
+          throw new Error("must not create when an existing email is found");
+        },
+        linkBetterAuthUser,
+      },
+      defaultOrgId: existing.orgId,
+    });
+
+    await expect(
+      module.resolveUserActor({
+        id: "unverified-auth-user",
+        email: "victim@example.com",
+        emailVerified: false,
+      }),
+    ).rejects.toBeInstanceOf(BetterAuthVerifiedEmailRequiredError);
+    expect(linkBetterAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("preserves verified-email linking to an existing actor", async () => {
+    const existing = {
+      id: "actor-existing",
+      orgId: "22222222-2222-4222-8222-222222222222",
+      type: "user" as const,
+      email: "victim@example.com",
+      displayName: "Victim",
+      scopes: ["mail.read"],
+      metadata: {},
+    };
+    const linkBetterAuthUser = vi.fn().mockResolvedValue({
+      ...existing,
+      metadata: { betterAuth: { userId: "verified-auth-user", emailVerified: true } },
+    });
+    const module = createBetterAuthPlatformModule({
+      actorStore: {
+        async findUserActorByBetterAuthId() {
+          return null;
+        },
+        async findUserActorByEmail() {
+          return existing;
+        },
+        async createUserActor() {
+          throw new Error("must not create when an existing email is found");
+        },
+        linkBetterAuthUser,
+      },
+      defaultOrgId: existing.orgId,
+    });
+
+    await expect(
+      module.resolveUserActor({
+        id: "verified-auth-user",
+        email: "victim@example.com",
+        emailVerified: true,
+      }),
+    ).resolves.toMatchObject({ actor: { id: existing.id, scopes: ["mail.read"] } });
+    expect(linkBetterAuthUser).toHaveBeenCalledTimes(1);
   });
 });
 

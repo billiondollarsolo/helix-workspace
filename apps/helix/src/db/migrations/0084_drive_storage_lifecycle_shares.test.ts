@@ -20,6 +20,9 @@ describe("0084 Drive storage lifecycle and shares", () => {
     expect(migration).toContain("drive_lifecycle_policies");
     expect(migration).toContain("drive_legal_hold");
     expect(migration).toContain("trash_expires_at");
+    expect(migration).toContain("using (org_id = helix_current_org_id())");
+    expect(migration).toContain("with check (org_id = helix_current_org_id())");
+    expect(migration).not.toContain("app.current_org_id");
     expect(rollback).toContain("raw drive share tokens were irreversibly removed");
   });
 });

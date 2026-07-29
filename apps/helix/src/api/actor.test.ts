@@ -219,67 +219,70 @@ describe("resolveCredentialAuthenticatedPrincipal", () => {
     expect(result).toMatchObject({ ok: false, statusCode: 401, code: "invalid_certificate" });
   });
 
-  it("re-evaluates an OAuth credential after access-token issuance", async () => {
-    const credential = agentCredential({
-      credentialType: "oauth_client",
-      clientId: "client-1",
-      policy: {
-        ...EMPTY_CREDENTIAL_POLICY,
-        confirmationOverride: "always",
-        rateLimitOverrides: { requestsPerMinute: 1 },
-      },
-    });
-    let active = true;
-    const store = storeWith([credential]);
-    const credentialStore: AgentCredentialStore = {
-      ...store,
-      async findByClientId(clientId) {
-        return active && clientId === "client-1" ? credential : null;
-      },
-    };
-    const tokenStore = {
-      async saveToken() {},
-      async findToken() {
-        return {
-          token: "token-1",
-          clientId: "client-1",
-          actorId: "agent-7",
-          orgId: "org-1",
-          actorType: "agent" as const,
-          scopes: ["mail.read"],
-          issuedAt: new Date("2026-07-28T00:00:00.000Z"),
-          expiresAt: new Date("2026-07-28T01:00:00.000Z"),
-        };
-      },
-    };
-    const request = requestWith({ authorization: "Bearer token-1" }, {});
-
-    const resolved = await toolInvocationPrincipalFromRequest(
-      request,
-      tokenStore,
-      undefined,
-      credentialStore,
-    );
-    expect(resolved).toMatchObject({
-      ok: true,
-      principal: {
-        credentialId: "cred-1",
-        credentialPolicy: {
+  it.each(["agent", "user", "service_account"] as const)(
+    "re-evaluates an OAuth credential after access-token issuance for %s actors",
+    async (actorType) => {
+      const credential = agentCredential({
+        credentialType: "oauth_client",
+        clientId: "client-1",
+        policy: {
+          ...EMPTY_CREDENTIAL_POLICY,
           confirmationOverride: "always",
           rateLimitOverrides: { requestsPerMinute: 1 },
         },
-      },
-    });
+      });
+      let active = true;
+      const store = storeWith([credential]);
+      const credentialStore: AgentCredentialStore = {
+        ...store,
+        async findByClientId(clientId) {
+          return active && clientId === "client-1" ? credential : null;
+        },
+      };
+      const tokenStore = {
+        async saveToken() {},
+        async findToken() {
+          return {
+            token: "token-1",
+            clientId: "client-1",
+            actorId: "agent-7",
+            orgId: "org-1",
+            actorType,
+            scopes: ["mail.read"],
+            issuedAt: new Date("2026-07-28T00:00:00.000Z"),
+            expiresAt: new Date("2026-07-28T01:00:00.000Z"),
+          };
+        },
+      };
+      const request = requestWith({ authorization: "Bearer token-1" }, {});
 
-    active = false;
-    await expect(
-      toolInvocationPrincipalFromRequest(request, tokenStore, undefined, credentialStore),
-    ).resolves.toMatchObject({
-      ok: false,
-      statusCode: 403,
-      code: "credential_revoked",
-    });
-  });
+      const resolved = await toolInvocationPrincipalFromRequest(
+        request,
+        tokenStore,
+        undefined,
+        credentialStore,
+      );
+      expect(resolved).toMatchObject({
+        ok: true,
+        principal: {
+          credentialId: "cred-1",
+          credentialPolicy: {
+            confirmationOverride: "always",
+            rateLimitOverrides: { requestsPerMinute: 1 },
+          },
+        },
+      });
+
+      active = false;
+      await expect(
+        toolInvocationPrincipalFromRequest(request, tokenStore, undefined, credentialStore),
+      ).resolves.toMatchObject({
+        ok: false,
+        statusCode: 403,
+        code: "credential_revoked",
+      });
+    },
+  );
 });
 
 function requestWith(

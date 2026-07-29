@@ -39,6 +39,16 @@ export interface RegisterMailProviderWebhookRoutesOptions {
     readonly providerId: string;
   }) => void;
   readonly alertMonitor?: MailDeliveryAlertMonitor;
+  readonly maxBodyBytes?: number;
+}
+
+export class ProviderWebhookBodyTooLargeError extends Error {
+  readonly statusCode = 413;
+
+  constructor(readonly maxBodyBytes: number) {
+    super(`Provider webhook body exceeds the ${String(maxBodyBytes)} byte limit.`);
+    this.name = "ProviderWebhookBodyTooLargeError";
+  }
 }
 
 /**
@@ -55,7 +65,10 @@ export async function registerMailProviderWebhookRoutes(
       done(null, payload);
       return;
     }
-    void readPayload(payload)
+    void readBoundedPayload(
+      payload,
+      options.maxBodyBytes ?? app.initialConfig.bodyLimit ?? 1024 * 1024,
+    )
       .then((rawBody) => {
         rawProviderWebhookBodies.set(request, rawBody);
         const replay = Readable.from(rawBody);
@@ -197,12 +210,19 @@ function canWriteMailEvents(actor: Actor): boolean {
   return canWriteAdminConsole(actor) || (actor.scopes ?? []).includes("mail.admin");
 }
 
-async function readPayload(payload: Readable): Promise<Buffer> {
+export async function readBoundedPayload(payload: Readable, maxBodyBytes: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
+  let receivedBytes = 0;
   for await (const chunk of payload as AsyncIterable<Buffer | string | Uint8Array>) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    receivedBytes += buffer.length;
+    if (receivedBytes > maxBodyBytes) {
+      payload.destroy();
+      throw new ProviderWebhookBodyTooLargeError(maxBodyBytes);
+    }
+    chunks.push(buffer);
   }
-  return Buffer.concat(chunks);
+  return Buffer.concat(chunks, receivedBytes);
 }
 
 function bodyToBuffer(value: unknown): Buffer {

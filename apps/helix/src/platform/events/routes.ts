@@ -80,6 +80,10 @@ export async function handleEventSocket(
     socket.close(1008, "Authentication required");
     return;
   }
+  if (canMatchChatSubject(subject)) {
+    socket.close(1008, "Chat events require the room-authorized Chat WebSocket");
+    return;
+  }
 
   if (options.bus === undefined) {
     socket.close(1013, "Event bus unavailable");
@@ -124,6 +128,16 @@ function parseSubject(query: unknown): string | null {
 
 function isUnauthenticated(actor: Actor): boolean {
   return actor.id === unauthenticatedActor.id && actor.orgId === unauthenticatedActor.orgId;
+}
+
+/**
+ * The generic event stream has no room-membership context. Chat payloads must
+ * only flow through the dedicated Chat WebSocket, which checks tenant and room
+ * membership both when the connection opens and before each delivery.
+ */
+function canMatchChatSubject(subject: string): boolean {
+  const root = subject.split(".")[0];
+  return root === "chat" || root === "*" || root === ">";
 }
 
 function sendEvent(socket: EventSocket, event: EventEnvelope): void {

@@ -244,6 +244,7 @@ describe("PostgresDriveStore metering", () => {
     expect(recording.calls[0]?.text).toContain("o.quotas ? 'storage_bytes_limit'");
     expect(recording.calls[0]?.text).toContain("p.quotas_default ? 'storage_bytes_limit'");
     expect(recording.calls[0]?.text).toContain("for update of o");
+    expect(recording.calls[0]?.text).toContain("or obj.upload_state = 'pending_upload'");
     expect(recording.calls[0]?.text).not.toContain("insert into objects");
     expect(metering.records).toHaveLength(0);
     expect(events.records).toEqual([
@@ -505,6 +506,36 @@ describe("PostgresDriveStore metering", () => {
     await expect(store.delete({ orgId, actorId, objectId })).resolves.toBe(false);
 
     expect(metering.records).toHaveLength(0);
+  });
+
+  it("deletes and marks an abandoned single-part upload", async () => {
+    const storage = new RecordingStorageClient();
+    const storageKey = `drive/${orgId}/${objectId}/v1/abandoned.bin`;
+    const recording = createRecordingSql([
+      [
+        {
+          id: objectId,
+          org_id: orgId,
+          storage_key: storageKey,
+          kind: "single",
+          upload_id: null,
+        },
+      ],
+      [],
+    ]);
+    const store = new PostgresDriveStore(recording.sql, storage);
+
+    await expect(
+      store.collectOrphans({
+        olderThan: new Date("2026-05-23T00:00:00.000Z"),
+        dryRun: false,
+      }),
+    ).resolves.toEqual({ candidates: 1, collected: 1 });
+
+    expect(storage.calls).toEqual([`delete:${storageKey}`]);
+    expect(recording.calls[0]?.text).toContain("then 'single'");
+    expect(recording.calls[0]?.text).not.toContain("o.metadata->>'multipartUploadId' is not null");
+    expect(recording.calls[1]?.text).toContain('"failureReason":"orphaned_upload"');
   });
 });
 

@@ -162,7 +162,7 @@ export async function toolInvocationPrincipalFromRequest(
     const accessToken = await tokenStore.findToken(token);
     if (accessToken !== null) {
       const actor = actorFromAccessToken(accessToken);
-      if (actor.type === "agent" && credentialStore?.findByClientId !== undefined) {
+      if (credentialStore?.findByClientId !== undefined) {
         const credential = await credentialStore.findByClientId(accessToken.clientId);
         if (
           credential === null ||

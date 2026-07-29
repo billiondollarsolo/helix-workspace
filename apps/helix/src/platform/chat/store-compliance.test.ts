@@ -20,8 +20,13 @@ describe("Postgres Chat compliance invariants", () => {
     const source = await readFile(storeUrl, "utf8");
     expect(source).toContain("await lockChatCompliance(tx, input.orgId)");
     expect(source).toContain("await lockChatCompliance(sql, message.orgId)");
-    expect(source).toContain("not coalesce(");
-    expect(source).toContain("legal_hold from chat_retention_policies");
+    expect(source).toContain("coalesce(room_policy.legal_hold, false)");
+    expect(source).toContain("or coalesce(org_policy.legal_hold, false)");
+    expect(source).toContain(
+      "(select legal_hold from chat_retention_policies\n" +
+        "               where org_id = m.org_id and thread_id is null)",
+    );
+    expect(source).not.toContain("coalesce(room_policy.legal_hold, org_policy.legal_hold, false)");
   });
 
   it("keeps exports tenant-scoped and deleted content null", async () => {

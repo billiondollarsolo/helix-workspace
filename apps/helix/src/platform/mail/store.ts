@@ -931,6 +931,29 @@ export class PostgresMailStore
       where m.org_id = ${input.orgId}
         and m.kind = 'mail'
         and m.deleted_at is null
+        and (
+          exists (
+            select 1 from messages visible_message
+            where visible_message.thread_id = t.id
+              and visible_message.org_id = ${input.orgId}
+              and visible_message.kind = 'mail'
+              and visible_message.actor_id = ${input.actorId}
+          )
+          or exists (
+            select 1
+            from messages recipient_message
+            join mail_inbound_deliveries visible_delivery
+              on visible_delivery.message_id = recipient_message.id
+              and visible_delivery.org_id = ${input.orgId}
+            join mail_inbound_recipients visible_recipient
+              on visible_recipient.delivery_id = visible_delivery.id
+              and visible_recipient.org_id = ${input.orgId}
+              and visible_recipient.actor_id = ${input.actorId}
+            where recipient_message.thread_id = t.id
+              and recipient_message.org_id = ${input.orgId}
+              and recipient_message.kind = 'mail'
+          )
+        )
         and coalesce(mts.deleted_at, t.archived_at) is null
         and (mts.snoozed_until is null or mts.snoozed_until <= now())
         and (${input.query ?? ""} = '' or t.subject ilike ${`%${input.query ?? ""}%`} or m.body ilike ${`%${input.query ?? ""}%`})
@@ -1060,6 +1083,29 @@ export class PostgresMailStore
       where t.org_id = ${input.orgId}
         and t.kind = 'mail'
         and t.id = ${input.threadId}
+        and (
+          exists (
+            select 1 from messages visible_message
+            where visible_message.thread_id = t.id
+              and visible_message.org_id = ${input.orgId}
+              and visible_message.kind = 'mail'
+              and visible_message.actor_id = ${input.actorId}
+          )
+          or exists (
+            select 1
+            from messages recipient_message
+            join mail_inbound_deliveries visible_delivery
+              on visible_delivery.message_id = recipient_message.id
+              and visible_delivery.org_id = ${input.orgId}
+            join mail_inbound_recipients visible_recipient
+              on visible_recipient.delivery_id = visible_delivery.id
+              and visible_recipient.org_id = ${input.orgId}
+              and visible_recipient.actor_id = ${input.actorId}
+            where recipient_message.thread_id = t.id
+              and recipient_message.org_id = ${input.orgId}
+              and recipient_message.kind = 'mail'
+          )
+        )
         and m.kind = 'mail'
         and m.deleted_at is null
         and coalesce(mts.deleted_at, t.archived_at) is null
@@ -1143,6 +1189,29 @@ export class PostgresMailStore
           and m.kind = 'mail'
           and m.deleted_at is null
           and t.kind = 'mail'
+          and (
+            exists (
+              select 1 from messages visible_message
+              where visible_message.thread_id = t.id
+                and visible_message.org_id = ${input.orgId}
+                and visible_message.kind = 'mail'
+                and visible_message.actor_id = ${input.actorId}
+            )
+            or exists (
+              select 1
+              from messages recipient_message
+              join mail_inbound_deliveries visible_delivery
+                on visible_delivery.message_id = recipient_message.id
+                and visible_delivery.org_id = ${input.orgId}
+              join mail_inbound_recipients visible_recipient
+                on visible_recipient.delivery_id = visible_delivery.id
+                and visible_recipient.org_id = ${input.orgId}
+                and visible_recipient.actor_id = ${input.actorId}
+              where recipient_message.thread_id = t.id
+                and recipient_message.org_id = ${input.orgId}
+                and recipient_message.kind = 'mail'
+            )
+          )
         order by m.thread_id, m.sent_at desc, m.id desc
       ),
       filtered as (
@@ -1220,6 +1289,29 @@ export class PostgresMailStore
           and m.kind = 'mail'
           and m.deleted_at is null
           and t.kind = 'mail'
+          and (
+            exists (
+              select 1 from messages visible_message
+              where visible_message.thread_id = t.id
+                and visible_message.org_id = ${input.orgId}
+                and visible_message.kind = 'mail'
+                and visible_message.actor_id = ${input.actorId}
+            )
+            or exists (
+              select 1
+              from messages recipient_message
+              join mail_inbound_deliveries visible_delivery
+                on visible_delivery.message_id = recipient_message.id
+                and visible_delivery.org_id = ${input.orgId}
+              join mail_inbound_recipients visible_recipient
+                on visible_recipient.delivery_id = visible_delivery.id
+                and visible_recipient.org_id = ${input.orgId}
+                and visible_recipient.actor_id = ${input.actorId}
+              where recipient_message.thread_id = t.id
+                and recipient_message.org_id = ${input.orgId}
+                and recipient_message.kind = 'mail'
+            )
+          )
         order by m.thread_id, m.sent_at desc, m.id desc
       )
       select count(*)::int as total from latest
@@ -1294,6 +1386,29 @@ export class PostgresMailStore
           and m.kind = 'mail'
           and m.deleted_at is null
           and t.kind = 'mail'
+          and (
+            exists (
+              select 1 from messages visible_message
+              where visible_message.thread_id = t.id
+                and visible_message.org_id = ${input.orgId}
+                and visible_message.kind = 'mail'
+                and visible_message.actor_id = ${input.actorId}
+            )
+            or exists (
+              select 1
+              from messages recipient_message
+              join mail_inbound_deliveries visible_delivery
+                on visible_delivery.message_id = recipient_message.id
+                and visible_delivery.org_id = ${input.orgId}
+              join mail_inbound_recipients visible_recipient
+                on visible_recipient.delivery_id = visible_delivery.id
+                and visible_recipient.org_id = ${input.orgId}
+                and visible_recipient.actor_id = ${input.actorId}
+              where recipient_message.thread_id = t.id
+                and recipient_message.org_id = ${input.orgId}
+                and recipient_message.kind = 'mail'
+            )
+          )
         order by m.thread_id, m.sent_at desc, m.id desc
       ),
       classified as (

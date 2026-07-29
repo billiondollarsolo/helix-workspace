@@ -76,6 +76,16 @@ Three encryption options, selected per tier:
 
 `age` and KMS encryption are mutually exclusive. Business+ backups fail closed if neither is configured.
 
+Every manifest is also authenticated with HMAC-SHA256. Inject an independent
+32-byte-or-longer `HELIX_BACKUP_MANIFEST_HMAC_KEY` into both backup and restore
+operators and set `HELIX_BACKUP_MANIFEST_HMAC_KEY_REF` to its non-secret
+Vault/KMS reference. Never store the HMAC key in the archive, manifest, object
+bucket, sidecar, repository, or general application environment. The recovery
+digest binds the tier, encryption/key-custody claims, retention and off-host
+policy, database/object modes, versioning/replication observations, capture
+times, and artifact inventory; the independent HMAC prevents a compromised
+backup destination from rewriting those claims and recomputing the digest.
+
 ## Create a Backup
 
 Dry-run:
@@ -94,6 +104,8 @@ Execute an encrypted Tier 2 PITR backup with an object-store copy:
 
 ```sh
 AGE_RECIPIENTS="age1..." \
+HELIX_BACKUP_MANIFEST_HMAC_KEY="<injected-from-protected-secret-store>" \
+HELIX_BACKUP_MANIFEST_HMAC_KEY_REF=vault://production/helix-backup-manifest-hmac \
 HELIX_BACKUP_RUSTFS_BUCKET=helix-objects \
   infra/scripts/backup.sh --tier business --pitr --object-backup --execute
 ```

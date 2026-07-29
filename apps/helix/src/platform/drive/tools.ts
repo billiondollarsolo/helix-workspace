@@ -54,7 +54,7 @@ const uploadSchema = z.object({
   name: z.string().min(1).max(255),
   folderId: uuidSchema.nullable().optional(),
   mimeType: z.string().min(1).default("application/octet-stream"),
-  byteSize: z.number().int().min(0).optional(),
+  byteSize: z.number().int().min(0),
   sha256: z
     .string()
     .regex(/^[a-f0-9]{64}$/i)
@@ -369,7 +369,7 @@ export function createDriveToolDefinitions(
           name: input.name,
           folderId: input.folderId ?? null,
           mimeType: input.mimeType,
-          ...(input.byteSize === undefined ? {} : { byteSize: input.byteSize }),
+          byteSize: input.byteSize,
           ...(input.sha256 === undefined ? {} : { sha256: input.sha256.toLowerCase() }),
           metadata: toJsonObject(input.metadata),
         });

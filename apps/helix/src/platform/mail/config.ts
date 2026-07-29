@@ -1,4 +1,5 @@
 import type { Env } from "../../config/env.js";
+import { isIP } from "node:net";
 import type { SecurityTier } from "@helix/sdk-types";
 import type { OutboundMailConfig } from "./outbound.js";
 import type { SpamdScannerOptions } from "./spam.js";
@@ -139,13 +140,34 @@ function buildReceiverTransportSecurity(env: Env): SmtpTransportSecurity {
       if (!envFlag(env.MAIL_SMTP_RECEIVER_PROXY_PROTOCOL)) {
         throw new Error("Trusted SMTP proxy mode requires PROXY protocol.");
       }
-      return { mode, proxyProtocol: true };
+      return {
+        mode,
+        proxyProtocol: true,
+        trustedProxyIps: parseTrustedProxyIps(env.MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS),
+      };
     case "development-plaintext":
       if (env.NODE_ENV === "production") {
         throw new Error("Plaintext SMTP receipt is forbidden in production.");
       }
       return { mode };
   }
+}
+
+function parseTrustedProxyIps(value: string | undefined): readonly string[] {
+  const addresses = [
+    ...new Set(
+      (value ?? "")
+        .split(",")
+        .map((address) => address.trim())
+        .filter((address) => address.length > 0),
+    ),
+  ];
+  if (addresses.length === 0 || addresses.some((address) => isIP(address) === 0)) {
+    throw new Error(
+      "Trusted SMTP proxy mode requires MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS with explicit IP addresses.",
+    );
+  }
+  return addresses;
 }
 
 function compactReceiverLimits(input: {

@@ -80,6 +80,36 @@ describe("mailConfig", () => {
         }),
       ),
     ).toThrow("PROXY protocol");
+
+    expect(
+      mailConfig(
+        loadEnv({
+          ...base,
+          NODE_ENV: "production",
+          MAIL_SMTP_RECEIVER_ENABLED: "true",
+          MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY: "trusted-proxy",
+          MAIL_SMTP_RECEIVER_PROXY_PROTOCOL: "true",
+          MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS: "10.0.0.10, 10.0.0.11",
+        }),
+      ).receiver?.transportSecurity,
+    ).toEqual({
+      mode: "trusted-proxy",
+      proxyProtocol: true,
+      trustedProxyIps: ["10.0.0.10", "10.0.0.11"],
+    });
+
+    expect(() =>
+      mailConfig(
+        loadEnv({
+          ...base,
+          NODE_ENV: "production",
+          MAIL_SMTP_RECEIVER_ENABLED: "true",
+          MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY: "trusted-proxy",
+          MAIL_SMTP_RECEIVER_PROXY_PROTOCOL: "true",
+          MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS: "not-an-ip",
+        }),
+      ),
+    ).toThrow("TRUSTED_PROXY_IPS");
   });
 
   it("builds spamd/clamav when enabled", () => {

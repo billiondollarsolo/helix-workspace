@@ -24,20 +24,45 @@ describe("SMTP transport security", () => {
 
   it("marks a trusted proxy connection as secured and disables local STARTTLS", () => {
     expect(
-      smtpTransportSecurityOptions({ mode: "trusted-proxy", proxyProtocol: true }),
+      smtpTransportSecurityOptions({
+        mode: "trusted-proxy",
+        proxyProtocol: true,
+        trustedProxyIps: ["10.0.0.10"],
+      }),
     ).toMatchObject({
       secured: true,
       hideSTARTTLS: true,
-      useProxy: true,
+      useProxy: ["10.0.0.10"],
     });
-    expect(smtpDisabledCommands({ mode: "trusted-proxy", proxyProtocol: true })).toContain(
-      "STARTTLS",
-    );
+    expect(
+      smtpDisabledCommands({
+        mode: "trusted-proxy",
+        proxyProtocol: true,
+        trustedProxyIps: ["10.0.0.10"],
+      }),
+    ).toContain("STARTTLS");
   });
 
   it("requires non-empty direct TLS material", () => {
     expect(() =>
       smtpTransportSecurityOptions({ mode: "starttls", key: "", cert: "certificate" }),
     ).toThrow("key");
+  });
+
+  it("rejects wildcard or empty trusted-proxy allowlists", () => {
+    expect(() =>
+      smtpTransportSecurityOptions({
+        mode: "trusted-proxy",
+        proxyProtocol: true,
+        trustedProxyIps: [],
+      }),
+    ).toThrow("explicit proxy IP allowlist");
+    expect(() =>
+      smtpTransportSecurityOptions({
+        mode: "trusted-proxy",
+        proxyProtocol: true,
+        trustedProxyIps: ["*"],
+      }),
+    ).toThrow("explicit proxy IP allowlist");
   });
 });

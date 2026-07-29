@@ -1272,12 +1272,17 @@ export class PostgresChatStore
         where m.org_id = ${input.orgId}
           and m.kind = 'chat'
           and m.deleted_at is null
-          and not coalesce(
-            (select legal_hold from chat_retention_policies
-             where org_id = m.org_id and thread_id = m.thread_id),
-            (select legal_hold from chat_retention_policies
-             where org_id = m.org_id and thread_id is null),
-            false
+          and not (
+            coalesce(
+              (select legal_hold from chat_retention_policies
+               where org_id = m.org_id and thread_id = m.thread_id),
+              false
+            )
+            or coalesce(
+              (select legal_hold from chat_retention_policies
+               where org_id = m.org_id and thread_id is null),
+              false
+            )
           )
           and m.sent_at < ${now} - make_interval(days => coalesce(
             (select retention_days from chat_retention_policies
@@ -1624,7 +1629,10 @@ async function requireChatMutationAllowed(
   await lockChatCompliance(sql, message.orgId);
   const rows = (await sql`
     select
-      coalesce(room_policy.legal_hold, org_policy.legal_hold, false) as legal_hold,
+      (
+        coalesce(room_policy.legal_hold, false)
+        or coalesce(org_policy.legal_hold, false)
+      ) as legal_hold,
       coalesce(
         room_policy.edit_window_seconds,
         org_policy.edit_window_seconds,

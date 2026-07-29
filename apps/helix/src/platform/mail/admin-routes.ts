@@ -2,6 +2,10 @@ import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod3";
 import {
+  OUTBOUND_MAIL_SECRET_REFERENCES,
+  WEBHOOK_MAIL_SECRET_REFERENCES,
+} from "./secret-policy.js";
+import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
   auditAdminAction,
@@ -59,6 +63,8 @@ const domainKeyParams = z.object({ id: z.string().uuid(), keyId: z.string().uuid
 
 const providerKindSchema = z.enum(OUTBOUND_MAIL_PROVIDER_KINDS);
 const jsonObjectSchema = z.record(z.unknown());
+const outboundSecretRefSchema = z.enum(OUTBOUND_MAIL_SECRET_REFERENCES).nullable();
+const webhookSecretRefSchema = z.enum(WEBHOOK_MAIL_SECRET_REFERENCES).nullable();
 
 const createProviderBody = z
   .object({
@@ -67,8 +73,8 @@ const createProviderBody = z
     enabled: z.boolean().default(true),
     isDefault: z.boolean().default(false),
     config: jsonObjectSchema.default({}),
-    secretRef: z.string().trim().min(1).max(200).nullable().default(null),
-    webhookSecretRef: z.string().trim().min(1).max(200).nullable().default(null),
+    secretRef: outboundSecretRefSchema.default(null),
+    webhookSecretRef: webhookSecretRefSchema.default(null),
   })
   .strict();
 
@@ -78,8 +84,8 @@ const updateProviderBody = z
     enabled: z.boolean().optional(),
     isDefault: z.boolean().optional(),
     config: jsonObjectSchema.optional(),
-    secretRef: z.string().trim().min(1).max(200).nullable().optional(),
-    webhookSecretRef: z.string().trim().min(1).max(200).nullable().optional(),
+    secretRef: outboundSecretRefSchema.optional(),
+    webhookSecretRef: webhookSecretRefSchema.optional(),
   })
   .strict();
 

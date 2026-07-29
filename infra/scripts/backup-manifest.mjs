@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import process from "node:process";
@@ -79,21 +79,14 @@ export async function createBackupManifest(root, rawOptions) {
     requireArtifact(artifacts, `objects/${options.objectBucket}.versions.json`);
   }
 
-  const recoveryLinkMaterial = [
-    options.backupId,
-    options.databaseCapturedAt,
-    options.objectsCapturedAt,
-    ...artifacts.map(({ path, sha256 }) => `${path}:${sha256}`),
-  ].join("\n");
   const databaseTime = Date.parse(options.databaseCapturedAt);
   const objectsTime = Date.parse(options.objectsCapturedAt);
-  const manifest = {
+  const protectedManifest = {
     schema: BACKUP_MANIFEST_SCHEMA,
     backupId: options.backupId,
     createdAt: options.createdAt,
     tier: options.tier,
     recoverySet: {
-      id: createHash("sha256").update(recoveryLinkMaterial).digest("hex"),
       databaseCapturedAt: options.databaseCapturedAt,
       objectsCapturedAt: options.objectsCapturedAt,
       maximumCaptureSkewSeconds: Math.round(Math.abs(databaseTime - objectsTime) / 1000),
@@ -128,13 +121,31 @@ export async function createBackupManifest(root, rawOptions) {
     },
     artifacts,
   };
+  const manifestWithoutMac = {
+    ...protectedManifest,
+    recoverySet: {
+      id: createHash("sha256").update(recoverySetMaterial(protectedManifest)).digest("hex"),
+      ...protectedManifest.recoverySet,
+    },
+    integrity: {
+      algorithm: "hmac-sha256",
+      keyRef: options.integrityKeyRef,
+    },
+  };
+  const manifest = {
+    ...manifestWithoutMac,
+    integrity: {
+      ...manifestWithoutMac.integrity,
+      mac: createManifestMac(manifestWithoutMac, options.integrityKey),
+    },
+  };
   validateManifestShape(manifest);
   await writeFile(resolve(root, MANIFEST_NAME), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return manifest;
 }
 
-export async function verifyBackupManifest(root) {
-  const manifest = await readVerifiedManifest(root);
+export async function verifyBackupManifest(root, rawOptions = {}) {
+  const manifest = await readVerifiedManifest(root, rawOptions);
   return {
     schema: manifest.schema,
     backupId: manifest.backupId,
@@ -145,9 +156,10 @@ export async function verifyBackupManifest(root) {
   };
 }
 
-async function readVerifiedManifest(root) {
+async function readVerifiedManifest(root, rawOptions = {}) {
   const manifest = JSON.parse(await readFile(resolve(root, MANIFEST_NAME), "utf8"));
   validateManifestShape(manifest);
+  verifyManifestMac(manifest, integrityKeyFrom(rawOptions));
   const actual = await collectArtifacts(root);
   verifyArtifactsMatch(manifest, actual);
   verifyRecoverySet(manifest);
@@ -175,14 +187,7 @@ function verifyArtifactsMatch(manifest, actual) {
 }
 
 function verifyRecoverySet(manifest) {
-  const expected = manifest.artifacts;
-  const recoveryLinkMaterial = [
-    manifest.backupId,
-    manifest.recoverySet.databaseCapturedAt,
-    manifest.recoverySet.objectsCapturedAt,
-    ...expected.map(({ path, sha256 }) => `${path}:${sha256}`),
-  ].join("\n");
-  const recoverySetId = createHash("sha256").update(recoveryLinkMaterial).digest("hex");
+  const recoverySetId = createHash("sha256").update(recoverySetMaterial(manifest)).digest("hex");
   if (recoverySetId !== manifest.recoverySet.id) {
     throw new Error("recovery-set linkage digest mismatch");
   }
@@ -212,6 +217,11 @@ function normalizeCreateOptions(options) {
     keyCustodyRef: String(options.keyCustodyRef ?? ""),
     offHostUri: String(options.offHostUri ?? ""),
     retentionDays: integerValue(options.retentionDays ?? 0, "retention days"),
+    integrityKey: integrityKeyFrom(options),
+    integrityKeyRef: requiredString(
+      options.integrityKeyRef ?? process.env.HELIX_BACKUP_MANIFEST_HMAC_KEY_REF,
+      "manifest integrity key reference",
+    ),
   };
   if (!["logical-dump", "physical-basebackup"].includes(normalized.databaseMode)) {
     throw new Error(`unsupported database mode: ${normalized.databaseMode}`);
@@ -292,6 +302,63 @@ function validateManifestShape(manifest) {
   }
   if (manifest.encryption?.plaintextKeyMaterialIncluded !== false) {
     throw new Error("manifest must assert that plaintext key material is excluded");
+  }
+  if (manifest.integrity?.algorithm !== "hmac-sha256") {
+    throw new Error("manifest integrity algorithm must be hmac-sha256");
+  }
+  requiredString(manifest.integrity?.keyRef, "manifest integrity key reference");
+  if (!SHA256.test(String(manifest.integrity?.mac))) {
+    throw new Error("manifest integrity MAC must be a sha256 digest");
+  }
+}
+
+function integrityKeyFrom(options) {
+  const value = options.integrityKey ?? process.env.HELIX_BACKUP_MANIFEST_HMAC_KEY;
+  const key = requiredString(value, "manifest integrity key");
+  if (Buffer.byteLength(key, "utf8") < 32) {
+    throw new Error("manifest integrity key must be at least 32 bytes");
+  }
+  return key;
+}
+
+function recoverySetMaterial(manifest) {
+  return JSON.stringify({
+    schema: manifest.schema,
+    backupId: manifest.backupId,
+    createdAt: manifest.createdAt,
+    tier: manifest.tier,
+    recoverySet: {
+      databaseCapturedAt: manifest.recoverySet.databaseCapturedAt,
+      objectsCapturedAt: manifest.recoverySet.objectsCapturedAt,
+      maximumCaptureSkewSeconds: manifest.recoverySet.maximumCaptureSkewSeconds,
+    },
+    database: manifest.database,
+    objects: manifest.objects,
+    encryption: manifest.encryption,
+    resilience: manifest.resilience,
+    artifacts: manifest.artifacts,
+  });
+}
+
+function manifestMacMaterial(manifest) {
+  return JSON.stringify({
+    ...manifest,
+    integrity: {
+      algorithm: manifest.integrity.algorithm,
+      keyRef: manifest.integrity.keyRef,
+    },
+  });
+}
+
+function createManifestMac(manifest, integrityKey) {
+  return createHmac("sha256", integrityKey).update(manifestMacMaterial(manifest)).digest("hex");
+}
+
+function verifyManifestMac(manifest, integrityKey) {
+  const expected = Buffer.from(createManifestMac(manifest, integrityKey), "hex");
+  const actual = Buffer.from(manifest.integrity.mac, "hex");
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    throw new Error("manifest integrity MAC mismatch");
   }
 }
 

@@ -460,15 +460,40 @@ describe("MailSendService idempotency", () => {
 });
 
 describe("NodemailerMailTransport attachment content", () => {
-  it("accepts Buffer content", async () => {
-    // Smoke: constructor accepts config shape (no live SMTP).
-    expect(
-      () =>
-        new NodemailerMailTransport({
-          host: "localhost",
-          port: 1025,
-          secure: false,
-        }),
-    ).not.toThrow();
+  it("requires STARTTLS when implicit TLS is not selected", () => {
+    const transport = new NodemailerMailTransport({
+      host: "smtp.example.test",
+      port: 587,
+      secure: false,
+    }) as unknown as {
+      readonly transporter: { readonly options: { readonly requireTLS?: boolean } };
+    };
+
+    expect(transport.transporter.options.requireTLS).toBe(true);
+  });
+
+  it("preserves implicit TLS transports without requiring STARTTLS", () => {
+    const transport = new NodemailerMailTransport({
+      host: "smtp.example.test",
+      port: 465,
+      secure: true,
+    }) as unknown as {
+      readonly transporter: { readonly options: { readonly requireTLS?: boolean } };
+    };
+
+    expect(transport.transporter.options.requireTLS).toBe(false);
+  });
+
+  it("permits an explicit plaintext override only for injected development fixtures", () => {
+    const transport = new NodemailerMailTransport({
+      host: "127.0.0.1",
+      port: 1025,
+      secure: false,
+      requireTls: false,
+    }) as unknown as {
+      readonly transporter: { readonly options: { readonly requireTLS?: boolean } };
+    };
+
+    expect(transport.transporter.options.requireTLS).toBe(false);
   });
 });

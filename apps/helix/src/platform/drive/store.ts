@@ -1650,7 +1650,7 @@ export class PostgresDriveStore
       const token = randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", "");
       const tokenHash = hashDriveShareToken(token);
       const passwordHash =
-        input.password === undefined ? null : hashDriveSharePassword(input.password);
+        input.password === undefined ? null : await hashDriveSharePassword(input.password);
       const rows = (await tx`
         insert into drive_share_links (
           org_id, token_hash, password_hash, object_id, role, expires_at,
@@ -1756,19 +1756,16 @@ export class PostgresDriveStore
       limit 1
     `) as unknown as readonly DriveShareLinkRow[];
     const candidate = candidates[0];
-    if (
-      candidate === undefined ||
-      (candidate.password_hash !== null &&
-        (input.password === undefined ||
-          !verifyDriveSharePassword(input.password, candidate.password_hash)))
-    ) {
+    if (candidate === undefined) {
       return null;
     }
-    const rows = (await this.sql`
+
+    // Consume the per-link attempt budget before password verification. Failed
+    // and missing passwords therefore cannot bypass throttling, and the KDF
+    // cannot be invoked after the hourly window is exhausted.
+    const admitted = (await this.sql`
       update drive_share_links
       set
-        download_count = download_count + 1,
-        last_used_at = now(),
         rate_window_count = case
           when rate_window_started_at <= now() - interval '1 hour' then 1
           else rate_window_count + 1
@@ -1785,6 +1782,27 @@ export class PostgresDriveStore
           rate_window_started_at <= now() - interval '1 hour'
           or rate_window_count < rate_limit_per_hour
         )
+      returning password_hash
+    `) as unknown as readonly { readonly password_hash: string | null }[];
+    const admittedCandidate = admitted[0];
+    if (
+      admittedCandidate === undefined ||
+      (admittedCandidate.password_hash !== null &&
+        (input.password === undefined ||
+          !(await verifyDriveSharePassword(input.password, admittedCandidate.password_hash))))
+    ) {
+      return null;
+    }
+
+    const rows = (await this.sql`
+      update drive_share_links
+      set
+        download_count = download_count + 1,
+        last_used_at = now()
+      where id = ${candidate.id}
+        and revoked_at is null
+        and (expires_at is null or expires_at > now())
+        and (max_downloads is null or download_count < max_downloads)
       returning org_id, object_id, role, created_by_actor_id
     `) as unknown as readonly {
       readonly org_id: string;
@@ -2016,13 +2034,15 @@ export class PostgresDriveStore
             o.id::text as id,
             o.org_id,
             o.storage_key,
-            'multipart'::text as kind,
+            case
+              when o.metadata->>'multipartUploadId' is null then 'single'
+              else 'multipart'
+            end as kind,
             o.metadata->>'multipartUploadId' as upload_id
           from objects o
           where o.kind = 'file'
             and o.upload_state = 'pending_upload'
             and o.updated_at < ${input.olderThan}
-            and o.metadata->>'multipartUploadId' is not null
           order by o.updated_at
           limit ${Math.min(Math.max(input.limit ?? 100, 1), 1_000)}
           for update skip locked
@@ -2046,7 +2066,7 @@ export class PostgresDriveStore
         readonly id: string;
         readonly org_id: string;
         readonly storage_key: string;
-        readonly kind: "blob" | "multipart";
+        readonly kind: "blob" | "multipart" | "single";
         readonly upload_id: string | null;
       }[];
       if (input.dryRun) {
@@ -2064,6 +2084,19 @@ export class PostgresDriveStore
             set
               upload_state = 'scan_failed',
               metadata = (metadata - 'multipartUploadId' - 'multipartInitiatedAt')
+                || '{"status":"scan_failed","failureReason":"orphaned_upload"}'::jsonb,
+              updated_at = now()
+            where id = ${row.id}::uuid
+              and org_id = ${row.org_id}
+              and upload_state = 'pending_upload'
+          `;
+        } else if (row.kind === "single") {
+          await storage.delete(row.storage_key);
+          await tx`
+            update objects
+            set
+              upload_state = 'scan_failed',
+              metadata = metadata
                 || '{"status":"scan_failed","failureReason":"orphaned_upload"}'::jsonb,
               updated_at = now()
             where id = ${row.id}::uuid
@@ -2781,7 +2814,10 @@ async function assertStorageQuotaAvailable(
             where obj.org_id = ${orgId}
               and obj.kind in ('file', 'recording')
               and obj.deleted_at is null
-              and coalesce(obj.metadata->>'status', 'ready') = 'ready'
+              and (
+                coalesce(obj.metadata->>'status', 'ready') = 'ready'
+                or obj.upload_state = 'pending_upload'
+              )
             union all
             select v.storage_key, v.byte_size, 1 as source_rank
             from drive_versions v

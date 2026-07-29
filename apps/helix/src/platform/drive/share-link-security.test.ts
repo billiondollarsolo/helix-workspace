@@ -7,12 +7,12 @@ import {
 } from "./share-link-security.js";
 
 describe("Drive share-link security", () => {
-  it("stores deterministic token hashes and salted password verifiers", () => {
+  it("stores deterministic token hashes and salted password verifiers", async () => {
     expect(hashDriveShareToken("secret")).toMatch(/^[a-f0-9]{64}$/u);
-    const encoded = hashDriveSharePassword("correct horse");
+    const encoded = await hashDriveSharePassword("correct horse");
     expect(encoded).not.toContain("correct horse");
-    expect(verifyDriveSharePassword("correct horse", encoded)).toBe(true);
-    expect(verifyDriveSharePassword("wrong", encoded)).toBe(false);
+    await expect(verifyDriveSharePassword("correct horse", encoded)).resolves.toBe(true);
+    await expect(verifyDriveSharePassword("wrong", encoded)).resolves.toBe(false);
   });
 
   it.each(["text/html", "image/svg+xml", "application/xhtml+xml", "text/xml"])(

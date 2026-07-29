@@ -191,16 +191,25 @@ function sanitizeIdentifier(value: string): string {
 
 function decodeHtmlEntities(value: string): string {
   return value
-    .replace(/&#x([0-9a-f]+);?/giu, (_match, code: string) =>
-      String.fromCodePoint(Number.parseInt(code, 16)),
-    )
-    .replace(/&#([0-9]+);?/gu, (_match, code: string) =>
-      String.fromCodePoint(Number.parseInt(code, 10)),
-    )
+    .replace(/&#x([0-9a-f]+);?/giu, (_match, code: string) => decodeNumericEntity(_match, code, 16))
+    .replace(/&#([0-9]+);?/gu, (_match, code: string) => decodeNumericEntity(_match, code, 10))
     .replace(/&(?:colon);/giu, ":")
     .replace(/&(?:lt);/giu, "<")
     .replace(/&(?:gt);/giu, ">")
     .replace(/&(?:amp);/giu, "&")
     .replace(/&(?:quot);/giu, '"')
     .replace(/&(?:apos|#39);/giu, "'");
+}
+
+function decodeNumericEntity(match: string, code: string, radix: 10 | 16): string {
+  const point = Number.parseInt(code, radix);
+  if (
+    !Number.isSafeInteger(point) ||
+    point < 0 ||
+    point > 0x10ffff ||
+    (point >= 0xd800 && point <= 0xdfff)
+  ) {
+    return match;
+  }
+  return String.fromCodePoint(point);
 }

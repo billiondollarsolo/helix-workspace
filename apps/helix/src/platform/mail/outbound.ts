@@ -27,6 +27,8 @@ export interface OutboundMailConfig {
   readonly host: string;
   readonly port?: number;
   readonly secure?: boolean;
+  /** Test/development-only override; production environment loading never sets this false. */
+  readonly requireTls?: boolean;
   readonly user?: string;
   readonly pass?: string;
 }
@@ -97,6 +99,9 @@ export class NodemailerMailTransport implements OutboundMailTransport {
             host: config.host,
             port: config.port ?? 587,
             secure: config.secure ?? false,
+            // `secure: false` selects explicit STARTTLS. Require the upgrade so
+            // an on-path peer cannot downgrade production mail to plaintext.
+            requireTLS: config.requireTls ?? config.secure !== true,
             ...(config.user === undefined
               ? {}
               : {

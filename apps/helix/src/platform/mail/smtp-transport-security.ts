@@ -14,6 +14,7 @@ export type SmtpTransportSecurity =
       /** Private listener behind an attested TLS-terminating SMTP proxy. */
       readonly mode: "trusted-proxy";
       readonly proxyProtocol: boolean;
+      readonly trustedProxyIps: readonly string[];
     }
   | {
       /** Local test/development only; production assertions must reject it. */
@@ -40,11 +41,19 @@ export function smtpTransportSecurityOptions(
         minVersion: security.minVersion ?? "TLSv1.2",
       };
     case "trusted-proxy":
+      if (
+        security.trustedProxyIps.length === 0 ||
+        security.trustedProxyIps.some((address) => address === "*")
+      ) {
+        throw new Error("Trusted SMTP proxy mode requires an explicit proxy IP allowlist.");
+      }
       return {
         secure: false,
         secured: true,
         hideSTARTTLS: true,
-        useProxy: security.proxyProtocol,
+        // smtp-server accepts an address array at runtime even though its
+        // published TypeScript declaration still narrows this option to boolean.
+        useProxy: [...security.trustedProxyIps] as unknown as boolean,
       };
     case "development-plaintext":
       return {

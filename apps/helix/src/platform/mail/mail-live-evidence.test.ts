@@ -74,6 +74,7 @@ describe("M7 deterministic retry over a real local SMTP service", () => {
         host: "127.0.0.1",
         port: address.port,
         secure: false,
+        requireTls: false,
       }),
       {
         maxAttempts: 3,

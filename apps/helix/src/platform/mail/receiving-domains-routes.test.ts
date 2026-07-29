@@ -140,6 +140,40 @@ describe("receiving-domain admin routes", () => {
     expect(audited).not.toContain("mail.receiving_domain.verified");
   });
 
+  it("requires a current DNS proof before re-enabling a disabled domain", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/mail/receiving-domains",
+      payload: { domain: "transferred.example" },
+    });
+    const id = created.json<{ domain: { id: string } }>().domain.id;
+    await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${id}/verify`,
+    });
+    await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${id}/enable`,
+    });
+    await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${id}/disable`,
+    });
+
+    ownershipResult = false;
+    const staleEnable = await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${id}/enable`,
+    });
+
+    expect(staleEnable.statusCode).toBe(409);
+    expect(staleEnable.json()).toMatchObject({ code: "conflict" });
+    const listed = await app.inject({ method: "GET", url: "/api/admin/mail/receiving-domains" });
+    expect(listed.json<{ domains: readonly { status: string }[] }>().domains[0]?.status).toBe(
+      "disabled",
+    );
+  });
+
   it("returns a retryable response when DNS verification is unavailable", async () => {
     ownershipResult = new Error("resolver timeout");
     const created = await app.inject({

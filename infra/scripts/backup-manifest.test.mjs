@@ -23,7 +23,9 @@ describe("backup manifest contract", () => {
       "objects/helix-objects/object-1.bin",
       "postgres.dump",
     ]);
-    await expect(verifyBackupManifest(root)).resolves.toMatchObject({
+    await expect(
+      verifyBackupManifest(root, { integrityKey: validOptions().integrityKey }),
+    ).resolves.toMatchObject({
       backupId: "backup-1",
       artifactCount: 5,
       encrypted: true,
@@ -36,7 +38,37 @@ describe("backup manifest contract", () => {
     await createBackupManifest(root, validOptions());
     await writeFile(resolve(root, "postgres.dump"), "tampered\n", "utf8");
 
-    await expect(verifyBackupManifest(root)).rejects.toThrow("artifact checksum mismatch");
+    await expect(
+      verifyBackupManifest(root, { integrityKey: validOptions().integrityKey }),
+    ).rejects.toThrow("artifact checksum mismatch");
+  });
+
+  it("rejects forged encryption and resilience claims even when artifacts are unchanged", async () => {
+    const root = await fixture();
+    await createBackupManifest(root, {
+      ...validOptions(),
+      tier: "personal",
+      encryption: "none",
+      keyCustodyRef: "",
+      offHostUri: "",
+      retentionDays: 0,
+      objectVersioning: "Unavailable",
+      objectReplication: "not-applicable",
+    });
+    const path = resolve(root, "manifest.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    manifest.tier = "business";
+    manifest.encryption.method = "age";
+    manifest.encryption.keyCustodyRef = "vault://backup/forged";
+    manifest.resilience.offHostUri = "s3://off-host/forged";
+    manifest.resilience.retentionDays = 35;
+    manifest.objects.versioning = "Enabled";
+    manifest.objects.replication = "configured";
+    await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    await expect(
+      verifyBackupManifest(root, { integrityKey: validOptions().integrityKey }),
+    ).rejects.toThrow("manifest integrity MAC mismatch");
   });
 
   it("fails closed when a production backup omits resilience or key-custody controls", async () => {
@@ -107,5 +139,7 @@ function validOptions() {
     keyCustodyRef: "vault://backup/age-recipient",
     offHostUri: "s3://off-host/helix",
     retentionDays: 35,
+    integrityKey: "manifest-integrity-test-key-at-least-32-bytes",
+    integrityKeyRef: "vault://backup/manifest-hmac",
   };
 }

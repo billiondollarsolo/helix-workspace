@@ -1,9 +1,14 @@
 import fastify from "fastify";
+import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { signWebhookPayload } from "../webhooks/signatures.js";
 import { InMemoryOutboundProviderStore } from "./admin-store.js";
 import { InMemoryMailDeliveryEventStore } from "./delivery-events.js";
-import { registerMailProviderWebhookRoutes } from "./provider-webhook-routes.js";
+import {
+  ProviderWebhookBodyTooLargeError,
+  readBoundedPayload,
+  registerMailProviderWebhookRoutes,
+} from "./provider-webhook-routes.js";
 
 const orgA = "11111111-1111-4111-8111-111111111111";
 const orgB = "22222222-2222-4222-8222-222222222222";
@@ -11,6 +16,20 @@ const actor = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const now = new Date("2026-07-28T12:00:00.000Z");
 
 describe("managed provider webhook route", () => {
+  it("stops buffering as soon as the raw-body limit is exceeded", async () => {
+    const payload = Readable.from([Buffer.alloc(700), Buffer.alloc(700), Buffer.alloc(700)]);
+
+    await expect(readBoundedPayload(payload, 1_024)).rejects.toBeInstanceOf(
+      ProviderWebhookBodyTooLargeError,
+    );
+    expect(payload.destroyed).toBe(true);
+  });
+
+  it("preserves exact raw bytes below the limit", async () => {
+    const payload = Readable.from([Buffer.from("signed"), Buffer.from("-body")]);
+    await expect(readBoundedPayload(payload, 11)).resolves.toEqual(Buffer.from("signed-body"));
+  });
+
   it("captures raw bytes, resolves the signing secret at call time, and scopes provider lookup", async () => {
     const providerStore = new InMemoryOutboundProviderStore();
     const provider = await providerStore.createProvider({

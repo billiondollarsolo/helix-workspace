@@ -32,6 +32,7 @@ import {
   registerActionStatusRoutes,
   registerAssistantStreamRoute,
   installTenantApiRpsLimitHook,
+  isAdminMfaProtectedPath,
   registerToolRestRoutes,
   rewriteVersionedApiUrl,
   verifyDefaultOrgAtBoot,
@@ -101,6 +102,24 @@ describe("BetterAuth server env config", () => {
       }),
     ).toThrow("BETTER_AUTH_SECRET must be at least 32 characters");
   });
+});
+
+describe("admin MFA route coverage", () => {
+  it.each([
+    "/api/admin/platform-config",
+    "/trpc/tools.explain",
+    "/trpc/tools.explain?batch=1",
+    "/trpc/admin.platformConfig.get",
+  ])("protects every admin-scoped HTTP and tRPC path (%s)", (url) => {
+    expect(isAdminMfaProtectedPath(url)).toBe(true);
+  });
+
+  it.each(["/api/tools/platform.ping", "/trpc/tools.list", "/trpc/tools.invoke"])(
+    "does not classify ordinary tool paths as admin MFA surfaces (%s)",
+    (url) => {
+      expect(isAdminMfaProtectedPath(url)).toBe(false);
+    },
+  );
 });
 
 describe("default org boot verification", () => {

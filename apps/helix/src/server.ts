@@ -40,6 +40,7 @@ import { buildErrorEnvelope, toolErrorEnvelope } from "./api/error-envelope.js";
 import {
   DEFAULT_IDEMPOTENCY_TTL_MS,
   InMemoryIdempotencyStore,
+  RedisIdempotencyStore,
   fingerprintRequestPayload,
   idempotencyStorageKey,
   resolveIdempotency,
@@ -242,6 +243,7 @@ import {
   quarantineReleaseScannerFromAntivirus,
   withOutboundRoutingInvalidation,
 } from "./platform/mail/index.js";
+import { isAllowedMailSecretReference } from "./platform/mail/secret-policy.js";
 import { mailConfig } from "./platform/mail/config.js";
 import {
   PostgresMeetStore,
@@ -1138,14 +1140,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       }),
     );
   });
-  // P1-10: process-local idempotency store for mutating tool calls.
-  const idempotencyStore: IdempotencyStore = new InMemoryIdempotencyStore();
   const sql = createSqlClient();
   const redisConnection = resolveRedisConnection(bootEnv);
   const redis =
     redisConnection === undefined
       ? undefined
       : new Redis(redisConnection.url, redisConnection.options);
+  const idempotencyStore: IdempotencyStore =
+    redis === undefined ? new InMemoryIdempotencyStore() : new RedisIdempotencyStore(redis);
   const tenantApiRpsLimiter: TenantApiRpsLimiter =
     redis === undefined ? new InMemoryTenantApiRpsLimiter() : new RedisTenantApiRpsLimiter(redis);
   const tenantHourlyQuotaLimiter: TenantHourlyQuotaLimiter =
@@ -1905,7 +1907,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const validatedMailSecrets = bootEnv as unknown as Readonly<Record<string, string | undefined>>;
   const mailSecretProvider = {
     resolveSecret: async (reference: string): Promise<string | undefined> =>
-      /^[A-Z][A-Z0-9_]*$/u.test(reference) ? validatedMailSecrets[reference] : undefined,
+      isAllowedMailSecretReference(reference) ? validatedMailSecrets[reference] : undefined,
   };
   const environmentOutboundTransport =
     outboundMailConfig === undefined ? undefined : new NodemailerMailTransport(outboundMailConfig);
@@ -2708,7 +2710,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // rejects admin-scoped actors that have not presented a verified MFA factor.
   app.addHook("preHandler", async (request, reply) => {
     const url = request.url.split("?")[0] ?? "";
-    if (!url.startsWith("/api/admin/")) {
+    if (!isAdminMfaProtectedPath(url)) {
       return;
     }
     const actor = await actorFromAuthenticatedRequest(request);
@@ -3711,6 +3713,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         request: requestContext,
         body: request.body,
         resources: mcpResourceProvider(request),
+        idempotencyStore,
       })) {
         reply.raw.write(formatSseEvent(event));
       }
@@ -3723,10 +3726,20 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       request: requestContext,
       body: request.body,
       resources: mcpResourceProvider(request),
+      idempotencyStore,
     });
   });
 
   return app;
+}
+
+export function isAdminMfaProtectedPath(url: string): boolean {
+  const path = url.split("?")[0] ?? "";
+  return (
+    path.startsWith("/api/admin/") ||
+    path === "/trpc/tools.explain" ||
+    path.startsWith("/trpc/admin.")
+  );
 }
 
 function nativeDocumentLayoutSettingsFromMetadata(metadata: JsonObject):

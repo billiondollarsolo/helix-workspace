@@ -12,7 +12,6 @@ import {
   InMemoryIdempotencyStore,
   fingerprintRequestPayload,
   idempotencyStorageKey,
-  resolveIdempotency,
   type IdempotencyStore,
 } from "./idempotency.js";
 import { HELIX_SERVER_VERSION, MCP_PROTOCOL_VERSION } from "./version.js";
@@ -70,7 +69,6 @@ const inFlightMutations = new Map<
     readonly result: Promise<Awaited<ReturnType<RuntimeToolRegistry["invoke"]>>>;
   }
 >();
-
 /**
  * MCP prompt descriptor surfaced via `prompts/list` (P1-4).
  */
@@ -545,26 +543,26 @@ async function invokeMcpMutationIdempotently(input: {
     toolId: input.toolId,
     arguments: input.arguments,
   });
-  const outcome = await resolveIdempotency(store, storageKey, requestHash);
-  if (outcome.kind === "conflict") {
+  const claim = await store.claim(storageKey, requestHash, DEFAULT_IDEMPOTENCY_TTL_MS);
+  if (claim.kind === "conflict") {
     return jsonRpcError(null, -32009, "MCP idempotency key was reused with different arguments.");
   }
-  if (outcome.kind === "replay") {
-    return outcome.record.result;
+  if (claim.kind === "replay") {
+    return claim.record.result;
   }
-
-  const existing = inFlightMutations.get(storageKey);
-  if (existing !== undefined) {
-    return existing.requestHash === requestHash
-      ? existing.result
-      : jsonRpcError(null, -32009, "MCP idempotency key was reused with different arguments.");
+  if (claim.kind === "in_progress") {
+    const local = inFlightMutations.get(storageKey);
+    if (local !== undefined && local.requestHash === requestHash) {
+      return local.result;
+    }
+    return jsonRpcError(null, -32010, "MCP mutation with this idempotency key is in progress.");
   }
 
   const result = input.invoke();
   inFlightMutations.set(storageKey, { requestHash, result });
   try {
     const completed = await result;
-    await store.set(storageKey, {
+    await store.complete(storageKey, claim.claimToken, {
       result: completed,
       statusCode: completed.ok
         ? completed.status === "pending_confirmation"
@@ -575,6 +573,9 @@ async function invokeMcpMutationIdempotently(input: {
       expiresAt: Date.now() + DEFAULT_IDEMPOTENCY_TTL_MS,
     });
     return completed;
+  } catch (error) {
+    await store.release(storageKey, claim.claimToken);
+    throw error;
   } finally {
     inFlightMutations.delete(storageKey);
   }

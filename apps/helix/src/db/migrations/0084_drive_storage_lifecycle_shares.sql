@@ -47,7 +47,8 @@ create table if not exists drive_lifecycle_policies (
 alter table drive_lifecycle_policies enable row level security;
 drop policy if exists helix_tenant_isolation on drive_lifecycle_policies;
 create policy helix_tenant_isolation on drive_lifecycle_policies
-  using (org_id = current_setting('app.current_org_id', true)::uuid);
+  using (org_id = helix_current_org_id())
+  with check (org_id = helix_current_org_id());
 
 create index if not exists objects_drive_trash_expiry_idx
   on objects (org_id, trash_expires_at)

@@ -560,6 +560,7 @@ export class PostgresAgentCredentialStore implements AgentCredentialStore {
       where c.api_key_hash = ${apiKeyHash}
         and c.credential_type = 'api_key'
         and c.revoked_at is null
+        and a.disabled_at is null
       limit 1
     `) as unknown as readonly AgentCredentialRow[];
     return rowToCredential(rows[0]);
@@ -573,6 +574,7 @@ export class PostgresAgentCredentialStore implements AgentCredentialStore {
       where c.cert_fingerprint = ${fingerprint}
         and c.credential_type = 'mtls_cert'
         and c.revoked_at is null
+        and a.disabled_at is null
       limit 1
     `) as unknown as readonly AgentCredentialRow[];
     return rowToCredential(rows[0]);
@@ -585,6 +587,7 @@ export class PostgresAgentCredentialStore implements AgentCredentialStore {
       join actors a on a.id = c.actor_id
       where c.client_id = ${clientId}
         and c.credential_type = 'oauth_client'
+        and a.disabled_at is null
       limit 1
     `) as unknown as readonly AgentCredentialRow[];
     return rowToCredential(rows[0]);
@@ -596,6 +599,7 @@ export class PostgresAgentCredentialStore implements AgentCredentialStore {
       from agent_credentials c
       join actors a on a.id = c.actor_id
       where c.id = ${credentialId}
+        and a.disabled_at is null
       limit 1
     `) as unknown as readonly AgentCredentialRow[];
     return rowToCredential(rows[0]);

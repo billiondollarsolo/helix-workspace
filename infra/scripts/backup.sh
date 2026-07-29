@@ -51,6 +51,9 @@ Environment:
   HELIX_BACKUP_OFFHOST_URI         S3 destination for encrypted artifacts
   HELIX_BACKUP_RETENTION_DAYS      Required retention duration
   HELIX_BACKUP_KEY_CUSTODY_REF     Non-secret recovery-key custody reference
+  HELIX_BACKUP_MANIFEST_HMAC_KEY   Independent 32+ byte manifest authentication key
+  HELIX_BACKUP_MANIFEST_HMAC_KEY_REF
+                                   Non-secret vault/KMS reference for that key
   HELIX_BACKUP_OFFHOST_PROFILE     Optional AWS profile for the off-host destination
 
 WAL archiving (operator one-time setup, required for --pitr / --include-wal):

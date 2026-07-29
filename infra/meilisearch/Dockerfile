@@ -1,11 +1,15 @@
 # syntax=docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
 ARG SOURCE_IMAGE=getmeili/meilisearch:v1.51.0@sha256:a9eb29ee09ab4943db3b4c68620bd6f3382e6b2b0ac4431c0e607b48dbcd4c14
-ARG RUNTIME_BASE=alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4
+ARG RUNTIME_BASE=alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 FROM ${SOURCE_IMAGE} AS source
 
 FROM ${RUNTIME_BASE} AS runtime
+
+RUN apk add --no-cache \
+      libcrypto3=3.5.7-r0 \
+      libssl3=3.5.7-r0
 
 LABEL org.opencontainers.image.title="helix-meilisearch" \
       org.opencontainers.image.description="Meilisearch 1.51.0 on a patched minimal runtime" \

@@ -46,6 +46,8 @@ RUN tar -xzf /tmp/gosu.tar.gz --strip-components=1 \
 
 FROM ${POSTGRES_BASE} AS runtime
 
+RUN apk add --no-cache c-ares=1.34.8-r0
+
 LABEL org.opencontainers.image.title="helix-postgres-pgvector" \
       org.opencontainers.image.description="PostgreSQL 18 with pgvector 0.8.5 and a patched gosu runtime" \
       org.opencontainers.image.vendor="Helix" \

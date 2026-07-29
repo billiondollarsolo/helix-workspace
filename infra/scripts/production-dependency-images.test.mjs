@@ -10,6 +10,7 @@ const dockerfiles = Object.fromEntries(
 );
 const spamassassinEntrypoint = readFileSync(resolve("infra/spamassassin/entrypoint.sh"), "utf8");
 const dataPlaneFixture = readFileSync(resolve("infra/scripts/data-plane-live-fixture.mjs"), "utf8");
+const workspaceDockerfile = readFileSync(resolve("infra/docker/Dockerfile"), "utf8");
 
 const SHA256 = "[a-f0-9]{64}";
 const COMMIT = "[a-f0-9]{40}";
@@ -60,9 +61,17 @@ describe("production dependency image build contracts", () => {
 
   it("repackages Meilisearch into a minimal patched runtime from an immutable source image", () => {
     expect(dockerfiles.meilisearch).toContain("SOURCE_IMAGE=getmeili/meilisearch:v1.51.0@sha256:");
-    expect(dockerfiles.meilisearch).toContain("RUNTIME_BASE=alpine:3.24.0@sha256:");
+    expect(dockerfiles.meilisearch).toContain("RUNTIME_BASE=alpine:3.24.1@sha256:");
     expect(dockerfiles.meilisearch).toContain("COPY --from=source /bin/meilisearch");
     expect(dockerfiles.meilisearch).not.toContain("getmeili/meilisearch:v1.10");
+  });
+
+  it("installs the exact Alpine packages that close current high-severity advisories", () => {
+    for (const dockerfile of [dockerfiles.nats, dockerfiles.meilisearch, workspaceDockerfile]) {
+      expect(dockerfile).toContain("libcrypto3=3.5.7-r0");
+      expect(dockerfile).toContain("libssl3=3.5.7-r0");
+    }
+    expect(dockerfiles.postgres).toContain("c-ares=1.34.8-r0");
   });
 
   it("bakes an integrity-checked Apache SpamAssassin ruleset and validates it", () => {

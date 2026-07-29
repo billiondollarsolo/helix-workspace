@@ -36,6 +36,7 @@ RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 # current file-linked package dependencies and do not enable native editing.
 COPY --from=helix_editors / /helix-editors/
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json /helix-workspace/
+COPY patches/ /helix-workspace/patches/
 COPY packages/config/ /helix-workspace/packages/config/
 COPY packages/contracts/ /helix-workspace/packages/contracts/
 COPY packages/sdk-types/ /helix-workspace/packages/sdk-types/
@@ -67,6 +68,7 @@ RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 COPY --from=editors-build /helix-editors/packages/ /helix-editors/packages/
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY patches/ patches/
 COPY apps/helix/package.json apps/helix/
 COPY packages/ packages/
 
@@ -120,6 +122,7 @@ RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 COPY --from=editors-build /helix-editors/packages/ /helix-editors/packages/
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY patches/ patches/
 COPY apps/web/package.json apps/web/
 COPY packages/ packages/
 

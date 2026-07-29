@@ -3,6 +3,14 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(resolve(".github/workflows/production-image-security.yml"), "utf8");
+const dockerfile = readFileSync(resolve("infra/docker/Dockerfile"), "utf8");
+
+function dockerStage(name) {
+  const start = dockerfile.indexOf(` AS ${name}`);
+  const end = dockerfile.indexOf("\nFROM ", start);
+  expect(start, `missing ${name} stage`).toBeGreaterThan(-1);
+  return dockerfile.slice(start, end === -1 ? undefined : end);
+}
 
 describe("production image supply-chain workflow", () => {
   it("grants only the permissions required for registry provenance", () => {
@@ -79,5 +87,17 @@ describe("production image supply-chain workflow", () => {
     for (const action of externalUses) {
       expect(action).toMatch(/@[a-f0-9]{40}$/u);
     }
+  });
+
+  it.each([
+    ["editors-build", "COPY patches/ /helix-workspace/patches/"],
+    ["build", "COPY patches/ patches/"],
+    ["web-build", "COPY patches/ patches/"],
+  ])("copies pnpm patches before installing dependencies in %s", (stageName, copyCommand) => {
+    const stage = dockerStage(stageName);
+    const copyIndex = stage.indexOf(copyCommand);
+    const installIndex = stage.indexOf("pnpm install --frozen-lockfile");
+    expect(copyIndex).toBeGreaterThan(-1);
+    expect(installIndex).toBeGreaterThan(copyIndex);
   });
 });

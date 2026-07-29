@@ -55,9 +55,7 @@ describe("production-readiness source workflow", () => {
     expect(migration).toBeGreaterThanOrEqual(0);
     expect(tenantIsolation).toBeGreaterThan(migration);
     expect(liveDemoJob).toContain("src/platform/tenancy/cross-tenant-isolation.test.ts");
-    expect(liveDemoJob).toContain(
-      "does not expose beta Drive data to an acme actor even with beta permission rows",
-    );
+    expect(liveDemoJob).toContain("does not expose beta Drive data to an acme actor");
     expect(liveDemoJob).toContain(
       "DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke",
     );

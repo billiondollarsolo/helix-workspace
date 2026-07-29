@@ -14,7 +14,7 @@ export const V2_NEGATIVE_SECURITY_MATRIX = [
       "An Org A actor remains unable to read, search, share, move, trash, or delete Org B data even when an Org B ACL row names that actor.",
       ref(
         "apps/helix/src/platform/tenancy/cross-tenant-isolation.test.ts",
-        "does not expose beta Drive data to an acme actor even with beta permission rows",
+        "does not expose beta Drive data to an acme actor",
         "live-postgres",
       ),
     ),

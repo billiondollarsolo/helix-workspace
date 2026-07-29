@@ -66,13 +66,13 @@ export async function runMigrations(
         }
 
         const statement = migration.sql;
-        await connection.begin(async (tx) => {
+        await runReservedTransaction(connection, async () => {
           const statements: readonly string[] =
             typeof statement === "string" ? [statement] : statement;
           for (const sqlStatement of statements) {
-            await tx.unsafe(sqlStatement);
+            await connection.unsafe(sqlStatement);
           }
-          await tx`
+          await connection`
             insert into schema_migrations (namespace, name)
             values (${source.namespace}, ${name})
           `;
@@ -91,6 +91,31 @@ export async function runMigrations(
   }
 
   return { applied, skipped };
+}
+
+async function runReservedTransaction(
+  connection: postgres.ReservedSql,
+  callback: () => Promise<void>,
+): Promise<void> {
+  // postgres.js 3.4.x declares ReservedSql.begin() in its public types but the
+  // runtime object returned by reserve() does not attach that method. Execute
+  // the transaction control statements on the reserved connection directly so
+  // the advisory lock and every migration statement remain on one session.
+  await connection.unsafe("begin");
+  try {
+    await callback();
+    await connection.unsafe("commit");
+  } catch (error) {
+    try {
+      await connection.unsafe("rollback");
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Migration failed and its reserved transaction could not be rolled back",
+      );
+    }
+    throw error;
+  }
 }
 
 export async function listPendingMigrations(

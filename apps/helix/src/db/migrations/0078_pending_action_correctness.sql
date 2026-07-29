@@ -70,6 +70,3 @@ alter table pending_actions
 
 create unique index if not exists pending_actions_execution_idempotency_idx
   on pending_actions (execution_idempotency_key);
-create index if not exists pending_actions_execution_recovery_idx
-  on pending_actions (status, execution_lease_expires_at)
-  where status = 'executing';

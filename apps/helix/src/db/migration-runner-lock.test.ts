@@ -8,22 +8,6 @@ describe("migration runner connection safety", () => {
     const unsafeStatements: string[] = [];
     const release = vi.fn();
 
-    const transaction = vi.fn(async (callback: (sql: postgres.TransactionSql) => unknown) =>
-      callback(transactionSql),
-    );
-    const transactionSql = Object.assign(
-      async (strings: TemplateStringsArray) => {
-        statements.push(compactSql(strings));
-        return [];
-      },
-      {
-        unsafe: vi.fn(async (statement: string) => {
-          unsafeStatements.push(statement);
-          return [];
-        }),
-      },
-    ) as unknown as postgres.TransactionSql;
-
     const reserved = Object.assign(
       async (strings: TemplateStringsArray) => {
         const statement = compactSql(strings);
@@ -37,7 +21,10 @@ describe("migration runner connection safety", () => {
         return [];
       },
       {
-        begin: transaction,
+        unsafe: vi.fn(async (statement: string) => {
+          unsafeStatements.push(statement);
+          return [];
+        }),
         release,
       },
     ) as unknown as postgres.ReservedSql;
@@ -63,8 +50,50 @@ describe("migration runner connection safety", () => {
     expect(sql.reserve).toHaveBeenCalledTimes(1);
     expect(statements[0]).toContain("pg_advisory_lock");
     expect(statements.at(-1)).toContain("pg_advisory_unlock");
-    expect(transaction).toHaveBeenCalledTimes(1);
-    expect(unsafeStatements).toEqual(["select 42"]);
+    expect(unsafeStatements).toEqual(["begin", "select 42", "commit"]);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls back a failed migration on the reserved connection", async () => {
+    const unsafeStatements: string[] = [];
+    const release = vi.fn();
+    const failure = new Error("unsafe migration failed");
+    const reserved = Object.assign(
+      async (strings: TemplateStringsArray) => {
+        const statement = compactSql(strings);
+        if (statement.includes("to_regclass")) {
+          return [{ exists: true }];
+        }
+        if (statement.includes("select exists")) {
+          return [{ exists: false }];
+        }
+        return [];
+      },
+      {
+        unsafe: vi.fn(async (statement: string) => {
+          unsafeStatements.push(statement);
+          if (statement === "select broken") {
+            throw failure;
+          }
+          return [];
+        }),
+        release,
+      },
+    ) as unknown as postgres.ReservedSql;
+    const sql = Object.assign(vi.fn(), {
+      reserve: vi.fn(async () => reserved),
+    }) as unknown as postgres.Sql;
+
+    await expect(
+      runMigrations(sql, [
+        {
+          namespace: "platform",
+          migrations: [{ name: "0001_broken.sql", sql: "select broken" }],
+        },
+      ]),
+    ).rejects.toBe(failure);
+
+    expect(unsafeStatements).toEqual(["begin", "select broken", "rollback"]);
     expect(release).toHaveBeenCalledTimes(1);
   });
 

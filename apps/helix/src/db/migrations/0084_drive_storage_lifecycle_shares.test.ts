@@ -10,6 +10,8 @@ describe("0084 Drive storage lifecycle and shares", () => {
     expect(sql).toContain("token_hash bytea");
     expect(sql).toContain("digest(token, 'sha256')");
     expect(sql).toContain("update drive_share_links set token = null");
+    expect(sql).toContain("drop constraint if exists drive_share_links_token_key");
+    expect(sql).not.toContain("drop index if exists drive_share_links_token_key");
     expect(sql).toContain("max_downloads");
     expect(sql).toContain("rate_limit_per_hour");
   });

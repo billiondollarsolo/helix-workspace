@@ -28,7 +28,8 @@ create unique index if not exists drive_share_links_token_hash_idx
 
 -- Raw bearer tokens are intentionally destroyed after their digest is populated.
 update drive_share_links set token = null where token is not null;
-drop index if exists drive_share_links_token_key;
+alter table drive_share_links
+  drop constraint if exists drive_share_links_token_key;
 
 alter table objects
   add column if not exists drive_legal_hold boolean not null default false,

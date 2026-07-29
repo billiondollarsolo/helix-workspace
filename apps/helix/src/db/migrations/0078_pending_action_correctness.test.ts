@@ -2,6 +2,10 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 const migrationUrl = new URL("./0078_pending_action_correctness.sql", import.meta.url);
+const executionIndexMigrationUrl = new URL(
+  "./0078a_pending_action_execution_index.sql",
+  import.meta.url,
+);
 const rollbackUrl = new URL("./rollbacks/0078_pending_action_correctness.sql", import.meta.url);
 
 describe("0078 pending action correctness migration", () => {
@@ -27,7 +31,14 @@ describe("0078 pending action correctness migration", () => {
     expect(sql).toContain("rename value 'confirmed' to 'approved'");
     expect(sql).toContain("add value if not exists 'executing'");
     expect(sql).toContain("pending_actions_execution_idempotency_idx");
+    expect(sql).not.toContain("pending_actions_execution_recovery_idx");
+  });
+
+  it("creates the execution index only after the enum migration commits", async () => {
+    const sql = await readFile(executionIndexMigrationUrl, "utf8");
+
     expect(sql).toContain("pending_actions_execution_recovery_idx");
+    expect(sql).toContain("where status = 'executing'");
   });
 
   it("guards destructive rollback behind worker-stop, backup, and evidence checks", async () => {

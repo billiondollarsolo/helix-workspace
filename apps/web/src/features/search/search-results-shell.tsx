@@ -14,10 +14,10 @@ import {
   type ColumnDef,
   type Row,
 } from "@tanstack/react-table";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer/debouncer";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -28,7 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { globalSearchQueryOptions } from "./queries";
+import { globalSearchQueryOptions, invalidateGlobalSearch } from "./queries";
 import type { GlobalSearchHit, GlobalSearchType } from "./api";
 
 export interface SearchRouteSearchState {
@@ -49,6 +49,7 @@ interface SearchResultRow {
   readonly body: string;
   readonly typeLabel: string;
   readonly updatedAtLabel: string;
+  readonly updatedAtIso?: string;
   readonly scoreLabel: string;
 }
 
@@ -69,8 +70,10 @@ export function SearchResultsShell({
   const resultScrollRef = useRef<HTMLDivElement | null>(null);
   const normalizedQuery = debouncedQuery.trim();
   const queryTypes = selectedTypes.length > 0 ? selectedTypes : undefined;
+  const queryClient = useQueryClient();
+  const searchInput = { query: normalizedQuery, types: queryTypes, limit: 100 };
   const searchQuery = useQuery({
-    ...globalSearchQueryOptions({ query: normalizedQuery, types: queryTypes, limit: 100 }),
+    ...globalSearchQueryOptions(searchInput),
     enabled: normalizedQuery.length > 0,
   });
   const hits = normalizedQuery.length > 0 ? (searchQuery.data?.hits ?? []) : [];
@@ -105,6 +108,17 @@ export function SearchResultsShell({
       {
         accessorKey: "updatedAtLabel",
         header: "Updated",
+        cell: ({ row }) =>
+          row.original.updatedAtIso === undefined ? (
+            row.original.updatedAtLabel
+          ) : (
+            <time
+              dateTime={row.original.updatedAtIso}
+              title={formatAbsoluteTimestamp(row.original.updatedAtIso)}
+            >
+              {row.original.updatedAtLabel}
+            </time>
+          ),
       },
       {
         accessorKey: "scoreLabel",
@@ -132,10 +146,7 @@ export function SearchResultsShell({
     measuredVirtualItems.length > 0
       ? measuredVirtualItems
       : fallbackVirtualItems(tableRows.length, searchResultEstimate);
-  const totalSize = Math.max(
-    virtualizer.getTotalSize(),
-    tableRows.length * searchResultEstimate,
-  );
+  const totalSize = Math.max(virtualizer.getTotalSize(), tableRows.length * searchResultEstimate);
   const selectedTypeSet = useMemo(() => new Set(selectedTypes), [selectedTypes]);
 
   useEffect(() => {
@@ -164,8 +175,13 @@ export function SearchResultsShell({
           <span className="sr-only">Search query</span>
           <Search aria-hidden="true" size={17} />
           <Input
+            type="search"
+            name="workspace-search"
+            autoComplete="off"
+            enterKeyHint="search"
+            spellCheck={false}
             onChange={(event) => setDraftQuery(event.target.value)}
-            placeholder="Search workspace content"
+            placeholder="Search workspace content…"
             value={draftQuery}
           />
         </label>
@@ -181,6 +197,15 @@ export function SearchResultsShell({
               {labelForSearchType(type)}
             </Button>
           ))}
+          {selectedTypes.length > 0 ? (
+            <Button
+              onClick={() => setSelectedTypes(emptySearchTypes)}
+              type="button"
+              variant="ghost"
+            >
+              Clear filters
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -224,6 +249,9 @@ export function SearchResultsShell({
               isError: searchQuery.isError,
               isLoading: searchQuery.isLoading || (searchQuery.isFetching && rows.length === 0),
               normalizedQuery,
+              onRetry: () => {
+                void invalidateGlobalSearch(queryClient, searchInput);
+              },
               rows: tableRows,
               virtualItems,
             })}
@@ -239,6 +267,7 @@ function renderSearchResultsBody({
   isError,
   isLoading,
   normalizedQuery,
+  onRetry,
   rows,
   virtualItems,
 }: {
@@ -246,11 +275,16 @@ function renderSearchResultsBody({
   readonly isError: boolean;
   readonly isLoading: boolean;
   readonly normalizedQuery: string;
+  readonly onRetry: () => void;
   readonly rows: readonly Row<SearchResultRow>[];
   readonly virtualItems: readonly VirtualItem[];
 }) {
   if (normalizedQuery.length === 0) {
-    return <SearchResultsStateRow colSpan={columns.length} message="Enter a query to search." />;
+    return (
+      <SearchResultsStateRow colSpan={columns.length}>
+        Enter a query to search.
+      </SearchResultsStateRow>
+    );
   }
 
   if (isLoading) {
@@ -281,15 +315,16 @@ function renderSearchResultsBody({
 
   if (isError) {
     return (
-      <SearchResultsStateRow
-        colSpan={columns.length}
-        message="Search is unavailable. Try again in a moment."
-      />
+      <SearchResultsStateRow colSpan={columns.length}>
+        <SearchErrorState onRetry={onRetry} />
+      </SearchResultsStateRow>
     );
   }
 
   if (rows.length === 0) {
-    return <SearchResultsStateRow colSpan={columns.length} message="No matching results." />;
+    return (
+      <SearchResultsStateRow colSpan={columns.length}>No matching results.</SearchResultsStateRow>
+    );
   }
 
   return virtualItems.map((virtualItem) => {
@@ -315,16 +350,27 @@ function renderSearchResultsBody({
   });
 }
 
+export function SearchErrorState({ onRetry }: { readonly onRetry: () => void }) {
+  return (
+    <div className="search-results-error" role="alert">
+      <span>Search is unavailable. Check your connection, then try again.</span>
+      <Button onClick={onRetry} size="sm" type="button" variant="outline">
+        Retry search
+      </Button>
+    </div>
+  );
+}
+
 function SearchResultsStateRow({
+  children,
   colSpan,
-  message,
 }: {
+  readonly children: ReactNode;
   readonly colSpan: number;
-  readonly message: string;
 }) {
   return (
     <TableRow className="search-results-table-row search-results-state-row">
-      <TableCell colSpan={colSpan}>{message}</TableCell>
+      <TableCell colSpan={colSpan}>{children}</TableCell>
     </TableRow>
   );
 }
@@ -376,6 +422,7 @@ function searchResultRowFromHit(hit: GlobalSearchHit): SearchResultRow {
     body: hit.body ?? "",
     typeLabel: labelForSearchType(hit.type),
     updatedAtLabel: formatUpdatedAt(hit.updatedAt),
+    ...(hit.updatedAt === undefined ? {} : { updatedAtIso: hit.updatedAt }),
     scoreLabel: formatScore(hit.score),
   };
 }
@@ -400,7 +447,7 @@ function resultStatusText({
     return "Search could not load.";
   }
   if (fetching && hits === 0) {
-    return "Searching...";
+    return "Searching…";
   }
   const total = estimatedTotalHits ?? hits;
   return `${new Intl.NumberFormat().format(total)} ${total === 1 ? "result" : "results"}`;
@@ -427,9 +474,24 @@ function formatScore(score: number | undefined): string {
     return "Relevant";
   }
   if (score >= 0 && score <= 1) {
-    return `${String(Math.round(score * 100))}%`;
+    return new Intl.NumberFormat(undefined, {
+      style: "percent",
+      maximumFractionDigits: 0,
+    }).format(score);
   }
-  return score.toFixed(2);
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  }).format(score);
+}
+
+function formatAbsoluteTimestamp(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "Unknown";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "full",
+    timeStyle: "long",
+  }).format(parsed);
 }
 
 function iconForSearchType(type: GlobalSearchType): LucideIcon {

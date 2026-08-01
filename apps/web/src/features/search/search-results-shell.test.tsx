@@ -4,7 +4,7 @@ import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SearchResultsShell } from "./search-results-shell";
+import { SearchErrorState, SearchResultsShell } from "./search-results-shell";
 import type { GlobalSearchHit } from "./api";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -95,6 +95,11 @@ describe("SearchResultsShell", () => {
     expect(table).toBeInstanceOf(HTMLTableElement);
     expect(table?.textContent).toContain("Planning notes for the launch");
     expect(table?.querySelector("[data-index='0']")).toBeInstanceOf(HTMLTableRowElement);
+    expect(table?.querySelector("time")?.getAttribute("dateTime")).toBe("2026-05-20T12:00:00.000Z");
+    expect(table?.querySelector("time")?.getAttribute("title")).toBeTruthy();
+    const searchInput = container.querySelector<HTMLInputElement>('input[type="search"]');
+    expect(searchInput?.name).toBe("workspace-search");
+    expect(searchInput?.autocomplete).toBe("off");
 
     expect(JSON.parse(requestBodyAt(0))).toEqual({
       limit: 100,
@@ -134,11 +139,27 @@ describe("SearchResultsShell", () => {
       query: "launch",
       types: ["drive"],
     });
+    expect(container.textContent).toContain("Clear filters");
+
+    await act(async () => {
+      button("Clear filters").click();
+      await Promise.resolve();
+    });
+    expect(onSearchStateChange).toHaveBeenLastCalledWith({ q: "launch" });
   });
 
-  function renderSearch(
-    props: Partial<Parameters<typeof SearchResultsShell>[0]> = {},
-  ) {
+  it("offers an actionable retry when search is unavailable", () => {
+    const onRetry = vi.fn();
+    act(() => root.render(<SearchErrorState onRetry={onRetry} />));
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Check your connection",
+    );
+    act(() => button("Retry search").click());
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  function renderSearch(props: Partial<Parameters<typeof SearchResultsShell>[0]> = {}) {
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>

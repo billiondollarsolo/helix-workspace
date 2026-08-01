@@ -106,7 +106,78 @@ describe("CommandPalette", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  function render(host: ReturnType<typeof createWebPlatformHost>, onClose: () => void): void {
+  it("uses combobox/listbox semantics, skips disabled options, and restores focus", async () => {
+    const disabledRun = vi.fn();
+    const enabledRun = vi.fn();
+    const close = vi.fn();
+    const host = createWebPlatformHost({
+      queryClient,
+      getColorMode: () => "system",
+    });
+    host.registerCommandPaletteItems([
+      {
+        id: "test.disabled",
+        pluginId: "test",
+        label: "Unavailable paired command",
+        keywords: ["paired-command"],
+        disabledReason: "Unavailable for this file.",
+        run: disabledRun,
+      },
+      {
+        id: "test.enabled",
+        pluginId: "test",
+        label: "Available paired command",
+        keywords: ["paired-command"],
+        run: enabledRun,
+      },
+    ]);
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+
+    render(host, close);
+    await act(async () => Promise.resolve());
+
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
+    const combobox = container.querySelector<HTMLInputElement>('[role="combobox"]');
+    expect(dialog?.getAttribute("aria-modal")).toBe("true");
+    expect(combobox?.getAttribute("aria-controls")).toBe("command-palette-results");
+    expect(container.querySelector('[role="listbox"]')).not.toBeNull();
+    expect(document.activeElement).toBe(combobox);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    const tabEvent = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      combobox?.dispatchEvent(tabEvent);
+    });
+    expect(tabEvent.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(combobox);
+
+    setSearchQuery("paired-command");
+    await act(async () => Promise.resolve());
+    const enabledOption = buttonWithText("Available paired command");
+    expect(combobox?.getAttribute("aria-activedescendant")).toBe(enabledOption.id);
+    act(() => {
+      combobox?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(disabledRun).not.toHaveBeenCalled();
+    expect(enabledRun).toHaveBeenCalledTimes(1);
+
+    render(host, close, false);
+    expect(document.activeElement).toBe(opener);
+    expect(document.body.style.overflow).toBe("");
+    opener.remove();
+  });
+
+  function render(
+    host: ReturnType<typeof createWebPlatformHost>,
+    onClose: () => void,
+    open = true,
+  ): void {
     act(() => {
       root.render(
         <WebPlatformProvider
@@ -118,7 +189,7 @@ describe("CommandPalette", () => {
             toggle: () => undefined,
           })}
         >
-          <CommandPalette open onClose={onClose} openSettings={() => undefined} />
+          <CommandPalette open={open} onClose={onClose} openSettings={() => undefined} />
         </WebPlatformProvider>,
       );
     });

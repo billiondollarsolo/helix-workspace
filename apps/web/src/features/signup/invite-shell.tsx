@@ -27,6 +27,7 @@ export function SignupInviteShell({
 }: SignupInviteShellProps) {
   const [state, setState] = useState<InviteState>({ status: "checking" });
   const acceptedTokenRef = useRef<string | null>(null);
+  const activeInviteRequestRef = useRef<AbortController | null>(null);
 
   const acceptInvite = useCallback(
     (nextToken: string) => {
@@ -38,12 +39,17 @@ export function SignupInviteShell({
         return;
       }
       acceptedTokenRef.current = nextToken;
+      activeInviteRequestRef.current?.abort();
+      const controller = new AbortController();
+      activeInviteRequestRef.current = controller;
       setState({ status: "accepting" });
-      void acceptSignupOnboardingInvite(nextToken, fetchImpl)
+      void acceptSignupOnboardingInvite(nextToken, fetchImpl, { signal: controller.signal })
         .then((result) => {
+          if (controller.signal.aborted) return;
           setState({ status: "accepted", result });
         })
         .catch((caught) => {
+          if (controller.signal.aborted) return;
           acceptedTokenRef.current = null;
           setState({
             status: "error",
@@ -55,8 +61,10 @@ export function SignupInviteShell({
   );
 
   useEffect(() => {
+    let active = true;
     void getSession(fetchImpl)
       .then((user) => {
+        if (!active) return;
         if (user === null) {
           setState({ status: "sign_in" });
           return;
@@ -64,8 +72,12 @@ export function SignupInviteShell({
         acceptInvite(token);
       })
       .catch(() => {
-        setState({ status: "sign_in" });
+        if (active) setState({ status: "sign_in" });
       });
+    return () => {
+      active = false;
+      activeInviteRequestRef.current?.abort();
+    };
   }, [acceptInvite, fetchImpl, getSession, token]);
 
   if (state.status === "sign_in") {
@@ -98,22 +110,32 @@ export function SignupInviteShell({
         </div>
 
         {state.status === "checking" || state.status === "accepting" ? (
-          <div className="auth-success" role="status">
+          <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
             <Loader2 className="auth-spinner" aria-hidden="true" />
-            <span>
-              {state.status === "checking" ? "Checking session..." : "Joining workspace..."}
-            </span>
+            <span>{state.status === "checking" ? "Checking session…" : "Joining workspace…"}</span>
           </div>
         ) : null}
 
         {state.status === "error" ? (
-          <p className="auth-error" role="alert">
-            {state.message}
-          </p>
+          <>
+            <p className="auth-error" role="alert">
+              {state.message}
+            </p>
+            {token.trim().length > 0 ? (
+              <button
+                className="btn primary lg auth-submit"
+                type="button"
+                onClick={() => acceptInvite(token)}
+              >
+                Try joining again
+                <ArrowRight aria-hidden="true" />
+              </button>
+            ) : null}
+          </>
         ) : null}
 
         {state.status === "accepted" ? (
-          <div className="auth-success" role="status">
+          <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
             <CheckCircle2 aria-hidden="true" />
             <span>
               Workspace <strong>{state.result.org.slug}</strong> is ready.

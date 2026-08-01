@@ -2,24 +2,23 @@
    handoff (shell.jsx → ProfileMenu). User card + appearance controls
    (mode / density / accent) + account actions. */
 
-import type { CSSProperties } from "react";
-import { useState } from "react";
+import type { CSSProperties, RefObject } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons, type IconComponent } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import { sessionUserQueryOptions, signOut } from "@/lib/auth";
-import {
-  ACCENT_OPTIONS,
-  setAppearance,
-  useAppearance,
-} from "@/components/settings-store";
+import type { SettingsSectionId } from "@/components/shell/overlay-context";
+import { ACCENT_OPTIONS, setAppearance, useAppearance } from "@/components/settings-store";
 
 export interface ProfileMenuProps {
   open: boolean;
   onClose: () => void;
+  /** Avatar button that owns this popover. */
+  anchorRef: RefObject<HTMLButtonElement | null>;
   /** Open the full-screen settings page. */
-  openSettings: () => void;
+  openSettings: (section?: SettingsSectionId) => void;
 }
 
 function AccentSwatch({
@@ -81,20 +80,39 @@ function segmentButton(selected: boolean): CSSProperties {
   };
 }
 
-export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
+export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileMenuProps) {
   const theme = useAppearance((s) => s.theme);
   const density = useAppearance((s) => s.density);
   const accent = useAppearance((s) => s.accent);
   const router = useRouter();
   const queryClient = useQueryClient();
   const [signingOut, setSigningOut] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const sessionQuery = useQuery(sessionUserQueryOptions());
   const displayName = sessionQuery.data?.name ?? sessionQuery.data?.email ?? "Signed in";
   const displayEmail = sessionQuery.data?.email ?? "";
 
-  if (!open) {
-    return null;
-  }
+  useEffect(() => {
+    if (!open) return;
+    const menu = menuRef.current;
+    const firstControl = menu?.querySelector<HTMLButtonElement>("button:not([disabled])");
+    queueMicrotask(() => firstControl?.focus());
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        !menu?.contains(target) &&
+        !anchorRef.current?.contains(target)
+      ) {
+        onClose();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [anchorRef, onClose, open]);
+
+  if (!open) return null;
 
   const handleSignOut = async (): Promise<void> => {
     if (signingOut) {
@@ -129,13 +147,55 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
         openSettings();
       },
     },
-    { icon: Icons.Shield, label: "Privacy & security", action: onClose },
-    { icon: Icons.Help, label: "Help & support", action: onClose },
+    {
+      icon: Icons.Shield,
+      label: "Privacy & security",
+      action: () => {
+        onClose();
+        openSettings("security");
+      },
+    },
+    {
+      icon: Icons.Help,
+      label: "Help & shortcuts",
+      action: () => {
+        onClose();
+        openSettings("shortcuts");
+      },
+    },
   ];
 
   return (
     <div
-      onClick={(event) => event.stopPropagation()}
+      id="profile-menu"
+      ref={menuRef}
+      role="menu"
+      aria-label="Profile & appearance"
+      className="profile-menu"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onClose();
+          anchorRef.current?.focus();
+          return;
+        }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        const controls = Array.from(
+          menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not([disabled])") ?? [],
+        );
+        if (controls.length === 0) return;
+        event.preventDefault();
+        const currentIndex = controls.indexOf(document.activeElement as HTMLButtonElement);
+        const nextIndex =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? controls.length - 1
+              : event.key === "ArrowDown"
+                ? (currentIndex + 1 + controls.length) % controls.length
+                : (currentIndex - 1 + controls.length) % controls.length;
+        controls[nextIndex]?.focus();
+      }}
       style={{
         position: "absolute",
         top: 44,
@@ -162,7 +222,10 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
         <Avatar name={displayName} size={36} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>{displayName}</div>
-          <div className="truncate" style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+          <div
+            className="truncate"
+            style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
+          >
             {displayEmail}
           </div>
         </div>
@@ -185,8 +248,13 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
 
         {/* Mode */}
         <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 4 }}>Mode</div>
-          <div style={segmentWrap}>
+          <div
+            id="profile-theme-label"
+            style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 4 }}
+          >
+            Mode
+          </div>
+          <div style={segmentWrap} role="group" aria-labelledby="profile-theme-label">
             {modeOptions.map((option) => {
               const Ico = option.icon;
               const selected = theme === option.v;
@@ -207,8 +275,13 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
 
         {/* Density */}
         <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 4 }}>Density</div>
-          <div style={segmentWrap}>
+          <div
+            id="profile-density-label"
+            style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 4 }}
+          >
+            Density
+          </div>
+          <div style={segmentWrap} role="group" aria-labelledby="profile-density-label">
             {densityOptions.map((option) => {
               const selected = density === option.v;
               return (
@@ -228,10 +301,17 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
 
         {/* Accent */}
         <div>
-          <div style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 6 }}>
+          <div
+            id="profile-accent-label"
+            style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 6 }}
+          >
             Accent color
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div
+            style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
+            role="group"
+            aria-labelledby="profile-accent-label"
+          >
             {ACCENT_OPTIONS.map((color) => (
               <AccentSwatch
                 key={color}
@@ -252,7 +332,9 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
             <button
               key={item.label}
               type="button"
+              role="menuitem"
               onClick={item.action}
+              className="profile-menu-action"
               style={{
                 width: "100%",
                 height: 34,
@@ -264,12 +346,6 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
                 color: "var(--text)",
                 textAlign: "left",
               }}
-              onMouseEnter={(event) => {
-                event.currentTarget.style.background = "var(--hover)";
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.background = "transparent";
-              }}
             >
               <Ico />
               {item.label}
@@ -279,6 +355,7 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
         <div style={{ height: 1, background: "var(--border)" }} />
         <button
           type="button"
+          role="menuitem"
           disabled={signingOut}
           onClick={() => {
             void handleSignOut();
@@ -296,12 +373,7 @@ export function ProfileMenu({ open, onClose, openSettings }: ProfileMenuProps) {
             cursor: signingOut ? "default" : "pointer",
             opacity: signingOut ? 0.6 : 1,
           }}
-          onMouseEnter={(event) => {
-            event.currentTarget.style.background = "var(--hover)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.background = "transparent";
-          }}
+          className="profile-menu-action"
         >
           <Icons.ArrowLeft />
           {signingOut ? "Signing out…" : "Sign out"}

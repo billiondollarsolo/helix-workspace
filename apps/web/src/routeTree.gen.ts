@@ -17,6 +17,7 @@ import { Route as OauthConsentRouteImport } from './routes/oauth.consent'
 import { Route as SignupInviteRouteImport } from './routes/signup_.invite'
 import { Route as SignupVerifyEmailRouteImport } from './routes/signup_.verify-email'
 import { Route as ShellAdminIndexRouteImport } from './routes/_shell/admin/index'
+import { Route as ShellAdminSectionRouteImport } from './routes/_shell/admin/$section'
 import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
 import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar/index'
 import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
@@ -70,6 +71,11 @@ const SignupVerifyEmailRoute = SignupVerifyEmailRouteImport.update({
 const ShellAdminIndexRoute = ShellAdminIndexRouteImport.update({
   id: '/admin/',
   path: '/admin/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellAdminSectionRoute = ShellAdminSectionRouteImport.update({
+  id: '/admin/$section',
+  path: '/admin/$section',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellAssistantIndexRoute = ShellAssistantIndexRouteImport.update({
@@ -155,6 +161,7 @@ export interface FileRoutesByFullPath {
   '/oauth/consent': typeof OauthConsentRoute
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
+  '/admin/$section': typeof ShellAdminSectionRoute
   '/docs/$documentId': typeof ShellDocsDocumentIdRoute
   '/media/$objectId': typeof ShellMediaObjectIdRoute
   '/open/$objectId': typeof ShellOpenObjectIdRoute
@@ -179,6 +186,7 @@ export interface FileRoutesByTo {
   '/oauth/consent': typeof OauthConsentRoute
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
+  '/admin/$section': typeof ShellAdminSectionRoute
   '/docs/$documentId': typeof ShellDocsDocumentIdRoute
   '/media/$objectId': typeof ShellMediaObjectIdRoute
   '/open/$objectId': typeof ShellOpenObjectIdRoute
@@ -205,6 +213,7 @@ export interface FileRoutesById {
   '/oauth/consent': typeof OauthConsentRoute
   '/signup_/invite': typeof SignupInviteRoute
   '/signup_/verify-email': typeof SignupVerifyEmailRoute
+  '/_shell/admin/$section': typeof ShellAdminSectionRoute
   '/_shell/docs/$documentId': typeof ShellDocsDocumentIdRoute
   '/_shell/media/$objectId': typeof ShellMediaObjectIdRoute
   '/_shell/open/$objectId': typeof ShellOpenObjectIdRoute
@@ -231,6 +240,7 @@ export interface FileRouteTypes {
     | '/oauth/consent'
     | '/signup/invite'
     | '/signup/verify-email'
+    | '/admin/$section'
     | '/docs/$documentId'
     | '/media/$objectId'
     | '/open/$objectId'
@@ -255,6 +265,7 @@ export interface FileRouteTypes {
     | '/oauth/consent'
     | '/signup/invite'
     | '/signup/verify-email'
+    | '/admin/$section'
     | '/docs/$documentId'
     | '/media/$objectId'
     | '/open/$objectId'
@@ -280,6 +291,7 @@ export interface FileRouteTypes {
     | '/oauth/consent'
     | '/signup_/invite'
     | '/signup_/verify-email'
+    | '/_shell/admin/$section'
     | '/_shell/docs/$documentId'
     | '/_shell/media/$objectId'
     | '/_shell/open/$objectId'
@@ -364,6 +376,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin/'
       preLoaderRoute: typeof ShellAdminIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/admin/$section': {
+      id: '/_shell/admin/$section'
+      path: '/admin/$section'
+      fullPath: '/admin/$section'
+      preLoaderRoute: typeof ShellAdminSectionRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/assistant/': {
@@ -475,6 +494,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface ShellRouteChildren {
+  ShellAdminSectionRoute: typeof ShellAdminSectionRoute
   ShellDocsDocumentIdRoute: typeof ShellDocsDocumentIdRoute
   ShellMediaObjectIdRoute: typeof ShellMediaObjectIdRoute
   ShellOpenObjectIdRoute: typeof ShellOpenObjectIdRoute
@@ -494,6 +514,7 @@ interface ShellRouteChildren {
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
+  ShellAdminSectionRoute: ShellAdminSectionRoute,
   ShellDocsDocumentIdRoute: ShellDocsDocumentIdRoute,
   ShellMediaObjectIdRoute: ShellMediaObjectIdRoute,
   ShellOpenObjectIdRoute: ShellOpenObjectIdRoute,

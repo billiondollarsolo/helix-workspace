@@ -1,23 +1,181 @@
 {
   "routes": [
-    { "name": "Redirect root", "path": "/", "surface": "entry" },
-    { "name": "Login", "path": "/login", "surface": "auth" },
-    { "name": "Signup", "path": "/signup", "surface": "auth" },
-    { "name": "Mail", "path": "/mail", "surface": "shell" },
-    { "name": "Chat", "path": "/chat", "surface": "shell" },
-    { "name": "Drive", "path": "/drive", "surface": "shell" },
-    { "name": "Docs", "path": "/docs", "surface": "shell" },
-    { "name": "Calendar", "path": "/calendar", "surface": "shell" },
-    { "name": "Meet", "path": "/meet", "surface": "shell" },
-    { "name": "Assistant", "path": "/assistant", "surface": "shell" },
-    { "name": "Search", "path": "/search?q=launch", "surface": "shell" },
-    { "name": "Settings", "path": "/settings", "surface": "shell" },
-    { "name": "Settings Admin", "path": "/settings/admin", "surface": "shell" },
-    { "name": "Admin", "path": "/admin", "surface": "shell" }
+    {
+      "name": "Redirect root",
+      "path": "/",
+      "surface": "entry"
+    },
+    {
+      "name": "Login",
+      "path": "/login",
+      "surface": "auth"
+    },
+    {
+      "name": "Signup",
+      "path": "/signup",
+      "surface": "auth"
+    },
+    {
+      "name": "Mail",
+      "path": "/mail",
+      "surface": "shell"
+    },
+    {
+      "name": "Chat",
+      "path": "/chat",
+      "surface": "shell"
+    },
+    {
+      "name": "Drive",
+      "path": "/drive",
+      "surface": "shell"
+    },
+    {
+      "name": "Docs",
+      "path": "/docs",
+      "surface": "shell"
+    },
+    {
+      "name": "Calendar",
+      "path": "/calendar",
+      "surface": "shell"
+    },
+    {
+      "name": "Meet",
+      "path": "/meet",
+      "surface": "shell"
+    },
+    {
+      "name": "Assistant",
+      "path": "/assistant",
+      "surface": "shell"
+    },
+    {
+      "name": "Search",
+      "path": "/search?q=launch",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings",
+      "path": "/settings",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings Admin",
+      "path": "/settings/admin",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin",
+      "path": "/admin",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Users",
+      "path": "/admin/users",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Policies",
+      "path": "/admin/policies",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Tier readiness",
+      "path": "/admin/tier-readiness",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Workspace settings",
+      "path": "/admin/workspace-settings",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Services",
+      "path": "/admin/services",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Overview",
+      "path": "/admin/overview",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Domains",
+      "path": "/admin/domains",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Groups",
+      "path": "/admin/groups",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Identity",
+      "path": "/admin/identity",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Audit log",
+      "path": "/admin/audit",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Workspace apps",
+      "path": "/admin/workspace-apps",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Mail",
+      "path": "/admin/mail",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin OAuth apps",
+      "path": "/admin/oauth-apps",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin App passwords",
+      "path": "/admin/app-passwords",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Agent credentials",
+      "path": "/admin/agent-credentials",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Webhooks",
+      "path": "/admin/webhooks",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin AI cost limits",
+      "path": "/admin/ai-costs",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin AI observability",
+      "path": "/admin/ai-observability",
+      "surface": "shell"
+    }
   ],
   "viewports": [
-    { "name": "mobile", "width": 390, "height": 844 },
-    { "name": "tablet", "width": 768, "height": 1024 },
-    { "name": "desktop", "width": 1440, "height": 900 }
+    {
+      "name": "mobile",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "name": "tablet",
+      "width": 768,
+      "height": 1024
+    },
+    {
+      "name": "desktop",
+      "width": 1440,
+      "height": 900
+    }
   ]
 }

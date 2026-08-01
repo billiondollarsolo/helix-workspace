@@ -5,6 +5,7 @@ import { insertNotification } from "../notifications/index.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import type { TenantStorageResolver } from "../storage/index.js";
 import { exportDocsDocument } from "./export/index.js";
+import { activityChainHash } from "../activity/hash-chain.js";
 import {
   HELIX_NATIVE_DOCUMENT_ENGINE,
   createNativeDocumentState,
@@ -2165,7 +2166,12 @@ async function appendDocsActivity(
     limit 1
   `) as unknown as readonly { readonly this_hash: string }[];
   const prevHash = previousRows[0]?.this_hash ?? null;
-  const thisHash = `${prevHash ?? "root"}:${input.verb}:${input.documentId}:${String(Date.now())}`;
+  const thisHash = activityChainHash({
+    prevHash,
+    verb: input.verb,
+    objectId: input.documentId,
+    timestamp: Date.now(),
+  });
   await sql`
     insert into activity (org_id, actor_id, verb, object_type, object_id, payload, prev_hash, this_hash)
     values (

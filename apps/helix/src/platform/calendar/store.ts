@@ -19,6 +19,7 @@ import type {
   CalendarFreeBusyRequest,
 } from "./types.js";
 import { expandCalendarEventOccurrences } from "./recurrence.js";
+import { activityChainHash } from "../activity/hash-chain.js";
 
 export interface CalendarAttendeeInput {
   readonly actorId?: string | null | undefined;
@@ -806,7 +807,12 @@ async function appendCalendarActivity(
     select this_hash from activity where org_id = ${orgId} order by created_at desc limit 1
   `) as unknown as readonly { readonly this_hash: string }[];
   const prevHash = previousRows[0]?.this_hash ?? null;
-  const thisHash = `${prevHash ?? "root"}:${verb}:${eventId}:${String(Date.now())}`;
+  const thisHash = activityChainHash({
+    prevHash,
+    verb,
+    objectId: eventId,
+    timestamp: Date.now(),
+  });
   await sql`
     insert into activity (org_id, actor_id, verb, object_type, object_id, payload, prev_hash, this_hash)
     values (${orgId}, ${actorId}, ${verb}, 'event', ${eventId}, ${sql.json(toSqlJson(payload))}, ${prevHash}, ${thisHash})
@@ -890,10 +896,7 @@ function mapCalendar(row: CalendarRow | undefined): CalendarRecord {
 /** Default calendar colour when neither the calendar nor the membership sets one. */
 const DEFAULT_CALENDAR_COLOR = "#4f46e5";
 
-function mapCalendarListEntry(
-  row: CalendarMembershipRow,
-  actorId: string,
-): CalendarListEntry {
+function mapCalendarListEntry(row: CalendarMembershipRow, actorId: string): CalendarListEntry {
   const writable = row.role === "owner" || row.role === "writer";
   return {
     id: row.id,

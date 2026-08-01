@@ -4,6 +4,7 @@ import type { JsonObject } from "@helix/sdk-types";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import type { TenantStorageResolver } from "../storage/index.js";
 import { parseSlideContent } from "./content.js";
+import { activityChainHash } from "../activity/hash-chain.js";
 import type {
   SlideContent,
   SlideDeckRecord,
@@ -1478,7 +1479,12 @@ async function appendSlidesActivity(
     limit 1
   `) as unknown as readonly { readonly this_hash: string }[];
   const prevHash = previousRows[0]?.this_hash ?? null;
-  const thisHash = `${prevHash ?? "root"}:${input.verb}:${input.deckId}:${String(Date.now())}`;
+  const thisHash = activityChainHash({
+    prevHash,
+    verb: input.verb,
+    objectId: input.deckId,
+    timestamp: Date.now(),
+  });
   await sql`
     insert into activity (org_id, actor_id, verb, object_type, object_id, payload, prev_hash, this_hash)
     values (

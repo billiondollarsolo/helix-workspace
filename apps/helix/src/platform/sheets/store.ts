@@ -4,6 +4,7 @@ import type { JsonObject } from "@helix/sdk-types";
 import { insertNotification } from "../notifications/index.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import { evaluateSheetFormulas, type SheetFormulaNamedRange } from "./formula.js";
+import { activityChainHash } from "../activity/hash-chain.js";
 import type {
   SheetCellEdit,
   SheetCellRecord,
@@ -4964,7 +4965,12 @@ async function appendSheetsActivity(
     limit 1
   `) as unknown as readonly { readonly this_hash: string }[];
   const prevHash = previousRows[0]?.this_hash ?? null;
-  const thisHash = `${prevHash ?? "root"}:${input.verb}:${input.objectId}:${String(Date.now())}`;
+  const thisHash = activityChainHash({
+    prevHash,
+    verb: input.verb,
+    objectId: input.objectId,
+    timestamp: Date.now(),
+  });
   await sql`
     insert into activity (org_id, actor_id, verb, object_type, object_id, payload, prev_hash, this_hash)
     values (

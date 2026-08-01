@@ -60,6 +60,14 @@ assert_contains "$BASE" '^kind: HorizontalPodAutoscaler$' "base chart must rende
 assert_contains "$BASE" 'helix_websocket_connections_active' "HPA must autoscale on the WebSocket-connection metric (PRD 16.1)"
 assert_contains "$BASE" '^  behavior:$' "HPA must declare scale-up/scale-down behaviour for spiky WebSocket traffic"
 assert_contains "$BASE" 'prometheus.io/scrape: "true"' "deployment must expose Prometheus scrape hints for the WS metrics adapter"
+# Schema migrations must run before the app rolls. docker-compose.production
+# has always gated the app on a `helix-migrate` service; the chart shipped
+# without an equivalent, so a Kubernetes upgrade served new code against the
+# old schema until this Job existed.
+assert_contains "$BASE" '^kind: Job$' "base chart must render the migration Job"
+assert_contains "$BASE" 'dist/db/migrate.js' "migration Job must run the migration runner"
+assert_contains "$BASE" '"helm.sh/hook": pre-install,pre-upgrade' "migrations must run as a pre-install/pre-upgrade hook, before the Deployment is applied"
+
 assert_contains "$BASE" '^kind: PodDisruptionBudget$' "base chart must render a PDB"
 assert_contains "$BASE" '^kind: NetworkPolicy$' "base chart must render a NetworkPolicy"
 assert_contains "$BASE" 'automountServiceAccountToken: false' "service account token automount must be disabled by default"

@@ -1,0 +1,104 @@
+{{- if .Values.migrations.enabled }}
+{{- /*
+  Schema migrations, run before the application rolls.
+
+  docker-compose.production.yml has always had a `helix-migrate` service that
+  the app `depends_on` with `condition: service_completed_successfully`. The
+  chart had no equivalent, so a Kubernetes install or upgrade started serving
+  new code against the old schema — the pods come up healthy and then fail on
+  the first request touching a table the release expects to have changed.
+
+  A pre-install/pre-upgrade hook is what makes this ordered: Helm waits for
+  this Job to succeed before applying the Deployment, and a failure aborts the
+  release rather than half-applying it. `before-hook-creation` deletes the
+  previous Job so an upgrade is not blocked by an immutable completed Job of
+  the same name.
+
+  The migration runner takes an advisory lock (see migration-runner-lock.test),
+  so a Job that runs while an old replica is still serving is safe.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "helix.fullname" . }}-migrate
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+    helix.io/role: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  {{- with .Values.migrations.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ . }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "helix.selectorLabels" . | nindent 8 }}
+        helix.io/role: migrate
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if .Values.vault.agentInject }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.external.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-helix: {{ .Values.vault.secretPath | quote }}
+        {{- end }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "helix.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- $nodeSelector := .Values.nodeSelector }}
+      {{- if .Values.fips.enabled }}
+      {{- $nodeSelector = mergeOverwrite (deepCopy .Values.nodeSelector) .Values.fips.nodeSelector }}
+      {{- end }}
+      {{- with $nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: "{{ include "helix.image" . }}"
+          imagePullPolicy: {{ ternary .Values.airgap.pullPolicy .Values.image.pullPolicy .Values.airgap.enabled }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          command: ["/nodejs/bin/node", "dist/db/migrate.js"]
+          # Same env as the application container: the runner reads the same
+          # DATABASE_URL and TLS settings, so a migration that connects
+          # differently from the app is not a state this chart can produce.
+          env:
+            {{- include "helix.containerEnv" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.vault.csi.enabled }}
+            - name: vault-secrets
+              mountPath: /mnt/secrets-store
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.vault.csi.enabled }}
+        - name: vault-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "helix.fullname" . }}-vault
+        {{- end }}
+{{- end }}

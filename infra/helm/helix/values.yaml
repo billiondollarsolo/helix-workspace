@@ -400,6 +400,23 @@ stig:
     expectedDropCapabilities:
       - ALL
 
+# Schema migrations run as a Helm pre-install/pre-upgrade hook Job, so new code
+# never starts against an old schema. Disable only if migrations are applied by
+# a pipeline step outside the chart -- a release with neither will serve
+# requests against a schema the code does not expect.
+migrations:
+  enabled: true
+  # One retry: the runner takes an advisory lock, so the usual cause of a
+  # failure is a database that is not reachable yet rather than contention.
+  backoffLimit: 1
+  activeDeadlineSeconds: 900
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
 airgap:
   enabled: false
   imageRegistry: registry.example.internal

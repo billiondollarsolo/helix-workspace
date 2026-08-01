@@ -58,6 +58,27 @@ docker buildx build \
   -t helix/workspace-web:production .
 ```
 
+### Applying schema migrations
+
+Migrations are never applied by the application at boot — the entrypoint is
+`node dist/index.js` and nothing in it touches the schema. Each deployment
+method runs them separately, and both are ordered so that new code never
+serves against an old schema:
+
+| Method            | What runs migrations                  | Ordering                                                                                  |
+| ----------------- | ------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Docker Compose    | the one-shot `helix-migrate` service  | the app `depends_on` it with `condition: service_completed_successfully`                  |
+| Helm / Kubernetes | the `<release>-migrate` Job           | a `pre-install,pre-upgrade` hook, so Helm waits for it and aborts the release if it fails |
+| Anything else     | `pnpm --filter @helix/app db:migrate` | you own the ordering; run it to completion before the new image serves traffic            |
+
+The runner takes a Postgres advisory lock, so it is safe to run while an old
+replica is still serving and safe to run concurrently from two places.
+
+`migrations.enabled=false` turns the Helm Job off, for pipelines that apply
+migrations in a separate step. A release with neither will start and then fail
+on the first request touching a changed table, which is harder to diagnose than
+a failed migration.
+
 Both the application service and the one-shot `helix-migrate` job explicitly set
 `HELIX_EDITORS_MIGRATIONS_ENABLED=false`. The migrator resolves migration sources from its own
 minimal operational environment; it does not require application provider, listener, or MFA

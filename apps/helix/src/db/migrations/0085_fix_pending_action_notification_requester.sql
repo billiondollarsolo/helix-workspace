@@ -1,10 +1,7 @@
--- Durable, idempotent user notifications for the safety-critical pending
--- action lifecycle. Keeping this projection in the same database transaction
--- as the state change prevents process crashes from losing the notification.
-
-create unique index if not exists notifications_pending_action_state_idx
-  on notifications (org_id, actor_id, verb, object_type, object_id)
-  where object_type = 'pending_action';
+-- Repair installations that already applied 0083 with a trigger function
+-- referencing the nonexistent pending_actions.requester_actor_id column.
+-- pending_actions.actor_id is the durable requester identity; the explicit
+-- approval owner continues to take precedence when one is assigned.
 
 create or replace function notify_pending_action_state()
 returns trigger
@@ -63,8 +60,3 @@ begin
   return new;
 end;
 $$;
-
-drop trigger if exists pending_actions_notify_state on pending_actions;
-create trigger pending_actions_notify_state
-after insert or update of status on pending_actions
-for each row execute function notify_pending_action_state();

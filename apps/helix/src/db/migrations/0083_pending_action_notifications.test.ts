@@ -10,7 +10,8 @@ describe("0083 pending action notifications migration", () => {
 
     expect(sql).toContain("after insert or update of status on pending_actions");
     expect(sql).toContain("'pending_confirmation', 'executed', 'failed', 'cancelled', 'expired'");
-    expect(sql).toContain("coalesce(new.approval_owner_actor_id, new.requester_actor_id)");
+    expect(sql).toContain("coalesce(new.approval_owner_actor_id, new.actor_id)");
+    expect(sql).not.toContain("new.requester_actor_id");
     expect(sql).toContain("notifications_pending_action_state_idx");
     expect(sql).toContain("on conflict (org_id, actor_id, verb, object_type, object_id)");
     expect(sql).not.toContain("new.input");

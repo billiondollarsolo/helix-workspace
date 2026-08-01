@@ -179,8 +179,7 @@ export const ADMIN_NAV_GROUPS = [
 ] as const;
 
 export type AdminSectionId =
-  | (typeof ADMIN_NAV_ROOT)["id"]
-  | (typeof ADMIN_NAV_GROUPS)[number]["items"][number]["id"];
+  (typeof ADMIN_NAV_ROOT)["id"] | (typeof ADMIN_NAV_GROUPS)[number]["items"][number]["id"];
 
 /** Every section id, in sidebar order. */
 /* Sections a deployment does not run.

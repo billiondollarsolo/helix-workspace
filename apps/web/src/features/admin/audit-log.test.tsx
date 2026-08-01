@@ -146,7 +146,7 @@ describe("AuditLogList admin UI", () => {
     expect(scroller?.className).toContain("overflow-x-auto");
 
     const chain: string[] = [];
-    for (let node = scroller?.parentElement; node !== null && node !== container; ) {
+    for (let node = scroller?.parentElement; node !== null && node !== container;) {
       if (node === undefined) {
         throw new Error("Table container is not mounted under the page section");
       }

@@ -377,7 +377,18 @@ describe("AdminConsole", () => {
     });
   }
 
-  function renderConsole(section: AdminSectionId = "overview"): Promise<void> {
+  /* Sections are lazy-loaded chunks, so the panel is a Suspense fallback for a
+     tick after the router mounts. Callers assert on section content, so this
+     settles the chunk before returning rather than making every test wrap its
+     first assertion in `waitFor`. */
+  async function renderConsole(section: AdminSectionId = "overview"): Promise<void> {
+    await renderRouter(section);
+    await waitFor(() => {
+      expect(container.querySelector("h1")).not.toBeNull();
+    });
+  }
+
+  function renderRouter(section: AdminSectionId): Promise<void> {
     router = buildRouter(section);
     return act(() => {
       root.render(

@@ -23,9 +23,9 @@ land the valuable pieces without replaying the whole stale branch.
 
 The branch name (“top-10 greenfield”) is misleading. The git history shows two distinct intents:
 
-| Commit | Date | Intent |
-| --- | --- | --- |
-| `a3c8a9b` | 2026-07-28 | Document the **core workspace production-readiness** program (`AGENTS.md` + 2.1k-line plan). Explicitly states the remaining work is **not** a greenfield rewrite. |
+| Commit    | Date       | Intent                                                                                                                                                                                                                                      |
+| --------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `a3c8a9b` | 2026-07-28 | Document the **core workspace production-readiness** program (`AGENTS.md` + 2.1k-line plan). Explicitly states the remaining work is **not** a greenfield rewrite.                                                                          |
 | `4e57203` | 2026-08-01 | **Save point** of uncommitted web UI work: shell accessibility, mobile layout, offline banner, mail compose local recovery, unsaved-navigation guards, auth/search polish. Commit message says not reviewed, not rebased, not gate-checked. |
 
 In plain language, the WIP was aiming to make the **browser shell feel safe and operable**:
@@ -68,37 +68,37 @@ dd68a9a  Optimize Helix bundles… (#2)          ← merge-base with main
 
 ### 2.1 What `main` already has that the branch lacked or duplicated poorly
 
-| Area | On `main` | On the side branch | Consequence |
-| --- | --- | --- | --- |
-| Production MVP boundary in `AGENTS.md` | Explicit fail-closed MVP apps | Missing | Any re-land must preserve `main`’s `AGENTS.md` |
-| Production readiness plan | Landed + some tasks checked (ADRs, format gates); status says implementation authorized | Older copy; almost all checkboxes open; status still “not authorized” | Do not re-add or regress the plan file from the branch |
-| Server-side mail drafts | `saveMailDraft` + `draftId` / `draftVersion` / draft save errors in compose | Local `localStorage` recovery **and** a thinner server-draft path | Local recovery is a **fallback**, not a replacement for server drafts |
-| Design-token / Tailwind bridge | Landed (`88523c8`) | Based on pre-token CSS | Rebase styles carefully; prefer token-aware CSS |
-| Admin console routing/chunks | Major admin work after PR #3 | Untouched | Out of scope here |
-| Backend security/ops | Production assertions, migrations, domains, activity hash, etc. | Absent | Out of scope here |
-| Playwright artifact paths in `e2e.yml` | `apps/web/playwright-report` | Prefixed with `helix-all/helix-workspace/…` | **Do not port** the branch e2e.yml path change; it looks wrong for this repo layout |
+| Area                                   | On `main`                                                                               | On the side branch                                                    | Consequence                                                                         |
+| -------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Production MVP boundary in `AGENTS.md` | Explicit fail-closed MVP apps                                                           | Missing                                                               | Any re-land must preserve `main`’s `AGENTS.md`                                      |
+| Production readiness plan              | Landed + some tasks checked (ADRs, format gates); status says implementation authorized | Older copy; almost all checkboxes open; status still “not authorized” | Do not re-add or regress the plan file from the branch                              |
+| Server-side mail drafts                | `saveMailDraft` + `draftId` / `draftVersion` / draft save errors in compose             | Local `localStorage` recovery **and** a thinner server-draft path     | Local recovery is a **fallback**, not a replacement for server drafts               |
+| Design-token / Tailwind bridge         | Landed (`88523c8`)                                                                      | Based on pre-token CSS                                                | Rebase styles carefully; prefer token-aware CSS                                     |
+| Admin console routing/chunks           | Major admin work after PR #3                                                            | Untouched                                                             | Out of scope here                                                                   |
+| Backend security/ops                   | Production assertions, migrations, domains, activity hash, etc.                         | Absent                                                                | Out of scope here                                                                   |
+| Playwright artifact paths in `e2e.yml` | `apps/web/playwright-report`                                                            | Prefixed with `helix-all/helix-workspace/…`                           | **Do not port** the branch e2e.yml path change; it looks wrong for this repo layout |
 
 ### 2.2 What the branch has that `main` still lacks (valuable)
 
 These are the salvage candidates:
 
-| Capability | Branch artifacts | Present on `main`? |
-| --- | --- | --- |
-| Offline / reconnected banner | `network-status.tsx` + test + styles | No |
-| Local mail compose crash recovery | `mail-compose-recovery.ts` + tests + compose wiring | No (server drafts only) |
-| Unsaved-navigation warning dialog | `use-unsaved-changes-warning.tsx` + tests | No |
-| Settings deep-link via URL search (`?settings=…`) | `app-shell.tsx` + overlay/settings tests | No (local React state only) |
-| Command palette combobox a11y + focus restore | `command-palette.tsx` + test | Partial at best |
-| Dialog focus restore + body scroll lock + labelled title | `helix-dialog.tsx` + test | Weaker (no restore/scroll lock/`aria-labelledby` as complete) |
-| Profile menu keyboard/focus model | `profile-menu.tsx` + test | Weaker |
-| Notifications tablist / relative time / error empty states | `notifications-panel.tsx` + test | Weaker |
-| Settings honesty for unavailable actions | `settings-page.tsx` + test | Weaker |
-| Mobile bottom rail + safe-area layout + e2e | `styles.css` media queries + `mobile-shell-layout.spec.ts` | Partial mobile CSS; no e2e |
-| Auth form error focus / `aria-invalid` / `aria-busy` | login, signup, invite, verify-email | Weaker |
-| Route error / not-found focusable main regions | `__root.tsx` + test | Minimal static markup |
-| Search results error retry + table a11y polish | `search-results-shell.tsx` | Partial |
-| Theme-color meta + `color-scheme` from appearance store | `index.html`, `settings-store.ts` | Theme FOUC script only |
-| Compose UX extras | minimize, recipient validation, recovery notice, discard confirm | Mostly absent |
+| Capability                                                 | Branch artifacts                                                 | Present on `main`?                                            |
+| ---------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------- |
+| Offline / reconnected banner                               | `network-status.tsx` + test + styles                             | No                                                            |
+| Local mail compose crash recovery                          | `mail-compose-recovery.ts` + tests + compose wiring              | No (server drafts only)                                       |
+| Unsaved-navigation warning dialog                          | `use-unsaved-changes-warning.tsx` + tests                        | No                                                            |
+| Settings deep-link via URL search (`?settings=…`)          | `app-shell.tsx` + overlay/settings tests                         | No (local React state only)                                   |
+| Command palette combobox a11y + focus restore              | `command-palette.tsx` + test                                     | Partial at best                                               |
+| Dialog focus restore + body scroll lock + labelled title   | `helix-dialog.tsx` + test                                        | Weaker (no restore/scroll lock/`aria-labelledby` as complete) |
+| Profile menu keyboard/focus model                          | `profile-menu.tsx` + test                                        | Weaker                                                        |
+| Notifications tablist / relative time / error empty states | `notifications-panel.tsx` + test                                 | Weaker                                                        |
+| Settings honesty for unavailable actions                   | `settings-page.tsx` + test                                       | Weaker                                                        |
+| Mobile bottom rail + safe-area layout + e2e                | `styles.css` media queries + `mobile-shell-layout.spec.ts`       | Partial mobile CSS; no e2e                                    |
+| Auth form error focus / `aria-invalid` / `aria-busy`       | login, signup, invite, verify-email                              | Weaker                                                        |
+| Route error / not-found focusable main regions             | `__root.tsx` + test                                              | Minimal static markup                                         |
+| Search results error retry + table a11y polish             | `search-results-shell.tsx`                                       | Partial                                                       |
+| Theme-color meta + `color-scheme` from appearance store    | `index.html`, `settings-store.ts`                                | Theme FOUC script only                                        |
+| Compose UX extras                                          | minimize, recipient validation, recovery notice, discard confirm | Mostly absent                                                 |
 
 ### 2.3 What the branch touched that must **not** expand MVP scope
 
@@ -111,12 +111,12 @@ The WIP also edited native Docs/Sheets/Slides editors, Meet recording drawer, an
 
 ### 2.4 Relationship to the production-readiness plan
 
-| Production-readiness task | Overlap with this branch |
-| --- | --- |
-| Task 0.1 “land dirty branch safely” | Partially done (committed), **not** completed (never rebased onto post-MVP `main`, never PR’d cleanly) |
-| Task M6 “mail user reliability” | Local recovery is one bullet; plan wants server drafts as authority + reconcile + send status + idempotency |
-| Task V1 mobile shell checks | Mobile e2e sketch exists |
-| Phases 1–8 security/ops | **No meaningful overlap** — already progressed on `main` |
+| Production-readiness task           | Overlap with this branch                                                                                    |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Task 0.1 “land dirty branch safely” | Partially done (committed), **not** completed (never rebased onto post-MVP `main`, never PR’d cleanly)      |
+| Task M6 “mail user reliability”     | Local recovery is one bullet; plan wants server drafts as authority + reconcile + send status + idempotency |
+| Task V1 mobile shell checks         | Mobile e2e sketch exists                                                                                    |
+| Phases 1–8 security/ops             | **No meaningful overlap** — already progressed on `main`                                                    |
 
 This document **does not** re-open the production-readiness program. Where M6/V1 overlap, implement
 only the client-side pieces listed below and leave server/evidence work to that plan.
@@ -264,28 +264,28 @@ on current `main` so production MVP work is preserved.
 
 **Port / re-implement (in scope):**
 
-| Source path on side branch | Destination intent |
-| --- | --- |
-| `apps/web/src/components/shell/network-status.tsx` (+ test) | Port |
-| `apps/web/src/lib/use-unsaved-changes-warning.tsx` (+ test) | Port |
-| `apps/web/src/features/mail/mail-compose-recovery.ts` (+ test) | Port + reconcile with server drafts |
+| Source path on side branch                                                 | Destination intent                  |
+| -------------------------------------------------------------------------- | ----------------------------------- |
+| `apps/web/src/components/shell/network-status.tsx` (+ test)                | Port                                |
+| `apps/web/src/lib/use-unsaved-changes-warning.tsx` (+ test)                | Port                                |
+| `apps/web/src/features/mail/mail-compose-recovery.ts` (+ test)             | Port + reconcile with server drafts |
 | Shell a11y edits in palette/launcher/profile/notifications/settings/dialog | Selective port onto `main` versions |
-| Settings URL state in `app-shell.tsx` / overlay context | Port |
-| Mobile CSS + `mobile-shell-layout.spec.ts` | Port/adapt |
-| Login/signup/invite/verify a11y | Selective port |
-| `__root` error/not-found a11y | Port |
-| Search error retry polish | Selective port |
-| theme-color / color-scheme appearance bits | Port |
+| Settings URL state in `app-shell.tsx` / overlay context                    | Port                                |
+| Mobile CSS + `mobile-shell-layout.spec.ts`                                 | Port/adapt                          |
+| Login/signup/invite/verify a11y                                            | Selective port                      |
+| `__root` error/not-found a11y                                              | Port                                |
+| Search error retry polish                                                  | Selective port                      |
+| theme-color / color-scheme appearance bits                                 | Port                                |
 
 **Do not port:**
 
-| Source | Why |
-| --- | --- |
-| Side-branch `AGENTS.md` | Would remove MVP boundary |
-| Side-branch production-readiness plan file | Stale vs `main` |
-| `.github/workflows/e2e.yml` path rewrite | Incorrect for this workspace layout |
-| Docs/Sheets/Slides/Meet/PDF feature edits | Out of MVP scope |
-| Unrelated mail-shell churn beyond compose recovery/a11y | High conflict; re-apply surgically |
+| Source                                                  | Why                                 |
+| ------------------------------------------------------- | ----------------------------------- |
+| Side-branch `AGENTS.md`                                 | Would remove MVP boundary           |
+| Side-branch production-readiness plan file              | Stale vs `main`                     |
+| `.github/workflows/e2e.yml` path rewrite                | Incorrect for this workspace layout |
+| Docs/Sheets/Slides/Meet/PDF feature edits               | Out of MVP scope                    |
+| Unrelated mail-shell churn beyond compose recovery/a11y | High conflict; re-apply surgically  |
 
 **Acceptance:** PR description links this table; review rejects out-of-scope files.
 
@@ -807,41 +807,41 @@ Web UI: run relevant Playwright suite used in CI for mocked e2e.
 
 # 8. Granular task index
 
-| ID | Task | Depends on | Primary evidence |
-| --- | --- | --- | --- |
-| A1 | Branch from current `main` | — | clean branch tip = main |
-| A2 | Salvage map enforced in PR | A1 | file list review |
-| B1 | Dialog a11y harden | A1 | unit test |
-| B2 | Unsaved-changes hook | B1 | unit test |
-| B3 | NetworkStatus | A1 | unit + shell mount |
-| C1 | Settings URL state | A1 | unit + manual refresh |
-| C2 | Command palette a11y | B1 | unit |
-| C3 | App launcher keyboard | A1 | unit |
-| C4 | Profile menu keyboard | C1 | unit |
-| C5 | Notifications a11y | A1 | unit |
-| C6 | Settings honesty + theme-color | C1 | unit |
-| C7 | AppShell focus + mount network | B3, C1 | unit |
-| D1 | Local recovery module | A1 | unit |
-| D2 | Compose wiring + reconcile | B2, D1 | unit + manual crash |
-| D3 | Compose CSS | D2 | visual |
-| E1 | Auth form a11y | A1 | unit |
-| E2 | Root error/not-found | A1 | unit |
-| E3 | Search error retry | A1 | unit |
-| E4 | Drive micro a11y (optional) | A1 | unit |
-| F1 | Mobile CSS | C7 | e2e + manual |
-| F2 | Mobile Playwright | F1 | e2e CI |
-| G1 | Focused tests | all feature tasks | vitest/playwright |
-| G2 | Full gates | G1 | format/type/lint/test/build |
-| G3 | Manual checklist | G1 | human sign-off |
-| G4 | PR close-out | G2–G3 | merged PR |
+| ID  | Task                           | Depends on        | Primary evidence            |
+| --- | ------------------------------ | ----------------- | --------------------------- |
+| A1  | Branch from current `main`     | —                 | clean branch tip = main     |
+| A2  | Salvage map enforced in PR     | A1                | file list review            |
+| B1  | Dialog a11y harden             | A1                | unit test                   |
+| B2  | Unsaved-changes hook           | B1                | unit test                   |
+| B3  | NetworkStatus                  | A1                | unit + shell mount          |
+| C1  | Settings URL state             | A1                | unit + manual refresh       |
+| C2  | Command palette a11y           | B1                | unit                        |
+| C3  | App launcher keyboard          | A1                | unit                        |
+| C4  | Profile menu keyboard          | C1                | unit                        |
+| C5  | Notifications a11y             | A1                | unit                        |
+| C6  | Settings honesty + theme-color | C1                | unit                        |
+| C7  | AppShell focus + mount network | B3, C1            | unit                        |
+| D1  | Local recovery module          | A1                | unit                        |
+| D2  | Compose wiring + reconcile     | B2, D1            | unit + manual crash         |
+| D3  | Compose CSS                    | D2                | visual                      |
+| E1  | Auth form a11y                 | A1                | unit                        |
+| E2  | Root error/not-found           | A1                | unit                        |
+| E3  | Search error retry             | A1                | unit                        |
+| E4  | Drive micro a11y (optional)    | A1                | unit                        |
+| F1  | Mobile CSS                     | C7                | e2e + manual                |
+| F2  | Mobile Playwright              | F1                | e2e CI                      |
+| G1  | Focused tests                  | all feature tasks | vitest/playwright           |
+| G2  | Full gates                     | G1                | format/type/lint/test/build |
+| G3  | Manual checklist               | G1                | human sign-off              |
+| G4  | PR close-out                   | G2–G3             | merged PR                   |
 
 Suggested PR slicing:
 
-1. **PR1:** B1–B3 + C7 mount network only  
-2. **PR2:** C1–C6 shell chrome  
-3. **PR3:** D1–D3 mail recovery  
-4. **PR4:** E1–E3 (+ optional E4)  
-5. **PR5:** F1–F2 mobile  
+1. **PR1:** B1–B3 + C7 mount network only
+2. **PR2:** C1–C6 shell chrome
+3. **PR3:** D1–D3 mail recovery
+4. **PR4:** E1–E3 (+ optional E4)
+5. **PR5:** F1–F2 mobile
 
 Or combine PR1+PR2 if small enough; keep mail recovery separate because of compose conflict risk.
 
@@ -849,16 +849,16 @@ Or combine PR1+PR2 if small enough; keep mail recovery separate because of compo
 
 # 9. Risks and mitigations
 
-| Risk | Mitigation |
-| --- | --- |
-| Merge conflicts in `mail-shell.tsx` / `styles.css` | Surgical re-apply; never whole-file copy from side branch |
-| Local recovery overwrites newer server draft | Normative reconcile rules in D2; tests for conflict |
-| localStorage PII (draft body) | Document as device-local; cap size; clear on send; no logs |
-| Attachment loss after crash | Explicit UX copy; do not pretend attachments recovered |
-| MVP boundary regression via launcher/docs edits | C3 asserts MVP apps; skip editor ports |
-| CSS fights design tokens on `main` | Port selectors/behaviors, restyle with current variables |
-| e2e.yml wrong paths | Leave `main` workflow paths alone |
-| Scope creep into production-readiness M6 server work | Keep server draft API as-is; file follow-ups for full M6 |
+| Risk                                                 | Mitigation                                                 |
+| ---------------------------------------------------- | ---------------------------------------------------------- |
+| Merge conflicts in `mail-shell.tsx` / `styles.css`   | Surgical re-apply; never whole-file copy from side branch  |
+| Local recovery overwrites newer server draft         | Normative reconcile rules in D2; tests for conflict        |
+| localStorage PII (draft body)                        | Document as device-local; cap size; clear on send; no logs |
+| Attachment loss after crash                          | Explicit UX copy; do not pretend attachments recovered     |
+| MVP boundary regression via launcher/docs edits      | C3 asserts MVP apps; skip editor ports                     |
+| CSS fights design tokens on `main`                   | Port selectors/behaviors, restyle with current variables   |
+| e2e.yml wrong paths                                  | Leave `main` workflow paths alone                          |
+| Scope creep into production-readiness M6 server work | Keep server draft API as-is; file follow-ups for full M6   |
 
 ---
 
@@ -877,13 +877,13 @@ Stop and return to owner review if:
 
 # 11. Reference commits and paths
 
-| Ref | Role |
-| --- | --- |
-| `origin/agent/top-10-greenfield-improvements` | Historical WIP branch (do not merge) |
-| `4e57203` | Shell / recovery / unsaved WIP save point |
-| `a3c8a9b` | Original production-readiness doc commit (superseded on `main`) |
-| `docs/superpowers/plans/2026-07-28-core-workspace-production-readiness.md` | Sibling plan for security/ops (on `main`) |
-| `AGENTS.md` on `main` | MVP boundary and verification commands |
+| Ref                                                                        | Role                                                            |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `origin/agent/top-10-greenfield-improvements`                              | Historical WIP branch (do not merge)                            |
+| `4e57203`                                                                  | Shell / recovery / unsaved WIP save point                       |
+| `a3c8a9b`                                                                  | Original production-readiness doc commit (superseded on `main`) |
+| `docs/superpowers/plans/2026-07-28-core-workspace-production-readiness.md` | Sibling plan for security/ops (on `main`)                       |
+| `AGENTS.md` on `main`                                                      | MVP boundary and verification commands                          |
 
 ### High-value source files to read when implementing
 

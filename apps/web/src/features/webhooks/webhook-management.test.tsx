@@ -417,6 +417,36 @@ describe("WebhookManagement", () => {
     expect(inboundCache()[0]?.enabled).toBe(true);
   });
 
+  /* Every summary tile used to read `query.data ?? []` and print `.length`, so
+     a refused webhook API rendered "0 outbound, 0 inbound, 0 enabled, 0 failed"
+     — indistinguishable from a healthy empty workspace, on the surface an
+     operator checks to see whether deliveries are failing. */
+  it("reports unknown rather than zero when the webhook API is unavailable", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json({ error: "unavailable" }, { status: 503 })),
+    );
+
+    renderWebhooks();
+    await waitFor(() => {
+      expect(container.querySelector(".webhooks-error-panel")).not.toBeNull();
+    });
+
+    const tiles = Array.from(container.querySelectorAll(".webhooks-summary-item"));
+    expect(tiles).toHaveLength(4);
+    for (const tile of tiles) {
+      expect(tile.querySelector("strong")?.textContent).toBe("—");
+      expect(tile.hasAttribute("data-unknown")).toBe(true);
+    }
+    expect(container.textContent).not.toContain("No outbound webhooks configured");
+    expect(container.textContent).toContain("Could not load outbound webhooks.");
+
+    // The heading already says "unavailable"; a backend echoing that word must
+    // not produce "…unavailableunavailable".
+    expect(container.querySelector(".webhooks-error-panel")?.textContent).toBe(
+      "Webhook API unavailableUnable to load webhook data.",
+    );
+  });
+
   function renderWebhooks() {
     act(() => {
       root.render(

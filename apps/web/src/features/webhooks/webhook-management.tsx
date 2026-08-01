@@ -405,18 +405,31 @@ export function WebhookManagement() {
       </header>
 
       <div className="webhooks-summary" aria-label="Webhook summary">
-        <SummaryMetric label="Outbound" value={outboundWebhooks.length} />
-        <SummaryMetric label="Inbound" value={inboundWebhooks.length} />
+        <SummaryMetric
+          label="Outbound"
+          value={outboundQuery.data === undefined ? null : outboundWebhooks.length}
+        />
+        <SummaryMetric
+          label="Inbound"
+          value={inboundQuery.data === undefined ? null : inboundWebhooks.length}
+        />
         <SummaryMetric
           label="Enabled"
+          /* Needs both lists: half a total is a wrong number, not a partial one. */
           value={
-            outboundWebhooks.filter((item) => item.enabled).length +
-            inboundWebhooks.filter((item) => item.enabled).length
+            outboundQuery.data === undefined || inboundQuery.data === undefined
+              ? null
+              : outboundWebhooks.filter((item) => item.enabled).length +
+                inboundWebhooks.filter((item) => item.enabled).length
           }
         />
         <SummaryMetric
           label="Failed deliveries"
-          value={deliveries.filter((item) => item.status === "failed").length}
+          value={
+            deliveriesQuery.data === undefined
+              ? null
+              : deliveries.filter((item) => item.status === "failed").length
+          }
           tone="danger"
         />
       </div>
@@ -473,6 +486,7 @@ export function WebhookManagement() {
       {activeTab === "outbound" ? (
         <div className="webhooks-grid">
           <OutboundTable
+            failed={outboundQuery.data === undefined && !outboundQuery.isLoading}
             isBusy={outboundQuery.isLoading || outboundActionMutation.isPending}
             onAction={(action) => outboundActionMutation.mutate(action)}
             onEdit={(webhook) => setOutboundForm(outboundFormFromWebhook(webhook))}
@@ -495,6 +509,7 @@ export function WebhookManagement() {
       {activeTab === "inbound" ? (
         <div className="webhooks-grid">
           <InboundTable
+            failed={inboundQuery.data === undefined && !inboundQuery.isLoading}
             isBusy={inboundQuery.isLoading || inboundActionMutation.isPending}
             onAction={(action) => inboundActionMutation.mutate(action)}
             onEdit={(webhook) => setInboundForm(inboundFormFromWebhook(webhook))}
@@ -549,19 +564,33 @@ type InboundRowAction =
   | { readonly type: "rotate"; readonly webhook: InboundWebhook }
   | { readonly type: "delete"; readonly webhook: InboundWebhook };
 
+/* `value` is `null` when the query behind it has not answered.
+ *
+ * Every tile used to read `query.data ?? []` and print `.length`, so a
+ * workspace whose webhook API was refused or unreachable rendered "0 outbound,
+ * 0 inbound, 0 enabled, 0 failed" — four confident zeroes that are
+ * indistinguishable from a healthy empty workspace, on the one surface an
+ * operator checks to see whether deliveries are failing. A dash is not a
+ * count; it says we do not know. */
 function SummaryMetric({
   label,
   value,
   tone,
 }: {
   readonly label: string;
-  readonly value: number;
+  readonly value: number | null;
   readonly tone?: "danger";
 }) {
+  const unknown = value === null;
   return (
-    <div className={tone === "danger" ? "webhooks-summary-item danger" : "webhooks-summary-item"}>
+    <div
+      className={
+        tone === "danger" && !unknown ? "webhooks-summary-item danger" : "webhooks-summary-item"
+      }
+      data-unknown={unknown ? "" : undefined}
+    >
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong>{unknown ? "—" : value}</strong>
     </div>
   );
 }
@@ -601,12 +630,25 @@ function QueryErrors({ errors }: { readonly errors: readonly (Error | null)[] })
   return (
     <div className="webhooks-error-panel" role="alert">
       <strong>Webhook API unavailable</strong>
-      <span>{visibleErrors[0]?.message ?? "Unable to load webhook data."}</span>
+      {/* The heading already says "unavailable"; a backend that answers
+          {"error":"unavailable"} used to render "…unavailableunavailable".
+          Show the raw message only when it adds something. */}
+      <span>{webhookErrorDetail(visibleErrors[0]?.message)}</span>
     </div>
   );
 }
 
+/** Drop a backend message that only restates the heading. */
+function webhookErrorDetail(message: string | undefined): string {
+  const fallback = "Unable to load webhook data.";
+  if (message === undefined || message.trim().length === 0) {
+    return fallback;
+  }
+  return message.trim().toLowerCase() === "unavailable" ? fallback : message;
+}
+
 function OutboundTable({
+  failed,
   isBusy,
   onAction,
   onEdit,
@@ -614,6 +656,8 @@ function OutboundTable({
   setPendingDelete,
   webhooks,
 }: {
+  /** The list request failed, so an empty table is not an empty workspace. */
+  readonly failed: boolean;
   readonly isBusy: boolean;
   readonly onAction: (action: OutboundRowAction) => void;
   readonly onEdit: (webhook: OutboundWebhook) => void;
@@ -761,7 +805,13 @@ function OutboundTable({
             {rows.length === 0 ? (
               <EmptyRow
                 colSpan={columns.length}
-                text={isBusy ? "Loading outbound webhooks..." : "No outbound webhooks configured."}
+                text={
+                  isBusy
+                    ? "Loading outbound webhooks..."
+                    : failed
+                      ? "Could not load outbound webhooks."
+                      : "No outbound webhooks configured."
+                }
               />
             ) : (
               rows.map((row) => (
@@ -782,6 +832,7 @@ function OutboundTable({
 }
 
 function InboundTable({
+  failed,
   isBusy,
   onAction,
   onEdit,
@@ -789,6 +840,8 @@ function InboundTable({
   setPendingDelete,
   webhooks,
 }: {
+  /** The list request failed, so an empty table is not an empty workspace. */
+  readonly failed: boolean;
   readonly isBusy: boolean;
   readonly onAction: (action: InboundRowAction) => void;
   readonly onEdit: (webhook: InboundWebhook) => void;
@@ -933,7 +986,13 @@ function InboundTable({
             {rows.length === 0 ? (
               <EmptyRow
                 colSpan={columns.length}
-                text={isBusy ? "Loading inbound webhooks..." : "No inbound receivers configured."}
+                text={
+                  isBusy
+                    ? "Loading inbound webhooks..."
+                    : failed
+                      ? "Could not load inbound receivers."
+                      : "No inbound receivers configured."
+                }
               />
             ) : (
               rows.map((row) => (

@@ -137,7 +137,9 @@ async function callToolWithApproval<Output>(
 async function parseToolResponse<Output>(response: Response, toolId: string): Promise<Output> {
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(errorMessageFromOutput(output) ?? `Tool ${toolId} failed with ${response.status}`);
+    throw new Error(
+      errorMessageFromOutput(output) ?? `Tool ${toolId} failed with ${response.status}`,
+    );
   }
   return output as Output;
 }

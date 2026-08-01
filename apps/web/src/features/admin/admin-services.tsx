@@ -7,11 +7,21 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { queryOptions, useQuery } from "@tanstack/react-query";
-import { CheckCircle2, CircleAlert, CircleDashed, PlugZap } from "lucide-react";
+import {
+  EmptyRow,
+  PageHeading,
+  QueryFailureBanner,
+  StateBanner,
+  useQueryFailure,
+} from "@/features/admin/console/primitives";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2, CircleAlert, CircleDashed, CircleHelp, PlugZap } from "lucide-react";
 import { useMemo, useState } from "react";
 
 export type AdminServiceStatus = "ready" | "configured" | "missing" | "degraded" | "disabled";
+/** The API only ever reports a graded status; "unknown" is this page's reading
+ *  of a rollup whose catalog never arrived. */
+type SummaryCardStatus = AdminServiceStatus | "unknown";
 export type AdminServiceCategory =
   "workspace" | "communication" | "platform" | "security" | "integrations" | "ai";
 export type AdminDependencyType =
@@ -103,133 +113,199 @@ export async function prefetchAdminServicesQuery(queryClient: AdminServicesQuery
 }
 
 export function AdminServicesOverview() {
+  const queryClient = useQueryClient();
   const servicesQuery = useQuery(adminServicesQueryOptions());
+  const failure = useQueryFailure(servicesQuery, () => {
+    void queryClient.invalidateQueries({ queryKey: adminServicesQueryKey });
+  });
   const services = useMemo(() => [...(servicesQuery.data?.services ?? [])], [servicesQuery.data]);
   const [selectedServiceId, setSelectedServiceId] = useState<string | undefined>();
   const selectedService =
     services.find((service) => service.id === selectedServiceId) ?? services[0] ?? undefined;
-  const totals = useMemo(() => serviceTotals(services), [services]);
+  /* Grading requires a catalog. `services` is empty both when the API reported
+     no services and when it reported nothing at all, and the second case must
+     not be scored — every total is 0, so a "no missing, no degraded" ternary
+     paints a green check over a list that never arrived. `null` keeps the two
+     apart and forces the unknown branch to read as unknown. */
+  const totals = useMemo(
+    () => (servicesQuery.data === undefined ? null : serviceTotals(servicesQuery.data.services)),
+    [servicesQuery.data],
+  );
+  const ungradedNote =
+    totals === null ? "Not reported — the service catalog has not loaded." : undefined;
 
   return (
-    <section className="admin-tier-panel" aria-labelledby="admin-services-title">
-      <div className="admin-tier-panel-header">
-        <div>
-          <p className="admin-tier-kicker">Shared services</p>
-          <h2 id="admin-services-title">Admin services</h2>
-          <p>Runtime service surface, dependencies, routes, scopes, tools, and operations.</p>
-        </div>
-        {servicesQuery.data === undefined ? null : (
-          <span className="text-xs font-semibold text-muted-foreground">
-            Generated {formatTimestamp(servicesQuery.data.generatedAt)}
-          </span>
-        )}
-      </div>
+    <>
+      {/* The catalog's own h2 sits below this h1, and the per-service detail
+          below that, so the page reads as one heading chain. */}
+      <PageHeading
+        title="Admin services"
+        subtitle="Runtime service surface, dependencies, routes, scopes, tools, and operations."
+        meta={
+          servicesQuery.data === undefined ? undefined : (
+            <span className="ml-auto shrink-0 text-xs font-semibold text-muted-foreground">
+              Generated {formatTimestamp(servicesQuery.data.generatedAt)}
+            </span>
+          )
+        }
+      />
 
-      {servicesQuery.isPending ? (
-        <p role="status">Loading admin services</p>
-      ) : servicesQuery.isError ? (
-        <p role="alert">Admin services are unavailable or missing admin services scope.</p>
+      {servicesQuery.isPending && failure === null ? (
+        <StateBanner kind="loading">Loading admin services</StateBanner>
       ) : null}
+      {failure === null ? null : (
+        /* Default variant: when the catalog fails there is nothing else on this
+           page to act on, so retry is the page's primary action. */
+        <QueryFailureBanner
+          summary="The service catalog could not be loaded."
+          subject="platform services"
+          error={failure.error}
+          isRetrying={failure.isRetrying}
+          onRetry={failure.retry}
+          retryVariant="default"
+        >
+          Service readiness, dependencies and admin actions are all unknown until this loads.
+        </QueryFailureBanner>
+      )}
 
-      <div className="admin-ai-cost-grid">
-        <ServiceSummaryCard
-          title="Services"
-          status={totals.disabled > 0 ? "configured" : totals.total > 0 ? "ready" : "missing"}
-          rows={[
-            ["Total", formatNumber(totals.total)],
-            ["Enabled", formatNumber(totals.enabled)],
-            ["Disabled", formatNumber(totals.disabled)],
-          ]}
-        />
-        <ServiceSummaryCard
-          title="Readiness"
-          status={totals.missing > 0 || totals.degraded > 0 ? "degraded" : "ready"}
-          rows={[
-            ["Ready", formatNumber(totals.ready)],
-            ["Configured", formatNumber(totals.configured)],
-            ["Missing", formatNumber(totals.missing)],
-            ["Degraded", formatNumber(totals.degraded)],
-          ]}
-        />
-        <ServiceSummaryCard
-          title="Operations"
-          status="configured"
-          rows={[
-            ["Routes", formatNumber(totals.routes)],
-            ["Tools", formatNumber(totals.tools)],
-            ["Admin actions", formatNumber(totals.actions)],
-          ]}
-        />
-        <ServiceSummaryCard
-          title="Data and AI"
-          status="configured"
-          rows={[
-            ["Data stores", formatNumber(totals.dataStores)],
-            ["AI slots", formatNumber(totals.aiSlots)],
-            ["Enrichments", formatNumber(totals.enrichments)],
-          ]}
-        />
-      </div>
+      <section className="admin-tier-panel" aria-labelledby="admin-service-catalog-title">
+        <div className="admin-tier-panel-header">
+          <div>
+            <p className="admin-tier-kicker">Shared services</p>
+            <h2 id="admin-service-catalog-title">Service catalog</h2>
+          </div>
+        </div>
 
-      <Table aria-label="Admin services" className="admin-tier-table" role="table">
-        <TableHeader>
-          <TableRow role="row">
-            <TableHead role="columnheader">Service</TableHead>
-            <TableHead role="columnheader">Plugin</TableHead>
-            <TableHead role="columnheader">Status</TableHead>
-            <TableHead role="columnheader">Category</TableHead>
-            <TableHead role="columnheader">Dependencies</TableHead>
-            <TableHead role="columnheader">Routes</TableHead>
-            <TableHead role="columnheader">Tools</TableHead>
-            <TableHead role="columnheader">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {services.length === 0 ? (
+        <div className="admin-ai-cost-grid">
+          <ServiceSummaryCard
+            title="Services"
+            note={ungradedNote}
+            status={
+              totals === null
+                ? "unknown"
+                : totals.disabled > 0
+                  ? "configured"
+                  : totals.total > 0
+                    ? "ready"
+                    : "missing"
+            }
+            rows={[
+              ["Total", countLabel(totals?.total)],
+              ["Enabled", countLabel(totals?.enabled)],
+              ["Disabled", countLabel(totals?.disabled)],
+            ]}
+          />
+          <ServiceSummaryCard
+            title="Readiness"
+            note={ungradedNote}
+            status={
+              /* Three states, not two. `totals === null` covers a failed
+                 request, but a request that SUCCEEDED and returned no services
+                 also has nothing to grade — and `missing > 0 || degraded > 0`
+                 sent that case to "ready", painting a green check over four
+                 zeroes. An empty catalogue is not a healthy catalogue. */
+              totals === null || totals.total === 0
+                ? "unknown"
+                : totals.missing > 0 || totals.degraded > 0
+                  ? "degraded"
+                  : "ready"
+            }
+            rows={[
+              ["Ready", countLabel(totals?.ready)],
+              ["Configured", countLabel(totals?.configured)],
+              ["Missing", countLabel(totals?.missing)],
+              ["Degraded", countLabel(totals?.degraded)],
+            ]}
+          />
+          {/* No `status` on the two rollups below: they are sums of routes,
+              tools and slots, and nothing in the response grades them. A
+              status mark here would read as an assessment nobody made. */}
+          <ServiceSummaryCard
+            title="Operations"
+            note={ungradedNote}
+            rows={[
+              ["Routes", countLabel(totals?.routes)],
+              ["Tools", countLabel(totals?.tools)],
+              ["Admin actions", countLabel(totals?.actions)],
+            ]}
+          />
+          <ServiceSummaryCard
+            title="Data and AI"
+            note={ungradedNote}
+            rows={[
+              ["Data stores", countLabel(totals?.dataStores)],
+              ["AI slots", countLabel(totals?.aiSlots)],
+              ["Enrichments", countLabel(totals?.enrichments)],
+            ]}
+          />
+        </div>
+
+        <Table aria-label="Admin services" className="admin-tier-table" role="table">
+          <TableHeader>
             <TableRow role="row">
-              <TableCell colSpan={8} role="cell">
-                {servicesQuery.isPending ? "Loading service catalog..." : "No services reported."}
-              </TableCell>
+              <TableHead role="columnheader">Service</TableHead>
+              <TableHead role="columnheader">Plugin</TableHead>
+              <TableHead role="columnheader">Status</TableHead>
+              <TableHead role="columnheader">Category</TableHead>
+              <TableHead role="columnheader">Dependencies</TableHead>
+              <TableHead role="columnheader">Routes</TableHead>
+              <TableHead role="columnheader">Tools</TableHead>
+              <TableHead role="columnheader">Actions</TableHead>
             </TableRow>
-          ) : (
-            services.map((service) => (
-              <TableRow
-                aria-selected={selectedService?.id === service.id}
-                key={service.id}
-                onClick={() => setSelectedServiceId(service.id)}
-                role="row"
-              >
-                <TableCell role="cell">
-                  <button
-                    className="text-left font-medium text-foreground"
-                    onClick={() => setSelectedServiceId(service.id)}
-                    type="button"
-                  >
-                    {service.label}
-                    <span className="block text-xs font-normal text-muted-foreground">
-                      {service.id}
-                    </span>
-                  </button>
+          </TableHeader>
+          <TableBody>
+            {services.length === 0 ? (
+              <TableRow role="row">
+                <TableCell colSpan={8} role="cell">
+                  <EmptyRow>
+                    {servicesQuery.isPending
+                      ? "Loading service catalog…"
+                      : servicesQuery.data === undefined
+                        ? "Service catalog unavailable."
+                        : "No services reported."}
+                  </EmptyRow>
                 </TableCell>
-                <TableCell className="max-w-[220px] truncate" role="cell">
-                  {service.pluginId}
-                </TableCell>
-                <TableCell role="cell">
-                  {statusLabel(service.status)} / {service.enabled ? "Enabled" : "Disabled"}
-                </TableCell>
-                <TableCell role="cell">{categoryLabel(service.category)}</TableCell>
-                <TableCell role="cell">{dependenciesSummary(service.dependencies)}</TableCell>
-                <TableCell role="cell">{formatNumber(routeCount(service))}</TableCell>
-                <TableCell role="cell">{formatNumber(service.tools.length)}</TableCell>
-                <TableCell role="cell">{formatNumber(service.adminActions.length)}</TableCell>
               </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+            ) : (
+              services.map((service) => (
+                <TableRow
+                  aria-selected={selectedService?.id === service.id}
+                  key={service.id}
+                  onClick={() => setSelectedServiceId(service.id)}
+                  role="row"
+                >
+                  <TableCell role="cell">
+                    <button
+                      className="text-left font-medium text-foreground"
+                      onClick={() => setSelectedServiceId(service.id)}
+                      type="button"
+                    >
+                      {service.label}
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        {service.id}
+                      </span>
+                    </button>
+                  </TableCell>
+                  <TableCell className="max-w-[220px] truncate" role="cell">
+                    {service.pluginId}
+                  </TableCell>
+                  <TableCell role="cell">
+                    {statusLabel(service.status)} / {service.enabled ? "Enabled" : "Disabled"}
+                  </TableCell>
+                  <TableCell role="cell">{categoryLabel(service.category)}</TableCell>
+                  <TableCell role="cell">{dependenciesSummary(service.dependencies)}</TableCell>
+                  <TableCell role="cell">{formatNumber(routeCount(service))}</TableCell>
+                  <TableCell role="cell">{formatNumber(service.tools.length)}</TableCell>
+                  <TableCell role="cell">{formatNumber(service.adminActions.length)}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
 
-      {selectedService === undefined ? null : <ServiceDetail service={selectedService} />}
-    </section>
+        {selectedService === undefined ? null : <ServiceDetail service={selectedService} />}
+      </section>
+    </>
   );
 }
 
@@ -248,20 +324,29 @@ async function fetchAdminServices(): Promise<AdminServicesResponse> {
 }
 
 function ServiceSummaryCard({
+  note,
   rows,
   status,
   title,
 }: {
+  /** Why the rows read as unknown, when they do. */
+  readonly note?: string;
   readonly rows: readonly (readonly [string, string])[];
-  readonly status: AdminServiceStatus;
+  /** Omit for a card the response does not grade — see the call site.
+   *  `"unknown"` is a card that *would* be graded once the catalog arrives. */
+  readonly status?: SummaryCardStatus;
   readonly title: string;
 }) {
-  const Icon = statusIcon(status);
+  const Icon = status === undefined ? undefined : statusIcon(status);
   return (
     <article className="admin-ai-cost-card" data-status={status}>
-      <Icon aria-hidden="true" size={18} />
+      {Icon === undefined ? null : <Icon aria-hidden="true" size={18} />}
       <div>
         <h3>{title}</h3>
+        {/* The grade is otherwise carried only by the icon and the left rule,
+            neither of which is readable without colour vision. */}
+        {status === undefined ? null : <span className="sr-only">{statusLabel(status)}</span>}
+        {note === undefined ? null : <p className="mt-0.5 text-xs text-muted-foreground">{note}</p>}
         <dl>
           {rows.map(([label, value]) => (
             <div key={label}>
@@ -351,7 +436,7 @@ function ServiceDetail({ service }: { readonly service: AdminServiceSurface }) {
           {service.dependencies.length === 0 ? (
             <TableRow role="row">
               <TableCell colSpan={5} role="cell">
-                No dependencies reported.
+                <EmptyRow>No dependencies reported.</EmptyRow>
               </TableCell>
             </TableRow>
           ) : (
@@ -480,7 +565,7 @@ function listLabel(values: readonly string[]): string {
   return values.length === 0 ? "-" : values.join(", ");
 }
 
-function statusIcon(status: AdminServiceStatus) {
+function statusIcon(status: SummaryCardStatus) {
   switch (status) {
     case "ready":
       return CheckCircle2;
@@ -491,10 +576,12 @@ function statusIcon(status: AdminServiceStatus) {
       return CircleAlert;
     case "disabled":
       return CircleDashed;
+    case "unknown":
+      return CircleHelp;
   }
 }
 
-function statusLabel(status: AdminServiceStatus): string {
+function statusLabel(status: SummaryCardStatus): string {
   switch (status) {
     case "ready":
       return "Ready";
@@ -506,6 +593,8 @@ function statusLabel(status: AdminServiceStatus): string {
       return "Degraded";
     case "disabled":
       return "Disabled";
+    case "unknown":
+      return "Unknown";
   }
 }
 
@@ -528,6 +617,12 @@ function categoryLabel(category: AdminServiceCategory): string {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+/** A rollup with no catalog behind it has no count — printing `0` would report
+ *  a tally the response never made. */
+function countLabel(value: number | undefined): string {
+  return value === undefined ? "—" : formatNumber(value);
 }
 
 function formatTimestamp(value: string | undefined): string {

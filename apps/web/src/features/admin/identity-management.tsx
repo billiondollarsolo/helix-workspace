@@ -1,17 +1,17 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  EmptyRow,
+  EmptyState,
+  PageHeading,
+  QueryFailureBanner,
+  StateBanner,
+  useQueryFailure,
+} from "@/features/admin/console/primitives";
 import {
   adminIdentityQueryKeys,
   adminIdentityQueryOptions,
@@ -26,55 +26,37 @@ import {
   type UpdateTenantIdpConfigInput,
 } from "./identity-api";
 
-const FIELD_STYLE: React.CSSProperties = {
-  height: 32,
-  borderRadius: 6,
-  border: "1px solid var(--border)",
-  background: "var(--surface)",
-  color: "var(--text)",
-  padding: "0 8px",
-  fontSize: "var(--text-meta)",
-};
+/* There is no shared Select or Textarea primitive, so both restate the shell
+   `components/ui/input` draws rather than growing a second field look. */
+const SELECT_CLASS =
+  "h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30";
+const TEXTAREA_CLASS =
+  "min-h-[76px] w-full min-w-0 resize-y rounded-md border border-outline bg-surface-container px-3 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30";
 
-const TEXTAREA_STYLE: React.CSSProperties = {
-  minHeight: 76,
-  borderRadius: 6,
-  border: "1px solid var(--border)",
-  background: "var(--surface)",
-  color: "var(--text)",
-  padding: 8,
-  fontSize: "var(--text-meta)",
-  resize: "vertical",
-  fontFamily: "var(--font-mono, monospace)",
-};
+const FIELD_LABEL_CLASS = "grid gap-1 text-xs text-muted-foreground";
+const CHECKBOX_LABEL_CLASS = "flex min-h-8 items-center gap-2 text-sm";
 
-function Banner({ kind, children }: { kind: "loading" | "error" | "info"; children: string }) {
-  return (
-    <div
-      role={kind === "error" ? "alert" : "status"}
-      style={{
-        padding: "10px 12px",
-        borderRadius: 6,
-        fontSize: "var(--text-meta)",
-        marginBottom: 12,
-        background: kind === "error" ? "var(--danger-soft, var(--surface-2))" : "var(--surface-2)",
-        color: kind === "error" ? "var(--danger)" : "var(--text-2)",
-        border: "1px solid var(--border)",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
+/* auto-fit rather than a fixed column count: switching protocol swaps one SAML
+   field for two OIDC fields, and a fixed grid leaves a hole behind. */
+const FIELD_GRID_CLASS = "grid gap-3 grid-cols-[repeat(auto-fit,minmax(180px,1fr))]";
 
 export function IdentityManagement() {
   const queryClient = useQueryClient();
   const identityQuery = useQuery(adminIdentityQueryOptions());
+  const identityFailure = useQueryFailure(identityQuery, () => {
+    void queryClient.invalidateQueries({ queryKey: adminIdentityQueryKeys.detail() });
+  });
   const [form, setForm] = useState<IdpFormState>(() => emptyIdpForm());
   const [editingConfigId, setEditingConfigId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [testLogin, setTestLogin] = useState<AdminIdentityTestLogin | null>(null);
   const [configToDelete, setConfigToDelete] = useState<TenantIdpConfig | null>(null);
+  const displayNameRef = useRef<HTMLInputElement>(null);
+  /* The drawer stays uncontrolled: a React-owned `open` prop only writes to the
+     DOM when its value changes, so a disclosure the operator opened by hand can
+     be reopened-that-does-nothing on the next render. The browser owns the
+     toggle; we only ever force it open. */
+  const advancedRef = useRef<HTMLDetailsElement>(null);
   const mappingEditorRows = useMemo(
     () => attributeMappingEditorRows(form.attrMappingJson),
     [form.attrMappingJson],
@@ -179,405 +161,473 @@ export function IdentityManagement() {
     [idpConfigs],
   );
 
-  return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div>
-        <h1 style={{ fontSize: "var(--text-h2)", fontWeight: 600, margin: 0 }}>Identity</h1>
-        <div style={{ fontSize: "var(--text-body-sm)", color: "var(--text-3)", marginTop: 4 }}>
-          Local recovery, tenant IdPs, and provisioning entry points
-        </div>
-      </div>
+  function startNewIdp() {
+    setEditingConfigId(null);
+    setFormError(null);
+    setForm(emptyIdpForm());
+    displayNameRef.current?.focus();
+  }
 
-      {identityQuery.isPending ? (
-        <Banner kind="loading">Loading identity settings...</Banner>
+  return (
+    <>
+      <PageHeading
+        title="Identity"
+        subtitle="Local recovery, tenant IdPs, and provisioning entry points"
+      />
+
+      {identityQuery.isPending && identityFailure === null ? (
+        <StateBanner kind="loading">Loading identity settings…</StateBanner>
       ) : null}
-      {identityQuery.isError ? (
-        <Banner kind="error">Identity settings unavailable. Try again later.</Banner>
-      ) : null}
-      {formError === null ? null : <Banner kind="error">{formError}</Banner>}
+      {identityFailure === null ? null : (
+        /* Outline, not default: the add/edit form below stays usable while the
+           list is unreadable, and two competing primary buttons would hide
+           which one submits the form. */
+        <QueryFailureBanner
+          summary="Identity settings could not be loaded."
+          subject="identity settings"
+          error={identityFailure.error}
+          isRetrying={identityFailure.isRetrying}
+          onRetry={identityFailure.retry}
+          retryVariant="outline"
+        >
+          The tenant IdP list and the local recovery state are unknown until this loads.
+        </QueryFailureBanner>
+      )}
+      {formError === null ? null : <StateBanner kind="error">{formError}</StateBanner>}
       {testLogin === null ? null : (
-        <Banner kind={testLogin.status === "runtime_pending" ? "info" : "error"}>
+        <StateBanner kind={testLogin.status === "runtime_pending" ? "info" : "error"}>
           {testLogin.message}
-        </Banner>
+        </StateBanner>
       )}
 
-      <section className="panel" style={{ padding: 16 }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 6,
-              display: "grid",
-              placeItems: "center",
-              color: "var(--accent)",
-              background: "var(--accent-soft)",
-              flexShrink: 0,
-            }}
-          >
-            <Icons.Key />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>
-              Local email/password login
+      <div className="col gap-4">
+        <section className="panel p-4" aria-labelledby="identity-local-login">
+          <div className="flex items-start gap-3">
+            <span
+              aria-hidden="true"
+              className="grid size-8 shrink-0 place-items-center rounded-md bg-[var(--accent-soft)] text-[var(--accent)]"
+            >
+              <Icons.Key />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 id="identity-local-login" className="text-sm font-semibold">
+                Local email/password login
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">Owner/admin recovery path</p>
             </div>
-            <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginTop: 4 }}>
-              Owner/admin recovery path
-            </div>
-          </div>
-          <span className="chip success">
-            <span className="chip-dot" />
-            {identityQuery.data?.localLoginRecovery.enabled === true ? "enabled" : "enabled"}
-          </span>
-        </div>
-      </section>
-
-      <section className="panel" style={{ padding: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          <Icons.Shield />
-          <h2 style={{ fontSize: "var(--text-body)", fontWeight: 600, margin: 0 }}>Tenant IdPs</h2>
-          <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
-            {sortedConfigs.length}
-          </span>
-        </div>
-
-        {sortedConfigs.length === 0 ? (
-          <div style={{ padding: 24, textAlign: "center", color: "var(--text-3)" }}>
-            No IdPs configured.
-          </div>
-        ) : (
-          <div style={{ display: "grid", gap: 8 }}>
-            {sortedConfigs.map((config) => (
-              <IdpConfigRow
-                key={config.id}
-                config={config}
-                promotePending={promoteMutation.isPending}
-                onPromote={() => promoteMutation.mutate(config.id)}
-                updatePending={updateMutation.isPending}
-                onToggleEnabled={() =>
-                  updateMutation.mutate({ id: config.id, patch: { enabled: !config.enabled } })
-                }
-                onToggleJit={() =>
-                  updateMutation.mutate({
-                    id: config.id,
-                    patch: { jitProvisioning: !config.jitProvisioning },
-                  })
-                }
-                onEdit={() => {
-                  setFormError(null);
-                  setEditingConfigId(config.id);
-                  setForm(formFromConfig(config));
-                }}
-                deletePending={deleteMutation.isPending}
-                onDelete={() => setConfigToDelete(config)}
-                testPending={testLoginMutation.isPending}
-                onTestLogin={() => testLoginMutation.mutate(config.id)}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="panel" style={{ padding: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          {editingConfigId === null ? <Icons.Plus /> : <Icons.EditPen />}
-          <h2 style={{ fontSize: "var(--text-body)", fontWeight: 600, margin: 0 }}>
-            {editingConfigId === null ? "Add IdP" : "Edit IdP"}
-          </h2>
-        </div>
-        <form
-          style={{ display: "grid", gap: 12 }}
-          onSubmit={(event) => {
-            event.preventDefault();
-            setFormError(null);
-            const configId = editingConfigId;
-            try {
-              if (configId === null) {
-                buildCreateInput(form);
-              } else {
-                buildUpdateInput(form);
-              }
-            } catch (error) {
-              setFormError(error instanceof Error ? error.message : String(error));
-              return;
-            }
-            if (configId === null) {
-              createMutation.mutate();
-            } else {
-              updateMutation.mutate({ id: configId, patch: buildUpdateInput(form) });
-            }
-          }}
-        >
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: 12,
-            }}
-          >
-            <label style={labelStyle}>
-              Protocol
-              <select
-                aria-label="IdP protocol"
-                value={form.protocol}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    protocol: event.target.value as TenantIdpProtocol,
-                  }))
-                }
-                style={FIELD_STYLE}
-              >
-                <option value="saml">SAML</option>
-                <option value="oidc">OIDC</option>
-              </select>
-            </label>
-            <label style={labelStyle}>
-              Display name
-              <input
-                aria-label="IdP display name"
-                value={form.displayName}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, displayName: event.target.value }))
-                }
-                style={FIELD_STYLE}
-              />
-            </label>
-            {form.protocol === "saml" ? (
-              <label style={labelStyle}>
-                Metadata URL
-                <input
-                  aria-label="SAML metadata URL"
-                  value={form.metadataUrl}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, metadataUrl: event.target.value }))
-                  }
-                  style={FIELD_STYLE}
-                />
-              </label>
-            ) : (
-              <>
-                <label style={labelStyle}>
-                  Issuer URL
-                  <input
-                    aria-label="OIDC issuer URL"
-                    value={form.issuer}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, issuer: event.target.value }))
-                    }
-                    style={FIELD_STYLE}
-                  />
-                </label>
-                <label style={labelStyle}>
-                  Client ID
-                  <input
-                    aria-label="OIDC client ID"
-                    value={form.clientId}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, clientId: event.target.value }))
-                    }
-                    style={FIELD_STYLE}
-                  />
-                </label>
-              </>
+            {/* The platform pins this path on — the API models it as a literal
+                `true`, so there is no off state to render. Until the request
+                lands there is also nothing to claim, hence no chip. */}
+            {identityQuery.data === undefined ? null : (
+              <span className="chip success">
+                <span className="chip-dot" />
+                enabled
+              </span>
             )}
-            <label style={labelStyle}>
-              Signing cert Vault path
-              <input
-                aria-label="Signing cert Vault path"
-                value={form.signingCertVaultPath}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    signingCertVaultPath: event.target.value,
-                  }))
-                }
-                style={FIELD_STYLE}
-              />
-            </label>
+          </div>
+        </section>
+
+        <section className="panel p-4" aria-labelledby="identity-tenant-idps">
+          <div className="mb-3 flex items-center gap-2">
+            <Icons.Shield />
+            <h2 id="identity-tenant-idps" className="text-sm font-semibold">
+              Tenant IdPs
+            </h2>
+            {/* A count of 0 is a claim. Nothing was counted until the list
+                arrives, so nothing is shown. */}
+            {identityQuery.data === undefined ? null : (
+              <span className="text-xs text-muted-foreground">{sortedConfigs.length}</span>
+            )}
           </div>
 
-          <div aria-label="Attribute mapping editor" style={MAPPING_EDITOR_STYLE}>
-            {mappingEditorRows.map((row) => (
-              <label key={row.attribute} style={labelStyle}>
-                {row.label}
-                <input
-                  aria-label={`${row.label} claim selector`}
-                  value={row.selector}
+          {identityQuery.isPending ? (
+            <EmptyRow>Loading tenant IdPs…</EmptyRow>
+          ) : identityQuery.data === undefined ? (
+            <EmptyRow>Tenant IdPs could not be loaded.</EmptyRow>
+          ) : sortedConfigs.length === 0 ? (
+            <EmptyState
+              icon={<Icons.Shield />}
+              title="No identity providers"
+              /* Outline: the add form is already open below and owns the page's
+                 one primary button. This jumps to it, it does not replace it. */
+              action={
+                <Button type="button" variant="outline" onClick={startNewIdp}>
+                  <Icons.Plus />
+                  Add your first IdP
+                </Button>
+              }
+            >
+              A tenant IdP lets this workspace sign in through SAML or OIDC. Local email/password
+              recovery stays available for owners and admins either way.
+            </EmptyState>
+          ) : (
+            <div className="col gap-2">
+              {sortedConfigs.map((config) => (
+                <IdpConfigRow
+                  key={config.id}
+                  config={config}
+                  promotePending={promoteMutation.isPending}
+                  onPromote={() => promoteMutation.mutate(config.id)}
+                  updatePending={updateMutation.isPending}
+                  onToggleEnabled={() =>
+                    updateMutation.mutate({ id: config.id, patch: { enabled: !config.enabled } })
+                  }
+                  onToggleJit={() =>
+                    updateMutation.mutate({
+                      id: config.id,
+                      patch: { jitProvisioning: !config.jitProvisioning },
+                    })
+                  }
+                  onEdit={() => {
+                    setFormError(null);
+                    setEditingConfigId(config.id);
+                    setForm(formFromConfig(config));
+                    /* Editing is the one time the stored claim mapping matters:
+                       open the drawer so it is not silently carried over. */
+                    if (advancedRef.current !== null) {
+                      advancedRef.current.open = true;
+                    }
+                  }}
+                  deletePending={deleteMutation.isPending}
+                  onDelete={() => setConfigToDelete(config)}
+                  testPending={testLoginMutation.isPending}
+                  onTestLogin={() => testLoginMutation.mutate(config.id)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="panel p-4" aria-labelledby="identity-idp-form">
+          <div className="mb-3 flex items-center gap-2">
+            {editingConfigId === null ? <Icons.Plus /> : <Icons.EditPen />}
+            <h2 id="identity-idp-form" className="text-sm font-semibold">
+              {editingConfigId === null ? "Add IdP" : "Edit IdP"}
+            </h2>
+          </div>
+          <form
+            className="grid gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setFormError(null);
+              const configId = editingConfigId;
+              try {
+                if (configId === null) {
+                  buildCreateInput(form);
+                } else {
+                  buildUpdateInput(form);
+                }
+              } catch (error) {
+                setFormError(error instanceof Error ? error.message : String(error));
+                return;
+              }
+              if (configId === null) {
+                createMutation.mutate();
+              } else {
+                updateMutation.mutate({ id: configId, patch: buildUpdateInput(form) });
+              }
+            }}
+          >
+            <div className={FIELD_GRID_CLASS}>
+              <label className={FIELD_LABEL_CLASS}>
+                <span>Protocol</span>
+                <select
+                  aria-label="IdP protocol"
+                  value={form.protocol}
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
-                      attrMappingJson: updateAttributeMappingJson(
-                        current.attrMappingJson,
-                        row.attribute,
-                        event.target.value,
-                      ),
+                      protocol: event.target.value as TenantIdpProtocol,
                     }))
                   }
-                  style={FIELD_STYLE}
-                  placeholder={row.placeholder}
+                  className={SELECT_CLASS}
+                >
+                  <option value="saml">SAML</option>
+                  <option value="oidc">OIDC</option>
+                </select>
+              </label>
+              <label className={FIELD_LABEL_CLASS}>
+                <span>Display name</span>
+                <Input
+                  ref={displayNameRef}
+                  aria-label="IdP display name"
+                  value={form.displayName}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, displayName: event.target.value }))
+                  }
                 />
               </label>
-            ))}
-          </div>
-
-          <label style={labelStyle}>
-            Attribute mapping JSON
-            <textarea
-              aria-label="Attribute mapping JSON"
-              value={form.attrMappingJson}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, attrMappingJson: event.target.value }))
-              }
-              style={TEXTAREA_STYLE}
-            />
-          </label>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-              gap: 12,
-            }}
-          >
-            <label style={labelStyle}>
-              Sample claims JSON
-              <textarea
-                aria-label="Sample claims JSON"
-                value={form.sampleClaimsJson}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, sampleClaimsJson: event.target.value }))
-                }
-                style={TEXTAREA_STYLE}
-              />
-            </label>
-            <div aria-label="Attribute mapping preview" style={MAPPING_PREVIEW_STYLE}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>Mapping preview</div>
-              {mappingPreview.status === "error" ? (
-                <div role="alert" style={{ color: "var(--danger)" }}>
-                  {mappingPreview.message}
-                </div>
-              ) : mappingPreview.rows.length === 0 ? (
-                <div style={{ color: "var(--text-3)" }}>No mapped attributes.</div>
+              {form.protocol === "saml" ? (
+                <label className={FIELD_LABEL_CLASS}>
+                  <span>Metadata URL</span>
+                  <Input
+                    aria-label="SAML metadata URL"
+                    value={form.metadataUrl}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, metadataUrl: event.target.value }))
+                    }
+                  />
+                </label>
               ) : (
-                <dl style={MAPPING_PREVIEW_LIST_STYLE}>
-                  {mappingPreview.rows.map((row) => (
-                    <div key={row.attribute} style={MAPPING_PREVIEW_ROW_STYLE}>
-                      <dt style={{ fontWeight: 600 }}>{row.attribute}</dt>
-                      <dd style={{ margin: 0, color: row.value === null ? "var(--text-3)" : "" }}>
-                        {row.value ?? "not found"}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
+                <>
+                  <label className={FIELD_LABEL_CLASS}>
+                    <span>Issuer URL</span>
+                    <Input
+                      aria-label="OIDC issuer URL"
+                      value={form.issuer}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, issuer: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className={FIELD_LABEL_CLASS}>
+                    <span>Client ID</span>
+                    <Input
+                      aria-label="OIDC client ID"
+                      value={form.clientId}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, clientId: event.target.value }))
+                      }
+                    />
+                  </label>
+                </>
               )}
             </div>
-          </div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
-            <label style={checkboxLabelStyle}>
-              <input
-                type="checkbox"
-                checked={form.enabled}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, enabled: event.target.checked }))
-                }
-              />
-              Enabled
-            </label>
-            <label style={checkboxLabelStyle}>
-              <input
-                type="checkbox"
-                checked={form.isPrimary}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, isPrimary: event.target.checked }))
-                }
-              />
-              Primary
-            </label>
-            <label style={checkboxLabelStyle}>
-              <input
-                type="checkbox"
-                checked={form.jitProvisioning}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, jitProvisioning: event.target.checked }))
-                }
-              />
-              JIT provisioning
-            </label>
-          </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <label className={CHECKBOX_LABEL_CLASS}>
+                <input
+                  className="size-4"
+                  type="checkbox"
+                  checked={form.enabled}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, enabled: event.target.checked }))
+                  }
+                />
+                Enabled
+              </label>
+              <label className={CHECKBOX_LABEL_CLASS}>
+                <input
+                  className="size-4"
+                  type="checkbox"
+                  checked={form.isPrimary}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, isPrimary: event.target.checked }))
+                  }
+                />
+                Primary
+              </label>
+              <label className={CHECKBOX_LABEL_CLASS}>
+                <input
+                  className="size-4"
+                  type="checkbox"
+                  checked={form.jitProvisioning}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, jitProvisioning: event.target.checked }))
+                  }
+                />
+                JIT provisioning
+              </label>
+            </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            {editingConfigId === null ? null : (
-              <button
-                type="button"
-                className="btn"
-                disabled={updateMutation.isPending}
-                onClick={() => {
-                  setEditingConfigId(null);
-                  setFormError(null);
-                  setForm(emptyIdpForm());
-                }}
-              >
-                Cancel edit
-              </button>
-            )}
-            <button
-              type="submit"
-              className="btn primary"
-              disabled={createMutation.isPending || updateMutation.isPending}
+            <details
+              ref={advancedRef}
+              className="rounded-md border border-border bg-muted/40 px-3 py-2"
             >
-              {editingConfigId === null ? <Icons.Plus /> : <Icons.EditPen />}
-              {editingConfigId === null
-                ? createMutation.isPending
-                  ? "Adding..."
-                  : "Add IdP"
-                : updateMutation.isPending
-                  ? "Saving..."
-                  : "Save IdP"}
-            </button>
-          </div>
-        </form>
-      </section>
+              <summary className="cursor-pointer rounded-sm text-xs font-semibold marker:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:outline-none">
+                Advanced provider settings
+                <span className="ml-2 font-normal text-muted-foreground">
+                  Signing certificate path, claim mappings, and a preview against sample claims
+                </span>
+              </summary>
+              <div className="mt-3 grid gap-3">
+                <label className={FIELD_LABEL_CLASS}>
+                  <span>Signing cert Vault path</span>
+                  <Input
+                    aria-label="Signing cert Vault path"
+                    value={form.signingCertVaultPath}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        signingCertVaultPath: event.target.value,
+                      }))
+                    }
+                    placeholder="tenants/<org>/idp/saml-signing-cert"
+                  />
+                </label>
 
-      <AlertDialog
-        open={configToDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setConfigToDelete(null);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogMedia>
-              <Icons.Trash />
-            </AlertDialogMedia>
-            <AlertDialogTitle>Delete tenant IdP</AlertDialogTitle>
-            <AlertDialogDescription>
-              Delete {configToDelete?.displayName ?? "this IdP"} from this tenant. Local
-              email/password recovery remains enabled for owner/admin access.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={configToDelete === null || deleteMutation.isPending}
-              onClick={(event) => {
-                event.preventDefault();
-                if (configToDelete !== null) {
-                  deleteMutation.mutate(configToDelete.id);
-                }
-              }}
-              variant="destructive"
-            >
-              Delete IdP
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+                {/* Frame spelled out rather than `.panel`: that class is
+                    unlayered, so it outranks every Tailwind background and a
+                    nested panel silently stays white-on-white. */}
+                <div
+                  aria-label="Attribute mapping editor"
+                  className={`rounded-md border border-border bg-muted p-3 ${FIELD_GRID_CLASS}`}
+                >
+                  {mappingEditorRows.map((row) => (
+                    <label key={row.attribute} className={FIELD_LABEL_CLASS}>
+                      <span>{row.label}</span>
+                      <Input
+                        aria-label={`${row.label} claim selector`}
+                        value={row.selector}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            attrMappingJson: updateAttributeMappingJson(
+                              current.attrMappingJson,
+                              row.attribute,
+                              event.target.value,
+                            ),
+                          }))
+                        }
+                        placeholder={row.placeholder}
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <label className={FIELD_LABEL_CLASS}>
+                  <span>Attribute mapping JSON</span>
+                  <textarea
+                    aria-label="Attribute mapping JSON"
+                    className={`mono ${TEXTAREA_CLASS}`}
+                    value={form.attrMappingJson}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, attrMappingJson: event.target.value }))
+                    }
+                  />
+                </label>
+
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                  <label className={FIELD_LABEL_CLASS}>
+                    <span>Sample claims JSON</span>
+                    <textarea
+                      aria-label="Sample claims JSON"
+                      className={`mono ${TEXTAREA_CLASS}`}
+                      value={form.sampleClaimsJson}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, sampleClaimsJson: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <div
+                    aria-label="Attribute mapping preview"
+                    className="min-h-[76px] rounded-md border border-border bg-muted p-3 text-xs"
+                  >
+                    {/* h3, one step below the panel's h2: the preview is a region
+                        of the form, not a page-level panel of its own. */}
+                    <h3 className="mb-2 font-semibold text-foreground">Mapping preview</h3>
+                    {mappingPreview.status === "error" ? (
+                      <StateBanner kind="error">{mappingPreview.message}</StateBanner>
+                    ) : mappingPreview.rows.length === 0 ? (
+                      <EmptyRow>No mapped attributes.</EmptyRow>
+                    ) : (
+                      <dl className="grid gap-1.5">
+                        {mappingPreview.rows.map((row) => (
+                          <div
+                            key={row.attribute}
+                            className="grid grid-cols-[minmax(80px,0.45fr)_minmax(0,1fr)] items-baseline gap-2"
+                          >
+                            <dt className="font-semibold">{row.attribute}</dt>
+                            <dd
+                              className={row.value === null ? "text-muted-foreground" : undefined}
+                            >
+                              {row.value ?? "not found"}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <div className="flex flex-wrap justify-end gap-2">
+              {editingConfigId === null ? null : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={updateMutation.isPending}
+                  onClick={() => {
+                    setEditingConfigId(null);
+                    setFormError(null);
+                    setForm(emptyIdpForm());
+                  }}
+                >
+                  Cancel edit
+                </Button>
+              )}
+              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
+                {editingConfigId === null ? <Icons.Plus /> : <Icons.EditPen />}
+                {editingConfigId === null
+                  ? createMutation.isPending
+                    ? "Adding..."
+                    : "Add IdP"
+                  : updateMutation.isPending
+                    ? "Saving..."
+                    : "Save IdP"}
+              </Button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      {/* The shared confirmation, not a private rebuild of the AlertDialog
+          stack: the destructive-action policy lives in that one component, and
+          a hand-rolled copy drifts out of it without anything failing.
+
+          Tier: irreversible and it reaches well past the row — deleting cuts
+          SSO for everyone who signs in through this provider — so it carries a
+          `blastRadius` counted off the loaded config list. It stops short of
+          `confirmPhrase`: the Add IdP form on this same page can rebuild the
+          entry, so recovery is not a support ticket. */}
+      {configToDelete === null ? null : (
+        <ConfirmDestructive
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setConfigToDelete(null);
+            }
+          }}
+          title="Delete tenant IdP"
+          blastRadius={idpDeletionBlastRadius(configToDelete, idpConfigs)}
+          confirmLabel="Delete IdP"
+          isPending={deleteMutation.isPending}
+          onConfirm={() => {
+            deleteMutation.mutate(configToDelete.id);
+          }}
+        >
+          Deletes <strong>{configToDelete.displayName}</strong> (
+          {configToDelete.protocol.toUpperCase()}) from this tenant, with its claim mapping and
+          connection settings. Re-adding it means entering that configuration again from the
+          provider — this console holds no copy of the provider&rsquo;s client secret. Local
+          email/password recovery stays enabled for owner/admin access.
+        </ConfirmDestructive>
+      )}
+    </>
   );
+}
+
+/* Counted off the loaded list rather than asserted: "SSO will break" is a
+   warning an operator already assumed, "no other enabled provider is left" is
+   the thing that decides whether they click. */
+function idpDeletionBlastRadius(
+  target: TenantIdpConfig,
+  configs: readonly TenantIdpConfig[],
+): string {
+  const otherEnabled = configs.filter((config) => config.id !== target.id && config.enabled).length;
+  const impact = target.enabled
+    ? `Every user who signs in through ${target.displayName} loses SSO immediately${
+        target.isPrimary ? ", and it is this tenant's primary provider" : ""
+      }.`
+    : `${target.displayName} is disabled, so no one is signing in through it right now.`;
+  const remaining =
+    otherEnabled === 0
+      ? "No other enabled provider is left — owner/admin email/password recovery becomes the only way in."
+      : `${String(otherEnabled)} other enabled provider${
+          otherEnabled === 1 ? " remains" : "s remain"
+        } for them to sign in through.`;
+  return `${impact} ${remaining}`;
 }
 
 function IdpConfigRow({
@@ -606,20 +656,10 @@ function IdpConfigRow({
   readonly onTestLogin: () => void;
 }) {
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) auto auto auto auto auto auto auto",
-        gap: 12,
-        alignItems: "center",
-        border: "1px solid var(--border)",
-        borderRadius: 6,
-        padding: 12,
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600 }}>{config.displayName}</span>
+    <div className="panel flex flex-wrap items-center gap-3 p-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold">{config.displayName}</span>
           <span className={`chip ${config.enabled ? "success" : "warning"}`}>
             <span className="chip-dot" />
             {config.enabled ? "enabled" : "disabled"}
@@ -631,47 +671,88 @@ function IdpConfigRow({
             </span>
           ) : null}
         </div>
-        <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", marginTop: 4 }}>
+        <p className="mt-1 text-xs text-muted-foreground">
           {config.protocol.toUpperCase()} | {config.signingCertVaultPath ?? "no signing cert path"}
-        </div>
+        </p>
       </div>
-      {config.samlSpMetadataUrl === null ? null : (
-        <a
-          className="btn sm"
-          href={config.samlSpMetadataUrl}
-          download={metadataDownloadName(config)}
+      {/* No primary button in the row: the decision a row carries is which
+          provider is on, and the chips already say that. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {config.samlSpMetadataUrl === null ? null : (
+          <Button asChild size="sm" variant="outline">
+            <a href={config.samlSpMetadataUrl} download={metadataDownloadName(config)}>
+              <Icons.Download />
+              Metadata
+            </a>
+          </Button>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={testPending}
+          onClick={onTestLogin}
         >
-          <Icons.Download />
-          Metadata
-        </a>
-      )}
-      <button type="button" className="btn sm" disabled={testPending} onClick={onTestLogin}>
-        Test login
-      </button>
-      <button
-        type="button"
-        className="btn sm"
-        disabled={promotePending || config.isPrimary || !config.enabled}
-        onClick={onPromote}
-      >
-        Make primary
-      </button>
-      <button type="button" className="btn sm" disabled={updatePending} onClick={onToggleEnabled}>
-        {config.enabled ? "Disable" : "Enable"}
-      </button>
-      <button type="button" className="btn sm" disabled={updatePending} onClick={onToggleJit}>
-        {config.jitProvisioning ? "Disable JIT" : "Enable JIT"}
-      </button>
-      <button type="button" className="btn sm" disabled={updatePending} onClick={onEdit}>
-        <Icons.EditPen />
-        Edit
-      </button>
-      <button type="button" className="btn sm" disabled={deletePending} onClick={onDelete}>
-        <Icons.Trash />
-        Delete
-      </button>
+          Test login
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={promotePending || config.isPrimary || !config.enabled}
+          title={promoteBlockedReason(config)}
+          onClick={onPromote}
+        >
+          Make primary
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={updatePending}
+          onClick={onToggleEnabled}
+        >
+          {config.enabled ? "Disable" : "Enable"}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={updatePending}
+          onClick={onToggleJit}
+        >
+          {config.jitProvisioning ? "Disable JIT" : "Enable JIT"}
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={updatePending} onClick={onEdit}>
+          <Icons.EditPen />
+          Edit
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          disabled={deletePending}
+          onClick={onDelete}
+        >
+          <Icons.Trash />
+          Delete
+        </Button>
+      </div>
     </div>
   );
+}
+
+/** Why "Make primary" is unavailable, so the disabled control is not a dead
+ *  end the operator has to guess at. */
+function promoteBlockedReason(config: TenantIdpConfig): string | undefined {
+  if (config.isPrimary) {
+    return "Already the primary IdP for this tenant.";
+  }
+  if (!config.enabled) {
+    return "Enable this IdP before making it primary.";
+  }
+  return undefined;
 }
 
 function metadataDownloadName(config: TenantIdpConfig): string {
@@ -683,54 +764,6 @@ function metadataDownloadName(config: TenantIdpConfig): string {
       .replace(/^-|-$/gu, "") || "tenant"
   }-sp-metadata.xml`;
 }
-
-const labelStyle: React.CSSProperties = {
-  display: "grid",
-  gap: 4,
-  fontSize: "var(--text-caption)",
-  color: "var(--text-3)",
-};
-
-const checkboxLabelStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  fontSize: "var(--text-meta)",
-  color: "var(--text-2)",
-};
-
-const MAPPING_PREVIEW_STYLE: React.CSSProperties = {
-  minHeight: 76,
-  borderRadius: 6,
-  border: "1px solid var(--border)",
-  background: "var(--surface-2)",
-  color: "var(--text)",
-  padding: 10,
-  fontSize: "var(--text-meta)",
-};
-
-const MAPPING_EDITOR_STYLE: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-  gap: 12,
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  background: "var(--surface-2)",
-  padding: 12,
-};
-
-const MAPPING_PREVIEW_LIST_STYLE: React.CSSProperties = {
-  display: "grid",
-  gap: 6,
-  margin: 0,
-};
-
-const MAPPING_PREVIEW_ROW_STYLE: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "minmax(80px, 0.45fr) minmax(0, 1fr)",
-  gap: 8,
-  alignItems: "baseline",
-};
 
 interface IdpFormState {
   readonly protocol: TenantIdpProtocol;

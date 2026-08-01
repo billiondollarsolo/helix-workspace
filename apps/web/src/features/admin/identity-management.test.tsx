@@ -101,6 +101,173 @@ describe("IdentityManagement", () => {
     });
   });
 
+  it("titles the section with one h1 and steps sub-panels down a level at a time", async () => {
+    mockIdentityResponses(fetchMock);
+
+    await render();
+
+    await waitFor(() => {
+      expect(headingTexts("h1")).toEqual(["Identity"]);
+    });
+    expect(container.textContent).toContain(
+      "Local recovery, tenant IdPs, and provisioning entry points",
+    );
+    expect(headingTexts("h2")).toEqual(["Local email/password login", "Tenant IdPs", "Add IdP"]);
+    expect(headingTexts("h3")).toEqual(["Mapping preview"]);
+    expect(container.querySelectorAll("h4, h5, h6")).toHaveLength(0);
+  });
+
+  it("banners the loading state and claims nothing about recovery until data lands", async () => {
+    fetchMock.mockImplementation(() => new Promise<Response>(() => undefined));
+
+    await render();
+
+    await waitFor(() => {
+      const banner = container.querySelector('.admin-banner[data-kind="loading"]');
+      expect(banner?.getAttribute("role")).toBe("status");
+      expect(banner?.textContent).toBe("Loading identity settings…");
+    });
+    expect(container.querySelector(".chip")).toBeNull();
+    expect(container.querySelector(".admin-empty-row")?.textContent).toBe("Loading tenant IdPs…");
+  });
+
+  it("offers a recoverable failure with a working retry, not a dead end", async () => {
+    fetchMock.mockResolvedValue(Response.json({ error: "denied" }, { status: 403 }));
+
+    await render();
+
+    await waitFor(() => {
+      const banner = container.querySelector('.admin-banner[data-kind="error"]');
+      expect(banner?.getAttribute("role")).toBe("alert");
+      expect(banner?.textContent).toContain("Identity settings could not be loaded.");
+    });
+    const banner = container.querySelector('.admin-banner[data-kind="error"]');
+    expect(banner?.textContent).toContain(
+      "The service did not return a usable response for identity settings",
+    );
+    expect(banner?.textContent).toContain(
+      "The tenant IdP list and the local recovery state are unknown until this loads.",
+    );
+    // The raw message is the only thing support can act on.
+    expect(banner?.querySelector(".admin-failure-detail")?.textContent).toBe("denied");
+    expect(container.querySelector(".chip")).toBeNull();
+    expect(container.querySelector(".admin-empty-row")?.textContent).toBe(
+      "Tenant IdPs could not be loaded.",
+    );
+
+    fetchMock.mockImplementation(() => Promise.resolve(Response.json(identityPayload)));
+    await act(async () => {
+      buttonByText("Retry").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Acme Okta");
+    });
+    expect(container.querySelector('.admin-banner[data-kind="error"]')).toBeNull();
+  });
+
+  it("counts nothing it was not given", async () => {
+    fetchMock.mockResolvedValue(Response.json({ error: "denied" }, { status: 403 }));
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.querySelector(".admin-empty-row")?.textContent).toBe(
+        "Tenant IdPs could not be loaded.",
+      );
+    });
+    // A "0" beside the heading is a claim about the tenant, and a failed
+    // request never made it.
+    expect(headingRowText("identity-tenant-idps")).toBe("Tenant IdPs");
+
+    fetchMock.mockImplementation(() => Promise.resolve(Response.json(identityPayload)));
+    await act(async () => {
+      buttonByText("Retry").click();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(headingRowText("identity-tenant-idps")).toBe("Tenant IdPs2");
+    });
+  });
+
+  it("explains an empty IdP list as a whole empty section", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json({ ...identityPayload, idpConfigs: [] })),
+    );
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.querySelector(".admin-empty-title")?.textContent).toBe(
+        "No identity providers",
+      );
+    });
+    expect(container.querySelector(".admin-empty-body")?.textContent).toContain(
+      "sign in through SAML or OIDC",
+    );
+    expect(container.querySelector(".admin-empty-row")).toBeNull();
+    expect(container.querySelector(".chip.success")?.textContent).toContain("enabled");
+
+    // The empty state's one action must do something: it focuses the field the
+    // operator has to fill in first.
+    const emptyAction = buttonByText("Add your first IdP");
+    // Secondary: the add form below is already open and owns the one primary.
+    expect(emptyAction.dataset.variant).toBe("outline");
+    expect(buttonByText("Add IdP").dataset.variant).toBe("default");
+    await act(async () => {
+      emptyAction.click();
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(inputByLabel("IdP display name"));
+  });
+
+  it("keeps set-once provider detail behind a disclosure that names what it holds", async () => {
+    mockIdentityResponses(fetchMock);
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Acme Okta");
+    });
+
+    const disclosure = advancedDisclosure();
+    expect(disclosure.open).toBe(false);
+    const summary = disclosure.querySelector("summary");
+    expect(summary?.textContent).toContain("Advanced provider settings");
+    expect(summary?.textContent).toContain(
+      "Signing certificate path, claim mappings, and a preview against sample claims",
+    );
+
+    // The primary decision — protocol, name, endpoint, on/off — stays outside.
+    expect(disclosure.contains(inputByLabel("IdP display name"))).toBe(false);
+    expect(disclosure.contains(inputByLabel("SAML metadata URL"))).toBe(false);
+    expect(disclosure.contains(checkboxByText("Enabled"))).toBe(false);
+    // The set-once fields sit inside it.
+    expect(disclosure.contains(inputByLabel("Signing cert Vault path"))).toBe(true);
+    expect(disclosure.contains(inputByLabel("Email claim selector"))).toBe(true);
+    expect(disclosure.contains(textareaByLabel("Attribute mapping JSON"))).toBe(true);
+    expect(disclosure.contains(textareaByLabel("Sample claims JSON"))).toBe(true);
+
+    // Editing is the one time a stored mapping matters, so it opens itself.
+    await act(async () => {
+      buttonsByText("Edit")[0]?.click();
+      await Promise.resolve();
+    });
+    expect(advancedDisclosure().open).toBe(true);
+  });
+
+  it("styles itself from classes and tokens, never inline style attributes", async () => {
+    mockIdentityResponses(fetchMock);
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Acme Okta");
+    });
+    expect(container.querySelectorAll("[style]")).toHaveLength(0);
+  });
+
   it("creates a SAML IdP config from the add form", async () => {
     mockIdentityResponses(fetchMock);
 
@@ -161,7 +328,9 @@ describe("IdentityManagement", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Sample claims JSON must be a JSON object.");
+    const previewAlert = container.querySelector('.admin-banner[data-kind="error"]');
+    expect(previewAlert?.getAttribute("role")).toBe("alert");
+    expect(previewAlert?.textContent).toBe("Sample claims JSON must be a JSON object.");
     expect(container.textContent).toContain("Local email/password login");
   });
 
@@ -380,6 +549,17 @@ describe("IdentityManagement", () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain("Delete tenant IdP");
     });
+    /* The shared confirmation, so the console's one destructive-action policy
+       applies here too: this one reaches past the row it was clicked from, and
+       the blast radius counts what is left rather than warning in general. */
+    expect(blastRadiusText()).toBe(
+      "Every user who signs in through Acme Okta loses SSO immediately, and it is this" +
+        " tenant's primary provider. 1 other enabled provider remains for them to sign in" +
+        " through.",
+    );
+    // The policy stops short of a typed phrase here: the Add IdP form on this
+    // same page can rebuild the entry.
+    expect(document.body.querySelector(".admin-confirm-phrase")).toBeNull();
     await act(async () => {
       documentButtonByText("Delete IdP").click();
       await Promise.resolve();
@@ -393,6 +573,57 @@ describe("IdentityManagement", () => {
       expect(container.textContent).toContain("Local email/password login");
       expect(container.textContent).toContain("Owner/admin recovery path");
     });
+  });
+
+  /* The number in the blast radius is the decision input: deleting the last
+     enabled provider is a different act from deleting one of several, and the
+     dialog has to say which one the operator is committing. */
+  it("says local recovery is the only way in when the last enabled IdP is deleted", async () => {
+    mockSingleIdpResponses(fetchMock);
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Acme Okta");
+    });
+    await act(async () => {
+      buttonByText("Delete").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(blastRadiusText()).toBe(
+        "Every user who signs in through Acme Okta loses SSO immediately, and it is this" +
+          " tenant's primary provider. No other enabled provider is left — owner/admin" +
+          " email/password recovery becomes the only way in.",
+      );
+    });
+  });
+
+  it("cancelling the IdP confirmation deletes nothing", async () => {
+    mockIdentityResponses(fetchMock);
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Acme Okta");
+    });
+    await act(async () => {
+      buttonByText("Delete").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      documentButtonByText("Cancel").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    });
+    expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "DELETE")).toHaveLength(0);
+    // A dismissed overlay that fails to restore pointer events leaves the whole
+    // console unclickable.
+    expect(document.body.style.pointerEvents).not.toBe("none");
   });
 
   it("checks IdP login readiness without hiding local recovery", async () => {
@@ -452,6 +683,25 @@ describe("IdentityManagement", () => {
     });
   }
 
+  function headingTexts(selector: string): string[] {
+    return [...container.querySelectorAll(selector)].map(
+      (heading) => heading.textContent?.trim() ?? "",
+    );
+  }
+
+  /** The heading plus whatever sits beside it — the count, when there is one. */
+  function headingRowText(headingId: string): string {
+    return container.querySelector(`#${headingId}`)?.parentElement?.textContent?.trim() ?? "";
+  }
+
+  function advancedDisclosure(): HTMLDetailsElement {
+    const disclosure = container.querySelector("details");
+    if (!(disclosure instanceof HTMLDetailsElement)) {
+      throw new Error("Advanced settings disclosure not found.");
+    }
+    return disclosure;
+  }
+
   function inputByLabel(label: string): HTMLInputElement {
     const element =
       container.querySelector(`input[aria-label="${cssEscape(label)}"]`) ??
@@ -495,6 +745,11 @@ describe("IdentityManagement", () => {
     return [...container.querySelectorAll("button")].filter(
       (candidate) => candidate.textContent?.trim() === label && !candidate.disabled,
     );
+  }
+
+  // The confirmation is portaled to document.body, not into the section.
+  function blastRadiusText(): string {
+    return document.body.querySelector(".admin-confirm-blast")?.textContent ?? "";
   }
 
   function documentButtonByText(label: string): HTMLButtonElement {
@@ -623,6 +878,19 @@ function mockIdentityResponses(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>
     }
     return Promise.resolve(Response.json(identityPayload));
   });
+}
+
+/** One enabled provider and nothing else — the tenant where deleting it takes
+ *  SSO with it. */
+function mockSingleIdpResponses(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>): void {
+  fetchMock.mockImplementation(() =>
+    Promise.resolve(
+      Response.json({
+        idpConfigs: [identityPayload.idpConfigs[0]],
+        localLoginRecovery: identityPayload.localLoginRecovery,
+      }),
+    ),
+  );
 }
 
 function requestUrlOf(input: unknown): string {

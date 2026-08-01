@@ -264,12 +264,10 @@ export async function fetchGroupMembers(
   groupId: string,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly GroupMember[]> {
-  const response = await fetchImpl(
-    `/api/admin/groups/${encodeURIComponent(groupId)}/members`,
-    { method: "GET" },
-  );
-  return (await parseResponse(response, "load group members", groupMembersResponseSchema))
-    .members;
+  const response = await fetchImpl(`/api/admin/groups/${encodeURIComponent(groupId)}/members`, {
+    method: "GET",
+  });
+  return (await parseResponse(response, "load group members", groupMembersResponseSchema)).members;
 }
 
 export async function addGroupMember(
@@ -277,16 +275,12 @@ export async function addGroupMember(
   input: AddGroupMemberInput,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<GroupMember> {
-  const response = await fetchImpl(
-    `/api/admin/groups/${encodeURIComponent(groupId)}/members`,
-    {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify(input),
-    },
-  );
-  return (await parseResponse(response, "add group member", groupMemberResponseSchema))
-    .member;
+  const response = await fetchImpl(`/api/admin/groups/${encodeURIComponent(groupId)}/members`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+  return (await parseResponse(response, "add group member", groupMemberResponseSchema)).member;
 }
 
 export async function removeGroupMember(

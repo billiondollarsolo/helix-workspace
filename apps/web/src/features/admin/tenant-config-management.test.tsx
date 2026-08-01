@@ -4,7 +4,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TenantConfigManagement } from "./tenant-config-management";
+import {
+  BOOLEAN_FEATURE_FLAG_GROUPS,
+  BOOLEAN_FEATURE_FLAG_KEYS,
+  TenantConfigManagement,
+} from "./tenant-config-management";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -124,6 +128,22 @@ const liveStorageMigrationPayload = {
   },
 };
 
+describe("boolean feature-flag groups", () => {
+  /* The form renders flags by walking the groups, so a flag missing from every
+   * group is simply absent from the UI — no error, no empty row, nothing. This
+   * is the only thing that catches it. */
+  it("place every boolean flag in exactly one group", () => {
+    const grouped = BOOLEAN_FEATURE_FLAG_GROUPS.flatMap((group) => [...group.keys]);
+    expect(new Set(grouped).size, "a flag appears in more than one group").toBe(grouped.length);
+
+    // Derived from the labels map the form uses, so this stays honest if the
+    // flag list grows.
+    const declared = new Set(BOOLEAN_FEATURE_FLAG_KEYS);
+    expect([...declared].filter((key) => !grouped.includes(key)).sort()).toEqual([]);
+    expect(grouped.filter((key) => !declared.has(key)).sort()).toEqual([]);
+  });
+});
+
 describe("TenantConfigManagement", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -167,12 +187,18 @@ describe("TenantConfigManagement", () => {
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Tenant settings");
+      expect(container.textContent).toContain("Workspace settings");
       expect(container.textContent).toContain("AI smart compose");
       expect(container.textContent).toContain("Business plan defaults");
       expect(container.textContent).toContain("API RPS");
       expect(container.textContent).toContain("Override");
     });
+    // The flag list is grouped rather than one flat column of 19 checkboxes.
+    expect(
+      [...container.querySelectorAll("fieldset > legend")].map((element) => element.textContent),
+    ).toEqual(BOOLEAN_FEATURE_FLAG_GROUPS.map((group) => group.title));
+    // The tenant id stays on the page, just not as the page's title.
+    expect(container.textContent).toContain("org-1");
     expect(inputByLabel("Display name").value).toBe("Acme");
     expect(selectByLabel("DLP enforcement").value).toBe("warn");
     expect(selectByLabel("Storage mode").value).toBe("byo");
@@ -500,16 +526,45 @@ describe("TenantConfigManagement", () => {
     await waitFor(() => {
       expect(container.textContent).toContain("Succeeded");
       expect(container.textContent).toContain("Planned 12, copied 12, verified 12");
-      expect(buttonByLabel("Cut over storage").disabled).toBe(true);
+      /* The job is fully copied and verified, so nothing is holding the button
+         back any more. The gate that used to live here — an inline checkbox —
+         is retired; the assertion that it kept the button disabled went with
+         it, because the consent it stood for is now the dialog below. */
+      expect(buttonByLabel("Cut over storage").disabled).toBe(false);
     });
+    expect(checkboxLabels()).not.toContain("Confirm migration cutover");
+    // Destructive, not the card's third filled primary.
+    expect(buttonByLabel("Cut over storage").dataset.variant).toBe("destructive");
     expect(postBody("/api/admin/tenant-config/byo-storage/migrations")).toMatchObject({
       target: "helix-default",
       dryRun: false,
     });
 
     await act(async () => {
-      checkboxByLabel("Confirm migration cutover").click();
       buttonByLabel("Cut over storage").click();
+      await Promise.resolve();
+    });
+
+    // Opening the confirmation must not have repointed anything on its own.
+    expect(cutoverCalls()).toHaveLength(0);
+    expect(dialogText()).toContain("Cut over tenant storage");
+    expect(dialogText()).toContain("org-1");
+    expect(dialogText()).toContain("Helix default storage");
+    // Real numbers off the job, not a generic "this cannot be undone".
+    expect(blastRadiusText()).toContain("All 12 verified objects");
+    expect(blastRadiusText()).toContain("tenant org-1");
+
+    // Top tier: the action stays dead until the tenant id shown on the page is
+    // typed, and a near miss does not count.
+    expect(dialogButton("action").disabled).toBe(true);
+    await typePhrase("org-2");
+    expect(dialogButton("action").disabled).toBe(true);
+    await typePhrase("org-1");
+    expect(dialogButton("action").disabled).toBe(false);
+    expect(cutoverCalls()).toHaveLength(0);
+
+    await act(async () => {
+      dialogButton("action").click();
       await Promise.resolve();
     });
 
@@ -519,10 +574,98 @@ describe("TenantConfigManagement", () => {
     expect(postBody("/api/admin/tenant-config/byo-storage/migrations/")).toMatchObject({
       confirm: "CUTOVER",
     });
-    expect(fetchMock.mock.calls.some((call) => requestUrlOf(call[0]).endsWith("/cutover"))).toBe(
-      true,
-    );
+    expect(cutoverCalls()).toHaveLength(1);
+    // The overlay blanks the page behind it; a dialog left open would hide the
+    // migration panel that reports what happened.
+    await waitFor(() => {
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    });
     expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
+  });
+
+  it("cancelling the cutover confirmation repoints nothing", async () => {
+    mockSucceededLiveMigration();
+
+    await render();
+
+    await waitFor(() => {
+      expect(buttonByLabel("Request migration").disabled).toBe(false);
+    });
+    await act(async () => {
+      checkboxByLabel("Dry run only").click();
+      checkboxByLabel("Confirm live migration request").click();
+      buttonByLabel("Request migration").click();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(buttonByLabel("Cut over storage").disabled).toBe(false);
+    });
+
+    await act(async () => {
+      buttonByLabel("Cut over storage").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      dialogButton("cancel").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    });
+    expect(cutoverCalls()).toHaveLength(0);
+    // A dismissed overlay that fails to restore pointer events leaves the whole
+    // console unclickable.
+    expect(document.body.style.pointerEvents).not.toBe("none");
+  });
+
+  it("says why cutover is blocked when the job has not verified every object", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      const url = requestUrlOf(input);
+      if (
+        init?.method === "POST" &&
+        url.includes("/api/admin/tenant-config/byo-storage/migrations")
+      ) {
+        return Promise.resolve(
+          Response.json({
+            migration: {
+              ...liveStorageMigrationPayload.migration,
+              copiedCount: 11,
+              verifiedCount: 9,
+            },
+          }),
+        );
+      }
+      return Promise.resolve(Response.json(tenantConfigPayload));
+    });
+
+    await render();
+
+    await waitFor(() => {
+      expect(buttonByLabel("Request migration").disabled).toBe(false);
+    });
+    await act(async () => {
+      checkboxByLabel("Dry run only").click();
+      checkboxByLabel("Confirm live migration request").click();
+      buttonByLabel("Request migration").click();
+      await Promise.resolve();
+    });
+
+    /* A dark button with no stated reason is a dead end: the panel has to say
+       which count is short, not merely refuse. */
+    await waitFor(() => {
+      expect(buttonByLabel("Cut over storage").disabled).toBe(true);
+      expect(container.textContent).toContain(
+        "Cutover needs all 12 planned objects copied and verified — 11 copied, 9 verified so far.",
+      );
+    });
+
+    await act(async () => {
+      buttonByLabel("Cut over storage").click();
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(cutoverCalls()).toHaveLength(0);
   });
 
   it("surfaces storage migration request errors without mutating tenant config", async () => {
@@ -643,6 +786,141 @@ describe("TenantConfigManagement", () => {
     expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
   });
 
+  /* Progressive disclosure is only safe if the summary is honest about what it
+   * is covering. These pin the two halves of that: rare/read-only detail folds
+   * away, and anything already set stays visible. */
+  it("folds read-only quotas away and says how many overrides are inside", async () => {
+    fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Business plan defaults");
+    });
+    const quotas = detailsBySummary("Effective limits");
+    expect(quotas.querySelector("summary")?.textContent).toContain("2 tenant overrides");
+    expect(quotas.querySelector("summary")?.textContent).toContain("Read-only");
+    // Two quota keys carry a tenant override, so the panel must not start shut.
+    expect(quotas.open).toBe(true);
+    expect(quotas.textContent).toContain("API RPS");
+  });
+
+  it("reads an unreported quota as unknown rather than unlimited", async () => {
+    fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
+
+    await render();
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Business plan defaults");
+    });
+    const quotas = detailsBySummary("Effective limits");
+    // The payload reports no `storage_bytes_limit` anywhere; claiming
+    // "unlimited" would tell an operator the cap was lifted.
+    expect(rowByLabel(quotas, "Storage bytes").textContent).toContain("Not reported");
+    // `actors_limit` is an explicit null override — that one really is uncapped.
+    expect(rowByLabel(quotas, "Actors").textContent).toContain("Unlimited");
+    expect(container.textContent).not.toContain("unlimited");
+  });
+
+  it("keeps storage mode visible while folding the connection fields it gates", async () => {
+    fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
+
+    await render();
+
+    await waitFor(() => {
+      expect(selectByLabel("Storage mode").value).toBe("byo");
+    });
+    const connection = detailsBySummary("Connection details");
+    // This tenant is on customer-owned storage: a live bucket must not be
+    // hidden behind a closed lid.
+    expect(connection.open).toBe(true);
+    expect(connection.querySelector("summary")?.textContent).toContain("acme-helix-data");
+    expect(connection.contains(inputByLabel("Bucket"))).toBe(true);
+    // The decision itself stays at the top level, outside the disclosure.
+    expect(connection.contains(selectByLabel("Storage mode"))).toBe(false);
+  });
+
+  it("starts the connection fields closed when Helix manages storage", async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({
+        tenantConfig: {
+          ...tenantConfigPayload.tenantConfig,
+          quotas: {},
+          byo: { storage: { kind: "helix-default", prefix: "tenants/org-1/" } },
+        },
+      }),
+    );
+
+    await render();
+
+    await waitFor(() => {
+      expect(selectByLabel("Storage mode").value).toBe("helix-default");
+    });
+    const connection = detailsBySummary("Connection details");
+    expect(connection.open).toBe(false);
+    expect(connection.querySelector("summary")?.textContent).toContain("Helix manages the bucket");
+    // Nothing is set, so the read-only quota panel folds away too.
+    expect(detailsBySummary("Effective limits").open).toBe(false);
+    expect(detailsBySummary("Effective limits").querySelector("summary")?.textContent).toContain(
+      "no tenant overrides",
+    );
+  });
+
+  it("keeps storage migration closed until a job exists, then reveals it", async () => {
+    fetchMock.mockImplementation((input, init) => {
+      if (
+        init?.method === "POST" &&
+        requestUrlOf(input).includes("/api/admin/tenant-config/byo-storage/migrations")
+      ) {
+        return Promise.resolve(Response.json(storageMigrationPayload));
+      }
+      return Promise.resolve(Response.json(tenantConfigPayload));
+    });
+
+    await render();
+
+    await waitFor(() => {
+      expect(buttonByLabel("Request migration").disabled).toBe(false);
+    });
+    const migration = detailsBySummary("Storage migration");
+    expect(migration.open).toBe(false);
+    expect(migration.querySelector("summary")?.textContent).toContain(
+      "cutover repoints live reads",
+    );
+
+    await act(async () => {
+      buttonByLabel("Request migration").click();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Planned 12, copied 0, verified 12");
+    });
+    // An in-flight migration is never left concealed.
+    expect(migration.open).toBe(true);
+    expect(migration.querySelector("summary")?.textContent).toContain("Dry Run");
+  });
+
+  it("gates the feature-flag save on there being something to save", async () => {
+    fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
+
+    await render();
+
+    await waitFor(() => {
+      expect(checkboxByLabel("AI smart compose").checked).toBe(true);
+    });
+    expect(buttonByLabel("Save feature flags").disabled).toBe(true);
+    expect(container.textContent).toContain("No unsaved flag changes.");
+
+    await act(async () => {
+      checkboxByLabel("AI smart compose").click();
+      await Promise.resolve();
+    });
+
+    expect(buttonByLabel("Save feature flags").disabled).toBe(false);
+    expect(container.textContent).toContain("1 unsaved flag change.");
+  });
+
   it("shows an unavailable state when the admin API rejects the request", async () => {
     fetchMock.mockResolvedValue(
       Response.json({ error: "Missing required scope" }, { status: 403 }),
@@ -722,6 +1000,26 @@ describe("TenantConfigManagement", () => {
     return field;
   }
 
+  function detailsBySummary(title: string): HTMLDetailsElement {
+    const match = [...container.querySelectorAll("details")].find((candidate) =>
+      candidate.querySelector("summary")?.textContent?.startsWith(title),
+    );
+    if (match === undefined) {
+      throw new Error(`Disclosure "${title}" not found.`);
+    }
+    return match;
+  }
+
+  function rowByLabel(scope: HTMLElement, label: string): HTMLElement {
+    const row = [...scope.querySelectorAll<HTMLElement>('[role="listitem"]')].find((candidate) =>
+      candidate.textContent?.startsWith(label),
+    );
+    if (row === undefined) {
+      throw new Error(`Quota row "${label}" not found.`);
+    }
+    return row;
+  }
+
   function buttonByLabel(label: string): HTMLButtonElement {
     const button = [...container.querySelectorAll("button")].find(
       (candidate) => candidate.textContent?.trim() === label,
@@ -730,6 +1028,70 @@ describe("TenantConfigManagement", () => {
       throw new Error(`Button "${label}" not found.`);
     }
     return button;
+  }
+
+  function checkboxLabels(): readonly string[] {
+    return [...container.querySelectorAll("label")]
+      .filter((label) => label.querySelector('input[type="checkbox"]') !== null)
+      .map((label) => label.textContent?.trim() ?? "");
+  }
+
+  function mockSucceededLiveMigration(): void {
+    fetchMock.mockImplementation((input, init) => {
+      const url = requestUrlOf(input);
+      if (init?.method === "POST" && url.endsWith("/cutover")) {
+        return Promise.resolve(
+          Response.json({
+            ...liveStorageMigrationPayload,
+            tenantConfig: {
+              ...tenantConfigPayload.tenantConfig,
+              byo: { storage: { kind: "helix-default", prefix: "tenants/org-1/" } },
+            },
+          }),
+        );
+      }
+      if (
+        init?.method === "POST" &&
+        url.includes("/api/admin/tenant-config/byo-storage/migrations")
+      ) {
+        return Promise.resolve(Response.json(liveStorageMigrationPayload));
+      }
+      return Promise.resolve(Response.json(tenantConfigPayload));
+    });
+  }
+
+  function cutoverCalls() {
+    return fetchMock.mock.calls.filter((call) => requestUrlOf(call[0]).endsWith("/cutover"));
+  }
+
+  // The confirmation is portaled to document.body, not into the section.
+  function dialogText(): string {
+    return document.querySelector('[role="alertdialog"]')?.textContent ?? "";
+  }
+
+  function blastRadiusText(): string {
+    return document.body.querySelector(".admin-confirm-blast")?.textContent ?? "";
+  }
+
+  function dialogButton(slot: "action" | "cancel"): HTMLButtonElement {
+    const button = document.body.querySelector<HTMLButtonElement>(
+      `[data-slot="alert-dialog-${slot}"]`,
+    );
+    if (button === null) {
+      throw new Error(`Dialog ${slot} button not found.`);
+    }
+    return button;
+  }
+
+  async function typePhrase(value: string): Promise<void> {
+    const input = document.body.querySelector<HTMLInputElement>(".admin-confirm-phrase input");
+    if (input === null) {
+      throw new Error("Confirmation phrase input not found.");
+    }
+    await act(async () => {
+      setInputValue(input, value);
+      await Promise.resolve();
+    });
   }
 });
 

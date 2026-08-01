@@ -2,15 +2,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   ArrowRightLeft,
+  ChevronRight,
   Database,
   Gauge,
   Palette,
   RefreshCcw,
   Save,
-  Settings2,
   ToggleLeft,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -26,6 +26,8 @@ import {
   type TenantStorageMigrationTarget,
   type TenantStorageHealthResult,
 } from "./tenant-config-api";
+import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { PageHeading } from "@/features/admin/console/primitives";
 
 interface TenantConfigRouteQueryClient {
   ensureQueryData(options: ReturnType<typeof tenantConfigQueryOptions>): Promise<unknown>;
@@ -56,6 +58,40 @@ const BOOLEAN_FEATURE_FLAGS = [
   ["dedicated_csm", "Dedicated CSM"],
   ["marketplace_install_paid", "Paid marketplace installs"],
 ] as const;
+
+/** Boolean flags grouped for display.
+ *
+ *  Nineteen checkboxes in one undifferentiated column gave no hint that the
+ *  four `byo_*` flags are one decision, or that the editor flags gate a single
+ *  product surface. Keys only — labels come from `BOOLEAN_FEATURE_FLAGS` above
+ *  so there is one place to edit them. `tenant-config-management.test.tsx`
+ *  asserts the groups partition the flag list exactly, so adding a flag
+ *  without placing it fails rather than quietly disappearing from the form. */
+export const BOOLEAN_FEATURE_FLAG_GROUPS = [
+  {
+    title: "Editors",
+    keys: [
+      "editors_native_document",
+      "editors_native_spreadsheet",
+      "editors_native_presentation",
+      "editors_native_pdf",
+    ],
+  },
+  { title: "AI", keys: ["editors_ai_rag", "ai_smart_compose"] },
+  { title: "Sharing & mail", keys: ["b2b_sharing", "mail_outbound"] },
+  { title: "Identity", keys: ["sso_saml", "scim_provisioning", "custom_domain"] },
+  {
+    title: "Bring your own",
+    keys: ["byo_storage", "byo_database", "byo_kms", "byo_ai_provider"],
+  },
+  {
+    title: "Plan entitlements",
+    keys: ["white_label", "multi_region_dr", "dedicated_csm", "marketplace_install_paid"],
+  },
+] as const satisfies ReadonlyArray<{
+  readonly title: string;
+  readonly keys: readonly string[];
+}>;
 
 const SELECT_FEATURE_FLAGS = [
   ["dlp_enforcement", "DLP enforcement", ["off", "warn", "block"]],
@@ -108,6 +144,14 @@ const BYO_STORAGE_FIELDS = [
 ] as const;
 
 type BooleanFeatureFlagKey = (typeof BOOLEAN_FEATURE_FLAGS)[number][0];
+
+/** Flag key -> display label, so the grouped form can render by key. */
+const BOOLEAN_FEATURE_FLAG_LABELS = new Map<string, string>(BOOLEAN_FEATURE_FLAGS);
+
+/** Every boolean flag key. Exported so the test can check that
+ *  `BOOLEAN_FEATURE_FLAG_GROUPS` partitions this list exactly. */
+export const BOOLEAN_FEATURE_FLAG_KEYS: readonly BooleanFeatureFlagKey[] =
+  BOOLEAN_FEATURE_FLAGS.map(([key]) => key);
 type SelectFeatureFlagKey = (typeof SELECT_FEATURE_FLAGS)[number][0];
 type FeatureFlagKey = BooleanFeatureFlagKey | SelectFeatureFlagKey;
 type BrandingKey = (typeof BRANDING_FIELDS)[number][0];
@@ -153,9 +197,14 @@ export function TenantConfigManagement() {
   const [migrationTarget, setMigrationTarget] = useState<TenantStorageMigrationTarget>("byo");
   const [migrationDryRun, setMigrationDryRun] = useState(true);
   const [migrationRequestConfirmed, setMigrationRequestConfirmed] = useState(false);
-  const [migrationCutoverConfirmed, setMigrationCutoverConfirmed] = useState(false);
   const [storageMigration, setStorageMigration] = useState<TenantStorageMigrationJob | null>(null);
+  /* Holds the job the confirmation was opened for, rather than a bare boolean:
+     the operator consents to the counts they were shown, and a status refresh
+     landing mid-decision must not swap the job out from under the dialog. */
+  const [cutoverTarget, setCutoverTarget] = useState<TenantStorageMigrationJob | null>(null);
   const query = useQuery(tenantConfigQueryOptions());
+  const storageFieldsRef = useRef<HTMLDetailsElement>(null);
+  const migrationRef = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
     if (query.data === undefined) {
@@ -167,7 +216,7 @@ export function TenantConfigManagement() {
     setByoStorage(byoStorageStateFromConfig(query.data));
     setMigrationTarget(defaultMigrationTarget(query.data));
     setMigrationRequestConfirmed(false);
-    setMigrationCutoverConfirmed(false);
+    setCutoverTarget(null);
   }, [query.data]);
 
   const mutation = useMutation({
@@ -215,7 +264,9 @@ export function TenantConfigManagement() {
     },
     onSuccess: (migration) => {
       setStorageMigration(migration);
-      setMigrationCutoverConfirmed(false);
+      // A newly requested job is not the job any open confirmation was for.
+      setCutoverTarget(null);
+      revealDetails(migrationRef);
     },
   });
   const storageMigrationStatusMutation = useMutation({
@@ -232,7 +283,9 @@ export function TenantConfigManagement() {
     },
     onSuccess: (migration) => {
       setStorageMigration(migration);
-      setMigrationCutoverConfirmed(false);
+      // Refreshed counts are new evidence; consent has to be re-taken against them.
+      setCutoverTarget(null);
+      revealDetails(migrationRef);
     },
   });
   const storageMigrationCutoverMutation = useMutation({
@@ -249,7 +302,6 @@ export function TenantConfigManagement() {
     },
     onSuccess: async (result) => {
       setStorageMigration(result.migration);
-      setMigrationCutoverConfirmed(false);
       queryClient.setQueryData(tenantConfigQueryKeys.detail(), result.tenantConfig);
       await queryClient.invalidateQueries({ queryKey: tenantConfigQueryKeys.detail() });
     },
@@ -263,23 +315,41 @@ export function TenantConfigManagement() {
     !storageMigrationCutoverMutation.isPending &&
     !query.isLoading;
   const canRequestMigration = canSave && (migrationDryRun || migrationRequestConfirmed);
+  const cutoverBlocker = storageMigration === null ? null : cutoverBlockerFor(storageMigration);
   const canCutoverMigration =
     canSave &&
-    migrationCutoverConfirmed &&
     storageMigration !== null &&
     storageMigration.dryRun === false &&
     storageMigration.status === "succeeded" &&
-    storageMigration.failures.length === 0 &&
-    storageMigration.lastError === null &&
-    storageMigration.plannedCount === storageMigration.copiedCount &&
-    storageMigration.plannedCount === storageMigration.verifiedCount;
-  const orgId = query.data?.orgId ?? "tenant";
-  const booleanFeatureRows = useMemo(() => [...BOOLEAN_FEATURE_FLAGS], []);
+    cutoverBlocker === null;
+  /* No `?? "tenant"` fallback. That literal was printed as this workspace's
+     identifier AND handed to the cutover dialog as its `confirmPhrase`, so an
+     operator whose config had not loaded would have been asked to type the
+     word "tenant" to authorise repointing every object read in the tenant. */
+  const orgId = query.data?.orgId ?? null;
   const selectFeatureRows = useMemo(() => [...SELECT_FEATURE_FLAGS], []);
   const quotaRows = useMemo(() => [...QUOTA_FIELDS], []);
   const brandingRows = useMemo(() => [...BRANDING_FIELDS], []);
   const byoStorageRows = useMemo(() => [...BYO_STORAGE_FIELDS], []);
   const byoStorageKinds = useMemo(() => [...BYO_STORAGE_KINDS], []);
+
+  /* Disclosure defaults are derived from the *loaded config*, never from live
+     form state. React writes a DOM prop only when it changes between renders,
+     so a value that is stable after load lets the operator's own open/close
+     stick instead of snapping back on the next keystroke — and a mode switch
+     mid-edit does not slam the panel they are typing in. */
+  const storageFieldsDefaultOpen = useMemo(
+    () => readRecord(query.data?.byo.storage)?.kind === "byo",
+    [query.data],
+  );
+  const quotaOverrideCount = useMemo(() => {
+    const overrides = query.data?.quotas;
+    if (overrides === undefined) {
+      return 0;
+    }
+    return QUOTA_FIELDS.filter(([key]) => overrides[key] !== undefined).length;
+  }, [query.data]);
+
   const saveFeatures = () => {
     if (dirtyFeatureKeys.size === 0) {
       return;
@@ -309,6 +379,9 @@ export function TenantConfigManagement() {
     const parsed = parseByoStorage(byoStorage);
     if (typeof parsed === "string") {
       setError(parsed);
+      // The offending field lives in the connection disclosure; an error about
+      // a control the operator cannot see is a dead end.
+      revealDetails(storageFieldsRef);
       return;
     }
     setError(null);
@@ -348,10 +421,15 @@ export function TenantConfigManagement() {
     storageMigrationStatusMutation.mutate(storageMigration.id);
   };
   const cutoverStorageMigration = () => {
-    if (storageMigration === null) {
+    if (cutoverTarget === null) {
       return;
     }
-    storageMigrationCutoverMutation.mutate(storageMigration.id);
+    storageMigrationCutoverMutation.mutate(cutoverTarget.id, {
+      /* Close on settle, not on success: a failed cutover is reported by the
+         page-level banner behind this overlay, so holding the dialog open would
+         cover the only account of what went wrong. */
+      onSettled: () => setCutoverTarget(null),
+    });
   };
 
   function buildStorageMigrationRequest(): Parameters<typeof requestTenantStorageMigration>[0] {
@@ -378,18 +456,25 @@ export function TenantConfigManagement() {
   }
 
   return (
-    <section aria-labelledby="tenant-settings-title" className="grid gap-4">
-      <header className="flex items-start gap-2">
-        <Settings2 aria-hidden="true" className="mt-0.5 size-4 text-muted-foreground" />
-        <div>
-          <h3 id="tenant-settings-title" className="text-sm font-medium">
-            Tenant settings
-          </h3>
-          <p className="text-xs text-muted-foreground">
+    <section className="grid gap-4">
+      {/* Shared PageHeading for an h1 at the console's standard size — this
+          rendered a `text-sm` h3 with the raw tenant UUID as its subtitle,
+          which read as a caption rather than a page title. The id moved to a
+          footnote below: it matters when filing a support ticket, not when
+          scanning the page. */}
+      <PageHeading
+        title="Workspace settings"
+        subtitle="Feature flags, quotas, branding, and bring-your-own storage for this tenant."
+      />
+      <p className="text-xs text-muted-foreground">
+        {orgId === null ? (
+          "Tenant identifier unavailable"
+        ) : (
+          <>
             Tenant <code>{orgId}</code>
-          </p>
-        </div>
-      </header>
+          </>
+        )}
+      </p>
 
       {error !== null ? (
         <p className="text-xs text-destructive" role="alert">
@@ -402,7 +487,11 @@ export function TenantConfigManagement() {
           Tenant settings are unavailable.
         </p>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-4">
+        // Two columns, not four. The console body caps at 1280px, so
+        // `2xl:grid-cols-4` produced four ~300px columns of wildly unequal
+        // height — Feature flags ran off the fold while Branding ended halfway
+        // up. `items-start` stops each card stretching to its row's tallest.
+        <div className="grid items-start gap-4 lg:grid-cols-2">
           <form
             aria-label="Feature flags"
             className="grid content-start gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
@@ -412,25 +501,30 @@ export function TenantConfigManagement() {
             }}
           >
             <SectionHeader icon={<ToggleLeft aria-hidden="true" />} title="Feature flags" />
+            {BOOLEAN_FEATURE_FLAG_GROUPS.map((group) => (
+              <fieldset className="grid gap-2" key={group.title}>
+                <legend className="admin-flag-group-legend">{group.title}</legend>
+                {group.keys.map((key) => (
+                  <label
+                    key={key}
+                    className="flex min-h-8 items-center justify-between gap-3 text-sm"
+                  >
+                    <span>{BOOLEAN_FEATURE_FLAG_LABELS.get(key) ?? key}</span>
+                    <input
+                      checked={features[key]}
+                      className="size-4"
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        setFeatures((current) => ({ ...current, [key]: checked }));
+                        setDirtyFeatureKeys((current) => new Set(current).add(key));
+                      }}
+                      type="checkbox"
+                    />
+                  </label>
+                ))}
+              </fieldset>
+            ))}
             <div className="grid gap-2">
-              {booleanFeatureRows.map(([key, label]) => (
-                <label
-                  key={key}
-                  className="flex min-h-8 items-center justify-between gap-3 text-sm"
-                >
-                  <span>{label}</span>
-                  <input
-                    checked={features[key]}
-                    className="size-4"
-                    onChange={(event) => {
-                      const checked = event.currentTarget.checked;
-                      setFeatures((current) => ({ ...current, [key]: checked }));
-                      setDirtyFeatureKeys((current) => new Set(current).add(key));
-                    }}
-                    type="checkbox"
-                  />
-                </label>
-              ))}
               {selectFeatureRows.map(([key, label, options]) => (
                 <label key={key} className="grid gap-1 text-xs text-muted-foreground">
                   <span>{label}</span>
@@ -455,33 +549,18 @@ export function TenantConfigManagement() {
                 </label>
               ))}
             </div>
-            <SaveButton disabled={!canSave} label="Save feature flags" onClick={saveFeatures} />
-          </form>
-
-          <form
-            aria-label="Quotas"
-            className="grid content-start gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
-            onSubmit={(event) => {
-              event.preventDefault();
-            }}
-          >
-            <SectionHeader icon={<Gauge aria-hidden="true" />} title="Quotas" />
-            <p className="text-xs text-muted-foreground">
-              {query.data?.plan === null || query.data?.plan === undefined
-                ? "Effective limits are shown from system defaults and tenant overrides."
-                : `${query.data.plan.displayName} plan defaults with tenant overrides applied.`}
+            {/* Saving with nothing dirty PATCHed an empty patch — a control
+                that does nothing. The count says what the button will write. */}
+            <p className="text-xs text-muted-foreground" role="status">
+              {dirtyFeatureKeys.size === 0
+                ? "No unsaved flag changes."
+                : `${String(dirtyFeatureKeys.size)} unsaved flag change${dirtyFeatureKeys.size === 1 ? "" : "s"}.`}
             </p>
-            <div className="grid gap-2" role="list">
-              {quotaRows.map(([key, label]) => (
-                <QuotaRow
-                  key={key}
-                  effective={query.data?.effective.quotas[key]}
-                  label={label}
-                  override={query.data?.quotas[key]}
-                  planDefault={query.data?.plan?.quotasDefault[key]}
-                />
-              ))}
-            </div>
+            <SaveButton
+              disabled={!canSave || dirtyFeatureKeys.size === 0}
+              label="Save feature flags"
+              onClick={saveFeatures}
+            />
           </form>
 
           <form
@@ -544,29 +623,38 @@ export function TenantConfigManagement() {
                 ))}
               </select>
             </label>
-            <label className="grid gap-1 text-xs text-muted-foreground">
-              <span>Provider</span>
-              <select
-                className="h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
-                onChange={(event) => {
-                  const provider = event.currentTarget.value as ByoStorageProvider;
-                  setByoStorage((current) => ({
-                    ...current,
-                    provider,
-                    force_path_style: provider !== "aws-s3",
-                  }));
-                }}
-                value={byoStorage.provider}
-                disabled={byoStorage.kind === "helix-default"}
-              >
-                {BYO_STORAGE_PROVIDERS.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="grid gap-2">
+            {/* Storage mode is the decision; everything below only matters once
+                it is "Customer-owned", so it goes one level in. Seeded open
+                when the tenant is already on customer-owned storage — a
+                disclosure that hides a live bucket is worse than a flat list. */}
+            <Disclosure
+              detail={byoConnectionSummary(byoStorage)}
+              detailsRef={storageFieldsRef}
+              open={storageFieldsDefaultOpen}
+              title="Connection details"
+            >
+              <label className="grid gap-1 text-xs text-muted-foreground">
+                <span>Provider</span>
+                <select
+                  className="h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+                  onChange={(event) => {
+                    const provider = event.currentTarget.value as ByoStorageProvider;
+                    setByoStorage((current) => ({
+                      ...current,
+                      provider,
+                      force_path_style: provider !== "aws-s3",
+                    }));
+                  }}
+                  value={byoStorage.provider}
+                  disabled={byoStorage.kind === "helix-default"}
+                >
+                  {BYO_STORAGE_PROVIDERS.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               {byoStorageRows.map(([key, label]) => (
                 <label key={key} className="grid gap-1 text-xs text-muted-foreground">
                   <span>{label}</span>
@@ -585,28 +673,40 @@ export function TenantConfigManagement() {
                   />
                 </label>
               ))}
+              <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
+                <span>Force path-style S3</span>
+                <input
+                  checked={byoStorage.force_path_style}
+                  className="size-4"
+                  onChange={(event) => {
+                    const checked = event.currentTarget.checked;
+                    setByoStorage((current) => ({
+                      ...current,
+                      force_path_style: checked,
+                    }));
+                  }}
+                  type="checkbox"
+                  disabled={byoStorage.kind === "helix-default"}
+                />
+              </label>
+            </Disclosure>
+            {/* Save is the card's one primary action; Test is a check you run
+                alongside it. Both rendered as filled violet buttons, which put
+                three equal-weight primaries on this page once button
+                backgrounds started applying at all. */}
+            <div className="flex flex-wrap gap-2">
+              <SaveButton disabled={!canSave} label="Save BYO storage" onClick={saveByoStorage} />
+              <Button
+                disabled={!canSave}
+                onClick={testStorage}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <Activity aria-hidden="true" />
+                {storageTestMutation.isPending ? "Testing storage" : "Test storage"}
+              </Button>
             </div>
-            <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
-              <span>Force path-style S3</span>
-              <input
-                checked={byoStorage.force_path_style}
-                className="size-4"
-                onChange={(event) => {
-                  const checked = event.currentTarget.checked;
-                  setByoStorage((current) => ({
-                    ...current,
-                    force_path_style: checked,
-                  }));
-                }}
-                type="checkbox"
-                disabled={byoStorage.kind === "helix-default"}
-              />
-            </label>
-            <SaveButton disabled={!canSave} label="Save BYO storage" onClick={saveByoStorage} />
-            <Button disabled={!canSave} onClick={testStorage} size="sm" type="button">
-              <Activity aria-hidden="true" />
-              {storageTestMutation.isPending ? "Testing storage" : "Test storage"}
-            </Button>
             {storageHealth === null ? null : (
               <p className="text-xs text-muted-foreground" role="status">
                 {storageHealth.status}: {storageHealth.message}
@@ -614,11 +714,18 @@ export function TenantConfigManagement() {
                 {storageHealth.prefix === undefined ? "" : ` prefix ${storageHealth.prefix}`}
               </p>
             )}
-            <div className="grid gap-3 border-t border-border/70 pt-3">
-              <SectionHeader
-                icon={<ArrowRightLeft aria-hidden="true" />}
-                title="Storage migration"
-              />
+            {/* Rare and destructive: it copies every object in the tenant and
+                the cutover repoints live reads. It sat permanently open under
+                the save controls, giving a one-off operation the same standing
+                as the fields an operator edits weekly. Closed by default, and
+                re-opened by `revealDetails` the moment a job exists so an
+                in-flight migration is never concealed. */}
+            <Disclosure
+              detail={migrationSummary(storageMigration)}
+              detailsRef={migrationRef}
+              open={false}
+              title="Storage migration"
+            >
               <label className="grid gap-1 text-xs text-muted-foreground">
                 <span>Migration target</span>
                 <select
@@ -707,47 +814,187 @@ export function TenantConfigManagement() {
                     </span>
                   )}
                   {storageMigration.dryRun === false && storageMigration.status === "succeeded" ? (
+                    /* The "Confirm migration cutover" checkbox that used to sit
+                       here is gone. Consent is the dialog: a checkbox in front
+                       of a typed confirmation is a gate the operator learns to
+                       click past on the way to the real one, and it read as a
+                       setting rather than as the point of no return. */
                     <div className="grid gap-2 border-t border-border/70 pt-2">
-                      <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
-                        <span>Confirm migration cutover</span>
-                        <input
-                          checked={migrationCutoverConfirmed}
-                          className="size-4"
-                          onChange={(event) => {
-                            setMigrationCutoverConfirmed(event.currentTarget.checked);
-                          }}
-                          type="checkbox"
-                        />
-                      </label>
                       <Button
                         disabled={!canCutoverMigration}
-                        onClick={cutoverStorageMigration}
+                        onClick={() => setCutoverTarget(storageMigration)}
                         size="sm"
                         type="button"
+                        variant="destructive"
                       >
                         <ArrowRightLeft aria-hidden="true" />
                         {storageMigrationCutoverMutation.isPending
                           ? "Cutting over"
                           : "Cut over storage"}
                       </Button>
+                      {/* A dark button with no stated reason is a dead end, and
+                          the counts that blocked it are printed three lines up.
+                          No `role="status"` of its own: the panel around it is
+                          already the live region, and nesting one inside another
+                          is how announcements get dropped. */}
+                      {cutoverBlocker === null ? null : (
+                        <p className="text-xs text-muted-foreground">{cutoverBlocker}</p>
+                      )}
                     </div>
                   ) : null}
                 </div>
               )}
-            </div>
+            </Disclosure>
           </form>
+
+          {/* Read-only reference, so it sits after the editable cards and its
+              rows fold away. Seeded open whenever a tenant override exists —
+              an override is an active setting and must not be concealed. */}
+          <section
+            aria-label="Quotas"
+            className="grid content-start gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
+          >
+            <SectionHeader icon={<Gauge aria-hidden="true" />} title="Quotas" />
+            <p className="text-xs text-muted-foreground">
+              {query.data?.plan === null || query.data?.plan === undefined
+                ? "Effective limits are shown from system defaults and tenant overrides."
+                : `${query.data.plan.displayName} plan defaults with tenant overrides applied.`}
+            </p>
+            <Disclosure
+              detail={quotaSummary(quotaRows.length, quotaOverrideCount)}
+              open={quotaOverrideCount > 0}
+              title="Effective limits"
+            >
+              <div className="grid gap-2" role="list">
+                {quotaRows.map(([key, label]) => (
+                  <QuotaRow
+                    key={key}
+                    effective={query.data?.effective.quotas[key]}
+                    label={label}
+                    override={query.data?.quotas[key]}
+                    planDefault={query.data?.plan?.quotasDefault[key]}
+                  />
+                ))}
+              </div>
+            </Disclosure>
+          </section>
         </div>
+      )}
+
+      {/* The console's top tier. Cutover is not one object: it repoints every
+          live object read for the whole tenant, so it carries the blast radius
+          AND a typed `confirmPhrase`. The phrase is the tenant id printed under
+          the page title — the operator reads it off this page, never goes
+          hunting for it, and typing it is a second look at which workspace they
+          are about to move. */}
+      {cutoverTarget === null || orgId === null ? null : (
+        <ConfirmDestructive
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setCutoverTarget(null);
+            }
+          }}
+          title="Cut over tenant storage"
+          blastRadius={cutoverBlastRadius(cutoverTarget, orgId)}
+          confirmPhrase={orgId}
+          confirmLabel="Cut over storage"
+          isPending={storageMigrationCutoverMutation.isPending}
+          onConfirm={cutoverStorageMigration}
+        >
+          Repoints every live object read and write for tenant <code>{orgId}</code> to{" "}
+          {formatMigrationTarget(cutoverTarget.target)}. The backend this job copied from is
+          reported as <code>{cutoverTarget.sourceStorage?.managedBy ?? "unknown"}</code>.
+        </ConfirmDestructive>
       )}
     </section>
   );
 }
 
+/* Why the cutover button is dark, said where the counts that blocked it are
+   already printed — a disabled control with no stated reason is a dead end.
+   Null means nothing is holding it back. */
+function cutoverBlockerFor(migration: TenantStorageMigrationJob): string | null {
+  if (migration.lastError !== null) {
+    return "The last run reported an error. Cutover stays blocked until a re-run finishes clean.";
+  }
+  if (migration.failures.length > 0) {
+    const count = migration.failures.length;
+    return `${String(count)} object${count === 1 ? "" : "s"} failed to copy. Cutover stays blocked until a re-run copies ${count === 1 ? "it" : "them"}.`;
+  }
+  if (
+    migration.copiedCount !== migration.plannedCount ||
+    migration.verifiedCount !== migration.plannedCount
+  ) {
+    return `Cutover needs all ${String(migration.plannedCount)} planned objects copied and verified — ${String(migration.copiedCount)} copied, ${String(migration.verifiedCount)} verified so far.`;
+  }
+  return null;
+}
+
+/* The numbers are the job's own, and the gate above guarantees planned, copied
+   and verified agree by the time this can be read — so the count is what the
+   platform verified, not an estimate of what cutover will touch. */
+function cutoverBlastRadius(migration: TenantStorageMigrationJob, orgId: string): string {
+  return `All ${String(migration.verifiedCount)} verified objects start serving from ${formatMigrationTarget(migration.target)} the moment this lands, for every user and every app in tenant ${orgId}. Going back means running a full migration the other way.`;
+}
+
+/** Force a disclosure open without taking control of it.
+ *
+ *  React writes a DOM prop only when its value changes between renders, so
+ *  poking `open` here sticks: the next render still passes the same `open`
+ *  value it always did and leaves the attribute alone. Used when something
+ *  outside the panel — a validation failure, a migration job appearing —
+ *  means the operator must see what is inside. */
+function revealDetails(ref: { readonly current: HTMLDetailsElement | null }): void {
+  if (ref.current !== null) {
+    ref.current.open = true;
+  }
+}
+
+/* A disclosure summary has to answer "what is in here" AND "is anything in
+   here set" — otherwise it is just a lid on a surprise. */
+function Disclosure({
+  children,
+  detail,
+  detailsRef,
+  open,
+  title,
+}: {
+  readonly children: ReactNode;
+  readonly detail: string;
+  readonly detailsRef?: Ref<HTMLDetailsElement>;
+  readonly open: boolean;
+  readonly title: string;
+}) {
+  return (
+    <details className="group rounded-md border border-border/70" open={open} ref={detailsRef}>
+      <summary className="flex cursor-pointer list-none items-start gap-2 rounded-md px-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          aria-hidden="true"
+          className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+        />
+        {/* h3 under the card's h2 — the level the outline expects here, and the
+            one element type a <summary> may hold besides phrasing content. */}
+        <h3 className="grid gap-0.5 text-sm font-semibold">
+          {title}
+          <span className="font-normal text-muted-foreground">{detail}</span>
+        </h3>
+      </summary>
+      <div className="grid gap-2 border-t border-border/70 px-3 py-3">{children}</div>
+    </details>
+  );
+}
+
+/* h2, not h4: these card titles sit directly under the page's single h1 from
+   `PageHeading`, and this is the only sub-heading level in the file — an h4
+   here skipped two levels on every render. The visual size stays put; only the
+   outline level changes. */
 function SectionHeader({ icon, title }: { readonly icon: ReactNode; readonly title: string }) {
   return (
-    <h4 className="flex items-center gap-2 text-sm font-semibold">
+    <h2 className="flex items-center gap-2 text-sm font-semibold">
       <span className="[&_svg]:size-4">{icon}</span>
       {title}
-    </h4>
+    </h2>
   );
 }
 
@@ -912,8 +1159,42 @@ function parseByoStorage(input: ByoStorageState):
   };
 }
 
+/* The tenant-config contract types every quota as `number | null`, where null
+   is a real "no cap". Anything else means the API did not report that key —
+   which is a different claim, and rendering it as "unlimited" told an operator
+   a limit was lifted when we simply do not know. */
 function formatQuotaValue(value: unknown): string {
-  return typeof value === "number" ? new Intl.NumberFormat("en-US").format(value) : "unlimited";
+  if (typeof value === "number") {
+    return new Intl.NumberFormat("en-US").format(value);
+  }
+  return value === null ? "Unlimited" : "Not reported";
+}
+
+function quotaSummary(limitCount: number, overrideCount: number): string {
+  const overrides =
+    overrideCount === 0
+      ? "no tenant overrides"
+      : `${String(overrideCount)} tenant override${overrideCount === 1 ? "" : "s"}`;
+  return `Read-only · ${String(limitCount)} limits · ${overrides}`;
+}
+
+function byoConnectionSummary(state: ByoStorageState): string {
+  if (state.kind === "helix-default") {
+    return "Helix manages the bucket — only the object prefix applies.";
+  }
+  const provider =
+    BYO_STORAGE_PROVIDERS.find(([value]) => value === state.provider)?.[1] ?? state.provider;
+  const bucket = state.bucket.trim();
+  return `${provider} · ${bucket.length === 0 ? "no bucket set" : bucket}`;
+}
+
+function migrationSummary(migration: TenantStorageMigrationJob | null): string {
+  if (migration === null) {
+    return "Copies every object to another backend. Dry run first — cutover repoints live reads.";
+  }
+  return `${formatMigrationStatus(migration.status)} · ${
+    migration.dryRun ? "dry run" : "live migration"
+  } to ${formatMigrationTarget(migration.target)}`;
 }
 
 function formatMigrationStatus(status: TenantStorageMigrationJob["status"]): string {

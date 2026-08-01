@@ -18,6 +18,8 @@ import {
   type CoreAppId,
 } from "./core-apps-api";
 import { APPS, CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
+import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { PageHeading } from "@/features/admin/console/primitives";
 
 interface CoreAppsRouteQueryClient {
   ensureQueryData(options: ReturnType<typeof coreAppsAdminQueryOptions>): Promise<unknown>;
@@ -36,6 +38,27 @@ const APP_ICON_BG: Readonly<Record<CoreAppId, string>> = {
   meet: "bg-cyan-500/15 text-cyan-400",
   assistant: "bg-fuchsia-500/15 text-fuchsia-400",
   editors: "bg-slate-500/15 text-slate-400",
+};
+
+/* What each app's users lose the moment it goes off, org-wide.
+ *
+ * The console's destructive policy wants `blastRadius` to be a decision input,
+ * not "this cannot be undone" — and one generic sentence would throw away what
+ * this file already knows: turning Editors off is nothing like turning Drive
+ * off (the Editors row states that difference in its own description). Every
+ * line here is a loss of access that follows from the page's own promise that
+ * a disabled app leaves the launcher, rail, and search for everyone; none of
+ * them claims anything about what the backend keeps running or retains. */
+const DISABLE_CONSEQUENCE: Readonly<Record<CoreAppId, string>> = {
+  mail: "Every user loses the inbox, composing, and mail results in search.",
+  chat: "Every user loses channels and direct messages, including conversations already in progress.",
+  drive: "Every user loses file browsing, upload, download, and Drive results in search.",
+  docs: "Every user loses document browsing and creation, and documents stop appearing in search.",
+  calendar: "Every user loses their schedule, event creation, and invitations.",
+  meet: "Nobody can start or join a meeting from Helix, including meetings already scheduled.",
+  assistant: "Every user loses AI answers, summaries, and assisted actions across the workspace.",
+  editors:
+    "Drive keeps storage, previews, download, and sharing, but nobody can open or create an editable Doc, Sheet, Slide, or PDF.",
 };
 
 function AppIcon({ id }: { readonly id: CoreAppId }) {
@@ -66,11 +89,18 @@ function AppIcon({ id }: { readonly id: CoreAppId }) {
  * Disabling an app removes it from the launcher, rail, and search for every
  * user in the org. Some apps require a restart to fully unregister; the row
  * surfaces a "pending restart" badge until the next deploy cycles the module.
+ *
+ * The two directions of the switch are not the same action. Enabling is
+ * additive and stays one click — confirming it would only teach operators to
+ * click through dialogs. Disabling is the console's irreversible/many-affected
+ * tier (one toggle, every user in the org), so it confirms with the app named
+ * and a blast radius saying what stops working.
  */
 export function CoreAppsManagement() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [pendingRestart, setPendingRestart] = useState<ReadonlySet<CoreAppId>>(new Set());
+  const [disableTargetId, setDisableTargetId] = useState<CoreAppId | null>(null);
   const statusQuery = useQuery(coreAppsAdminQueryOptions());
 
   const toggleMutation = useMutation({
@@ -89,6 +119,11 @@ export function CoreAppsManagement() {
       await queryClient.invalidateQueries({ queryKey: coreAppsQueryKeys.admin() });
       await queryClient.invalidateQueries({ queryKey: coreAppsQueryKeys.shell() });
     },
+    onSettled: () => {
+      // Closes on failure too: the error banner lives on the page behind the
+      // dialog, so leaving it open would hide the reason nothing happened.
+      setDisableTargetId(null);
+    },
   });
 
   const apps = useMemo(() => {
@@ -97,32 +132,36 @@ export function CoreAppsManagement() {
       ? configuredApps.filter((app) => APPS.some((workspaceApp) => workspaceApp.id === app.id))
       : configuredApps;
   }, [statusQuery.data?.apps]);
-  const role = statusQuery.data?.role ?? "all";
+  /* `undefined` until the request lands, and it stays undefined on failure —
+     defaulting to "all" put a specific claim about the deployment in the
+     subtitle while the body said the settings could not be read. */
+  const role = statusQuery.data?.role;
   const enabledCount = useMemo(() => apps.filter((a) => a.enabled).length, [apps]);
+  /* Derived from the live list rather than held as a snapshot: if a refetch
+     drops the app, the dialog must not keep offering to disable something that
+     is no longer there. */
+  const disableTarget = apps.find((app) => app.id === disableTargetId) ?? null;
 
   return (
-    <section className="grid gap-5" aria-labelledby="core-apps-title">
-      <header className="flex items-start justify-between gap-6 flex-wrap">
-        <div>
-          <h2 id="core-apps-title" className="text-lg font-semibold text-[var(--text)]">
-            Core apps
-          </h2>
-          <p className="mt-1 text-sm text-[var(--text-2)] max-w-2xl">
-            Turn workspace apps on or off for everyone in your organization. Disabled apps disappear
-            from the launcher, rail, and search. This deployment boots with the{" "}
-            <code className="text-[var(--text-2)] bg-[var(--surface-2)] px-1 py-0.5 rounded text-xs">
-              {role}
-            </code>{" "}
-            role.
-          </p>
-        </div>
-        {apps.length > 0 ? (
-          <div className="text-sm text-[var(--text-2)] shrink-0">
-            <span className="font-medium text-[var(--text)]">{enabledCount}</span>
-            <span className="text-[var(--text-3)]"> of {apps.length} enabled</span>
-          </div>
-        ) : null}
-      </header>
+    <section className="grid gap-5">
+      {/* Uses the console's shared PageHeading so this section's title is an
+          h1 like every other `/admin/<section>` page — it rendered an h2 here
+          and an h3 in tenant settings purely by accident of authorship. */}
+      <PageHeading
+        title="Workspace apps"
+        subtitle={
+          "Turn workspace apps on or off for everyone in your organization. Disabled apps disappear from the launcher, rail, and search." +
+          (role === undefined ? "" : ` This deployment boots with the ${role} role.`)
+        }
+        meta={
+          apps.length > 0 ? (
+            <span className="ml-auto shrink-0 text-sm text-[var(--text-2)]">
+              <span className="font-medium text-[var(--text)]">{enabledCount}</span>
+              <span className="text-[var(--text-3)]"> of {apps.length} enabled</span>
+            </span>
+          ) : undefined
+        }
+      />
 
       {error !== null ? (
         <div
@@ -151,11 +190,36 @@ export function CoreAppsManagement() {
               pendingRestart={pendingRestart.has(app.id)}
               busy={toggleMutation.isPending}
               onToggle={(enabled) => {
-                toggleMutation.mutate({ appId: app.id, enabled });
+                if (enabled) {
+                  toggleMutation.mutate({ appId: app.id, enabled: true });
+                  return;
+                }
+                setDisableTargetId(app.id);
               }}
             />
           ))}
         </div>
+      )}
+
+      {disableTarget === null ? null : (
+        <ConfirmDestructive
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setDisableTargetId(null);
+            }
+          }}
+          title={`Disable ${disableTarget.name}`}
+          blastRadius={DISABLE_CONSEQUENCE[disableTarget.id]}
+          confirmLabel={`Disable ${disableTarget.name}`}
+          isPending={toggleMutation.isPending}
+          onConfirm={() => {
+            toggleMutation.mutate({ appId: disableTarget.id, enabled: false });
+          }}
+        >
+          Turns {disableTarget.name} off for everyone in your organization, not just you. It
+          disappears from the launcher, rail, and search until an admin turns it back on.
+        </ConfirmDestructive>
       )}
     </section>
   );
@@ -187,7 +251,10 @@ function CoreAppRow({
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-[var(--text)]">{app.name}</span>
           {app.id === "editors" ? <AlphaPill /> : null}
-          <StatusPill enabled={app.enabled} />
+          {/* No Enabled/Disabled pill: the switch on this row already reports
+              that state, and two readouts for one value invite the reader to
+              wonder which is authoritative. State the switch can't convey —
+              pending restart, not served by this role — still gets a badge. */}
           {pendingRestart ? (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-500/15 text-amber-400">
               Pending restart
@@ -219,21 +286,6 @@ function AlphaPill() {
   return (
     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-400">
       Alpha
-    </span>
-  );
-}
-
-function StatusPill({ enabled }: { readonly enabled: boolean }) {
-  if (enabled) {
-    return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/10 text-emerald-400">
-        <span className="w-1.5 h-1.5 rounded-full bg-current" /> Enabled
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-[var(--surface-2)] text-[var(--text-3)]">
-      <span className="w-1.5 h-1.5 rounded-full bg-current" /> Disabled
     </span>
   );
 }

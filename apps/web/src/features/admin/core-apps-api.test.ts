@@ -80,10 +80,10 @@ describe("core-apps-api", () => {
 
   it("fails safe when /api/core-apps apps entries are malformed", async () => {
     fetchImpl.mockResolvedValue(
-      new Response(
-        JSON.stringify({ role: "all", apps: [{ id: "mail" }] }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
+      new Response(JSON.stringify({ role: "all", apps: [{ id: "mail" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
     );
 
     const status = await fetchCoreAppsShellStatus(fetchImpl);
@@ -98,8 +98,6 @@ describe("core-apps-api", () => {
       }),
     );
 
-    await expect(
-      setCoreAppEnabled("mail", false, fetchImpl),
-    ).rejects.toThrow(/Unknown core app/u);
+    await expect(setCoreAppEnabled("mail", false, fetchImpl)).rejects.toThrow(/Unknown core app/u);
   });
 });

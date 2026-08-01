@@ -1,12 +1,7 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-  type ColumnDef,
-} from "@tanstack/react-table";
-import { BadgeDollarSign, RotateCcw, Save, Trash2 } from "lucide-react";
+import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
+import { BadgeDollarSign, Save, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,21 +13,21 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { EmptyState, PageHeading, StateBanner } from "@/features/admin/console/primitives";
 import {
   aiCostLimitsQueryKeys,
   aiCostLimitsQueryOptions,
   clearAICostLimit,
   setAICostLimit,
   type AICostLimit,
+  type AICostTierDefault,
 } from "./ai-cost-limits-api";
 
 interface AICostLimitsRouteQueryClient {
   ensureQueryData(options: ReturnType<typeof aiCostLimitsQueryOptions>): Promise<unknown>;
 }
 
-export async function prefetchAdminAICostLimitsQuery(
-  queryClient: AICostLimitsRouteQueryClient,
-) {
+export async function prefetchAdminAICostLimitsQuery(queryClient: AICostLimitsRouteQueryClient) {
   await queryClient.ensureQueryData(aiCostLimitsQueryOptions()).catch(() => undefined);
 }
 
@@ -113,13 +108,16 @@ export function AICostLimitsManagement() {
         id: "actions",
         header: "",
         cell: ({ row }) => (
+          // Outline, not destructive: clearing an override restores the tier
+          // default rather than deleting anything, and a filled button per row
+          // would out-shout the panel's own Save action.
           <Button
             aria-label={`Clear AI cost limit for ${row.original.actorId}`}
             disabled={clearMutation.isPending}
             onClick={() => clearMutation.mutate(row.original.actorId)}
             size="sm"
             type="button"
-            variant="destructive"
+            variant="outline"
           >
             <Trash2 />
             Clear
@@ -151,162 +149,181 @@ export function AICostLimitsManagement() {
     },
   });
 
+  const hasOverrides = limits.length > 0;
+  // Only claim "nobody has an override" once the list has actually loaded.
+  const showEmptyState = !hasOverrides && !limitsQuery.isPending && !limitsQuery.isError;
+
   return (
-    <section
-      aria-labelledby="ai-cost-limits-title"
-      className="mx-auto grid w-full max-w-7xl gap-4 px-4 py-4 sm:px-6 lg:px-8"
-    >
-      <header className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4 text-card-foreground">
-        <div className="flex items-center gap-2">
-          <BadgeDollarSign aria-hidden="true" size={18} />
-          <h3 id="ai-cost-limits-title" className="text-sm font-semibold">
-            Per-user AI cost limits
-          </h3>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Override the daily AI spend budget for an individual user. Leave a field blank to use
-          the {tierDefault === undefined ? "tier" : `${tierDefault.tier} tier`} default
-          {tierDefault === undefined
-            ? "."
-            : ` (actor ${formatUsd(tierDefault.actorDailyUsd)}, feature ${formatUsd(
-                tierDefault.featureDailyUsd,
-              )}).`}
-        </p>
-      </header>
+    // `ai-costs` is registered through `withPageScroll` in admin-console.tsx,
+    // so the scroll container, page padding, and 1280px cap already wrap this.
+    <section className="grid gap-4">
+      <PageHeading title="AI cost limits" subtitle={tierDefaultSubtitle(tierDefault)} />
 
-      <form
-        className="grid gap-3 rounded-lg border border-border bg-card p-4 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void limitForm.handleSubmit();
-        }}
+      <section
+        aria-labelledby="ai-cost-limits-form-heading"
+        className="grid gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
       >
-        <limitForm.Field name="actorId">
-          {(field) => (
-            <label className="grid gap-1 text-xs">
-              <span className="font-medium">Actor ID</span>
-              <Input
-                aria-label="Actor ID"
-                onChange={(event) => field.handleChange(event.target.value)}
-                placeholder="00000000-0000-0000-0000-000000000000"
-                value={field.state.value}
-              />
-            </label>
-          )}
-        </limitForm.Field>
-        <limitForm.Field name="actorDailyUsd">
-          {(field) => (
-            <label className="grid gap-1 text-xs">
-              <span className="font-medium">Actor daily (USD)</span>
-              <Input
-                aria-label="Actor daily budget in USD"
-                inputMode="decimal"
-                onChange={(event) => field.handleChange(event.target.value)}
-                placeholder="tier default"
-                value={field.state.value}
-              />
-            </label>
-          )}
-        </limitForm.Field>
-        <limitForm.Field name="featureDailyUsd">
-          {(field) => (
-            <label className="grid gap-1 text-xs">
-              <span className="font-medium">Feature daily (USD)</span>
-              <Input
-                aria-label="Feature daily budget in USD"
-                inputMode="decimal"
-                onChange={(event) => field.handleChange(event.target.value)}
-                placeholder="tier default"
-                value={field.state.value}
-              />
-            </label>
-          )}
-        </limitForm.Field>
-        <Button disabled={upsertMutation.isPending} size="sm" type="submit">
-          <Save />
-          Save limit
-        </Button>
-      </form>
+        <h2
+          className="flex items-center gap-2 text-sm font-semibold"
+          id="ai-cost-limits-form-heading"
+        >
+          <BadgeDollarSign aria-hidden="true" size={16} />
+          Set a per-user override
+        </h2>
 
-      {formError === null ? null : (
-        <p className="text-xs text-destructive" role="alert">
-          {formError}
-        </p>
-      )}
-      {upsertMutation.isError ? (
-        <p className="text-xs text-destructive" role="alert">
-          {upsertMutation.error instanceof Error
-            ? upsertMutation.error.message
-            : "Failed to save AI cost limit."}
-        </p>
-      ) : null}
-      {clearMutation.isError ? (
-        <p className="text-xs text-destructive" role="alert">
-          {clearMutation.error instanceof Error
-            ? clearMutation.error.message
-            : "Failed to clear AI cost limit."}
-        </p>
-      ) : null}
-      {limitsQuery.isError ? (
-        <p className="text-xs text-destructive" role="alert">
-          AI cost limits are unavailable or admin AI scope is missing.
-        </p>
-      ) : null}
-      {limitsQuery.isPending ? (
-        <p className="text-xs text-muted-foreground" role="status">
-          <RotateCcw aria-hidden="true" className="mr-1 inline size-3 animate-spin" />
-          Loading AI cost limits
-        </p>
-      ) : null}
+        <form
+          className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void limitForm.handleSubmit();
+          }}
+        >
+          <limitForm.Field name="actorId">
+            {(field) => (
+              <label className="grid gap-1 text-xs">
+                <span className="font-medium">Actor ID</span>
+                <Input
+                  aria-label="Actor ID"
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  value={field.state.value}
+                />
+              </label>
+            )}
+          </limitForm.Field>
+          <limitForm.Field name="actorDailyUsd">
+            {(field) => (
+              <label className="grid gap-1 text-xs">
+                <span className="font-medium">Actor daily (USD)</span>
+                <Input
+                  aria-label="Actor daily budget in USD"
+                  inputMode="decimal"
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  placeholder="tier default"
+                  value={field.state.value}
+                />
+              </label>
+            )}
+          </limitForm.Field>
+          <limitForm.Field name="featureDailyUsd">
+            {(field) => (
+              <label className="grid gap-1 text-xs">
+                <span className="font-medium">Feature daily (USD)</span>
+                <Input
+                  aria-label="Feature daily budget in USD"
+                  inputMode="decimal"
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  placeholder="tier default"
+                  value={field.state.value}
+                />
+              </label>
+            )}
+          </limitForm.Field>
+          <Button disabled={upsertMutation.isPending} size="sm" type="submit">
+            <Save />
+            Save limit
+          </Button>
+        </form>
 
-      <Table aria-label="Per-user AI cost limits" role="table">
-        <TableHeader>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id} role="row">
-              {headerGroup.headers.map((header) => (
-                <TableHead key={header.id} role="columnheader">
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(header.column.columnDef.header, header.getContext())}
-                </TableHead>
+        {formError === null ? null : <StateBanner kind="error">{formError}</StateBanner>}
+        {upsertMutation.isError ? (
+          <StateBanner kind="error">
+            {upsertMutation.error instanceof Error
+              ? upsertMutation.error.message
+              : "Failed to save AI cost limit."}
+          </StateBanner>
+        ) : null}
+      </section>
+
+      <section aria-labelledby="ai-cost-limits-overrides-heading" className="grid gap-2">
+        <h2 className="text-sm font-semibold" id="ai-cost-limits-overrides-heading">
+          Active overrides
+        </h2>
+
+        {limitsQuery.isPending ? (
+          <StateBanner kind="loading">Loading AI cost limits…</StateBanner>
+        ) : null}
+        {limitsQuery.isError ? (
+          <StateBanner kind="error">
+            AI cost limits are unavailable or admin AI scope is missing.
+          </StateBanner>
+        ) : null}
+        {clearMutation.isError ? (
+          <StateBanner kind="error">
+            {clearMutation.error instanceof Error
+              ? clearMutation.error.message
+              : "Failed to clear AI cost limit."}
+          </StateBanner>
+        ) : null}
+
+        {showEmptyState ? (
+          <EmptyState icon={<BadgeDollarSign aria-hidden="true" />} title="No per-user overrides">
+            Every user is billed against the {tierDefault === undefined ? "tier" : tierDefault.tier}{" "}
+            tier default. Save an override above to give one user a different daily AI budget.
+          </EmptyState>
+        ) : null}
+
+        {hasOverrides ? (
+          <Table aria-label="Per-user AI cost limits" role="table">
+            <TableHeader>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id} role="row">
+                  {headerGroup.headers.map((header) => (
+                    <TableHead key={header.id} role="columnheader">
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(header.column.columnDef.header, header.getContext())}
+                    </TableHead>
+                  ))}
+                </TableRow>
               ))}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {table.getRowModel().rows.length === 0 ? (
-            <TableRow role="row">
-              <TableCell colSpan={columns.length} role="cell">
-                <span className="text-xs text-muted-foreground">
-                  No per-user overrides. All users follow the tier default.
-                </span>
-              </TableCell>
-            </TableRow>
-          ) : (
-            table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id} role="row">
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id} role="cell">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+            </TableHeader>
+            <TableBody>
+              {table.getRowModel().rows.map((row) => (
+                <TableRow key={row.id} role="row">
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id} role="cell">
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
+      </section>
     </section>
   );
 }
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+function tierDefaultSubtitle(tierDefault: AICostTierDefault | undefined): string {
+  const lead =
+    "Override the daily AI spend budget for an individual user. A blank field falls back to the";
+  if (tierDefault === undefined) {
+    return `${lead} tier default.`;
+  }
+  return `${lead} ${tierDefault.tier} tier default (actor ${formatTierBudget(
+    tierDefault.actorDailyUsd,
+  )}, feature ${formatTierBudget(tierDefault.featureDailyUsd)}).`;
+}
+
+/* A null budget means different things on either side of this screen: on a
+ * tier default it is "no cap at this dimension", on a per-user override it is
+ * "inherit the tier default". Rendering both as "tier default" made the tier
+ * row claim it inherited from itself. */
+function formatTierBudget(value: number | null): string {
+  return value === null ? "no cap" : formatUsd(value);
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 /** Validates and normalizes the form into the upsert payload, or an error. */
-export function normalizeFormInput(
-  value: AICostLimitFormState,
-):
-  | { readonly actorId: string; readonly actorDailyUsd: number | null; readonly featureDailyUsd: number | null }
+export function normalizeFormInput(value: AICostLimitFormState):
+  | {
+      readonly actorId: string;
+      readonly actorDailyUsd: number | null;
+      readonly featureDailyUsd: number | null;
+    }
   | string {
   const actorId = value.actorId.trim();
   if (!UUID_PATTERN.test(actorId)) {

@@ -254,7 +254,7 @@ jobs:
         run: |
           docker compose -p helix_demo_smoke_ci_${{ github.run_id }} exec -T postgres \
             psql -U helix -d helix_demo_smoke -v ON_ERROR_STOP=1 \
-            -c "update orgs set quotas = jsonb_set(quotas, '{api_rps_limit}', 'null'::jsonb, true) where id = '00000000-0000-4000-8000-000000000100';"
+            -c "update orgs set quotas = jsonb_set(quotas, '{api_rps_limit}', 'null'::jsonb, true) where id = '00000000-0000-0000-0000-000000000000';"
 
       - name: Start Helix API
         env:
@@ -266,7 +266,7 @@ jobs:
           BETTER_AUTH_URL: http://127.0.0.1:39531
           BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:39531
           HELIX_PUBLIC_URL: http://127.0.0.1:39531
-          HELIX_DEFAULT_ORG_ID: 00000000-0000-4000-8000-000000000100
+          HELIX_DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000000
           MEILI_HOST: http://127.0.0.1:39533
           MEILI_MASTER_KEY: helix_dev_meili_master_key
           RUSTFS_ENDPOINT: http://127.0.0.1:39534

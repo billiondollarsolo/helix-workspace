@@ -183,30 +183,73 @@ export class PostgresOrgStore implements OrgStore {
     const slug = input.slug ?? DEFAULT_ORG_SLUG;
     const displayName = input.displayName ?? DEFAULT_ORG_DISPLAY_NAME;
     const region = input.region ?? DEFAULT_ORG_REGION;
-    const rows = (await this.sql`
-      insert into orgs (id, slug, display_name, status, tier, plan_id, region)
-      values (${id}, ${slug}, ${displayName}, 'active', 'personal', 'personal', ${region})
-      on conflict (id) do update
-        set updated_at = orgs.updated_at
-      returning
-        id,
-        slug,
-        display_name,
-        status,
-        tier,
-        plan_id,
-        region,
-        byo_config,
-        feature_flags,
-        quotas,
-        branding,
-        suspended_at,
-        soft_deleted_at,
-        hard_deleted_at
-    `) as unknown as readonly OrgRow[];
-    const org = mapOrgRow(rows[0]);
+
+    // Read before write: `orgs` is unique on both `id` and `slug` (orgs_slug_idx),
+    // so an insert here can collide on either one. A bare `on conflict (id)` only
+    // absorbs half of that and the other half surfaced as an unhandled
+    // PostgresError during boot.
+    let org = await this.findExistingDefaultOrg(id, slug);
+    if (org === null) {
+      const rows = (await this.sql`
+        insert into orgs (id, slug, display_name, status, tier, plan_id, region)
+        values (${id}, ${slug}, ${displayName}, 'active', 'personal', 'personal', ${region})
+        on conflict do nothing
+        returning
+          id,
+          slug,
+          display_name,
+          status,
+          tier,
+          plan_id,
+          region,
+          byo_config,
+          feature_flags,
+          quotas,
+          branding,
+          suspended_at,
+          soft_deleted_at,
+          hard_deleted_at
+      `) as unknown as readonly OrgRow[];
+      // Zero rows means a replica booting concurrently won the insert; re-read so
+      // every replica converges on the row that actually landed.
+      org =
+        rows[0] === undefined ? await this.findExistingDefaultOrg(id, slug) : mapOrgRow(rows[0]);
+    }
+    if (org === null) {
+      throw new Error(
+        `default org ${id} could not be created or found; the insert conflicted with a row that matches neither the configured id nor slug "${slug}"`,
+      );
+    }
+
     await this.options.tenantRoleProvisioner?.ensureRoleForOrg(org.id);
     return org;
+  }
+
+  private async findExistingDefaultOrg(id: string, slug: string): Promise<OrgRecord | null> {
+    const byId = await this.findById(id);
+    if (byId !== null) {
+      // Slug drift under the configured id is benign: every tenant-scoped query
+      // routes on org_id, and both operators and the local seed scripts rename the
+      // default org's slug freely (seed-local-demo gives it slug "local-demo").
+      return byId;
+    }
+
+    const bySlug = await this.findBySlug(slug);
+    if (bySlug === null) {
+      return null;
+    }
+
+    // The slug is already owned by a different org. Migration 0031 seeds
+    // (00000000-0000-0000-0000-000000000000, 'default'), so this is exactly what a
+    // fresh database looks like when HELIX_DEFAULT_ORG_ID names some other uuid.
+    // Adopting the stored row would boot cleanly while serving an org the operator
+    // never configured, and because seeded data lands under the *configured* id the
+    // workspace would read as empty rather than as misconfigured -- a far harder
+    // failure to diagnose than refusing to start.
+    throw new Error(
+      `default org id mismatch: slug "${slug}" is already held by org ${bySlug.id}, but HELIX_DEFAULT_ORG_ID is ${id}. ` +
+        `Set HELIX_DEFAULT_ORG_ID to ${bySlug.id}, or give org ${id} its own slug via HELIX_DEFAULT_ORG_SLUG.`,
+    );
   }
 
   async activateProvisionedOrg(id: string): Promise<OrgRecord | null> {
@@ -467,9 +510,7 @@ export class PostgresOrgStore implements OrgStore {
       await tx`
         select
           set_config('helix.tenant_config_changed_by', ${input.changedByActorId ?? ""}, true),
-          set_config('helix.tenant_config_reason', ${
-            input.reason ?? "tenant-config:update"
-          }, true)
+          set_config('helix.tenant_config_reason', ${input.reason ?? "tenant-config:update"}, true)
       `;
       const rows = (await tx`
         update orgs
@@ -527,9 +568,7 @@ export class PostgresOrgStore implements OrgStore {
     return rows.map((row) => row.id);
   }
 
-  async updateByoStorageHealth(
-    input: UpdateByoStorageHealthInput,
-  ): Promise<OrgRecord | null> {
+  async updateByoStorageHealth(input: UpdateByoStorageHealthInput): Promise<OrgRecord | null> {
     return this.sql.begin(async (tx) => {
       await tx`
         select set_config(

@@ -62,7 +62,7 @@ describe("admin oauth apps routes", () => {
       headers: headers("admin.console.read"),
     });
     expect(list.statusCode).toBe(200);
-    const apps = (field(list, "apps") as { name: string; status: string }[]);
+    const apps = field(list, "apps") as { name: string; status: string }[];
     expect(apps).toHaveLength(1);
     expect(apps[0]?.name).toBe("GitHub");
     expect(apps[0]?.status).toBe("pending");
@@ -79,8 +79,8 @@ describe("admin oauth apps routes", () => {
       url: "/api/admin/oauth-apps?limit=2",
       headers: headers("admin.console.read"),
     });
-    expect((field(firstPage, "apps") as unknown[])).toHaveLength(2);
-    const cursor = (field(firstPage, "nextCursor") as string);
+    expect(field(firstPage, "apps") as unknown[]).toHaveLength(2);
+    const cursor = field(firstPage, "nextCursor") as string;
     expect(cursor).not.toBeNull();
 
     const secondPage = await app.inject({
@@ -88,7 +88,7 @@ describe("admin oauth apps routes", () => {
       url: `/api/admin/oauth-apps?limit=2&cursor=${encodeURIComponent(cursor)}`,
       headers: headers("admin.console.read"),
     });
-    expect((field(secondPage, "apps") as unknown[])).toHaveLength(1);
+    expect(field(secondPage, "apps") as unknown[]).toHaveLength(1);
     expect(body(secondPage).nextCursor).toBeNull();
   });
 
@@ -107,7 +107,7 @@ describe("admin oauth apps routes", () => {
       url: "/api/admin/oauth-apps?status=blocked",
       headers: headers("admin.console.read"),
     });
-    const blockedApps = (field(blocked, "apps") as { name: string }[]);
+    const blockedApps = field(blocked, "apps") as { name: string }[];
     expect(blockedApps).toHaveLength(1);
     expect(blockedApps[0]?.name).toBe("Apollo");
 
@@ -116,7 +116,7 @@ describe("admin oauth apps routes", () => {
       url: "/api/admin/oauth-apps?risk=high",
       headers: headers("admin.console.read"),
     });
-    expect((field(highRisk, "apps") as unknown[])).toHaveLength(1);
+    expect(field(highRisk, "apps") as unknown[]).toHaveLength(1);
   });
 
   it("revokes an app and fires the onRevoke hook", async () => {

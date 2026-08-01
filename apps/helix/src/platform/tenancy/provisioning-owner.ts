@@ -93,9 +93,7 @@ function normalizeOwnerEmail(email: string): string {
   return normalized;
 }
 
-function mapInitialOwnerActorRow(
-  row: InitialOwnerActorRow | undefined,
-): InitialOwnerActorRecord {
+function mapInitialOwnerActorRow(row: InitialOwnerActorRow | undefined): InitialOwnerActorRecord {
   if (row === undefined) {
     throw new Error("initial owner actor query returned no rows");
   }

@@ -81,9 +81,7 @@ export class TenantHardDeleteWorker {
 
   async runOnce(): Promise<TenantHardDeleteWorkerRunResult> {
     return withJobSpan("tenant-hard-delete", async () => {
-      const dueBefore = new Date(
-        this.now().getTime() - this.gracePeriodDays * 24 * 60 * 60 * 1000,
-      );
+      const dueBefore = new Date(this.now().getTime() - this.gracePeriodDays * 24 * 60 * 60 * 1000);
       const dueTenants = await this.options.store.listSoftDeletedTenantsDueForHardDelete({
         before: dueBefore,
         limit: this.batchSize,

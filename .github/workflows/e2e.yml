@@ -173,7 +173,7 @@ jobs:
           BETTER_AUTH_SECRET: helix_local_better_auth_secret_change_me_32_chars
           BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:28431,http://127.0.0.1:4173
           HELIX_PUBLIC_URL: http://127.0.0.1:28431
-          HELIX_DEFAULT_ORG_ID: 00000000-0000-4000-8000-000000000100
+          HELIX_DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000000
           HELIX_DEFAULT_ORG_SLUG: local-e2e
           HELIX_DEFAULT_ORG_NAME: Local E2E Workspace
           REDIS_URL: redis://127.0.0.1:28433

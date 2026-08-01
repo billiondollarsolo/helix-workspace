@@ -29,7 +29,9 @@ describe("PostgresTenantBootstrapSeedStore", () => {
     expect(recording.calls).toHaveLength(5);
     expect(recording.calls[0]?.text).toContain("from actors");
     expect(recording.calls[0]?.text).toContain("lower(email)");
-    expect(recording.calls[0]?.values).toEqual(expect.arrayContaining([orgId, "owner@example.com"]));
+    expect(recording.calls[0]?.values).toEqual(
+      expect.arrayContaining([orgId, "owner@example.com"]),
+    );
     expect(recording.calls[1]?.text).toContain("insert into permissions");
     expect(recording.calls[1]?.text).toContain("resource_type = 'org'");
     expect(recording.calls[1]?.text).toContain("where not exists");
@@ -85,14 +87,12 @@ interface RecordedQuery {
   readonly values: readonly unknown[];
 }
 
-function createRecordingSql(
-  input: {
-    readonly ownerExists?: boolean;
-    readonly permissionExists?: boolean;
-    readonly activityExists?: boolean;
-    readonly previousHash?: string | null;
-  },
-): {
+function createRecordingSql(input: {
+  readonly ownerExists?: boolean;
+  readonly permissionExists?: boolean;
+  readonly activityExists?: boolean;
+  readonly previousHash?: string | null;
+}): {
   readonly sql: postgres.Sql;
   readonly calls: readonly RecordedQuery[];
   readonly transactions: number;

@@ -335,7 +335,7 @@ outbound SMTP sink. Compose publishes the app receiver at `28456` and Mailpit at
 `28458`; local host-run apps must set `MAIL_SMTP_RECEIVER_ENABLED=true`,
 `MAIL_SMTP_RECEIVER_PORT=28456`, `MAIL_SMTP_HOST=127.0.0.1`,
 `MAIL_SMTP_PORT=28457`, `NATS_URL`, and
-`HELIX_DEFAULT_ORG_ID=00000000-0000-4000-8000-000000000100` for actor-visible
+`HELIX_DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000000` for actor-visible
 inbound mail and outbound worker delivery.
 The Mailpit smoke only validates local backend receive/send plumbing. For
 external deliverability failures, use `pnpm quality:mail-deliverability-smoke`

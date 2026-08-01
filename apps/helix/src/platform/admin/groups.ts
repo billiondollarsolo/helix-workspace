@@ -804,11 +804,7 @@ export class PostgresGroupsStore implements GroupsStore {
     return rows.length > 0;
   }
 
-  async #computePath(
-    orgId: string,
-    parentId: string | null,
-    name: string,
-  ): Promise<string> {
+  async #computePath(orgId: string, parentId: string | null, name: string): Promise<string> {
     if (parentId === null) {
       return name;
     }

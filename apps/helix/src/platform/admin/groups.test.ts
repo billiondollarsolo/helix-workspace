@@ -60,7 +60,7 @@ describe("admin org units", () => {
       payload: { name: "Engineering", description: "Eng org" },
     });
     expect(root.statusCode).toBe(201);
-    const rootUnit = (field(root, "orgUnit") as { id: string; path: string });
+    const rootUnit = field(root, "orgUnit") as { id: string; path: string };
     expect(rootUnit.path).toBe("Engineering");
 
     const child = await app.inject({
@@ -78,7 +78,7 @@ describe("admin org units", () => {
       headers: headers("admin.console.read"),
     });
     expect(list.statusCode).toBe(200);
-    const units = (field(list, "orgUnits") as { name: string; childCount: number }[]);
+    const units = field(list, "orgUnits") as { name: string; childCount: number }[];
     expect(units.map((unit) => unit.name)).toEqual(["Engineering", "Platform"]);
     expect(units.find((unit) => unit.name === "Engineering")?.childCount).toBe(1);
   });
@@ -230,9 +230,9 @@ describe("InMemoryGroupsStore", () => {
       name: "Growth",
     });
     expect(updated?.name).toBe("Growth");
-    await expect(
-      store.updateOrgUnit({ orgId, id: unit.id, parentId: unit.id }),
-    ).rejects.toThrow(/own parent/u);
+    await expect(store.updateOrgUnit({ orgId, id: unit.id, parentId: unit.id })).rejects.toThrow(
+      /own parent/u,
+    );
   });
 
   it("isolates records by org", async () => {

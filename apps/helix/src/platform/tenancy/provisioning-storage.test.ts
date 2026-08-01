@@ -28,14 +28,9 @@ describe("PostgresTenantStorageNamespaceStore", () => {
     expect(recording.calls[0]?.text).toContain("for update");
     expect(recording.calls[0]?.text).toContain("coalesce(target.byo_config -> 'storage'");
     expect(recording.calls[1]?.text).toContain("insert into tenant_config_audit");
-    expect(recording.calls[1]?.text).toContain(
-      "tenant-provisioning:default-object-store-prefix",
-    );
+    expect(recording.calls[1]?.text).toContain("tenant-provisioning:default-object-store-prefix");
     expect(recording.calls[1]?.values).toEqual(
-      expect.arrayContaining([
-        orgId,
-        defaultObjectStoreConfig(orgId),
-      ]),
+      expect.arrayContaining([orgId, defaultObjectStoreConfig(orgId)]),
     );
     for (const call of recording.calls) {
       expect(call.text).not.toContain("ensureBucket");

@@ -80,8 +80,12 @@ describe("ensureDefaultOrgForMode", () => {
   });
 });
 
+// Migration 0031 seeds (DEFAULT_ORG_ID, 'default'), and .env.example used to ship a
+// different HELIX_DEFAULT_ORG_ID against that same slug.
+const MISCONFIGURED_ORG_ID = "00000000-0000-4000-8000-000000000100";
+
 describe("PostgresOrgStore", () => {
-  it("provisions a tenant Postgres role after default org creation", async () => {
+  it("provisions a tenant Postgres role for the resolved default org", async () => {
     const provisionedOrgIds: string[] = [];
     const store = new PostgresOrgStore(sqlReturningOrg(), {
       tenantRoleProvisioner: {
@@ -95,6 +99,96 @@ describe("PostgresOrgStore", () => {
 
     expect(org.id).toBe(DEFAULT_ORG_ID);
     expect(provisionedOrgIds).toEqual([DEFAULT_ORG_ID]);
+  });
+
+  it("inserts the default org on an empty database without targeting a single unique index", async () => {
+    const provisionedOrgIds: string[] = [];
+    const recording = createRecordingSql([[], [], [orgRow()]]);
+    const store = new PostgresOrgStore(recording.sql, {
+      tenantRoleProvisioner: {
+        async ensureRoleForOrg(orgId) {
+          provisionedOrgIds.push(orgId);
+        },
+      },
+    });
+
+    await expect(store.getOrCreateDefaultOrg()).resolves.toMatchObject({
+      id: DEFAULT_ORG_ID,
+      slug: DEFAULT_ORG_SLUG,
+    });
+
+    expect(recording.calls[0]?.text).toContain("where id = ?");
+    expect(recording.calls[1]?.text).toContain("where slug = ?");
+    expect(recording.calls[2]?.text).toContain("insert into orgs");
+    // `on conflict (id)` let a collision on orgs_slug_idx escape as a PostgresError.
+    expect(recording.calls[2]?.text).toContain("on conflict do nothing");
+    expect(recording.calls[2]?.text).not.toContain("on conflict (id)");
+    expect(provisionedOrgIds).toEqual([DEFAULT_ORG_ID]);
+  });
+
+  it("returns the stored default org without re-inserting once it exists", async () => {
+    const recording = createRecordingSql([[orgRow()]]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    await expect(store.getOrCreateDefaultOrg()).resolves.toMatchObject({ id: DEFAULT_ORG_ID });
+
+    expect(recording.calls).toHaveLength(1);
+    expect(recording.calls.map((call) => call.text).join("\n")).not.toContain("insert into orgs");
+  });
+
+  it("refuses to boot when the configured default org id disagrees with the stored slug owner", async () => {
+    const provisionedOrgIds: string[] = [];
+    const recording = createRecordingSql([[], [orgRow({ id: DEFAULT_ORG_ID })]]);
+    const store = new PostgresOrgStore(recording.sql, {
+      tenantRoleProvisioner: {
+        async ensureRoleForOrg(orgId) {
+          provisionedOrgIds.push(orgId);
+        },
+      },
+    });
+
+    await expect(store.getOrCreateDefaultOrg({ id: MISCONFIGURED_ORG_ID })).rejects.toThrow(
+      /default org id mismatch/,
+    );
+
+    // Both ids belong in the message: the operator has to know which one to change.
+    await expect(
+      new PostgresOrgStore(
+        createRecordingSql([[], [orgRow({ id: DEFAULT_ORG_ID })]]).sql,
+      ).getOrCreateDefaultOrg({ id: MISCONFIGURED_ORG_ID }),
+    ).rejects.toThrow(new RegExp(`${DEFAULT_ORG_ID}[\\s\\S]*${MISCONFIGURED_ORG_ID}`));
+
+    // The insert never runs, so the unique violation cannot resurface.
+    expect(recording.calls.map((call) => call.text).join("\n")).not.toContain("insert into orgs");
+    expect(provisionedOrgIds).toEqual([]);
+  });
+
+  it("adopts the stored default org when only its slug drifted from the configured one", async () => {
+    const recording = createRecordingSql([[orgRow({ slug: "local-demo" })]]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    await expect(store.getOrCreateDefaultOrg()).resolves.toMatchObject({
+      id: DEFAULT_ORG_ID,
+      slug: "local-demo",
+    });
+
+    expect(recording.calls.map((call) => call.text).join("\n")).not.toContain("insert into orgs");
+  });
+
+  it("re-reads the default org when a concurrently booting replica won the insert", async () => {
+    const recording = createRecordingSql([[], [], [], [orgRow()]]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    await expect(store.getOrCreateDefaultOrg()).resolves.toMatchObject({ id: DEFAULT_ORG_ID });
+
+    expect(recording.calls[2]?.text).toContain("insert into orgs");
+    expect(recording.calls[3]?.text).toContain("where id = ?");
+  });
+
+  it("fails loudly when the default org insert conflicts but no row can be found", async () => {
+    const store = new PostgresOrgStore(createRecordingSql([[], [], [], [], []]).sql);
+
+    await expect(store.getOrCreateDefaultOrg()).rejects.toThrow(/could not be created or found/);
   });
 
   it("creates SaaS orgs in provisioning status and provisions their tenant role", async () => {
@@ -324,10 +418,7 @@ function orgRecord(overrides: Partial<OrgRecord>): OrgRecord {
 }
 
 function sqlReturningOrg(overrides: Partial<OrgRecord> = {}): postgres.Sql {
-  const tag = () =>
-    Promise.resolve([
-      orgRow(overrides),
-    ]);
+  const tag = () => Promise.resolve([orgRow(overrides)]);
   const sql = Object.assign(tag, {
     json: (value: unknown) => value,
     array: (value: unknown) => value,

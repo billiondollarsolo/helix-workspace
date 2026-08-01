@@ -256,9 +256,7 @@ export async function registerAdminOAuthAppsRoutes(
     }
     const body = statusBody.safeParse(request.body);
     if (!body.success) {
-      return reply
-        .code(400)
-        .send(invalidRequest("Invalid OAuth app status.", body.error.issues));
+      return reply.code(400).send(invalidRequest("Invalid OAuth app status.", body.error.issues));
     }
     const oauthApp = await store.setStatus({
       orgId: actor.orgId,

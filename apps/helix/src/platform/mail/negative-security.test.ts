@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  InMemoryReceivingDomainStore,
-} from "./receiving-domains-store.js";
+import { InMemoryReceivingDomainStore } from "./receiving-domains-store.js";
 
 const orgId = "10000000-0000-4000-8000-000000000001";
 const actorId = "10000000-0000-4000-8000-000000000011";

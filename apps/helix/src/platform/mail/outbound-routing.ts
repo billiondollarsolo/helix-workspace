@@ -253,15 +253,18 @@ export function withOutboundRoutingInvalidation(
     },
     domainStore: {
       listDomains: (orgId) => domainStore.listDomains(orgId),
+      /* Pass-through: this wrapper exists to invalidate the routing cache on
+         writes, and a console read changes nothing it caches. */
+      listDomainsForConsole: (orgId) => domainStore.listDomainsForConsole(orgId),
       getDomain: (orgId, id) => domainStore.getDomain(orgId, id),
       createDomain: async (input: CreateSendingDomainInput) => {
         const result = await domainStore.createDomain(input);
         invalidateOrg(input.orgId);
         return result;
       },
-      setDomainVerified: async (orgId, id, verified) => {
-        const result = await domainStore.setDomainVerified(orgId, id, verified);
-        if (result !== null) invalidateOrg(orgId);
+      refreshDomainVerification: async (orgId, id) => {
+        const result = await domainStore.refreshDomainVerification(orgId, id);
+        invalidateOrg(orgId);
         return result;
       },
       deleteDomain: async (orgId, id) => {

@@ -6,6 +6,7 @@ import {
   evaluateDnsRecord,
   registerAdminDomainsRoutes,
   type DnsRecordType,
+  expectedDnsRecordsForDomain,
   type DnsResolver,
 } from "./domains.js";
 
@@ -28,13 +29,14 @@ function field(response: { json: () => unknown }, key: string): unknown {
   return body(response)[key];
 }
 
-async function buildApp(options?: { dnsResolver?: DnsResolver }) {
+async function buildApp(options?: { dnsResolver?: DnsResolver; mailHostname?: string }) {
   const store = new InMemoryDomainsStore();
   const app = fastify();
   await registerAdminDomainsRoutes(app, {
     store,
     actorFromRequest,
     ...(options?.dnsResolver === undefined ? {} : { dnsResolver: options.dnsResolver }),
+    ...(options?.mailHostname === undefined ? {} : { mailHostname: options.mailHostname }),
   });
   return { app, store };
 }
@@ -55,9 +57,9 @@ async function createDomain(
 
 describe("DNS record evaluation", () => {
   it("verifies a record when the observed value matches", () => {
-    expect(evaluateDnsRecord("v=spf1 include:_spf.helix.io ~all", "v=spf1  include:_spf.helix.io ~all")).toBe(
-      "verified",
-    );
+    expect(
+      evaluateDnsRecord("v=spf1 include:_spf.helix.io ~all", "v=spf1  include:_spf.helix.io ~all"),
+    ).toBe("verified");
     expect(evaluateDnsRecord("10 mx1.helix.io", "20 mx2.helix.io")).toBe("failed");
     expect(evaluateDnsRecord("anything", null)).toBe("failed");
   });
@@ -114,7 +116,7 @@ describe("admin domains routes", () => {
       url: `/api/admin/domains/${domainId}/dns`,
       headers: headers("admin.console.read"),
     });
-    expect((field(dns, "dnsRecords") as unknown[])).toHaveLength(1);
+    expect(field(dns, "dnsRecords") as unknown[]).toHaveLength(1);
   });
 
   it("verifies a DNS record against the resolver", async () => {
@@ -138,7 +140,7 @@ describe("admin domains routes", () => {
       headers: headers("admin.console.write"),
     });
     expect(verify.statusCode).toBe(200);
-    const verifiedRecord = (field(verify, "dnsRecord") as { status: string; observedValue: string });
+    const verifiedRecord = field(verify, "dnsRecord") as { status: string; observedValue: string };
     expect(verifiedRecord.status).toBe("verified");
     expect(verifiedRecord.observedValue).toBe("10 mx1.helix.io");
   });
@@ -189,5 +191,76 @@ describe("admin domains routes", () => {
     });
     expect(deleted.statusCode).toBe(200);
     expect(await store.listDnsRecords(orgId, domainId)).toEqual([]);
+  });
+});
+
+describe("expectedDnsRecordsForDomain", () => {
+  it("names the records Helix needs, anchored on the deployment mail host", () => {
+    const records = expectedDnsRecordsForDomain({
+      domain: "helix.io",
+      mailHostname: "mail.helix.example",
+    });
+
+    expect(records.map((record) => [record.recordType, record.host])).toEqual([
+      ["MX", "helix.io"],
+      ["SPF", "helix.io"],
+      ["DMARC", "_dmarc.helix.io"],
+    ]);
+    expect(records[0]?.expectedValue).toBe("10 mail.helix.example");
+    expect(records[1]?.expectedValue).toContain("a:mail.helix.example");
+  });
+
+  it("starts SPF at softfail and DMARC at monitor-only", () => {
+    /* A domain mid-setup must not hard-fail or quarantine legitimate mail;
+       both policies are tightened once reports show the setup is right. */
+    const records = expectedDnsRecordsForDomain({
+      domain: "helix.io",
+      mailHostname: "mail.helix.example",
+    });
+
+    expect(records[1]?.expectedValue).toContain("~all");
+    expect(records[1]?.expectedValue).not.toContain("-all");
+    expect(records[2]?.expectedValue).toContain("p=none");
+  });
+
+  it("omits DKIM, whose value does not exist until a key is generated", () => {
+    // Seeding a placeholder would put a row on screen that can never verify.
+    const records = expectedDnsRecordsForDomain({
+      domain: "helix.io",
+      mailHostname: "mail.helix.example",
+    });
+
+    expect(records.some((record) => record.recordType === "DKIM")).toBe(false);
+  });
+});
+
+describe("domain creation seeding", () => {
+  it("seeds the expected records when a mail hostname is configured", async () => {
+    const { app } = await buildApp({ mailHostname: "mail.helix.example" });
+    const domainId = await createDomain(app, "helix.io", true);
+
+    const dns = await app.inject({
+      method: "GET",
+      url: `/api/admin/domains/${domainId}/dns`,
+      headers: headers("admin.console.read"),
+    });
+    const records = field(dns, "dnsRecords") as { recordType: string; status: string }[];
+    expect(records.map((record) => record.recordType).sort()).toEqual(["DMARC", "MX", "SPF"]);
+    // Seeded, not asserted: nothing has been looked up yet.
+    expect(records.every((record) => record.status === "pending")).toBe(true);
+  });
+
+  it("seeds nothing when the deployment has no public mail hostname", async () => {
+    /* Guessing an MX target would blackhole mail, so an unconfigured
+       deployment gets an empty panel and the console explains why. */
+    const { app } = await buildApp();
+    const domainId = await createDomain(app, "helix.io", true);
+
+    const dns = await app.inject({
+      method: "GET",
+      url: `/api/admin/domains/${domainId}/dns`,
+      headers: headers("admin.console.read"),
+    });
+    expect(field(dns, "dnsRecords") as unknown[]).toHaveLength(0);
   });
 });

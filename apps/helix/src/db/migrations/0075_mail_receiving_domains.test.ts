@@ -13,6 +13,9 @@ describe("0075 mail receiving-domain migration contract", () => {
       "org_id uuid not null",
       "domain text not null",
       "status mail_receiving_domain_status",
+      /* 0075 declared this; 0087 moved the proof to admin_domains and dropped
+         it. Asserted here because this test reads 0075's own text, not the
+         current schema. */
       "verification_token_hash text not null",
       "verified_at timestamptz",
       "catch_all_actor_id uuid",
@@ -56,7 +59,11 @@ live("0075 mail receiving-domain PostgreSQL invariants", () => {
 
   beforeAll(async () => {
     sql = postgres(process.env.DATABASE_URL ?? "", { max: 2, prepare: false });
-    await sql.unsafe(await readFile(migrationUrl, "utf8"));
+    /* Deliberately NOT replaying 0075 here. It creates an index on
+       `verification_token_hash`, a column 0087 later drops, so replaying an old
+       migration against a fully-migrated database fails. These tests assert
+       invariants of the CURRENT schema, so `db:migrate` is the prerequisite —
+       the same assumption every other live-Postgres suite in this repo makes. */
     await sql`
       insert into orgs (id, slug, display_name)
       values
@@ -76,25 +83,45 @@ live("0075 mail receiving-domain PostgreSQL invariants", () => {
   afterAll(async () => {
     await sql`delete from mail_receiving_domains where org_id in (${orgOne}, ${orgTwo})`;
     await sql`delete from actors where id in (${actorOne}, ${actorTwo})`;
+    /* admin_domains gained its FK to orgs in 0087, so this now cascades. Kept
+       explicit so the suite still cleans up if run against an older schema. */
+    await sql`delete from admin_domains where org_id in (${orgOne}, ${orgTwo})`;
     await sql`delete from orgs where id in (${orgOne}, ${orgTwo})`;
     await sql.end();
   });
 
+  /** The admin_domains identity a receiving domain now requires. */
+  async function ensureParent(orgId: string, domain: string, actorId: string): Promise<string> {
+    const rows = await sql<{ readonly id: string }[]>`
+      insert into admin_domains (org_id, domain, verification_status, created_by)
+      values (${orgId}, ${domain}, 'verified', ${actorId})
+      on conflict (org_id, (lower(domain))) do update set updated_at = now()
+      returning id
+    `;
+    const row = rows[0];
+    if (row === undefined) {
+      throw new Error(`could not create a domain identity for ${domain}`);
+    }
+    return row.id;
+  }
+
   it("lets exactly one concurrent organization activate a shared domain", async () => {
     await sql`delete from mail_receiving_domains where org_id in (${orgOne}, ${orgTwo})`;
+    /* Since 0086 a receiving domain hangs off an admin_domains identity. Two
+       orgs claiming the same name get two separate parents — which is the
+       point of this test: the race is decided per-domain across orgs, not by
+       the parent link. */
+    const [parentOne, parentTwo] = await Promise.all([
+      ensureParent(orgOne, "race.example", actorOne),
+      ensureParent(orgTwo, "race.example", actorTwo),
+    ]);
     const records = await sql<{ readonly id: string; readonly org_id: string }[]>`
       insert into mail_receiving_domains (
-        org_id, domain, status, verification_token_hash, verified_at, created_by
+        org_id, admin_domain_id, domain, status, verified_at, created_by
       )
       values
-        (
-          ${orgOne}, 'race.example', 'verified',
-          ${"1".repeat(64)}, now(), ${actorOne}
-        ),
-        (
-          ${orgTwo}, 'race.example', 'verified',
-          ${"2".repeat(64)}, now(), ${actorTwo}
-        )
+        (${orgOne}, ${parentOne}, 'race.example', 'verified', now(), ${actorOne}),
+        (${orgTwo}, ${parentTwo}, 'race.example', 'verified', now(), ${actorTwo})
       returning id, org_id
     `;
     const results = await Promise.allSettled(
@@ -120,10 +147,11 @@ live("0075 mail receiving-domain PostgreSQL invariants", () => {
     await expect(
       sql`
         insert into mail_receiving_domains (
-          org_id, domain, verification_token_hash, catch_all_actor_id, created_by
+          org_id, admin_domain_id, domain, catch_all_actor_id, created_by
         )
         values (
-          ${orgOne}, 'cross-org.example', ${"3".repeat(64)}, ${actorTwo}, ${actorOne}
+          ${orgOne}, ${await ensureParent(orgOne, "cross-org.example", actorOne)},
+          'cross-org.example', ${actorTwo}, ${actorOne}
         )
       `,
     ).rejects.toMatchObject({

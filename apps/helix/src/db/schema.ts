@@ -1168,6 +1168,11 @@ export const mailSendingDomains = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     orgId: uuid("org_id").notNull(),
+    /* The domain identity this capability hangs off (admin_domains). Declared
+       without a Drizzle .references() because admin_domains is managed in raw
+       SQL and has no table definition here; the FK itself is enforced by the
+       database (migration 0086). */
+    adminDomainId: uuid("admin_domain_id").notNull(),
     domain: text("domain").notNull(),
     isDefault: boolean("is_default").default(false).notNull(),
     verifiedAt: timestamp("verified_at", { withTimezone: true }),
@@ -1259,6 +1264,9 @@ export const mailReceivingDomains = pgTable(
     orgId: uuid("org_id")
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
+    /* See mailSendingDomains.adminDomainId — same parent, same reason the
+       reference is left to the database. */
+    adminDomainId: uuid("admin_domain_id").notNull(),
     domain: text("domain").notNull(),
     status: mailReceivingDomainStatus("status").default("pending").notNull(),
     verificationTokenHash: text("verification_token_hash").notNull(),

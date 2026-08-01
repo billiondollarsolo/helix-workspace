@@ -1,5 +1,6 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
+import { ensureAdminDomain } from "../admin/domain-identity.js";
 import { normalizeMailDomain, normalizeMailboxAddress } from "./address-normalization.js";
 
 export const MAIL_RECEIVING_DOMAIN_STATUSES = [
@@ -13,9 +14,10 @@ export type MailReceivingDomainStatus = (typeof MAIL_RECEIVING_DOMAIN_STATUSES)[
 export interface MailReceivingDomainRecord {
   readonly id: string;
   readonly orgId: string;
+  /** The `admin_domains` identity this capability hangs off (migration 0086). */
+  readonly adminDomainId: string;
   readonly domain: string;
   readonly status: MailReceivingDomainStatus;
-  readonly verificationTokenHash: string;
   readonly verifiedAt: string | null;
   readonly catchAllActorId: string | null;
   readonly createdBy: string | null;
@@ -35,7 +37,6 @@ export interface ReceivingMailboxResolution {
 export interface CreateReceivingDomainInput {
   readonly orgId: string;
   readonly domain: string;
-  readonly verificationTokenHash: string;
   readonly catchAllActorId?: string | null;
   readonly createdBy?: string | null;
 }
@@ -45,6 +46,9 @@ export interface ReceivingDomainStore {
   getDomain(orgId: string, id: string): Promise<MailReceivingDomainRecord | null>;
   createDomain(input: CreateReceivingDomainInput): Promise<MailReceivingDomainRecord>;
   markVerified(orgId: string, id: string): Promise<MailReceivingDomainRecord | null>;
+  /* Remove the capability. The admin_domains identity survives: other
+     capabilities may hang off it, and it carries the DNS records. */
+  deleteDomain(orgId: string, id: string): Promise<boolean>;
   enableDomain(orgId: string, id: string): Promise<MailReceivingDomainRecord | null>;
   disableDomain(orgId: string, id: string): Promise<MailReceivingDomainRecord | null>;
   resolveReceivingDomain(domain: string): Promise<MailReceivingDomainRecord | null>;
@@ -77,30 +81,6 @@ export class ReceivingDomainInvariantError extends Error {
     super(message);
     this.name = "ReceivingDomainInvariantError";
   }
-}
-
-export interface ReceivingDomainVerificationChallenge {
-  readonly token: string;
-  readonly tokenHash: string;
-  readonly dnsName: string;
-  readonly dnsValue: string;
-}
-
-export function createReceivingDomainVerificationChallenge(
-  domain: string,
-): ReceivingDomainVerificationChallenge {
-  const normalizedDomain = normalizeMailDomain(domain);
-  const token = randomBytes(32).toString("base64url");
-  return {
-    token,
-    tokenHash: hashReceivingDomainVerificationToken(token),
-    dnsName: `_helix-verification.${normalizedDomain}`,
-    dnsValue: `helix-domain-verification=${token}`,
-  };
-}
-
-export function hashReceivingDomainVerificationToken(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 export interface InMemoryReceivingDomainActor {
@@ -147,7 +127,6 @@ export class InMemoryReceivingDomainStore implements ReceivingDomainStore {
 
   async createDomain(input: CreateReceivingDomainInput): Promise<MailReceivingDomainRecord> {
     const domain = normalizeMailDomain(input.domain);
-    assertTokenHash(input.verificationTokenHash);
     this.#assertCatchAll(input.orgId, input.catchAllActorId ?? null);
     if (
       [...this.#domains.values()].some(
@@ -158,20 +137,16 @@ export class InMemoryReceivingDomainStore implements ReceivingDomainStore {
         "This organization already has a receiving-domain record for that domain.",
       );
     }
-    if (
-      [...this.#domains.values()].some(
-        (record) => record.verificationTokenHash === input.verificationTokenHash,
-      )
-    ) {
-      throw new ReceivingDomainConflictError("Verification challenge collision.");
-    }
     const timestamp = this.#now().toISOString();
     const record: MailReceivingDomainRecord = {
       id: randomUUID(),
       orgId: input.orgId,
+      /* This adapter has no admin_domains table; one identity per (org, domain)
+         is the invariant the database enforces, so deriving a stable id from
+         that pair reproduces it. */
+      adminDomainId: `${input.orgId}:${domain}`,
       domain,
       status: "pending",
-      verificationTokenHash: input.verificationTokenHash,
       verifiedAt: null,
       catchAllActorId: input.catchAllActorId ?? null,
       createdBy: input.createdBy ?? null,
@@ -180,6 +155,15 @@ export class InMemoryReceivingDomainStore implements ReceivingDomainStore {
     };
     this.#domains.set(record.id, record);
     return record;
+  }
+
+  async deleteDomain(orgId: string, id: string): Promise<boolean> {
+    const current = await this.getDomain(orgId, id);
+    if (current === null) {
+      return false;
+    }
+    this.#domains.delete(id);
+    return true;
   }
 
   async markVerified(orgId: string, id: string): Promise<MailReceivingDomainRecord | null> {
@@ -340,7 +324,7 @@ interface ReceivingDomainRow {
   readonly org_id: string;
   readonly domain: string;
   readonly status: MailReceivingDomainStatus;
-  readonly verification_token_hash: string;
+  readonly admin_domain_id: string;
   readonly verified_at: Date | string | null;
   readonly catch_all_actor_id: string | null;
   readonly created_by: string | null;
@@ -365,7 +349,7 @@ export class PostgresReceivingDomainStore implements ReceivingDomainStore {
 
   async listDomains(orgId: string): Promise<readonly MailReceivingDomainRecord[]> {
     const rows = await this.sql<ReceivingDomainRow[]>`
-      select id, org_id, domain, status, verification_token_hash, verified_at,
+      select id, org_id, admin_domain_id, domain, status, verified_at,
              catch_all_actor_id, created_by, created_at, updated_at
       from mail_receiving_domains
       where org_id = ${orgId}
@@ -376,7 +360,7 @@ export class PostgresReceivingDomainStore implements ReceivingDomainStore {
 
   async getDomain(orgId: string, id: string): Promise<MailReceivingDomainRecord | null> {
     const rows = await this.sql<ReceivingDomainRow[]>`
-      select id, org_id, domain, status, verification_token_hash, verified_at,
+      select id, org_id, admin_domain_id, domain, status, verified_at,
              catch_all_actor_id, created_by, created_at, updated_at
       from mail_receiving_domains
       where org_id = ${orgId} and id = ${id}
@@ -387,18 +371,24 @@ export class PostgresReceivingDomainStore implements ReceivingDomainStore {
 
   async createDomain(input: CreateReceivingDomainInput): Promise<MailReceivingDomainRecord> {
     const domain = normalizeMailDomain(input.domain);
-    assertTokenHash(input.verificationTokenHash);
     await this.#assertCatchAll(input.orgId, input.catchAllActorId ?? null);
+    /* Resolve (or register) the domain identity this capability hangs off.
+       It lands `pending` — accepting mail still requires proving ownership. */
+    const adminDomainId = await ensureAdminDomain(this.sql, {
+      orgId: input.orgId,
+      domain,
+      createdBy: input.createdBy ?? null,
+    });
     try {
       const rows = await this.sql<ReceivingDomainRow[]>`
         insert into mail_receiving_domains (
-          org_id, domain, status, verification_token_hash, catch_all_actor_id, created_by
+          org_id, admin_domain_id, domain, status, catch_all_actor_id, created_by
         )
         values (
-          ${input.orgId}, ${domain}, 'pending', ${input.verificationTokenHash},
+          ${input.orgId}, ${adminDomainId}, ${domain}, 'pending',
           ${input.catchAllActorId ?? null}, ${input.createdBy ?? null}
         )
-        returning id, org_id, domain, status, verification_token_hash, verified_at,
+        returning id, org_id, admin_domain_id, domain, status, verified_at,
                   catch_all_actor_id, created_by, created_at, updated_at
       `;
       return mapRequiredRow(rows[0]);
@@ -415,12 +405,21 @@ export class PostgresReceivingDomainStore implements ReceivingDomainStore {
     }
   }
 
+  async deleteDomain(orgId: string, id: string): Promise<boolean> {
+    const rows = await this.sql<{ readonly id: string }[]>`
+      delete from mail_receiving_domains
+      where org_id = ${orgId} and id = ${id}
+      returning id
+    `;
+    return rows[0] !== undefined;
+  }
+
   async markVerified(orgId: string, id: string): Promise<MailReceivingDomainRecord | null> {
     const rows = await this.sql<ReceivingDomainRow[]>`
       update mail_receiving_domains
       set status = 'verified', verified_at = coalesce(verified_at, now()), updated_at = now()
       where org_id = ${orgId} and id = ${id} and status = 'pending'
-      returning id, org_id, domain, status, verification_token_hash, verified_at,
+      returning id, org_id, admin_domain_id, domain, status, verified_at,
                 catch_all_actor_id, created_by, created_at, updated_at
     `;
     if (rows[0] !== undefined) {
@@ -457,7 +456,7 @@ export class PostgresReceivingDomainStore implements ReceivingDomainStore {
           and id = ${id}
           and status in ('verified', 'disabled')
           and verified_at is not null
-        returning id, org_id, domain, status, verification_token_hash, verified_at,
+        returning id, org_id, admin_domain_id, domain, status, verified_at,
                   catch_all_actor_id, created_by, created_at, updated_at
       `;
       if (rows[0] !== undefined) {
@@ -491,7 +490,7 @@ export class PostgresReceivingDomainStore implements ReceivingDomainStore {
       update mail_receiving_domains
       set status = 'disabled', updated_at = now()
       where org_id = ${orgId} and id = ${id} and status in ('active', 'verified')
-      returning id, org_id, domain, status, verification_token_hash, verified_at,
+      returning id, org_id, admin_domain_id, domain, status, verified_at,
                 catch_all_actor_id, created_by, created_at, updated_at
     `;
     return rows[0] === undefined ? this.getDomain(orgId, id) : mapReceivingDomain(rows[0]);
@@ -500,7 +499,7 @@ export class PostgresReceivingDomainStore implements ReceivingDomainStore {
   async resolveReceivingDomain(domain: string): Promise<MailReceivingDomainRecord | null> {
     const normalized = normalizeMailDomain(domain);
     const rows = await this.sql<ReceivingDomainRow[]>`
-      select id, org_id, domain, status, verification_token_hash, verified_at,
+      select id, org_id, admin_domain_id, domain, status, verified_at,
              catch_all_actor_id, created_by, created_at, updated_at
       from mail_receiving_domains
       where domain = ${normalized} and status = 'active'
@@ -600,7 +599,7 @@ function mapReceivingDomain(row: ReceivingDomainRow): MailReceivingDomainRecord 
     orgId: row.org_id,
     domain: row.domain,
     status: row.status,
-    verificationTokenHash: row.verification_token_hash,
+    adminDomainId: row.admin_domain_id,
     verifiedAt: iso(row.verified_at),
     catchAllActorId: row.catch_all_actor_id,
     createdBy: row.created_by,
@@ -634,12 +633,6 @@ function resolution(
     actorId,
     match,
   };
-}
-
-function assertTokenHash(tokenHash: string): void {
-  if (!/^[a-f0-9]{64}$/u.test(tokenHash)) {
-    throw new TypeError("Receiving-domain verification token hash must be SHA-256 hex.");
-  }
 }
 
 function isUniqueViolation(error: unknown): boolean {

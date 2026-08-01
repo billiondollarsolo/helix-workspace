@@ -121,14 +121,10 @@ describe("mail-admin-api", () => {
     fetchImpl.mockImplementation(() => Promise.resolve(jsonResponse(domain)));
 
     await generateDkimKey("d-1", fetchImpl);
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe(
-      "/api/admin/mail/sending-domains/d-1/dkim",
-    );
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe("/api/admin/mail/sending-domains/d-1/dkim");
 
     await rotateDkimKey("d-1", fetchImpl);
-    expect(fetchImpl.mock.calls[1]?.[0]).toBe(
-      "/api/admin/mail/sending-domains/d-1/dkim/rotate",
-    );
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe("/api/admin/mail/sending-domains/d-1/dkim/rotate");
   });
 
   it("fetches the DMARC deliverability summary", async () => {
@@ -198,13 +194,9 @@ describe("mail-admin-api", () => {
   });
 
   it("throws a descriptive error on a non-OK response", async () => {
-    fetchImpl.mockResolvedValue(
-      jsonResponse({ error: "Missing required scope" }, 403),
-    );
+    fetchImpl.mockResolvedValue(jsonResponse({ error: "Missing required scope" }, 403));
 
-    await expect(fetchMailProviders(fetchImpl)).rejects.toThrow(
-      /Missing required scope/u,
-    );
+    await expect(fetchMailProviders(fetchImpl)).rejects.toThrow(/Missing required scope/u);
   });
 
   it("throws on a malformed but OK response", async () => {

@@ -20,11 +20,13 @@ let app: FastifyInstance;
 let actor: Actor;
 let ownershipResult: boolean | Error;
 let audited: string[];
+let issuedChallenges: { id: string; tokenHash: string }[];
 
 beforeEach(async () => {
   actor = adminActor;
   ownershipResult = true;
   audited = [];
+  issuedChallenges = [];
   app = fastify();
   await registerReceivingDomainAdminRoutes(app, {
     store: new InMemoryReceivingDomainStore({
@@ -38,6 +40,17 @@ beforeEach(async () => {
       ],
     }),
     actorFromRequest: () => actor,
+    /* Ownership lives on the admin_domains parent since 0087; the routes issue
+       the challenge there. This records what they wrote. */
+    ownershipStore: {
+      async setOwnershipChallenge(_orgId, id, tokenHash) {
+        issuedChallenges.push({ id, tokenHash });
+        return null;
+      },
+      async getOwnershipTokenHash() {
+        return issuedChallenges.at(-1)?.tokenHash ?? null;
+      },
+    },
     ownershipVerifier: {
       async verify() {
         if (ownershipResult instanceof Error) {
@@ -78,7 +91,7 @@ describe("receiving-domain admin routes", () => {
     });
     expect(createdBody.verification.dnsName).toBe("_helix-verification.xn--bcher-kva.example");
     expect(createdBody.verification.dnsValue).toMatch(/^helix-domain-verification=/u);
-    expect(JSON.stringify(createdBody)).not.toContain("verificationTokenHash");
+    expect(JSON.stringify(createdBody)).not.toContain("TokenHash");
 
     const verified = await app.inject({
       method: "POST",
@@ -221,5 +234,154 @@ describe("receiving-domain admin routes", () => {
       url: "/api/admin/mail/receiving-domains",
     });
     expect(deniedRead.statusCode).toBe(403);
+  });
+});
+
+describe("challenge reissue", () => {
+  async function createPending(domain: string): Promise<{ id: string; dnsValue: string }> {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/mail/receiving-domains",
+      payload: { domain },
+    });
+    const payload: unknown = response.json();
+    const body = payload as { domain: { id: string }; verification: { dnsValue: string } };
+    return { id: body.domain.id, dnsValue: body.verification.dnsValue };
+  }
+
+  it("issues a different token that supersedes the lost one", async () => {
+    /* The create response is the only time the token is shown. An operator who
+       closed that dialog had a row that could never verify and, there being no
+       delete route, could never be removed either. */
+    const created = await createPending("inbound.example");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${created.id}/challenge`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload: unknown = response.json();
+    const reissued = payload as { verification: { dnsName: string; dnsValue: string } };
+    expect(reissued.verification.dnsValue).not.toBe(created.dnsValue);
+    expect(reissued.verification.dnsName).toBe("_helix-verification.inbound.example");
+  });
+
+  it("keeps the domain pending so the operator must still prove ownership", async () => {
+    const created = await createPending("inbound.example");
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${created.id}/challenge`,
+    });
+    const payload: unknown = response.json();
+    expect((payload as { domain: { status: string } }).domain.status).toBe("pending");
+  });
+
+  it("refuses to reissue for an already-verified domain", async () => {
+    // Rotating a satisfied challenge would invite re-proving settled ownership.
+    const created = await createPending("inbound.example");
+    await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${created.id}/verify`,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${created.id}/challenge`,
+    });
+    expect(response.statusCode).toBe(409);
+  });
+
+  it("requires the write scope", async () => {
+    const created = await createPending("inbound.example");
+    actor = { ...adminActor, scopes: ["admin.console.read"] };
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${created.id}/challenge`,
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  it("records the reissue in the audit log", async () => {
+    const created = await createPending("inbound.example");
+    await app.inject({
+      method: "POST",
+      url: `/api/admin/mail/receiving-domains/${created.id}/challenge`,
+    });
+    expect(audited).toContain("mail.receiving_domain.challenge_reissued");
+  });
+
+  it("returns 404 for a domain that does not exist", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/mail/receiving-domains/55555555-5555-4555-8555-555555555555/challenge",
+    });
+    expect(response.statusCode).toBe(404);
+  });
+});
+
+describe("deletion", () => {
+  async function create(domain: string): Promise<string> {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/mail/receiving-domains",
+      payload: { domain },
+    });
+    const payload: unknown = response.json();
+    return (payload as { domain: { id: string } }).domain.id;
+  }
+
+  it("removes the domain from the list", async () => {
+    const id = await create("gone.example");
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/admin/mail/receiving-domains/${id}`,
+    });
+    expect(deleted.statusCode).toBe(200);
+
+    const list = await app.inject({ method: "GET", url: "/api/admin/mail/receiving-domains" });
+    const payload: unknown = list.json();
+    expect((payload as { domains: unknown[] }).domains).toHaveLength(0);
+  });
+
+  it("removes an active domain, which stops mail immediately", async () => {
+    /* Deliberately allowed: an operator decommissioning a domain must not have
+       to leave a permanent row behind. The console states the consequence. */
+    const id = await create("live.example");
+    await app.inject({ method: "POST", url: `/api/admin/mail/receiving-domains/${id}/verify` });
+    await app.inject({ method: "POST", url: `/api/admin/mail/receiving-domains/${id}/enable` });
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/admin/mail/receiving-domains/${id}`,
+    });
+    expect(deleted.statusCode).toBe(200);
+  });
+
+  it("records the status the domain was in when deleted", async () => {
+    const id = await create("audited.example");
+    await app.inject({ method: "DELETE", url: `/api/admin/mail/receiving-domains/${id}` });
+    expect(audited).toContain("mail.receiving_domain.deleted");
+  });
+
+  it("requires the write scope", async () => {
+    const id = await create("scoped.example");
+    actor = { ...adminActor, scopes: ["admin.console.read"] };
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/api/admin/mail/receiving-domains/${id}`,
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  it("returns 404 for a domain that does not exist", async () => {
+    const response = await app.inject({
+      method: "DELETE",
+      url: "/api/admin/mail/receiving-domains/66666666-6666-4666-8666-666666666666",
+    });
+    expect(response.statusCode).toBe(404);
   });
 });

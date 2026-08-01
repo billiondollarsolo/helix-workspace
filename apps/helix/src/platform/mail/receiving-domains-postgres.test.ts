@@ -1,7 +1,6 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createReceivingDomainVerificationChallenge,
   PostgresReceivingDomainStore,
   ReceivingDomainCatchAllError,
 } from "./receiving-domains-store.js";
@@ -50,11 +49,9 @@ live("PostgresReceivingDomainStore", () => {
   });
 
   it("persists the verified lifecycle and resolves primary, alias, and catch-all mailboxes", async () => {
-    const challenge = createReceivingDomainVerificationChallenge("store.example");
     const domain = await store.createDomain({
       orgId: orgOne,
       domain: "STORE.example",
-      verificationTokenHash: challenge.tokenHash,
       catchAllActorId: actorOne,
       createdBy: actorOne,
     });
@@ -91,9 +88,6 @@ live("PostgresReceivingDomainStore", () => {
       store.createDomain({
         orgId: orgOne,
         domain: "invalid-catch-all.example",
-        verificationTokenHash: createReceivingDomainVerificationChallenge(
-          "invalid-catch-all.example",
-        ).tokenHash,
         catchAllActorId: actorTwo,
         createdBy: actorOne,
       }),

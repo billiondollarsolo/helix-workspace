@@ -26,6 +26,7 @@ const unprivilegedActor: Actor = { ...adminActor, scopes: ["mail.read"] };
 
 let app: FastifyInstance;
 let currentActor: Actor;
+let domainStore: InMemorySendingDomainStore;
 const audited: { verb: string; objectType: string }[] = [];
 
 /** A Fastify inject response narrowed to a status code and a JSON payload. */
@@ -71,9 +72,10 @@ beforeEach(async () => {
   currentActor = adminActor;
   audited.length = 0;
   app = fastify();
+  domainStore = new InMemorySendingDomainStore();
   await registerMailDeliveryAdminRoutes(app, {
     providerStore: new InMemoryOutboundProviderStore(),
-    domainStore: new InMemorySendingDomainStore(),
+    domainStore,
     dkimStore: new InMemoryMailDkimKeyStore(),
     dmarcStore: new InMemoryMailDmarcReportStore(),
     routingStore: new InMemoryMailRoutingRuleStore(),
@@ -239,6 +241,28 @@ describe("outbound provider admin routes", () => {
 });
 
 describe("sending domain and DKIM admin routes", () => {
+  it("ignores a client that asserts its own verification", async () => {
+    /* The route used to take `{ verified: boolean }` and write it straight to
+       `verified_at`. Outbound routing selects a domain's dedicated transport on
+       that column, so asserting the boolean was enough to route mail as a
+       domain you had not proven you control. */
+    const created = await inject({
+      method: "POST",
+      url: "/api/admin/mail/sending-domains",
+      payload: { domain: "spoof.test", isDefault: false },
+    });
+    const domain = created.body<{ domain: DomainView }>().domain;
+
+    const response = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/verify`,
+      payload: { verified: true },
+    });
+
+    expect(response.body<{ verified: boolean }>().verified).toBe(false);
+    expect(response.body<{ domain: DomainView }>().domain.verifiedAt).toBeNull();
+  });
+
   it("registers a domain, generates and rotates DKIM keys", async () => {
     const domainResponse = await inject({
       method: "POST",
@@ -249,10 +273,23 @@ describe("sending domain and DKIM admin routes", () => {
     const domain = domainResponse.body<{ domain: DomainView }>().domain;
     expect(domain.domain).toBe("helix.test");
 
+    /* Verification reflects the DNS Helix has observed, so a freshly added
+       domain is not verified and says which record is outstanding. */
+    const unverified = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/verify`,
+    });
+    expect(unverified.body<{ verified: boolean; spf: string; dkim: string }>()).toMatchObject({
+      verified: false,
+      spf: "pending",
+      dkim: "pending",
+    });
+    expect(unverified.body<{ domain: DomainView }>().domain.verifiedAt).toBeNull();
+
+    domainStore.setDnsPosture(domain.id, { spf: "verified", dkim: "verified" });
     const verify = await inject({
       method: "POST",
       url: `/api/admin/mail/sending-domains/${domain.id}/verify`,
-      payload: { verified: true },
     });
     expect(verify.body<{ domain: DomainView }>().domain.verifiedAt).not.toBeNull();
 

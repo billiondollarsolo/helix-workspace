@@ -61,7 +61,10 @@ describe("DispatchTimeTransportResolver", () => {
       providerId: dedicated.id,
       createdBy: actor,
     });
-    await domains.setDomainVerified(orgA, domain.id, true);
+    /* Verification now derives from observed DNS rather than a boolean the
+       caller supplies, so the fixture states the DNS posture instead. */
+    domains.setDnsPosture(domain.id, { spf: "verified", dkim: "verified" });
+    await domains.refreshDomainVerification(orgA, domain.id);
     const resolver = new DispatchTimeTransportResolver({
       providerStore: providers,
       domainStore: domains,

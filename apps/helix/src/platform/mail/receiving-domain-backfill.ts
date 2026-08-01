@@ -1,5 +1,4 @@
 import {
-  createReceivingDomainVerificationChallenge,
   type MailReceivingDomainRecord,
   type ReceivingDomainStore,
 } from "./receiving-domains-store.js";
@@ -44,10 +43,13 @@ export async function backfillSingleTenantReceivingDomain(
     (await store.createDomain({
       orgId: input.orgId,
       domain,
-      verificationTokenHash: createReceivingDomainVerificationChallenge(domain).tokenHash,
       catchAllActorId: input.catchAllActorId ?? null,
       createdBy: input.createdBy,
     }));
+  /* `ownershipAttested` is checked above and stands in for the DNS challenge:
+     this path exists for a domain already receiving mail before Helix tracked
+     it. It is the one place a domain becomes verified without a TXT record,
+     which is why it refuses to run outside explicit single-tenant mode. */
   if (record.status === "pending") {
     record = (await store.markVerified(input.orgId, record.id)) ?? missingBackfillRecord();
   }

@@ -283,6 +283,10 @@ import {
 } from "./platform/admin/oauth-apps.js";
 import { PostgresBillingStore, registerAdminBillingRoutes } from "./platform/admin/billing.js";
 import { PostgresDomainsStore, registerAdminDomainsRoutes } from "./platform/admin/domains.js";
+import { NodeDnsResolver } from "./platform/admin/dns-resolver.js";
+import { DnsTxtDomainOwnershipVerifier } from "./platform/admin/domain-identity.js";
+import { registerReceivingDomainAdminRoutes } from "./platform/mail/receiving-domains-routes.js";
+import { DnsTxtReceivingDomainOwnershipVerifier } from "./platform/mail/receiving-domain-ownership.js";
 import { signupEventSchemas } from "./platform/signup/event-schemas.js";
 import { registerSignupRoutesForMode } from "./platform/signup/routes.js";
 import {
@@ -2833,6 +2837,21 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
       auditSink: auditStore,
     });
+    /* Inbound domain control plane. The SMTP receiver already reads this store
+       to decide which recipients it will accept (`smtpRecipientResolver`), but
+       the routes that let an operator register, prove ownership of, and enable
+       a domain were never mounted — so a workspace could receive mail only for
+       domains put in the table out of band. */
+    /* One domains store instance for both: the receiving routes issue and read
+       the ownership challenge on the admin_domains parent (migration 0087). */
+    const domainIdentityStore = new PostgresDomainsStore(sql);
+    await registerReceivingDomainAdminRoutes(app, {
+      store: new PostgresReceivingDomainStore(sql),
+      ownershipVerifier: new DnsTxtReceivingDomainOwnershipVerifier(domainIdentityStore),
+      ownershipStore: domainIdentityStore,
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      auditSink: auditStore,
+    });
     const mailDeliveryAlertMonitor = new MailDeliveryAlertMonitor({
       store: mailDeliveryEventStore,
       emit: (alert) => {
@@ -2977,10 +2996,27 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     });
   }
+  /* Domain verification needs outbound DNS. It is on by default because an
+     unverified domain cannot send or receive mail, so a deployment that cannot
+     verify is a deployment whose first-run setup dead-ends. Air-gapped
+     installs set HELIX_ADMIN_DNS_VERIFICATION_ENABLED=false; the route then
+     answers 503 and the console says verification is disabled rather than
+     reporting every record as failed. */
+  const adminDnsVerificationEnabled = envValueFlag(
+    bootEnv.HELIX_ADMIN_DNS_VERIFICATION_ENABLED ?? "",
+    true,
+  );
   await registerAdminDomainsRoutes(app, {
     store: new PostgresDomainsStore(sql),
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
+    ...(adminDnsVerificationEnabled ? { dnsResolver: new NodeDnsResolver() } : {}),
+    ...(adminDnsVerificationEnabled
+      ? { ownershipVerifier: new DnsTxtDomainOwnershipVerifier() }
+      : {}),
+    ...(bootEnv.HELIX_MAIL_PUBLIC_HOSTNAME === undefined
+      ? {}
+      : { mailHostname: bootEnv.HELIX_MAIL_PUBLIC_HOSTNAME }),
   });
   await registerBackupAdminRoutes(app, {
     service: new ScriptedBackupAdminService({

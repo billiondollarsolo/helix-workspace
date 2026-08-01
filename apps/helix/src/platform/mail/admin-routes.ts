@@ -104,8 +104,6 @@ const createSendingDomainBody = z
   })
   .strict();
 
-const verifyDomainBody = z.object({ verified: z.boolean() }).strict();
-
 const generateDkimBody = z
   .object({
     selector: z
@@ -419,7 +417,7 @@ export async function registerMailDeliveryAdminRoutes(
     if (!canReadMailDeliveryAdmin(actor)) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
-    return { domains: await domainStore.listDomains(actor.orgId) };
+    return { domains: await domainStore.listDomainsForConsole(actor.orgId) };
   });
 
   app.post("/api/admin/mail/sending-domains", async (request, reply) => {
@@ -463,6 +461,10 @@ export async function registerMailDeliveryAdminRoutes(
     return reply.code(201).send({ domain });
   });
 
+  /* Re-reads the DNS records observed against this domain's identity. Takes no
+     body: it used to accept `{ verified: boolean }` and write that straight to
+     `verified_at`, which outbound routing reads when choosing a dedicated
+     transport — so the client decided its own verification. */
   app.post("/api/admin/mail/sending-domains/:id/verify", async (request, reply) => {
     const actor = await actorFromRequest(request);
     if (!canWriteMailDeliveryAdmin(actor)) {
@@ -472,27 +474,24 @@ export async function registerMailDeliveryAdminRoutes(
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid domain id."));
     }
-    const body = verifyDomainBody.safeParse(request.body);
-    if (!body.success) {
-      return reply.code(400).send(invalidRequest("Invalid verification request."));
-    }
-    const domain = await domainStore.setDomainVerified(
-      actor.orgId,
-      params.data.id,
-      body.data.verified,
-    );
-    if (domain === null) {
+    const result = await domainStore.refreshDomainVerification(actor.orgId, params.data.id);
+    if (result === null) {
       return reply.code(404).send(notFound("Sending domain not found."));
     }
     await auditAdminAction(auditSink, {
       orgId: actor.orgId,
       actorId: actor.id,
-      verb: "mail.sending_domain.verified",
+      verb: "mail.sending_domain.verification_checked",
       objectType: "mail_sending_domain",
-      objectId: domain.id,
-      metadata: { domain: domain.domain, verified: body.data.verified },
+      objectId: result.domain.id,
+      metadata: {
+        domain: result.domain.domain,
+        spf: result.spf,
+        dkim: result.dkim,
+        verified: result.verified,
+      },
     });
-    return { domain };
+    return { domain: result.domain, spf: result.spf, dkim: result.dkim, verified: result.verified };
   });
 
   app.delete("/api/admin/mail/sending-domains/:id", async (request, reply) => {

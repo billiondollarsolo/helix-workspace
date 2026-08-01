@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createDomainOwnershipChallenge } from "../admin/domain-identity.js";
 import {
-  createReceivingDomainVerificationChallenge,
   InMemoryReceivingDomainStore,
   ReceivingDomainCatchAllError,
   ReceivingDomainConflictError,
@@ -12,18 +12,18 @@ const orgTwo = "20000000-0000-4000-8000-000000000002";
 const actorOne = "10000000-0000-4000-8000-000000000011";
 const actorTwo = "20000000-0000-4000-8000-000000000022";
 
+/** The ownership challenge now belongs to the admin_domains parent; kept here
+ *  for the few assertions that still need a well-formed digest. */
 function challenge(domain = "example.com") {
-  return createReceivingDomainVerificationChallenge(domain);
+  return createDomainOwnershipChallenge(domain);
 }
 
 describe("receiving-domain lifecycle", () => {
   it("requires ownership verification before activation and ignores inactive domains", async () => {
     const store = new InMemoryReceivingDomainStore();
-    const proof = challenge();
     const created = await store.createDomain({
       orgId: orgOne,
       domain: "EXAMPLE.com",
-      verificationTokenHash: proof.tokenHash,
     });
 
     expect(created.status).toBe("pending");
@@ -53,12 +53,10 @@ describe("receiving-domain lifecycle", () => {
     const first = await store.createDomain({
       orgId: orgOne,
       domain: "shared.example",
-      verificationTokenHash: challenge("shared.example").tokenHash,
     });
     const second = await store.createDomain({
       orgId: orgTwo,
       domain: "shared.example",
-      verificationTokenHash: challenge("shared.example").tokenHash,
     });
     await Promise.all([
       store.markVerified(orgOne, first.id),
@@ -85,13 +83,11 @@ describe("receiving-domain lifecycle", () => {
     await store.createDomain({
       orgId: orgOne,
       domain: "bücher.example",
-      verificationTokenHash: challenge("one.example").tokenHash,
     });
     await expect(
       store.createDomain({
         orgId: orgOne,
         domain: "xn--bcher-kva.example",
-        verificationTokenHash: challenge("two.example").tokenHash,
       }),
     ).rejects.toBeInstanceOf(ReceivingDomainConflictError);
   });
@@ -109,7 +105,6 @@ describe("receiving-domain lifecycle", () => {
         orgId: orgOne,
         domain: "example.com",
         catchAllActorId: actorTwo,
-        verificationTokenHash: challenge().tokenHash,
       }),
     ).rejects.toBeInstanceOf(ReceivingDomainCatchAllError);
     await expect(
@@ -117,7 +112,6 @@ describe("receiving-domain lifecycle", () => {
         orgId: orgOne,
         domain: "example.com",
         catchAllActorId: "10000000-0000-4000-8000-000000000099",
-        verificationTokenHash: challenge().tokenHash,
       }),
     ).rejects.toBeInstanceOf(ReceivingDomainCatchAllError);
   });
@@ -142,7 +136,6 @@ describe("mailbox resolution", () => {
       orgId: orgOne,
       domain: "example.com",
       catchAllActorId: actorOne,
-      verificationTokenHash: challenge().tokenHash,
     });
     await store.markVerified(orgOne, created.id);
     await store.enableDomain(orgOne, created.id);
@@ -171,7 +164,6 @@ describe("mailbox resolution", () => {
     const created = await store.createDomain({
       orgId: orgOne,
       domain: "example.com",
-      verificationTokenHash: challenge().tokenHash,
     });
     await store.markVerified(orgOne, created.id);
     await store.enableDomain(orgOne, created.id);

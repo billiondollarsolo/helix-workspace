@@ -335,10 +335,9 @@ export async function deleteSendingDomain(
   id: string,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<void> {
-  const response = await fetchImpl(
-    `/api/admin/mail/sending-domains/${encodeURIComponent(id)}`,
-    { method: "DELETE" },
-  );
+  const response = await fetchImpl(`/api/admin/mail/sending-domains/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
   await ensureOk(response, "delete sending domain");
 }
 
@@ -403,14 +402,11 @@ export async function patchRoutingRule(
   input: Partial<RoutingRuleInput>,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<RoutingRule> {
-  const response = await fetchImpl(
-    `/api/admin/mail/routing-rules/${encodeURIComponent(id)}`,
-    {
-      method: "PATCH",
-      headers: jsonHeaders,
-      body: JSON.stringify(input),
-    },
-  );
+  const response = await fetchImpl(`/api/admin/mail/routing-rules/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
   return parseResponse(response, "update routing rule", routingRuleSchema);
 }
 
@@ -418,10 +414,9 @@ export async function deleteRoutingRule(
   id: string,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<void> {
-  const response = await fetchImpl(
-    `/api/admin/mail/routing-rules/${encodeURIComponent(id)}`,
-    { method: "DELETE" },
-  );
+  const response = await fetchImpl(`/api/admin/mail/routing-rules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
   await ensureOk(response, "delete routing rule");
 }
 
@@ -440,7 +435,7 @@ export async function fetchSpamSettings(
 // Shared response handling
 // ---------------------------------------------------------------------------
 
-async function parseResponse<T>(
+export async function parseResponse<T>(
   response: Response,
   action: string,
   schema: z.ZodType<T>,

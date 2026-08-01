@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod3";
+import { createDomainOwnershipChallenge, type DomainOwnershipVerifier } from "./domain-identity.js";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -42,6 +43,22 @@ export interface DomainRecord {
   readonly updatedAt: string;
 }
 
+/** What a domain is currently used for. Both sides are nullable: a registered
+ *  domain with neither capability switched on is a normal, expressible state. */
+export interface DomainCapabilities {
+  readonly adminDomainId: string;
+  readonly sending: {
+    readonly id: string;
+    readonly isDefault: boolean;
+    readonly verifiedAt: string | null;
+    readonly dkimKeyCount: number;
+  } | null;
+  readonly receiving: {
+    readonly id: string;
+    readonly status: "pending" | "verified" | "active" | "disabled";
+  } | null;
+}
+
 export interface DnsRecordRecord {
   readonly id: string;
   readonly orgId: string;
@@ -59,6 +76,9 @@ export interface DnsRecordRecord {
 export interface DomainWithRecords {
   readonly domain: DomainRecord;
   readonly dnsRecords: readonly DnsRecordRecord[];
+  /** What the domain is used for; null means the capability is not set up. */
+  readonly sending: DomainCapabilities["sending"];
+  readonly receiving: DomainCapabilities["receiving"];
 }
 
 // --------------------------------------------------------------------------
@@ -94,12 +114,22 @@ export interface DomainsStore {
   /** Mark `id` primary and clear the flag from all sibling domains. */
   setPrimaryDomain(orgId: string, id: string): Promise<DomainRecord | null>;
   deleteDomain(orgId: string, id: string): Promise<boolean>;
+  /* Store a fresh ownership challenge digest and return the domain. Only the
+     digest is kept — the token is shown to the operator once and cannot be
+     re-read, so re-issuing is the recovery path for a lost one. */
+  setOwnershipChallenge(orgId: string, id: string, tokenHash: string): Promise<DomainRecord | null>;
+  /** The digest to check a published TXT record against, or null if unchallenged. */
+  getOwnershipTokenHash(orgId: string, id: string): Promise<string | null>;
+  /** Record the outcome of an ownership check. */
+  setOwnershipVerified(orgId: string, id: string, verified: boolean): Promise<DomainRecord | null>;
+
+  /* What each of the org's domains is used for. One query rather than per-row
+     so the console's list does not fan out across two more tables. */
+  listCapabilities(orgId: string): Promise<readonly DomainCapabilities[]>;
 
   listDnsRecords(orgId: string, domainId: string): Promise<readonly DnsRecordRecord[]>;
   upsertDnsRecord(input: UpsertDnsRecordInput): Promise<DnsRecordRecord>;
-  setDnsRecordVerification(
-    input: SetDnsRecordVerificationInput,
-  ): Promise<DnsRecordRecord | null>;
+  setDnsRecordVerification(input: SetDnsRecordVerificationInput): Promise<DnsRecordRecord | null>;
 }
 
 /** Thrown by stores when a uniqueness rule is violated. */
@@ -120,7 +150,67 @@ export interface DnsResolver {
   lookup(input: {
     readonly recordType: DnsRecordType;
     readonly host: string;
+    /**
+     * The value being looked for, supplied so the resolver can pick the right
+     * answer out of a set — a host legitimately carries several TXT records
+     * (SPF beside a verification token, say), and returning an arbitrary one
+     * would report a spurious mismatch.
+     *
+     * Selection only. The resolver never decides the outcome: the route hands
+     * whatever comes back to `evaluateDnsRecord`, so a resolver cannot turn a
+     * missing record into a pass by echoing the expectation.
+     */
+    readonly expectedValue?: string;
   }): Promise<string | null>;
+}
+
+/**
+ * The DNS records Helix needs published for a domain it will send and receive
+ * mail for.
+ *
+ * Seeded on domain creation so an operator is not left with an empty panel and
+ * a blank three-field form, having to know that Helix wants an MX at the apex,
+ * an SPF include, and a DMARC policy at `_dmarc`.
+ *
+ * `mailHostname` is required rather than guessed. Helix does not otherwise know
+ * its own public mail hostname — `MAIL_SMTP_RECEIVER_HOST` is a bind address
+ * and `HELIX_PUBLIC_URL` is the console — and an MX pointing at the wrong host
+ * silently blackholes mail, which is worse than no MX at all. Without it we
+ * seed nothing and the console explains what is missing.
+ *
+ * DKIM is deliberately absent: its value is a public key that does not exist
+ * until a keypair is generated for the domain (Mail admin owns that, and
+ * `dkimDnsRecord` composes the record from it). Seeding a DKIM row with a
+ * placeholder would put a record on screen that can never verify.
+ */
+export function expectedDnsRecordsForDomain(input: {
+  readonly domain: string;
+  readonly mailHostname: string;
+}): readonly Omit<UpsertDnsRecordInput, "orgId" | "domainId">[] {
+  const { domain, mailHostname } = input;
+  return [
+    {
+      recordType: "MX",
+      host: domain,
+      // Priority 10 is the conventional single-host value; an operator running
+      // several relays edits this row rather than starting from nothing.
+      expectedValue: `10 ${mailHostname}`,
+    },
+    {
+      recordType: "SPF",
+      host: domain,
+      // `~all` (softfail) rather than `-all`: a hard fail on a domain that is
+      // still being set up bounces legitimate mail.
+      expectedValue: `v=spf1 mx a:${mailHostname} ~all`,
+    },
+    {
+      recordType: "DMARC",
+      host: `_dmarc.${domain}`,
+      // `p=none` is the monitoring posture every DMARC rollout starts from;
+      // tightening to quarantine/reject before reports are read breaks mail.
+      expectedValue: `v=DMARC1; p=none; rua=mailto:dmarc@${domain}`,
+    },
+  ];
 }
 
 /** Compare an observed DNS value against the expectation. */
@@ -178,6 +268,18 @@ export interface RegisterAdminDomainsRoutesOptions {
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly auditSink?: AdminConsoleAuditSink | undefined;
   readonly dnsResolver?: DnsResolver | undefined;
+  /**
+   * Checks a published TXT record against a domain's ownership challenge. When
+   * absent, the challenge can be issued but not verified, and the verify route
+   * says so rather than reporting a failure it never actually tested.
+   */
+  readonly ownershipVerifier?: DomainOwnershipVerifier | undefined;
+  /**
+   * Public hostname this deployment receives mail on. When set, creating a
+   * domain seeds the MX / SPF / DMARC records Helix needs published for it.
+   * Absent, no records are seeded — see `expectedDnsRecordsForDomain`.
+   */
+  readonly mailHostname?: string | undefined;
 }
 
 /**
@@ -195,7 +297,8 @@ export async function registerAdminDomainsRoutes(
   app: FastifyInstance,
   options: RegisterAdminDomainsRoutesOptions,
 ): Promise<void> {
-  const { store, actorFromRequest, auditSink, dnsResolver } = options;
+  const { store, actorFromRequest, auditSink, dnsResolver, mailHostname, ownershipVerifier } =
+    options;
 
   app.get("/api/admin/domains", async (request, reply) => {
     const actor = await actorFromRequest(request);
@@ -203,11 +306,19 @@ export async function registerAdminDomainsRoutes(
       return sendForbidden(reply, adminConsoleReadScope);
     }
     const domains = await store.listDomains(actor.orgId);
+    /* One capability query for the whole list, indexed by parent id, rather
+       than two more round trips per domain. */
+    const capabilities = new Map(
+      (await store.listCapabilities(actor.orgId)).map((entry) => [entry.adminDomainId, entry]),
+    );
     const withRecords: DomainWithRecords[] = [];
     for (const domain of domains) {
+      const capability = capabilities.get(domain.id);
       withRecords.push({
         domain,
         dnsRecords: await store.listDnsRecords(actor.orgId, domain.id),
+        sending: capability?.sending ?? null,
+        receiving: capability?.receiving ?? null,
       });
     }
     return { domains: withRecords };
@@ -235,6 +346,25 @@ export async function registerAdminDomainsRoutes(
         return reply.code(409).send(conflict(error.message));
       }
       throw error;
+    }
+    /* Seed the records Helix needs published, so the panel opens with the work
+       to do rather than an empty table. Best-effort: a store that rejects one
+       must not undo a domain that was created successfully, and the operator
+       can still add records by hand. */
+    if (mailHostname !== undefined && mailHostname.length > 0) {
+      for (const record of expectedDnsRecordsForDomain({
+        domain: domain.domain,
+        mailHostname,
+      })) {
+        try {
+          await store.upsertDnsRecord({ orgId: actor.orgId, domainId: domain.id, ...record });
+        } catch (error) {
+          request.log.warn(
+            { err: error, domain: domain.domain, recordType: record.recordType },
+            "could not seed expected DNS record",
+          );
+        }
+      }
     }
     await auditAdminAction(auditSink, {
       orgId: actor.orgId,
@@ -269,6 +399,99 @@ export async function registerAdminDomainsRoutes(
       metadata: { domain: domain.domain },
     });
     return { domain };
+  });
+
+  /* Proof of ownership, on the domain rather than on one thing you do with it.
+     Proving control of example.com to receive mail proves it for sending too,
+     so the challenge lives here and the capabilities read the result. */
+  app.post("/api/admin/domains/:id/challenge", async (request, reply) => {
+    const actor = await actorFromRequest(request);
+    if (!canWriteAdminConsole(actor)) {
+      return sendForbidden(reply, adminConsoleWriteScope);
+    }
+    const params = idParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.code(400).send(invalidRequest("Invalid domain id."));
+    }
+    const current = await store.getDomain(actor.orgId, params.data.id);
+    if (current === null) {
+      return reply.code(404).send(notFound("Domain not found."));
+    }
+    const challenge = createDomainOwnershipChallenge(current.domain);
+    const domain = await store.setOwnershipChallenge(actor.orgId, current.id, challenge.tokenHash);
+    if (domain === null) {
+      return reply.code(404).send(notFound("Domain not found."));
+    }
+    await auditAdminAction(auditSink, {
+      orgId: actor.orgId,
+      actorId: actor.id,
+      verb: "admin.domain.challenge_issued",
+      objectType: "admin_domain",
+      objectId: domain.id,
+      metadata: { domain: domain.domain },
+    });
+    /* The token is returned here and nowhere else: only its digest is stored,
+       so re-issuing is the only way back if the operator loses it. */
+    return reply.code(201).send({
+      domain,
+      verification: { dnsName: challenge.dnsName, dnsValue: challenge.dnsValue },
+    });
+  });
+
+  app.post("/api/admin/domains/:id/verify-ownership", async (request, reply) => {
+    const actor = await actorFromRequest(request);
+    if (!canWriteAdminConsole(actor)) {
+      return sendForbidden(reply, adminConsoleWriteScope);
+    }
+    const params = idParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.code(400).send(invalidRequest("Invalid domain id."));
+    }
+    if (ownershipVerifier === undefined) {
+      return reply.code(503).send({
+        error: "Domain ownership verification is not configured on this deployment.",
+        code: "service_unavailable",
+      });
+    }
+    const current = await store.getDomain(actor.orgId, params.data.id);
+    if (current === null) {
+      return reply.code(404).send(notFound("Domain not found."));
+    }
+    const tokenHash = await store.getOwnershipTokenHash(actor.orgId, current.id);
+    if (tokenHash === null) {
+      /* Nothing to check against. Reporting this as a failed verification
+         would tell the operator their DNS is wrong when in fact no challenge
+         has been issued. */
+      return reply.code(409).send({
+        error: "This domain has no ownership challenge. Issue one first.",
+        code: "conflict",
+      });
+    }
+
+    let owned: boolean;
+    try {
+      owned = await ownershipVerifier.verify({ domain: current.domain, tokenHash });
+    } catch {
+      // Could-not-look is not the same as not-published.
+      return reply.code(503).send({
+        error: "Domain ownership verification is temporarily unavailable.",
+        code: "service_unavailable",
+      });
+    }
+
+    const domain = await store.setOwnershipVerified(actor.orgId, current.id, owned);
+    if (domain === null) {
+      return reply.code(404).send(notFound("Domain not found."));
+    }
+    await auditAdminAction(auditSink, {
+      orgId: actor.orgId,
+      actorId: actor.id,
+      verb: "admin.domain.ownership_checked",
+      objectType: "admin_domain",
+      objectId: domain.id,
+      metadata: { domain: domain.domain, verified: owned },
+    });
+    return { domain, verified: owned };
   });
 
   app.delete("/api/admin/domains/:id", async (request, reply) => {
@@ -367,6 +590,7 @@ export async function registerAdminDomainsRoutes(
     const observedValue = await dnsResolver.lookup({
       recordType: target.recordType,
       host: target.host,
+      expectedValue: target.expectedValue,
     });
     const status = evaluateDnsRecord(target.expectedValue, observedValue);
     const dnsRecord = await store.setDnsRecordVerification({
@@ -466,6 +690,50 @@ export class PostgresDomainsStore implements DomainsStore {
     return created;
   }
 
+  async setOwnershipChallenge(
+    orgId: string,
+    id: string,
+    tokenHash: string,
+  ): Promise<DomainRecord | null> {
+    const rows = (await this.sql`
+      update admin_domains
+      set verification_token_hash = ${tokenHash}, updated_at = now()
+      where org_id = ${orgId} and id = ${id}
+      returning id, org_id, domain, is_primary, verification_status, verified_at,
+                created_at, updated_at
+    `) as unknown as readonly DomainRow[];
+    const row = rows[0];
+    return row === undefined ? null : mapDomainRow(row);
+  }
+
+  async getOwnershipTokenHash(orgId: string, id: string): Promise<string | null> {
+    const rows = (await this.sql`
+      select verification_token_hash from admin_domains
+      where org_id = ${orgId} and id = ${id}
+    `) as unknown as readonly { readonly verification_token_hash: string | null }[];
+    return rows[0]?.verification_token_hash ?? null;
+  }
+
+  /* `verified_at` keeps its first value on a re-check that still passes: it
+     records when the domain was proved, not when someone last looked. */
+  async setOwnershipVerified(
+    orgId: string,
+    id: string,
+    verified: boolean,
+  ): Promise<DomainRecord | null> {
+    const rows = (await this.sql`
+      update admin_domains
+      set verification_status = ${verified ? "verified" : "failed"},
+          verified_at = ${verified ? this.sql`coalesce(verified_at, now())` : null},
+          updated_at = now()
+      where org_id = ${orgId} and id = ${id}
+      returning id, org_id, domain, is_primary, verification_status, verified_at,
+                created_at, updated_at
+    `) as unknown as readonly DomainRow[];
+    const row = rows[0];
+    return row === undefined ? null : mapDomainRow(row);
+  }
+
   async setPrimaryDomain(orgId: string, id: string): Promise<DomainRecord | null> {
     const existing = await this.getDomain(orgId, id);
     if (existing === null) {
@@ -490,6 +758,45 @@ export class PostgresDomainsStore implements DomainsStore {
       delete from admin_domains where org_id = ${orgId} and id = ${id} returning id
     `) as unknown as readonly { readonly id: string }[];
     return rows.length > 0;
+  }
+
+  async listCapabilities(orgId: string): Promise<readonly DomainCapabilities[]> {
+    const rows = (await this.sql`
+      select
+        p.id as admin_domain_id,
+        s.id as sending_id,
+        s.is_default as sending_is_default,
+        s.verified_at as sending_verified_at,
+        (select count(*)::int from mail_dkim_keys k where k.domain_id = s.id) as dkim_key_count,
+        r.id as receiving_id,
+        r.status as receiving_status
+      from admin_domains p
+      left join mail_sending_domains s on s.admin_domain_id = p.id
+      left join mail_receiving_domains r on r.admin_domain_id = p.id
+      where p.org_id = ${orgId}
+    `) as unknown as readonly {
+      readonly admin_domain_id: string;
+      readonly sending_id: string | null;
+      readonly sending_is_default: boolean | null;
+      readonly sending_verified_at: Date | null;
+      readonly dkim_key_count: number | null;
+      readonly receiving_id: string | null;
+      readonly receiving_status: "pending" | "verified" | "active" | "disabled";
+    }[];
+    return rows.map((row) => ({
+      adminDomainId: row.admin_domain_id,
+      sending:
+        row.sending_id === null
+          ? null
+          : {
+              id: row.sending_id,
+              isDefault: row.sending_is_default ?? false,
+              verifiedAt: row.sending_verified_at?.toISOString() ?? null,
+              dkimKeyCount: row.dkim_key_count ?? 0,
+            },
+      receiving:
+        row.receiving_id === null ? null : { id: row.receiving_id, status: row.receiving_status },
+    }));
   }
 
   async listDnsRecords(orgId: string, domainId: string): Promise<readonly DnsRecordRecord[]> {
@@ -594,6 +901,8 @@ interface MemDomain {
   id: string;
   orgId: string;
   domain: string;
+  /** SHA-256 digest of the outstanding ownership challenge, if any. */
+  verificationTokenHash?: string | null;
   isPrimary: boolean;
   verificationStatus: VerificationStatus;
   verifiedAt: string | null;
@@ -632,6 +941,43 @@ export class InMemoryDomainsStore implements DomainsStore {
     return `00000000-0000-4000-b000-${this.#seq.toString(16).padStart(12, "0")}`;
   }
 
+  async setOwnershipChallenge(
+    orgId: string,
+    id: string,
+    tokenHash: string,
+  ): Promise<DomainRecord | null> {
+    const domain = this.#domains.get(id);
+    if (domain === undefined || domain.orgId !== orgId) {
+      return null;
+    }
+    domain.verificationTokenHash = tokenHash;
+    domain.updatedAt = this.#now();
+    return { ...domain };
+  }
+
+  async getOwnershipTokenHash(orgId: string, id: string): Promise<string | null> {
+    const domain = this.#domains.get(id);
+    if (domain === undefined || domain.orgId !== orgId) {
+      return null;
+    }
+    return domain.verificationTokenHash ?? null;
+  }
+
+  async setOwnershipVerified(
+    orgId: string,
+    id: string,
+    verified: boolean,
+  ): Promise<DomainRecord | null> {
+    const domain = this.#domains.get(id);
+    if (domain === undefined || domain.orgId !== orgId) {
+      return null;
+    }
+    domain.verificationStatus = verified ? "verified" : "failed";
+    domain.verifiedAt = verified ? (domain.verifiedAt ?? this.#now()) : null;
+    domain.updatedAt = this.#now();
+    return { ...domain };
+  }
+
   async listDomains(orgId: string): Promise<readonly DomainRecord[]> {
     return [...this.#domains.values()]
       .filter((domain) => domain.orgId === orgId)
@@ -649,8 +995,7 @@ export class InMemoryDomainsStore implements DomainsStore {
   async createDomain(input: CreateDomainInput): Promise<DomainRecord> {
     const clash = [...this.#domains.values()].some(
       (domain) =>
-        domain.orgId === input.orgId &&
-        domain.domain.toLowerCase() === input.domain.toLowerCase(),
+        domain.orgId === input.orgId && domain.domain.toLowerCase() === input.domain.toLowerCase(),
     );
     if (clash) {
       throw new DomainsConflictError("This domain is already registered for the org.");
@@ -703,6 +1048,12 @@ export class InMemoryDomainsStore implements DomainsStore {
       }
     }
     return true;
+  }
+
+  /* This adapter has no mail tables; route tests that care about capabilities
+     assert against the Postgres store or the mail routes directly. */
+  async listCapabilities(): Promise<readonly DomainCapabilities[]> {
+    return [];
   }
 
   async listDnsRecords(orgId: string, domainId: string): Promise<readonly DnsRecordRecord[]> {

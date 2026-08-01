@@ -50,9 +50,27 @@ const dnsRecordSchema = z.object({
 
 export type DnsRecord = z.infer<typeof dnsRecordSchema>;
 
+/* What a domain is used for. Both nullable: a registered domain with neither
+   capability switched on is a normal state, not an error. */
+const sendingCapabilitySchema = z.object({
+  id: z.string(),
+  isDefault: z.boolean(),
+  verifiedAt: z.string().nullable(),
+  dkimKeyCount: z.number(),
+});
+const receivingCapabilitySchema = z.object({
+  id: z.string(),
+  status: z.enum(["pending", "verified", "active", "disabled"]),
+});
+
+export type SendingCapability = z.infer<typeof sendingCapabilitySchema>;
+export type ReceivingCapability = z.infer<typeof receivingCapabilitySchema>;
+
 const domainWithRecordsSchema = z.object({
   domain: domainSchema,
   dnsRecords: z.array(dnsRecordSchema),
+  sending: sendingCapabilitySchema.nullable(),
+  receiving: receivingCapabilitySchema.nullable(),
 });
 
 export type DomainWithRecords = z.infer<typeof domainWithRecordsSchema>;
@@ -156,12 +174,10 @@ export async function fetchDnsRecords(
   domainId: string,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly DnsRecord[]> {
-  const response = await fetchImpl(
-    `/api/admin/domains/${encodeURIComponent(domainId)}/dns`,
-    { method: "GET" },
-  );
-  return (await parseResponse(response, "load DNS records", dnsRecordsResponseSchema))
-    .dnsRecords;
+  const response = await fetchImpl(`/api/admin/domains/${encodeURIComponent(domainId)}/dns`, {
+    method: "GET",
+  });
+  return (await parseResponse(response, "load DNS records", dnsRecordsResponseSchema)).dnsRecords;
 }
 
 export async function upsertDnsRecord(
@@ -169,14 +185,11 @@ export async function upsertDnsRecord(
   input: UpsertDnsRecordInput,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<DnsRecord> {
-  const response = await fetchImpl(
-    `/api/admin/domains/${encodeURIComponent(domainId)}/dns`,
-    {
-      method: "PUT",
-      headers: jsonHeaders,
-      body: JSON.stringify(input),
-    },
-  );
+  const response = await fetchImpl(`/api/admin/domains/${encodeURIComponent(domainId)}/dns`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
   return (await parseResponse(response, "save DNS record", dnsRecordResponseSchema)).dnsRecord;
 }
 
@@ -187,7 +200,12 @@ export async function verifyDnsRecord(
 ): Promise<DnsRecord> {
   const response = await fetchImpl(
     `/api/admin/domains/${encodeURIComponent(domainId)}/dns/${encodeURIComponent(recordId)}/verify`,
-    { method: "POST", headers: jsonHeaders },
+    /* No `content-type: application/json` header. Verify takes no body, and
+       Fastify's JSON parser rejects a bodyless request that declares one with
+       `FST_ERR_CTP_EMPTY_JSON_BODY` — a 400 raised before the route handler
+       runs, which is why verification failed with "Bad Request" no matter what
+       the DNS said. */
+    { method: "POST" },
   );
   return (await parseResponse(response, "verify DNS record", dnsRecordResponseSchema)).dnsRecord;
 }
@@ -230,4 +248,40 @@ function errorMessage(payload: unknown): string | undefined {
     return payload.error;
   }
   return undefined;
+}
+
+/* --------------------------------------------------------------------- */
+/* Proof of ownership                                                     */
+/* --------------------------------------------------------------------- */
+
+const ownershipChallengeSchema = z.object({
+  domain: domainSchema,
+  verification: z.object({ dnsName: z.string(), dnsValue: z.string() }),
+});
+export type OwnershipChallenge = z.infer<typeof ownershipChallengeSchema>;
+
+/** Issues a fresh TXT challenge. The value is returned here and nowhere else —
+ *  only its digest is stored, so re-issuing is the only way back. */
+export async function issueOwnershipChallenge(
+  id: string,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<OwnershipChallenge> {
+  const response = await fetchImpl(`/api/admin/domains/${encodeURIComponent(id)}/challenge`, {
+    method: "POST",
+  });
+  return parseResponse(response, "issue a verification record", ownershipChallengeSchema);
+}
+
+const ownershipVerifySchema = z.object({ domain: domainSchema, verified: z.boolean() });
+
+export async function verifyDomainOwnership(
+  id: string,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<z.infer<typeof ownershipVerifySchema>> {
+  // No body, and no content-type: Fastify rejects an empty JSON body.
+  const response = await fetchImpl(
+    `/api/admin/domains/${encodeURIComponent(id)}/verify-ownership`,
+    { method: "POST" },
+  );
+  return parseResponse(response, "verify domain ownership", ownershipVerifySchema);
 }

@@ -109,6 +109,7 @@ const envSchema = z.object({
   HELIX_DRIVE_GC_ORPHAN_GRACE_HOURS: coercePositiveInt(24),
   HELIX_DRIVE_GC_BATCH_SIZE: coercePositiveInt(100),
   HELIX_DRIVE_OFFICE_PREVIEW_ALLOWED_HOSTS: optionalString,
+  HELIX_ADMIN_DNS_VERIFICATION_ENABLED: optionalString,
   DRIVE_AUTO_TAG_ENRICHMENT: optionalString,
   DRIVE_CLAMAV_ENABLED: optionalString,
   DRIVE_CLAMAV_HOST: optionalString,
@@ -198,6 +199,9 @@ const envSchema = z.object({
   MAIL_RECEIVER_ENABLED: optionalString,
   MAIL_SMTP_RECEIVER_ENABLED: optionalString,
   MAIL_SMTP_RECEIVER_HOST: optionalString,
+  /* Public hostname operators point MX and SPF at. MAIL_SMTP_RECEIVER_HOST
+     is a bind address (0.0.0.0), so it cannot answer this. */
+  HELIX_MAIL_PUBLIC_HOSTNAME: optionalString,
   MAIL_SMTP_RECEIVER_PORT: optionalString,
   MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY: z
     .enum(["starttls", "trusted-proxy", "development-plaintext"])

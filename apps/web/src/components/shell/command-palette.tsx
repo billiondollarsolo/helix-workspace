@@ -4,7 +4,7 @@
    arrow-key navigation; Enter selects; Escape closes. */
 
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePlatformSnapshot, type CommandItem, type WebPlatformHost } from "@helix/sdk-web";
 import { Icons, type IconName } from "@/components/icons";
 import { APPS } from "@/components/apps";
@@ -35,6 +35,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
   const registeredCommands = usePlatformSnapshot(selectCommands);
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const goto = useMemo(
     () => (route: string) => {
@@ -119,38 +120,44 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
   }, [query, goto, openSettings, registeredCommands]);
 
   useEffect(() => {
-    setIndex(0);
-  }, [query]);
-
-  useEffect(() => {
     if (!open) {
       return;
     }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-        return;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    let cancelled = false;
+    setQuery("");
+    document.body.style.overflow = "hidden";
+    queueMicrotask(() => {
+      if (!cancelled) {
+        searchInputRef.current?.focus();
       }
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setIndex((i) => Math.min(items.length - 1, i + 1));
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setIndex((i) => Math.max(0, i - 1));
-      }
-      if (event.key === "Enter") {
-        const item = items[index];
-        if (item === undefined || item.disabledReason !== undefined) {
-          return;
-        }
-        void item.action();
-        onClose();
+    });
+    return () => {
+      cancelled = true;
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected === true) {
+        previousFocus.focus();
       }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, index, items, onClose]);
+  }, [open]);
+
+  useEffect(() => {
+    setIndex(firstEnabledIndex(items));
+  }, [items]);
+
+  const activeOptionId = index >= 0 ? `command-palette-option-${String(index)}` : undefined;
+
+  useEffect(() => {
+    if (!open || activeOptionId === undefined) {
+      return;
+    }
+    const option = document.getElementById(activeOptionId);
+    if (option !== null && typeof option.scrollIntoView === "function") {
+      option.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeOptionId, open]);
 
   if (!open) {
     return null;
@@ -167,6 +174,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
 
   return (
     <div
+      data-testid="command-palette-backdrop"
       style={{
         position: "fixed",
         inset: 0,
@@ -178,12 +186,50 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
         zIndex: 1000,
         backdropFilter: "blur(4px)",
       }}
-      onClick={onClose}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
     >
       <div
-        onClick={(event) => event.stopPropagation()}
         role="dialog"
-        aria-label="Command palette"
+        aria-modal="true"
+        aria-labelledby="command-palette-title"
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) {
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+            return;
+          }
+          if (event.key === "Tab") {
+            event.preventDefault();
+            searchInputRef.current?.focus();
+            return;
+          }
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setIndex((current) => nextEnabledIndex(items, current, 1));
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setIndex((current) => nextEnabledIndex(items, current, -1));
+            return;
+          }
+          if (event.key === "Enter") {
+            const item = items[index];
+            if (item === undefined || item.disabledReason !== undefined) {
+              return;
+            }
+            event.preventDefault();
+            void item.action();
+            onClose();
+          }
+        }}
         style={{
           width: 600,
           maxWidth: "90vw",
@@ -197,6 +243,9 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
           overflow: "hidden",
         }}
       >
+        <h2 id="command-palette-title" className="sr-only">
+          Command palette
+        </h2>
         <div
           style={{
             padding: "12px 16px",
@@ -208,7 +257,12 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
         >
           <Icons.Search />
           <input
-            autoFocus
+            ref={searchInputRef}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded="true"
+            aria-controls="command-palette-results"
+            aria-activedescendant={activeOptionId}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search apps, docs, people, actions…"
@@ -223,10 +277,20 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
           />
           <span className="kbd">esc</span>
         </div>
-        <div style={{ overflowY: "auto", flex: 1, padding: 6 }}>
+        <div
+          id="command-palette-results"
+          role="listbox"
+          aria-label="Commands"
+          style={{ overflowY: "auto", flex: 1, padding: 6 }}
+        >
           {Array.from(groups.entries()).map(([group, groupItems]) => (
-            <div key={group}>
+            <div
+              key={group}
+              role="group"
+              aria-labelledby={`command-palette-group-${group.toLowerCase().replaceAll(" ", "-")}`}
+            >
               <div
+                id={`command-palette-group-${group.toLowerCase().replaceAll(" ", "-")}`}
                 style={{
                   fontSize: "var(--text-chip)",
                   color: "var(--text-3)",
@@ -247,7 +311,12 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                 return (
                   <button
                     key={`${item.group}-${item.title}-${myIndex}`}
+                    id={`command-palette-option-${String(myIndex)}`}
                     type="button"
+                    role="option"
+                    aria-selected={active}
+                    aria-disabled={disabled}
+                    tabIndex={-1}
                     disabled={disabled}
                     title={item.disabledReason}
                     onClick={() => {
@@ -309,7 +378,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
             </div>
           ))}
           {items.length === 0 ? (
-            <div className="empty" style={{ padding: 32 }}>
+            <div className="empty" role="status" aria-live="polite" style={{ padding: 32 }}>
               <Icons.Search />
               <div>No results for &quot;{query}&quot;</div>
             </div>
@@ -338,6 +407,28 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
       </div>
     </div>
   );
+}
+
+function firstEnabledIndex(items: readonly PaletteItem[]): number {
+  return items.findIndex((item) => item.disabledReason === undefined);
+}
+
+function nextEnabledIndex(
+  items: readonly PaletteItem[],
+  current: number,
+  direction: 1 | -1,
+): number {
+  if (items.length === 0) {
+    return -1;
+  }
+  const start = current >= 0 ? current : direction === 1 ? -1 : 0;
+  for (let offset = 1; offset <= items.length; offset += 1) {
+    const candidate = (start + direction * offset + items.length) % items.length;
+    if (items[candidate]?.disabledReason === undefined) {
+      return candidate;
+    }
+  }
+  return -1;
 }
 
 function commandPaletteItemFromPlatformCommand(command: CommandItem): PaletteItem {

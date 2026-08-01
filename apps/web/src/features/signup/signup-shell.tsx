@@ -51,6 +51,13 @@ export function SignupShell({
   const slugCheckSeq = useRef(0);
   const passwordStrengthSeq = useRef(0);
   const formViewedRecorded = useRef(false);
+  const errorRef = useRef<HTMLParagraphElement | null>(null);
+
+  useEffect(() => {
+    if (error !== null) {
+      errorRef.current?.focus();
+    }
+  }, [error]);
 
   const checkSlug = useAsyncDebouncedCallback(
     async (slug: string, seq: number) => {
@@ -250,8 +257,10 @@ export function SignupShell({
             <span className="auth-label">Work email</span>
             <input
               className="input"
+              name="email"
               type="email"
               autoComplete="email"
+              spellCheck={false}
               placeholder="you@example.com"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
@@ -262,6 +271,7 @@ export function SignupShell({
             <span className="auth-label">Password</span>
             <input
               className="input"
+              name="password"
               type="password"
               autoComplete="new-password"
               placeholder="At least 12 characters"
@@ -272,6 +282,9 @@ export function SignupShell({
               onChange={(event) => setPassword(event.target.value)}
               minLength={12}
               aria-describedby="signup-password-status"
+              aria-invalid={
+                password.length > 0 && passwordStrength?.acceptable === false ? true : undefined
+              }
               required
             />
           </label>
@@ -288,6 +301,7 @@ export function SignupShell({
             <span className="auth-label">Workspace name</span>
             <input
               className="input"
+              name="orgName"
               type="text"
               autoComplete="organization"
               placeholder="Acme"
@@ -301,6 +315,7 @@ export function SignupShell({
             <span className="auth-label">Workspace URL</span>
             <input
               className="input"
+              name="orgSlug"
               type="text"
               inputMode="url"
               autoComplete="off"
@@ -322,6 +337,7 @@ export function SignupShell({
             <span className="auth-label">Country</span>
             <select
               className="select auth-select"
+              name="country"
               value={country}
               onChange={(event) => setCountry(event.target.value)}
               required
@@ -343,6 +359,7 @@ export function SignupShell({
             <span className="auth-label">Phone</span>
             <input
               className="input"
+              name="phone"
               type="tel"
               autoComplete="tel"
               placeholder="+1 415 555 0100"
@@ -353,6 +370,7 @@ export function SignupShell({
           <label className="auth-check">
             <input
               type="checkbox"
+              name="marketingOptIn"
               checked={marketingOptIn}
               onChange={(event) => setMarketingOptIn(event.target.checked)}
             />
@@ -361,6 +379,7 @@ export function SignupShell({
           <label className="auth-check">
             <input
               type="checkbox"
+              name="termsAccepted"
               checked={termsAccepted}
               onChange={(event) => setTermsAccepted(event.target.checked)}
               required
@@ -372,6 +391,7 @@ export function SignupShell({
           <label className="auth-check">
             <input
               type="checkbox"
+              name="privacyAccepted"
               checked={privacyAccepted}
               onChange={(event) => setPrivacyAccepted(event.target.checked)}
               required
@@ -382,18 +402,23 @@ export function SignupShell({
           </label>
 
           {error === null ? null : (
-            <p className="auth-error" role="alert">
+            <p ref={errorRef} id="signup-error" className="auth-error" role="alert" tabIndex={-1}>
               {error}
             </p>
           )}
 
-          <button className="btn primary lg auth-submit" type="submit" disabled={!canSubmit}>
+          <button
+            className="btn primary lg auth-submit"
+            type="submit"
+            disabled={!canSubmit}
+            aria-busy={status === "submitting"}
+          >
             {status === "submitting" ? (
               <Loader2 className="auth-spinner" aria-hidden="true" />
             ) : (
               <ArrowRight aria-hidden="true" />
             )}
-            {status === "submitting" ? "Creating workspace..." : "Create workspace"}
+            {status === "submitting" ? "Creating workspace…" : "Create workspace"}
           </button>
         </form>
 

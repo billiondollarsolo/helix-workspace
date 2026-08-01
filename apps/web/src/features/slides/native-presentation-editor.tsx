@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { Icons } from "@/components/icons";
 import { DriveShareDialog } from "@/features/drive/drive-share-dialog";
+import { useUnsavedChangesWarning } from "@/lib/use-unsaved-changes-warning";
 import {
   OfficeVersionHistoryPanel,
   type OfficeVersionRecord,
@@ -342,6 +343,7 @@ export function NativePresentationEditor({
   const [presentSlideIndex, setPresentSlideIndex] = useState(0);
   const [syncStatus, setSyncStatus] = useState<NativePresentationSyncStatus>("offline");
   const [syncErrorMessage, setSyncErrorMessage] = useState<string | null>(null);
+  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<readonly PresentationCollaborator[]>([]);
   const [activeShapeId, setActiveShapeId] = useState<string | null>(null);
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
@@ -510,14 +512,18 @@ export function NativePresentationEditor({
         // Per-slide CAS rejected our edit because another collaborator
         // changed the same slide first. The provider has already swapped
         // the local snapshot to the server's authoritative one (via
-        // onSnapshot above); we only need to keep React Query in sync.
-        // TODO(slides-ot): surface a toast so the user knows their last
-        // local change was discarded — paired with the full per-shape OT
-        // follow-up (see docs/reviews/follow-up.md).
+        // onSnapshot above). Keep React Query in sync and tell the user that
+        // their optimistic edit was replaced instead of silently discarding it.
         queryClient.setQueryData(slidesQueryKeys.deckDetail(deckId), {
           deck: frame.deck,
           slides: frame.slides,
         });
+        const conflictedSlide = frame.slides.find((slide) => slide.id === frame.slideId);
+        const title =
+          conflictedSlide === undefined ? "this slide" : `“${slideTitle(conflictedSlide.content)}”`;
+        setConflictMessage(
+          `A collaborator saved a newer version of ${title}. Your last local change was replaced; review the slide before continuing.`,
+        );
       },
       onError: (error) => {
         setSyncErrorMessage(slidesSyncErrorMessage(error));
@@ -1757,6 +1763,7 @@ export function NativePresentationEditor({
 
   return (
     <div style={EDITOR_STYLE}>
+      {slideEditor.unsavedChangesWarning}
       <style>{SLIDE_SHAPE_ANIMATION_KEYFRAMES}</style>
       <EditorAppBar
         title={deckQuery.data.deck.title}
@@ -1775,6 +1782,14 @@ export function NativePresentationEditor({
       {syncErrorMessage !== null ? (
         <div role="alert" style={SYNC_ERROR_BANNER_STYLE}>
           {syncErrorMessage}
+        </div>
+      ) : null}
+      {conflictMessage !== null ? (
+        <div role="alert" data-testid="slides-conflict-notice" style={SYNC_CONFLICT_BANNER_STYLE}>
+          <span>{conflictMessage}</span>
+          <button type="button" className="btn sm" onClick={() => setConflictMessage(null)}>
+            Dismiss
+          </button>
         </div>
       ) : null}
       <EditorWorkspace
@@ -3806,6 +3821,10 @@ function SlideShapePreview({
           <img
             src={shape.imageUrl}
             alt={shape.imageAlt ?? label}
+            width={Math.max(1, Math.round(shape.width * 10))}
+            height={Math.max(1, Math.round(shape.height * 10))}
+            loading="lazy"
+            decoding="async"
             style={imageShapeStyle(shape)}
             draggable={false}
           />
@@ -3971,6 +3990,7 @@ function useSlideEditorController(
   readonly transitionPreviewRun: number;
   readonly previewingTransition: boolean;
   readonly setPreviewingTransition: (value: boolean) => void;
+  readonly unsavedChangesWarning: ReactNode;
 } {
   const previewRef = useRef<HTMLDivElement | null>(null);
   const mediaTrimPreviewCleanupRef = useRef<(() => void) | null>(null);
@@ -3994,6 +4014,14 @@ function useSlideEditorController(
   const [previewingTransition, setPreviewingTransition] = useState(false);
   const [shapeClipboard, setShapeClipboard] = useState<SlideShape | null>(() =>
     readStoredSlideShapeClipboard(),
+  );
+  const hasUnsavedSlideDraft =
+    slide !== null &&
+    draftSlideId === slide.id &&
+    !slideDraftsEqual(draft, draftFromSlide(slide.content, slide.speakerNotes));
+  const unsavedChangesWarning = useUnsavedChangesWarning(
+    hasUnsavedSlideDraft,
+    "presentation editor",
   );
 
   // Reset draft whenever the active slide changes (by id) -- but not when the
@@ -4529,6 +4557,7 @@ function useSlideEditorController(
     transitionPreviewRun,
     previewingTransition,
     setPreviewingTransition,
+    unsavedChangesWarning,
   };
 }
 
@@ -7800,6 +7829,19 @@ const SYNC_ERROR_BANNER_STYLE = {
   borderBottom: "1px solid color-mix(in srgb, var(--danger) 26%, transparent)",
   background: "color-mix(in srgb, var(--danger) 10%, var(--surface))",
   color: "var(--danger)",
+  fontSize: "var(--text-caption)",
+  lineHeight: 1.35,
+} satisfies CSSProperties;
+
+const SYNC_CONFLICT_BANNER_STYLE = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: "8px 16px",
+  borderBottom: "1px solid color-mix(in srgb, var(--warning) 34%, transparent)",
+  background: "color-mix(in srgb, var(--warning) 12%, var(--surface))",
+  color: "var(--text)",
   fontSize: "var(--text-caption)",
   lineHeight: 1.35,
 } satisfies CSSProperties;

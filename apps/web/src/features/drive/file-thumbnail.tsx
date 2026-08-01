@@ -94,7 +94,10 @@ function previewContent(
         <img
           src={src}
           alt=""
+          width={640}
+          height={480}
           loading="lazy"
+          decoding="async"
           onError={(event) => {
             event.currentTarget.style.display = "none";
           }}
@@ -255,10 +258,7 @@ function usePreviewVisibility(ref: React.RefObject<HTMLElement | null>): boolean
   return visible;
 }
 
-function runBoundedThumbnailLoad<T>(
-  signal: AbortSignal,
-  task: () => Promise<T>,
-): Promise<T> {
+function runBoundedThumbnailLoad<T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const job: ThumbnailLoadJob = {
       run: () => {
@@ -267,9 +267,7 @@ function runBoundedThumbnailLoad<T>(
           reject(abortError());
           return;
         }
-        task()
-          .then(resolve, reject)
-          .finally(completeThumbnailLoad);
+        task().then(resolve, reject).finally(completeThumbnailLoad);
       },
     };
 
@@ -592,11 +590,7 @@ function extractTableRows(document: Document): readonly (readonly string[])[] {
   }
   return [...table.querySelectorAll("tr")]
     .slice(0, 9)
-    .map((row) =>
-      [...row.querySelectorAll("th,td")]
-        .slice(0, 6)
-        .map(textFromNode),
-    )
+    .map((row) => [...row.querySelectorAll("th,td")].slice(0, 6).map(textFromNode))
     .filter((row) => row.some((cell) => cell.length > 0));
 }
 
@@ -835,7 +829,10 @@ function PdfFirstPageThumbnail({
         <img
           src={dataUrl}
           alt=""
+          width={640}
+          height={480}
           loading="lazy"
+          decoding="async"
           aria-label={`Rendered first page of ${name}`}
           style={{
             position: "absolute",

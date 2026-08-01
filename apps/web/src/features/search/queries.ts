@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { searchGlobal, type GlobalSearchInput } from "./api";
 
 export const globalSearchQueryKeys = {
@@ -19,4 +19,11 @@ export function globalSearchQueryOptions(input: GlobalSearchInput) {
     throwOnError: false,
     staleTime: 15_000,
   });
+}
+
+export function invalidateGlobalSearch(
+  queryClient: QueryClient,
+  input: GlobalSearchInput,
+): Promise<void> {
+  return queryClient.invalidateQueries({ queryKey: globalSearchQueryKeys.query(input) });
 }

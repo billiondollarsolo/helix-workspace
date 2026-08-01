@@ -4,13 +4,30 @@
 
 import { createContext, useContext } from "react";
 
+export const SETTINGS_SECTION_IDS = [
+  "profile",
+  "appearance",
+  "language",
+  "notify",
+  "signature",
+  "ai",
+  "security",
+  "shortcuts",
+] as const;
+
+export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
+
+export function isSettingsSectionId(value: unknown): value is SettingsSectionId {
+  return typeof value === "string" && (SETTINGS_SECTION_IDS as readonly string[]).includes(value);
+}
+
 export interface ShellOverlayApi {
   /** Open the notifications panel. */
   openNotifications: () => void;
   /** Open the ⌘K command palette. */
   openPalette: () => void;
   /** Open the full-screen settings page. */
-  openSettings: () => void;
+  openSettings: (section?: SettingsSectionId) => void;
 }
 
 export const ShellOverlayContext = createContext<ShellOverlayApi | null>(null);

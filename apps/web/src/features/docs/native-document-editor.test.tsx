@@ -44,6 +44,22 @@ import {
   type NativeDocumentCommandEventDetail,
 } from "./native-document-commands";
 
+const useBlockerMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    status: "idle" as const,
+    current: undefined,
+    next: undefined,
+    action: undefined,
+    proceed: undefined,
+    reset: undefined,
+  })),
+);
+
+vi.mock("@tanstack/react-router", async () => ({
+  ...(await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router")),
+  useBlocker: useBlockerMock,
+}));
+
 const collaborationMockState = vi.hoisted(() => ({
   latestDocument: null as Y.Doc | null,
 }));
@@ -1434,6 +1450,9 @@ describe("NativeDocumentEditor find and replace", () => {
       container.querySelector('[data-testid="native-document-editor-status"]')?.textContent,
     ).toBe("Recovered local changes");
     expect(onRecoveryStatusChange).toHaveBeenCalledWith(true);
+    expect(useBlockerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ disabled: false, enableBeforeUnload: true }),
+    );
 
     remountFreshEditor({ onRecoveryStatusChange });
     await settle();
@@ -1455,6 +1474,9 @@ describe("NativeDocumentEditor find and replace", () => {
 
     expect(window.localStorage.getItem(recoveryKey)).toBeNull();
     expect(latestNativeDocumentYDoc().getText("recovery").toJSON()).toBe("Unsaved docs story");
+    expect(useBlockerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ disabled: true, enableBeforeUnload: false }),
+    );
   });
 
   function render(

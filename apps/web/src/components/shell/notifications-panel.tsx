@@ -5,7 +5,7 @@
 
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icons, type IconComponent } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import {
@@ -26,14 +26,14 @@ type NotificationKind =
   | "system";
 
 const NOTIF_ICONS: Record<NotificationKind, { Icon: IconComponent; bg: string }> = {
-  mention:   { Icon: Icons.Comment,  bg: "#7c3aed" },
-  share:     { Icon: Icons.Drive,    bg: "#7c3aed" },
-  comment:   { Icon: Icons.Comment,  bg: "#0891b2" },
-  calendar:  { Icon: Icons.Calendar, bg: "#ea580c" },
-  dm:        { Icon: Icons.Chat,     bg: "#db2777" },
-  approval:  { Icon: Icons.Shield,   bg: "#dc2626" },
-  recording: { Icon: Icons.Drive,    bg: "#dc2626" },
-  system:    { Icon: Icons.Bell,     bg: "#475569" },
+  mention: { Icon: Icons.Comment, bg: "#7c3aed" },
+  share: { Icon: Icons.Drive, bg: "#7c3aed" },
+  comment: { Icon: Icons.Comment, bg: "#0891b2" },
+  calendar: { Icon: Icons.Calendar, bg: "#ea580c" },
+  dm: { Icon: Icons.Chat, bg: "#db2777" },
+  approval: { Icon: Icons.Shield, bg: "#dc2626" },
+  recording: { Icon: Icons.Drive, bg: "#dc2626" },
+  system: { Icon: Icons.Bell, bg: "#475569" },
 };
 
 /** Map server-side verbs to the icon kind and the in-app route to open. */
@@ -61,13 +61,36 @@ function routeForNotification(item: NotificationItem): string | null {
   return null;
 }
 
-function relativeTime(iso: string): string {
-  const created = new Date(iso).getTime();
-  const seconds = Math.max(0, (Date.now() - created) / 1000);
-  if (seconds < 60) return `${Math.floor(seconds)}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86_400)}d`;
+export function formatRelativeNotificationTime(
+  iso: string,
+  now = Date.now(),
+  locales?: Intl.LocalesArgument,
+): { readonly relative: string; readonly absolute: string } {
+  const created = new Date(iso);
+  const createdAt = created.getTime();
+  if (!Number.isFinite(createdAt)) {
+    return { relative: "Unknown time", absolute: "Unknown time" };
+  }
+  const elapsed = createdAt - now;
+  const absoluteElapsed = Math.abs(elapsed);
+  const [unit, divisor] =
+    absoluteElapsed < 60_000
+      ? (["second", 1_000] as const)
+      : absoluteElapsed < 3_600_000
+        ? (["minute", 60_000] as const)
+        : absoluteElapsed < 86_400_000
+          ? (["hour", 3_600_000] as const)
+          : (["day", 86_400_000] as const);
+  return {
+    relative: new Intl.RelativeTimeFormat(locales, { numeric: "auto" }).format(
+      Math.round(elapsed / divisor),
+      unit,
+    ),
+    absolute: new Intl.DateTimeFormat(locales, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(created),
+  };
 }
 
 export interface NotificationsPanelProps {
@@ -77,18 +100,35 @@ export interface NotificationsPanelProps {
 
 export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
   const navigate = useNavigate();
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const [filter, setFilter] = useState<"all" | "unread">("all");
-  const { data, isLoading, isError } = useQuery(notificationsListQueryOptions(false));
+  const { data, isLoading, isError, isFetching, refetch } = useQuery(
+    notificationsListQueryOptions(false),
+  );
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
 
   useEffect(() => {
     if (!open) return;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        panelRef.current?.querySelector<HTMLElement>("button:not([disabled])")?.focus();
+      }
+    });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("keydown", onKeyDown);
+      if (previousFocus?.isConnected === true) {
+        previousFocus.focus();
+      }
+    };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -103,6 +143,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
 
   return (
     <div
+      ref={panelRef}
       onClick={(event) => event.stopPropagation()}
       role="dialog"
       aria-label="Notifications"
@@ -140,10 +181,14 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
           Mark all read
         </button>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
-          <Icons.X />
+          <span aria-hidden="true">
+            <Icons.X />
+          </span>
         </button>
       </div>
       <div
+        role="tablist"
+        aria-label="Notification filters"
         style={{
           display: "flex",
           gap: 2,
@@ -155,6 +200,10 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
           <button
             key={tab.id}
             type="button"
+            id={`notifications-tab-${tab.id}`}
+            role="tab"
+            aria-selected={filter === tab.id}
+            aria-controls="notifications-results"
             onClick={() => setFilter(tab.id)}
             className={filter === tab.id ? "tab active" : "tab"}
             style={{ height: 32, fontSize: "var(--text-meta)" }}
@@ -163,16 +212,35 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
           </button>
         ))}
       </div>
-      <div style={{ overflowY: "auto", flex: 1 }}>
+      <div
+        id="notifications-results"
+        role="tabpanel"
+        aria-labelledby={`notifications-tab-${filter}`}
+        tabIndex={0}
+        style={{ overflowY: "auto", flex: 1 }}
+      >
         {isLoading ? (
-          <div className="empty" style={{ padding: 32 }}>
-            <Icons.Bell />
+          <div className="empty" role="status" aria-live="polite" style={{ padding: 32 }}>
+            <span aria-hidden="true">
+              <Icons.Bell />
+            </span>
             <div>Loading…</div>
           </div>
         ) : isError ? (
-          <div className="empty" style={{ padding: 32, color: "var(--danger)" }}>
-            <Icons.Bell />
-            <div>Could not load notifications.</div>
+          <div className="empty" role="alert" style={{ padding: 32, color: "var(--danger)" }}>
+            <span aria-hidden="true">
+              <Icons.Bell />
+            </span>
+            <div>Could not load notifications. Check your connection and try again.</div>
+            <button
+              type="button"
+              className="btn sm"
+              disabled={isFetching}
+              aria-busy={isFetching}
+              onClick={() => void refetch()}
+            >
+              {isFetching ? "Retrying…" : "Retry"}
+            </button>
           </div>
         ) : null}
         {items.map((notification) => {
@@ -180,6 +248,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
           const meta = NOTIF_ICONS[kind];
           const { Icon } = meta;
           const route = routeForNotification(notification);
+          const timestamp = formatRelativeNotificationTime(notification.createdAt);
           return (
             <button
               key={notification.id}
@@ -193,26 +262,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
                 }
                 onClose();
               }}
-              style={{
-                display: "flex",
-                gap: 10,
-                padding: "10px 14px",
-                width: "100%",
-                textAlign: "left",
-                borderBottom: "1px solid var(--border)",
-                cursor: "pointer",
-                background: notification.unread ? "var(--accent-soft)" : "transparent",
-              }}
-              onMouseEnter={(event) => {
-                event.currentTarget.style.background = notification.unread
-                  ? "var(--accent-soft)"
-                  : "var(--hover)";
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.background = notification.unread
-                  ? "var(--accent-soft)"
-                  : "transparent";
-              }}
+              className={`notification-row${notification.unread ? " unread" : ""}`}
             >
               <div style={{ position: "relative", flexShrink: 0 }}>
                 <Avatar name={notification.summary} size={32} />
@@ -231,7 +281,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
                     border: "2px solid var(--surface)",
                   }}
                 >
-                  <span style={{ display: "block", transform: "scale(0.55)" }}>
+                  <span aria-hidden="true" style={{ display: "block", transform: "scale(0.55)" }}>
                     <Icon />
                   </span>
                 </div>
@@ -256,9 +306,18 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
                     {notification.body}
                   </div>
                 ) : null}
-                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}>
-                  {relativeTime(notification.createdAt)} ago
-                </div>
+                <time
+                  dateTime={notification.createdAt}
+                  title={timestamp.absolute}
+                  style={{
+                    display: "block",
+                    fontSize: "var(--text-caption)",
+                    color: "var(--text-3)",
+                    marginTop: 4,
+                  }}
+                >
+                  {timestamp.relative}
+                </time>
               </div>
               {notification.unread ? (
                 <div
@@ -270,6 +329,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
                     flexShrink: 0,
                     alignSelf: "center",
                   }}
+                  aria-hidden="true"
                 />
               ) : null}
             </button>
@@ -277,7 +337,9 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
         })}
         {!isLoading && !isError && items.length === 0 ? (
           <div className="empty" style={{ padding: 32 }}>
-            <Icons.Bell />
+            <span aria-hidden="true">
+              <Icons.Bell />
+            </span>
             <div>You&apos;re all caught up</div>
           </div>
         ) : null}

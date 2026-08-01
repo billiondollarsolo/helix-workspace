@@ -285,6 +285,11 @@ describe("DriveShell", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("Engineering");
     expect(text).toContain("Roadmap.docx");
+    const renderedFile = container.querySelector(".drive-file-card, .drive-file-row");
+    expect(
+      renderedFile?.classList.contains("render-contained-card") === true ||
+        renderedFile?.classList.contains("render-contained-list-item") === true,
+    ).toBe(true);
     expect(toolCalls.some((call) => call.url === "/api/tools/drive.list")).toBe(true);
   });
 

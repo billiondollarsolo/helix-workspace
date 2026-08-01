@@ -66,6 +66,7 @@ export function ImportedImageRenderer({ image, objectId, fileName }: ImportedIma
           <img
             src={url}
             alt={fileName ?? ""}
+            decoding="async"
             style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
           />
         ) : null}

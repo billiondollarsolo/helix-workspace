@@ -18,10 +18,13 @@
 import "./mail-shell.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Icons, type IconName } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import { SurfaceFrame } from "@/components/shell";
+import { Dialog } from "@/components/ui/helix-dialog";
+import { useUnsavedChangesWarning } from "@/lib/use-unsaved-changes-warning";
 import {
   applyMailLabels,
   archiveMailThread,
@@ -52,6 +55,14 @@ import {
   mailThreadsQueryOptions,
 } from "./queries";
 import { useMailRealtime } from "./use-mail-realtime";
+import {
+  clearMailComposeRecovery,
+  hasMailComposeContent,
+  invalidRecipientTokens,
+  readMailComposeRecovery,
+  recipientTokens,
+  writeMailComposeRecovery,
+} from "./mail-compose-recovery";
 
 function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -237,7 +248,7 @@ function ThreadRow({
 
   return (
     <div
-      className="mail-thread-row"
+      className="mail-thread-row render-contained-list-item"
       role="button"
       tabIndex={0}
       onClick={onClick}
@@ -1742,11 +1753,7 @@ interface ComposeProps {
 
 /** Parses a comma/semicolon-separated recipient string into addresses. */
 function parseRecipients(raw: string): MailSendInput["to"] {
-  return raw
-    .split(/[,;]/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((address) => ({ address }));
+  return recipientTokens(raw).map((address) => ({ address }));
 }
 
 /**
@@ -1775,14 +1782,18 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 function Compose({ onClose, onSent }: ComposeProps) {
-  const [to, setTo] = useState("");
-  const [cc, setCc] = useState("");
-  const [bcc, setBcc] = useState("");
-  const [showCc, setShowCc] = useState(false);
-  const [showBcc, setShowBcc] = useState(false);
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
-  const [scheduling, setScheduling] = useState(false);
+  const [recoveredDraft] = useState(readMailComposeRecovery);
+  const [to, setTo] = useState(recoveredDraft?.to ?? "");
+  const [cc, setCc] = useState(recoveredDraft?.cc ?? "");
+  const [bcc, setBcc] = useState(recoveredDraft?.bcc ?? "");
+  const [showCc, setShowCc] = useState((recoveredDraft?.cc.length ?? 0) > 0);
+  const [showBcc, setShowBcc] = useState((recoveredDraft?.bcc.length ?? 0) > 0);
+  const [subject, setSubject] = useState(recoveredDraft?.subject ?? "");
+  const [body, setBody] = useState(recoveredDraft?.body ?? "");
+  const [showRecoveryNotice, setShowRecoveryNotice] = useState(recoveredDraft !== null);
+  const [minimized, setMinimized] = useState(false);
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
+  const [recipientError, setRecipientError] = useState<string | null>(null);
   const [sendFailed, setSendFailed] = useState(false);
   const [attachments, setAttachments] = useState<readonly MailAttachment[]>([]);
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -1797,6 +1808,40 @@ function Compose({ onClose, onSent }: ComposeProps) {
   const dragDepth = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const toInputRef = useRef<HTMLInputElement>(null);
+  const ccInputRef = useRef<HTMLInputElement>(null);
+  const bccInputRef = useRef<HTMLInputElement>(null);
+  const skipRecoveryFlushRef = useRef(false);
+  const hasDraft = hasMailComposeContent({ to, cc, bcc, subject, body }) || attachments.length > 0;
+  const recoveryDebouncer = useDebouncer(
+    (draft: { to: string; cc: string; bcc: string; subject: string; body: string }) => {
+      writeMailComposeRecovery(draft);
+    },
+    {
+      wait: 400,
+      onUnmount: (debouncer) => {
+        if (skipRecoveryFlushRef.current) {
+          debouncer.cancel();
+        } else {
+          debouncer.flush();
+        }
+      },
+    },
+  );
+  const unsavedChangesWarning = useUnsavedChangesWarning(hasDraft, "unsent message", {
+    message:
+      "This message is saved on this device. You can leave now and recover it the next time you open Compose.",
+    leaveLabel: "Leave and keep draft",
+  });
+
+  useEffect(() => {
+    if (hasDraft) {
+      recoveryDebouncer.maybeExecute({ to, cc, bcc, subject, body });
+    } else {
+      recoveryDebouncer.cancel();
+      clearMailComposeRecovery();
+    }
+  }, [bcc, body, cc, hasDraft, recoveryDebouncer, subject, to]);
 
   const sendMutation = useMutation({
     mutationFn: (input: MailSendInput) => sendMail(input),
@@ -1807,6 +1852,9 @@ function Compose({ onClose, onSent }: ComposeProps) {
       setSendFailed(true);
     },
     onSuccess: (result: MailSendResult) => {
+      skipRecoveryFlushRef.current = true;
+      recoveryDebouncer.cancel();
+      clearMailComposeRecovery();
       onSent();
       const undoUntil = result.undoUntil;
       const outboundId = result.id ?? result.outboundId;
@@ -1860,12 +1908,30 @@ function Compose({ onClose, onSent }: ComposeProps) {
   }, [bcc, body, cc, draftId, subject, to]);
 
   const recipients = parseRecipients(to);
-  const canSend = recipients.length > 0 && !sendMutation.isPending;
+  const canSend = !sendMutation.isPending;
 
   const handleSend = useCallback(() => {
     if (recipients.length === 0) {
+      setRecipientError("Enter at least one recipient email address.");
+      toInputRef.current?.focus();
       return;
     }
+    const invalidGroups = [
+      { label: "To", invalid: invalidRecipientTokens(to), ref: toInputRef },
+      { label: "Cc", invalid: invalidRecipientTokens(cc), ref: ccInputRef },
+      { label: "Bcc", invalid: invalidRecipientTokens(bcc), ref: bccInputRef },
+    ].filter((group) => group.invalid.length > 0);
+    const firstInvalid = invalidGroups[0];
+    if (firstInvalid !== undefined) {
+      setRecipientError(
+        `${firstInvalid.label} contains invalid email ${firstInvalid.invalid.length === 1 ? "address" : "addresses"}: ${firstInvalid.invalid.join(", ")}.`,
+      );
+      if (firstInvalid.label === "Cc") setShowCc(true);
+      if (firstInvalid.label === "Bcc") setShowBcc(true);
+      queueMicrotask(() => firstInvalid.ref.current?.focus());
+      return;
+    }
+    setRecipientError(null);
     sendMutation.mutate({
       to: recipients,
       cc: parseRecipients(cc),
@@ -1874,7 +1940,23 @@ function Compose({ onClose, onSent }: ComposeProps) {
       bodyText: body,
       attachments: attachments.length > 0 ? attachments : undefined,
     });
-  }, [attachments, bcc, body, cc, recipients, sendMutation, subject]);
+  }, [attachments, bcc, body, cc, recipients, sendMutation, subject, to]);
+
+  const requestClose = useCallback(() => {
+    if (hasDraft) {
+      setConfirmDiscardOpen(true);
+      return;
+    }
+    onClose();
+  }, [hasDraft, onClose]);
+
+  const discardDraft = useCallback(() => {
+    skipRecoveryFlushRef.current = true;
+    recoveryDebouncer.cancel();
+    clearMailComposeRecovery();
+    setConfirmDiscardOpen(false);
+    onClose();
+  }, [onClose, recoveryDebouncer]);
 
   /** Convert a FileList (from picker or drop) into MailAttachment records and
    *  append them to the current attachment list. */
@@ -1948,7 +2030,10 @@ function Compose({ onClose, onSent }: ComposeProps) {
 
   return (
     <div
-      className="compose compose-drop-root"
+      className={cx("compose compose-drop-root", minimized && "compose-minimized")}
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="mail-compose-title"
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -1970,305 +2055,400 @@ function Compose({ onClose, onSent }: ComposeProps) {
         onChange={handleFileInputChange}
       />
       <div className="compose-header">
-        <span>New message</span>
+        <span id="mail-compose-title" className="truncate">
+          {subject.trim().length > 0 ? subject : "New message"}
+        </span>
         <div style={{ display: "flex", gap: 2 }}>
-          <button type="button" className="icon-btn" aria-label="Minimize">
-            <Icons.ChevronDown />
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label={minimized ? "Expand compose" : "Minimize compose"}
+            aria-expanded={!minimized}
+            onClick={() => setMinimized((value) => !value)}
+          >
+            <Icons.ChevronDown style={{ transform: minimized ? "rotate(180deg)" : undefined }} />
           </button>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Close compose"
+            onClick={requestClose}
+          >
             <Icons.X />
           </button>
         </div>
       </div>
-      <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "4px 0",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
-            To
-          </span>
-          <input
-            value={to}
-            onChange={(event) => {
-              setTo(event.target.value);
-            }}
-            aria-label="To"
-            style={{
-              flex: 1,
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              fontSize: "var(--text-body-sm)",
-            }}
-          />
-          <button
-            type="button"
-            aria-pressed={showCc}
-            onClick={() => {
-              setShowCc((value) => !value);
-            }}
-            style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
-          >
-            Cc
-          </button>
-          <span style={{ margin: "0 6px", color: "var(--text-3)" }}>·</span>
-          <button
-            type="button"
-            aria-pressed={showBcc}
-            onClick={() => {
-              setShowBcc((value) => !value);
-            }}
-            style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
-          >
-            Bcc
-          </button>
-        </div>
-        {showCc && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              padding: "4px 0",
-              borderBottom: "1px solid var(--border)",
-            }}
-          >
-            <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
-              Cc
-            </span>
-            <input
-              value={cc}
-              onChange={(event) => {
-                setCc(event.target.value);
-              }}
-              aria-label="Cc"
-              style={{
-                flex: 1,
-                border: "none",
-                outline: "none",
-                background: "transparent",
-                fontSize: "var(--text-body-sm)",
-              }}
-            />
-          </div>
-        )}
-        {showBcc && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              padding: "4px 0",
-              borderBottom: "1px solid var(--border)",
-            }}
-          >
-            <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
-              Bcc
-            </span>
-            <input
-              value={bcc}
-              onChange={(event) => {
-                setBcc(event.target.value);
-              }}
-              aria-label="Bcc"
-              style={{
-                flex: 1,
-                border: "none",
-                outline: "none",
-                background: "transparent",
-                fontSize: "var(--text-body-sm)",
-              }}
-            />
-          </div>
-        )}
-        <div style={{ padding: "4px 0" }}>
-          <input
-            value={subject}
-            onChange={(event) => {
-              setSubject(event.target.value);
-            }}
-            onBlur={saveDraft}
-            placeholder="Subject"
-            aria-label="Subject"
-            style={{
-              width: "100%",
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              fontSize: "var(--text-body-sm)",
-              fontWeight: 500,
-            }}
-          />
-        </div>
-      </div>
-      <textarea
-        value={body}
-        onChange={(event) => {
-          setBody(event.target.value);
-        }}
-        onBlur={saveDraft}
-        placeholder="Write your message…"
-        aria-label="Message body"
-        style={{
-          width: "100%",
-          minHeight: 200,
-          padding: 14,
-          border: "none",
-          outline: "none",
-          background: "transparent",
-          fontSize: "var(--text-body-sm)",
-          lineHeight: 1.55,
-          resize: "none",
-          fontFamily: "inherit",
-        }}
-      />
-      {attachments.length > 0 && (
-        <div className="compose-attachments" aria-label="Attached files">
-          {attachments.map((attachment, index) => (
-            <div
-              key={`${attachment.filename}-${String(index)}`}
-              className="compose-attachment-chip"
-            >
-              <Icons.Paperclip />
-              <span title={attachment.filename}>{attachment.filename}</span>
+      {minimized ? null : (
+        <>
+          {showRecoveryNotice ? (
+            <div className="compose-recovery" role="status" aria-live="polite">
+              <span>Recovered your unsent message from this device.</span>
               <button
                 type="button"
-                aria-label={`Remove attachment ${attachment.filename}`}
-                onClick={() => {
-                  removeAttachment(index);
-                }}
+                className="icon-btn"
+                aria-label="Dismiss recovery notice"
+                onClick={() => setShowRecoveryNotice(false)}
               >
-                <Icons.X size={10} />
+                <Icons.X />
               </button>
             </div>
-          ))}
-        </div>
-      )}
-      {undo !== null && Date.now() < undo.untilMs && (
-        <div
-          role="status"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            margin: "0 14px 8px",
-            padding: "8px 12px",
-            borderRadius: 8,
-            background: "var(--surface-2)",
-            fontSize: "var(--text-body-sm)",
-          }}
-        >
-          <span>Message queued — you can undo send for a few seconds.</span>
-          <button
-            type="button"
-            onClick={() => {
-              cancelMutation.mutate(undo.outboundId);
+          ) : null}
+          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                padding: "4px 0",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
+                To
+              </span>
+              <input
+                ref={toInputRef}
+                name="mail-compose-to"
+                autoComplete="email"
+                inputMode="email"
+                spellCheck={false}
+                value={to}
+                onChange={(event) => {
+                  setTo(event.target.value);
+                  setRecipientError(null);
+                }}
+                aria-label="To"
+                aria-invalid={recipientError !== null}
+                aria-describedby={
+                  recipientError === null ? undefined : "mail-compose-recipient-error"
+                }
+                style={{
+                  flex: 1,
+                  border: "none",
+                  outline: "none",
+                  background: "transparent",
+                  fontSize: "var(--text-body-sm)",
+                }}
+              />
+              <button
+                type="button"
+                aria-pressed={showCc}
+                onClick={() => {
+                  setShowCc((value) => !value);
+                }}
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
+              >
+                Cc
+              </button>
+              <span style={{ margin: "0 6px", color: "var(--text-3)" }}>·</span>
+              <button
+                type="button"
+                aria-pressed={showBcc}
+                onClick={() => {
+                  setShowBcc((value) => !value);
+                }}
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
+              >
+                Bcc
+              </button>
+            </div>
+            {showCc && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "4px 0",
+                  borderBottom: "1px solid var(--border)",
+                }}
+              >
+                <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
+                  Cc
+                </span>
+                <input
+                  ref={ccInputRef}
+                  name="mail-compose-cc"
+                  autoComplete="email"
+                  inputMode="email"
+                  spellCheck={false}
+                  value={cc}
+                  onChange={(event) => {
+                    setCc(event.target.value);
+                    setRecipientError(null);
+                  }}
+                  aria-label="Cc"
+                  aria-invalid={recipientError !== null}
+                  aria-describedby={
+                    recipientError === null ? undefined : "mail-compose-recipient-error"
+                  }
+                  style={{
+                    flex: 1,
+                    border: "none",
+                    outline: "none",
+                    background: "transparent",
+                    fontSize: "var(--text-body-sm)",
+                  }}
+                />
+              </div>
+            )}
+            {showBcc && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "4px 0",
+                  borderBottom: "1px solid var(--border)",
+                }}
+              >
+                <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
+                  Bcc
+                </span>
+                <input
+                  ref={bccInputRef}
+                  name="mail-compose-bcc"
+                  autoComplete="email"
+                  inputMode="email"
+                  spellCheck={false}
+                  value={bcc}
+                  onChange={(event) => {
+                    setBcc(event.target.value);
+                    setRecipientError(null);
+                  }}
+                  aria-label="Bcc"
+                  aria-invalid={recipientError !== null}
+                  aria-describedby={
+                    recipientError === null ? undefined : "mail-compose-recipient-error"
+                  }
+                  style={{
+                    flex: 1,
+                    border: "none",
+                    outline: "none",
+                    background: "transparent",
+                    fontSize: "var(--text-body-sm)",
+                  }}
+                />
+              </div>
+            )}
+            <div style={{ padding: "4px 0" }}>
+              <input
+                name="mail-compose-subject"
+                autoComplete="off"
+                value={subject}
+                onChange={(event) => {
+                  setSubject(event.target.value);
+                }}
+                onBlur={saveDraft}
+                placeholder="Subject"
+                aria-label="Subject"
+                style={{
+                  width: "100%",
+                  border: "none",
+                  outline: "none",
+                  background: "transparent",
+                  fontSize: "var(--text-body-sm)",
+                  fontWeight: 500,
+                }}
+              />
+            </div>
+          </div>
+          <textarea
+            name="mail-compose-body"
+            autoComplete="off"
+            value={body}
+            onChange={(event) => {
+              setBody(event.target.value);
             }}
-            disabled={cancelMutation.isPending}
-          >
-            Undo
-          </button>
-        </div>
-      )}
-      {sendFailed && (
-        <div
-          style={{ margin: "0 14px 8px", fontSize: "var(--text-caption)", color: "var(--danger)" }}
-        >
-          Could not send message. Try again.
-        </div>
-      )}
-      {scheduling && (
-        <div
-          style={{
-            margin: "0 14px 8px",
-            padding: 10,
-            background: "var(--accent-soft)",
-            borderRadius: 6,
-            border: "1px solid var(--accent-soft-border)",
-            fontSize: "var(--text-meta)",
-          }}
-        >
-          <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--accent)" }}>
-            Schedule send
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" className="btn sm">
-              Tomorrow 8:00 AM
-            </button>
-            <button type="button" className="btn sm">
-              Monday 8:00 AM
-            </button>
-            <button type="button" className="btn sm">
-              Pick date &amp; time
-            </button>
-          </div>
-        </div>
-      )}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          padding: "8px 12px",
-          borderTop: "1px solid var(--border)",
-        }}
-      >
-        <div style={{ display: "flex" }}>
-          <button type="button" className="btn primary" disabled={!canSend} onClick={handleSend}>
-            <Icons.Send /> {sendMutation.isPending ? "Sending…" : "Send"}
-          </button>
-          <button
-            type="button"
-            className="btn primary icon"
-            aria-label="Schedule send"
+            onBlur={saveDraft}
+            placeholder="Write your message…"
+            aria-label="Message body"
             style={{
-              borderLeft: "1px solid rgba(255,255,255,0.2)",
-              marginLeft: 1,
-              borderRadius: "0 6px 6px 0",
+              width: "100%",
+              minHeight: 200,
+              padding: 14,
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              fontSize: "var(--text-body-sm)",
+              lineHeight: 1.55,
+              resize: "none",
+              fontFamily: "inherit",
             }}
-            onClick={() => {
-              setScheduling((value) => !value);
+          />
+          {recipientError === null ? null : (
+            <p id="mail-compose-recipient-error" className="compose-inline-error" role="alert">
+              {recipientError}
+            </p>
+          )}
+          {attachments.length > 0 && (
+            <div className="compose-attachments" aria-label="Attached files">
+              {attachments.map((attachment, index) => (
+                <div
+                  key={`${attachment.filename}-${String(index)}`}
+                  className="compose-attachment-chip"
+                >
+                  <Icons.Paperclip />
+                  <span title={attachment.filename}>{attachment.filename}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove attachment ${attachment.filename}`}
+                    onClick={() => {
+                      removeAttachment(index);
+                    }}
+                  >
+                    <Icons.X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {undo !== null && Date.now() < undo.untilMs && (
+            <div
+              role="status"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                margin: "0 14px 8px",
+                padding: "8px 12px",
+                borderRadius: 8,
+                background: "var(--surface-2)",
+                fontSize: "var(--text-body-sm)",
+              }}
+            >
+              <span>Message queued — you can undo send for a few seconds.</span>
+              <button
+                type="button"
+                onClick={() => {
+                  cancelMutation.mutate(undo.outboundId);
+                }}
+                disabled={cancelMutation.isPending}
+              >
+                Undo
+              </button>
+            </div>
+          )}
+          {sendFailed && (
+            <div
+              style={{
+                margin: "0 14px 8px",
+                fontSize: "var(--text-caption)",
+                color: "var(--danger)",
+              }}
+            >
+              Could not send message. Try again.
+            </div>
+          )}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "8px 12px",
+              borderTop: "1px solid var(--border)",
             }}
           >
-            <Icons.ChevronDown />
-          </button>
-        </div>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="Attach"
-          onClick={() => {
-            fileInputRef.current?.click();
-          }}
+            <div style={{ display: "flex" }}>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!canSend}
+                onClick={handleSend}
+              >
+                <Icons.Send /> {sendMutation.isPending ? "Sending…" : "Send"}
+              </button>
+              <button
+                type="button"
+                className="btn primary icon"
+                aria-label="Schedule send unavailable"
+                aria-description="Scheduled send is not connected in this build yet."
+                title="Scheduled send is not connected in this build yet."
+                disabled
+                style={{
+                  borderLeft: "1px solid rgba(255,255,255,0.2)",
+                  marginLeft: 1,
+                  borderRadius: "0 6px 6px 0",
+                }}
+              >
+                <Icons.ChevronDown />
+              </button>
+            </div>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Attach"
+              onClick={() => {
+                fileInputRef.current?.click();
+              }}
+            >
+              <Icons.Paperclip />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Insert link unavailable"
+              aria-description="Rich compose tools are not connected in this build yet."
+              title="Rich compose tools are not connected in this build yet."
+              disabled
+            >
+              <Icons.Link />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Emoji unavailable"
+              title="Emoji insertion is not connected in this build yet."
+              disabled
+            >
+              <Icons.Smile />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Insert image unavailable"
+              title="Use Attach to add an image in this build."
+              disabled
+            >
+              <Icons.Image />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="AI assist unavailable"
+              title="AI compose assistance is not connected in this build yet."
+              disabled
+            >
+              <Icons.Sparkles />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Discard draft"
+              style={{ marginLeft: "auto" }}
+              onClick={requestClose}
+            >
+              <Icons.Trash />
+            </button>
+          </div>
+        </>
+      )}
+      {unsavedChangesWarning}
+      {confirmDiscardOpen ? (
+        <Dialog
+          title="Discard this draft?"
+          onClose={() => setConfirmDiscardOpen(false)}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setConfirmDiscardOpen(false)}>
+                Keep editing
+              </button>
+              <button type="button" className="btn danger" onClick={discardDraft}>
+                Discard draft
+              </button>
+            </>
+          }
         >
-          <Icons.Paperclip />
-        </button>
-        <button type="button" className="icon-btn" aria-label="Insert link">
-          <Icons.Link />
-        </button>
-        <button type="button" className="icon-btn" aria-label="Emoji">
-          <Icons.Smile />
-        </button>
-        <button type="button" className="icon-btn" aria-label="Insert image">
-          <Icons.Image />
-        </button>
-        <button type="button" className="icon-btn" aria-label="AI assist">
-          <Icons.Sparkles />
-        </button>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="Discard draft"
-          style={{ marginLeft: "auto" }}
-          onClick={onClose}
-        >
-          <Icons.Trash />
-        </button>
-      </div>
+          <p>This permanently removes the recovered copy from this device.</p>
+        </Dialog>
+      ) : null}
     </div>
   );
 }

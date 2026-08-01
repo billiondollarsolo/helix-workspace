@@ -9,6 +9,22 @@ import { uploadDriveFile } from "@/features/drive/api";
 import type { SheetsApiCell, SheetsApiTab, SheetsDriveComment } from "./api";
 import { NativeSpreadsheetEditor, adjustSheetDecimalFormat } from "./native-spreadsheet-editor";
 
+const useBlockerMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    status: "idle" as const,
+    current: undefined,
+    next: undefined,
+    action: undefined,
+    proceed: undefined,
+    reset: undefined,
+  })),
+);
+
+vi.mock("@tanstack/react-router", async () => ({
+  ...(await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router")),
+  useBlocker: useBlockerMock,
+}));
+
 vi.mock("@/features/drive/api", () => ({
   uploadDriveFile: vi.fn(),
 }));
@@ -555,6 +571,9 @@ describe("NativeSpreadsheetEditor", () => {
     const recoveryKey = `helix.sheets.unsavedGrid.v1.${sheetId}.${tabId}`;
     expect(window.localStorage.getItem(recoveryKey)).not.toBeNull();
     expect(toolCalls.some((call) => call.url === "/api/tools/sheets.cells.update")).toBe(false);
+    expect(useBlockerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ disabled: false, enableBeforeUnload: true }),
+    );
 
     remountFreshEditor();
     await settle();
@@ -571,6 +590,9 @@ describe("NativeSpreadsheetEditor", () => {
 
     expect(input("D2").value).toBe("At risk");
     expect(window.localStorage.getItem(recoveryKey)).toBeNull();
+    expect(useBlockerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ disabled: true, enableBeforeUnload: false }),
+    );
   });
 
   it("exports native spreadsheets as ODS workbooks", async () => {
@@ -778,11 +800,14 @@ describe("NativeSpreadsheetEditor", () => {
         ],
       },
     });
-    expect(
-      container.querySelector(
-        'figure[aria-label="Embedded image Forecast photo"] img[src="/api/drive/objects/55555555-5555-4555-8555-555555555555/content"]',
-      ),
-    ).not.toBeNull();
+    const embeddedImage = container.querySelector<HTMLImageElement>(
+      'figure[aria-label="Embedded image Forecast photo"] img[src="/api/drive/objects/55555555-5555-4555-8555-555555555555/content"]',
+    );
+    expect(embeddedImage).not.toBeNull();
+    expect(embeddedImage?.width).toBe(384);
+    expect(embeddedImage?.height).toBe(256);
+    expect(embeddedImage?.getAttribute("loading")).toBe("lazy");
+    expect(embeddedImage?.getAttribute("decoding")).toBe("async");
 
     await dragEmbeddedImage("Forecast photo", { x: 348, y: 172 }, { x: 540, y: 236 });
     await settle();

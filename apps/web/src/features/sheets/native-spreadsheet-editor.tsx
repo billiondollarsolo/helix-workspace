@@ -24,6 +24,7 @@ import { Icons } from "@/components/icons";
 import { trashDriveObject, uploadDriveFile } from "@/features/drive/api";
 import { DriveShareDialog } from "@/features/drive/drive-share-dialog";
 import { driveQueryKeys } from "@/features/drive/queries";
+import { useUnsavedChangesWarning } from "@/lib/use-unsaved-changes-warning";
 import {
   OfficeVersionHistoryPanel,
   type OfficeVersionRecord,
@@ -557,6 +558,10 @@ export function NativeSpreadsheetEditor({
     readonly future: readonly SheetCellHistoryEntry[];
   }>({ past: [], future: [] });
   const [hasRecoveredGridDraft, setHasRecoveredGridDraft] = useState(false);
+  const unsavedChangesWarning = useUnsavedChangesWarning(
+    hasRecoveredGridDraft,
+    "spreadsheet editor",
+  );
   const displayGrid = useMemo(
     () => displayGridWithLocalSheetEdits(baseGrid, baseDisplayGrid, grid),
     [baseDisplayGrid, baseGrid, grid],
@@ -4674,6 +4679,7 @@ export function NativeSpreadsheetEditor({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+      {unsavedChangesWarning}
       <EditorAppBar
         title={sheetQuery.data.title}
         onBack={onBack}
@@ -7659,7 +7665,17 @@ function EmbeddedSheetImage({
       }}
       onMouseDown={(event) => onDragStart(event, image)}
     >
-      <img src={image.src} alt={image.alt} title={image.title} style={EMBEDDED_IMAGE_IMG_STYLE} />
+      <img
+        src={image.src}
+        alt={image.alt}
+        title={image.title}
+        width={Math.max(1, placement.colSpan * SHEET_CELL_WIDTH)}
+        height={Math.max(1, placement.rowSpan * SHEET_CELL_HEIGHT)}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        style={EMBEDDED_IMAGE_IMG_STYLE}
+      />
       {selected ? (
         <button
           type="button"

@@ -12,6 +12,22 @@ import {
 } from "./native-presentation-editor";
 import type { SlideShape } from "./seed";
 
+const useBlockerMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    status: "idle" as const,
+    current: undefined,
+    next: undefined,
+    action: undefined,
+    proceed: undefined,
+    reset: undefined,
+  })),
+);
+
+vi.mock("@tanstack/react-router", async () => ({
+  ...(await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router")),
+  useBlocker: useBlockerMock,
+}));
+
 const deckId = "11111111-1111-4111-8111-111111111111";
 const firstSlideId = "22222222-2222-4222-8222-222222222222";
 const secondSlideId = "33333333-3333-4333-8333-333333333333";
@@ -1235,6 +1251,10 @@ describe("NativePresentationEditor", () => {
       "/api/drive/objects/55555555-5555-4555-8555-555555555555/content",
     );
     expect(uploadedImageShape.querySelector("img")?.getAttribute("alt")).toBe("Roadmap photo");
+    expect(uploadedImageShape.querySelector("img")?.getAttribute("loading")).toBe("lazy");
+    expect(uploadedImageShape.querySelector("img")?.getAttribute("decoding")).toBe("async");
+    expect(uploadedImageShape.querySelector<HTMLImageElement>("img")?.width).toBe(300);
+    expect(uploadedImageShape.querySelector<HTMLImageElement>("img")?.height).toBe(260);
 
     await clickButton("Save slide");
     await settle();
@@ -1369,6 +1389,9 @@ describe("NativePresentationEditor", () => {
     const recoveryKey = `helix.slides.unsavedDraft.v1.${firstSlideId}`;
     expect(window.localStorage.getItem(recoveryKey)).not.toBeNull();
     expect(toolCalls.some((call) => call.url === "/api/tools/slides.slide.update")).toBe(false);
+    expect(useBlockerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ disabled: false, enableBeforeUnload: true }),
+    );
 
     remountFreshEditor();
     await settle();
@@ -1392,6 +1415,9 @@ describe("NativePresentationEditor", () => {
       },
     });
     expect(window.localStorage.getItem(recoveryKey)).toBeNull();
+    expect(useBlockerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ disabled: true, enableBeforeUnload: false }),
+    );
   });
 
   it("drops image files onto the slide canvas as Drive-backed image shapes", async () => {
@@ -2844,6 +2870,58 @@ describe("NativePresentationEditor", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       'Slides realtime save failed: column "revision" does not exist.',
     );
+  });
+
+  it("warns when a collaboration conflict replaces the last local edit", async () => {
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    render();
+    await settle();
+
+    const socket = MockWebSocket.instances.at(-1);
+    const authoritativeSlides = slides.map((candidate) =>
+      candidate.id === firstSlideId
+        ? {
+            ...candidate,
+            content: {
+              layout: "bullets" as const,
+              title: "Launch story — collaborator version",
+              items: ["Positioning", "Demo"],
+            },
+          }
+        : candidate,
+    );
+    act(() => {
+      socket?.open();
+      socket?.receive({
+        type: "ready",
+        protocol: "slides-sync",
+        deckId,
+        revision: 0,
+        deck: deck(),
+        slides,
+      });
+      socket?.receive({
+        type: "slide-conflict",
+        protocol: "slides-sync",
+        deckId,
+        operationId: "op-stale",
+        revision: 1,
+        slideId: firstSlideId,
+        currentSlideRevision: 2,
+        deck: deck(),
+        slides: authoritativeSlides,
+      });
+    });
+    await settle();
+
+    const notice = container.querySelector<HTMLElement>('[data-testid="slides-conflict-notice"]');
+    expect(notice?.textContent).toContain(
+      "A collaborator saved a newer version of “Launch story — collaborator version”.",
+    );
+    expect(notice?.textContent).toContain("Your last local change was replaced");
+
+    await clickButton("Dismiss");
+    expect(container.querySelector('[data-testid="slides-conflict-notice"]')).toBeNull();
   });
 
   it("falls back to REST slide saves when realtime send fails", async () => {

@@ -48,8 +48,8 @@ test.describe("/login authenticated handoff", () => {
     await expect(page.getByText("Local email/password login")).toBeVisible();
     await expect(page.getByText("Email + password")).toBeVisible();
 
-    await page.getByLabel("Email").fill(" admin@helix.local ");
-    await page.getByLabel("Password").fill("helix-admin-password");
+    await page.getByLabel("Email", { exact: true }).fill(" admin@helix.local ");
+    await page.getByLabel("Password", { exact: true }).fill("helix-admin-password");
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(page).toHaveURL(/\/mail(?:[/?#]|$)/);
@@ -95,8 +95,8 @@ test.describe("/login authenticated handoff", () => {
     });
 
     await page.goto("/login");
-    await page.getByLabel("Email").fill("admin@helix.local");
-    await page.getByLabel("Password").fill("wrong-password");
+    await page.getByLabel("Email", { exact: true }).fill("admin@helix.local");
+    await page.getByLabel("Password", { exact: true }).fill("wrong-password");
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(page.getByRole("alert")).toHaveText("Invalid email or password.");

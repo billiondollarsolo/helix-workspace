@@ -12,6 +12,7 @@
  */
 
 import { Icons } from "@/components/icons";
+import { useEffect, useId, useRef } from "react";
 import type { MeetMeetingRecord, MeetRecordingArtifactRecord } from "./api";
 
 export interface RecordingDrawerProps {
@@ -21,11 +22,58 @@ export interface RecordingDrawerProps {
 
 export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
   const artifacts = meeting.recordingArtifacts ?? [];
+  const titleId = useId();
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    queueMicrotask(() => closeButtonRef.current?.focus());
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || drawerRef.current === null) return;
+      const controls = Array.from(
+        drawerRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), video[controls], [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (controls.length === 0) {
+        event.preventDefault();
+        drawerRef.current.focus();
+        return;
+      }
+      const first = controls[0]!;
+      const last = controls[controls.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus();
+    };
+  }, [onClose]);
+
   return (
     <>
       <button
         type="button"
-        aria-label="Close recording drawer"
+        aria-hidden="true"
+        tabIndex={-1}
         onClick={onClose}
         style={{
           position: "fixed",
@@ -38,7 +86,11 @@ export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
         }}
       />
       <aside
-        aria-label={`Recordings for ${meeting.title || meeting.subject}`}
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         style={{
           position: "fixed",
           top: 0,
@@ -64,8 +116,10 @@ export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
         >
           <Icons.Video />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div
+            <h2
+              id={titleId}
               style={{
+                margin: 0,
                 fontWeight: 600,
                 fontSize: "var(--text-body-sm)",
                 color: "var(--text)",
@@ -75,7 +129,7 @@ export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
               }}
             >
               Recordings
-            </div>
+            </h2>
             <div
               style={{
                 fontSize: "var(--text-meta)",
@@ -89,6 +143,7 @@ export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
             </div>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             className="icon-btn"
             aria-label="Close"
@@ -161,6 +216,7 @@ function RecordingCard({
     >
       <div style={{ background: "#000" }}>
         <video
+          aria-label={`Recording ${String(index + 1)} of ${String(total)}`}
           controls
           preload="metadata"
           src={src}

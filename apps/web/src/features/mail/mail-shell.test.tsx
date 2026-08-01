@@ -6,12 +6,21 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { MailShell } from "./mail-shell";
+import { MAIL_COMPOSE_RECOVERY_KEY } from "./mail-compose-recovery";
 
 const navigateMock = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
   useRouter: () => ({ navigate: navigateMock }),
   useSearch: () => ({}),
+  useBlocker: () => ({
+    status: "idle",
+    current: undefined,
+    next: undefined,
+    action: undefined,
+    proceed: undefined,
+    reset: undefined,
+  }),
 }));
 
 vi.mock("@helix/sdk-web", () => ({
@@ -164,6 +173,7 @@ describe("MailShell", () => {
 
   beforeEach(() => {
     navigateMock.mockClear();
+    window.localStorage.clear();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -265,6 +275,9 @@ describe("MailShell", () => {
     expect(container.textContent).toContain("Team");
     expect(container.textContent).toContain("Q3 roadmap sign-off");
     expect(container.textContent).toContain("1–1 of 1");
+    expect(
+      container.querySelector(".mail-thread-row")?.classList.contains("render-contained-list-item"),
+    ).toBe(true);
 
     const calledTools = fetchMock.mock.calls.map((call) => call[0]);
     expect(calledTools).toContain("/api/tools/mail.folders.list");
@@ -399,7 +412,7 @@ describe("MailShell", () => {
     const sendButton = Array.from(container.querySelectorAll("button")).find(
       (candidate) => candidate.textContent?.trim() === "Send",
     );
-    expect(sendButton?.disabled).toBe(true);
+    expect(sendButton?.disabled).toBe(false);
 
     const toInput = container.querySelector('input[aria-label="To"]');
     if (!(toInput instanceof HTMLInputElement)) {
@@ -433,6 +446,97 @@ describe("MailShell", () => {
     expect(body.cc).toEqual([{ address: "ops@helix.io" }]);
     expect(body.subject).toBe("Hello");
     expect(container.textContent).not.toContain("New message");
+  });
+
+  it("validates recipients inline and focuses the first invalid field", async () => {
+    render();
+    await flush();
+    clickButtonText("Compose");
+
+    clickButtonText("Send");
+    expect(container.textContent).toContain("Enter at least one recipient email address.");
+    expect(document.activeElement).toBe(container.querySelector('input[aria-label="To"]'));
+
+    const toInput = container.querySelector('input[aria-label="To"]');
+    if (!(toInput instanceof HTMLInputElement)) throw new Error("To input not found");
+    setInputValue(toInput, "not-an-address");
+    clickButtonText("Send");
+
+    expect(container.textContent).toContain("To contains invalid email address: not-an-address.");
+    expect(toInput.getAttribute("aria-invalid")).toBe("true");
+    expect(fetchMock.mock.calls.some((call) => call[0] === "/api/tools/mail.send")).toBe(false);
+  });
+
+  it("restores a local draft, minimizes without losing it, and marks unavailable tools", async () => {
+    window.localStorage.setItem(
+      MAIL_COMPOSE_RECOVERY_KEY,
+      JSON.stringify({
+        to: "mira@helix.test",
+        cc: "",
+        bcc: "",
+        subject: "Recovered launch note",
+        body: "The restored body",
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    render();
+    await flush();
+    clickButtonText("Compose");
+
+    expect(container.textContent).toContain("Recovered your unsent message from this device.");
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="To"]')?.value).toBe(
+      "mira@helix.test",
+    );
+    expect(
+      container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message body"]')?.value,
+    ).toBe("The restored body");
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Schedule send unavailable"]')
+        ?.disabled,
+    ).toBe(true);
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="AI assist unavailable"]')
+        ?.title,
+    ).toContain("not connected");
+
+    const minimize = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Minimize compose"]',
+    );
+    act(() => minimize?.click());
+    expect(container.querySelector('textarea[aria-label="Message body"]')).toBeNull();
+    expect(container.querySelector(".compose-minimized")).not.toBeNull();
+
+    act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Expand compose"]')?.click(),
+    );
+    expect(
+      container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message body"]')?.value,
+    ).toBe("The restored body");
+  });
+
+  it("confirms explicit draft discard and clears the recovered copy", async () => {
+    render();
+    await flush();
+    clickButtonText("Compose");
+    const subject = container.querySelector('input[aria-label="Subject"]');
+    if (!(subject instanceof HTMLInputElement)) throw new Error("Subject input not found");
+    setInputValue(subject, "Keep this");
+
+    act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Close compose"]')?.click(),
+    );
+    expect(container.textContent).toContain("Discard this draft?");
+    expect(container.textContent).toContain("Keep editing");
+
+    clickButtonText("Keep editing");
+    expect(container.textContent).toContain("Keep this");
+    act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Discard draft"]')?.click(),
+    );
+    clickButtonText("Discard draft");
+
+    expect(container.textContent).not.toContain("Keep this");
+    expect(window.localStorage.getItem(MAIL_COMPOSE_RECOVERY_KEY)).toBeNull();
   });
 
   it("renders an empty thread list when mail.threads.list fails", async () => {

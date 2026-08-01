@@ -28,6 +28,7 @@ import * as Y from "yjs";
 import { Icons } from "@/components/icons";
 import { uploadDriveFile } from "@/features/drive/api";
 import { parseHelixDriveItemDragData } from "@/features/drive/drag-payload";
+import { useUnsavedChangesWarning } from "@/lib/use-unsaved-changes-warning";
 import {
   generateDocsSuggestionDraft,
   saveNativeDocumentState,
@@ -294,6 +295,10 @@ export function NativeDocumentEditor({
   );
   const [hasRecoveredDocumentDraft, setHasRecoveredDocumentDraft] = useState(
     recoveredState !== null,
+  );
+  const unsavedChangesWarning = useUnsavedChangesWarning(
+    hasRecoveredDocumentDraft,
+    "document editor",
   );
   const ydoc = useMemo(() => {
     const doc = new Y.Doc();
@@ -1427,6 +1432,7 @@ export function NativeDocumentEditor({
       onDragOver={onDocumentDragOver}
       onDrop={onDocumentDrop}
     >
+      {unsavedChangesWarning}
       <input
         ref={imageFileInputRef}
         aria-label="Choose document image"

@@ -130,6 +130,28 @@ describe("buildDocsMenus", () => {
     expect(ids.has("help.about")).toBe(true);
   });
 
+  it("marks commands without capabilities as disabled with an explicit reason", () => {
+    const menus = buildDocsMenus(makeCtx(null));
+    const toolsMenu = menus.find((menu) => menu.id === "tools");
+    const fileMenu = menus.find((menu) => menu.id === "file");
+    if (toolsMenu === undefined || fileMenu === undefined) {
+      throw new Error("Missing Docs menus");
+    }
+    const preferences = toolsMenu.items.find(
+      (item) => "id" in item && item.id === "tools.preferences",
+    );
+    const newDocument = fileMenu.items.find((item) => "id" in item && item.id === "file.new");
+
+    expect(preferences).toMatchObject({
+      disabled: true,
+      disabledReason: "This command is not available in this editor yet.",
+    });
+    expect(newDocument).toMatchObject({
+      disabled: true,
+      disabledReason: "This command is not available in this editor yet.",
+    });
+  });
+
   it("invokes the editor chain when Bold is selected from the Format menu", () => {
     const { editor, chain } = createFakeEditor();
     const menus = buildDocsMenus(makeCtx(editor));
@@ -332,9 +354,7 @@ describe("buildDocsMenus", () => {
     copyLink.onSelect();
 
     expect(onCopyLink).toHaveBeenCalledTimes(1);
-    expect(shareMenu.items.some((item) => "id" in item && item.id === "share.publish")).toBe(
-      false,
-    );
+    expect(shareMenu.items.some((item) => "id" in item && item.id === "share.publish")).toBe(false);
     expect(shareMenu.items.some((item) => "id" in item && item.id === "share.email")).toBe(false);
   });
 
@@ -347,9 +367,7 @@ describe("buildDocsMenus", () => {
     });
     const helpMenu = menus.find((menu) => menu.id === "help");
     if (helpMenu === undefined) throw new Error("Missing Help menu");
-    const shortcuts = helpMenu.items.find(
-      (item) => "id" in item && item.id === "help.shortcuts",
-    );
+    const shortcuts = helpMenu.items.find((item) => "id" in item && item.id === "help.shortcuts");
     const about = helpMenu.items.find((item) => "id" in item && item.id === "help.about");
     if (shortcuts === undefined || !("onSelect" in shortcuts)) {
       throw new Error("Missing keyboard shortcuts command");
@@ -364,9 +382,7 @@ describe("buildDocsMenus", () => {
     expect(onOpenKeyboardShortcuts).toHaveBeenCalledTimes(1);
     expect(onOpenAbout).toHaveBeenCalledTimes(1);
     expect(helpMenu.items.some((item) => "id" in item && item.id === "help.docs")).toBe(false);
-    expect(helpMenu.items.some((item) => "id" in item && item.id === "help.feedback")).toBe(
-      false,
-    );
+    expect(helpMenu.items.some((item) => "id" in item && item.id === "help.feedback")).toBe(false);
   });
 
   it("dispatches link, image, table, equation, cross-reference, field, smart-chip, and page-break insert menu items", () => {
@@ -398,9 +414,7 @@ describe("buildDocsMenus", () => {
     const link = insertMenu.items.find((item) => "id" in item && item.id === "insert.link");
     const image = insertMenu.items.find((item) => "id" in item && item.id === "insert.image");
     const table = insertMenu.items.find((item) => "id" in item && item.id === "insert.table");
-    const equation = insertMenu.items.find(
-      (item) => "id" in item && item.id === "insert.equation",
-    );
+    const equation = insertMenu.items.find((item) => "id" in item && item.id === "insert.equation");
     const crossReference = insertMenu.items.find(
       (item) => "id" in item && item.id === "insert.crossRef",
     );
@@ -411,9 +425,7 @@ describe("buildDocsMenus", () => {
     const pageBreak = insertMenu.items.find(
       (item) => "id" in item && item.id === "insert.pageBreak",
     );
-    const footnote = insertMenu.items.find(
-      (item) => "id" in item && item.id === "insert.footnote",
-    );
+    const footnote = insertMenu.items.find((item) => "id" in item && item.id === "insert.footnote");
     if (link === undefined || !("onSelect" in link)) {
       throw new Error("Missing Link command");
     }
@@ -473,9 +485,7 @@ describe("buildDocsMenus", () => {
     if (viewMenu === undefined) throw new Error("Missing View menu");
     if (toolsMenu === undefined) throw new Error("Missing Tools menu");
     const outline = viewMenu.items.find((item) => "id" in item && item.id === "view.outline");
-    const wordCount = toolsMenu.items.find(
-      (item) => "id" in item && item.id === "tools.wordCount",
-    );
+    const wordCount = toolsMenu.items.find((item) => "id" in item && item.id === "tools.wordCount");
     if (outline === undefined || !("onSelect" in outline)) {
       throw new Error("Missing Show outline command");
     }
@@ -498,9 +508,7 @@ describe("buildDocsMenus", () => {
     });
     const viewMenu = menus.find((menu) => menu.id === "view");
     if (viewMenu === undefined) throw new Error("Missing View menu");
-    const fullscreen = viewMenu.items.find(
-      (item) => "id" in item && item.id === "view.fullscreen",
-    );
+    const fullscreen = viewMenu.items.find((item) => "id" in item && item.id === "view.fullscreen");
     if (fullscreen === undefined || !("onSelect" in fullscreen)) {
       throw new Error("Missing Full screen command");
     }
@@ -583,8 +591,9 @@ describe("buildDocsMenus", () => {
       (item) => "id" in item && item.id === "view.mode.viewing",
     );
 
-    expect(modeSubmenu.items.some((item) => "id" in item && item.id === "view.mode.suggesting"))
-      .toBe(false);
+    expect(
+      modeSubmenu.items.some((item) => "id" in item && item.id === "view.mode.suggesting"),
+    ).toBe(false);
     expect(editing).toMatchObject({ kind: "checkbox", checked: true });
     expect(viewing).toMatchObject({ kind: "checkbox", checked: false });
     if (viewing === undefined || !("onCheckedChange" in viewing)) {
@@ -603,9 +612,7 @@ describe("buildDocsMenus", () => {
     });
     const viewingMode = viewingMenus
       .find((menu) => menu.id === "view")
-      ?.items.find(
-        (item) => "kind" in item && item.kind === "submenu" && item.id === "view.mode",
-      );
+      ?.items.find((item) => "kind" in item && item.kind === "submenu" && item.id === "view.mode");
     const checkedViewing =
       viewingMode !== undefined && "items" in viewingMode
         ? viewingMode.items.find((item) => "id" in item && item.id === "view.mode.viewing")
@@ -762,5 +769,22 @@ describe("buildDocsRibbon", () => {
     expect(onInsertImage).toHaveBeenCalledTimes(1);
     expect(onInsertTable).toHaveBeenCalledTimes(1);
     expect(onInsertEquation).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables unwired ribbon commands and exposes the reason", () => {
+    const { editor } = createFakeEditor();
+    act(() => {
+      root.render(buildDocsRibbon(makeCtx(editor)));
+    });
+    const insertLink = container.querySelector<HTMLButtonElement>(
+      "button[aria-label='Insert link']",
+    );
+    if (insertLink === null) throw new Error("Missing Insert link button");
+
+    expect(insertLink.disabled).toBe(true);
+    expect(insertLink.title).toBe("This command is not available in this editor yet.");
+    expect(insertLink.getAttribute("aria-description")).toBe(
+      "This command is not available in this editor yet.",
+    );
   });
 });

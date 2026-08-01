@@ -67,7 +67,11 @@ describe("FileThumbnail", () => {
     });
     container.remove();
     if (originalGetContextDescriptor !== undefined) {
-      Object.defineProperty(HTMLCanvasElement.prototype, "getContext", originalGetContextDescriptor);
+      Object.defineProperty(
+        HTMLCanvasElement.prototype,
+        "getContext",
+        originalGetContextDescriptor,
+      );
     }
     if (originalToDataURLDescriptor !== undefined) {
       Object.defineProperty(HTMLCanvasElement.prototype, "toDataURL", originalToDataURLDescriptor);
@@ -99,9 +103,12 @@ describe("FileThumbnail", () => {
       />,
     );
 
-    expect(container.querySelector("img")?.getAttribute("src")).toBe(
-      "https://cdn.example/diagram.png",
-    );
+    const image = container.querySelector("img");
+    expect(image?.getAttribute("src")).toBe("https://cdn.example/diagram.png");
+    expect(image?.width).toBe(640);
+    expect(image?.height).toBe(480);
+    expect(image?.getAttribute("loading")).toBe("lazy");
+    expect(image?.getAttribute("decoding")).toBe("async");
   });
 
   it("renders browser-supported image previews from file metadata when preview metadata is absent", () => {
@@ -145,10 +152,7 @@ describe("FileThumbnail", () => {
 
     expect(
       [...container.querySelectorAll("img")].map((image) => image.getAttribute("src")),
-    ).toEqual([
-      "/api/drive/objects/jp2-1/preview",
-      "/api/drive/objects/jxl-1/preview",
-    ]);
+    ).toEqual(["/api/drive/objects/jp2-1/preview", "/api/drive/objects/jxl-1/preview"]);
   });
 
   it("renders DOCX HTML previews as safe document thumbnails without injecting HTML", async () => {
@@ -174,9 +178,7 @@ describe("FileThumbnail", () => {
     );
     await flushAsyncEffects();
 
-    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith(
-      "/api/drive/objects/docx-1/preview",
-    );
+    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith("/api/drive/objects/docx-1/preview");
     expect(container.querySelector("iframe")).toBeNull();
     expect(container.querySelector("script")).toBeNull();
     expect(container.textContent).toContain("Launch plan");
@@ -206,9 +208,7 @@ describe("FileThumbnail", () => {
     );
     await flushAsyncEffects();
 
-    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith(
-      "/api/drive/objects/xls-1/preview",
-    );
+    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith("/api/drive/objects/xls-1/preview");
     expect(container.querySelector("iframe")).toBeNull();
     expect(container.querySelectorAll("table td")).toHaveLength(4);
     expect(container.textContent).toContain("Customer");
@@ -238,9 +238,7 @@ describe("FileThumbnail", () => {
     );
     await flushAsyncEffects();
 
-    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith(
-      "/api/drive/objects/pptx-1/preview",
-    );
+    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith("/api/drive/objects/pptx-1/preview");
     expect(container.querySelector("iframe")).toBeNull();
     expect(container.querySelector("script")).toBeNull();
     expect(container.textContent).toContain("Launch narrative");
@@ -362,12 +360,11 @@ describe("FileThumbnail", () => {
   });
 
   it("renders raw PDF thumbnails through PDF.js without embedding the PDF", async () => {
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({})) as unknown as
-      typeof HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = vi.fn(
+      () => ({}),
+    ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.toDataURL = vi.fn(() => "data:image/png;base64,pdf");
-    vi.mocked(authenticatedFetch).mockResolvedValue(
-      new Response(new Uint8Array([4, 5, 6]).buffer),
-    );
+    vi.mocked(authenticatedFetch).mockResolvedValue(new Response(new Uint8Array([4, 5, 6]).buffer));
     pdfJsMock.getPage.mockResolvedValue({
       getViewport: ({ scale }: { readonly scale: number }) => ({
         width: 600 * scale,
@@ -394,9 +391,7 @@ describe("FileThumbnail", () => {
     await flushAsyncEffects();
 
     expect(container.querySelector("iframe")).toBeNull();
-    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith(
-      "/api/drive/objects/pdf-1/preview",
-    );
+    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith("/api/drive/objects/pdf-1/preview");
     expect(pdfJsMock.getDocument).toHaveBeenCalledWith({
       data: new Uint8Array([4, 5, 6]),
       verbosity: 0,
@@ -412,12 +407,11 @@ describe("FileThumbnail", () => {
   }
 
   it("renders PDF and Office previews through a PDF.js first-page image", async () => {
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({})) as unknown as
-      typeof HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = vi.fn(
+      () => ({}),
+    ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.toDataURL = vi.fn(() => "data:image/png;base64,preview");
-    vi.mocked(authenticatedFetch).mockResolvedValue(
-      new Response(new Uint8Array([1, 2, 3]).buffer),
-    );
+    vi.mocked(authenticatedFetch).mockResolvedValue(new Response(new Uint8Array([1, 2, 3]).buffer));
     pdfJsMock.getPage.mockResolvedValue({
       getViewport: ({ scale }: { readonly scale: number }) => ({
         width: 600 * scale,
@@ -459,12 +453,11 @@ describe("FileThumbnail", () => {
   });
 
   it("uses the Drive preview endpoint when a PDF preview artifact has no public URL", async () => {
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({})) as unknown as
-      typeof HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = vi.fn(
+      () => ({}),
+    ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.toDataURL = vi.fn(() => "data:image/png;base64,office-pdf");
-    vi.mocked(authenticatedFetch).mockResolvedValue(
-      new Response(new Uint8Array([7, 8, 9]).buffer),
-    );
+    vi.mocked(authenticatedFetch).mockResolvedValue(new Response(new Uint8Array([7, 8, 9]).buffer));
     pdfJsMock.getPage.mockResolvedValue({
       getViewport: ({ scale }: { readonly scale: number }) => ({
         width: 600 * scale,
@@ -536,7 +529,9 @@ describe("FileThumbnail", () => {
       />,
     );
 
-    expect(container.querySelector('[aria-label="Rendered preview of Launch plan"]')).not.toBeNull();
+    expect(
+      container.querySelector('[aria-label="Rendered preview of Launch plan"]'),
+    ).not.toBeNull();
     expect(container.textContent).toContain("First milestone");
     expect(container.textContent).not.toContain("Fallback");
   });

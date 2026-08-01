@@ -19,6 +19,14 @@ import {
 } from "./native-document-shell";
 
 vi.mock("@tanstack/react-router", () => ({
+  useBlocker: () => ({
+    status: "idle",
+    current: undefined,
+    next: undefined,
+    action: undefined,
+    proceed: undefined,
+    reset: undefined,
+  }),
   Link: ({
     children,
     to,

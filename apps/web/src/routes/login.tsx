@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Dna, Loader2, LogIn } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getSessionUser, signInWithEmail, type SessionUser, type SignInInput } from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({
@@ -44,6 +44,13 @@ export function LocalLoginPanel({
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting">("idle");
   const [error, setError] = useState<string | null>(null);
+  const errorRef = useRef<HTMLParagraphElement | null>(null);
+
+  useEffect(() => {
+    if (error !== null) {
+      errorRef.current?.focus();
+    }
+  }, [error]);
 
   async function submit(nextEmail: string, nextPassword: string): Promise<void> {
     setStatus("submitting");
@@ -86,10 +93,14 @@ export function LocalLoginPanel({
             <span className="auth-label">Email</span>
             <input
               className="input"
+              name="email"
               type="email"
               autoComplete="username"
+              spellCheck={false}
               placeholder="you@helix.local"
               value={email}
+              aria-describedby={error === null ? undefined : "login-error"}
+              aria-invalid={error === null ? undefined : true}
               onChange={(event) => setEmail(event.target.value)}
               required
             />
@@ -98,17 +109,20 @@ export function LocalLoginPanel({
             <span className="auth-label">Password</span>
             <input
               className="input"
+              name="password"
               type="password"
               autoComplete="current-password"
               placeholder="••••••••"
               value={password}
+              aria-describedby={error === null ? undefined : "login-error"}
+              aria-invalid={error === null ? undefined : true}
               onChange={(event) => setPassword(event.target.value)}
               required
             />
           </label>
 
           {error === null ? null : (
-            <p className="auth-error" role="alert">
+            <p ref={errorRef} id="login-error" className="auth-error" role="alert" tabIndex={-1}>
               {error}
             </p>
           )}
@@ -117,6 +131,7 @@ export function LocalLoginPanel({
             className="btn primary lg auth-submit"
             type="submit"
             disabled={status === "submitting"}
+            aria-busy={status === "submitting"}
           >
             {status === "submitting" ? (
               <Loader2 className="auth-spinner" aria-hidden="true" />

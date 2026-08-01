@@ -6,7 +6,7 @@
    (e.g. Mail's operator search); otherwise it is a button that opens the
    ⌘K command palette. */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
@@ -45,17 +45,9 @@ export function TopBar({
   const overlays = useShellOverlays();
   const theme = useAppearance((s) => s.theme);
   const [menuOpen, setMenuOpen] = useState(false);
+  const profileButtonRef = useRef<HTMLButtonElement | null>(null);
   const sessionQuery = useQuery(sessionUserQueryOptions());
   const avatarName = sessionQuery.data?.name ?? sessionQuery.data?.email ?? "User";
-
-  useEffect(() => {
-    if (!menuOpen) {
-      return;
-    }
-    const close = () => setMenuOpen(false);
-    window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
-  }, [menuOpen]);
 
   const hasLiveSearch = typeof onSearchChange === "function";
 
@@ -105,7 +97,7 @@ export function TopBar({
           <span className="kbd">⌘K</span>
         </button>
       )}
-      <div className="row gap-2" style={{ marginLeft: "auto" }}>
+      <div className="topbar-actions row gap-2" style={{ marginLeft: "auto" }}>
         {actions}
         <button
           type="button"
@@ -151,18 +143,16 @@ export function TopBar({
         <button
           type="button"
           className="icon-btn"
-          onClick={overlays.openSettings}
+          onClick={() => overlays.openSettings()}
           title="Settings"
           aria-label="Settings"
         >
           <Icons.Settings />
         </button>
         <button
+          ref={profileButtonRef}
           type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            setMenuOpen((open) => !open);
-          }}
+          onClick={() => setMenuOpen((open) => !open)}
           style={{
             borderRadius: 999,
             padding: 0,
@@ -173,6 +163,7 @@ export function TopBar({
           aria-label="Profile"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
+          aria-controls="profile-menu"
         >
           <Avatar name={avatarName} size={28} />
         </button>
@@ -180,6 +171,7 @@ export function TopBar({
       <ProfileMenu
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
+        anchorRef={profileButtonRef}
         openSettings={overlays.openSettings}
       />
     </div>

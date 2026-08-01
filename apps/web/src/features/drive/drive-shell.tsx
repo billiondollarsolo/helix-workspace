@@ -1649,6 +1649,7 @@ function DriveFileCard({
   const meta = appMeta ?? DRIVE_FILE_META[file.type];
   return (
     <div
+      className="drive-file-card render-contained-card"
       style={{
         background: "var(--surface)",
         border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
@@ -1754,6 +1755,7 @@ function DriveFileRow({
   const FileIcon = Icons[meta.icon];
   return (
     <button
+      className="drive-file-row render-contained-list-item"
       type="button"
       aria-pressed={selected}
       draggable
@@ -2017,6 +2019,10 @@ function DriveDetailsPanel({
             <img
               src={entry.preview.url}
               alt={file.name}
+              width={640}
+              height={480}
+              loading="lazy"
+              decoding="async"
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
             />
           ) : (

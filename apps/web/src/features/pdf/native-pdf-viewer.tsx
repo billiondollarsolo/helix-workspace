@@ -2341,6 +2341,7 @@ export function NativePdfViewer({
                 src={renderedPage.dataUrl}
                 width={renderedPage.width}
                 height={renderedPage.height}
+                decoding="async"
                 data-page={renderedPage.pageNumber}
                 data-zoom={renderedPage.zoom}
                 style={PDF_RENDERED_PAGE_STYLE}
@@ -3682,7 +3683,9 @@ function pdfFormStateStatusMessage(status: Exclude<PdfFormStateStatus, "idle">):
   return "Could not update saved draft.";
 }
 
-function validatePdfFormFields(fields: readonly PdfFieldDraft[]): readonly PdfFieldValidationError[] {
+function validatePdfFormFields(
+  fields: readonly PdfFieldDraft[],
+): readonly PdfFieldValidationError[] {
   return fields.flatMap((field): readonly PdfFieldValidationError[] => {
     if (!field.required || !isBlankPdfField(field)) {
       return [];
@@ -4916,6 +4919,8 @@ function PageNavigationButton({
           src={thumbnail.dataUrl}
           width={thumbnail.width}
           height={thumbnail.height}
+          loading="lazy"
+          decoding="async"
           style={PAGE_THUMBNAIL_STYLE}
         />
       )}

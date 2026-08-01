@@ -6,35 +6,59 @@
    inside the Outlet — mirroring the prototype where every app owns a
    `.workspace` element. Ported from the design handoff (app.jsx + shell.jsx). */
 
-import { Outlet } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Outlet, useLocation, useNavigate, useSearch } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Rail } from "@/components/shell/rail";
 import { AppLauncher } from "@/components/shell/app-launcher";
 import { NotificationsPanel } from "@/components/shell/notifications-panel";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { SettingsPage } from "@/components/shell/settings-page";
+import { NetworkStatus } from "@/components/shell/network-status";
 import {
   ShellOverlayContext,
+  isSettingsSectionId,
+  type SettingsSectionId,
   type ShellOverlayApi,
 } from "@/components/shell/overlay-context";
 
 export function AppShell() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const shellSearch: Partial<{ settings: SettingsSectionId }> = useSearch({ strict: false });
+  const settingsSection = isSettingsSectionId(shellSearch.settings) ? shellSearch.settings : null;
+  const previousPathRef = useRef(location.pathname);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const overlays = useMemo<ShellOverlayApi>(
     () => ({
       openNotifications: () => setNotifOpen(true),
       openPalette: () => setPaletteOpen(true),
-      openSettings: () => {
+      openSettings: (section = "profile") => {
         setPaletteOpen(false);
-        setSettingsOpen(true);
+        void navigate({
+          to: location.pathname,
+          search: (previous: Record<string, unknown>) => ({
+            ...previous,
+            settings: section,
+          }),
+        } as never);
       },
     }),
-    [],
+    [location.pathname, navigate],
   );
+
+  const closeSettings = useCallback(() => {
+    void navigate({
+      to: location.pathname,
+      replace: true,
+      search: (previous: Record<string, unknown>) => ({
+        ...previous,
+        settings: undefined,
+      }),
+    } as never);
+  }, [location.pathname, navigate]);
 
   // ⌘K global shortcut.
   useEffect(() => {
@@ -48,6 +72,16 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (previousPathRef.current === location.pathname) {
+      return;
+    }
+    previousPathRef.current = location.pathname;
+    queueMicrotask(() => {
+      document.getElementById("main-content")?.focus({ preventScroll: true });
+    });
+  }, [location.pathname]);
+
   const closeLauncher = useCallback(() => setLauncherOpen(false), []);
 
   return (
@@ -60,8 +94,14 @@ export function AppShell() {
           }
         }}
       >
+        <a className="skip-link" href="#main-content">
+          Skip to main content
+        </a>
+        <NetworkStatus />
         <Rail
+          launcherOpen={launcherOpen}
           onOpenLauncher={() => setLauncherOpen((open) => !open)}
+          onOpenHelp={() => overlays.openSettings("shortcuts")}
         />
         <AppLauncher open={launcherOpen} onClose={closeLauncher} />
 
@@ -73,7 +113,21 @@ export function AppShell() {
           onClose={() => setPaletteOpen(false)}
           openSettings={overlays.openSettings}
         />
-        <SettingsPage open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <SettingsPage
+          open={settingsSection !== null}
+          section={settingsSection ?? "profile"}
+          onSectionChange={(section) => {
+            void navigate({
+              to: location.pathname,
+              replace: true,
+              search: (previous: Record<string, unknown>) => ({
+                ...previous,
+                settings: section,
+              }),
+            } as never);
+          }}
+          onClose={closeSettings}
+        />
       </div>
     </ShellOverlayContext.Provider>
   );

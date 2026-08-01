@@ -148,8 +148,35 @@ export interface DocsChromeContext {
 }
 
 const TODO_NOOP = (): void => {
-  // TODO: wire when corresponding editor capability lands.
+  // Required by the shared menu/ribbon command contract for disabled controls.
 };
+
+const DOCS_COMMAND_UNAVAILABLE = "This command is not available in this editor yet.";
+
+function optionalCommand(action: (() => void) | undefined): {
+  readonly onSelect: () => void;
+  readonly disabled: boolean;
+  readonly disabledReason?: string;
+} {
+  if (action !== undefined) {
+    return { onSelect: action, disabled: false };
+  }
+  return {
+    onSelect: TODO_NOOP,
+    disabled: true,
+    disabledReason: DOCS_COMMAND_UNAVAILABLE,
+  };
+}
+
+function ribbonDisabledReason(
+  editable: boolean,
+  action: (() => void) | undefined,
+): string | undefined {
+  if (!editable) {
+    return "Switch to editing mode to use this command.";
+  }
+  return action === undefined ? DOCS_COMMAND_UNAVAILABLE : undefined;
+}
 
 function runChain(
   editor: DocsChromeEditorLike | null,
@@ -221,16 +248,16 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
     id: "file",
     label: "File",
     items: [
-      { id: "file.new", label: "New document", onSelect: cb.onNewDocument ?? TODO_NOOP },
-      { id: "file.open", label: "Open...", onSelect: cb.onOpenDocuments ?? TODO_NOOP },
+      { id: "file.new", label: "New document", ...optionalCommand(cb.onNewDocument) },
+      { id: "file.open", label: "Open…", ...optionalCommand(cb.onOpenDocuments) },
       { kind: "separator" },
-      { id: "file.rename", label: "Rename", onSelect: cb.onRename ?? TODO_NOOP },
-      { id: "file.makeCopy", label: "Make a copy", onSelect: cb.onMakeCopy ?? TODO_NOOP },
+      { id: "file.rename", label: "Rename", ...optionalCommand(cb.onRename) },
+      { id: "file.makeCopy", label: "Make a copy", ...optionalCommand(cb.onMakeCopy) },
       {
         id: "file.moveToTrash",
         label: "Move to trash",
         destructive: true,
-        onSelect: cb.onMoveToTrash ?? TODO_NOOP,
+        ...optionalCommand(cb.onMoveToTrash),
       },
       { kind: "separator" },
       {
@@ -241,26 +268,31 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
           {
             id: "file.download.docx",
             label: "Microsoft Word (.docx)",
-            onSelect: () => cb.onExport?.("docx"),
+            ...optionalCommand(cb.onExport === undefined ? undefined : () => cb.onExport?.("docx")),
           },
           {
             id: "file.download.pdf",
             label: "PDF (.pdf)",
-            onSelect: () => cb.onExport?.("pdf"),
+            ...optionalCommand(cb.onExport === undefined ? undefined : () => cb.onExport?.("pdf")),
           },
           {
             id: "file.download.epub",
             label: "EPUB (.epub)",
-            onSelect: () => cb.onExport?.("epub"),
+            ...optionalCommand(cb.onExport === undefined ? undefined : () => cb.onExport?.("epub")),
           },
         ],
       },
-      { id: "file.print", label: "Print", keybinding: "Ctrl+P", onSelect: cb.onPrint ?? TODO_NOOP },
+      {
+        id: "file.print",
+        label: "Print",
+        keybinding: "Ctrl+P",
+        ...optionalCommand(cb.onPrint),
+      },
       { kind: "separator" },
       {
         id: "file.versionHistory",
         label: "Version history",
-        onSelect: cb.onOpenVersionHistory ?? TODO_NOOP,
+        ...optionalCommand(cb.onOpenVersionHistory),
       },
     ],
   };
@@ -282,14 +314,14 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
         onSelect: () => runChain(editor, (c) => c.redo()),
       },
       { kind: "separator" },
-      { id: "edit.cut", label: "Cut", keybinding: "Ctrl+X", onSelect: cb.onCut ?? TODO_NOOP },
-      { id: "edit.copy", label: "Copy", keybinding: "Ctrl+C", onSelect: cb.onCopy ?? TODO_NOOP },
-      { id: "edit.paste", label: "Paste", keybinding: "Ctrl+V", onSelect: cb.onPaste ?? TODO_NOOP },
+      { id: "edit.cut", label: "Cut", keybinding: "Ctrl+X", ...optionalCommand(cb.onCut) },
+      { id: "edit.copy", label: "Copy", keybinding: "Ctrl+C", ...optionalCommand(cb.onCopy) },
+      { id: "edit.paste", label: "Paste", keybinding: "Ctrl+V", ...optionalCommand(cb.onPaste) },
       {
         id: "edit.pastePlain",
         label: "Paste without formatting",
         keybinding: "Ctrl+Shift+V",
-        onSelect: cb.onPastePlain ?? TODO_NOOP,
+        ...optionalCommand(cb.onPastePlain),
       },
       { kind: "separator" },
       {
@@ -302,7 +334,7 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
         id: "edit.findReplace",
         label: "Find and replace",
         keybinding: "Ctrl+F",
-        onSelect: cb.onOpenFindReplace ?? TODO_NOOP,
+        ...optionalCommand(cb.onOpenFindReplace),
       },
     ],
   };
@@ -321,6 +353,9 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
             id: "view.mode.editing",
             label: "Editing",
             checked: ctx.state.documentMode === "editing",
+            disabled: cb.onSetDocumentMode === undefined,
+            disabledReason:
+              cb.onSetDocumentMode === undefined ? DOCS_COMMAND_UNAVAILABLE : undefined,
             onCheckedChange: () => cb.onSetDocumentMode?.("editing"),
           },
           {
@@ -328,26 +363,33 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
             id: "view.mode.viewing",
             label: "Viewing",
             checked: ctx.state.documentMode === "viewing",
+            disabled: cb.onSetDocumentMode === undefined,
+            disabledReason:
+              cb.onSetDocumentMode === undefined ? DOCS_COMMAND_UNAVAILABLE : undefined,
             onCheckedChange: () => cb.onSetDocumentMode?.("viewing"),
           },
         ],
       },
       { kind: "separator" },
-      { id: "view.outline", label: "Show outline", onSelect: cb.onOpenOutline ?? TODO_NOOP },
+      { id: "view.outline", label: "Show outline", ...optionalCommand(cb.onOpenOutline) },
       {
         id: "view.rulers",
         label: ctx.state.showRulers ? "Hide ruler" : "Show ruler",
-        onSelect: cb.onToggleRulers ?? TODO_NOOP,
+        ...optionalCommand(cb.onToggleRulers),
       },
       {
         id: "view.nonprinting",
         label: ctx.state.showNonPrintingCharacters
           ? "Hide non-printing characters"
           : "Show non-printing characters",
-        onSelect: cb.onToggleNonPrintingCharacters ?? TODO_NOOP,
+        ...optionalCommand(cb.onToggleNonPrintingCharacters),
       },
       { kind: "separator" },
-      { id: "view.fullscreen", label: "Full screen", onSelect: cb.onToggleFullscreen ?? TODO_NOOP },
+      {
+        id: "view.fullscreen",
+        label: "Full screen",
+        ...optionalCommand(cb.onToggleFullscreen),
+      },
     ],
   };
 
@@ -355,34 +397,34 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
     id: "insert",
     label: "Insert",
     items: [
-      { id: "insert.image", label: "Image", onSelect: cb.onInsertImage ?? TODO_NOOP },
-      { id: "insert.table", label: "Table", onSelect: cb.onInsertTable ?? TODO_NOOP },
+      { id: "insert.image", label: "Image", ...optionalCommand(cb.onInsertImage) },
+      { id: "insert.table", label: "Table", ...optionalCommand(cb.onInsertTable) },
       {
         id: "insert.link",
         label: "Link",
         keybinding: "Ctrl+K",
-        onSelect: cb.onInsertLink ?? TODO_NOOP,
+        ...optionalCommand(cb.onInsertLink),
       },
       {
         id: "insert.comment",
         label: "Comment",
         keybinding: "Ctrl+Alt+M",
-        onSelect: cb.onInsertComment ?? TODO_NOOP,
+        ...optionalCommand(cb.onInsertComment),
       },
       { kind: "separator" },
-      { id: "insert.equation", label: "Equation", onSelect: cb.onInsertEquation ?? TODO_NOOP },
-      { id: "insert.toc", label: "Table of contents", onSelect: cb.onInsertTOC ?? TODO_NOOP },
-      { id: "insert.bookmark", label: "Bookmark", onSelect: cb.onInsertBookmark ?? TODO_NOOP },
+      { id: "insert.equation", label: "Equation", ...optionalCommand(cb.onInsertEquation) },
+      { id: "insert.toc", label: "Table of contents", ...optionalCommand(cb.onInsertTOC) },
+      { id: "insert.bookmark", label: "Bookmark", ...optionalCommand(cb.onInsertBookmark) },
       {
         id: "insert.crossRef",
         label: "Cross-reference",
-        onSelect: cb.onInsertCrossReference ?? TODO_NOOP,
+        ...optionalCommand(cb.onInsertCrossReference),
       },
       { kind: "separator" },
-      { id: "insert.field", label: "Field", onSelect: cb.onInsertField ?? TODO_NOOP },
-      { id: "insert.smartChip", label: "Smart chip", onSelect: cb.onInsertSmartChip ?? TODO_NOOP },
-      { id: "insert.pageBreak", label: "Page break", onSelect: cb.onInsertPageBreak ?? TODO_NOOP },
-      { id: "insert.footnote", label: "Footnote", onSelect: cb.onInsertFootnote ?? TODO_NOOP },
+      { id: "insert.field", label: "Field", ...optionalCommand(cb.onInsertField) },
+      { id: "insert.smartChip", label: "Smart chip", ...optionalCommand(cb.onInsertSmartChip) },
+      { id: "insert.pageBreak", label: "Page break", ...optionalCommand(cb.onInsertPageBreak) },
+      { id: "insert.footnote", label: "Footnote", ...optionalCommand(cb.onInsertFootnote) },
     ],
   };
 
@@ -517,28 +559,28 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
       {
         id: "tools.spelling",
         label: "Spelling and grammar",
-        onSelect: cb.onOpenSpelling ?? TODO_NOOP,
+        ...optionalCommand(cb.onOpenSpelling),
       },
       {
         id: "tools.wordCount",
         label: "Word count",
         keybinding: "Ctrl+Shift+C",
-        onSelect: cb.onOpenWordCount ?? TODO_NOOP,
+        ...optionalCommand(cb.onOpenWordCount),
       },
       { kind: "separator" },
       {
         id: "tools.findReplace",
         label: "Find and replace",
         keybinding: "Ctrl+F",
-        onSelect: cb.onOpenFindReplace ?? TODO_NOOP,
+        ...optionalCommand(cb.onOpenFindReplace),
       },
       {
         id: "tools.refreshFields",
         label: "Refresh fields",
-        onSelect: cb.onRefreshFields ?? TODO_NOOP,
+        ...optionalCommand(cb.onRefreshFields),
       },
       { kind: "separator" },
-      { id: "tools.preferences", label: "Preferences", onSelect: TODO_NOOP },
+      { id: "tools.preferences", label: "Preferences", ...optionalCommand(undefined) },
     ],
   };
 
@@ -546,8 +588,8 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
     id: "ai",
     label: "AI",
     items: [
-      { id: "ai.ask", label: "Ask this document", onSelect: cb.onAskAI ?? TODO_NOOP },
-      { id: "ai.compose", label: "Smart compose", onSelect: cb.onSmartCompose ?? TODO_NOOP },
+      { id: "ai.ask", label: "Ask this document", ...optionalCommand(cb.onAskAI) },
+      { id: "ai.compose", label: "Smart compose", ...optionalCommand(cb.onSmartCompose) },
     ],
   };
 
@@ -558,9 +600,9 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
       {
         id: "share.invite",
         label: "Share with people",
-        onSelect: cb.onOpenShareDialog ?? TODO_NOOP,
+        ...optionalCommand(cb.onOpenShareDialog),
       },
-      { id: "share.copyLink", label: "Copy link", onSelect: cb.onCopyLink ?? TODO_NOOP },
+      { id: "share.copyLink", label: "Copy link", ...optionalCommand(cb.onCopyLink) },
     ],
   };
 
@@ -572,9 +614,9 @@ export function buildDocsMenus(ctx: DocsChromeContext): MenuBarMenu[] {
         id: "help.shortcuts",
         label: "Keyboard shortcuts",
         keybinding: "Ctrl+/",
-        onSelect: cb.onOpenKeyboardShortcuts ?? TODO_NOOP,
+        ...optionalCommand(cb.onOpenKeyboardShortcuts),
       },
-      { id: "help.about", label: "About Helix Docs", onSelect: cb.onOpenAbout ?? TODO_NOOP },
+      { id: "help.about", label: "About Helix Docs", ...optionalCommand(cb.onOpenAbout) },
     ],
   };
 
@@ -779,31 +821,36 @@ export function buildDocsRibbon(ctx: DocsChromeContext): ReactNode {
           icon={<LinkIcon className="h-4 w-4" aria-hidden="true" />}
           label="Insert link"
           keybinding="Ctrl+K"
-          disabled={!editable}
+          disabled={!editable || callbacks.onInsertLink === undefined}
+          disabledReason={ribbonDisabledReason(editable, callbacks.onInsertLink)}
           onClick={callbacks.onInsertLink ?? TODO_NOOP}
         />
         <RibbonButton
           icon={<ImageIcon className="h-4 w-4" aria-hidden="true" />}
           label="Insert image"
-          disabled={!editable}
+          disabled={!editable || callbacks.onInsertImage === undefined}
+          disabledReason={ribbonDisabledReason(editable, callbacks.onInsertImage)}
           onClick={callbacks.onInsertImage ?? TODO_NOOP}
         />
         <RibbonButton
           icon={<TableIcon className="h-4 w-4" aria-hidden="true" />}
           label="Insert table"
-          disabled={!editable}
+          disabled={!editable || callbacks.onInsertTable === undefined}
+          disabledReason={ribbonDisabledReason(editable, callbacks.onInsertTable)}
           onClick={callbacks.onInsertTable ?? TODO_NOOP}
         />
         <RibbonButton
           icon={<Sigma className="h-4 w-4" aria-hidden="true" />}
           label="Insert equation"
-          disabled={!editable}
+          disabled={!editable || callbacks.onInsertEquation === undefined}
+          disabledReason={ribbonDisabledReason(editable, callbacks.onInsertEquation)}
           onClick={callbacks.onInsertEquation ?? TODO_NOOP}
         />
         <RibbonButton
           icon={<MessageSquarePlus className="h-4 w-4" aria-hidden="true" />}
           label="Add comment"
-          disabled={!editable}
+          disabled={!editable || callbacks.onInsertComment === undefined}
+          disabledReason={ribbonDisabledReason(editable, callbacks.onInsertComment)}
           onClick={callbacks.onInsertComment ?? TODO_NOOP}
         />
       </RibbonGroup>
@@ -814,26 +861,30 @@ export function buildDocsRibbon(ctx: DocsChromeContext): ReactNode {
         <RibbonButton
           icon={<FileText className="h-4 w-4" aria-hidden="true" />}
           label="Insert table of contents"
-          disabled={!editable}
+          disabled={!editable || callbacks.onInsertTOC === undefined}
+          disabledReason={ribbonDisabledReason(editable, callbacks.onInsertTOC)}
           onClick={callbacks.onInsertTOC ?? TODO_NOOP}
         />
         <RibbonButton
           icon={<Hash className="h-4 w-4" aria-hidden="true" />}
           label="Insert bookmark"
-          disabled={!editable}
+          disabled={!editable || callbacks.onInsertBookmark === undefined}
+          disabledReason={ribbonDisabledReason(editable, callbacks.onInsertBookmark)}
           onClick={callbacks.onInsertBookmark ?? TODO_NOOP}
         />
         <RibbonButton
           icon={<Search className="h-4 w-4" aria-hidden="true" />}
           label="Find and replace"
           keybinding="Ctrl+F"
-          disabled={!editable}
+          disabled={!editable || callbacks.onOpenFindReplace === undefined}
+          disabledReason={ribbonDisabledReason(editable, callbacks.onOpenFindReplace)}
           onClick={callbacks.onOpenFindReplace ?? TODO_NOOP}
         />
         <RibbonButton
           icon={<Sparkles className="h-4 w-4" aria-hidden="true" />}
           label="Ask AI"
-          disabled={!editable}
+          disabled={!editable || callbacks.onAskAI === undefined}
+          disabledReason={ribbonDisabledReason(editable, callbacks.onAskAI)}
           onClick={callbacks.onAskAI ?? TODO_NOOP}
         />
       </RibbonGroup>

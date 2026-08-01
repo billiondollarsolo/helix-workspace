@@ -2741,7 +2741,19 @@ export class PostgresDriveStore
       if (input.folderId !== undefined && input.folderId !== null) {
         await requireFolderAccess(tx, input.orgId, input.actorId, input.folderId);
       }
-      const current = await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
+      /* `allowTrashed` has to be threaded here too, not just into the role
+         check above. Trashing sets `upload_state = 'trashed'`, and this lookup
+         filters on `upload_state = 'active'` unless told otherwise — so
+         restore, the one operation whose subject is always trashed, could
+         never find its own object and every restore raised
+         DriveNotFoundError. */
+      const current = await requireObjectAccess(
+        tx,
+        input.orgId,
+        input.actorId,
+        input.objectId,
+        input.restore,
+      );
       const rows = (await tx`
         update objects
         set

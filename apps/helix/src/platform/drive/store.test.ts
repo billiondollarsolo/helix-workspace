@@ -57,8 +57,8 @@ describe(
         insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, metadata)
         values (
           ${TEST_SHEET_ID}, ${TEST_ORG_ID}, ${TEST_ACTOR_ID},
-          'file', ${'drive/test/sheet'}, ${'application/vnd.helix.sheet'}, ${0},
-          ${sql.json({ app: 'sheets', name: 'Test Sheet', folderId: null, status: 'ready' })}
+          'file', ${"drive/test/sheet"}, ${"application/vnd.helix.sheet"}, ${0},
+          ${sql.json({ app: "sheets", name: "Test Sheet", folderId: null, status: "ready" })}
         )
         on conflict (id) do nothing
       `;
@@ -78,8 +78,8 @@ describe(
         insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, metadata)
         values (
           ${TEST_DECK_ID}, ${TEST_ORG_ID}, ${TEST_ACTOR_ID},
-          'file', ${'drive/test/deck'}, ${'application/vnd.helix.slides'}, ${0},
-          ${sql.json({ app: 'slides', name: 'Test Deck', folderId: null, status: 'ready' })}
+          'file', ${"drive/test/deck"}, ${"application/vnd.helix.slides"}, ${0},
+          ${sql.json({ app: "slides", name: "Test Deck", folderId: null, status: "ready" })}
         )
         on conflict (id) do nothing
       `;
@@ -99,8 +99,8 @@ describe(
         insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, metadata)
         values (
           ${TEST_DOC_ID}, ${TEST_ORG_ID}, ${TEST_ACTOR_ID},
-          'file', ${'drive/test/doc'}, ${'application/vnd.helix.doc'}, ${0},
-          ${sql.json({ app: 'docs', name: 'Test Doc', folderId: null, status: 'ready' })}
+          'file', ${"drive/test/doc"}, ${"application/vnd.helix.doc"}, ${0},
+          ${sql.json({ app: "docs", name: "Test Doc", folderId: null, status: "ready" })}
         )
         on conflict (id) do nothing
       `;
@@ -124,16 +124,57 @@ describe(
       await sql.end();
     });
 
-    // Helper: reset deleted_at on all three content rows before each sub-test.
+    /* Reset all three content rows to a live, untrashed state.
+    
+       `upload_state` is reset alongside `deleted_at` because `trash()` writes
+       both. Resetting only `deleted_at` left the objects `trashed` for every
+       subsequent test — which is how the restore cases ended up exercising a
+       state the fixture created rather than one the product does. */
     async function resetDeletedAt() {
       await sql`
-        update objects set deleted_at = null, updated_at = now()
+        update objects
+        set deleted_at = null, upload_state = 'active', updated_at = now()
         where id in (${TEST_SHEET_ID}, ${TEST_DECK_ID}, ${TEST_DOC_ID})
       `;
       await sql`update sheets set deleted_at = null where id = ${TEST_SHEET_ID}`;
       await sql`update slide_decks set deleted_at = null where id = ${TEST_DECK_ID}`;
       await sql`update docs_documents set deleted_at = null where id = ${TEST_DOC_ID}`;
     }
+
+    it("restores a file it trashed itself, end to end", async () => {
+      /* The gap this closes: every test here drove trash and restore from a
+         hand-written row state, so nothing exercised the two against each
+         other. `trash()` writes `upload_state = 'trashed'`, and restore's
+         object lookup filtered on `upload_state = 'active'` without passing
+         `allowTrashed` — so restoring any genuinely trashed file raised
+         DriveNotFoundError. Both halves of the round trip must run for that to
+         be visible. */
+      await resetDeletedAt();
+
+      await store.trash({
+        orgId: TEST_ORG_ID,
+        actorId: TEST_ACTOR_ID,
+        objectId: TEST_SHEET_ID,
+      });
+      const trashed = await sql<{ upload_state: string }[]>`
+        select upload_state from objects where id = ${TEST_SHEET_ID}
+      `;
+      expect(trashed[0]?.upload_state).toBe("trashed");
+
+      await expect(
+        store.restore({
+          orgId: TEST_ORG_ID,
+          actorId: TEST_ACTOR_ID,
+          objectId: TEST_SHEET_ID,
+        }),
+      ).resolves.not.toBeNull();
+
+      const restored = await sql<{ upload_state: string; deleted_at: Date | null }[]>`
+        select upload_state, deleted_at from objects where id = ${TEST_SHEET_ID}
+      `;
+      expect(restored[0]?.upload_state).toBe("active");
+      expect(restored[0]?.deleted_at).toBeNull();
+    });
 
     it("trash sets sheets.deleted_at when object has metadata.app='sheets'", async () => {
       await resetDeletedAt();
@@ -153,9 +194,11 @@ describe(
     });
 
     it("restore clears sheets.deleted_at when object has metadata.app='sheets'", async () => {
-      // Ensure we start with a trashed state.
-      await sql`update objects set deleted_at = now(), updated_at = now() where id = ${TEST_SHEET_ID}`;
-      await sql`update sheets set deleted_at = now() where id = ${TEST_SHEET_ID}`;
+      /* Trash through the store rather than by hand: hand-setting `deleted_at`
+         alone produced a row `trash()` never writes, so the restore path was
+         being tested against a state that does not occur. */
+      await resetDeletedAt();
+      await store.trash({ orgId: TEST_ORG_ID, actorId: TEST_ACTOR_ID, objectId: TEST_SHEET_ID });
 
       const result = await store.restore({
         orgId: TEST_ORG_ID,

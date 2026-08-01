@@ -4,8 +4,17 @@ import { Slot } from "radix-ui";
 
 import { cn } from "@/lib/utils";
 
+/* `rounded-[var(--radius)]`, not `rounded-full`.
+ *
+ * The design system is built on one 6px corner: `--radius` is shared by
+ * `.btn`, `.input`, `.select`, `.chip`, `.tab`, `.icon-btn` and `.panel`, and
+ * `.btn` alone has ~370 call sites outside this component. The pill shipped
+ * with the shadcn kit and was never reconciled, so the two shapes met on the
+ * same page — /admin/groups drew a 6px "New group" beside 9999px pills. Taking
+ * the token means one corner everywhere, and it follows the theme if the token
+ * ever changes. */
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-full border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[background-color,box-shadow,color,border-color,transform] outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/30 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-5",
+  "group/button inline-flex shrink-0 items-center justify-center rounded-[var(--radius)] border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-[background-color,box-shadow,color,border-color,transform] outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/30 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-5",
   {
     variants: {
       variant: {

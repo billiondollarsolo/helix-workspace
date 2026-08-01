@@ -46,6 +46,19 @@ function installVirtualizerLayoutShims(): void {
   } as unknown as typeof ResizeObserver;
 }
 
+// jsdom has no layout engine, so `window.scrollTo` is unimplemented and logs a
+// "Not implemented" error every time it is called. TanStack Router calls it on
+// each navigation for scroll restoration, which floods any router-mounted test
+// with stderr noise. Scroll restoration is not under test; a no-op keeps real
+// failures visible.
+function installScrollShim(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.scrollTo = () => {};
+  window.scroll = () => {};
+}
+
 function hasUsableLocalStorage(): boolean {
   if (typeof window === "undefined") {
     return true;
@@ -97,6 +110,7 @@ function installMemoryLocalStorage(): void {
 
 beforeAll(() => {
   installVirtualizerLayoutShims();
+  installScrollShim();
 });
 
 beforeEach(() => {

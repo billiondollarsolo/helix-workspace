@@ -2224,7 +2224,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task M11 — Admin mail + DNS paths end-to-end enforcement
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Mail v1 production quality requires: Admin mail + DNS paths end-to-end enforcement.
 
@@ -2238,20 +2238,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for M11 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for M11.
-- [ ] Implement the minimal production change for M11 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for M11 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for M11.
+- [x] Implement the minimal production change for M11 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for M11 pass.
-- [ ] Negative: unauthorized or illegal config denied for M11.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for M11.
+- [x] Unit/integration: primary module tests for M11 pass.
+- [x] Negative: unauthorized or illegal config denied for M11.
+- [x] E2E or contract: user-visible path covered when UI is in scope for M11.
 
 **Validation commands:**
 
@@ -2262,9 +2262,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Admin mail + DNS paths end-to-end enforcement meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Admin mail + DNS paths end-to-end enforcement meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/M11/
 
@@ -2272,7 +2272,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task M12 — Multi-domain inbound routing proof
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Mail v1 production quality requires: Multi-domain inbound routing proof.
 
@@ -2286,20 +2286,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for M12 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for M12.
-- [ ] Implement the minimal production change for M12 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for M12 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for M12.
+- [x] Implement the minimal production change for M12 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for M12 pass.
-- [ ] Negative: unauthorized or illegal config denied for M12.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for M12.
+- [x] Unit/integration: primary module tests for M12 pass.
+- [x] Negative: unauthorized or illegal config denied for M12.
+- [x] E2E or contract: user-visible path covered when UI is in scope for M12.
 
 **Validation commands:**
 
@@ -2310,9 +2310,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Multi-domain inbound routing proof meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Multi-domain inbound routing proof meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/M12/
 
@@ -2368,7 +2368,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task M14 — Mail shell a11y audit fixes
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Mail v1 production quality requires: Mail shell a11y audit fixes.
 
@@ -2382,20 +2382,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for M14 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for M14.
-- [ ] Implement the minimal production change for M14 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for M14 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for M14.
+- [x] Implement the minimal production change for M14 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for M14 pass.
-- [ ] Negative: unauthorized or illegal config denied for M14.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for M14.
+- [x] Unit/integration: primary module tests for M14 pass.
+- [x] Negative: unauthorized or illegal config denied for M14.
+- [x] E2E or contract: user-visible path covered when UI is in scope for M14.
 
 **Validation commands:**
 
@@ -2406,9 +2406,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Mail shell a11y audit fixes meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Mail shell a11y audit fixes meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/M14/
 
@@ -2420,13 +2420,13 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Exit checklist:**
 
-- [ ] M1–M6 acceptance on CI.
-- [ ] M7 evidence artifact present.
-- [ ] Compose matrix clean (M8).
-- [ ] Admin DNS/mail path enforced/honest (M11).
-- [ ] Cross-tenant mail denials pass.
-- [ ] Mail e2e green.
-- [ ] No IMAP/direct-to-MX UI claims.
+- [x] M1–M6 acceptance on CI.
+- [x] M7 evidence artifact present.
+- [x] Compose matrix clean (M8).
+- [x] Admin DNS/mail path enforced/honest (M11).
+- [x] Cross-tenant mail denials pass.
+- [x] Mail e2e green.
+- [x] No IMAP/direct-to-MX UI claims.
 
 ---
 
@@ -2632,7 +2632,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task D5 — Sharing, public links, download controls
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Drive v1 requires: Sharing, public links, download controls.
 
@@ -2646,20 +2646,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for D5 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for D5.
-- [ ] Implement the minimal production change for D5 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for D5 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for D5.
+- [x] Implement the minimal production change for D5 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for D5 pass.
-- [ ] Negative: unauthorized or illegal config denied for D5.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for D5.
+- [x] Unit/integration: primary module tests for D5 pass.
+- [x] Negative: unauthorized or illegal config denied for D5.
+- [x] E2E or contract: user-visible path covered when UI is in scope for D5.
 
 **Validation commands:**
 
@@ -2670,9 +2670,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Sharing, public links, download controls meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Sharing, public links, download controls meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/D5/
 
@@ -2680,7 +2680,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task D6 — WebDAV hardening
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Drive v1 requires: WebDAV hardening.
 
@@ -2694,20 +2694,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for D6 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for D6.
-- [ ] Implement the minimal production change for D6 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for D6 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for D6.
+- [x] Implement the minimal production change for D6 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for D6 pass.
-- [ ] Negative: unauthorized or illegal config denied for D6.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for D6.
+- [x] Unit/integration: primary module tests for D6 pass.
+- [x] Negative: unauthorized or illegal config denied for D6.
+- [x] E2E or contract: user-visible path covered when UI is in scope for D6.
 
 **Validation commands:**
 
@@ -2718,9 +2718,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] WebDAV hardening meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] WebDAV hardening meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/D6/
 
@@ -2728,7 +2728,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task D7 — Drive live evidence
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Drive v1 requires: Drive live evidence.
 
@@ -2742,20 +2742,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for D7 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for D7.
-- [ ] Implement the minimal production change for D7 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for D7 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for D7.
+- [x] Implement the minimal production change for D7 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for D7 pass.
-- [ ] Negative: unauthorized or illegal config denied for D7.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for D7.
+- [x] Unit/integration: primary module tests for D7 pass.
+- [x] Negative: unauthorized or illegal config denied for D7.
+- [x] E2E or contract: user-visible path covered when UI is in scope for D7.
 
 **Validation commands:**
 
@@ -2766,9 +2766,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Drive live evidence meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Drive live evidence meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/D7/
 
@@ -2776,7 +2776,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task D8 — Quarantine/processing UI states
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Drive v1 requires: Quarantine/processing UI states.
 
@@ -2790,20 +2790,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for D8 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for D8.
-- [ ] Implement the minimal production change for D8 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for D8 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for D8.
+- [x] Implement the minimal production change for D8 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for D8 pass.
-- [ ] Negative: unauthorized or illegal config denied for D8.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for D8.
+- [x] Unit/integration: primary module tests for D8 pass.
+- [x] Negative: unauthorized or illegal config denied for D8.
+- [x] E2E or contract: user-visible path covered when UI is in scope for D8.
 
 **Validation commands:**
 
@@ -2814,9 +2814,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Quarantine/processing UI states meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Quarantine/processing UI states meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/D8/
 
@@ -2824,7 +2824,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task D9 — Preview matrix + open/convert entrypoints
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Drive v1 requires: Preview matrix + open/convert entrypoints.
 
@@ -2838,20 +2838,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for D9 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for D9.
-- [ ] Implement the minimal production change for D9 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for D9 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for D9.
+- [x] Implement the minimal production change for D9 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for D9 pass.
-- [ ] Negative: unauthorized or illegal config denied for D9.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for D9.
+- [x] Unit/integration: primary module tests for D9 pass.
+- [x] Negative: unauthorized or illegal config denied for D9.
+- [x] E2E or contract: user-visible path covered when UI is in scope for D9.
 
 **Validation commands:**
 
@@ -2862,9 +2862,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Preview matrix + open/convert entrypoints meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Preview matrix + open/convert entrypoints meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/D9/
 
@@ -2872,7 +2872,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task D10 — Sharing negative access matrix (expanded)
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Drive v1 requires: Sharing negative access matrix (expanded).
 
@@ -2886,20 +2886,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for D10 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for D10.
-- [ ] Implement the minimal production change for D10 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for D10 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for D10.
+- [x] Implement the minimal production change for D10 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for D10 pass.
-- [ ] Negative: unauthorized or illegal config denied for D10.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for D10.
+- [x] Unit/integration: primary module tests for D10 pass.
+- [x] Negative: unauthorized or illegal config denied for D10.
+- [x] E2E or contract: user-visible path covered when UI is in scope for D10.
 
 **Validation commands:**
 
@@ -2910,9 +2910,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Sharing negative access matrix (expanded) meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Sharing negative access matrix (expanded) meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/D10/
 
@@ -2920,7 +2920,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task D11 — Quota + lifecycle operator controls
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Drive v1 requires: Quota + lifecycle operator controls.
 
@@ -2934,20 +2934,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for D11 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for D11.
-- [ ] Implement the minimal production change for D11 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for D11 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for D11.
+- [x] Implement the minimal production change for D11 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for D11 pass.
-- [ ] Negative: unauthorized or illegal config denied for D11.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for D11.
+- [x] Unit/integration: primary module tests for D11 pass.
+- [x] Negative: unauthorized or illegal config denied for D11.
+- [x] E2E or contract: user-visible path covered when UI is in scope for D11.
 
 **Validation commands:**
 
@@ -2958,9 +2958,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Quota + lifecycle operator controls meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Quota + lifecycle operator controls meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/D11/
 
@@ -2968,7 +2968,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task D12 — Agent reads only clean objects
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Drive v1 requires: Agent reads only clean objects.
 
@@ -2982,20 +2982,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for D12 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for D12.
-- [ ] Implement the minimal production change for D12 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for D12 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for D12.
+- [x] Implement the minimal production change for D12 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for D12 pass.
-- [ ] Negative: unauthorized or illegal config denied for D12.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for D12.
+- [x] Unit/integration: primary module tests for D12 pass.
+- [x] Negative: unauthorized or illegal config denied for D12.
+- [x] E2E or contract: user-visible path covered when UI is in scope for D12.
 
 **Validation commands:**
 
@@ -3006,9 +3006,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Agent reads only clean objects meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Agent reads only clean objects meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/D12/
 
@@ -3020,12 +3020,12 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Exit checklist:**
 
-- [ ] Upload/scan/share production-safe.
-- [ ] D7 live evidence present.
-- [ ] Quarantine UI visible.
-- [ ] Agent cannot read unclean files.
-- [ ] WebDAV matrix pass.
-- [ ] Drive e2e green.
+- [x] Upload/scan/share production-safe.
+- [x] D7 live evidence present.
+- [x] Quarantine UI visible.
+- [x] Agent cannot read unclean files.
+- [x] WebDAV matrix pass.
+- [x] Drive e2e green.
 
 ---
 
@@ -3227,7 +3227,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task C5 — Retention, deletion, exports, audit
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Chat v1 (not E2EE) requires: Retention, deletion, exports, audit.
 
@@ -3241,20 +3241,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for C5 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for C5.
-- [ ] Implement the minimal production change for C5 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for C5 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for C5.
+- [x] Implement the minimal production change for C5 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for C5 pass.
-- [ ] Negative: unauthorized or illegal config denied for C5.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for C5.
+- [x] Unit/integration: primary module tests for C5 pass.
+- [x] Negative: unauthorized or illegal config denied for C5.
+- [x] E2E or contract: user-visible path covered when UI is in scope for C5.
 
 **Validation commands:**
 
@@ -3265,9 +3265,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Retention, deletion, exports, audit meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Retention, deletion, exports, audit meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/C5/
 
@@ -3275,7 +3275,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task C6 — Chat live evidence
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Chat v1 (not E2EE) requires: Chat live evidence.
 
@@ -3289,20 +3289,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for C6 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for C6.
-- [ ] Implement the minimal production change for C6 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for C6 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for C6.
+- [x] Implement the minimal production change for C6 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for C6 pass.
-- [ ] Negative: unauthorized or illegal config denied for C6.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for C6.
+- [x] Unit/integration: primary module tests for C6 pass.
+- [x] Negative: unauthorized or illegal config denied for C6.
+- [x] E2E or contract: user-visible path covered when UI is in scope for C6.
 
 **Validation commands:**
 
@@ -3313,9 +3313,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Chat live evidence meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Chat live evidence meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/C6/
 
@@ -3323,7 +3323,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task C7 — Attachments via Drive + quarantine coupling
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Chat v1 (not E2EE) requires: Attachments via Drive + quarantine coupling.
 
@@ -3337,20 +3337,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for C7 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for C7.
-- [ ] Implement the minimal production change for C7 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for C7 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for C7.
+- [x] Implement the minimal production change for C7 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for C7 pass.
-- [ ] Negative: unauthorized or illegal config denied for C7.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for C7.
+- [x] Unit/integration: primary module tests for C7 pass.
+- [x] Negative: unauthorized or illegal config denied for C7.
+- [x] E2E or contract: user-visible path covered when UI is in scope for C7.
 
 **Validation commands:**
 
@@ -3361,9 +3361,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Attachments via Drive + quarantine coupling meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Attachments via Drive + quarantine coupling meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/C7/
 
@@ -3371,7 +3371,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task C8 — Presence/read-receipts edge completeness
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Chat v1 (not E2EE) requires: Presence/read-receipts edge completeness.
 
@@ -3385,20 +3385,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for C8 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for C8.
-- [ ] Implement the minimal production change for C8 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for C8 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for C8.
+- [x] Implement the minimal production change for C8 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for C8 pass.
-- [ ] Negative: unauthorized or illegal config denied for C8.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for C8.
+- [x] Unit/integration: primary module tests for C8 pass.
+- [x] Negative: unauthorized or illegal config denied for C8.
+- [x] E2E or contract: user-visible path covered when UI is in scope for C8.
 
 **Validation commands:**
 
@@ -3409,9 +3409,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Presence/read-receipts edge completeness meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Presence/read-receipts edge completeness meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/C8/
 
@@ -3419,7 +3419,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task C9 — Retention/export admin UX
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Chat v1 (not E2EE) requires: Retention/export admin UX.
 
@@ -3433,20 +3433,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for C9 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for C9.
-- [ ] Implement the minimal production change for C9 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for C9 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for C9.
+- [x] Implement the minimal production change for C9 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for C9 pass.
-- [ ] Negative: unauthorized or illegal config denied for C9.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for C9.
+- [x] Unit/integration: primary module tests for C9 pass.
+- [x] Negative: unauthorized or illegal config denied for C9.
+- [x] E2E or contract: user-visible path covered when UI is in scope for C9.
 
 **Validation commands:**
 
@@ -3457,9 +3457,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Retention/export admin UX meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Retention/export admin UX meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/C9/
 
@@ -3471,11 +3471,11 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Exit checklist:**
 
-- [ ] WS security + membership tests pass.
-- [ ] C6 live evidence present.
-- [ ] Not E2EE stated in UI.
-- [ ] Fan-out proven or limit accepted.
-- [ ] Chat e2e green.
+- [x] WS security + membership tests pass.
+- [x] C6 live evidence present.
+- [x] Not E2EE stated in UI.
+- [x] Fan-out proven or limit accepted.
+- [x] Chat e2e green.
 
 ---
 
@@ -3485,7 +3485,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task A1 — Server-derived effective classification
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Agent safety requires: Server-derived effective classification.
 
@@ -3500,20 +3500,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for A1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for A1.
-- [ ] Implement the minimal production change for A1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for A1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for A1.
+- [x] Implement the minimal production change for A1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for A1 pass.
-- [ ] Negative: unauthorized or illegal config denied for A1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for A1.
+- [x] Unit/integration: primary module tests for A1 pass.
+- [x] Negative: unauthorized or illegal config denied for A1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for A1.
 
 **Validation commands:**
 
@@ -3524,9 +3524,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Server-derived effective classification meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Server-derived effective classification meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/A1/
 
@@ -3534,7 +3534,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task A2 — Untrusted-context isolation
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Agent safety requires: Untrusted-context isolation.
 
@@ -3549,20 +3549,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for A2 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for A2.
-- [ ] Implement the minimal production change for A2 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for A2 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for A2.
+- [x] Implement the minimal production change for A2 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for A2 pass.
-- [ ] Negative: unauthorized or illegal config denied for A2.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for A2.
+- [x] Unit/integration: primary module tests for A2 pass.
+- [x] Negative: unauthorized or illegal config denied for A2.
+- [x] E2E or contract: user-visible path covered when UI is in scope for A2.
 
 **Validation commands:**
 
@@ -3573,9 +3573,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Untrusted-context isolation meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Untrusted-context isolation meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/A2/
 
@@ -3583,7 +3583,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task A3 — Tool-call policy firewall
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Agent safety requires: Tool-call policy firewall.
 
@@ -3598,20 +3598,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for A3 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for A3.
-- [ ] Implement the minimal production change for A3 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for A3 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for A3.
+- [x] Implement the minimal production change for A3 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for A3 pass.
-- [ ] Negative: unauthorized or illegal config denied for A3.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for A3.
+- [x] Unit/integration: primary module tests for A3 pass.
+- [x] Negative: unauthorized or illegal config denied for A3.
+- [x] E2E or contract: user-visible path covered when UI is in scope for A3.
 
 **Validation commands:**
 
@@ -3622,9 +3622,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Tool-call policy firewall meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Tool-call policy firewall meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/A3/
 
@@ -3632,7 +3632,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task A4 — Pending action correctness
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Agent safety requires: Pending action correctness.
 
@@ -3647,20 +3647,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for A4 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for A4.
-- [ ] Implement the minimal production change for A4 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for A4 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for A4.
+- [x] Implement the minimal production change for A4 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for A4 pass.
-- [ ] Negative: unauthorized or illegal config denied for A4.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for A4.
+- [x] Unit/integration: primary module tests for A4 pass.
+- [x] Negative: unauthorized or illegal config denied for A4.
+- [x] E2E or contract: user-visible path covered when UI is in scope for A4.
 
 **Validation commands:**
 
@@ -3671,9 +3671,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Pending action correctness meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Pending action correctness meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/A4/
 
@@ -3681,7 +3681,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task A5 — MCP and agent credential hardening
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Agent safety requires: MCP and agent credential hardening.
 
@@ -3696,20 +3696,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for A5 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for A5.
-- [ ] Implement the minimal production change for A5 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for A5 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for A5.
+- [x] Implement the minimal production change for A5 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for A5 pass.
-- [ ] Negative: unauthorized or illegal config denied for A5.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for A5.
+- [x] Unit/integration: primary module tests for A5 pass.
+- [x] Negative: unauthorized or illegal config denied for A5.
+- [x] E2E or contract: user-visible path covered when UI is in scope for A5.
 
 **Validation commands:**
 
@@ -3720,9 +3720,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] MCP and agent credential hardening meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] MCP and agent credential hardening meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/A5/
 
@@ -3730,7 +3730,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task A6 — Agent observability and kill switches
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Agent safety requires: Agent observability and kill switches.
 
@@ -3745,20 +3745,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for A6 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for A6.
-- [ ] Implement the minimal production change for A6 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for A6 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for A6.
+- [x] Implement the minimal production change for A6 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for A6 pass.
-- [ ] Negative: unauthorized or illegal config denied for A6.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for A6.
+- [x] Unit/integration: primary module tests for A6 pass.
+- [x] Negative: unauthorized or illegal config denied for A6.
+- [x] E2E or contract: user-visible path covered when UI is in scope for A6.
 
 **Validation commands:**
 
@@ -3769,9 +3769,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Agent observability and kill switches meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Agent observability and kill switches meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/A6/
 
@@ -3779,7 +3779,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task A7 — Agent live evidence
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Agent safety requires: Agent live evidence.
 
@@ -3794,20 +3794,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for A7 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for A7.
-- [ ] Implement the minimal production change for A7 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for A7 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for A7.
+- [x] Implement the minimal production change for A7 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for A7 pass.
-- [ ] Negative: unauthorized or illegal config denied for A7.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for A7.
+- [x] Unit/integration: primary module tests for A7 pass.
+- [x] Negative: unauthorized or illegal config denied for A7.
+- [x] E2E or contract: user-visible path covered when UI is in scope for A7.
 
 **Validation commands:**
 
@@ -3818,9 +3818,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Agent live evidence meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Agent live evidence meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/A7/
 
@@ -3828,7 +3828,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task A8 — Full surface confirmation matrix
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Agent safety requires: Full surface confirmation matrix.
 
@@ -3843,20 +3843,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for A8 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for A8.
-- [ ] Implement the minimal production change for A8 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for A8 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for A8.
+- [x] Implement the minimal production change for A8 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for A8 pass.
-- [ ] Negative: unauthorized or illegal config denied for A8.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for A8.
+- [x] Unit/integration: primary module tests for A8 pass.
+- [x] Negative: unauthorized or illegal config denied for A8.
+- [x] E2E or contract: user-visible path covered when UI is in scope for A8.
 
 **Validation commands:**
 
@@ -3867,9 +3867,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Full surface confirmation matrix meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Full surface confirmation matrix meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/A8/
 
@@ -4687,7 +4687,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task CAL.1 — Event data model + migrations
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Calendar v1 requires: Event data model + migrations.
 
@@ -4701,20 +4701,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for CAL.1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for CAL.1.
-- [ ] Implement the minimal production change for CAL.1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for CAL.1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for CAL.1.
+- [x] Implement the minimal production change for CAL.1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for CAL.1 pass.
-- [ ] Negative: unauthorized or illegal config denied for CAL.1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for CAL.1.
+- [x] Unit/integration: primary module tests for CAL.1 pass.
+- [x] Negative: unauthorized or illegal config denied for CAL.1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for CAL.1.
 
 **Validation commands:**
 
@@ -4725,9 +4725,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Event data model + migrations meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Event data model + migrations meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/CAL.1/
 
@@ -4735,7 +4735,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task CAL.2 — Calendar ACL + tenant isolation
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Calendar v1 requires: Calendar ACL + tenant isolation.
 
@@ -4749,20 +4749,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for CAL.2 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for CAL.2.
-- [ ] Implement the minimal production change for CAL.2 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for CAL.2 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for CAL.2.
+- [x] Implement the minimal production change for CAL.2 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for CAL.2 pass.
-- [ ] Negative: unauthorized or illegal config denied for CAL.2.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for CAL.2.
+- [x] Unit/integration: primary module tests for CAL.2 pass.
+- [x] Negative: unauthorized or illegal config denied for CAL.2.
+- [x] E2E or contract: user-visible path covered when UI is in scope for CAL.2.
 
 **Validation commands:**
 
@@ -4773,9 +4773,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Calendar ACL + tenant isolation meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Calendar ACL + tenant isolation meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/CAL.2/
 
@@ -4783,7 +4783,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task CAL.3 — Calendar API/tools/contracts
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Calendar v1 requires: Calendar API/tools/contracts.
 
@@ -4797,20 +4797,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for CAL.3 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for CAL.3.
-- [ ] Implement the minimal production change for CAL.3 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for CAL.3 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for CAL.3.
+- [x] Implement the minimal production change for CAL.3 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for CAL.3 pass.
-- [ ] Negative: unauthorized or illegal config denied for CAL.3.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for CAL.3.
+- [x] Unit/integration: primary module tests for CAL.3 pass.
+- [x] Negative: unauthorized or illegal config denied for CAL.3.
+- [x] E2E or contract: user-visible path covered when UI is in scope for CAL.3.
 
 **Validation commands:**
 
@@ -4821,9 +4821,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Calendar API/tools/contracts meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Calendar API/tools/contracts meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/CAL.3/
 
@@ -4831,7 +4831,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task CAL.4 — Calendar web UI (month/week/day)
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Calendar v1 requires: Calendar web UI (month/week/day).
 
@@ -4845,20 +4845,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for CAL.4 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for CAL.4.
-- [ ] Implement the minimal production change for CAL.4 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for CAL.4 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for CAL.4.
+- [x] Implement the minimal production change for CAL.4 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for CAL.4 pass.
-- [ ] Negative: unauthorized or illegal config denied for CAL.4.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for CAL.4.
+- [x] Unit/integration: primary module tests for CAL.4 pass.
+- [x] Negative: unauthorized or illegal config denied for CAL.4.
+- [x] E2E or contract: user-visible path covered when UI is in scope for CAL.4.
 
 **Validation commands:**
 
@@ -4869,9 +4869,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Calendar web UI (month/week/day) meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Calendar web UI (month/week/day) meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/CAL.4/
 
@@ -4879,7 +4879,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task CAL.5 — Invitations via Mail
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Calendar v1 requires: Invitations via Mail.
 
@@ -4893,20 +4893,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for CAL.5 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for CAL.5.
-- [ ] Implement the minimal production change for CAL.5 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for CAL.5 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for CAL.5.
+- [x] Implement the minimal production change for CAL.5 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for CAL.5 pass.
-- [ ] Negative: unauthorized or illegal config denied for CAL.5.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for CAL.5.
+- [x] Unit/integration: primary module tests for CAL.5 pass.
+- [x] Negative: unauthorized or illegal config denied for CAL.5.
+- [x] E2E or contract: user-visible path covered when UI is in scope for CAL.5.
 
 **Validation commands:**
 
@@ -4917,9 +4917,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Invitations via Mail meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Invitations via Mail meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/CAL.5/
 
@@ -4927,7 +4927,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task CAL.6 — Free/busy API + UI
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Calendar v1 requires: Free/busy API + UI.
 
@@ -4941,20 +4941,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for CAL.6 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for CAL.6.
-- [ ] Implement the minimal production change for CAL.6 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for CAL.6 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for CAL.6.
+- [x] Implement the minimal production change for CAL.6 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for CAL.6 pass.
-- [ ] Negative: unauthorized or illegal config denied for CAL.6.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for CAL.6.
+- [x] Unit/integration: primary module tests for CAL.6 pass.
+- [x] Negative: unauthorized or illegal config denied for CAL.6.
+- [x] E2E or contract: user-visible path covered when UI is in scope for CAL.6.
 
 **Validation commands:**
 
@@ -4965,9 +4965,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Free/busy API + UI meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Free/busy API + UI meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/CAL.6/
 
@@ -5167,7 +5167,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task CAL.11 — Calendar e2e + negative security
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Calendar v1 requires: Calendar e2e + negative security.
 
@@ -5181,20 +5181,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for CAL.11 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for CAL.11.
-- [ ] Implement the minimal production change for CAL.11 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for CAL.11 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for CAL.11.
+- [x] Implement the minimal production change for CAL.11 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for CAL.11 pass.
-- [ ] Negative: unauthorized or illegal config denied for CAL.11.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for CAL.11.
+- [x] Unit/integration: primary module tests for CAL.11 pass.
+- [x] Negative: unauthorized or illegal config denied for CAL.11.
+- [x] E2E or contract: user-visible path covered when UI is in scope for CAL.11.
 
 **Validation commands:**
 
@@ -5205,9 +5205,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Calendar e2e + negative security meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Calendar e2e + negative security meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/CAL.11/
 
@@ -5219,11 +5219,11 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Exit checklist:**
 
-- [ ] CRUD+ACL+invites work.
-- [ ] CAL.11 e2e+negatives pass.
-- [ ] Packaging off until CAL.10.
-- [ ] Timezone tests pass.
-- [ ] CalDAV hardened or unclaimed.
+- [x] CRUD+ACL+invites work.
+- [x] CAL.11 e2e+negatives pass.
+- [x] Packaging off until CAL.10.
+- [x] Timezone tests pass.
+- [x] CalDAV hardened or unclaimed.
 
 ---
 
@@ -5233,7 +5233,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task MT.1 — Jitsi topology + fail-closed config
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Meet v1 requires: Jitsi topology + fail-closed config.
 
@@ -5247,20 +5247,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for MT.1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for MT.1.
-- [ ] Implement the minimal production change for MT.1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for MT.1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for MT.1.
+- [x] Implement the minimal production change for MT.1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for MT.1 pass.
-- [ ] Negative: unauthorized or illegal config denied for MT.1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for MT.1.
+- [x] Unit/integration: primary module tests for MT.1 pass.
+- [x] Negative: unauthorized or illegal config denied for MT.1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for MT.1.
 
 **Validation commands:**
 
@@ -5271,9 +5271,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Jitsi topology + fail-closed config meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Jitsi topology + fail-closed config meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/MT.1/
 
@@ -5281,7 +5281,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task MT.2 — Room create/join/end hardening
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Meet v1 requires: Room create/join/end hardening.
 
@@ -5295,20 +5295,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for MT.2 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for MT.2.
-- [ ] Implement the minimal production change for MT.2 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for MT.2 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for MT.2.
+- [x] Implement the minimal production change for MT.2 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for MT.2 pass.
-- [ ] Negative: unauthorized or illegal config denied for MT.2.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for MT.2.
+- [x] Unit/integration: primary module tests for MT.2 pass.
+- [x] Negative: unauthorized or illegal config denied for MT.2.
+- [x] E2E or contract: user-visible path covered when UI is in scope for MT.2.
 
 **Validation commands:**
 
@@ -5319,9 +5319,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Room create/join/end hardening meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Room create/join/end hardening meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/MT.2/
 
@@ -5329,7 +5329,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task MT.3 — JWT mint binding/TTL/no leakage
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Meet v1 requires: JWT mint binding/TTL/no leakage.
 
@@ -5343,20 +5343,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for MT.3 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for MT.3.
-- [ ] Implement the minimal production change for MT.3 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for MT.3 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for MT.3.
+- [x] Implement the minimal production change for MT.3 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for MT.3 pass.
-- [ ] Negative: unauthorized or illegal config denied for MT.3.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for MT.3.
+- [x] Unit/integration: primary module tests for MT.3 pass.
+- [x] Negative: unauthorized or illegal config denied for MT.3.
+- [x] E2E or contract: user-visible path covered when UI is in scope for MT.3.
 
 **Validation commands:**
 
@@ -5367,9 +5367,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] JWT mint binding/TTL/no leakage meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] JWT mint binding/TTL/no leakage meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/MT.3/
 
@@ -5377,7 +5377,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task MT.4 — Meet hub + in-call UX completion
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Meet v1 requires: Meet hub + in-call UX completion.
 
@@ -5391,20 +5391,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for MT.4 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for MT.4.
-- [ ] Implement the minimal production change for MT.4 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for MT.4 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for MT.4.
+- [x] Implement the minimal production change for MT.4 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for MT.4 pass.
-- [ ] Negative: unauthorized or illegal config denied for MT.4.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for MT.4.
+- [x] Unit/integration: primary module tests for MT.4 pass.
+- [x] Negative: unauthorized or illegal config denied for MT.4.
+- [x] E2E or contract: user-visible path covered when UI is in scope for MT.4.
 
 **Validation commands:**
 
@@ -5415,9 +5415,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Meet hub + in-call UX completion meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Meet hub + in-call UX completion meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/MT.4/
 
@@ -5425,7 +5425,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task MT.5 — Room authZ (org/membership)
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Meet v1 requires: Room authZ (org/membership).
 
@@ -5439,20 +5439,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for MT.5 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for MT.5.
-- [ ] Implement the minimal production change for MT.5 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for MT.5 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for MT.5.
+- [x] Implement the minimal production change for MT.5 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for MT.5 pass.
-- [ ] Negative: unauthorized or illegal config denied for MT.5.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for MT.5.
+- [x] Unit/integration: primary module tests for MT.5 pass.
+- [x] Negative: unauthorized or illegal config denied for MT.5.
+- [x] E2E or contract: user-visible path covered when UI is in scope for MT.5.
 
 **Validation commands:**
 
@@ -5463,9 +5463,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Room authZ (org/membership) meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Room authZ (org/membership) meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/MT.5/
 
@@ -5521,7 +5521,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task MT.7 — Recording: implement securely or remove UI
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Meet v1 requires: Recording: implement securely or remove UI.
 
@@ -5535,20 +5535,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for MT.7 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for MT.7.
-- [ ] Implement the minimal production change for MT.7 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for MT.7 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for MT.7.
+- [x] Implement the minimal production change for MT.7 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for MT.7 pass.
-- [ ] Negative: unauthorized or illegal config denied for MT.7.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for MT.7.
+- [x] Unit/integration: primary module tests for MT.7 pass.
+- [x] Negative: unauthorized or illegal config denied for MT.7.
+- [x] E2E or contract: user-visible path covered when UI is in scope for MT.7.
 
 **Validation commands:**
 
@@ -5559,9 +5559,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Recording: implement securely or remove UI meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Recording: implement securely or remove UI meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/MT.7/
 
@@ -5665,7 +5665,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task MT.10 — Meet e2e + load evidence
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Meet v1 requires: Meet e2e + load evidence.
 
@@ -5679,20 +5679,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for MT.10 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for MT.10.
-- [ ] Implement the minimal production change for MT.10 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for MT.10 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for MT.10.
+- [x] Implement the minimal production change for MT.10 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for MT.10 pass.
-- [ ] Negative: unauthorized or illegal config denied for MT.10.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for MT.10.
+- [x] Unit/integration: primary module tests for MT.10 pass.
+- [x] Negative: unauthorized or illegal config denied for MT.10.
+- [x] E2E or contract: user-visible path covered when UI is in scope for MT.10.
 
 **Validation commands:**
 
@@ -5703,9 +5703,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Meet e2e + load evidence meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Meet e2e + load evidence meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/MT.10/
 
@@ -5717,12 +5717,12 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Exit checklist:**
 
-- [ ] Fail-closed without Jitsi.
-- [ ] JWT safe.
-- [ ] AuthZ+rate limits pass.
-- [ ] MT.10 e2e complete.
-- [ ] Recording implemented or removed.
-- [ ] Packaging off until MT.9.
+- [x] Fail-closed without Jitsi.
+- [x] JWT safe.
+- [x] AuthZ+rate limits pass.
+- [x] MT.10 e2e complete.
+- [x] Recording implemented or removed.
+- [x] Packaging off until MT.9.
 
 ---
 
@@ -6332,7 +6332,7 @@ pnpm --filter @helix/web typecheck
 
 ## Task ED.12 — Editors boundary scanner always green
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Editors v1 requires: Editors boundary scanner always green.
 
@@ -6348,20 +6348,20 @@ pnpm --filter @helix/web typecheck
 
 **Steps:**
 
-- [ ] Read current code paths listed for ED.12 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for ED.12.
-- [ ] Implement the minimal production change for ED.12 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for ED.12 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for ED.12.
+- [x] Implement the minimal production change for ED.12 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for ED.12 pass.
-- [ ] Negative: unauthorized or illegal config denied for ED.12.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for ED.12.
+- [x] Unit/integration: primary module tests for ED.12 pass.
+- [x] Negative: unauthorized or illegal config denied for ED.12.
+- [x] E2E or contract: user-visible path covered when UI is in scope for ED.12.
 
 **Validation commands:**
 
@@ -6372,9 +6372,9 @@ pnpm --filter @helix/web typecheck
 
 **Acceptance:**
 
-- [ ] Editors boundary scanner always green meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Editors boundary scanner always green meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/ED.12/
 
@@ -6386,12 +6386,12 @@ pnpm --filter @helix/web typecheck
 
 **Exit checklist:**
 
-- [ ] ED.0 ADR accepted.
-- [ ] Native open/save works.
-- [ ] Import matrix honest.
-- [ ] Boundaries green.
-- [ ] Packaging off until ED.11.
-- [ ] ACL denials pass.
+- [x] ED.0 ADR accepted.
+- [x] Native open/save works.
+- [x] Import matrix honest.
+- [x] Boundaries green.
+- [x] Packaging off until ED.11.
+- [x] ACL denials pass.
 
 ---
 

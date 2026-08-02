@@ -10,17 +10,21 @@
 - Keep unrelated work in the workspace intact. Never edit generated dependencies or commit build
   output.
 
-## Current production MVP boundary
+## Production packaging boundary (MVP default; Full Workspace gated)
 
-- The production MVP is Mail, Drive file storage/management with read-only previews, secure
-  server-readable Chat, Assistant/agent workflows, and Admin.
-- Do not implement or enable native Docs, Sheets, Slides, PDF editing, Calendar, Meet, or editor
-  collaboration as part of MVP work.
-- Production must fail closed unless `HELIX_APPS` is exactly `mail,drive,chat,assistant`, the
-  disabled module configuration is explicit, editor migrations are false, and the web build uses
-  `VITE_HELIX_MVP_ONLY=true`.
-- `../helix-editors` remains a pinned compatibility/build input only. Do not broaden the active
-  product boundary merely because dormant integration code already exists.
+- **Default production profile is MVP** (`HELIX_WORKSPACE_PROFILE=mvp` or unset): Mail, Drive
+  (storage + read-only previews), secure server-readable Chat, Assistant/agent workflows, and Admin.
+- MVP production must fail closed unless `HELIX_APPS` is exactly `mail,drive,chat,assistant`, the
+  disabled module configuration is explicit for docs/calendar/meet/editors, editor migrations are
+  `false`, and the web build uses `VITE_HELIX_MVP_ONLY=true`.
+- **Full Workspace v1** (`HELIX_WORKSPACE_PROFILE=full`) expands `HELIX_APPS` to
+  `mail,drive,chat,assistant,calendar,meet,docs,sheets,slides` only after domain evidence and
+  fail-closed dependency gates (Meet requires Jitsi domain + JWT secret; Business Drive requires
+  ClamAV; editors require `HELIX_EDITORS_MIGRATIONS_ENABLED=true` and helix-editors pin). See
+  `docs/architecture/v1-packaging-matrix.md` and `apps/helix/src/config/workspace-packaging.ts`.
+- Do not enable Full Workspace packaging as a shortcut without those gates. Dormant integration
+  code is not enablement.
+- `../helix-editors` remains a pinned compatibility/build input; treat editor enablement as PKG.
 
 ## Implementation rules
 

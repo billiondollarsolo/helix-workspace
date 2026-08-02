@@ -9,7 +9,16 @@ import { AdminSecurity } from "./policies";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-function policy(policyType: string, enabled: boolean, enforcement: string) {
+function policy(
+  policyType: string,
+  enabled: boolean,
+  enforcement: string,
+  runtime?: {
+    mode: "enforced" | "partial" | "recorded_only";
+    displayLevel: "off" | "recorded" | "active" | "required";
+    displayLevelOn: boolean;
+  },
+) {
   return {
     id: `p-${policyType}`,
     orgId: "org-1",
@@ -20,6 +29,17 @@ function policy(policyType: string, enabled: boolean, enforcement: string) {
     updatedBy: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    ...(runtime === undefined
+      ? {}
+      : {
+          runtimeStatus: {
+            mode: runtime.mode,
+            summary: "test",
+            enforcementPoints: [],
+            displayLevel: runtime.displayLevel,
+            displayLevelOn: runtime.displayLevelOn,
+          },
+        }),
   };
 }
 
@@ -71,9 +91,21 @@ describe("AdminSecurity", () => {
           new Response(
             JSON.stringify({
               policies: [
-                policy("mfa", true, "required"),
-                policy("external_sharing", true, "optional"),
-                policy("dlp", true, "required"),
+                policy("mfa", true, "required", {
+                  mode: "partial",
+                  displayLevel: "active",
+                  displayLevelOn: true,
+                }),
+                policy("external_sharing", true, "required", {
+                  mode: "enforced",
+                  displayLevel: "required",
+                  displayLevelOn: true,
+                }),
+                policy("dlp", true, "optional", {
+                  mode: "recorded_only",
+                  displayLevel: "recorded",
+                  displayLevelOn: false,
+                }),
               ],
             }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -93,38 +125,23 @@ describe("AdminSecurity", () => {
     vi.clearAllMocks();
   });
 
-  it("says outright that the policies are not enforced", async () => {
-    /* None of the six is read by any runtime path: no login consults the MFA
-       policy, no share consults the external-sharing allowlist, no message is
-       scanned against the DLP settings. A page that presents them as controls
-       without saying so invites an operator to configure a protection they do
-       not have and then stop looking — which is worse than having no page. */
+  it("explains runtime status instead of claiming blanket non-enforcement", async () => {
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("does not enforce them yet");
+      expect(container.textContent).toContain("runtime status");
     });
-    expect(container.textContent).toContain("recorded and audited");
-    expect(container.textContent).toContain("does not change what the platform allows");
+    expect(container.textContent).toContain("External sharing");
+    expect(container.textContent).toContain("identity provider");
   });
 
-  it("points somewhere the control can actually be applied", async () => {
-    // Naming the gap without naming a remedy leaves the operator stuck.
-    await render();
-
-    await waitFor(() => {
-      expect(container.textContent).toContain("identity provider");
-    });
-  });
-
-  it("still shows a policy's own state, which stays meaningful as intent", async () => {
-    /* The disclaimer is about enforcement, not about the record: what an
-       operator saved is real, versioned and audited, and the page should keep
-       showing it. */
+  it("renders honest chips from runtimeStatus (Required only when enforced)", async () => {
     await render();
 
     await waitFor(() => {
       expect(container.textContent).toContain("Required");
+      expect(container.textContent).toContain("Recorded");
+      expect(container.textContent).toContain("Partial");
     });
   });
 });

@@ -76,6 +76,12 @@ import {
   type DriveFolderItem,
 } from "./drive-data";
 import {
+  badgeStyleForTone,
+  canOpenDriveObject,
+  driveUploadStatusView,
+  openDenialMessage,
+} from "./upload-status-ui";
+import {
   applyDriveScope,
   driveAccessQueryOptions,
   driveActorQueryOptions,
@@ -576,6 +582,17 @@ export function DriveShell() {
     if (entry === undefined) {
       return;
     }
+    // D8: never open/import non-active processing or quarantined objects.
+    if (
+      !canOpenDriveObject({
+        uploadState: entry.uploadState,
+        available: entry.available,
+      })
+    ) {
+      setSelectedFileId(id);
+      setImportErrorState(openDenialMessage(entry.uploadState));
+      return;
+    }
     if (CORE_WORKSPACE_STORAGE_ONLY) {
       setSelectedFileId(id);
       return;
@@ -600,6 +617,18 @@ export function DriveShell() {
 
   const onSelectFile = (id: string) => {
     const entry = entryById.get(id);
+    // Always allow selection so quarantine/processing details are visible.
+    // Content open paths are gated in onOpenFile / details panel actions.
+    if (
+      entry !== undefined &&
+      !canOpenDriveObject({
+        uploadState: entry.uploadState,
+        available: entry.available,
+      })
+    ) {
+      setSelectedFileId(id);
+      return;
+    }
     if (CORE_WORKSPACE_STORAGE_ONLY) {
       setSelectedFileId(entry === undefined ? null : id);
       return;
@@ -741,6 +770,8 @@ export function DriveShell() {
               : "status"
           }
           aria-live="polite"
+          data-testid="drive-processing-banner"
+          data-upload-state={uploadStatusQuery.data?.state ?? processingUpload.initialState}
           style={{
             position: "fixed",
             top: 20,
@@ -749,8 +780,16 @@ export function DriveShell() {
             maxWidth: 420,
             padding: "12px 16px",
             borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: "var(--surface)",
+            border:
+              uploadStatusQuery.data?.state === "quarantined" ||
+              uploadStatusQuery.data?.state === "scan_failed"
+                ? "1px solid var(--danger, #dc2626)"
+                : "1px solid var(--border)",
+            background:
+              uploadStatusQuery.data?.state === "quarantined" ||
+              uploadStatusQuery.data?.state === "scan_failed"
+                ? "var(--danger-soft, #fef2f2)"
+                : "var(--surface)",
             boxShadow: "var(--shadow-lg)",
           }}
         >
@@ -760,6 +799,18 @@ export function DriveShell() {
               ? "Upload stored safely, but its security scan status could not be refreshed."
               : (uploadStatusQuery.data?.label ?? "Queued for security scan")}
           </div>
+          {uploadStatusQuery.data?.state === "quarantined" ||
+          uploadStatusQuery.data?.state === "scan_failed" ? (
+            <div
+              style={{
+                marginTop: 6,
+                fontSize: "var(--text-meta)",
+                color: "var(--danger, #dc2626)",
+              }}
+            >
+              {openDenialMessage(uploadStatusQuery.data.state)}
+            </div>
+          ) : null}
           <button
             type="button"
             className="btn sm"
@@ -1711,6 +1762,39 @@ function DriveEmptyState({
   );
 }
 
+function DriveUploadStatusBadge({
+  file,
+}: {
+  readonly file: Pick<DriveFileItem, "uploadState" | "uploadStatusLabel" | "available">;
+}) {
+  const view = driveUploadStatusView(file.uploadState);
+  if (view === null || view.available) {
+    return null;
+  }
+  const toneStyle = badgeStyleForTone(view.tone);
+  return (
+    <span
+      data-testid="drive-upload-status-badge"
+      data-upload-state={view.state}
+      title={file.uploadStatusLabel ?? view.label}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "1px 6px",
+        borderRadius: 999,
+        fontSize: "var(--text-chip, 10px)",
+        fontWeight: 600,
+        letterSpacing: "0.02em",
+        textTransform: "uppercase",
+        ...toneStyle,
+      }}
+    >
+      {file.uploadStatusLabel ?? view.label}
+    </span>
+  );
+}
+
 function DriveFileCard({
   file,
   selected,
@@ -1724,6 +1808,10 @@ function DriveFileCard({
 }) {
   const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
   const meta = appMeta ?? DRIVE_FILE_META[file.type];
+  const openable = canOpenDriveObject({
+    uploadState: file.uploadState,
+    available: file.available,
+  });
   return (
     <div
       style={{
@@ -1737,6 +1825,7 @@ function DriveFileCard({
         overflow: "hidden",
         boxShadow: selected ? "0 0 0 3px var(--accent-soft)" : "none",
         position: "relative",
+        opacity: openable ? 1 : 0.92,
       }}
     >
       <DriveStarToggle
@@ -1748,8 +1837,13 @@ function DriveFileCard({
       <button
         type="button"
         aria-pressed={selected}
-        draggable
+        aria-disabled={!openable}
+        draggable={openable}
         onDragStart={(event) => {
+          if (!openable) {
+            event.preventDefault();
+            return;
+          }
           setHelixDriveItemDragData(event.dataTransfer, {
             id: file.id,
             name: file.name,
@@ -1776,7 +1870,7 @@ function DriveFileCard({
           objectId={file.id}
           name={file.name}
           mimeType={file.mimeType}
-          preview={file.preview}
+          preview={openable ? file.preview : undefined}
           icon={meta.icon}
           color={meta.color}
           aspectRatio="4 / 3"
@@ -1794,6 +1888,9 @@ function DriveFileCard({
               name={file.name}
               style={{ fontSize: "var(--text-meta)", fontWeight: 500, flex: 1, minWidth: 0 }}
             />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <DriveUploadStatusBadge file={file} />
           </div>
           <div
             style={{
@@ -1829,12 +1926,23 @@ function DriveFileRow({
   const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
   const meta = appMeta ?? DRIVE_FILE_META[file.type];
   const FileIcon = Icons[meta.icon];
+  const openable =
+    file.type === "folder" ||
+    canOpenDriveObject({
+      uploadState: file.uploadState,
+      available: file.available,
+    });
   return (
     <button
       type="button"
       aria-pressed={selected}
-      draggable
+      aria-disabled={!openable && file.type !== "folder"}
+      draggable={openable && file.type !== "folder"}
       onDragStart={(event) => {
+        if (!openable || file.type === "folder") {
+          event.preventDefault();
+          return;
+        }
         setHelixDriveItemDragData(event.dataTransfer, {
           id: file.id,
           name: file.name,
@@ -1870,6 +1978,7 @@ function DriveFileRow({
           <FileIcon />
         </span>
         <FileNameText name={file.name} style={{ flex: 1, minWidth: 0 }} />
+        <DriveUploadStatusBadge file={file} />
       </div>
       <div className="row gap-2">
         <Avatar name={file.owner} size={18} />
@@ -1981,6 +2090,11 @@ function DriveDetailsPanel({
   const FileIcon = Icons[meta.icon];
   const [shareInput, setShareInput] = useState("");
   const [shareRole, setShareRole] = useState<DriveAccessRole>("reader");
+  const openable = canOpenDriveObject({
+    uploadState: file.uploadState ?? entry?.uploadState,
+    available: file.available ?? entry?.available,
+  });
+  const statusView = driveUploadStatusView(file.uploadState ?? entry?.uploadState);
 
   // Owner label: when the entry is owned by the current actor, show the
   // session display name. Otherwise prefer the server-resolved display
@@ -2120,6 +2234,23 @@ function DriveDetailsPanel({
             <span>{file.size}</span>
           </div>
 
+          {!openable && statusView !== null ? (
+            <div
+              role="status"
+              data-testid="drive-details-unavailable"
+              data-upload-state={statusView.state}
+              style={{
+                fontSize: "var(--text-caption)",
+                marginBottom: 10,
+                padding: "8px 10px",
+                borderRadius: 6,
+                ...badgeStyleForTone(statusView.tone),
+              }}
+            >
+              {openDenialMessage(statusView.state)}
+            </div>
+          ) : null}
+
           {actionError !== null ? (
             <div
               role="alert"
@@ -2137,7 +2268,8 @@ function DriveDetailsPanel({
             <button
               type="button"
               className="btn sm primary"
-              disabled={entry === null}
+              disabled={entry === null || !openable}
+              title={openable ? "Open file" : openDenialMessage(statusView?.state)}
               onClick={() => onOpen(file.id)}
               style={{ flex: 1, justifyContent: "center" }}
             >
@@ -2147,7 +2279,7 @@ function DriveDetailsPanel({
             <button
               type="button"
               className="btn sm"
-              disabled={busy || entry === null || isTrash}
+              disabled={busy || entry === null || isTrash || !openable}
               onClick={() => onSetStarred(file.id, !file.starred)}
               aria-pressed={file.starred}
               style={{ flex: 1, justifyContent: "center" }}
@@ -2161,11 +2293,22 @@ function DriveDetailsPanel({
                 button for those; the editor surfaces its own export flow. */}
             <a
               className="btn sm"
-              href={entry === null ? "#" : driveRawDownloadUrl(entry)}
-              download={download?.name}
-              aria-disabled={download === null}
+              href={!openable || entry === null ? undefined : driveRawDownloadUrl(entry)}
+              download={openable ? download?.name : undefined}
+              aria-disabled={download === null || !openable}
+              title={openable ? "Download file" : openDenialMessage(statusView?.state)}
+              onClick={(event) => {
+                if (!openable || download === null) {
+                  event.preventDefault();
+                }
+              }}
               hidden={entry?.app !== null && entry?.app !== undefined}
-              style={{ flex: 1, justifyContent: "center" }}
+              style={{
+                flex: 1,
+                justifyContent: "center",
+                pointerEvents: openable && download !== null ? "auto" : "none",
+                opacity: openable && download !== null ? 1 : 0.5,
+              }}
             >
               <Icons.Download />
               Download

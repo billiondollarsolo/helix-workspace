@@ -382,9 +382,9 @@ import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
 import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
 import {
   createMfaAssertionVerificationResolver,
-  evaluateAdminMfa,
   type MfaVerificationResolver,
 } from "./platform/auth/mfa.js";
+import { evaluateOrgAdminMfa } from "./platform/admin/security-policy-runtime.js";
 import {
   InMemoryAgentRateCostLimiter,
   InMemoryTenantHourlyQuotaLimiter,
@@ -1191,6 +1191,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const tenantStorageNamespaceStore = new PostgresTenantStorageNamespaceStore(sql);
   const tenantBootstrapSeedStore = new PostgresTenantBootstrapSeedStore(sql);
   const tenantIdpConfigStore = new PostgresTenantIdpConfigStore(sql);
+  const securityPoliciesStore = new PostgresSecurityPoliciesStore(sql);
   const tenantScimCredentialStore = new PostgresTenantScimCredentialStore(sql);
   const signupEmailVerificationTokenStore = new PostgresSignupEmailVerificationTokenStore(sql);
   const signupVerifiedIdentityStore = new PostgresSignupVerifiedIdentityStore(sql);
@@ -2534,6 +2535,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           unresolvedRefs: normalizedRefs.filter((ref) => !matchedRefs.has(ref)),
         };
       },
+      // ADM.6: single source of truth for external sharing — the admin security
+      // policy. Public links and email-targeted shares honor mode/allowlist.
+      getExternalSharingPolicy: async (orgId) =>
+        securityPoliciesStore.get(orgId, "external_sharing"),
     });
   }
   const calendarInvitationSender = createMailCalendarInvitationSender({
@@ -2707,20 +2712,22 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const trpcRouter = createHelixTRPCRouter({ tools, metrics, platformConfig });
   installHttpMetrics(app, metrics);
 
-  // P2-1: enforce MFA-required-for-admins. Every `/api/admin/*` route shares
-  // this prefix, so a single preHandler hook gates all admin surfaces. The
-  // hook resolves the request actor and, on tiers that require admin MFA,
-  // rejects admin-scoped actors that have not presented a verified MFA factor.
+  // P2-1 / ADM.2: enforce MFA for admin-scoped requests when the security tier
+  // requires it (Tier 2+) *or* the org MFA security policy is enabled+required.
+  // Every `/api/admin/*` route shares this prefix so a single preHandler gates
+  // the surface. Org policy is loaded from the admin security-policies store.
   app.addHook("preHandler", async (request, reply) => {
     const url = request.url.split("?")[0] ?? "";
     if (!isAdminMfaProtectedPath(url)) {
       return;
     }
     const actor = await actorFromAuthenticatedRequest(request);
-    const decision = evaluateAdminMfa({
+    const orgMfaPolicy = await securityPoliciesStore.get(actor.orgId, "mfa");
+    const decision = evaluateOrgAdminMfa({
       tier: securityTier,
       actor,
       mfaVerified: await mfaResolver.isMfaVerified(request, actor),
+      orgMfaPolicy,
     });
     if (!decision.allowed) {
       const traceId = traceIdForRequest(request);
@@ -2923,7 +2930,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     auditSink: auditStore,
   });
   await registerAdminSecurityPoliciesRoutes(app, {
-    store: new PostgresSecurityPoliciesStore(sql),
+    store: securityPoliciesStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
   });

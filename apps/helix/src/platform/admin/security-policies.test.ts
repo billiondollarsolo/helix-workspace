@@ -236,6 +236,38 @@ describe("admin security policies routes", () => {
     });
     expect(response.statusCode).toBe(403);
   });
+
+  it("attaches runtimeStatus so clients never invent enforcement", async () => {
+    const { app } = await buildApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/admin/security-policies",
+      headers: headers("admin.console.read"),
+    });
+    expect(response.statusCode).toBe(200);
+    const policies = field(response, "policies") as {
+      policyType: string;
+      runtimeStatus: { mode: string; displayLevel: string };
+    }[];
+    const byType = new Map(policies.map((policy) => [policy.policyType, policy.runtimeStatus]));
+    expect(byType.get("external_sharing")?.mode).toBe("enforced");
+    expect(byType.get("sso")?.mode).toBe("recorded_only");
+    expect(byType.get("dlp")?.mode).toBe("recorded_only");
+  });
+
+  it("refuses SSO/DLP enforcement=required while runtime is recorded-only", async () => {
+    const { app } = await buildApp();
+    for (const policyType of ["sso", "dlp", "device_trust"] as const) {
+      const response = await app.inject({
+        method: "PUT",
+        url: `/api/admin/security-policies/${policyType}`,
+        headers: headers("admin.console.write"),
+        payload: { enabled: true, enforcement: "required" },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(String(body(response).error)).toMatch(/required|enforce/i);
+    }
+  });
 });
 
 describe("InMemorySecurityPoliciesStore", () => {

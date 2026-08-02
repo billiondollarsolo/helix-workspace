@@ -46,6 +46,14 @@ export const securityPolicyGroup: Record<SecurityPolicyType, "Authentication" | 
 export const POLICY_ENFORCEMENTS = ["disabled", "optional", "required"] as const;
 export type PolicyEnforcement = (typeof POLICY_ENFORCEMENTS)[number];
 
+const policyRuntimeStatusSchema = z.object({
+  mode: z.enum(["enforced", "partial", "recorded_only"]),
+  summary: z.string(),
+  enforcementPoints: z.array(z.string()),
+  displayLevel: z.enum(["off", "recorded", "active", "required"]),
+  displayLevelOn: z.boolean(),
+});
+
 const securityPolicySchema = z.object({
   id: z.string(),
   orgId: z.string(),
@@ -56,9 +64,12 @@ const securityPolicySchema = z.object({
   updatedBy: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  /** Present on current API; optional so older fixtures still parse. */
+  runtimeStatus: policyRuntimeStatusSchema.optional(),
 });
 
 export type SecurityPolicy = z.infer<typeof securityPolicySchema>;
+export type PolicyRuntimeStatus = z.infer<typeof policyRuntimeStatusSchema>;
 
 const policiesResponseSchema = z.object({ policies: z.array(securityPolicySchema) });
 const policyResponseSchema = z.object({ policy: securityPolicySchema });

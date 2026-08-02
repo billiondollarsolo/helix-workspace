@@ -20,6 +20,8 @@ import {
   drivePdfFormStateGetOutputSchema,
   drivePdfFormStateOutputSchema,
   driveSearchOutputSchema,
+  driveLifecyclePolicyOutputSchema,
+  driveQuotaUsageOutputSchema,
   driveShareLinkListOutputSchema,
   driveShareLinkOutputSchema,
   driveShareLinkRevokeOutputSchema,
@@ -29,7 +31,12 @@ import {
   driveVersionOutputSchema,
   driveVersionsListOutputSchema,
 } from "./tool-output-schemas.js";
-import { BadRequestError, NotFoundError } from "../../api/api-error.js";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../../api/api-error.js";
+import {
+  evaluateExternalEmailSharePolicy,
+  evaluatePublicShareLinkPolicy,
+  type SecurityPolicyLike,
+} from "../admin/security-policy-runtime.js";
 import { normalizeDriveRole } from "./core/roles.js";
 import type {
   DriveAccessGrantRecord,
@@ -171,6 +178,13 @@ const revokeShareLinkSchema = z.object({
   linkId: uuidSchema,
 });
 
+const emptyAdminSchema = z.object({});
+
+const lifecycleSetSchema = z.object({
+  trashRetentionDays: z.number().int().min(1).max(3650),
+  orphanGraceHours: z.number().int().min(1).max(720),
+});
+
 const createCommentSchema = z.object({
   objectId: uuidSchema,
   parentCommentId: uuidSchema.optional(),
@@ -270,6 +284,13 @@ export interface CreateDriveToolDefinitionsOptions {
     readonly actorIds: readonly string[];
     readonly unresolvedRefs: readonly string[];
   }>;
+  /**
+   * Loads the org external_sharing security policy (ADM.6). When omitted,
+   * share tools do not apply organization external-sharing gates (dev/tests).
+   */
+  readonly getExternalSharingPolicy?: (
+    orgId: string,
+  ) => Promise<Pick<SecurityPolicyLike, "enabled" | "enforcement" | "settings"> | null>;
 }
 
 export function createDriveToolDefinitions(
@@ -514,6 +535,18 @@ export function createDriveToolDefinitions(
       inputSchema: zodToolSchema(shareSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveShareOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        if (options.getExternalSharingPolicy !== undefined) {
+          const emailTargets = input.actorRefs.filter((ref) => ref.includes("@"));
+          if (emailTargets.length > 0) {
+            const policy = await options.getExternalSharingPolicy(ctx.actor.orgId);
+            const decision = evaluateExternalEmailSharePolicy(policy, emailTargets);
+            if (!decision.allowed) {
+              throw new ForbiddenError(decision.message, {
+                details: { code: decision.code },
+              });
+            }
+          }
+        }
         const resolvedActorIds =
           input.actorRefs.length === 0
             ? []
@@ -1021,16 +1054,26 @@ export function createDriveToolDefinitions(
           if (options.store.createShareLink === undefined) {
             throw new Error("drive.link.create requires DriveStore.createShareLink.");
           }
+          const expiresAt =
+            input.expiresAt === undefined || input.expiresAt === null
+              ? null
+              : new Date(input.expiresAt);
+          if (options.getExternalSharingPolicy !== undefined) {
+            const policy = await options.getExternalSharingPolicy(ctx.actor.orgId);
+            const decision = evaluatePublicShareLinkPolicy(policy, { expiresAt });
+            if (!decision.allowed) {
+              throw new ForbiddenError(decision.message, {
+                details: { code: decision.code },
+              });
+            }
+          }
           return serializeShareLink(
             await options.store.createShareLink({
               orgId: ctx.actor.orgId,
               actorId: ctx.actor.id,
               objectId: input.objectId,
               role: input.role,
-              expiresAt:
-                input.expiresAt === undefined || input.expiresAt === null
-                  ? null
-                  : new Date(input.expiresAt),
+              expiresAt,
               ...(input.password === undefined ? {} : { password: input.password }),
               maxDownloads: input.maxDownloads ?? null,
               rateLimitPerHour: input.rateLimitPerHour,
@@ -1084,6 +1127,66 @@ export function createDriveToolDefinitions(
             linkId: input.linkId,
           }),
         };
+      },
+    }),
+    defineTool<z.output<typeof emptyAdminSchema>, z.output<typeof driveQuotaUsageOutputSchema>>({
+      id: "drive.quota.usage",
+      description:
+        "Operator read of organization Drive storage usage versus the effective storage_bytes_limit quota.",
+      permission: "admin.drive",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(emptyAdminSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveQuotaUsageOutputSchema, genericObjectJsonSchema),
+      handler: async (_input, ctx) => {
+        if (options.store.getStorageQuotaUsage === undefined) {
+          throw new Error("drive.quota.usage requires DriveStore.getStorageQuotaUsage.");
+        }
+        return options.store.getStorageQuotaUsage({ orgId: ctx.actor.orgId });
+      },
+    }),
+    defineTool<
+      z.output<typeof emptyAdminSchema>,
+      z.output<typeof driveLifecyclePolicyOutputSchema>
+    >({
+      id: "drive.lifecycle.get",
+      description:
+        "Read the organization Drive trash retention and orphan-grace lifecycle policy (platform defaults when unset).",
+      permission: "admin.drive",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(emptyAdminSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveLifecyclePolicyOutputSchema, genericObjectJsonSchema),
+      handler: async (_input, ctx) => {
+        if (options.store.getLifecyclePolicy === undefined) {
+          throw new Error("drive.lifecycle.get requires DriveStore.getLifecyclePolicy.");
+        }
+        return serializeLifecyclePolicy(
+          await options.store.getLifecyclePolicy({ orgId: ctx.actor.orgId }),
+        );
+      },
+    }),
+    defineTool<
+      z.output<typeof lifecycleSetSchema>,
+      z.output<typeof driveLifecyclePolicyOutputSchema>
+    >({
+      id: "drive.lifecycle.set",
+      description: "Set organization Drive trash retention days and orphan garbage-collection grace hours.",
+      permission: "admin.drive",
+      sideEffects: "write",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(lifecycleSetSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveLifecyclePolicyOutputSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.setLifecyclePolicy === undefined) {
+          throw new Error("drive.lifecycle.set requires DriveStore.setLifecyclePolicy.");
+        }
+        return serializeLifecyclePolicy(
+          await options.store.setLifecyclePolicy({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            trashRetentionDays: input.trashRetentionDays,
+            orphanGraceHours: input.orphanGraceHours,
+          }),
+        );
       },
     }),
   ];
@@ -1214,6 +1317,24 @@ function serializePdfFormState(state: DrivePdfFormStateRecord) {
     ...state,
     createdAt: state.createdAt.toISOString(),
     updatedAt: state.updatedAt.toISOString(),
+  };
+}
+
+function serializeLifecyclePolicy(policy: {
+  readonly orgId: string;
+  readonly trashRetentionDays: number;
+  readonly orphanGraceHours: number;
+  readonly updatedByActorId: string | null;
+  readonly updatedAt: Date | null;
+  readonly configured: boolean;
+}) {
+  return {
+    orgId: policy.orgId,
+    trashRetentionDays: policy.trashRetentionDays,
+    orphanGraceHours: policy.orphanGraceHours,
+    updatedByActorId: policy.updatedByActorId,
+    updatedAt: policy.updatedAt?.toISOString() ?? null,
+    configured: policy.configured,
   };
 }
 

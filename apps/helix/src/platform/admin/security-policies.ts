@@ -13,6 +13,11 @@ import {
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "./console-shared.js";
+import {
+  policyRuntimeStatus,
+  validateRecordedOnlyRequiredEnforcement,
+  type PolicyRuntimeStatusView,
+} from "./security-policy-runtime.js";
 
 /**
  * Admin Console — Security policies.
@@ -23,10 +28,12 @@ import {
  *   mfa | sso | session | external_sharing | dlp | device_trust
  *
  * `settings` is a typed JSON blob whose shape is validated per policy type.
- * Tier-config enforcement (audit shipping, Vault/SIEM) lives elsewhere and is
- * unaffected; these records hold the org-author-editable policy state and are
- * advisory to that enforcement. The store seeds a default record for each type
- * the first time an org's policies are listed so the UI always has six cards.
+ * Runtime consumption is declared in `security-policy-runtime.ts` and attached
+ * to every list/get response as `runtimeStatus` so the UI never claims
+ * "Required" for a control the platform does not enforce. External sharing
+ * and org MFA (admin) are live; SSO/DLP/device_trust refuse enforcement=required.
+ * The store seeds a default record for each type the first time an org's
+ * policies are listed so the UI always has six cards.
  */
 
 export type SecurityPolicyType =
@@ -53,6 +60,17 @@ export interface SecurityPolicyRecord {
   readonly updatedBy: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export type SecurityPolicyView = SecurityPolicyRecord & {
+  readonly runtimeStatus: PolicyRuntimeStatusView;
+};
+
+function toPolicyView(policy: SecurityPolicyRecord): SecurityPolicyView {
+  return {
+    ...policy,
+    runtimeStatus: policyRuntimeStatus(policy),
+  };
 }
 
 export type SsoTestLoginStatus = "configuration_required" | "runtime_pending";
@@ -234,7 +252,8 @@ export async function registerAdminSecurityPoliciesRoutes(
     if (!canReadAdminConsole(actor)) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
-    return { policies: await store.list(actor.orgId) };
+    const policies = await store.list(actor.orgId);
+    return { policies: policies.map(toPolicyView) };
   });
 
   app.get("/api/admin/security-policies/:policyType", async (request, reply) => {
@@ -248,9 +267,23 @@ export async function registerAdminSecurityPoliciesRoutes(
     }
     const policy = await store.get(actor.orgId, params.data.policyType);
     if (policy === null) {
-      return reply.code(404).send(notFound("Security policy not found."));
+      // Materialize the same defaults list/get consumers already see.
+      const fallback = defaultPolicy(params.data.policyType);
+      return {
+        policy: toPolicyView({
+          id: `default:${params.data.policyType}`,
+          orgId: actor.orgId,
+          policyType: params.data.policyType,
+          enabled: fallback.enabled,
+          enforcement: fallback.enforcement,
+          settings: fallback.settings,
+          updatedBy: null,
+          createdAt: "",
+          updatedAt: "",
+        }),
+      };
     }
-    return { policy };
+    return { policy: toPolicyView(policy) };
   });
 
   app.post("/api/admin/security-policies/sso/test-login", async (request, reply) => {
@@ -327,6 +360,12 @@ export async function registerAdminSecurityPoliciesRoutes(
       updatedAt: "",
     };
 
+    const nextEnforcement = body.data.enforcement ?? current.enforcement;
+    const enforcementGate = validateRecordedOnlyRequiredEnforcement(policyType, nextEnforcement);
+    if (!enforcementGate.ok) {
+      return reply.code(400).send(invalidRequest(enforcementGate.message));
+    }
+
     const settingsInput = body.data.settings ?? current.settings;
     const parsedSettings = parsePolicySettings(policyType, settingsInput);
     if (!parsedSettings.ok) {
@@ -339,7 +378,7 @@ export async function registerAdminSecurityPoliciesRoutes(
       orgId: actor.orgId,
       policyType,
       enabled: body.data.enabled ?? current.enabled,
-      enforcement: body.data.enforcement ?? current.enforcement,
+      enforcement: enforcementGate.enforcement,
       settings: parsedSettings.settings,
       updatedBy: actor.id,
     });
@@ -355,9 +394,10 @@ export async function registerAdminSecurityPoliciesRoutes(
         enabled: policy.enabled,
         enforcement: policy.enforcement,
         fields: Object.keys(body.data),
+        runtimeMode: policyRuntimeStatus(policy).mode,
       },
     });
-    return { policy };
+    return { policy: toPolicyView(policy) };
   });
 }
 

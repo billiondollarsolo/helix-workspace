@@ -98,7 +98,9 @@ interface Workspace {
 const CLEAN: Required<Workspace> = {
   domains: { domains: [domainEntry("helix.local", "verified", true)] },
   policies: {
-    policies: [policy("mfa", true, "required"), policy("dlp", true, "required")],
+    // external_sharing is runtime-enforced; dlp is recorded-only and must not
+    // count as "enforced" merely because enforcement=required is stored.
+    policies: [policy("mfa", true, "required"), policy("external_sharing", true, "required")],
   },
   platform: {
     config: { security: { tier: "business" } },
@@ -390,7 +392,7 @@ describe("AdminOverview", () => {
     expect(cardText("Directory")).toContain("1 suspended, 2 active");
     expect(cardText("Workspace apps")).toContain("Off: Chat");
     expect(cardText("Security policies")).toContain(
-      "Not required: Single sign-on (SSO), DLP — Data loss prevention",
+      "Not runtime-enforced: Single sign-on (SSO), DLP — Data loss prevention",
     );
   });
 
@@ -694,13 +696,24 @@ describe("AdminOverview", () => {
   it("treats an absent MFA record as unknown rather than unenforced", async () => {
     await renderWorkspace({
       ...CLEAN,
-      policies: { policies: [policy("dlp", true, "required")] },
+      policies: { policies: [policy("external_sharing", true, "required")] },
     });
 
     // No `mfa` record came back. Reporting "Multi-factor authentication is not
     // enforced" would be inventing a policy state the backend never sent.
     expect(text()).not.toContain("Multi-factor authentication is not enforced");
     expect(figureFor("Security policies")).toBe("1/1 policy enforced");
+    expect(cleanHeading()).toBe("Nothing needs attention");
+  });
+
+  it("does not count recorded-only DLP required intent as enforced", async () => {
+    await renderWorkspace({
+      ...CLEAN,
+      policies: { policies: [policy("dlp", true, "required"), policy("mfa", true, "required")] },
+    });
+
+    expect(figureFor("Security policies")).toBe("1/2 policies enforced");
+    expect(cardText("Security policies")).toContain("DLP");
     expect(cleanHeading()).toBe("Nothing needs attention");
   });
 
@@ -796,10 +809,11 @@ describe("AdminOverview", () => {
     await renderWorkspace(CLEAN);
 
     // A clean Overview is the reading an operator over-trusts, so the coverage
-    // sentence has to be there in exactly that state.
+    // sentence has to be there in exactly that state. Total section count is
+    // derived from ADMIN_SECTION_IDS (grows when Chat/Drive admin land).
     expect(cleanHeading()).toBe("Nothing needs attention");
-    expect(text()).toContain("These checks read 5 of the console's 18 sections");
-    expect(text()).toContain("The other 13 are not read here at all");
+    expect(text()).toMatch(/These checks read 5 of the console's \d+ sections/);
+    expect(text()).toMatch(/The other \d+ are not read here at all/);
     expect(text()).toContain("A quiet Overview is not a checked workspace");
   });
 
@@ -824,10 +838,10 @@ describe("AdminOverview", () => {
     await waitFor(() => {
       expect(chipFor("Domains")).toBe("Unavailable");
     });
-    // Two different gaps — the check that broke, and the fourteen sections
+    // Two different gaps — the check that broke, and the remaining sections
     // nothing here ever looks at. Neither may stand in for the other.
     expect(text()).toContain("1 check is unavailable");
-    expect(text()).toContain("These checks read 5 of the console's 18 sections");
+    expect(text()).toMatch(/These checks read 5 of the console's \d+ sections/);
   });
 
   /* ---------------------------------------------------------------- */

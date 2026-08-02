@@ -165,6 +165,16 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
   { scope: "admin.plugins", description: "Administer plugins.", surfaces: ["admin"] },
   { scope: "admin.webhooks", description: "Administer webhooks.", surfaces: ["admin"] },
   { scope: "admin.agents", description: "Administer agent credentials.", surfaces: ["admin"] },
+  {
+    scope: "admin.drive",
+    description: "Administer Drive quota usage and lifecycle policies.",
+    surfaces: ["admin"],
+  },
+  {
+    scope: "admin.chat",
+    description: "Administer Chat retention, legal hold, and exports.",
+    surfaces: ["admin"],
+  },
 
   // Legacy / protocol scopes for app passwords (DAV, IMAP, SMTP).
   { scope: "caldav", description: "CalDAV protocol access.", protocolScope: true, surfaces: ["app_password"] },

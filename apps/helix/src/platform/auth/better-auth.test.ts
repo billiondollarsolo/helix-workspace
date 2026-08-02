@@ -442,7 +442,7 @@ describe("PostgresBetterAuthActorStore", () => {
   });
 });
 
-describe("Better Auth browser cookie policy", () => {
+describe("Better Auth browser cookie policy (ID.1 session cookie security matrix)", () => {
   it("enforces Secure, HttpOnly, and SameSite=Lax for an HTTPS production URL", () => {
     expect(sessionCookiePolicyForBaseUrl("https://app.helix.example")).toEqual({
       secure: true,
@@ -459,6 +459,35 @@ describe("Better Auth browser cookie policy", () => {
       sameSite: "lax",
       path: "/",
     });
+  });
+
+  it("documents the production cookie matrix required for browser sessions", () => {
+    const matrix = {
+      name: "helix_session",
+      httpOnly: true,
+      sameSite: "lax" as const,
+      path: "/",
+      secureOnHttps: true,
+      secureOnHttpLocal: false,
+      notReadableFromJs: true,
+    };
+    const https = sessionCookiePolicyForBaseUrl("https://workspace.example");
+    const httpLocal = sessionCookiePolicyForBaseUrl("http://127.0.0.1:5173");
+    expect(https).toMatchObject({
+      secure: matrix.secureOnHttps,
+      httpOnly: matrix.httpOnly,
+      sameSite: matrix.sameSite,
+      path: matrix.path,
+    });
+    expect(httpLocal).toMatchObject({
+      secure: matrix.secureOnHttpLocal,
+      httpOnly: matrix.httpOnly,
+      sameSite: matrix.sameSite,
+      path: matrix.path,
+    });
+    // Helix never uses SameSite=None without Secure, and never drops HttpOnly.
+    expect(https.sameSite).not.toBe("none");
+    expect(https.httpOnly).toBe(true);
   });
 });
 

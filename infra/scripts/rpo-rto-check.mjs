@@ -188,7 +188,10 @@ export async function evaluateBackupAge({ backupDir, rpoHours, now = new Date() 
   };
 }
 
-export function evaluateEvidence(evidence, { rpoHours = DEFAULT_RPO_HOURS, rtoHours = DEFAULT_RTO_HOURS }) {
+export function evaluateEvidence(
+  evidence,
+  { rpoHours = DEFAULT_RPO_HOURS, rtoHours = DEFAULT_RTO_HOURS },
+) {
   if (evidence?.schema !== RESTORE_DRILL_EVIDENCE_SCHEMA) {
     throw new Error(`unexpected evidence schema: ${String(evidence?.schema)}`);
   }
@@ -264,7 +267,9 @@ async function findManifestCandidates(dir) {
       const manifest = JSON.parse(raw);
       if (manifest?.schema !== BACKUP_MANIFEST_SCHEMA) continue;
       const recoveryPointRaw =
-        manifest.recoverySet?.databaseCapturedAt ?? manifest.databaseCapturedAt ?? manifest.createdAt;
+        manifest.recoverySet?.databaseCapturedAt ??
+        manifest.databaseCapturedAt ??
+        manifest.createdAt;
       if (typeof recoveryPointRaw !== "string") continue;
       const recoveryPoint = new Date(recoveryPointRaw);
       if (Number.isNaN(recoveryPoint.getTime())) continue;

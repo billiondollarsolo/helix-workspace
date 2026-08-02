@@ -6,25 +6,25 @@
 
 ## What this is (and is not)
 
-| Claim                                          | Supported?                                                                                      |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Engineering objective: 99.5% monthly avail.    | Yes (Business pilot)                                                                            |
-| RPO ≤ 24 hours                                 | Yes — gate for pilot / release evidence                                                         |
-| RTO ≤ 4 hours                                  | Yes — gate for pilot / release evidence                                                         |
-| Multi-region active-active HA / contractual SLA | **No** — not claimed; requires a later ADR and staffing/replication evidence                    |
-| Full Workspace apps enabled in production      | **No until PKG.** Production remains MVP fail-closed (`mail,drive,chat,assistant`) per AGENTS.md |
+| Claim                                           | Supported?                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Engineering objective: 99.5% monthly avail.     | Yes (Business pilot)                                                                             |
+| RPO ≤ 24 hours                                  | Yes — gate for pilot / release evidence                                                          |
+| RTO ≤ 4 hours                                   | Yes — gate for pilot / release evidence                                                          |
+| Multi-region active-active HA / contractual SLA | **No** — not claimed; requires a later ADR and staffing/replication evidence                     |
+| Full Workspace apps enabled in production       | **No until PKG.** Production remains MVP fail-closed (`mail,drive,chat,assistant`) per AGENTS.md |
 
 Kubernetes scaffolding (replicas, HPA, PDB, CloudNativePG) improves **local** resilience. It does
 not by itself satisfy RPO/RTO without measured backup age and timed restore drills.
 
 ## Targets by packaging tier
 
-| Tier       | Availability objective | RPO target | RTO target | Backup path                                                                 |
-| ---------- | ---------------------- | ---------- | ---------- | --------------------------------------------------------------------------- |
-| Personal   | Best effort            | 24h        | 8h         | Logical `pg_dump` + object sync; operator off-host copy                     |
-| Business   | 99.5% monthly          | **≤ 24h**  | **≤ 4h**   | Encrypted PITR-capable backup + object snapshot + off-host S3 (ADR-0006)    |
-| Enterprise | Higher ops expectation | ≤ 1h\*     | ≤ 2h\*     | CloudNativePG continuous WAL/PITR + KMS; \*stretch targets, not pilot SLA   |
-| Sovereign  | Enterprise + air-gap   | ≤ 1h\*     | ≤ 2h\*     | Enterprise + WORM/Object Lock + FIPS/STIG path                              |
+| Tier       | Availability objective | RPO target | RTO target | Backup path                                                               |
+| ---------- | ---------------------- | ---------- | ---------- | ------------------------------------------------------------------------- |
+| Personal   | Best effort            | 24h        | 8h         | Logical `pg_dump` + object sync; operator off-host copy                   |
+| Business   | 99.5% monthly          | **≤ 24h**  | **≤ 4h**   | Encrypted PITR-capable backup + object snapshot + off-host S3 (ADR-0006)  |
+| Enterprise | Higher ops expectation | ≤ 1h\*     | ≤ 2h\*     | CloudNativePG continuous WAL/PITR + KMS; \*stretch targets, not pilot SLA |
+| Sovereign  | Enterprise + air-gap   | ≤ 1h\*     | ≤ 2h\*     | Enterprise + WORM/Object Lock + FIPS/STIG path                            |
 
 Business pilot **release gates** remain RPO ≤ 24h and RTO ≤ 4h regardless of enterprise stretch
 goals. Stretch targets are operator aspirations until a new ADR + evidence promote them.
@@ -72,26 +72,26 @@ Helm/CNPG path: enterprise `ScheduledBackup` + recovery cluster; O-K.16 evidence
 
 ### Docker Compose (O-DOCKER)
 
-| Control                         | Where                                                              | Notes                                      |
-| ------------------------------- | ------------------------------------------------------------------ | ------------------------------------------ |
-| Single app replica              | `docker-compose.production.yml`                                    | HA via host/VM restart + edge, not multi-AZ |
-| Migrate-before-app              | `helix-migrate` + `depends_on: service_completed_successfully`     | Parity with Helm pre-upgrade Job           |
-| Private data plane              | published ports only Caddy 80/443 + SMTP                           | See O-D.2                                  |
-| Backup / restore                | `backup.sh` / `restore.sh` / `restore-drill.sh`                    | Business+ fail closed without encryption   |
-| ClamAV / SpamAssassin           | production overlay enabled for Mail/Drive                          | Meet/editors remain disabled               |
-| Meet / Calendar / Editors       | modules `enabled: false`; `HELIX_APPS=mail,drive,chat,assistant`   | PKG flip only after evidence               |
+| Control                   | Where                                                            | Notes                                       |
+| ------------------------- | ---------------------------------------------------------------- | ------------------------------------------- |
+| Single app replica        | `docker-compose.production.yml`                                  | HA via host/VM restart + edge, not multi-AZ |
+| Migrate-before-app        | `helix-migrate` + `depends_on: service_completed_successfully`   | Parity with Helm pre-upgrade Job            |
+| Private data plane        | published ports only Caddy 80/443 + SMTP                         | See O-D.2                                   |
+| Backup / restore          | `backup.sh` / `restore.sh` / `restore-drill.sh`                  | Business+ fail closed without encryption    |
+| ClamAV / SpamAssassin     | production overlay enabled for Mail/Drive                        | Meet/editors remain disabled                |
+| Meet / Calendar / Editors | modules `enabled: false`; `HELIX_APPS=mail,drive,chat,assistant` | PKG flip only after evidence                |
 
 ### Kubernetes / Helm (O-K8S)
 
-| Control                    | Chart / values                                      | Notes                                                |
-| -------------------------- | --------------------------------------------------- | ---------------------------------------------------- |
-| Replicas ≥ 2               | `replicaCount` / HPA `minReplicas`                  | Not multi-region                                     |
-| HPA (CPU/mem/WS)           | `autoscaling`                                       | Needs metrics adapter for WS gauge                   |
-| PDB                        | `podDisruptionBudget`                               | minAvailable 1 by default                            |
-| NetworkPolicy              | `networkPolicy`                                     | Business+ CIDR allow-list                            |
-| Migrate Job                | `migrations` pre-install/pre-upgrade hook           | Aborts release on failure                            |
-| CNPG HA + barmanObjectStore| `values-enterprise.yaml`                            | Preferred K8s RPO path                               |
-| Workspace packaging        | `workspace.*` in `values.yaml`                      | MVP fail-closed defaults; see PKG flip below         |
+| Control                     | Chart / values                            | Notes                                        |
+| --------------------------- | ----------------------------------------- | -------------------------------------------- |
+| Replicas ≥ 2                | `replicaCount` / HPA `minReplicas`        | Not multi-region                             |
+| HPA (CPU/mem/WS)            | `autoscaling`                             | Needs metrics adapter for WS gauge           |
+| PDB                         | `podDisruptionBudget`                     | minAvailable 1 by default                    |
+| NetworkPolicy               | `networkPolicy`                           | Business+ CIDR allow-list                    |
+| Migrate Job                 | `migrations` pre-install/pre-upgrade hook | Aborts release on failure                    |
+| CNPG HA + barmanObjectStore | `values-enterprise.yaml`                  | Preferred K8s RPO path                       |
+| Workspace packaging         | `workspace.*` in `values.yaml`            | MVP fail-closed defaults; see PKG flip below |
 
 ## Full Workspace readiness gates (document only — not enabled)
 
@@ -155,13 +155,13 @@ workspace:
 
 ## Alert → runbook linkage (minimum)
 
-| Signal                                      | Runbook                                                                 |
-| ------------------------------------------- | ----------------------------------------------------------------------- |
-| Backup missing / age > RPO                  | [backup-restore-recovery.md](../runbooks/backup-restore-recovery.md)    |
-| Restore drill fail / RTO exceed             | same + [backup-restore.md](../backup-restore.md)                        |
-| Object-store mismatch                       | [object-store-data-mismatch.md](../runbooks/object-store-data-mismatch.md) |
-| Node disk low                               | [node-filesystem-low-space.md](../runbooks/node-filesystem-low-space.md) |
-| Platform dependency outage                  | [platform-dependency-outage.md](../runbooks/platform-dependency-outage.md) |
+| Signal                          | Runbook                                                                    |
+| ------------------------------- | -------------------------------------------------------------------------- |
+| Backup missing / age > RPO      | [backup-restore-recovery.md](../runbooks/backup-restore-recovery.md)       |
+| Restore drill fail / RTO exceed | same + [backup-restore.md](../backup-restore.md)                           |
+| Object-store mismatch           | [object-store-data-mismatch.md](../runbooks/object-store-data-mismatch.md) |
+| Node disk low                   | [node-filesystem-low-space.md](../runbooks/node-filesystem-low-space.md)   |
+| Platform dependency outage      | [platform-dependency-outage.md](../runbooks/platform-dependency-outage.md) |
 
 ## Definition of done for Ops O4 / O-D.13 / O-K.16 (engineering artifacts)
 

@@ -180,7 +180,7 @@ export function DriveAdminSection() {
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Trash retention (days)">
             <input
-              className={INPUT_STYLE}
+              style={INPUT_STYLE}
               inputMode="numeric"
               value={form.trashRetentionDays}
               disabled={controlsDisabled || saveMutation.isPending}
@@ -191,7 +191,7 @@ export function DriveAdminSection() {
           </Field>
           <Field label="Orphan grace (hours)">
             <input
-              className={INPUT_STYLE}
+              style={INPUT_STYLE}
               inputMode="numeric"
               value={form.orphanGraceHours}
               disabled={controlsDisabled || saveMutation.isPending}

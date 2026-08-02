@@ -978,7 +978,7 @@ export class PostgresMailStore
           {
             subject: hit.subject,
             preview: hit.preview,
-            from: hit.from,
+            ...(hit.from === undefined ? {} : { from: hit.from }),
             unread: hit.unread,
             starred: hit.starred,
             hasAttachment: hit.hasAttachment === true,
@@ -2238,8 +2238,7 @@ function mapSearchHit(row: MailSearchRow): MailSearchHit {
   const from = row.metadata.from as MailSearchHit["from"] | undefined;
   const attachments = row.metadata.attachments;
   const hasAttachment =
-    row.metadata.hasAttachment === true ||
-    (Array.isArray(attachments) && attachments.length > 0);
+    row.metadata.hasAttachment === true || (Array.isArray(attachments) && attachments.length > 0);
   return {
     threadId: row.thread_id,
     messageId: row.message_id,

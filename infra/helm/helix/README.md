@@ -13,12 +13,12 @@ This chart deploys Helix against external production services. It does not insta
 
 Defaults match production Compose and `AGENTS.md`:
 
-| Value | Default |
-| ----- | ------- |
-| `workspace.profile` | `mvp` |
-| `workspace.apps` | `mail,drive,chat,assistant` |
-| `workspace.editorsMigrationsEnabled` | `false` |
-| `workspace.modules.{docs,calendar,meet,editors}.enabled` | `false` |
+| Value                                                    | Default                     |
+| -------------------------------------------------------- | --------------------------- |
+| `workspace.profile`                                      | `mvp`                       |
+| `workspace.apps`                                         | `mail,drive,chat,assistant` |
+| `workspace.editorsMigrationsEnabled`                     | `false`                     |
+| `workspace.modules.{docs,calendar,meet,editors}.enabled` | `false`                     |
 
 These render into `HELIX_WORKSPACE_PROFILE`, `HELIX_APPS`,
 `HELIX_EDITORS_MIGRATIONS_ENABLED`, and `HELIX_CONFIG_JSON.modules`. Expanding

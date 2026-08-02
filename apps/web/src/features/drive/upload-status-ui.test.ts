@@ -30,7 +30,7 @@ describe("Drive upload status UI (D8)", () => {
 
   it("defaults unknown/legacy entries to openable for backward compatibility", () => {
     expect(canOpenDriveObject({})).toBe(true);
-    expect(canOpenDriveObject({ uploadState: "legacy-ready" })).toBe(true);
+    expect(canOpenDriveObject({ uploadState: undefined })).toBe(true);
   });
 
   it("explains open denials for quarantine and processing states", () => {

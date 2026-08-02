@@ -103,7 +103,6 @@ export function createMeetToolDefinitions(
     new InMemoryMeetRateLimiter({
       ...(options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget }),
     });
-  const jwtDefaultTtlSeconds = options.jwtDefaultTtlSeconds ?? DEFAULT_JITSI_JWT_TTL_SECONDS;
   const jwtMaxTtlSeconds = options.jwtMaxTtlSeconds ?? MAX_JITSI_JWT_TTL_SECONDS;
 
   return [
@@ -215,7 +214,7 @@ export function createMeetToolDefinitions(
         if (!decision.allowed) {
           throw meetRateLimitError(decision);
         }
-        const requestedTtl = input.expiresInSeconds ?? jwtDefaultTtlSeconds;
+        const requestedTtl = input.expiresInSeconds;
         const minted = mintJitsiJwt({
           secret: options.jwtSecret,
           issuer: options.jwtIssuer ?? options.jwtAppId ?? "helix",

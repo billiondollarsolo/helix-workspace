@@ -62,25 +62,14 @@ export interface MailSendStatusInput {
   readonly nowMs?: number;
 }
 
-const TERMINAL_PHASES: ReadonlySet<MailSendUiPhase> = new Set([
-  "sent",
-  "failed",
-  "cancelled",
-]);
+const TERMINAL_PHASES: ReadonlySet<MailSendUiPhase> = new Set(["sent", "failed", "cancelled"]);
 
-const ACTIVE_POLL_PHASES: ReadonlySet<MailSendUiPhase> = new Set([
-  "queued",
-  "sending",
-  "delayed",
-]);
+const ACTIVE_POLL_PHASES: ReadonlySet<MailSendUiPhase> = new Set(["queued", "sending", "delayed"]);
 
 export function isMailDeliveryStatus(
   value: string | null | undefined,
 ): value is MailDeliveryStatus {
-  return (
-    typeof value === "string" &&
-    (MAIL_DELIVERY_STATUSES as readonly string[]).includes(value)
-  );
+  return typeof value === "string" && (MAIL_DELIVERY_STATUSES as readonly string[]).includes(value);
 }
 
 /**
@@ -231,7 +220,9 @@ export function mailSendStatusLabel(
   }
 }
 
-export function mailSendUiStatusIsRetryable(status: MailSendUiStatusName | MailSendUiPhase): boolean {
+export function mailSendUiStatusIsRetryable(
+  status: MailSendUiStatusName | MailSendUiPhase,
+): boolean {
   return status === "failed" || status === "delayed";
 }
 
@@ -246,9 +237,7 @@ export function mapMailSendUiStatus(
 ): MailSendUiStatus {
   const outboundId = resolveMailOutboundId(source);
   const lastError =
-    typeof source.lastError === "string" && source.lastError.length > 0
-      ? source.lastError
-      : null;
+    typeof source.lastError === "string" && source.lastError.length > 0 ? source.lastError : null;
   const delivery = resolveMailDeliveryStatus(source);
   const undoUntilMs = parseMailUndoUntilMs(source.undoUntil);
   const undoAvailable =

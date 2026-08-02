@@ -29,17 +29,14 @@ import {
   formatUntrustedSources,
   prepareSearchContext,
   sanitizeUntrustedText,
-} from "../assistant/context-policy.js";
+} from "./context-policy.js";
 import { evaluateAutomationPolicy, hashToolInput } from "../tools/automation-policy.js";
 import { evaluateToolPolicyFirewall } from "../tools/policy-firewall.js";
-import {
-  InMemoryConfirmationGate,
-  InMemoryPendingActionStore,
-} from "../tools/registry.js";
+import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "../tools/registry.js";
 import { createToolRegistry } from "../tool-registry.js";
 import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
-import { AssistantOrchestrator } from "../assistant/orchestrator.js";
-import { InMemoryAssistantStore } from "../assistant/store.js";
+import { AssistantOrchestrator } from "./orchestrator.js";
+import { InMemoryAssistantStore } from "./store.js";
 import type { SearchEngine, SearchHit, SearchRequest } from "../search/index.js";
 
 const orgId = "org-a1a5";
@@ -179,9 +176,9 @@ describe("A2 — untrusted-context isolation", () => {
       })),
       orgId,
     );
-    expect(
-      prepared.sources.reduce((n, s) => n + (s.body?.length ?? 0), 0),
-    ).toBeLessThanOrEqual(assistantContextLimits.totalSourceCharacters);
+    expect(prepared.sources.reduce((n, s) => n + (s.body?.length ?? 0), 0)).toBeLessThanOrEqual(
+      assistantContextLimits.totalSourceCharacters,
+    );
   });
 
   it("delimits retrieved content as untrusted in the assistant system prompt", async () => {
@@ -547,9 +544,10 @@ describe("A5 — MCP and agent credential hardening", () => {
     const at = new Date("2026-05-21T15:00:00.000Z");
     const base = credentialRecord({});
     expect(enforceCredentialPolicy(base, { ip: "8.8.8.8", at })).toEqual({ ok: true });
-    expect(
-      enforceCredentialPolicy(credentialRecord({ revokedAt: at }), { at }),
-    ).toMatchObject({ ok: false, code: "credential_revoked" });
+    expect(enforceCredentialPolicy(credentialRecord({ revokedAt: at }), { at })).toMatchObject({
+      ok: false,
+      code: "credential_revoked",
+    });
     expect(
       enforceCredentialPolicy(
         credentialRecord({ expiresAt: new Date("2026-05-20T00:00:00.000Z") }),
@@ -593,7 +591,7 @@ describe("A5 — MCP and agent credential hardening", () => {
     expect(JSON.stringify(principal)).not.toContain("confirmationOverride");
     const options = toolInvocationOptions(principal, { requestId: "r1" });
     expect(options.credentialId).toBe("cred-secret");
-    expect(options.credentialPolicy?.rateLimitOverrides.requestsPerMinute).toBe(2);
+    expect(options.credentialPolicy?.rateLimitOverrides?.requestsPerMinute).toBe(2);
     expect(options.policyContext?.requestChannel).toBe("rest");
   });
 

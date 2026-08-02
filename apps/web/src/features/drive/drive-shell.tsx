@@ -1574,7 +1574,6 @@ function DriveMain({
                   file={file}
                   selected={file.id === selectedFileId}
                   onSelect={() => onSelectFile(file.id)}
-                  onOpenFolder={() => onOpenFolder({ id: file.id, name: file.name, itemCount: 0 })}
                   onSetStarred={(starred) => onSetStarred(file.id, starred)}
                 />
               ))}
@@ -1914,32 +1913,29 @@ function DriveFileRow({
   file,
   selected,
   onSelect,
-  onOpenFolder,
   onSetStarred,
 }: {
   readonly file: DriveFileItem;
   readonly selected: boolean;
   readonly onSelect: () => void;
-  readonly onOpenFolder: () => void;
   readonly onSetStarred: (starred: boolean) => void;
 }) {
   const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
   const meta = appMeta ?? DRIVE_FILE_META[file.type];
   const FileIcon = Icons[meta.icon];
-  const openable =
-    file.type === "folder" ||
-    canOpenDriveObject({
-      uploadState: file.uploadState,
-      available: file.available,
-    });
+  // DriveFileRow is only used for non-folder file rows (folders render separately).
+  const openable = canOpenDriveObject({
+    uploadState: file.uploadState,
+    available: file.available,
+  });
   return (
     <button
       type="button"
       aria-pressed={selected}
-      aria-disabled={!openable && file.type !== "folder"}
-      draggable={openable && file.type !== "folder"}
+      aria-disabled={!openable}
+      draggable={openable}
       onDragStart={(event) => {
-        if (!openable || file.type === "folder") {
+        if (!openable) {
           event.preventDefault();
           return;
         }
@@ -1951,7 +1947,7 @@ function DriveFileRow({
           app: file.app,
         });
       }}
-      onClick={file.type === "folder" ? onOpenFolder : onSelect}
+      onClick={onSelect}
       style={{
         display: "grid",
         gridTemplateColumns: LIST_COLUMNS,
@@ -1966,14 +1962,12 @@ function DriveFileRow({
       }}
     >
       <div className="row gap-2" style={{ minWidth: 0 }}>
-        {file.type !== "folder" ? (
-          <DriveStarToggle
-            name={file.name}
-            starred={file.starred}
-            onSetStarred={onSetStarred}
-            asButton={false}
-          />
-        ) : null}
+        <DriveStarToggle
+          name={file.name}
+          starred={file.starred}
+          onSetStarred={onSetStarred}
+          asButton={false}
+        />
         <span style={{ color: meta.color, display: "inline-flex" }}>
           <FileIcon />
         </span>

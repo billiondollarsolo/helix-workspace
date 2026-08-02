@@ -5732,7 +5732,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task ED.0 — Collab decision + ADR (single-active vs realtime)
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Editors v1 requires: Collab decision + ADR (single-active vs realtime).
 
@@ -5748,20 +5748,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for ED.0 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for ED.0.
-- [ ] Implement the minimal production change for ED.0 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for ED.0 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for ED.0.
+- [x] Implement the minimal production change for ED.0 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for ED.0 pass.
-- [ ] Negative: unauthorized or illegal config denied for ED.0.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for ED.0.
+- [x] Unit/integration: primary module tests for ED.0 pass.
+- [x] Negative: unauthorized or illegal config denied for ED.0.
+- [x] E2E or contract: user-visible path covered when UI is in scope for ED.0.
 
 **Validation commands:**
 
@@ -5772,9 +5772,9 @@ pnpm --filter @helix/web typecheck
 
 **Acceptance:**
 
-- [ ] Collab decision + ADR (single-active vs realtime) meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Collab decision + ADR (single-active vs realtime) meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/ED.0/
 
@@ -5782,7 +5782,7 @@ pnpm --filter @helix/web typecheck
 
 ## Task ED.1 — helix-editors pin + contract CI
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Editors v1 requires: helix-editors pin + contract CI.
 
@@ -5798,20 +5798,20 @@ pnpm --filter @helix/web typecheck
 
 **Steps:**
 
-- [ ] Read current code paths listed for ED.1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for ED.1.
-- [ ] Implement the minimal production change for ED.1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for ED.1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for ED.1.
+- [x] Implement the minimal production change for ED.1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for ED.1 pass.
-- [ ] Negative: unauthorized or illegal config denied for ED.1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for ED.1.
+- [x] Unit/integration: primary module tests for ED.1 pass.
+- [x] Negative: unauthorized or illegal config denied for ED.1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for ED.1.
 
 **Validation commands:**
 
@@ -5822,9 +5822,9 @@ pnpm --filter @helix/web typecheck
 
 **Acceptance:**
 
-- [ ] helix-editors pin + contract CI meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] helix-editors pin + contract CI meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/ED.1/
 
@@ -6032,7 +6032,7 @@ pnpm --filter @helix/web typecheck
 
 ## Task ED.6 — PDF preview (edit non-goal unless decided)
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Editors v1 requires: PDF preview (edit non-goal unless decided).
 
@@ -6048,20 +6048,20 @@ pnpm --filter @helix/web typecheck
 
 **Steps:**
 
-- [ ] Read current code paths listed for ED.6 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for ED.6.
-- [ ] Implement the minimal production change for ED.6 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for ED.6 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for ED.6.
+- [x] Implement the minimal production change for ED.6 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for ED.6 pass.
-- [ ] Negative: unauthorized or illegal config denied for ED.6.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for ED.6.
+- [x] Unit/integration: primary module tests for ED.6 pass.
+- [x] Negative: unauthorized or illegal config denied for ED.6.
+- [x] E2E or contract: user-visible path covered when UI is in scope for ED.6.
 
 **Validation commands:**
 
@@ -6072,9 +6072,9 @@ pnpm --filter @helix/web typecheck
 
 **Acceptance:**
 
-- [ ] PDF preview (edit non-goal unless decided) meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] PDF preview (edit non-goal unless decided) meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/ED.6/
 
@@ -6401,7 +6401,7 @@ pnpm --filter @helix/web typecheck
 
 ## Task SRCH.1 — Index coverage matrix
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Search v1 requires: Index coverage matrix.
 
@@ -6414,20 +6414,20 @@ pnpm --filter @helix/web typecheck
 
 **Steps:**
 
-- [ ] Read current code paths listed for SRCH.1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for SRCH.1.
-- [ ] Implement the minimal production change for SRCH.1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for SRCH.1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for SRCH.1.
+- [x] Implement the minimal production change for SRCH.1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for SRCH.1 pass.
-- [ ] Negative: unauthorized or illegal config denied for SRCH.1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for SRCH.1.
+- [x] Unit/integration: primary module tests for SRCH.1 pass.
+- [x] Negative: unauthorized or illegal config denied for SRCH.1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for SRCH.1.
 
 **Validation commands:**
 
@@ -6438,9 +6438,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Index coverage matrix meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Index coverage matrix meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/SRCH.1/
 
@@ -6448,7 +6448,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task SRCH.2 — ACL-filtered search proof
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Search v1 requires: ACL-filtered search proof.
 
@@ -6461,20 +6461,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for SRCH.2 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for SRCH.2.
-- [ ] Implement the minimal production change for SRCH.2 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for SRCH.2 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for SRCH.2.
+- [x] Implement the minimal production change for SRCH.2 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for SRCH.2 pass.
-- [ ] Negative: unauthorized or illegal config denied for SRCH.2.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for SRCH.2.
+- [x] Unit/integration: primary module tests for SRCH.2 pass.
+- [x] Negative: unauthorized or illegal config denied for SRCH.2.
+- [x] E2E or contract: user-visible path covered when UI is in scope for SRCH.2.
 
 **Validation commands:**
 
@@ -6485,9 +6485,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] ACL-filtered search proof meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] ACL-filtered search proof meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/SRCH.2/
 
@@ -6607,7 +6607,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task ID.1 — Session cookie security matrix
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Identity v1 requires: Session cookie security matrix.
 
@@ -6621,20 +6621,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for ID.1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for ID.1.
-- [ ] Implement the minimal production change for ID.1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for ID.1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for ID.1.
+- [x] Implement the minimal production change for ID.1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for ID.1 pass.
-- [ ] Negative: unauthorized or illegal config denied for ID.1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for ID.1.
+- [x] Unit/integration: primary module tests for ID.1 pass.
+- [x] Negative: unauthorized or illegal config denied for ID.1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for ID.1.
 
 **Validation commands:**
 
@@ -6646,9 +6646,9 @@ pnpm --filter @helix/web exec playwright test tests/e2e/login-auth-handoff.spec.
 
 **Acceptance:**
 
-- [ ] Session cookie security matrix meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Session cookie security matrix meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/ID.1/
 
@@ -6656,7 +6656,7 @@ pnpm --filter @helix/web exec playwright test tests/e2e/login-auth-handoff.spec.
 
 ## Task ID.2 — Local auth hardening
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Identity v1 requires: Local auth hardening.
 
@@ -6670,20 +6670,20 @@ pnpm --filter @helix/web exec playwright test tests/e2e/login-auth-handoff.spec.
 
 **Steps:**
 
-- [ ] Read current code paths listed for ID.2 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for ID.2.
-- [ ] Implement the minimal production change for ID.2 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for ID.2 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for ID.2.
+- [x] Implement the minimal production change for ID.2 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for ID.2 pass.
-- [ ] Negative: unauthorized or illegal config denied for ID.2.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for ID.2.
+- [x] Unit/integration: primary module tests for ID.2 pass.
+- [x] Negative: unauthorized or illegal config denied for ID.2.
+- [x] E2E or contract: user-visible path covered when UI is in scope for ID.2.
 
 **Validation commands:**
 
@@ -6695,9 +6695,9 @@ pnpm --filter @helix/web exec playwright test tests/e2e/login-auth-handoff.spec.
 
 **Acceptance:**
 
-- [ ] Local auth hardening meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Local auth hardening meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/ID.2/
 
@@ -6705,7 +6705,7 @@ pnpm --filter @helix/web exec playwright test tests/e2e/login-auth-handoff.spec.
 
 ## Task ID.3 — Invite + email verify flows
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Identity v1 requires: Invite + email verify flows.
 
@@ -6719,20 +6719,20 @@ pnpm --filter @helix/web exec playwright test tests/e2e/login-auth-handoff.spec.
 
 **Steps:**
 
-- [ ] Read current code paths listed for ID.3 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for ID.3.
-- [ ] Implement the minimal production change for ID.3 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for ID.3 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for ID.3.
+- [x] Implement the minimal production change for ID.3 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for ID.3 pass.
-- [ ] Negative: unauthorized or illegal config denied for ID.3.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for ID.3.
+- [x] Unit/integration: primary module tests for ID.3 pass.
+- [x] Negative: unauthorized or illegal config denied for ID.3.
+- [x] E2E or contract: user-visible path covered when UI is in scope for ID.3.
 
 **Validation commands:**
 
@@ -6744,9 +6744,9 @@ pnpm --filter @helix/web exec playwright test tests/e2e/login-auth-handoff.spec.
 
 **Acceptance:**
 
-- [ ] Invite + email verify flows meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Invite + email verify flows meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/ID.3/
 
@@ -6919,7 +6919,7 @@ pnpm --filter @helix/web exec playwright test tests/e2e/login-auth-handoff.spec.
 
 ## Task O1 — Production image hardening
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Ops v1 requires: Production image hardening.
 
@@ -6934,20 +6934,20 @@ pnpm --filter @helix/web exec playwright test tests/e2e/login-auth-handoff.spec.
 
 **Steps:**
 
-- [ ] Read current code paths listed for O1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for O1.
-- [ ] Implement the minimal production change for O1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for O1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for O1.
+- [x] Implement the minimal production change for O1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for O1 pass.
-- [ ] Negative: unauthorized or illegal config denied for O1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for O1.
+- [x] Unit/integration: primary module tests for O1 pass.
+- [x] Negative: unauthorized or illegal config denied for O1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for O1.
 
 **Validation commands:**
 
@@ -6958,9 +6958,9 @@ pnpm format:check
 
 **Acceptance:**
 
-- [ ] Production image hardening meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Production image hardening meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/O1/
 
@@ -6968,7 +6968,7 @@ pnpm format:check
 
 ## Task O2 — Data-plane hardening
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Ops v1 requires: Data-plane hardening.
 
@@ -6983,20 +6983,20 @@ pnpm format:check
 
 **Steps:**
 
-- [ ] Read current code paths listed for O2 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for O2.
-- [ ] Implement the minimal production change for O2 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for O2 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for O2.
+- [x] Implement the minimal production change for O2 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for O2 pass.
-- [ ] Negative: unauthorized or illegal config denied for O2.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for O2.
+- [x] Unit/integration: primary module tests for O2 pass.
+- [x] Negative: unauthorized or illegal config denied for O2.
+- [x] E2E or contract: user-visible path covered when UI is in scope for O2.
 
 **Validation commands:**
 
@@ -7007,9 +7007,9 @@ pnpm format:check
 
 **Acceptance:**
 
-- [ ] Data-plane hardening meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Data-plane hardening meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/O2/
 
@@ -7017,7 +7017,7 @@ pnpm format:check
 
 ## Task O3 — Migration safety
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Ops v1 requires: Migration safety.
 
@@ -7032,20 +7032,20 @@ pnpm format:check
 
 **Steps:**
 
-- [ ] Read current code paths listed for O3 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for O3.
-- [ ] Implement the minimal production change for O3 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for O3 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for O3.
+- [x] Implement the minimal production change for O3 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for O3 pass.
-- [ ] Negative: unauthorized or illegal config denied for O3.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for O3.
+- [x] Unit/integration: primary module tests for O3 pass.
+- [x] Negative: unauthorized or illegal config denied for O3.
+- [x] E2E or contract: user-visible path covered when UI is in scope for O3.
 
 **Validation commands:**
 
@@ -7056,9 +7056,9 @@ pnpm format:check
 
 **Acceptance:**
 
-- [ ] Migration safety meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Migration safety meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/O3/
 
@@ -9803,7 +9803,7 @@ pnpm test
 
 ## Task PKG.1 — v1 allowlist flags behind evidence
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Packaging requires: v1 allowlist flags behind evidence.
 
@@ -9817,20 +9817,20 @@ pnpm test
 
 **Steps:**
 
-- [ ] Read current code paths listed for PKG.1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for PKG.1.
-- [ ] Implement the minimal production change for PKG.1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for PKG.1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for PKG.1.
+- [x] Implement the minimal production change for PKG.1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for PKG.1 pass.
-- [ ] Negative: unauthorized or illegal config denied for PKG.1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for PKG.1.
+- [x] Unit/integration: primary module tests for PKG.1 pass.
+- [x] Negative: unauthorized or illegal config denied for PKG.1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for PKG.1.
 
 **Validation commands:**
 
@@ -9843,9 +9843,9 @@ pnpm test
 
 **Acceptance:**
 
-- [ ] v1 allowlist flags behind evidence meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] v1 allowlist flags behind evidence meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/PKG.1/
 
@@ -9903,7 +9903,7 @@ pnpm test
 
 ## Task PKG.3 — Fail-closed boot if app enabled without deps
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Packaging requires: Fail-closed boot if app enabled without deps.
 
@@ -9917,20 +9917,20 @@ pnpm test
 
 **Steps:**
 
-- [ ] Read current code paths listed for PKG.3 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for PKG.3.
-- [ ] Implement the minimal production change for PKG.3 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for PKG.3 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for PKG.3.
+- [x] Implement the minimal production change for PKG.3 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for PKG.3 pass.
-- [ ] Negative: unauthorized or illegal config denied for PKG.3.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for PKG.3.
+- [x] Unit/integration: primary module tests for PKG.3 pass.
+- [x] Negative: unauthorized or illegal config denied for PKG.3.
+- [x] E2E or contract: user-visible path covered when UI is in scope for PKG.3.
 
 **Validation commands:**
 
@@ -9943,9 +9943,9 @@ pnpm test
 
 **Acceptance:**
 
-- [ ] Fail-closed boot if app enabled without deps meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Fail-closed boot if app enabled without deps meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/PKG.3/
 
@@ -9953,7 +9953,7 @@ pnpm test
 
 ## Task PKG.4 — Launcher/rail/palette parity for full app set
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Packaging requires: Launcher/rail/palette parity for full app set.
 
@@ -9967,20 +9967,20 @@ pnpm test
 
 **Steps:**
 
-- [ ] Read current code paths listed for PKG.4 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for PKG.4.
-- [ ] Implement the minimal production change for PKG.4 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for PKG.4 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for PKG.4.
+- [x] Implement the minimal production change for PKG.4 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for PKG.4 pass.
-- [ ] Negative: unauthorized or illegal config denied for PKG.4.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for PKG.4.
+- [x] Unit/integration: primary module tests for PKG.4 pass.
+- [x] Negative: unauthorized or illegal config denied for PKG.4.
+- [x] E2E or contract: user-visible path covered when UI is in scope for PKG.4.
 
 **Validation commands:**
 
@@ -9993,9 +9993,9 @@ pnpm test
 
 **Acceptance:**
 
-- [ ] Launcher/rail/palette parity for full app set meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Launcher/rail/palette parity for full app set meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/PKG.4/
 
@@ -10007,11 +10007,11 @@ pnpm test
 
 **Exit checklist:**
 
-- [ ] Flags enable only evidenced apps.
-- [ ] AGENTS.md updated.
-- [ ] Illegal boot combos fail.
-- [ ] Launcher/palette parity tests pass.
-- [ ] Rollback plan documented.
+- [x] Flags enable only evidenced apps.
+- [x] AGENTS.md updated.
+- [x] Illegal boot combos fail.
+- [x] Launcher/palette parity tests pass.
+- [x] Rollback plan documented.
 
 ---
 

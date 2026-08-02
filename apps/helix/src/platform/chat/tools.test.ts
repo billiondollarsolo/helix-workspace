@@ -41,6 +41,7 @@ describe("chat tools", () => {
       "chat.pins.list",
       "chat.react",
       "chat.reply_in_thread",
+      "chat.retention.get",
       "chat.retention.set",
       "chat.room.list",
       "chat.search",
@@ -84,10 +85,43 @@ describe("chat tools", () => {
         confirmationRequired: true,
       });
     }
+    expect(tools.find((candidate) => candidate.id === "chat.retention.get")).toMatchObject({
+      permission: "admin.chat",
+      sideEffects: "read",
+    });
+    expect(
+      tools.find((candidate) => candidate.id === "chat.retention.get")?.confirmationRequired,
+    ).toBeUndefined();
     expect(tools.find((candidate) => candidate.id === "chat.export.organization")).toMatchObject({
       sideEffects: "read",
       rateLimit: { perActor: { perHour: 2, perDay: 4 } },
     });
+  });
+
+  it("reads retention policy for the authenticated actor organization only", async () => {
+    const store = new FakeChatStore();
+    const tool = createChatToolDefinitions({ store }).find(
+      (candidate) => candidate.id === "chat.retention.get",
+    );
+    if (tool === undefined) throw new Error("Expected Chat retention get tool.");
+    const context: ToolContext = {
+      actor: {
+        id: actorId,
+        orgId,
+        type: "user",
+        scopes: ["admin.chat"],
+      },
+      can: async () => true,
+      requirePermission: async () => {},
+      audit: async () => {},
+    };
+    const output = await tool.handler(tool.inputSchema.parse({}), context);
+    expect(output).toMatchObject({
+      orgId,
+      configured: false,
+      retentionDays: 2555,
+    });
+    expect(store.getRetentionInputs).toEqual([expect.objectContaining({ orgId, actorId })]);
   });
 
   it("exports only the authenticated actor organization after confirmation", async () => {
@@ -281,6 +315,23 @@ describe("chat tools", () => {
 class FakeChatStore implements ChatStore {
   readonly sent: unknown[] = [];
   readonly exportInputs: unknown[] = [];
+  readonly getRetentionInputs: unknown[] = [];
+
+  async getRetentionPolicy(
+    input: Parameters<NonNullable<ChatStore["getRetentionPolicy"]>>[0],
+  ): Promise<Awaited<ReturnType<NonNullable<ChatStore["getRetentionPolicy"]>>>> {
+    this.getRetentionInputs.push(input);
+    return {
+      orgId: input.orgId,
+      roomId: input.roomId ?? null,
+      retentionDays: 2555,
+      editWindowSeconds: 86_400,
+      deleteWindowSeconds: 86_400,
+      legalHold: false,
+      updatedAt: null,
+      configured: false,
+    };
+  }
 
   async exportOrganization(
     input: Parameters<NonNullable<ChatStore["exportOrganization"]>>[0],

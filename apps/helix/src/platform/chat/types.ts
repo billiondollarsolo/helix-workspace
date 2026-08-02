@@ -98,6 +98,19 @@ export interface ChatRetentionPolicyRecord {
   readonly updatedAt: Date;
 }
 
+/** Effective policy returned by get — platform defaults when no row exists. */
+export interface ChatRetentionPolicyView {
+  readonly orgId: string;
+  readonly roomId: string | null;
+  readonly retentionDays: number;
+  readonly editWindowSeconds: number;
+  readonly deleteWindowSeconds: number;
+  readonly legalHold: boolean;
+  /** Null when the organization has not configured a policy row. */
+  readonly updatedAt: Date | null;
+  readonly configured: boolean;
+}
+
 export interface ChatExportMessageRecord {
   readonly id: string;
   readonly roomId: string;

@@ -14,6 +14,7 @@ import {
   chatReactInputSchema,
   chatReactionSchema,
   chatReplyInThreadInputSchema,
+  chatRetentionPolicyGetInputSchema,
   chatRetentionPolicyInputSchema,
   chatRoomSchema,
   chatSearchHitSchema,
@@ -86,6 +87,17 @@ const chatRetentionPolicyResultSchema = z.object({
   deleteWindowSeconds: z.number().int(),
   legalHold: z.boolean(),
   updatedAt: z.string(),
+});
+
+const chatRetentionPolicyViewSchema = z.object({
+  orgId: z.string().uuid(),
+  roomId: z.string().uuid().nullable(),
+  retentionDays: z.number().int(),
+  editWindowSeconds: z.number().int(),
+  deleteWindowSeconds: z.number().int(),
+  legalHold: z.boolean(),
+  updatedAt: z.string().nullable(),
+  configured: z.boolean(),
 });
 
 const chatExportResultSchema = z.object({
@@ -447,6 +459,30 @@ export function createChatToolDefinitions(
       }),
     }),
     defineTool<
+      z.output<typeof chatRetentionPolicyGetInputSchema>,
+      z.output<typeof chatRetentionPolicyViewSchema>
+    >({
+      id: "chat.retention.get",
+      description:
+        "Read the organization-default or room-specific Chat retention policy (platform defaults when unset).",
+      permission: "admin.chat",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(chatRetentionPolicyGetInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRetentionPolicyViewSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.getRetentionPolicy === undefined) {
+          throw new Error("This Chat store does not support reading retention policies.");
+        }
+        return serializeRetentionPolicyView(
+          await options.store.getRetentionPolicy({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            ...(input.roomId === undefined ? {} : { roomId: input.roomId }),
+          }),
+        );
+      },
+    }),
+    defineTool<
       z.output<typeof chatRetentionPolicyInputSchema>,
       z.output<typeof chatRetentionPolicyResultSchema>
     >({
@@ -648,6 +684,15 @@ function serializeRetentionPolicy(
   return {
     ...policy,
     updatedAt: policy.updatedAt.toISOString(),
+  };
+}
+
+function serializeRetentionPolicyView(
+  policy: Awaited<ReturnType<NonNullable<ChatStore["getRetentionPolicy"]>>>,
+) {
+  return {
+    ...policy,
+    updatedAt: policy.updatedAt?.toISOString() ?? null,
   };
 }
 

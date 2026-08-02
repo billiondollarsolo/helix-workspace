@@ -12,7 +12,12 @@ import {
   type ChatSql,
 } from "./authorization.js";
 import { normalizeChatContent, renderChatBodyHtml } from "./content-safety.js";
-import { chatMutationAllowed } from "./compliance-policy.js";
+import {
+  CHAT_PLATFORM_DEFAULT_DELETE_WINDOW_SECONDS,
+  CHAT_PLATFORM_DEFAULT_EDIT_WINDOW_SECONDS,
+  CHAT_PLATFORM_DEFAULT_RETENTION_DAYS,
+  chatMutationAllowed,
+} from "./compliance-policy.js";
 import { memberHandleResolver, parseMentions } from "./core/mentions.js";
 import { ChatMemberAccessError, ChatMessageNotFoundError, ChatRoomAccessError } from "./errors.js";
 import type {
@@ -26,6 +31,7 @@ import type {
   ChatReactionRecord,
   ChatReadReceiptRecord,
   ChatRetentionPolicyRecord,
+  ChatRetentionPolicyView,
   ChatRoomKind,
   ChatRoomRecord,
   ChatSearchHit,
@@ -153,6 +159,11 @@ export interface ChatStore {
     readonly actorId: string;
     readonly roomId: string;
   }): Promise<ChatRoomRecord | null>;
+  getRetentionPolicy?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId?: string | undefined;
+  }): Promise<ChatRetentionPolicyView>;
   setRetentionPolicy?(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -1064,6 +1075,52 @@ export class PostgresChatStore
       limit ${input.limit ?? 50}
     `) as unknown as readonly ChatSearchRow[];
     return rows.map(mapSearchHit);
+  }
+
+  async getRetentionPolicy(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId?: string | undefined;
+  }): Promise<ChatRetentionPolicyView> {
+    await requireChatActorInOrg(this.sql, input.orgId, input.actorId);
+    if (input.roomId !== undefined) {
+      await requireChatRoomExistsInOrg(this.sql, input.orgId, input.roomId);
+    }
+    const rows =
+      input.roomId === undefined
+        ? ((await this.sql`
+            select *
+            from chat_retention_policies
+            where org_id = ${input.orgId}
+              and thread_id is null
+            limit 1
+          `) as unknown as readonly ChatRetentionPolicyRow[])
+        : ((await this.sql`
+            select *
+            from chat_retention_policies
+            where org_id = ${input.orgId}
+              and thread_id = ${input.roomId}
+            limit 1
+          `) as unknown as readonly ChatRetentionPolicyRow[]);
+    const row = rows[0];
+    if (row === undefined) {
+      return {
+        orgId: input.orgId,
+        roomId: input.roomId ?? null,
+        retentionDays: CHAT_PLATFORM_DEFAULT_RETENTION_DAYS,
+        editWindowSeconds: CHAT_PLATFORM_DEFAULT_EDIT_WINDOW_SECONDS,
+        deleteWindowSeconds: CHAT_PLATFORM_DEFAULT_DELETE_WINDOW_SECONDS,
+        legalHold: false,
+        updatedAt: null,
+        configured: false,
+      };
+    }
+    const policy = mapRetentionPolicy(row);
+    return {
+      ...policy,
+      updatedAt: policy.updatedAt,
+      configured: true,
+    };
   }
 
   async setRetentionPolicy(input: {

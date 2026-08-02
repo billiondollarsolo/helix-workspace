@@ -83,6 +83,7 @@ const SECTION_CONTENT: Record<AdminSectionId, ComponentType> = {
     { scroll: true },
   ),
   mail: section(() => import("@/features/admin/mail-admin"), "MailAdminSection"),
+  chat: section(() => import("@/features/admin/chat-admin"), "ChatAdminSection", { scroll: true }),
   "oauth-apps": section(() => import("@/features/admin/sections/oauth-apps"), "AdminApps"),
   "app-passwords": section(
     () => import("@/features/admin/app-passwords-management"),

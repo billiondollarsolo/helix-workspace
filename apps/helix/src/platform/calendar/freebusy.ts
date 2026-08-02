@@ -9,6 +9,7 @@ import type {
   CalendarWorkingHours,
 } from "./types.js";
 import { expandCalendarEventOccurrences } from "./recurrence.js";
+import { zonedDayOfWeek, zonedHourOfDay } from "./timezone.js";
 
 const minuteMs = 60_000;
 
@@ -162,12 +163,25 @@ function withinWorkingHours(
   if (workingHours === undefined) {
     return true;
   }
-  const day = startsAt.getUTCDay();
+  const timeZone = workingHours.timezone ?? "UTC";
+  const day = timeZone === "UTC" ? startsAt.getUTCDay() : zonedDayOfWeek(startsAt, timeZone);
+  if (day === null) {
+    return false;
+  }
   if (workingHours.daysOfWeek !== undefined && !workingHours.daysOfWeek.includes(day)) {
     return false;
   }
-  const startsHour = startsAt.getUTCHours() + startsAt.getUTCMinutes() / 60;
-  const endsHour = endsAt.getUTCHours() + endsAt.getUTCMinutes() / 60;
+  const startsHour =
+    timeZone === "UTC"
+      ? startsAt.getUTCHours() + startsAt.getUTCMinutes() / 60
+      : zonedHourOfDay(startsAt, timeZone);
+  const endsHour =
+    timeZone === "UTC"
+      ? endsAt.getUTCHours() + endsAt.getUTCMinutes() / 60
+      : zonedHourOfDay(endsAt, timeZone);
+  if (startsHour === null || endsHour === null) {
+    return false;
+  }
   return startsHour >= workingHours.startsAtHour && endsHour <= workingHours.endsAtHour;
 }
 

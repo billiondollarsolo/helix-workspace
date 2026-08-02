@@ -13,11 +13,7 @@
 
 import { useState, type ReactNode } from "react";
 import { TopBar } from "@/components/shell/top-bar";
-import {
-  SidePanel,
-  SidePanelRail,
-  type SideTool,
-} from "@/components/shell/side-panel";
+import { SidePanel, SidePanelRail, type SideTool } from "@/components/shell/side-panel";
 import { useQuery } from "@tanstack/react-query";
 import { unreadCountQueryOptions } from "@/features/notifications/api";
 
@@ -65,14 +61,12 @@ export function SurfaceFrame({
         searchValue={searchValue}
         onSearchChange={onSearchChange}
       />
-      <main className="workspace-body" aria-label={title}>
+      <main id="main-content" className="workspace-body" aria-label={title} tabIndex={-1}>
         {children}
         <SidePanel activeTool={sideTool} onClose={() => setSideTool(null)} />
         <SidePanelRail
           activeTool={sideTool}
-          onToggle={(tool) =>
-            setSideTool((current) => (current === tool ? null : tool))
-          }
+          onToggle={(tool) => setSideTool((current) => (current === tool ? null : tool))}
         />
       </main>
     </div>

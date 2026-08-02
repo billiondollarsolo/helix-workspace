@@ -128,6 +128,12 @@ export const chatRetentionPolicyInputSchema = z.object({
 });
 export type ChatRetentionPolicyInput = z.infer<typeof chatRetentionPolicyInputSchema>;
 
+/** Read the effective org-default or room-override Chat retention policy. */
+export const chatRetentionPolicyGetInputSchema = z.object({
+  roomId: uuidSchema.optional(),
+});
+export type ChatRetentionPolicyGetInput = z.infer<typeof chatRetentionPolicyGetInputSchema>;
+
 export const chatLegalHoldInputSchema = z.object({
   roomId: uuidSchema.optional(),
   enabled: z.boolean(),

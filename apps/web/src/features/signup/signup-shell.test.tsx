@@ -54,6 +54,24 @@ describe("signup shell", () => {
     expect(deriveOrgSlug(" -Bad Prefix ")).toBe("bad-prefix");
   });
 
+  it("provides stable form names and browser autofill semantics", async () => {
+    await act(async () => {
+      root.render(<SignupShell fetchImpl={vi.fn<typeof fetch>()} />);
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('input[name="email"][autocomplete="email"]')).not.toBeNull();
+    expect(
+      container.querySelector('input[name="password"][autocomplete="new-password"]'),
+    ).not.toBeNull();
+    expect(container.querySelector('input[name="orgName"]')).not.toBeNull();
+    expect(container.querySelector('input[name="orgSlug"][spellcheck="false"]')).not.toBeNull();
+    expect(container.querySelector('select[name="country"]')).not.toBeNull();
+    expect(container.querySelector('input[name="phone"][autocomplete="tel"]')).not.toBeNull();
+    expect(container.querySelector('input[name="termsAccepted"]')).not.toBeNull();
+    expect(container.querySelector('input[name="privacyAccepted"]')).not.toBeNull();
+  });
+
   it("creates a workspace and shows the email verification handoff", async () => {
     const fetchImpl = vi.fn<typeof fetch>((input) => {
       const url = urlForRequest(input);
@@ -326,6 +344,45 @@ describe("verify email shell", () => {
     expect(container.textContent).not.toContain("Send a new link");
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it("retries a transient verification failure without reloading the page", async () => {
+    const successPayload = {
+      status: "active",
+      org: {
+        id: "11111111-1111-4111-8111-111111111111",
+        slug: "acme",
+        displayName: "Acme",
+        status: "active",
+        region: "default",
+      },
+      verification: { status: "verified" },
+      session: { created: true, status: "created" },
+      workspace: {
+        onboardingUrl: "https://acme.helix.example/onboarding",
+        welcomeUrl: "https://acme.helix.example/welcome",
+      },
+    };
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ error: { message: "Verification service unavailable." } }, { status: 503 }),
+      )
+      .mockResolvedValueOnce(Response.json(successPayload));
+
+    await act(async () => {
+      root.render(<VerifyEmailShell token="token-1" fetchImpl={fetchImpl} />);
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Try verification again");
+
+    clickButton("Try verification again");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Email verified");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("signup invite shell", () => {
@@ -422,17 +479,74 @@ describe("signup invite shell", () => {
       await Promise.resolve();
     });
 
-    expect(fetchImpl).toHaveBeenCalledWith("/api/signup/onboarding-invite/accept", {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token: "invite-token" }),
-    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/signup/onboarding-invite/accept",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: "invite-token" }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
     expect(container.textContent).toContain("Invitation accepted");
     expect(container.textContent).toContain("Local email/password login remains available");
     expect(container.querySelector<HTMLAnchorElement>("a")?.getAttribute("href")).toBe(
       "https://acme.helix.example/welcome",
     );
+  });
+
+  it("retries invite acceptance after a transient backend failure", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ error: { message: "Invite service unavailable." } }, { status: 503 }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          status: "accepted",
+          org: {
+            id: "11111111-1111-4111-8111-111111111111",
+            slug: "acme",
+            displayName: "Acme",
+            status: "active",
+            region: "default",
+          },
+          actorId: "actor-1",
+          workspace: {
+            onboardingUrl: "https://acme.helix.example/onboarding",
+            welcomeUrl: "https://acme.helix.example/welcome",
+          },
+        }),
+      );
+
+    await act(async () => {
+      root.render(
+        <SignupInviteShell
+          token="invite-token"
+          fetchImpl={fetchImpl}
+          getSession={() =>
+            Promise.resolve({
+              id: "user-1",
+              email: "ada@example.com",
+              name: "Ada",
+              actorId: "actor-1",
+            })
+          }
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Try joining again");
+
+    clickButton("Try joining again");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Invitation accepted");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
 

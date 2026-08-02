@@ -56,6 +56,12 @@ export const driveEntrySchema = z.object({
   storageKey: z.string().optional(),
   versionNumber: z.number().int().positive().optional(),
   preview: drivePreviewSchema.optional(),
+  /** Upload/scan lifecycle state. Content is only available when `active`. */
+  uploadState: driveUploadStateSchema.optional(),
+  /** User-facing label for non-active processing/quarantine states. */
+  uploadStatusLabel: z.string().optional(),
+  /** False while scanning/quarantined/failed; true only for active objects. */
+  available: z.boolean().optional(),
   metadata: jsonObjectSchema.default({}),
   deletedAt: z.string().nullable(),
   createdAt: z.string(),

@@ -25,6 +25,26 @@ security:
 publicUrl: http://helix.local
 logLevel: info
 
+# Production workspace packaging (AGENTS.md + docs/architecture/v1-packaging-matrix.md).
+# Defaults are MVP fail-closed. Do NOT set profile=full or enable Meet/Calendar/Editors
+# modules until PKG.* domain evidence, O-D/O-K deps, and dual-target RPO/RTO drills pass.
+# PKG flip procedure: docs/architecture/ha-rpo-rto.md
+workspace:
+  # mvp | full — full only after evidenced packaging flip (never a silent default).
+  profile: mvp
+  # Exact production MVP allowlist. Full Workspace allowlist is documented only until PKG.
+  apps: "mail,drive,chat,assistant"
+  editorsMigrationsEnabled: false
+  modules:
+    docs:
+      enabled: false
+    calendar:
+      enabled: false
+    meet:
+      enabled: false
+    editors:
+      enabled: false
+
 serviceAccount:
   create: true
   name: ""

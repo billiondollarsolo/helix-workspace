@@ -9,6 +9,10 @@ data:
   HELIX_SECURITY_TIER: {{ .Values.security.tier | quote }}
   HELIX_PUBLIC_URL: {{ .Values.publicUrl | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
+  {{- /* Workspace packaging: MVP fail-closed defaults. PKG flip only with evidence. */}}
+  HELIX_WORKSPACE_PROFILE: {{ default "mvp" .Values.workspace.profile | quote }}
+  HELIX_APPS: {{ default "mail,drive,chat,assistant" .Values.workspace.apps | quote }}
+  HELIX_EDITORS_MIGRATIONS_ENABLED: {{ ternary "true" "false" (default false .Values.workspace.editorsMigrationsEnabled) | quote }}
   {{- /*
     FIPS is opt-in. The Helix crypto adapter treats an explicit
     HELIX_CRYPTO_ADAPTER as an override that selects the FipsCryptoProvider

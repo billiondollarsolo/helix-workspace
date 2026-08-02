@@ -1,5 +1,12 @@
 import { getCryptoProvider } from "../crypto/index.js";
 
+/** Default short-lived room JWT lifetime (MT.3): 15 minutes. */
+export const DEFAULT_JITSI_JWT_TTL_SECONDS = 15 * 60;
+/** Hard ceiling for mint TTL regardless of caller request (1 hour). */
+export const MAX_JITSI_JWT_TTL_SECONDS = 60 * 60;
+/** Minimum allowed TTL (30 seconds) so clock skew does not mint already-expired tokens. */
+export const MIN_JITSI_JWT_TTL_SECONDS = 30;
+
 export interface JitsiJwtUser {
   readonly id: string;
   readonly name?: string | undefined;
@@ -16,12 +23,34 @@ export interface MintJitsiJwtInput {
   readonly room: string;
   readonly user: JitsiJwtUser;
   readonly ttlSeconds?: number | undefined;
+  /** Optional override of the hard TTL ceiling (defaults to {@link MAX_JITSI_JWT_TTL_SECONDS}). */
+  readonly maxTtlSeconds?: number | undefined;
   readonly now?: Date | undefined;
 }
 
 export interface MintedJitsiJwt {
   readonly token: string;
   readonly expiresAt: Date;
+  readonly ttlSeconds: number;
+}
+
+export function resolveJitsiJwtTtlSeconds(input: {
+  readonly ttlSeconds?: number | undefined;
+  readonly maxTtlSeconds?: number | undefined;
+}): number {
+  const maxTtl = input.maxTtlSeconds ?? MAX_JITSI_JWT_TTL_SECONDS;
+  if (!Number.isSafeInteger(maxTtl) || maxTtl < MIN_JITSI_JWT_TTL_SECONDS) {
+    throw new Error(
+      `Jitsi JWT maxTtlSeconds must be an integer >= ${String(MIN_JITSI_JWT_TTL_SECONDS)}.`,
+    );
+  }
+  const requested = input.ttlSeconds ?? DEFAULT_JITSI_JWT_TTL_SECONDS;
+  if (!Number.isSafeInteger(requested) || requested < MIN_JITSI_JWT_TTL_SECONDS) {
+    throw new Error(
+      `Jitsi JWT ttlSeconds must be an integer >= ${String(MIN_JITSI_JWT_TTL_SECONDS)}.`,
+    );
+  }
+  return Math.min(requested, maxTtl);
 }
 
 export function mintJitsiJwt(input: MintJitsiJwtInput): MintedJitsiJwt {
@@ -31,7 +60,10 @@ export function mintJitsiJwt(input: MintJitsiJwtInput): MintedJitsiJwt {
 
   const now = input.now ?? new Date();
   const issuedAt = Math.floor(now.getTime() / 1000);
-  const ttlSeconds = input.ttlSeconds ?? 60 * 60;
+  const ttlSeconds = resolveJitsiJwtTtlSeconds({
+    ttlSeconds: input.ttlSeconds,
+    maxTtlSeconds: input.maxTtlSeconds,
+  });
   const expiresAtSeconds = issuedAt + ttlSeconds;
   const header = { alg: "HS256", typ: "JWT" };
   const payload = {
@@ -64,6 +96,7 @@ export function mintJitsiJwt(input: MintJitsiJwtInput): MintedJitsiJwt {
   return {
     token: `${encodedHeader}.${encodedPayload}.${signature}`,
     expiresAt: new Date(expiresAtSeconds * 1000),
+    ttlSeconds,
   };
 }
 

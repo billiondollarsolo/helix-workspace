@@ -289,6 +289,8 @@ export interface MailSearchHit {
   readonly labels: readonly string[];
   readonly unread: boolean;
   readonly starred: boolean;
+  /** True when metadata indicates at least one attachment (M13 has:attachment). */
+  readonly hasAttachment?: boolean | undefined;
   readonly outboundStatus?: MailOutboundStatus | undefined;
   readonly providerMessageId?: string | undefined;
   readonly deliveryMetadata?: JsonObject | undefined;

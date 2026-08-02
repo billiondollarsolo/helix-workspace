@@ -60,10 +60,18 @@ function pendingSql(): postgres.Sql {
 }
 
 describe("Drive non-active availability invariants", () => {
-  it("omits processing files from list, database search, and external indexing projections", async () => {
+  it("surfaces owner-visible processing files in list only as unavailable, never in search/index", async () => {
     const store = new PostgresDriveStore(pendingSql());
 
-    await expect(store.list({ orgId, actorId })).resolves.toEqual([]);
+    const listed = await store.list({ orgId, actorId });
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({
+      id: objectId,
+      uploadState: "scanning",
+      available: false,
+      uploadStatusLabel: "Scanning for malware",
+    });
+    // Search and indexing projections still omit non-active objects.
     await expect(store.search({ orgId, actorId })).resolves.toEqual([]);
     await expect(store.getDriveSearchRecord(objectId)).resolves.toBeNull();
   });

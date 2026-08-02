@@ -12,9 +12,13 @@ import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 export interface RailProps {
   /** Open the app launcher popover. */
   onOpenLauncher: () => void;
+  /** Whether the app launcher popover is expanded. */
+  launcherOpen: boolean;
+  /** Open workspace help. */
+  onOpenHelp: () => void;
 }
 
-export function Rail({ onOpenLauncher }: RailProps) {
+export function Rail({ onOpenLauncher, launcherOpen, onOpenHelp }: RailProps) {
   const location = useLocation();
   const activeApp = appForRoute(location.pathname);
   const enabled = useEnabledApps();
@@ -26,6 +30,9 @@ export function Rail({ onOpenLauncher }: RailProps) {
         className="rail-logo"
         onClick={onOpenLauncher}
         aria-label="Helix apps"
+        aria-expanded={launcherOpen}
+        aria-controls="app-launcher"
+        aria-haspopup="menu"
         title="Apps"
       >
         <HelixLogo size={22} />
@@ -48,7 +55,7 @@ export function Rail({ onOpenLauncher }: RailProps) {
         );
       })}
       <div className="rail-spacer" />
-      <button type="button" className="rail-item" aria-label="Help">
+      <button type="button" className="rail-item" aria-label="Help" onClick={onOpenHelp}>
         <Icons.Help />
         <span className="rail-tip">Help</span>
       </button>

@@ -62,11 +62,14 @@ describe("drive tools", () => {
         "drive.create",
         "drive.delete",
         "drive.finalize",
+        "drive.lifecycle.get",
+        "drive.lifecycle.set",
         "drive.link.create",
         "drive.link.list",
         "drive.link.revoke",
         "drive.list",
         "drive.move",
+        "drive.quota.usage",
         "drive.rename",
         "drive.restore",
         "drive.search",
@@ -782,6 +785,106 @@ describe("drive tools", () => {
       }),
     ).not.toThrow();
     expect(create.description).toBe("Create a new Drive folder.");
+  });
+
+  it("drive.link.create denies public links when external sharing is blocked (ADM.6)", async () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      getExternalSharingPolicy: async () => ({
+        enabled: true,
+        enforcement: "required",
+        settings: { mode: "blocked", allowedDomains: [], requireExpiry: false },
+      }),
+    });
+    const actor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      displayName: "Ada",
+      scopes: ["drive.write"],
+    };
+    await expect(
+      registry.invoke(
+        "drive.link.create",
+        { objectId, role: "reader", rateLimitPerHour: 120 },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/blocked/i),
+    });
+  });
+
+  it("drive.link.create allows public links when external sharing mode is anyone", async () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      getExternalSharingPolicy: async () => ({
+        enabled: true,
+        enforcement: "optional",
+        settings: { mode: "anyone", allowedDomains: [], requireExpiry: false },
+      }),
+    });
+    const actor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      displayName: "Ada",
+      scopes: ["drive.write"],
+    };
+    await expect(
+      registry.invoke(
+        "drive.link.create",
+        { objectId, role: "reader", rateLimitPerHour: 120 },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { objectId, role: "reader" },
+    });
+  });
+
+  it("drive.share denies email targets outside the external-sharing allowlist", async () => {
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      getExternalSharingPolicy: async () => ({
+        enabled: true,
+        enforcement: "required",
+        settings: {
+          mode: "allowlist",
+          allowedDomains: ["helix.example"],
+          requireExpiry: false,
+        },
+      }),
+      resolveShareActorRefs: async () => ({
+        actorIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab"],
+        unresolvedRefs: [],
+      }),
+    });
+    const actor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      displayName: "Ada",
+      scopes: ["drive.write"],
+    };
+    await expect(
+      registry.invoke(
+        "drive.share",
+        {
+          objectId,
+          role: "reader",
+          actorIds: [],
+          actorRefs: ["outsider@evil.example"],
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/denies recipient domain/i),
+    });
   });
 
   it("drive.list returns app field on each entry and supports app filter", async () => {

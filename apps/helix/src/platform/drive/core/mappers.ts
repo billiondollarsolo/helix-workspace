@@ -1,4 +1,5 @@
 import type { JsonObject } from "@helix/sdk-types";
+import type { DriveUploadState } from "@helix/contracts";
 import type {
   DriveAccessGrantRecord,
   DriveEntryRecord,
@@ -6,6 +7,11 @@ import type {
   DriveSearchHit,
   DriveVersionRecord,
 } from "../types.js";
+import {
+  isDriveFileAvailable,
+  isDriveUploadState,
+  userFacingDriveUploadState,
+} from "../upload-state.js";
 
 /** Minimal pure helpers shared by store mappers (G5). */
 
@@ -38,6 +44,17 @@ export interface MapObjectEntryInput {
   readonly mine?: boolean;
   readonly shared_count?: string | number | null;
   readonly preview?: DrivePreview;
+  readonly upload_state?: DriveUploadState | null;
+}
+
+/** Owner-visible non-active states that may appear in list (never treated as available). */
+export function isOwnerVisibleProcessingState(state: DriveUploadState): boolean {
+  return (
+    state === "uploaded" ||
+    state === "scanning" ||
+    state === "quarantined" ||
+    state === "scan_failed"
+  );
 }
 
 export function mapObjectEntry(row: MapObjectEntryInput): DriveEntryRecord {
@@ -51,6 +68,9 @@ export function mapObjectEntry(row: MapObjectEntryInput): DriveEntryRecord {
             ? {}
             : { sharedCount: bytesFromDatabase(row.shared_count) }),
         };
+  const uploadState = isDriveUploadState(row.upload_state) ? row.upload_state : undefined;
+  const userFacing =
+    uploadState === undefined ? undefined : userFacingDriveUploadState(uploadState);
   return {
     id: row.id,
     type: "file",
@@ -64,6 +84,14 @@ export function mapObjectEntry(row: MapObjectEntryInput): DriveEntryRecord {
     storageKey: row.storage_key,
     versionNumber: row.version_number ?? undefined,
     ...(row.preview === undefined ? {} : { preview: row.preview }),
+    ...(uploadState === undefined
+      ? {}
+      : {
+          uploadState,
+          uploadStatusLabel: userFacing?.label,
+          available:
+            userFacing !== undefined ? userFacing.available : isDriveFileAvailable(uploadState),
+        }),
     metadata,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,

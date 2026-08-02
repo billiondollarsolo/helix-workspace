@@ -30,7 +30,7 @@
  * a section that opens one request is not the cause, and loosening `retry`
  * for every caller would hide real faults on every other surface.
  *
- * Coverage. Five checks against nineteen sections. `CoverageNote` says so on
+ * Coverage. Five checks against the live admin section catalog. `CoverageNote` says so on
  * every load and in every state, because the way a status page does real
  * damage is an operator reading a quiet one as a checked workspace. */
 
@@ -306,9 +306,29 @@ function readDomains(domains: readonly DomainWithRecords[]): Reading {
   };
 }
 
-/** Enforced is a conjunction of two positive facts, never the fall-through of
- *  a negative test — a record missing from the response is absent, not off. */
+/**
+ * Runtime-enforced only. Prefer server `runtimeStatus` so recorded-only
+ * policies never count as enforced when stored as required. Without
+ * runtimeStatus, SSO/DLP/device_trust never count (honest fail-closed).
+ */
 function isEnforced(policy: SecurityPolicy): boolean {
+  if (policy.runtimeStatus !== undefined) {
+    if (policy.runtimeStatus.displayLevel === "required") {
+      return true;
+    }
+    // Partial controls (admin MFA, session) with required intent are live on
+    // some paths — count them as enforced for the overview ratio.
+    return (
+      policy.runtimeStatus.mode === "partial" && policy.enabled && policy.enforcement === "required"
+    );
+  }
+  if (
+    policy.policyType === "sso" ||
+    policy.policyType === "dlp" ||
+    policy.policyType === "device_trust"
+  ) {
+    return false;
+  }
   return policy.enabled && policy.enforcement === "required";
 }
 
@@ -334,8 +354,8 @@ function readPolicies(policies: readonly SecurityPolicy[]): Reading {
        listed rather than leaving the operator to infer a bug. */
     detail:
       unenforced.length === 0
-        ? "Every returned policy is set to required."
-        : `Not required: ${nameList(unenforced.map((policy) => securityPolicyLabels[policy.policyType]))}. Only an unenforced multi-factor policy is counted above.`,
+        ? "Every returned policy is runtime-enforced (or partially enforced) at required."
+        : `Not runtime-enforced: ${nameList(unenforced.map((policy) => securityPolicyLabels[policy.policyType]))}. Only an unenforced multi-factor policy is counted above.`,
     /* Only MFA is escalated, and only when its record is present. An absent
        record is unknown — reporting it as "not enforced" would be inventing a
        policy state the backend never sent. */
@@ -682,8 +702,9 @@ export function AdminOverview() {
           </li>
           <li>
             Security policies counts records the workspace returned, and calls a policy enforced
-            only when it is both enabled and set to required. A policy type with no record is
-            absent, not off, and is left out of the count.
+            only when runtime status says so (not mere stored intent). Recorded-only controls never
+            count as enforced. A policy type with no record is absent, not off, and is left out of
+            the count.
           </li>
           <li>
             Tier readiness reports the live tier and the platform&apos;s own ready flag. The

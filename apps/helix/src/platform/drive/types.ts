@@ -153,6 +153,10 @@ export interface DriveEntryRecord {
   readonly storageKey?: string | undefined;
   readonly versionNumber?: number | undefined;
   readonly preview?: DrivePreview | undefined;
+  /** Upload/scan lifecycle state when known (list/detail). */
+  readonly uploadState?: DriveUploadState | undefined;
+  readonly uploadStatusLabel?: string | undefined;
+  readonly available?: boolean | undefined;
   readonly metadata: JsonObject;
   readonly deletedAt: Date | null;
   readonly createdAt: Date;

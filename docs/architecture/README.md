@@ -58,4 +58,12 @@ The source decision set is the
 | [v1-packaging-matrix.md](./v1-packaging-matrix.md)             | G0.6 |
 | [v1-old-to-new-task-id-map.md](./v1-old-to-new-task-id-map.md) | G0.8 |
 
+## Ops dual-target (O / O-DOCKER / O-K8S / O-X)
+
+| Doc                                                | Task               |
+| -------------------------------------------------- | ------------------ |
+| [ha-rpo-rto.md](./ha-rpo-rto.md)                   | O4, O-D.13, O-K.16 |
+| [compose-helm-parity.md](./compose-helm-parity.md) | O-X.1              |
+| [v1-packaging-matrix.md](./v1-packaging-matrix.md) | G0.6 / PKG         |
+
 Forward execution plan: [`../superpowers/plans/2026-08-02-helix-full-workspace-v1-release.md`](../superpowers/plans/2026-08-02-helix-full-workspace-v1-release.md)

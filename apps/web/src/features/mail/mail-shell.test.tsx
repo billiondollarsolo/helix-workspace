@@ -12,6 +12,14 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
   useRouter: () => ({ navigate: navigateMock }),
   useSearch: () => ({}),
+  useBlocker: () => ({
+    status: "idle",
+    current: undefined,
+    next: undefined,
+    action: undefined,
+    proceed: undefined,
+    reset: undefined,
+  }),
 }));
 
 vi.mock("@helix/sdk-web", () => ({

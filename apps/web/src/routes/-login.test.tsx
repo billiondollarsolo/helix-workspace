@@ -48,8 +48,11 @@ describe("LocalLoginPanel", () => {
     const form = container.querySelector("form.auth-form");
     expect(form).not.toBeNull();
     expect(form?.querySelector('input[type="email"][autocomplete="username"]')).not.toBeNull();
+    expect(form?.querySelector('input[name="email"][spellcheck="false"]')).not.toBeNull();
     expect(
-      form?.querySelector('input[type="password"][autocomplete="current-password"]'),
+      form?.querySelector(
+        'input[name="password"][type="password"][autocomplete="current-password"]',
+      ),
     ).not.toBeNull();
     expect(buttonNamed("Sign in", form ?? container)?.type).toBe("submit");
   });
@@ -96,6 +99,30 @@ describe("LocalLoginPanel", () => {
     expect(onSignedIn).toHaveBeenCalledWith(
       expect.objectContaining({ email: "admin@helix.local", actorId: "actor-1" }),
     );
+  });
+
+  it("focuses an actionable error after sign-in fails", async () => {
+    const signIn = vi.fn().mockRejectedValue(new Error("Check your email and password."));
+    act(() => {
+      root.render(<LocalLoginPanel signIn={signIn} />);
+    });
+    const email = container.querySelector<HTMLInputElement>('input[name="email"]');
+    const password = container.querySelector<HTMLInputElement>('input[name="password"]');
+    const form = container.querySelector("form");
+    if (email === null || password === null || form === null) {
+      throw new Error("Missing login form controls.");
+    }
+    await act(async () => {
+      setInputValue(email, "owner@example.com");
+      setInputValue(password, "wrong-password");
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]');
+    expect(alert?.textContent).toBe("Check your email and password.");
+    expect(document.activeElement).toBe(alert);
+    expect(email.getAttribute("aria-invalid")).toBe("true");
   });
 });
 

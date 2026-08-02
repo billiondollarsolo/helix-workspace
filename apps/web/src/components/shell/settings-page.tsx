@@ -3,11 +3,9 @@
    Sections: Profile, Appearance, Language, Notifications, Mail signature,
    Helix AI (the AI provider config), Security, Keyboard shortcuts. */
 
-import { useEffect, useState, type ReactNode } from "react";
-import { useDebouncedCallback } from "@tanstack/react-pacer";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Icons, type IconName } from "@/components/icons";
-import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
 import { sessionUserQueryOptions } from "@/lib/auth";
 import {
@@ -16,16 +14,19 @@ import {
   setAppearance,
   useAppearance,
 } from "@/components/settings-store";
+import type { SettingsSectionId } from "@/components/shell/overlay-context";
 
 /* ---------- shared bits ---------- */
 
 function SettingsField({
   label,
   hint,
+  controlId,
   children,
 }: {
   label: string;
   hint?: string;
+  controlId?: string;
   children: ReactNode;
 }) {
   return (
@@ -40,7 +41,16 @@ function SettingsField({
       }}
     >
       <div>
-        <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{label}</div>
+        {controlId === undefined ? (
+          <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{label}</div>
+        ) : (
+          <label
+            htmlFor={controlId}
+            style={{ display: "block", fontSize: "var(--text-body-sm)", fontWeight: 500 }}
+          >
+            {label}
+          </label>
+        )}
         {hint ? (
           <div
             style={{
@@ -59,13 +69,28 @@ function SettingsField({
   );
 }
 
-function Toggle({ defaultOn }: { defaultOn: boolean }) {
+const SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE =
+  "Account-backed settings are not available in this build yet.";
+
+function Toggle({
+  defaultOn,
+  label,
+  disabledReason,
+}: {
+  defaultOn: boolean;
+  label: string;
+  disabledReason?: string;
+}) {
   const [on, setOn] = useState(defaultOn);
   return (
     <button
       type="button"
       role="switch"
+      aria-label={label}
       aria-checked={on}
+      aria-description={disabledReason}
+      title={disabledReason}
+      disabled={disabledReason !== undefined}
       onClick={() => setOn((value) => !value)}
       style={{
         width: 36,
@@ -93,6 +118,29 @@ function Toggle({ defaultOn }: { defaultOn: boolean }) {
   );
 }
 
+function UnavailableSettingsButton({
+  children,
+  className = "btn sm",
+  style,
+}: {
+  children: ReactNode;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <button
+      type="button"
+      className={className}
+      style={style}
+      disabled
+      title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+      aria-description={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+    >
+      {children}
+    </button>
+  );
+}
+
 const h1Style = { fontSize: "var(--text-h2)", fontWeight: 600, margin: "0 0 4px" } as const;
 const subStyle = {
   fontSize: "var(--text-body-sm)",
@@ -113,30 +161,64 @@ function ProfileSection() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <Avatar name={displayName || "You"} size={64} />
           <div>
-            <button type="button" className="btn sm">
-              Upload
-            </button>
-            <button type="button" className="btn sm ghost" style={{ marginLeft: 4 }}>
+            <UnavailableSettingsButton>Upload</UnavailableSettingsButton>
+            <UnavailableSettingsButton className="btn sm ghost" style={{ marginLeft: 4 }}>
               Remove
-            </button>
+            </UnavailableSettingsButton>
           </div>
         </div>
       </SettingsField>
-      <SettingsField label="Display name">
-        <input className="input" defaultValue={displayName} key={displayName} />
+      <SettingsField label="Display name" controlId="settings-display-name">
+        <input
+          id="settings-display-name"
+          name="displayName"
+          autoComplete="name"
+          className="input"
+          defaultValue={displayName}
+          key={displayName}
+          disabled
+          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+        />
       </SettingsField>
-      <SettingsField label="Pronouns">
-        <input className="input" defaultValue="" placeholder="e.g. they/them" />
-      </SettingsField>
-      <SettingsField label="Job title">
-        <input className="input" defaultValue="" placeholder="Your role" />
-      </SettingsField>
-      <SettingsField label="About" hint="A short bio shown on your contact card">
-        <textarea
+      <SettingsField label="Pronouns" controlId="settings-pronouns">
+        <input
+          id="settings-pronouns"
+          name="pronouns"
+          autoComplete="off"
           className="input"
           defaultValue=""
-          placeholder="A short bio shown on your contact card"
+          placeholder="For example, they/them…"
+          disabled
+          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+        />
+      </SettingsField>
+      <SettingsField label="Job title" controlId="settings-job-title">
+        <input
+          id="settings-job-title"
+          name="jobTitle"
+          autoComplete="organization-title"
+          className="input"
+          defaultValue=""
+          placeholder="For example, Product Designer…"
+          disabled
+          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+        />
+      </SettingsField>
+      <SettingsField
+        label="About"
+        hint="A short bio shown on your contact card"
+        controlId="settings-about"
+      >
+        <textarea
+          id="settings-about"
+          name="about"
+          autoComplete="off"
+          className="input"
+          defaultValue=""
+          placeholder="For example, Building the next Helix release…"
           rows={3}
+          disabled
+          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
           style={{
             height: "auto",
             padding: 10,
@@ -168,7 +250,7 @@ function AppearanceSection() {
       <h1 style={h1Style}>Appearance</h1>
       <div style={subStyle}>Personalize how Helix looks for you</div>
       <SettingsField label="Theme" hint="Choose light or dark mode">
-        <div style={{ display: "flex", gap: 12 }}>
+        <div role="group" aria-label="Theme" style={{ display: "flex", gap: 12 }}>
           {themeOptions.map((option) => (
             <button
               key={option.v}
@@ -242,6 +324,8 @@ function AppearanceSection() {
       </SettingsField>
       <SettingsField label="Density" hint="How tightly content is packed">
         <div
+          role="group"
+          aria-label="Density"
           style={{
             display: "flex",
             gap: 4,
@@ -280,6 +364,8 @@ function AppearanceSection() {
       </SettingsField>
       <SettingsField label="Text size" hint="Scale text across the entire workspace">
         <div
+          role="group"
+          aria-label="Text size"
           style={{
             display: "flex",
             gap: 4,
@@ -312,7 +398,11 @@ function AppearanceSection() {
         </div>
       </SettingsField>
       <SettingsField label="Accent color" hint="Used for buttons, selections, and highlights">
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div
+          role="group"
+          aria-label="Accent color"
+          style={{ display: "flex", gap: 10, flexWrap: "wrap" }}
+        >
           {ACCENT_OPTIONS.map((color) => (
             <button
               key={color}
@@ -350,8 +440,15 @@ function LanguageSection() {
     <>
       <h1 style={h1Style}>Language &amp; region</h1>
       <div style={subStyle}>How dates, times, and language are formatted</div>
-      <SettingsField label="Language">
-        <select className="select" defaultValue="en-US">
+      <SettingsField label="Language" controlId="settings-language">
+        <select
+          id="settings-language"
+          name="language"
+          className="select"
+          defaultValue="en-US"
+          disabled
+          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+        >
           <option value="en-US">English (US)</option>
           <option value="en-GB">English (UK)</option>
           <option value="de-DE">Deutsch</option>
@@ -359,25 +456,59 @@ function LanguageSection() {
           <option value="ja-JP">日本語</option>
         </select>
       </SettingsField>
-      <SettingsField label="Time zone">
-        <select className="select" defaultValue="pt">
+      <SettingsField label="Time zone" controlId="settings-time-zone">
+        <select
+          id="settings-time-zone"
+          name="timeZone"
+          className="select"
+          defaultValue="pt"
+          disabled
+          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+        >
           <option value="pt">(GMT-08:00) America / Los Angeles</option>
           <option value="et">(GMT-05:00) America / New York</option>
           <option value="utc">(GMT+00:00) UTC</option>
           <option value="cet">(GMT+01:00) Europe / Berlin</option>
         </select>
       </SettingsField>
-      <SettingsField label="First day of week">
-        <select className="select" defaultValue="mon">
+      <SettingsField label="First day of week" controlId="settings-week-start">
+        <select
+          id="settings-week-start"
+          name="weekStart"
+          className="select"
+          defaultValue="mon"
+          disabled
+          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+        >
           <option value="sun">Sunday</option>
           <option value="mon">Monday</option>
         </select>
       </SettingsField>
       <SettingsField label="Working hours">
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input className="input" defaultValue="09:00" style={{ width: 100 }} />
+          <input
+            className="input"
+            name="workingHoursStart"
+            type="time"
+            autoComplete="off"
+            aria-label="Working hours start"
+            defaultValue="09:00"
+            style={{ width: 100 }}
+            disabled
+            title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          />
           <span style={{ color: "var(--text-3)" }}>to</span>
-          <input className="input" defaultValue="18:00" style={{ width: 100 }} />
+          <input
+            className="input"
+            name="workingHoursEnd"
+            type="time"
+            autoComplete="off"
+            aria-label="Working hours end"
+            defaultValue="18:00"
+            style={{ width: 100 }}
+            disabled
+            title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          />
           <span style={{ color: "var(--text-3)", fontSize: "var(--text-meta)" }}>Mon–Fri</span>
         </div>
       </SettingsField>
@@ -390,25 +521,17 @@ function LanguageSection() {
 function NotifySection() {
   const rows = [
     { label: "@mentions and DMs", desc: "Always notify", on: true },
-    ...(CORE_WORKSPACE_STORAGE_ONLY
-      ? []
-      : [
-          {
-            label: "Document comments",
-            desc: "Notify when someone replies to your comment",
-            on: true,
-          },
-        ]),
     {
-      label: "Shared with you",
-      desc: CORE_WORKSPACE_STORAGE_ONLY
-        ? "When a file or folder is shared with you"
-        : "When a doc, sheet, or deck is shared with you",
+      label: "Document comments",
+      desc: "Notify when someone replies to your comment",
       on: true,
     },
-    ...(CORE_WORKSPACE_STORAGE_ONLY
-      ? []
-      : [{ label: "Calendar reminders", desc: "10 minutes before events", on: true }]),
+    {
+      label: "Shared with you",
+      desc: "When a doc, sheet, or deck is shared with you",
+      on: true,
+    },
+    { label: "Calendar reminders", desc: "10 minutes before events", on: true },
     { label: "Weekly digest", desc: "Monday morning summary", on: false },
     { label: "Marketing emails", desc: "Product updates and tips", on: false },
   ];
@@ -433,7 +556,11 @@ function NotifySection() {
               {row.desc}
             </div>
           </div>
-          <Toggle defaultOn={row.on} />
+          <Toggle
+            defaultOn={row.on}
+            label={row.label}
+            disabledReason={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          />
         </div>
       ))}
     </>
@@ -447,12 +574,17 @@ function SignatureSection() {
     <>
       <h1 style={h1Style}>Mail signature</h1>
       <div style={subStyle}>Added to every email you send from Helix Mail</div>
-      <SettingsField label="Signature">
+      <SettingsField label="Signature" controlId="settings-mail-signature">
         <textarea
+          id="settings-mail-signature"
+          name="mailSignature"
+          autoComplete="off"
           className="input"
           defaultValue=""
-          placeholder="Your email signature"
+          placeholder="For example, Thanks, Morgan…"
           rows={5}
+          disabled
+          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
           style={{
             height: "auto",
             padding: 10,
@@ -463,8 +595,14 @@ function SignatureSection() {
           }}
         />
       </SettingsField>
-      <SettingsField label="Reply behavior">
-        <select className="select">
+      <SettingsField label="Reply behavior" controlId="settings-reply-signature">
+        <select
+          id="settings-reply-signature"
+          name="replySignature"
+          className="select"
+          disabled
+          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+        >
           <option>Include signature on replies</option>
           <option>Skip on replies</option>
         </select>
@@ -505,17 +643,13 @@ function SecuritySection() {
           <span className="chip-dot" />
           Enrolled · YubiKey + TOTP
         </span>
-        <button type="button" className="btn sm" style={{ marginLeft: 8 }}>
-          Manage
-        </button>
+        <UnavailableSettingsButton style={{ marginLeft: 8 }}>Manage</UnavailableSettingsButton>
       </SettingsField>
       <SettingsField
         label="Recovery codes"
         hint="Stored offline, used if your second factor is unavailable"
       >
-        <button type="button" className="btn sm">
-          View recovery codes
-        </button>
+        <UnavailableSettingsButton>View recovery codes</UnavailableSettingsButton>
       </SettingsField>
       <SettingsField label="Active sessions" hint="Devices currently signed in">
         <div className="panel">
@@ -545,9 +679,7 @@ function SecuritySection() {
                 </div>
               </div>
               {!session.current ? (
-                <button type="button" className="btn sm">
-                  Sign out
-                </button>
+                <UnavailableSettingsButton>Sign out</UnavailableSettingsButton>
               ) : null}
             </div>
           ))}
@@ -581,7 +713,7 @@ const AI_PROVIDERS: readonly AiProvider[] = [
     desc: "Use your own OpenAI API key. Routes all AI features through OpenAI.",
     needsKey: true,
     host: "api.openai.com/v1",
-    placeholder: "sk-...",
+    placeholder: "For example, sk-…",
   },
   {
     id: "anthropic",
@@ -589,7 +721,7 @@ const AI_PROVIDERS: readonly AiProvider[] = [
     desc: "Use your own Anthropic API key. Routes all AI features through Claude.",
     needsKey: true,
     host: "api.anthropic.com/v1",
-    placeholder: "sk-ant-...",
+    placeholder: "For example, sk-ant-…",
   },
   {
     id: "google",
@@ -597,7 +729,7 @@ const AI_PROVIDERS: readonly AiProvider[] = [
     desc: "Use your own Google AI API key.",
     needsKey: true,
     host: "generativelanguage.googleapis.com",
-    placeholder: "AIza...",
+    placeholder: "For example, AIza…",
   },
   {
     id: "azure",
@@ -655,17 +787,8 @@ function AiModelOptions({ provider }: { provider: string }) {
 
 function AISection() {
   const [provider, setProvider] = useState("helix");
-  const [testStatus, setTestStatus] = useState<"idle" | "testing" | "ok">("idle");
 
   const selected = AI_PROVIDERS.find((p) => p.id === provider) ?? AI_PROVIDERS[0]!;
-
-  // Mock connection test: surface agents wire this to POST /api/ai/config.
-  // The debounced callback simulates the round-trip latency.
-  const settleTest = useDebouncedCallback(() => setTestStatus("ok"), { wait: 900 });
-  const runTest = () => {
-    setTestStatus("testing");
-    settleTest();
-  };
 
   const features = [
     {
@@ -673,21 +796,17 @@ function AISection() {
       desc: "Inline writing suggestions and draft replies",
       on: true,
     },
-    ...(CORE_WORKSPACE_STORAGE_ONLY
-      ? []
-      : [
-          { label: "Slash commands in Docs", desc: "/ai prompt inside any document", on: true },
-          {
-            label: "Formula generation in Sheets",
-            desc: "Natural language → spreadsheet formulas",
-            on: true,
-          },
-          {
-            label: "Meeting summaries in Meet",
-            desc: "Post-call recap with action items",
-            on: true,
-          },
-        ]),
+    { label: "Slash commands in Docs", desc: "/ai prompt inside any document", on: true },
+    {
+      label: "Formula generation in Sheets",
+      desc: "Natural language → spreadsheet formulas",
+      on: true,
+    },
+    {
+      label: "Meeting summaries in Meet",
+      desc: "Post-call recap with action items",
+      on: true,
+    },
     { label: "Smart replies in Chat", desc: "Suggested replies in DMs and spaces", on: false },
   ];
 
@@ -704,6 +823,9 @@ function AISection() {
               type="button"
               onClick={() => setProvider(option.id)}
               aria-pressed={provider === option.id}
+              aria-description={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+              title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+              disabled
               style={{
                 display: "flex",
                 gap: 12,
@@ -747,35 +869,66 @@ function AISection() {
 
       {selected.needsKey ? (
         <>
-          <SettingsField label="Endpoint" hint="Base URL for API requests">
-            <input className="input mono" defaultValue={selected.host} />
+          <SettingsField
+            label="Endpoint"
+            hint="Base URL for API requests"
+            controlId="settings-ai-endpoint"
+          >
+            <input
+              id="settings-ai-endpoint"
+              name="aiEndpoint"
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+              className="input mono"
+              defaultValue={selected.host}
+              disabled
+              title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+            />
           </SettingsField>
-          <SettingsField label="API key" hint="Stored encrypted. Never sent to Helix servers.">
+          <SettingsField
+            label="API key"
+            hint="Stored encrypted. Never sent to Helix servers."
+            controlId="settings-ai-api-key"
+          >
             <div style={{ display: "flex", gap: 8 }}>
               <input
+                id="settings-ai-api-key"
+                name="aiApiKey"
                 className="input mono"
                 type="password"
+                autoComplete="off"
+                spellCheck={false}
                 placeholder={selected.placeholder}
                 style={{ flex: 1 }}
+                disabled
+                title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
               />
-              <button type="button" className="btn" onClick={runTest}>
-                {testStatus === "testing"
-                  ? "Testing…"
-                  : testStatus === "ok"
-                    ? "✓ Verified"
-                    : "Test"}
-              </button>
+              <UnavailableSettingsButton className="btn">Test Connection</UnavailableSettingsButton>
             </div>
           </SettingsField>
-          <SettingsField label="Default model">
-            <select className="select">
+          <SettingsField label="Default model" controlId="settings-ai-model">
+            <select
+              id="settings-ai-model"
+              name="aiModel"
+              className="select"
+              disabled
+              title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+            >
               <AiModelOptions provider={provider} />
             </select>
           </SettingsField>
         </>
       ) : (
-        <SettingsField label="Default model">
-          <select className="select">
+        <SettingsField label="Default model" controlId="settings-ai-model">
+          <select
+            id="settings-ai-model"
+            name="aiModel"
+            className="select"
+            disabled
+            title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          >
             <option>Helix Pro — best for analysis and writing</option>
             <option>Helix Fast — quick responses, lower cost</option>
             <option>Helix Reason — multi-step reasoning + planning</option>
@@ -804,7 +957,11 @@ function AISection() {
                 {feature.desc}
               </div>
             </div>
-            <Toggle defaultOn={feature.on} />
+            <Toggle
+              defaultOn={feature.on}
+              label={feature.label}
+              disabledReason={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+            />
           </div>
         ))}
       </SettingsField>
@@ -822,15 +979,16 @@ function AISection() {
           >
             <input
               type="checkbox"
+              name="aiWorkspaceContext"
               defaultChecked
+              disabled
+              title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
               style={{ accentColor: "var(--accent)", marginTop: 2 }}
             />
             <div>
               <div style={{ fontWeight: 500 }}>Use my workspace content for context</div>
               <div style={{ color: "var(--text-3)", marginTop: 2 }}>
-                {CORE_WORKSPACE_STORAGE_ONLY
-                  ? "Mail, Drive files, and Chat messages referenced in prompts."
-                  : "Mail, docs, and files referenced in prompts."}
+                Mail, docs, and files referenced in prompts.
               </div>
             </div>
           </label>
@@ -843,7 +1001,13 @@ function AISection() {
               cursor: "pointer",
             }}
           >
-            <input type="checkbox" style={{ accentColor: "var(--accent)", marginTop: 2 }} />
+            <input
+              type="checkbox"
+              name="aiProviderTraining"
+              disabled
+              title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+              style={{ accentColor: "var(--accent)", marginTop: 2 }}
+            />
             <div>
               <div style={{ fontWeight: 500 }}>Allow provider to train on my data</div>
               <div style={{ color: "var(--text-3)", marginTop: 2 }}>
@@ -867,12 +1031,8 @@ function ShortcutsSection() {
         ["⌘ K", "Open command palette"],
         ["⌘ /", "Show keyboard shortcuts"],
         ["G then M", "Go to Mail"],
-        ...(CORE_WORKSPACE_STORAGE_ONLY
-          ? ([["G then D", "Go to Drive"]] as const)
-          : ([
-              ["G then D", "Go to Docs"],
-              ["G then C", "Go to Calendar"],
-            ] as const)),
+        ["G then D", "Go to Docs"],
+        ["G then C", "Go to Calendar"],
       ],
     },
     {
@@ -888,21 +1048,17 @@ function ShortcutsSection() {
         ["B", "Snooze"],
       ],
     },
-    ...(CORE_WORKSPACE_STORAGE_ONLY
-      ? []
-      : [
-          {
-            name: "Docs",
-            shortcuts: [
-              ["⌘ B", "Bold"],
-              ["⌘ I", "Italic"],
-              ["⌘ ⇧ K", "Insert link"],
-              ["⌘ ⇧ M", "Add comment"],
-              ["⌘ ⇧ S", "Share"],
-              ["/", "Slash menu"],
-            ],
-          },
-        ]),
+    {
+      name: "Docs",
+      shortcuts: [
+        ["⌘ B", "Bold"],
+        ["⌘ I", "Italic"],
+        ["⌘ ⇧ K", "Insert link"],
+        ["⌘ ⇧ M", "Add comment"],
+        ["⌘ ⇧ S", "Share"],
+        ["/", "Slash menu"],
+      ],
+    },
   ];
   return (
     <>
@@ -939,9 +1095,6 @@ function ShortcutsSection() {
 
 /* ---------- shell ---------- */
 
-type SettingsSectionId =
-  "profile" | "appearance" | "language" | "notify" | "signature" | "ai" | "security" | "shortcuts";
-
 const SECTIONS: { id: SettingsSectionId; label: string; icon: IconName }[] = [
   { id: "profile", label: "Profile", icon: "Users" },
   { id: "appearance", label: "Appearance", icon: "Sun" },
@@ -955,23 +1108,66 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: IconName }[] = [
 
 export interface SettingsPageProps {
   open: boolean;
+  section: SettingsSectionId;
+  onSectionChange: (section: SettingsSectionId) => void;
   onClose: () => void;
 }
 
-export function SettingsPage({ open, onClose }: SettingsPageProps) {
-  const [section, setSection] = useState<SettingsSectionId>("profile");
+const SETTINGS_FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+export function SettingsPage({ open, section, onSectionChange, onClose }: SettingsPageProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) {
       return;
     }
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    let cancelled = false;
+    document.body.style.overflow = "hidden";
+    queueMicrotask(() => {
+      if (!cancelled) {
+        dialogRef.current?.querySelector<HTMLElement>(SETTINGS_FOCUSABLE)?.focus();
+      }
+    });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         onClose();
+        return;
+      }
+      if (event.key !== "Tab" || dialogRef.current === null) {
+        return;
+      }
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(SETTINGS_FOCUSABLE),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
       }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected === true) {
+        previousFocus.focus();
+      }
+    };
   }, [open, onClose]);
 
   if (!open) {
@@ -980,8 +1176,11 @@ export function SettingsPage({ open, onClose }: SettingsPageProps) {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
-      aria-label="Settings"
+      aria-modal="true"
+      aria-labelledby="settings-title"
+      tabIndex={-1}
       style={{
         position: "fixed",
         inset: 0,
@@ -1005,7 +1204,9 @@ export function SettingsPage({ open, onClose }: SettingsPageProps) {
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Back">
           <Icons.ArrowLeft />
         </button>
-        <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>Settings</span>
+        <span id="settings-title" style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>
+          Settings
+        </span>
         <div style={{ marginLeft: "auto" }}>
           <button type="button" className="btn primary sm" onClick={onClose}>
             Done
@@ -1013,7 +1214,8 @@ export function SettingsPage({ open, onClose }: SettingsPageProps) {
         </div>
       </div>
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <aside
+        <nav
+          aria-label="Settings sections"
           style={{
             width: 240,
             borderRight: "1px solid var(--border)",
@@ -1028,8 +1230,8 @@ export function SettingsPage({ open, onClose }: SettingsPageProps) {
               <button
                 key={entry.id}
                 type="button"
-                onClick={() => setSection(entry.id)}
-                aria-current={selected ? "true" : undefined}
+                onClick={() => onSectionChange(entry.id)}
+                aria-current={selected ? "page" : undefined}
                 style={{
                   width: "100%",
                   display: "flex",
@@ -1050,8 +1252,9 @@ export function SettingsPage({ open, onClose }: SettingsPageProps) {
               </button>
             );
           })}
-        </aside>
-        <div
+        </nav>
+        <main
+          aria-label={`${SECTIONS.find((entry) => entry.id === section)?.label ?? "Settings"} settings`}
           style={{
             flex: 1,
             overflowY: "auto",
@@ -1068,7 +1271,7 @@ export function SettingsPage({ open, onClose }: SettingsPageProps) {
           {section === "ai" ? <AISection /> : null}
           {section === "security" ? <SecuritySection /> : null}
           {section === "shortcuts" ? <ShortcutsSection /> : null}
-        </div>
+        </main>
       </div>
     </div>
   );

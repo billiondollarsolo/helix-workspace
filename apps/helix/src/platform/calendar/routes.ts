@@ -4,6 +4,7 @@ import { z } from "zod3";
 import { createIcsCalendar, type CalendarInvitationSender } from "./ics.js";
 import { expandCalendarEventOccurrences } from "./recurrence.js";
 import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
+import { zonedLocalDateToUtc } from "./timezone.js";
 import type {
   CalendarAttendeeRecord,
   CalendarAttendeeRole,
@@ -365,15 +366,10 @@ function parseDavCalendarCollectionTarget(url: string): string | undefined {
 }
 
 function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-    value,
-  );
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
 }
 
-function davCalendarQueryFilter(
-  actor: Actor,
-  calendarId: string | undefined,
-): string | undefined {
+function davCalendarQueryFilter(actor: Actor, calendarId: string | undefined): string | undefined {
   return calendarId === actor.id ? undefined : calendarId;
 }
 
@@ -867,99 +863,6 @@ function cancelledRecurrenceIds(vevents: readonly (readonly IcsProperty[])[]): r
 
 function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
-}
-
-function zonedLocalDateToUtc(
-  input: {
-    readonly year: number;
-    readonly month: number;
-    readonly day: number;
-    readonly hour: number;
-    readonly minute: number;
-    readonly second: number;
-  },
-  timeZone: string,
-): Date {
-  let date = new Date(
-    Date.UTC(input.year, input.month - 1, input.day, input.hour, input.minute, input.second),
-  );
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const local = utcToZonedParts(date, timeZone);
-    if (local === null) {
-      return new Date(Number.NaN);
-    }
-    const wantedUtc = Date.UTC(
-      input.year,
-      input.month - 1,
-      input.day,
-      input.hour,
-      input.minute,
-      input.second,
-    );
-    const actualUtc = Date.UTC(
-      local.year,
-      local.month - 1,
-      local.day,
-      local.hour,
-      local.minute,
-      local.second,
-    );
-    const delta = wantedUtc - actualUtc;
-    if (delta === 0) {
-      return date;
-    }
-    date = new Date(date.getTime() + delta);
-  }
-  return date;
-}
-
-function utcToZonedParts(
-  date: Date,
-  timeZone: string,
-): {
-  readonly year: number;
-  readonly month: number;
-  readonly day: number;
-  readonly hour: number;
-  readonly minute: number;
-  readonly second: number;
-} | null {
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      hour12: false,
-      hourCycle: "h23",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    }).formatToParts(date);
-    const numberPart = (type: Intl.DateTimeFormatPartTypes): number | null => {
-      const value = parts.find((candidate) => candidate.type === type)?.value;
-      return value === undefined ? null : Number(value);
-    };
-    const year = numberPart("year");
-    const month = numberPart("month");
-    const day = numberPart("day");
-    const hour = numberPart("hour");
-    const minute = numberPart("minute");
-    const second = numberPart("second");
-    if (
-      year === null ||
-      month === null ||
-      day === null ||
-      hour === null ||
-      minute === null ||
-      second === null
-    ) {
-      return null;
-    }
-    return { year, month, day, hour, minute, second };
-  } catch {
-    return null;
-  }
 }
 
 function parseAttendee(propertyValue: IcsProperty): readonly CalendarAttendeeInput[] {

@@ -3,6 +3,7 @@ import { callTool } from "@/lib/tool-call";
 import type {
   MailAddress,
   MailAttachmentInput,
+  MailDraft,
   MailFilter,
   MailOutboundRecord,
   MailThreadRow as MailThreadRowContract,
@@ -120,8 +121,11 @@ export interface MailSendResult {
   readonly messageId?: string;
   readonly threadId?: string;
   readonly status?: string;
+  /** User-visible delivery state from the server (`mailOutboundDisplayStatus`). */
+  readonly deliveryStatus?: "queued" | "sending" | "sent" | "delayed" | "failed" | "cancelled";
   readonly undoUntil?: string;
   readonly queuedAt?: string;
+  readonly lastError?: string | null;
 }
 
 export interface MailDraftResult {
@@ -326,6 +330,18 @@ export async function spamMailThread(
   await callMailTool("mail.spam", { threadId, spam: true }, fetchImpl);
 }
 
+export async function getMailOutbound(
+  outboundId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<MailOutboundRecord | null> {
+  const output = await callMailTool<{ readonly outbound?: MailOutboundRecord | null }>(
+    "mail.outbound.get",
+    { id: outboundId },
+    fetchImpl,
+  );
+  return output.outbound ?? null;
+}
+
 export async function cancelOutboundMail(
   outboundId: string,
   fetchImpl: MailApiFetch = authenticatedFetch,
@@ -340,8 +356,8 @@ export async function cancelOutboundMail(
 
 export async function listMailDrafts(
   fetchImpl: MailApiFetch = authenticatedFetch,
-): Promise<readonly unknown[]> {
-  const output = await callMailTool<{ readonly drafts?: readonly unknown[] }>(
+): Promise<readonly MailDraft[]> {
+  const output = await callMailTool<{ readonly drafts?: readonly MailDraft[] }>(
     "mail.draft.list",
     {},
     fetchImpl,

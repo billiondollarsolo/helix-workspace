@@ -56,6 +56,10 @@ const DEFAULTS: AppearanceSettings = {
 };
 
 const STORAGE_KEY = "helix-appearance";
+const THEME_COLORS: Readonly<Record<ThemeMode, string>> = {
+  light: "#fafaf9",
+  dark: "#0a0a0b",
+};
 
 function readStorage(): AppearanceSettings {
   if (typeof window === "undefined") {
@@ -93,6 +97,10 @@ export function applyAppearance(settings: AppearanceSettings): void {
   root.setAttribute("data-density", settings.density);
   root.setAttribute("data-font-scale", settings.fontScale);
   root.style.setProperty("--accent-h", String(ACCENT_HUE[settings.accent] ?? 290));
+  root.style.colorScheme = settings.theme;
+  document
+    .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    ?.setAttribute("content", THEME_COLORS[settings.theme]);
 }
 
 // Persist + apply on every change.

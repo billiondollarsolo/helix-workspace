@@ -27,6 +27,25 @@ describe("mapObjectEntry", () => {
     expect(entry.versionNumber).toBe(3);
     expect(entry.name).toBe("f.pdf");
   });
+
+  it("projects upload/scan lifecycle onto entry for D8 list badges", () => {
+    const entry = mapObjectEntry({
+      id: "11111111-1111-4111-8111-111111111111",
+      owner_actor_id: "a",
+      storage_key: "drive/o/x/v1/bad.bin",
+      mime_type: "application/octet-stream",
+      byte_size: 3,
+      sha256: "d".repeat(64),
+      metadata: { name: "bad.bin" },
+      deleted_at: null,
+      created_at: new Date("2026-07-18T00:00:00Z"),
+      updated_at: new Date("2026-07-18T00:00:00Z"),
+      upload_state: "quarantined",
+    });
+    expect(entry.uploadState).toBe("quarantined");
+    expect(entry.available).toBe(false);
+    expect(entry.uploadStatusLabel).toBe("Quarantined");
+  });
 });
 
 describe("mapDriveAccessGrant", () => {

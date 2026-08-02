@@ -2,6 +2,17 @@
 
 Phase 9 TASK-A04/A05 artifacts live under `infra/scripts/` and are safe by default: every script runs in dry-run mode unless `--execute` is passed.
 
+**RPO/RTO contract (ADR-0006):** Business pilot targets are **RPO ≤ 24 hours** and
+**RTO ≤ 4 hours** (engineering objectives, not a contractual SLA). Operator
+measurement, dual-target HA notes, and the PKG flip procedure live in
+[`docs/architecture/ha-rpo-rto.md`](./architecture/ha-rpo-rto.md). Gate helpers:
+
+```sh
+node infra/scripts/rpo-rto-check.mjs --print-contract
+node infra/scripts/rpo-rto-check.mjs --backup-dir ./backups --rpo-hours 24 --require-pass
+node infra/scripts/rpo-rto-check.mjs --evidence <restore-drill-evidence.json> --require-pass
+```
+
 ## O4 Production Recovery Contract
 
 New backups use `helix.backup-manifest.v3`. The embedded manifest binds one

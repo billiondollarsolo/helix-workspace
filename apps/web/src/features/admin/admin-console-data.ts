@@ -159,6 +159,8 @@ export const ADMIN_NAV_GROUPS = [
     items: [
       { id: "workspace-apps", label: "Workspace apps", icon: "Briefcase" },
       { id: "mail", label: "Mail", icon: "Mail" },
+      { id: "chat", label: "Chat", icon: "Chat" },
+      { id: "drive", label: "Drive", icon: "Drive" },
       { id: "oauth-apps", label: "OAuth apps", icon: "Grid" },
       { id: "app-passwords", label: "App passwords", icon: "Key" },
       { id: "agent-credentials", label: "Agent credentials", icon: "Sparkles" },

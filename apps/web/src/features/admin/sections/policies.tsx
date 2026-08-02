@@ -44,13 +44,32 @@ const POLICY_GROUP_HEADING_ID: Record<PolicyGroup, string> = {
   "Access & data": "policy-group-access-data",
 };
 
-/** Map a policy's enforcement to the design's level-chip text + on/off color. */
+/**
+ * Map a policy to the level-chip. Prefer server `runtimeStatus` so a recorded
+ * intent never renders as "Required" when Helix does not enforce the control.
+ */
 function policyLevel(policy: SecurityPolicy): { text: string; on: boolean } {
+  const runtime = policy.runtimeStatus;
+  if (runtime !== undefined) {
+    switch (runtime.displayLevel) {
+      case "off":
+        return { text: "Off", on: false };
+      case "recorded":
+        return { text: "Recorded", on: false };
+      case "required":
+        return { text: "Required", on: true };
+      case "active":
+        return { text: runtime.mode === "partial" ? "Partial" : "Active", on: true };
+      default:
+        return { text: "Off", on: false };
+    }
+  }
   if (!policy.enabled) {
     return { text: "Off", on: false };
   }
   if (policy.enforcement === "required") {
-    return { text: "Required", on: true };
+    // Without runtimeStatus, never claim Required — prefer Recorded.
+    return { text: "Recorded", on: false };
   }
   if (policy.enforcement === "optional") {
     return { text: "Active", on: true };
@@ -106,6 +125,11 @@ interface PolicyEditFormProps {
 function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormProps) {
   const [enabled, setEnabled] = useState(policy.enabled);
   const [enforcement, setEnforcement] = useState<PolicyEnforcement>(policy.enforcement);
+  const requiredUnavailable =
+    policy.runtimeStatus?.mode === "recorded_only" ||
+    policy.policyType === "sso" ||
+    policy.policyType === "dlp" ||
+    policy.policyType === "device_trust";
 
   return (
     <form
@@ -129,15 +153,20 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
         Enforcement
         <select
           aria-label={`Enforcement for ${securityPolicyLabels[policy.policyType]}`}
-          value={enforcement}
+          value={enforcement === "required" && requiredUnavailable ? "optional" : enforcement}
           onChange={(event) => setEnforcement(event.target.value as PolicyEnforcement)}
           style={{ ...INPUT_STYLE, width: "100%", marginTop: 4 }}
         >
           <option value="disabled">Disabled</option>
           <option value="optional">Optional</option>
-          <option value="required">Required</option>
+          {requiredUnavailable ? null : <option value="required">Required</option>}
         </select>
       </label>
+      {requiredUnavailable ? (
+        <p style={{ margin: 0, fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
+          Required is unavailable until Helix enforces this control at runtime.
+        </p>
+      ) : null}
       {policy.policyType === "sso" ? (
         <label
           className="row gap-2"
@@ -238,18 +267,14 @@ export function AdminSecurity() {
         subtitle="Authentication, access, and data protection across the workspace"
       />
 
-      {/* Every one of these six is stored, versioned and audited, and none is
-          read by any runtime path — no login checks the MFA policy, no share
-          checks the external-sharing allowlist, no message is scanned against
-          the DLP settings. A chip reading "Required" over a control that
-          enforces nothing is the most dangerous thing this console could say,
-          because an operator configures it and stops looking. Until the
-          enforcement points exist, the page has to lead with what it is. */}
+      {/* Chips use server runtimeStatus: external sharing and admin MFA are live;
+          SSO/DLP/device trust remain recorded-only and cannot be set to Required.
+          Partial controls (MFA, session) never claim full Required. */}
       <StateBanner kind="info">
-        These policies are recorded and audited, but Helix does not enforce them yet. Saving one
-        captures your intent and leaves an audit trail — it does not change what the platform
-        allows. Configure the equivalent control at your identity provider or gateway until
-        enforcement ships.
+        Policy chips show runtime status, not intent alone. External sharing and org admin MFA are
+        enforced on live API paths. SSO, DLP, and device trust are recorded and audited only — Helix
+        will not let you set them to Required until enforcement ships. Prefer your identity provider
+        or gateway for those controls in the meantime.
       </StateBanner>
 
       {policiesFailure !== null ? (

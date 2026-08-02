@@ -57,6 +57,7 @@ import { mentionedActorIds, mentionTokensForComment } from "./core/mentions.js";
 import { createDefaultTrashSyncRegistry, type TrashSyncRegistry } from "./core/trash-sync.js";
 import {
   bytesFromDatabase,
+  isOwnerVisibleProcessingState,
   mapDriveAccessGrant as mapDriveAccessGrantCore,
   mapObjectEntry as mapObjectEntryCore,
   mapSearchHit as mapSearchHitCore,
@@ -363,6 +364,33 @@ export interface DriveStore {
     readonly dryRun: boolean;
     readonly limit?: number;
   }): Promise<{ readonly candidates: number; readonly collected: number }>;
+  /** Operator: current storage used bytes vs plan/org quota (D11). */
+  getStorageQuotaUsage?(input: { readonly orgId: string }): Promise<DriveStorageQuotaUsageRecord>;
+  /** Operator: org trash/orphan lifecycle policy (D11). */
+  getLifecyclePolicy?(input: { readonly orgId: string }): Promise<DriveLifecyclePolicyRecord>;
+  setLifecyclePolicy?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly trashRetentionDays: number;
+    readonly orphanGraceHours: number;
+  }): Promise<DriveLifecyclePolicyRecord>;
+}
+
+export interface DriveStorageQuotaUsageRecord {
+  readonly orgId: string;
+  readonly usedBytes: number;
+  readonly limitBytes: number | null;
+  readonly unlimited: boolean;
+  readonly percentUsed: number | null;
+}
+
+export interface DriveLifecyclePolicyRecord {
+  readonly orgId: string;
+  readonly trashRetentionDays: number;
+  readonly orphanGraceHours: number;
+  readonly updatedByActorId: string | null;
+  readonly updatedAt: Date | null;
+  readonly configured: boolean;
 }
 
 export interface DriveShareLinkRecord {
@@ -1044,6 +1072,10 @@ export class PostgresDriveStore
         and (
           o.upload_state = 'active'
           or (${input.includeTrashed ?? false} and o.upload_state = 'trashed')
+          or (
+            o.owner_actor_id = ${input.actorId}
+            and o.upload_state in ('uploaded', 'scanning', 'quarantined', 'scan_failed')
+          )
         )
         and (
           ${acrossFolders}
@@ -1104,8 +1136,14 @@ export class PostgresDriveStore
       ...fileRows
         .filter((row) => {
           const state = objectUploadState(row);
+          // Active (and optional trash) are broadly visible. Processing /
+          // quarantine / scan_failed appear only for the owner so the Drive UI
+          // can show honest badges — never treated as available content.
+          const ownedByCaller = row.owner_actor_id === input.actorId;
           return (
-            isDriveFileAvailable(state) || (input.includeTrashed === true && state === "trashed")
+            isDriveFileAvailable(state) ||
+            (input.includeTrashed === true && state === "trashed") ||
+            (ownedByCaller && isOwnerVisibleProcessingState(state))
           );
         })
         .map(mapObjectEntry),
@@ -2788,6 +2826,169 @@ export class PostgresDriveStore
       return rows[0] === undefined ? null : mapObjectEntry(rows[0]);
     });
   }
+
+  /** D11 operator: used storage vs effective plan/org limit (no mutation lock). */
+  async getStorageQuotaUsage(input: {
+    readonly orgId: string;
+  }): Promise<DriveStorageQuotaUsageRecord> {
+    const rows = (await this.sql`
+      select
+        case
+          when o.quotas ? 'storage_bytes_limit' then o.quotas -> 'storage_bytes_limit'
+          when p.quotas_default ? 'storage_bytes_limit' then p.quotas_default -> 'storage_bytes_limit'
+          else '5000000000'::jsonb
+        end as storage_bytes_limit,
+        (
+          select coalesce(sum(distinct_drive_storage.byte_size), 0)::bigint
+          from (
+            select distinct on (stored.storage_key) stored.storage_key, stored.byte_size
+            from (
+              select obj.storage_key, obj.byte_size, 0 as source_rank
+              from objects obj
+              where obj.org_id = ${input.orgId}
+                and obj.kind in ('file', 'recording')
+                and obj.deleted_at is null
+                and (
+                  coalesce(obj.metadata->>'status', 'ready') = 'ready'
+                  or obj.upload_state = 'pending_upload'
+                )
+              union all
+              select v.storage_key, v.byte_size, 1 as source_rank
+              from drive_versions v
+              join objects obj on obj.id = v.object_id and obj.org_id = v.org_id
+              where v.org_id = ${input.orgId}
+                and obj.kind in ('file', 'recording')
+                and obj.deleted_at is null
+                and coalesce(obj.metadata->>'status', 'ready') = 'ready'
+            ) stored
+            order by stored.storage_key, stored.source_rank
+          ) distinct_drive_storage
+        ) as storage_used_bytes
+      from orgs o
+      left join plans p on p.id = o.plan_id
+      where o.id = ${input.orgId}
+      limit 1
+    `) as unknown as readonly DriveStorageQuotaRow[];
+    const row = rows[0];
+    const usedBytes = row === undefined ? 0 : bytesFromDatabase(row.storage_used_bytes);
+    const limitBytes =
+      row === undefined ? 5_000_000_000 : storageLimitFromJson(row.storage_bytes_limit);
+    const unlimited = limitBytes === null;
+    const percentUsed =
+      unlimited || limitBytes === 0
+        ? null
+        : Math.min(100, Math.round((usedBytes / limitBytes) * 10_000) / 100);
+    return {
+      orgId: input.orgId,
+      usedBytes,
+      limitBytes,
+      unlimited,
+      percentUsed,
+    };
+  }
+
+  async getLifecyclePolicy(input: { readonly orgId: string }): Promise<DriveLifecyclePolicyRecord> {
+    const rows = (await this.sql`
+      select org_id, trash_retention_days, orphan_grace_hours, updated_by_actor_id, updated_at
+      from drive_lifecycle_policies
+      where org_id = ${input.orgId}
+      limit 1
+    `) as unknown as readonly {
+      readonly org_id: string;
+      readonly trash_retention_days: number;
+      readonly orphan_grace_hours: number;
+      readonly updated_by_actor_id: string | null;
+      readonly updated_at: Date;
+    }[];
+    const row = rows[0];
+    if (row === undefined) {
+      return {
+        orgId: input.orgId,
+        trashRetentionDays: 30,
+        orphanGraceHours: 24,
+        updatedByActorId: null,
+        updatedAt: null,
+        configured: false,
+      };
+    }
+    return {
+      orgId: row.org_id,
+      trashRetentionDays: row.trash_retention_days,
+      orphanGraceHours: row.orphan_grace_hours,
+      updatedByActorId: row.updated_by_actor_id,
+      updatedAt: row.updated_at,
+      configured: true,
+    };
+  }
+
+  async setLifecyclePolicy(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly trashRetentionDays: number;
+    readonly orphanGraceHours: number;
+  }): Promise<DriveLifecyclePolicyRecord> {
+    if (
+      !Number.isInteger(input.trashRetentionDays) ||
+      input.trashRetentionDays < 1 ||
+      input.trashRetentionDays > 3650
+    ) {
+      throw new DriveConflictError("trash_retention_days must be an integer from 1 to 3650.");
+    }
+    if (
+      !Number.isInteger(input.orphanGraceHours) ||
+      input.orphanGraceHours < 1 ||
+      input.orphanGraceHours > 720
+    ) {
+      throw new DriveConflictError("orphan_grace_hours must be an integer from 1 to 720.");
+    }
+    const rows = (await this.sql`
+      insert into drive_lifecycle_policies (
+        org_id, trash_retention_days, orphan_grace_hours, updated_by_actor_id, updated_at
+      )
+      values (
+        ${input.orgId},
+        ${input.trashRetentionDays},
+        ${input.orphanGraceHours},
+        ${input.actorId},
+        now()
+      )
+      on conflict (org_id) do update set
+        trash_retention_days = excluded.trash_retention_days,
+        orphan_grace_hours = excluded.orphan_grace_hours,
+        updated_by_actor_id = excluded.updated_by_actor_id,
+        updated_at = now()
+      returning org_id, trash_retention_days, orphan_grace_hours, updated_by_actor_id, updated_at
+    `) as unknown as readonly {
+      readonly org_id: string;
+      readonly trash_retention_days: number;
+      readonly orphan_grace_hours: number;
+      readonly updated_by_actor_id: string | null;
+      readonly updated_at: Date;
+    }[];
+    const row = rows[0];
+    if (row === undefined) {
+      throw new DriveConflictError("Expected drive_lifecycle_policies row.");
+    }
+    await appendDriveActivity(this.sql, {
+      orgId: input.orgId,
+      actorId: input.actorId,
+      // Org-scoped policy: record against the org id as the activity object.
+      objectId: input.orgId,
+      verb: "drive.lifecycle.policy_updated",
+      payload: {
+        trashRetentionDays: row.trash_retention_days,
+        orphanGraceHours: row.orphan_grace_hours,
+      },
+    });
+    return {
+      orgId: row.org_id,
+      trashRetentionDays: row.trash_retention_days,
+      orphanGraceHours: row.orphan_grace_hours,
+      updatedByActorId: row.updated_by_actor_id,
+      updatedAt: row.updated_at,
+      configured: true,
+    };
+  }
 }
 
 interface StorageQuotaExceededEvent {
@@ -3475,6 +3676,7 @@ function mapObjectEntry(row: DriveSearchRow): DriveEntryRecord {
     created_at: row.created_at,
     updated_at: row.updated_at,
     version_number: row.version_number ?? null,
+    upload_state: objectUploadState(row),
     ...(typeof row.mine === "boolean" ? { mine: row.mine } : {}),
     ...(row.shared_count === undefined || row.shared_count === null
       ? {}

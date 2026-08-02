@@ -62,3 +62,22 @@ export const driveShareLinkRevokeOutputSchema = z.object({
   id: z.string().uuid(),
   revoked: z.boolean(),
 });
+
+/** D11 operator quota usage snapshot. */
+export const driveQuotaUsageOutputSchema = z.object({
+  orgId: z.string().uuid(),
+  usedBytes: z.number().int().nonnegative(),
+  limitBytes: z.number().int().nonnegative().nullable(),
+  unlimited: z.boolean(),
+  percentUsed: z.number().nonnegative().nullable(),
+});
+
+/** D11 operator lifecycle policy. */
+export const driveLifecyclePolicyOutputSchema = z.object({
+  orgId: z.string().uuid(),
+  trashRetentionDays: z.number().int().min(1).max(3650),
+  orphanGraceHours: z.number().int().min(1).max(720),
+  updatedByActorId: z.string().uuid().nullable(),
+  updatedAt: z.string().nullable(),
+  configured: z.boolean(),
+});

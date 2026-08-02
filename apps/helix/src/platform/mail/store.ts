@@ -40,6 +40,7 @@ import { MAIL_FOLDER_IDS } from "./types.js";
 import { classifyMailCategory, coerceMailCategory } from "./category.js";
 import { sanitizeMailHtml } from "./content-safety.js";
 import { MailDraftVersionConflictError } from "./errors.js";
+import { mailSearchHitMatchesOperators, parseMailSearchQuery } from "./search-query.js";
 // ponytail: store.ts is the mail IO adapter surface (~1700 LOC). Split list/folder
 // projection into store-threads when next touching listThreads; keep god-file note
 // until that extraction lands fully (G9).
@@ -910,6 +911,9 @@ export class PostgresMailStore
   }
 
   async search(input: MailSearchRequest): Promise<readonly MailSearchHit[]> {
+    // M13: structured operators (from:/to:/subject:/has:/is:) + free-text remainder.
+    const parsed = parseMailSearchQuery(input.query);
+    const freeText = parsed.freeText;
     const rows = (await this.sql`
       select
         t.id as thread_id,
@@ -956,18 +960,33 @@ export class PostgresMailStore
         )
         and coalesce(mts.deleted_at, t.archived_at) is null
         and (mts.snoozed_until is null or mts.snoozed_until <= now())
-        and (${input.query ?? ""} = '' or t.subject ilike ${`%${input.query ?? ""}%`} or m.body ilike ${`%${input.query ?? ""}%`})
+        and (${freeText} = '' or t.subject ilike ${`%${freeText}%`} or m.body ilike ${`%${freeText}%`})
       order by m.sent_at desc
-      limit ${input.limit ?? 50}
+      limit ${Math.min(200, (input.limit ?? 50) * 4)}
     `) as unknown as readonly MailSearchRow[];
     const requestedLabels = new Set(input.labels ?? []);
+    const limit = input.limit ?? 50;
     return rows
       .filter(
         (row) =>
           requestedLabels.size === 0 ||
           (row.labels ?? []).some((label) => requestedLabels.has(label)),
       )
-      .map(mapSearchHit);
+      .map(mapSearchHit)
+      .filter((hit) =>
+        mailSearchHitMatchesOperators(
+          {
+            subject: hit.subject,
+            preview: hit.preview,
+            from: hit.from,
+            unread: hit.unread,
+            starred: hit.starred,
+            hasAttachment: hit.hasAttachment === true,
+          },
+          parsed,
+        ),
+      )
+      .slice(0, limit);
   }
 
   async getMailSearchRecord(messageId: string): Promise<MailSearchRecord | null> {
@@ -2217,6 +2236,10 @@ function outboundStatusCounts(
 
 function mapSearchHit(row: MailSearchRow): MailSearchHit {
   const from = row.metadata.from as MailSearchHit["from"] | undefined;
+  const attachments = row.metadata.attachments;
+  const hasAttachment =
+    row.metadata.hasAttachment === true ||
+    (Array.isArray(attachments) && attachments.length > 0);
   return {
     threadId: row.thread_id,
     messageId: row.message_id,
@@ -2227,6 +2250,7 @@ function mapSearchHit(row: MailSearchRow): MailSearchHit {
     labels: row.labels ?? [],
     unread: row.read_at === null || row.read_at < row.sent_at,
     starred: row.starred ?? false,
+    ...(hasAttachment ? { hasAttachment: true } : {}),
     ...(row.outbound_status === null ? {} : { outboundStatus: row.outbound_status }),
     ...(row.provider_message_id === null ? {} : { providerMessageId: row.provider_message_id }),
     ...(row.delivery_metadata === null ? {} : { deliveryMetadata: row.delivery_metadata }),

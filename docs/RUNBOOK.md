@@ -21,6 +21,8 @@ prompts, tokens, or personal data into an incident channel or ticket.
 - [Audit integrity or shipping failure](runbooks/audit-integrity-shipping-failure.md)
 - [Secret, certificate, or key rotation](runbooks/secret-certificate-rotation.md)
 - [Backup restore or total deployment recovery](runbooks/backup-restore-recovery.md)
+- [HA / RPO / RTO contract](architecture/ha-rpo-rto.md) (ADR-0006: RPO ≤ 24h, RTO ≤ 4h)
+- [Compose ↔ Helm parity](architecture/compose-helm-parity.md)
 
 ## Backup
 

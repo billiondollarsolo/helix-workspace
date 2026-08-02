@@ -60,6 +60,23 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.stig.imagePolicy.forbidLatestTag (not $digest) (eq .Values.image.tag "latest") -}}
 {{- fail "stig.imagePolicy.forbidLatestTag forbids image.tag=latest when no digest is set" -}}
 {{- end -}}
+{{- /* MVP packaging fail-closed: refuse accidental Full Workspace defaults without profile=full. */ -}}
+{{- $profile := "mvp" -}}
+{{- if and .Values.workspace .Values.workspace.profile -}}
+{{- $profile = .Values.workspace.profile -}}
+{{- end -}}
+{{- if ne $profile "full" -}}
+{{- $apps := "mail,drive,chat,assistant" -}}
+{{- if and .Values.workspace .Values.workspace.apps -}}
+{{- $apps = .Values.workspace.apps -}}
+{{- end -}}
+{{- if ne $apps "mail,drive,chat,assistant" -}}
+{{- fail "workspace.apps must be mail,drive,chat,assistant unless workspace.profile=full (PKG flip; see docs/architecture/ha-rpo-rto.md)" -}}
+{{- end -}}
+{{- if and .Values.workspace .Values.workspace.editorsMigrationsEnabled -}}
+{{- fail "workspace.editorsMigrationsEnabled must be false unless workspace.profile=full" -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "helix.serviceAccountName" -}}
@@ -78,7 +95,13 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $platform := deepCopy .Values.helixConfig.platform -}}
 {{- $_ := set $platform "endpoints" (dict "postgres" (dict "external" true "cloudNativePg" .Values.cloudnativepg.enabled) "cloudNativePg" (dict "enabled" .Values.cloudnativepg.enabled "endpoint" (printf "%s-rw" .Values.cloudnativepg.clusterName)) "s3" (dict "endpoint" .Values.external.s3.endpoint "bucket" .Values.external.s3.bucket "region" .Values.external.s3.region) "kms" (dict "enabled" .Values.external.kms.enabled "endpoint" .Values.external.kms.endpoint "keyId" .Values.external.kms.keyId) "vault" (dict "enabled" .Values.external.vault.enabled "address" .Values.external.vault.address "namespace" .Values.external.vault.namespace) "siem" (dict "enabled" .Values.external.siem.enabled "endpoint" .Values.external.siem.endpoint "format" .Values.external.siem.format)) -}}
 {{- $_ := set $platform "runtime" (dict "fips" (dict "enabled" .Values.fips.enabled "crypto" .Values.fips.crypto) "stig" (dict "enabled" .Values.stig.enabled "profile" .Values.stig.profile "imagePolicy" .Values.stig.imagePolicy) "airgap" .Values.airgap) -}}
-{{- dict "security" $security "plugins" .Values.helixConfig.plugins "platform" $platform | toJson -}}
+{{- $modules := dict -}}
+{{- if .Values.workspace -}}
+{{- if .Values.workspace.modules -}}
+{{- $modules = .Values.workspace.modules -}}
+{{- end -}}
+{{- end -}}
+{{- dict "security" $security "modules" $modules "plugins" .Values.helixConfig.plugins "platform" $platform | toJson -}}
 {{- end -}}
 
 {{/*
@@ -109,6 +132,21 @@ default role. Input is the chart root context.
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: HELIX_PUBLIC_URL
+- name: HELIX_WORKSPACE_PROFILE
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_WORKSPACE_PROFILE
+- name: HELIX_APPS
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_APPS
+- name: HELIX_EDITORS_MIGRATIONS_ENABLED
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_EDITORS_MIGRATIONS_ENABLED
 {{- /*
   FIPS env is opt-in: emitted only when fips.enabled is true. When omitted the
   crypto adapter sees no HELIX_FIPS_* / HELIX_CRYPTO_* env and self-initializes

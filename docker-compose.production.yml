@@ -5,6 +5,35 @@ name: helix-production
 #
 # Secret files are mounted from HELIX_PRODUCTION_SECRETS_DIR (default
 # ./secrets). See docs/deployment-production.md for generation and ownership.
+#
+# ---------------------------------------------------------------------------
+# Full Workspace readiness gates (O-DOCKER / PKG) — DOCUMENTATION ONLY
+# ---------------------------------------------------------------------------
+# Production remains MVP fail-closed (AGENTS.md). This overlay MUST keep:
+#   HELIX_APPS=mail,drive,chat,assistant
+#   HELIX_EDITORS_MIGRATIONS_ENABLED=false
+#   HELIX_CONFIG_JSON modules docs/calendar/meet/editors enabled:false
+#   MEET_JITSI_ENABLED=false (no production Meet credentials)
+#   ClamAV + SpamAssassin ON for Mail/Drive Business scanning
+#   Immutable digest-only images; data-plane ports unpublished
+#
+# Do NOT enable Meet, Calendar, Docs, Sheets, Slides, or Editors here until
+# PKG.* + domain evidence (CAL/MT/ED) + O-D.7–O-D.10 gates pass.
+#
+# PKG flip procedure (operators — after evidence, not a silent default):
+#   1. Bind release evidence under artifacts/release-readiness/<date>/<sha>/
+#   2. Promote web image built with VITE_HELIX_MVP_ONLY=false
+#   3. Set HELIX_WORKSPACE_PROFILE=full and the approved Full Workspace
+#      HELIX_APPS allowlist (see docs/architecture/v1-packaging-matrix.md)
+#   4. Enable only modules that passed gates; Meet requires real Jitsi domain
+#      + JWT secret; editors require HELIX_EDITORS_MIGRATIONS_ENABLED=true
+#      with helix-editors pin process
+#   5. Run helix-migrate, smoke, and RPO/RTO drill (docs/architecture/ha-rpo-rto.md)
+#   6. Update AGENTS.md boundary in the same release train (PKG.2)
+#
+# Compose ↔ Helm parity: docs/architecture/compose-helm-parity.md
+# RPO ≤ 24h / RTO ≤ 4h: node infra/scripts/rpo-rto-check.mjs …
+# ---------------------------------------------------------------------------
 
 services:
   helix-migrate:

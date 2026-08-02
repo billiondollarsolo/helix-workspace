@@ -9,6 +9,26 @@ This chart deploys Helix against external production services. It does not insta
 - `values-enterprise.yaml`: TASK-A02 / enterprise profile with SPIRE, Vault, KMS, SIEM, CloudNativePG HA Postgres, daily base backups, and PITR/WAL archiving to object storage.
 - `values-sovereign.yaml`: TASK-A03 / Tier 4 sovereign profile with SPIRE, Vault CSI, KMS, SIEM, digest-pinned FIPS image selection, STIG image policy, FIPS node targeting, and default-deny egress.
 
+## Workspace packaging (MVP fail-closed)
+
+Defaults match production Compose and `AGENTS.md`:
+
+| Value | Default |
+| ----- | ------- |
+| `workspace.profile` | `mvp` |
+| `workspace.apps` | `mail,drive,chat,assistant` |
+| `workspace.editorsMigrationsEnabled` | `false` |
+| `workspace.modules.{docs,calendar,meet,editors}.enabled` | `false` |
+
+These render into `HELIX_WORKSPACE_PROFILE`, `HELIX_APPS`,
+`HELIX_EDITORS_MIGRATIONS_ENABLED`, and `HELIX_CONFIG_JSON.modules`. Expanding
+`workspace.apps` without `workspace.profile=full` fails chart render (PKG flip
+guard). Full Workspace enablement is **not** a chart default — see
+`docs/architecture/ha-rpo-rto.md` and `docs/architecture/compose-helm-parity.md`.
+
+RPO ≤ 24h / RTO ≤ 4h drills use the same backup/restore scripts as Compose
+against external Postgres, or CloudNativePG recovery on the enterprise overlay.
+
 Render examples:
 
 ```sh

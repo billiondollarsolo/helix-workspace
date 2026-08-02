@@ -75,6 +75,47 @@ assert_contains "$BASE" 'runAsNonRoot: true' "pods must run as non-root"
 assert_contains "$BASE" 'readOnlyRootFilesystem: true' "container filesystem must be read-only"
 assert_not_contains "$BASE" '^kind: PrometheusRule$' "PrometheusRule must be opt-in because Prometheus Operator CRDs may be absent"
 
+# Full Workspace readiness gates (MVP fail-closed). Defaults must match
+# docker-compose.production.yml and AGENTS.md; PKG flip is documented only.
+assert_contains "$BASE" 'name: HELIX_APPS' "base chart must inject HELIX_APPS for packaging parity with Compose"
+assert_contains "$BASE" 'key: HELIX_APPS' "HELIX_APPS must come from the packaging ConfigMap"
+assert_contains "$BASE" 'HELIX_APPS: "mail,drive,chat,assistant"' "base chart must default HELIX_APPS to the production MVP allowlist"
+assert_contains "$BASE" 'HELIX_WORKSPACE_PROFILE: "mvp"' "base chart must default workspace profile to mvp"
+assert_contains "$BASE" 'HELIX_EDITORS_MIGRATIONS_ENABLED: "false"' "base chart must keep editors migrations disabled by default"
+# ConfigMap stores HELIX_CONFIG_JSON as an escaped JSON string (\"keys\").
+assert_contains "$BASE" '\\"docs\\":\{\\"enabled\\":false\}' "HELIX_CONFIG_JSON must disable docs module by default"
+assert_contains "$BASE" '\\"calendar\\":\{\\"enabled\\":false\}' "HELIX_CONFIG_JSON must disable calendar module by default"
+assert_contains "$BASE" '\\"meet\\":\{\\"enabled\\":false\}' "HELIX_CONFIG_JSON must disable meet module by default"
+assert_contains "$BASE" '\\"editors\\":\{\\"enabled\\":false\}' "HELIX_CONFIG_JSON must disable editors module by default"
+assert_not_contains "$BASE" 'HELIX_APPS: "mail,drive,chat,assistant,calendar' "base chart must not enable Full Workspace apps by default"
+assert_not_contains "$BASE" 'HELIX_EDITORS_MIGRATIONS_ENABLED: "true"' "base chart must not enable editors migrations by default"
+
+# Negative structural gate: MVP profile must refuse expanded apps without profile=full.
+# Helm --set treats unescaped commas as value separators, so escape list commas.
+if "$HELM_BIN" template helix "$CHART_DIR" \
+  --set workspace.apps='mail\,drive\,chat\,assistant\,meet' >/dev/null 2>"$WORK_DIR/mvp-apps-fail.err"; then
+  echo "Helm validation failed: MVP profile must refuse workspace.apps that enable Meet without profile=full" >&2
+  exit 1
+fi
+assert_contains "$WORK_DIR/mvp-apps-fail.err" 'workspace.apps must be mail,drive,chat,assistant unless workspace.profile=full' \
+  "MVP packaging fail must name the PKG flip constraint"
+
+# Full profile may expand apps (structural only — does not claim domain evidence).
+render full_profile \
+  --set workspace.profile=full \
+  --set workspace.apps='mail\,drive\,chat\,assistant\,calendar\,meet\,docs\,sheets\,slides' \
+  --set workspace.editorsMigrationsEnabled=true \
+  --set workspace.modules.docs.enabled=true \
+  --set workspace.modules.calendar.enabled=true \
+  --set workspace.modules.meet.enabled=true \
+  --set workspace.modules.editors.enabled=true
+FULL_PROFILE="$WORK_DIR/full_profile.yaml"
+assert_contains "$FULL_PROFILE" 'HELIX_WORKSPACE_PROFILE: "full"' "full profile must set HELIX_WORKSPACE_PROFILE=full"
+assert_contains "$FULL_PROFILE" 'HELIX_APPS: "mail,drive,chat,assistant,calendar,meet,docs,sheets,slides"' \
+  "full profile must render Full Workspace HELIX_APPS when explicitly set"
+assert_contains "$FULL_PROFILE" 'HELIX_EDITORS_MIGRATIONS_ENABLED: "true"' \
+  "full profile may enable editors migrations when explicitly set"
+
 assert_contains "$BUSINESS" 'helix.io/security-tier: "business"' "business overlay must label the tier"
 assert_contains "$BUSINESS" 'cidr: "10\.0\.0\.0/8"' "business overlay must render private egress allow-list CIDRs"
 assert_not_contains "$BUSINESS" '^    - \{\}$' "business overlay must not allow all egress"
@@ -127,4 +168,4 @@ else
   echo "kubeconform not found; skipped Kubernetes schema validation."
 fi
 
-echo "Helm validation passed: base, business, enterprise, sovereign, and observability overlays rendered expected PRD hardening evidence."
+echo "Helm validation passed: base, business, enterprise, sovereign, observability, and MVP packaging/full-profile structural gates rendered expected PRD hardening evidence."

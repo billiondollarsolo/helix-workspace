@@ -3,6 +3,7 @@ import { callTool } from "@/lib/tool-call";
 import type {
   MailAddress,
   MailAttachmentInput,
+  MailDraft,
   MailFilter,
   MailOutboundRecord,
   MailThreadRow as MailThreadRowContract,
@@ -340,8 +341,8 @@ export async function cancelOutboundMail(
 
 export async function listMailDrafts(
   fetchImpl: MailApiFetch = authenticatedFetch,
-): Promise<readonly unknown[]> {
-  const output = await callMailTool<{ readonly drafts?: readonly unknown[] }>(
+): Promise<readonly MailDraft[]> {
+  const output = await callMailTool<{ readonly drafts?: readonly MailDraft[] }>(
     "mail.draft.list",
     {},
     fetchImpl,

@@ -28,7 +28,6 @@ const DISALLOWED_MAIL_HOSTS = new Set([
   "mailhog",
   "smtp4dev",
 ]);
-const PRODUCTION_MVP_APPS = "mail,drive,chat,assistant";
 const PRODUCTION_DISABLED_MODULES = PRODUCTION_MVP_DISABLED_MODULES;
 const PRODUCTION_IMAGE_REPOSITORIES = {
   HELIX_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace",

@@ -13,7 +13,7 @@
  */
 
 import type { JsonObject } from "@helix/sdk-types";
-import type { NotificationStore } from "../notifications/store.js";
+import type { NotificationStore } from "../notifications/index.js";
 import type { NotificationInsert } from "../notifications/types.js";
 import type { CalendarEventRecord } from "./types.js";
 
@@ -111,7 +111,7 @@ export function reminderDispatchKey(input: {
   readonly minutesBefore: number;
   readonly occurrenceStartsAt: Date;
 }): string {
-  return `${input.orgId}:${input.eventId}:${input.minutesBefore}:${input.occurrenceStartsAt.toISOString()}`;
+  return `${input.orgId}:${input.eventId}:${String(input.minutesBefore)}:${input.occurrenceStartsAt.toISOString()}`;
 }
 
 /**
@@ -192,7 +192,7 @@ export function buildReminderNotifications(
       ? `Starting now: ${due.title}`
       : due.minutesBefore === 1
         ? `In 1 minute: ${due.title}`
-        : `In ${due.minutesBefore} minutes: ${due.title}`;
+        : `In ${String(due.minutesBefore)} minutes: ${due.title}`;
 
   return due.recipientActorIds.map((actorId) => ({
     orgId: due.orgId,

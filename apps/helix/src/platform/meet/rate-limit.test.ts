@@ -8,7 +8,7 @@ const otherOrg = "44444444-4444-4444-8444-444444444444";
 
 describe("Meet abuse rate limits (MT.6)", () => {
   it("limits create_room per org+actor independently of join_room", async () => {
-    let now = 1_000;
+    const now = 1_000;
     const limiter = new InMemoryMeetRateLimiter({
       now: () => now,
       budget: { createRoomLimit: 2, joinRoomLimit: 3, windowMs: 60_000 },

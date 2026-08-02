@@ -110,8 +110,8 @@ export class InMemoryMeetRateLimiter implements MeetRateLimiter {
         code: "meet_rate_limited",
         message:
           input.action === "create_room"
-            ? `Meet room create rate limit exceeded (${limit} per window). Retry after ${retryAfterSeconds}s.`
-            : `Meet room join rate limit exceeded (${limit} per window). Retry after ${retryAfterSeconds}s.`,
+            ? `Meet room create rate limit exceeded (${String(limit)} per window). Retry after ${String(retryAfterSeconds)}s.`
+            : `Meet room join rate limit exceeded (${String(limit)} per window). Retry after ${String(retryAfterSeconds)}s.`,
       };
     }
 

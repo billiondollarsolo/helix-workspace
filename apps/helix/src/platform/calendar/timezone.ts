@@ -99,12 +99,13 @@ export function formatZonedIcsLocalDate(value: Date, timeZone: string): string |
     return null;
   }
   return (
-    `${String(parts.year).padStart(4, "0")}` +
-    `${String(parts.month).padStart(2, "0")}` +
-    `${String(parts.day).padStart(2, "0")}T` +
-    `${String(parts.hour).padStart(2, "0")}` +
-    `${String(parts.minute).padStart(2, "0")}` +
-    `${String(parts.second).padStart(2, "0")}`
+    String(parts.year).padStart(4, "0") +
+    String(parts.month).padStart(2, "0") +
+    String(parts.day).padStart(2, "0") +
+    "T" +
+    String(parts.hour).padStart(2, "0") +
+    String(parts.minute).padStart(2, "0") +
+    String(parts.second).padStart(2, "0")
   );
 }
 

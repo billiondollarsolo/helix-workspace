@@ -44,7 +44,7 @@ export interface MapObjectEntryInput {
   readonly mine?: boolean;
   readonly shared_count?: string | number | null;
   readonly preview?: DrivePreview;
-  readonly upload_state?: DriveUploadState | string | null;
+  readonly upload_state?: DriveUploadState | null;
 }
 
 /** Owner-visible non-active states that may appear in list (never treated as available). */

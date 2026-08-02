@@ -9,7 +9,6 @@ import {
   canReadAdminConsole,
   canWriteAdminConsole,
   invalidRequest,
-  notFound,
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "./console-shared.js";

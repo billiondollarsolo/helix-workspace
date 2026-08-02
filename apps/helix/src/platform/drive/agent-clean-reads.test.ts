@@ -170,7 +170,10 @@ describe("D12 agent reads only clean objects", () => {
     const tools = createDriveToolDefinitions({ store: store as never });
     const list = tools.find((tool) => tool.id === "drive.list");
     expect(list).toBeDefined();
-    const result = (await list!.handler({ folderId: null, includeTrashed: false, limit: 100 }, {
+    if (list === undefined) {
+      throw new Error("expected list tool");
+    }
+    const result = (await list.handler({ folderId: null, includeTrashed: false, limit: 100 }, {
       actor: { id: actorId, orgId, type: "user", scopes: ["drive.read"] },
     } as never)) as { entries: readonly { available?: boolean; uploadState?: string }[] };
     expect(result.entries[0]?.available).toBe(false);

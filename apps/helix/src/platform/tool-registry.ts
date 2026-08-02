@@ -1553,7 +1553,15 @@ class PermissionDeniedError extends Error {
   }
 }
 
-function shouldQueueConfirmation(input: {
+/**
+ * G1.5 — Decide whether a tool invocation must enter the pending-confirmation
+ * path. Exported so phase tests can prove RD-5 without re-implementing policy.
+ *
+ * Agent mutations always queue unless a *bounded* automation allowlist matches
+ * (`automationAllowed`). Credential-wide `confirmationOverride: "never"` does
+ * not exempt agent writes (fails closed).
+ */
+export function shouldQueueConfirmation(input: {
   readonly tool: ToolDefinition;
   readonly actor: Actor;
   readonly defaults: TierSecurityDefaults;

@@ -1,4 +1,10 @@
 import type { Env } from "./env.js";
+import {
+  PRODUCTION_MVP_DISABLED_MODULES,
+  resolveWorkspacePackagingProfile,
+  validateFullWorkspaceDependencyGates,
+  validateWorkspaceAppsAllowlist,
+} from "./workspace-packaging.js";
 
 const MIN_SECRET_LENGTH = 32;
 const MIN_SECRET_DISTINCT_CHARACTERS = 12;
@@ -23,7 +29,7 @@ const DISALLOWED_MAIL_HOSTS = new Set([
   "smtp4dev",
 ]);
 const PRODUCTION_MVP_APPS = "mail,drive,chat,assistant";
-const PRODUCTION_DISABLED_MODULES = ["docs", "calendar", "meet", "editors"] as const;
+const PRODUCTION_DISABLED_MODULES = PRODUCTION_MVP_DISABLED_MODULES;
 const PRODUCTION_IMAGE_REPOSITORIES = {
   HELIX_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace",
   HELIX_WEB_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-web",
@@ -401,13 +407,37 @@ function validateProductionMvpScope(
   environment: Env,
   issues: ProductionConfigurationIssue[],
 ): void {
-  validateProductionDeploymentConfiguration(environment, issues);
+  const profile = resolveWorkspacePackagingProfile(
+    (environment as { readonly HELIX_WORKSPACE_PROFILE?: string }).HELIX_WORKSPACE_PROFILE,
+  );
 
-  if (normalized(environment.HELIX_APPS) !== PRODUCTION_MVP_APPS) {
-    issues.push({
-      variable: "HELIX_APPS",
-      message: "must exactly match the approved production MVP app allowlist",
-    });
+  // Deployment image pins always apply. Editors migrations: false in MVP; full
+  // profile may enable editors and is validated by dependency gates below.
+  if (profile === "mvp") {
+    validateProductionDeploymentConfiguration(environment, issues);
+  } else {
+    // Still require image digests in production full mode.
+    const deploymentIssues: ProductionConfigurationIssue[] = [];
+    validateProductionDeploymentConfiguration(
+      {
+        ...environment,
+        // Temporarily satisfy editors check path: full mode re-validates migrations via gates.
+        HELIX_EDITORS_MIGRATIONS_ENABLED: "false",
+      },
+      deploymentIssues,
+    );
+    for (const issue of deploymentIssues) {
+      if (issue.variable !== "HELIX_EDITORS_MIGRATIONS_ENABLED") {
+        issues.push(issue);
+      }
+    }
+  }
+
+  for (const issue of validateWorkspaceAppsAllowlist({
+    profile,
+    apps: environment.HELIX_APPS,
+  })) {
+    issues.push(issue);
   }
 
   const rawConfig = normalized(environment.HELIX_CONFIG_JSON);
@@ -426,19 +456,41 @@ function validateProductionMvpScope(
     }
   }
 
-  for (const moduleId of PRODUCTION_DISABLED_MODULES) {
-    const moduleConfig = modules?.[moduleId];
-    const explicitlyDisabled =
-      typeof moduleConfig === "object" &&
-      moduleConfig !== null &&
-      !Array.isArray(moduleConfig) &&
-      (moduleConfig as { readonly enabled?: unknown }).enabled === false;
-    if (!explicitlyDisabled) {
-      issues.push({
-        variable: "HELIX_CONFIG_JSON",
-        message: `must explicitly set modules.${moduleId}.enabled to false for the production MVP`,
-      });
+  if (profile === "mvp") {
+    for (const moduleId of PRODUCTION_DISABLED_MODULES) {
+      const moduleConfig = modules?.[moduleId];
+      const explicitlyDisabled =
+        typeof moduleConfig === "object" &&
+        moduleConfig !== null &&
+        !Array.isArray(moduleConfig) &&
+        (moduleConfig as { readonly enabled?: unknown }).enabled === false;
+      if (!explicitlyDisabled) {
+        issues.push({
+          variable: "HELIX_CONFIG_JSON",
+          message: `must explicitly set modules.${moduleId}.enabled to false for the production MVP`,
+        });
+      }
     }
+    return;
+  }
+
+  // Full Workspace: modules listed in HELIX_APPS must not be forced disabled;
+  // dependency gates refuse illegal combos (Meet without Jitsi, etc.).
+  for (const issue of validateFullWorkspaceDependencyGates({
+    apps: environment.HELIX_APPS ?? "",
+    meetJitsiDomain:
+      (environment as { readonly MEET_JITSI_DOMAIN?: string }).MEET_JITSI_DOMAIN ??
+      (environment as { readonly JITSI_DOMAIN?: string }).JITSI_DOMAIN,
+    meetJitsiJwtSecret:
+      (environment as { readonly MEET_JITSI_JWT_SECRET?: string }).MEET_JITSI_JWT_SECRET ??
+      (environment as { readonly JITSI_JWT_SECRET?: string }).JITSI_JWT_SECRET,
+    editorsMigrationsEnabled: environment.HELIX_EDITORS_MIGRATIONS_ENABLED,
+    helixEditorsPinPresent: true,
+    driveScannerKind: (environment as { readonly HELIX_DRIVE_SCANNER_KIND?: string })
+      .HELIX_DRIVE_SCANNER_KIND,
+    securityTier: environment.HELIX_SECURITY_TIER,
+  })) {
+    issues.push(issue);
   }
 }
 

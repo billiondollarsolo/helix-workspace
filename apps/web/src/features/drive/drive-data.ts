@@ -2,8 +2,10 @@
    from the backend `DriveApiEntry` shape onto the rows the shell renders.
    No fabricated seed data lives here. */
 
+import type { DriveUploadState } from "@helix/contracts";
 import type { DriveApiEntry, DriveApiPreview } from "./api";
 import { driveEntrySurface } from "./format-surface";
+import { canOpenDriveObject, driveUploadStatusView } from "./upload-status-ui";
 
 /** A file's visual category — drives the type-colored icon. */
 export type DriveFileType = "doc" | "sheet" | "slides" | "pdf" | "design" | "video" | "folder";
@@ -30,6 +32,11 @@ export interface DriveFileItem {
   /** Short uppercase format label for the per-row chip (e.g. "DOCX", "PDF", "MD"). */
   readonly formatLabel: string;
   readonly preview?: DriveApiPreview | undefined;
+  /** Upload/scan lifecycle (D8). Absent on folders and legacy entries. */
+  readonly uploadState?: DriveUploadState | undefined;
+  readonly uploadStatusLabel?: string | undefined;
+  /** False while processing/quarantined; open/share/download must be denied. */
+  readonly available?: boolean | undefined;
 }
 
 /** Drive rows historically stored preview metadata in `metadata.preview`.
@@ -221,6 +228,20 @@ export function folderItemFromEntry(entry: DriveApiEntry): DriveFolderItem {
 /** Adapt a backend file entry into a file card / row model. */
 export function fileItemFromEntry(entry: DriveApiEntry): DriveFileItem {
   const preview = previewFromEntry(entry);
+  const status =
+    entry.uploadState !== undefined
+      ? driveUploadStatusView(entry.uploadState)
+      : entry.available === false
+        ? null
+        : null;
+  const uploadState = entry.uploadState;
+  const available =
+    entry.available ??
+    (uploadState === undefined ? undefined : canOpenDriveObject({ uploadState }));
+  const uploadStatusLabel =
+    entry.uploadStatusLabel ??
+    status?.label ??
+    (uploadState === undefined ? undefined : driveUploadStatusView(uploadState)?.label);
   return {
     id: entry.id,
     name: entry.name,
@@ -233,6 +254,9 @@ export function fileItemFromEntry(entry: DriveApiEntry): DriveFileItem {
     starred: entry.metadata?.starred === true,
     formatLabel: formatLabelFromEntry(entry),
     ...(preview === undefined ? {} : { preview }),
+    ...(uploadState === undefined ? {} : { uploadState }),
+    ...(uploadStatusLabel === undefined ? {} : { uploadStatusLabel }),
+    ...(available === undefined ? {} : { available }),
   };
 }
 

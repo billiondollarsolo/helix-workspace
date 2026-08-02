@@ -2,7 +2,18 @@ import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod3";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
-import { mintJitsiJwt } from "./jwt.js";
+import {
+  DEFAULT_JITSI_JWT_TTL_SECONDS,
+  MAX_JITSI_JWT_TTL_SECONDS,
+  MIN_JITSI_JWT_TTL_SECONDS,
+  mintJitsiJwt,
+} from "./jwt.js";
+import {
+  InMemoryMeetRateLimiter,
+  meetRateLimitError,
+  type MeetRateLimitBudget,
+  type MeetRateLimiter,
+} from "./rate-limit.js";
 import type { MeetStore } from "./store.js";
 import type { MeetMeetingRecord, MeetRecordingArtifactRecord, MeetRoomRecord } from "./types.js";
 
@@ -46,9 +57,9 @@ const mintTokenSchema = z.object({
   expiresInSeconds: z
     .number()
     .int()
-    .positive()
-    .max(24 * 60 * 60)
-    .default(60 * 60),
+    .min(MIN_JITSI_JWT_TTL_SECONDS)
+    .max(MAX_JITSI_JWT_TTL_SECONDS)
+    .default(DEFAULT_JITSI_JWT_TTL_SECONDS),
   moderator: z.boolean().default(false),
 });
 
@@ -75,11 +86,26 @@ export interface CreateMeetToolDefinitionsOptions {
    *  unset, falls back to constructing `https://<jitsiDomain>/<room>`
    *  without a port. */
   readonly jitsiPublicUrl?: string | undefined;
+  /** Default JWT TTL in seconds (MT.3). Defaults to 15 minutes. */
+  readonly jwtDefaultTtlSeconds?: number | undefined;
+  /** Hard ceiling for JWT TTL in seconds (MT.3). Defaults to 1 hour. */
+  readonly jwtMaxTtlSeconds?: number | undefined;
+  /** Abuse rate limiter for create/join (MT.6). Defaults to in-memory. */
+  readonly rateLimiter?: MeetRateLimiter | undefined;
+  readonly rateLimitBudget?: Partial<MeetRateLimitBudget> | undefined;
 }
 
 export function createMeetToolDefinitions(
   options: CreateMeetToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
+  const rateLimiter =
+    options.rateLimiter ??
+    new InMemoryMeetRateLimiter({
+      ...(options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget }),
+    });
+  const jwtDefaultTtlSeconds = options.jwtDefaultTtlSeconds ?? DEFAULT_JITSI_JWT_TTL_SECONDS;
+  const jwtMaxTtlSeconds = options.jwtMaxTtlSeconds ?? MAX_JITSI_JWT_TTL_SECONDS;
+
   return [
     defineTool<z.output<typeof createRoomSchema>, unknown>({
       id: "meet.create-room",
@@ -88,8 +114,17 @@ export function createMeetToolDefinitions(
       sideEffects: "write",
       inputSchema: zodToolSchema(createRoomSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) =>
-        serializeRoom(
+      handler: async (input, ctx) => {
+        const decision = await rateLimiter.consume({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          action: "create_room",
+          ...(options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget }),
+        });
+        if (!decision.allowed) {
+          throw meetRateLimitError(decision);
+        }
+        return serializeRoom(
           await options.store.createRoom({
             orgId: ctx.actor.orgId,
             actorId: ctx.actor.id,
@@ -105,7 +140,8 @@ export function createMeetToolDefinitions(
               : { scheduledEndAt: new Date(input.scheduledEndAt) }),
             metadata: toJsonObject(input.metadata),
           }),
-        ),
+        );
+      },
     }),
     defineTool<z.output<typeof listRoomsSchema>, unknown>({
       id: "meet.room.list",
@@ -170,13 +206,24 @@ export function createMeetToolDefinitions(
         if (room.status !== "active") {
           throw new Error(`Meet room has ended: ${input.roomId}`);
         }
+        const decision = await rateLimiter.consume({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          action: "join_room",
+          ...(options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget }),
+        });
+        if (!decision.allowed) {
+          throw meetRateLimitError(decision);
+        }
+        const requestedTtl = input.expiresInSeconds ?? jwtDefaultTtlSeconds;
         const minted = mintJitsiJwt({
           secret: options.jwtSecret,
           issuer: options.jwtIssuer ?? options.jwtAppId ?? "helix",
           audience: options.jwtAudience,
           subject: options.jwtSubject ?? room.jitsiDomain,
           room: room.roomName,
-          ttlSeconds: input.expiresInSeconds,
+          ttlSeconds: requestedTtl,
+          maxTtlSeconds: jwtMaxTtlSeconds,
           user: {
             id: ctx.actor.id,
             name: ctx.actor.displayName ?? ctx.actor.id,
@@ -196,6 +243,7 @@ export function createMeetToolDefinitions(
             options.jitsiPublicUrl,
           ),
           expiresAt: minted.expiresAt.toISOString(),
+          ttlSeconds: minted.ttlSeconds,
         };
       },
     }),

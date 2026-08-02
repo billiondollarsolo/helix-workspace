@@ -57,6 +57,7 @@ import { mentionedActorIds, mentionTokensForComment } from "./core/mentions.js";
 import { createDefaultTrashSyncRegistry, type TrashSyncRegistry } from "./core/trash-sync.js";
 import {
   bytesFromDatabase,
+  isOwnerVisibleProcessingState,
   mapDriveAccessGrant as mapDriveAccessGrantCore,
   mapObjectEntry as mapObjectEntryCore,
   mapSearchHit as mapSearchHitCore,
@@ -1044,6 +1045,10 @@ export class PostgresDriveStore
         and (
           o.upload_state = 'active'
           or (${input.includeTrashed ?? false} and o.upload_state = 'trashed')
+          or (
+            o.owner_actor_id = ${input.actorId}
+            and o.upload_state in ('uploaded', 'scanning', 'quarantined', 'scan_failed')
+          )
         )
         and (
           ${acrossFolders}
@@ -1104,8 +1109,14 @@ export class PostgresDriveStore
       ...fileRows
         .filter((row) => {
           const state = objectUploadState(row);
+          // Active (and optional trash) are broadly visible. Processing /
+          // quarantine / scan_failed appear only for the owner so the Drive UI
+          // can show honest badges — never treated as available content.
+          const ownedByCaller = row.owner_actor_id === input.actorId;
           return (
-            isDriveFileAvailable(state) || (input.includeTrashed === true && state === "trashed")
+            isDriveFileAvailable(state) ||
+            (input.includeTrashed === true && state === "trashed") ||
+            (ownedByCaller && isOwnerVisibleProcessingState(state))
           );
         })
         .map(mapObjectEntry),
@@ -3475,6 +3486,7 @@ function mapObjectEntry(row: DriveSearchRow): DriveEntryRecord {
     created_at: row.created_at,
     updated_at: row.updated_at,
     version_number: row.version_number ?? null,
+    upload_state: objectUploadState(row),
     ...(typeof row.mine === "boolean" ? { mine: row.mine } : {}),
     ...(row.shared_count === undefined || row.shared_count === null
       ? {}

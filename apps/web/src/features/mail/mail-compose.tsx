@@ -7,6 +7,7 @@ import { useUnsavedChangesWarning } from "@/lib/use-unsaved-changes-warning";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import {
   cancelOutboundMail,
+  getMailOutbound,
   listMailDrafts,
   saveMailDraft,
   sendMail,
@@ -29,6 +30,12 @@ import {
   pickLatestMailDraft,
   serverDraftToComposeFields,
 } from "./mail-compose-server-draft";
+import {
+  mapMailSendUiStatus,
+  shouldPollMailSendStatus,
+  type MailSendStatusSource,
+  type MailSendUiStatus,
+} from "./mail-send-status";
 
 function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -42,7 +49,7 @@ interface ComposeProps {
 }
 
 /** Parses a comma/semicolon-separated recipient string into addresses. */
-function parseRecipients(raw: string): MailSendInput["to"] {
+export function parseRecipients(raw: string): MailSendInput["to"] {
   return raw
     .split(/[,;]/)
     .map((part) => part.trim())
@@ -102,15 +109,16 @@ export function Compose({ onClose, onSent }: ComposeProps) {
   const [minimized, setMinimized] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const [recipientError, setRecipientError] = useState<string | null>(null);
-  const [sendFailed, setSendFailed] = useState(false);
+  /** Last real send/outbound fields; UI phase is derived via mapMailSendUiStatus. */
+  const [sendSource, setSendSource] = useState<MailSendStatusSource | null>(null);
+  const [statusClockMs, setStatusClockMs] = useState(() => Date.now());
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<readonly MailAttachment[]>([]);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftVersion, setDraftVersion] = useState<number | null>(null);
   const [draftSaveError, setDraftSaveError] = useState<string | null>(null);
-  const [undo, setUndo] = useState<{
-    readonly outboundId: string;
-    readonly untilMs: number;
-  } | null>(null);
+  const sendStatus: MailSendUiStatus | null =
+    sendSource === null ? null : mapMailSendUiStatus(sendSource, statusClockMs);
   /** Drag-enter depth counter — incremented on dragenter, decremented on
    *  dragleave.  The overlay shows while > 0, which prevents flickering when
    *  the cursor moves over child elements (each child fires its own enter/leave
@@ -230,42 +238,109 @@ export function Compose({ onClose, onSent }: ComposeProps) {
   const sendMutation = useMutation({
     mutationFn: (input: MailSendInput) => sendMail(input),
     onMutate: () => {
-      setSendFailed(false);
+      setCancelError(null);
+      setSendSource({ clientPhase: "submitting" });
+      setStatusClockMs(Date.now());
     },
-    onError: () => {
-      setSendFailed(true);
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : null;
+      setSendSource({
+        clientPhase: "error",
+        ...(message === null ? {} : { lastError: message }),
+      });
+      setStatusClockMs(Date.now());
     },
     onSuccess: (result: MailSendResult) => {
       skipRecoveryFlushRef.current = true;
       recoveryDebouncer.cancel();
       clearMailComposeRecovery();
       onSent();
-      const undoUntil = result.undoUntil;
-      const outboundId = result.id ?? result.outboundId;
-      if (
-        typeof undoUntil === "string" &&
-        typeof outboundId === "string" &&
-        outboundId.length > 0
-      ) {
-        const untilMs = Date.parse(undoUntil);
-        if (Number.isFinite(untilMs) && untilMs > Date.now()) {
-          setUndo({ outboundId, untilMs });
-          return;
-        }
+      setSendSource(result);
+      setStatusClockMs(Date.now());
+      const ui = mapMailSendUiStatus(result);
+      // No durable outbound / already terminal sent: close immediately.
+      if (ui.phase === "sent" || (ui.phase === "idle" && ui.outboundId === null)) {
+        onClose();
       }
-      onClose();
     },
   });
 
   const cancelMutation = useMutation({
-    onMutate: () => undefined,
-    onError: () => undefined,
     mutationFn: (outboundId: string) => cancelOutboundMail(outboundId),
-    onSuccess: () => {
-      setUndo(null);
+    onMutate: () => {
+      setCancelError(null);
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Could not undo send. The message may already be leaving the queue.";
+      setCancelError(message);
+    },
+    onSuccess: (outbound) => {
+      if (outbound === null) {
+        setCancelError("Undo is no longer available for this message.");
+        return;
+      }
+      setSendSource(outbound);
+      setStatusClockMs(Date.now());
       onSent();
     },
   });
+
+  // Advance the clock so undoAvailable flips when undoUntil elapses.
+  useEffect(() => {
+    if (sendStatus === null) return;
+    if (!sendStatus.undoAvailable && !shouldPollMailSendStatus(sendStatus.phase)) return;
+    const id = window.setInterval(() => {
+      setStatusClockMs(Date.now());
+    }, 400);
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [sendStatus?.phase, sendStatus?.undoAvailable]);
+
+  // Poll outbound delivery while queued/sending/delayed so the UI tracks real status.
+  useEffect(() => {
+    if (sendStatus === null) return;
+    if (!shouldPollMailSendStatus(sendStatus.phase)) return;
+    const outboundId = sendStatus.outboundId;
+    if (outboundId === null) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const outbound = await getMailOutbound(outboundId);
+        if (cancelled || outbound === null) return;
+        setSendSource(outbound);
+        setStatusClockMs(Date.now());
+      } catch {
+        // Keep last honest status; next poll may recover. Do not invent "sent".
+      }
+    };
+
+    void tick();
+    const intervalId = window.setInterval(() => {
+      void tick();
+    }, 1_500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [sendStatus?.outboundId, sendStatus?.phase]);
+
+  // Auto-close after terminal success / cancel so status is briefly visible.
+  useEffect(() => {
+    if (sendStatus === null) return;
+    if (sendStatus.phase !== "sent" && sendStatus.phase !== "cancelled") return;
+    const timeoutId = window.setTimeout(() => {
+      onClose();
+    }, 1_200);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [onClose, sendStatus?.phase]);
 
   const saveDraft = useCallback(() => {
     if (to.trim().length === 0 && subject.trim().length === 0 && body.trim().length === 0) {
@@ -296,7 +371,10 @@ export function Compose({ onClose, onSent }: ComposeProps) {
   }, [attachments, bcc, body, cc, draftId, draftVersion, subject, to]);
 
   const recipients = parseRecipients(to);
-  const canSend = recipients.length > 0 && !sendMutation.isPending;
+  const canSend =
+    recipients.length > 0 &&
+    !sendMutation.isPending &&
+    (sendStatus === null || sendStatus.phase === "failed" || sendStatus.phase === "idle");
 
   const handleSend = useCallback(() => {
     if (recipients.length === 0) {
@@ -653,9 +731,12 @@ export function Compose({ onClose, onSent }: ComposeProps) {
               ))}
             </div>
           )}
-          {undo !== null && Date.now() < undo.untilMs && (
+          {sendStatus !== null && sendStatus.phase !== "idle" ? (
             <div
+              className="compose-send-status"
               role="status"
+              aria-live="polite"
+              data-send-phase={sendStatus.phase}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -666,31 +747,42 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 borderRadius: 8,
                 background: "var(--surface-2)",
                 fontSize: "var(--text-body-sm)",
+                color:
+                  sendStatus.phase === "failed"
+                    ? "var(--danger)"
+                    : sendStatus.phase === "sent" || sendStatus.phase === "cancelled"
+                      ? "var(--text-2)"
+                      : "var(--text-1)",
               }}
             >
-              <span>Message queued — you can undo send for a few seconds.</span>
-              <button
-                type="button"
-                onClick={() => {
-                  cancelMutation.mutate(undo.outboundId);
-                }}
-                disabled={cancelMutation.isPending}
-              >
-                Undo
-              </button>
+              <span>{sendStatus.label}</span>
+              {sendStatus.undoAvailable && sendStatus.outboundId !== null ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const outboundId = sendStatus.outboundId;
+                    if (outboundId === null) return;
+                    cancelMutation.mutate(outboundId);
+                  }}
+                  disabled={cancelMutation.isPending}
+                >
+                  {cancelMutation.isPending ? "Undoing…" : "Undo"}
+                </button>
+              ) : null}
             </div>
-          )}
-          {sendFailed && (
+          ) : null}
+          {cancelError !== null ? (
             <div
+              role="alert"
               style={{
                 margin: "0 14px 8px",
                 fontSize: "var(--text-caption)",
                 color: "var(--danger)",
               }}
             >
-              Could not send message. Try again.
+              {cancelError}
             </div>
-          )}
+          ) : null}
           {draftSaveError !== null && (
             <div
               role="alert"
@@ -719,7 +811,10 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 disabled={!canSend}
                 onClick={handleSend}
               >
-                <Icons.Send /> {sendMutation.isPending ? "Sending…" : "Send"}
+                <Icons.Send />{" "}
+                {sendStatus?.phase === "submitting" || sendMutation.isPending
+                  ? "Sending…"
+                  : "Send"}
               </button>
               <button
                 type="button"

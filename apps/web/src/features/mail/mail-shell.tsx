@@ -35,6 +35,7 @@ import {
   type MailFolderKey,
   type MailFolderSummary,
   type MailLabelSummary,
+  type MailSendInput,
   type MailThreadDetail,
   type MailThreadRow,
 } from "./api";
@@ -46,7 +47,7 @@ import {
   mailThreadsQueryOptions,
 } from "./queries";
 import { useMailRealtime } from "./use-mail-realtime";
-import { Compose } from "./mail-compose";
+import { Compose, parseRecipients } from "./mail-compose";
 
 function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");

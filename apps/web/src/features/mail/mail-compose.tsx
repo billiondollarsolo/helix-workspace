@@ -819,9 +819,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 onClick={handleSend}
               >
                 <Icons.Send />{" "}
-                {sendStatus?.phase === "submitting" || sendMutation.isPending
-                  ? "Sending…"
-                  : "Send"}
+                {sendStatus?.phase === "submitting" || sendMutation.isPending ? "Sending…" : "Send"}
               </button>
               <button
                 type="button"
@@ -978,4 +976,3 @@ export function Compose({ onClose, onSent }: ComposeProps) {
     </div>
   );
 }
-

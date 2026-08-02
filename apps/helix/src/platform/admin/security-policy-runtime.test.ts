@@ -89,9 +89,10 @@ describe("policyRuntimeStatus honest chips", () => {
 
 describe("evaluatePublicShareLinkPolicy (ADM.6)", () => {
   it("allows public links when policy is off", () => {
-    expect(
-      evaluatePublicShareLinkPolicy(policy("external_sharing", { enabled: false })),
-    ).toEqual({ allowed: true, requireExpiry: false });
+    expect(evaluatePublicShareLinkPolicy(policy("external_sharing", { enabled: false }))).toEqual({
+      allowed: true,
+      requireExpiry: false,
+    });
   });
 
   it("blocks public links when mode is blocked", () => {
@@ -252,7 +253,11 @@ describe("sessionExpiresInSecondsFromPolicy (ADM.3)", () => {
         policy("session", {
           enabled: true,
           enforcement: "optional",
-          settings: { inactivityTimeoutDays: 3, reauthForAdminActions: true, maxConcurrentSessions: 5 },
+          settings: {
+            inactivityTimeoutDays: 3,
+            reauthForAdminActions: true,
+            maxConcurrentSessions: 5,
+          },
         }),
       ),
     ).toBe(3 * 24 * 60 * 60);

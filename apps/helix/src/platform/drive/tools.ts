@@ -1169,7 +1169,8 @@ export function createDriveToolDefinitions(
       z.output<typeof driveLifecyclePolicyOutputSchema>
     >({
       id: "drive.lifecycle.set",
-      description: "Set organization Drive trash retention days and orphan garbage-collection grace hours.",
+      description:
+        "Set organization Drive trash retention days and orphan garbage-collection grace hours.",
       permission: "admin.drive",
       sideEffects: "write",
       confirmationRequired: true,

@@ -27,14 +27,14 @@ describe("calendar reminders (CAL.9)", () => {
   });
 
   it("honors explicit reminder lists and opt-out empty arrays", () => {
-    expect(parseEventReminders({ reminders: [{ minutesBefore: 30 }, { minutesBefore: 5 }] })).toEqual(
-      [{ minutesBefore: 30 }, { minutesBefore: 5 }],
-    );
+    expect(
+      parseEventReminders({ reminders: [{ minutesBefore: 30 }, { minutesBefore: 5 }] }),
+    ).toEqual([{ minutesBefore: 30 }, { minutesBefore: 5 }]);
     expect(parseEventReminders({ reminders: [] })).toEqual([]);
     expect(parseEventReminders({ reminderMinutesBefore: 15 })).toEqual([{ minutesBefore: 15 }]);
-    expect(parseEventReminders({ reminders: [{ minutesBefore: -1 }, { minutesBefore: 1.9 }] })).toEqual(
-      [{ minutesBefore: 1 }],
-    );
+    expect(
+      parseEventReminders({ reminders: [{ minutesBefore: -1 }, { minutesBefore: 1.9 }] }),
+    ).toEqual([{ minutesBefore: 1 }]);
   });
 
   it("computes fireAt as startsAt minus lead time", () => {
@@ -239,25 +239,23 @@ function eventRecord(
   const id = overrides.id ?? eventId;
   const orgId = overrides.orgId ?? orgA;
   const organizerActorId = overrides.organizerActorId ?? actorAda;
-  const attendees =
-    overrides.attendees ??
-    [
-      attendee({
-        orgId,
-        eventId: id,
-        actorId: organizerActorId,
-        email: "ada@example.com",
-        isOrganizer: true,
-        responseStatus: "accepted",
-      }),
-      attendee({
-        orgId,
-        eventId: id,
-        actorId: actorBruno,
-        email: "bruno@example.com",
-        responseStatus: "accepted",
-      }),
-    ];
+  const attendees = overrides.attendees ?? [
+    attendee({
+      orgId,
+      eventId: id,
+      actorId: organizerActorId,
+      email: "ada@example.com",
+      isOrganizer: true,
+      responseStatus: "accepted",
+    }),
+    attendee({
+      orgId,
+      eventId: id,
+      actorId: actorBruno,
+      email: "bruno@example.com",
+      responseStatus: "accepted",
+    }),
+  ];
   return {
     id,
     orgId,

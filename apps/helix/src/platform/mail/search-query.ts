@@ -14,8 +14,7 @@ export interface ParsedMailSearchQuery {
   readonly operators: readonly string[];
 }
 
-const OPERATOR_PATTERN =
-  /\b(from|to|subject|has|is):(?:"([^"]+)"|([^\s]+))/giu;
+const OPERATOR_PATTERN = /\b(from|to|subject|has|is):(?:"([^"]+)"|([^\s]+))/giu;
 
 export function parseMailSearchQuery(raw: string | undefined | null): ParsedMailSearchQuery {
   const source = (raw ?? "").trim();
@@ -31,34 +30,37 @@ export function parseMailSearchQuery(raw: string | undefined | null): ParsedMail
   let isUnread: boolean | null = null;
   let isStarred: boolean | null = null;
 
-  let freeText = source.replace(OPERATOR_PATTERN, (full, key: string, quoted?: string, bare?: string) => {
-    const value = (quoted ?? bare ?? "").trim();
-    const op = key.toLowerCase();
-    operators.push(`${op}:${value}`);
-    if (op === "from" && value.length > 0) {
-      from.push(value.toLowerCase());
-    } else if (op === "to" && value.length > 0) {
-      to.push(value.toLowerCase());
-    } else if (op === "subject" && value.length > 0) {
-      subject.push(value.toLowerCase());
-    } else if (op === "has") {
-      if (value.toLowerCase() === "attachment" || value.toLowerCase() === "attachments") {
-        hasAttachment = true;
+  let freeText = source.replace(
+    OPERATOR_PATTERN,
+    (full, key: string, quoted?: string, bare?: string) => {
+      const value = (quoted ?? bare ?? "").trim();
+      const op = key.toLowerCase();
+      operators.push(`${op}:${value}`);
+      if (op === "from" && value.length > 0) {
+        from.push(value.toLowerCase());
+      } else if (op === "to" && value.length > 0) {
+        to.push(value.toLowerCase());
+      } else if (op === "subject" && value.length > 0) {
+        subject.push(value.toLowerCase());
+      } else if (op === "has") {
+        if (value.toLowerCase() === "attachment" || value.toLowerCase() === "attachments") {
+          hasAttachment = true;
+        }
+      } else if (op === "is") {
+        const normalized = value.toLowerCase();
+        if (normalized === "unread") {
+          isUnread = true;
+        } else if (normalized === "read") {
+          isUnread = false;
+        } else if (normalized === "starred") {
+          isStarred = true;
+        } else if (normalized === "unstarred") {
+          isStarred = false;
+        }
       }
-    } else if (op === "is") {
-      const normalized = value.toLowerCase();
-      if (normalized === "unread") {
-        isUnread = true;
-      } else if (normalized === "read") {
-        isUnread = false;
-      } else if (normalized === "starred") {
-        isStarred = true;
-      } else if (normalized === "unstarred") {
-        isStarred = false;
-      }
-    }
-    return " ";
-  });
+      return " ";
+    },
+  );
 
   freeText = freeText.replace(/\s+/gu, " ").trim();
 
@@ -96,7 +98,10 @@ export function mailSearchHitMatchesOperators(
     }
   }
   if (parsed.to.length > 0) {
-    const hay = (hit.to ?? []).map((entry) => entry.address ?? "").join(" ").toLowerCase();
+    const hay = (hit.to ?? [])
+      .map((entry) => entry.address ?? "")
+      .join(" ")
+      .toLowerCase();
     if (!parsed.to.every((needle) => hay.includes(needle))) {
       return false;
     }

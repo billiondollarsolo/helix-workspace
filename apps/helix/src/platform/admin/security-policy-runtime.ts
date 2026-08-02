@@ -12,11 +12,7 @@
  */
 
 import type { Actor, SecurityTier } from "@helix/sdk-types";
-import {
-  actorHasAdminScope,
-  evaluateAdminMfa,
-  type AdminMfaDecision,
-} from "../auth/mfa.js";
+import { actorHasAdminScope, evaluateAdminMfa, type AdminMfaDecision } from "../auth/mfa.js";
 
 /** Local copies of policy types to avoid a circular import with security-policies.ts. */
 export type PolicyEnforcement = "disabled" | "optional" | "required";
@@ -95,9 +91,7 @@ const capabilityByType = new Map(
   SECURITY_POLICY_RUNTIME_CAPABILITIES.map((entry) => [entry.policyType, entry]),
 );
 
-export function policyRuntimeCapability(
-  policyType: SecurityPolicyType,
-): PolicyRuntimeCapability {
+export function policyRuntimeCapability(policyType: SecurityPolicyType): PolicyRuntimeCapability {
   const found = capabilityByType.get(policyType);
   if (found === undefined) {
     throw new Error(`Unknown security policy type: ${policyType}`);
@@ -192,7 +186,10 @@ export type ExternalSharingDecision =
   | { readonly allowed: true; readonly requireExpiry: boolean }
   | {
       readonly allowed: false;
-      readonly code: "external_sharing_blocked" | "external_sharing_domain_denied" | "external_sharing_expiry_required";
+      readonly code:
+        | "external_sharing_blocked"
+        | "external_sharing_domain_denied"
+        | "external_sharing_expiry_required";
       readonly message: string;
     };
 
@@ -317,7 +314,10 @@ function domainFromEmail(email: string): string | null {
 }
 
 function normalizeDomain(value: string): string {
-  return value.trim().toLowerCase().replace(/^\.+|\.+$/gu, "");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+|\.+$/gu, "");
 }
 
 // --------------------------------------------------------------------------
@@ -364,9 +364,7 @@ export function evaluateOrgAdminMfa(input: {
   readonly actor: Actor;
   readonly mfaVerified: boolean;
   readonly orgMfaPolicy?:
-    | Pick<SecurityPolicyLike, "enabled" | "enforcement" | "settings">
-    | null
-    | undefined;
+    Pick<SecurityPolicyLike, "enabled" | "enforcement" | "settings"> | null | undefined;
 }): AdminMfaDecision {
   const tierDecision = evaluateAdminMfa({
     tier: input.tier,
@@ -391,8 +389,7 @@ export function evaluateOrgAdminMfa(input: {
     allowed: false,
     statusCode: 403,
     code: "admin_mfa_required",
-    message:
-      "Organization MFA policy requires a verified MFA factor for admin-scoped requests.",
+    message: "Organization MFA policy requires a verified MFA factor for admin-scoped requests.",
   };
 }
 

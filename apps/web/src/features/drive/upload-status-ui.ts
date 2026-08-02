@@ -90,9 +90,7 @@ export function canOpenDriveObject(input: {
   return view === null ? true : view.available;
 }
 
-export function openDenialMessage(
-  state: DriveUploadState | null | undefined,
-): string {
+export function openDenialMessage(state: DriveUploadState | null | undefined): string {
   const view = driveUploadStatusView(state);
   if (view === null) {
     return "This file is not available yet.";

@@ -97,8 +97,7 @@ describe("DriveAdminSection", () => {
 
   it("renders quota and lifecycle panels from tool responses", async () => {
     fetchMock.mockImplementation((input) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.includes("drive.quota.usage")) {
         return Promise.resolve(
           new Response(
@@ -149,9 +148,9 @@ describe("DriveAdminSection", () => {
 
     await waitFor(() => {
       expect(container.querySelector('[data-testid="drive-admin-section"]')).not.toBeNull();
-      expect(container.querySelector('[data-testid="drive-quota-panel"]')?.textContent ?? "").toMatch(
-        /50%/,
-      );
+      expect(
+        container.querySelector('[data-testid="drive-quota-panel"]')?.textContent ?? "",
+      ).toMatch(/50%/);
       expect(container.textContent ?? "").toMatch(/Lifecycle policy/i);
       expect(container.textContent ?? "").toMatch(/Trash retention/i);
     });

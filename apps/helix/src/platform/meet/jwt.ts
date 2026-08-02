@@ -40,15 +40,11 @@ export function resolveJitsiJwtTtlSeconds(input: {
 }): number {
   const maxTtl = input.maxTtlSeconds ?? MAX_JITSI_JWT_TTL_SECONDS;
   if (!Number.isSafeInteger(maxTtl) || maxTtl < MIN_JITSI_JWT_TTL_SECONDS) {
-    throw new Error(
-      `Jitsi JWT maxTtlSeconds must be an integer >= ${MIN_JITSI_JWT_TTL_SECONDS}.`,
-    );
+    throw new Error(`Jitsi JWT maxTtlSeconds must be an integer >= ${MIN_JITSI_JWT_TTL_SECONDS}.`);
   }
   const requested = input.ttlSeconds ?? DEFAULT_JITSI_JWT_TTL_SECONDS;
   if (!Number.isSafeInteger(requested) || requested < MIN_JITSI_JWT_TTL_SECONDS) {
-    throw new Error(
-      `Jitsi JWT ttlSeconds must be an integer >= ${MIN_JITSI_JWT_TTL_SECONDS}.`,
-    );
+    throw new Error(`Jitsi JWT ttlSeconds must be an integer >= ${MIN_JITSI_JWT_TTL_SECONDS}.`);
   }
   return Math.min(requested, maxTtl);
 }

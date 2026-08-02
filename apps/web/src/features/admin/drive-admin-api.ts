@@ -50,9 +50,7 @@ export type MappedLifecycleInput =
     }
   | string;
 
-export function mapLifecycleFormToToolInput(
-  form: DriveLifecycleFormInput,
-): MappedLifecycleInput {
+export function mapLifecycleFormToToolInput(form: DriveLifecycleFormInput): MappedLifecycleInput {
   const trashRetentionDays = parsePositiveInt(
     form.trashRetentionDays,
     "Trash retention (days)",
@@ -60,12 +58,7 @@ export function mapLifecycleFormToToolInput(
     3650,
   );
   if (typeof trashRetentionDays === "string") return trashRetentionDays;
-  const orphanGraceHours = parsePositiveInt(
-    form.orphanGraceHours,
-    "Orphan grace (hours)",
-    1,
-    720,
-  );
+  const orphanGraceHours = parsePositiveInt(form.orphanGraceHours, "Orphan grace (hours)", 1, 720);
   if (typeof orphanGraceHours === "string") return orphanGraceHours;
   return { trashRetentionDays, orphanGraceHours };
 }
@@ -166,12 +159,7 @@ function parseToolOutput<T>(raw: unknown, schema: z.ZodType<T>, action: string):
   throw new Error(`Failed to ${action}: malformed response.`);
 }
 
-function parsePositiveInt(
-  value: string,
-  label: string,
-  min: number,
-  max: number,
-): number | string {
+function parsePositiveInt(value: string, label: string, min: number, max: number): number | string {
   const trimmed = value.trim();
   if (trimmed === "") {
     return `${label} is required.`;

@@ -229,8 +229,7 @@ export function describeChatAdminUnavailable(error: Error): string {
 }
 
 export const chatAdminQueryKeys = {
-  retention: (roomId?: string) =>
-    ["admin", "chat", "retention", roomId ?? "org-default"] as const,
+  retention: (roomId?: string) => ["admin", "chat", "retention", roomId ?? "org-default"] as const,
 };
 
 export function chatRetentionQueryOptions(
@@ -290,12 +289,7 @@ function parseToolOutput<T>(raw: unknown, schema: z.ZodType<T>, action: string):
   throw new Error(`Failed to ${action}: malformed response.`);
 }
 
-function parsePositiveInt(
-  value: string,
-  label: string,
-  min: number,
-  max: number,
-): number | string {
+function parsePositiveInt(value: string, label: string, min: number, max: number): number | string {
   const trimmed = value.trim();
   if (trimmed === "") {
     return `${label} is required.`;

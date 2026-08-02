@@ -365,13 +365,9 @@ export interface DriveStore {
     readonly limit?: number;
   }): Promise<{ readonly candidates: number; readonly collected: number }>;
   /** Operator: current storage used bytes vs plan/org quota (D11). */
-  getStorageQuotaUsage?(input: {
-    readonly orgId: string;
-  }): Promise<DriveStorageQuotaUsageRecord>;
+  getStorageQuotaUsage?(input: { readonly orgId: string }): Promise<DriveStorageQuotaUsageRecord>;
   /** Operator: org trash/orphan lifecycle policy (D11). */
-  getLifecyclePolicy?(input: {
-    readonly orgId: string;
-  }): Promise<DriveLifecyclePolicyRecord>;
+  getLifecyclePolicy?(input: { readonly orgId: string }): Promise<DriveLifecyclePolicyRecord>;
   setLifecyclePolicy?(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2875,7 +2871,8 @@ export class PostgresDriveStore
     `) as unknown as readonly DriveStorageQuotaRow[];
     const row = rows[0];
     const usedBytes = row === undefined ? 0 : bytesFromDatabase(row.storage_used_bytes);
-    const limitBytes = row === undefined ? 5_000_000_000 : storageLimitFromJson(row.storage_bytes_limit);
+    const limitBytes =
+      row === undefined ? 5_000_000_000 : storageLimitFromJson(row.storage_bytes_limit);
     const unlimited = limitBytes === null;
     const percentUsed =
       unlimited || limitBytes === 0
@@ -2890,9 +2887,7 @@ export class PostgresDriveStore
     };
   }
 
-  async getLifecyclePolicy(input: {
-    readonly orgId: string;
-  }): Promise<DriveLifecyclePolicyRecord> {
+  async getLifecyclePolicy(input: { readonly orgId: string }): Promise<DriveLifecyclePolicyRecord> {
     const rows = (await this.sql`
       select org_id, trash_retention_days, orphan_grace_hours, updated_by_actor_id, updated_at
       from drive_lifecycle_policies

@@ -16,7 +16,13 @@ const actorId = "22222222-2222-4222-8222-222222222222";
 const objectId = "33333333-3333-4333-8333-333333333333";
 const now = new Date("2026-08-01T00:00:00.000Z");
 
-const NON_ACTIVE = ["pending_upload", "uploaded", "scanning", "quarantined", "scan_failed"] as const;
+const NON_ACTIVE = [
+  "pending_upload",
+  "uploaded",
+  "scanning",
+  "quarantined",
+  "scan_failed",
+] as const;
 
 function objectRow(uploadState: string) {
   return {
@@ -164,10 +170,9 @@ describe("D12 agent reads only clean objects", () => {
     const tools = createDriveToolDefinitions({ store: store as never });
     const list = tools.find((tool) => tool.id === "drive.list");
     expect(list).toBeDefined();
-    const result = (await list!.handler(
-      { folderId: null, includeTrashed: false, limit: 100 },
-      { actor: { id: actorId, orgId, type: "user", scopes: ["drive.read"] } } as never,
-    )) as { entries: readonly { available?: boolean; uploadState?: string }[] };
+    const result = (await list!.handler({ folderId: null, includeTrashed: false, limit: 100 }, {
+      actor: { id: actorId, orgId, type: "user", scopes: ["drive.read"] },
+    } as never)) as { entries: readonly { available?: boolean; uploadState?: string }[] };
     expect(result.entries[0]?.available).toBe(false);
     expect(result.entries[0]?.uploadState).toBe("scanning");
   });

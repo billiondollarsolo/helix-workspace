@@ -70,10 +70,7 @@ export function validateFullWorkspaceDependencyGates(input: {
         message: "is required when meet is in HELIX_APPS (Full Workspace)",
       });
     }
-    if (
-      input.meetJitsiJwtSecret === undefined ||
-      input.meetJitsiJwtSecret.trim().length < 32
-    ) {
+    if (input.meetJitsiJwtSecret === undefined || input.meetJitsiJwtSecret.trim().length < 32) {
       issues.push({
         variable: "MEET_JITSI_JWT_SECRET",
         message: "must be a strong secret (≥32 chars) when meet is enabled",

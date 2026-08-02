@@ -89,7 +89,8 @@ export function mapObjectEntry(row: MapObjectEntryInput): DriveEntryRecord {
       : {
           uploadState,
           uploadStatusLabel: userFacing?.label,
-          available: userFacing !== undefined ? userFacing.available : isDriveFileAvailable(uploadState),
+          available:
+            userFacing !== undefined ? userFacing.available : isDriveFileAvailable(uploadState),
         }),
     metadata,
     deletedAt: row.deleted_at,

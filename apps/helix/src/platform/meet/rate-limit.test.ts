@@ -14,12 +14,12 @@ describe("Meet abuse rate limits (MT.6)", () => {
       budget: { createRoomLimit: 2, joinRoomLimit: 3, windowMs: 60_000 },
     });
 
-    await expect(
-      limiter.consume({ orgId, actorId, action: "create_room" }),
-    ).resolves.toMatchObject({ allowed: true, used: 1, remaining: 1 });
-    await expect(
-      limiter.consume({ orgId, actorId, action: "create_room" }),
-    ).resolves.toMatchObject({ allowed: true, used: 2, remaining: 0 });
+    await expect(limiter.consume({ orgId, actorId, action: "create_room" })).resolves.toMatchObject(
+      { allowed: true, used: 1, remaining: 1 },
+    );
+    await expect(limiter.consume({ orgId, actorId, action: "create_room" })).resolves.toMatchObject(
+      { allowed: true, used: 2, remaining: 0 },
+    );
     const blocked = await limiter.consume({ orgId, actorId, action: "create_room" });
     expect(blocked).toMatchObject({
       allowed: false,
@@ -33,9 +33,10 @@ describe("Meet abuse rate limits (MT.6)", () => {
     expect(blocked.retryAfterSeconds).toBeGreaterThan(0);
 
     // Join bucket is independent.
-    await expect(
-      limiter.consume({ orgId, actorId, action: "join_room" }),
-    ).resolves.toMatchObject({ allowed: true, used: 1 });
+    await expect(limiter.consume({ orgId, actorId, action: "join_room" })).resolves.toMatchObject({
+      allowed: true,
+      used: 1,
+    });
   });
 
   it("scopes limits by actor and org (no cross-tenant bleed)", async () => {
@@ -43,12 +44,12 @@ describe("Meet abuse rate limits (MT.6)", () => {
       budget: { createRoomLimit: 1, joinRoomLimit: 1, windowMs: 60_000 },
     });
 
-    await expect(
-      limiter.consume({ orgId, actorId, action: "create_room" }),
-    ).resolves.toMatchObject({ allowed: true });
-    await expect(
-      limiter.consume({ orgId, actorId, action: "create_room" }),
-    ).resolves.toMatchObject({ allowed: false });
+    await expect(limiter.consume({ orgId, actorId, action: "create_room" })).resolves.toMatchObject(
+      { allowed: true },
+    );
+    await expect(limiter.consume({ orgId, actorId, action: "create_room" })).resolves.toMatchObject(
+      { allowed: false },
+    );
 
     await expect(
       limiter.consume({ orgId, actorId: otherActor, action: "create_room" }),
@@ -65,17 +66,18 @@ describe("Meet abuse rate limits (MT.6)", () => {
       budget: { createRoomLimit: 1, joinRoomLimit: 1, windowMs: 5_000 },
     });
 
-    await expect(
-      limiter.consume({ orgId, actorId, action: "join_room" }),
-    ).resolves.toMatchObject({ allowed: true });
-    await expect(
-      limiter.consume({ orgId, actorId, action: "join_room" }),
-    ).resolves.toMatchObject({ allowed: false });
+    await expect(limiter.consume({ orgId, actorId, action: "join_room" })).resolves.toMatchObject({
+      allowed: true,
+    });
+    await expect(limiter.consume({ orgId, actorId, action: "join_room" })).resolves.toMatchObject({
+      allowed: false,
+    });
 
     now += 5_000;
-    await expect(
-      limiter.consume({ orgId, actorId, action: "join_room" }),
-    ).resolves.toMatchObject({ allowed: true, used: 1 });
+    await expect(limiter.consume({ orgId, actorId, action: "join_room" })).resolves.toMatchObject({
+      allowed: true,
+      used: 1,
+    });
   });
 
   it("builds a structured MeetRateLimitError", () => {
@@ -100,8 +102,8 @@ describe("Meet abuse rate limits (MT.6)", () => {
   });
 
   it("rejects non-positive budgets instead of silently disabling protection", () => {
-    expect(
-      () => new InMemoryMeetRateLimiter({ budget: { createRoomLimit: 0 } }),
-    ).toThrow("createRoomLimit");
+    expect(() => new InMemoryMeetRateLimiter({ budget: { createRoomLimit: 0 } })).toThrow(
+      "createRoomLimit",
+    );
   });
 });

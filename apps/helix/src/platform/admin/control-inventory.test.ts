@@ -22,7 +22,11 @@ describe("ADMIN_CONTROL_INVENTORY (ADM.1)", () => {
 
   it("never marks recorded-only security policies as fully enforced", () => {
     for (const entry of adminControlsBySurface("security_policies")) {
-      if (entry.id.endsWith(".sso") || entry.id.endsWith(".dlp") || entry.id.endsWith(".device_trust")) {
+      if (
+        entry.id.endsWith(".sso") ||
+        entry.id.endsWith(".dlp") ||
+        entry.id.endsWith(".device_trust")
+      ) {
         expect(entry.mode).toBe("recorded_only");
       }
     }

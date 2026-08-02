@@ -319,9 +319,7 @@ function isEnforced(policy: SecurityPolicy): boolean {
     // Partial controls (admin MFA, session) with required intent are live on
     // some paths — count them as enforced for the overview ratio.
     return (
-      policy.runtimeStatus.mode === "partial" &&
-      policy.enabled &&
-      policy.enforcement === "required"
+      policy.runtimeStatus.mode === "partial" && policy.enabled && policy.enforcement === "required"
     );
   }
   if (

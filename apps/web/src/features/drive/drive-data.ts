@@ -219,9 +219,8 @@ export function fileTypeFromEntry(entry: DriveApiEntry): DriveFileType {
 
 /** Adapt a backend folder entry into a folder tile. */
 export function folderItemFromEntry(entry: DriveApiEntry): DriveFolderItem {
-  const count = entry.metadata && typeof entry.metadata.itemCount === "number"
-    ? entry.metadata.itemCount
-    : 0;
+  const count =
+    entry.metadata && typeof entry.metadata.itemCount === "number" ? entry.metadata.itemCount : 0;
   return { id: entry.id, name: entry.name, itemCount: count };
 }
 

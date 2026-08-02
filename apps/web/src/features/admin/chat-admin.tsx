@@ -76,9 +76,7 @@ export function ChatAdminSection() {
 
   const policy = retentionQuery.data;
   const unavailableReason =
-    retentionFailure === null
-      ? null
-      : describeChatAdminUnavailable(retentionFailure.error);
+    retentionFailure === null ? null : describeChatAdminUnavailable(retentionFailure.error);
   const controlsDisabled = unavailableReason !== null || retentionQuery.isPending;
 
   const [retentionForm, setRetentionForm] = useState<ChatRetentionFormInput>({

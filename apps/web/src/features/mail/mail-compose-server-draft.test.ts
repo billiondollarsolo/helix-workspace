@@ -54,7 +54,10 @@ describe("mail compose server draft helpers (UX.10)", () => {
     expect(filterMailDraftRecords([{ not: "a draft" }, null, "x"])).toEqual([]);
     expect(
       filterMailDraftRecords([
-        draft({ id: "33333333-3333-4333-8333-333333333333", updatedAt: "2026-02-01T00:00:00.000Z" }),
+        draft({
+          id: "33333333-3333-4333-8333-333333333333",
+          updatedAt: "2026-02-01T00:00:00.000Z",
+        }),
       ]),
     ).toHaveLength(1);
   });

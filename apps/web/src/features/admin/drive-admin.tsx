@@ -277,8 +277,7 @@ function QuotaPanel({
             style={{
               width: `${String(barWidth)}%`,
               height: "100%",
-              background:
-                pct >= 90 ? "var(--danger, #dc2626)" : "var(--accent, #2563eb)",
+              background: pct >= 90 ? "var(--danger, #dc2626)" : "var(--accent, #2563eb)",
             }}
           />
         </div>

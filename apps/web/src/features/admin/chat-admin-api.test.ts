@@ -102,10 +102,7 @@ describe("mapExportFormToToolInput", () => {
       from: "2026-01-01T00:00:00.000Z",
       to: "2026-02-01T00:00:00.000Z",
       limit: 500,
-      roomIds: [
-        "33333333-3333-4333-8333-333333333333",
-        "44444444-4444-4444-8444-444444444444",
-      ],
+      roomIds: ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"],
     });
   });
 
@@ -169,7 +166,9 @@ describe("formatRetentionSummary / describeChatAdminUnavailable", () => {
       "admin.chat",
     );
     expect(
-      describeChatAdminUnavailable(new Error("This Chat store does not support retention policies.")),
+      describeChatAdminUnavailable(
+        new Error("This Chat store does not support retention policies."),
+      ),
     ).toContain("not enabled");
   });
 });

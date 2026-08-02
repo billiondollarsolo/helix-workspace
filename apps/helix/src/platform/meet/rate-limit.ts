@@ -78,8 +78,7 @@ export class InMemoryMeetRateLimiter implements MeetRateLimiter {
 
   async consume(input: MeetRateLimitConsumeInput): Promise<MeetRateLimitDecision> {
     const budget = resolveBudget({ ...this.#defaultBudget, ...input.budget });
-    const limit =
-      input.action === "create_room" ? budget.createRoomLimit : budget.joinRoomLimit;
+    const limit = input.action === "create_room" ? budget.createRoomLimit : budget.joinRoomLimit;
     const windowMs = budget.windowMs;
     const now = this.#now();
     const mapKey = `${input.action}:${input.orgId}:${input.actorId}`;

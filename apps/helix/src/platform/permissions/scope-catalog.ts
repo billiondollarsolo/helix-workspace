@@ -60,18 +60,58 @@ export interface ScopeDefinition {
  */
 export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
   // Platform.
-  { scope: "platform.read", description: "Read platform health and metadata.", surfaces: ["platform", "agent"] },
-  { scope: "tools:read", description: "List and describe registered tools.", surfaces: ["platform", "agent"] },
-  { scope: "tools:write", description: "Invoke registered tools.", surfaces: ["platform", "agent"] },
-  { scope: "profile.read", description: "Read the actor profile.", surfaces: ["platform", "agent"] },
-  { scope: "profile.write", description: "Update the actor profile.", surfaces: ["platform", "agent"] },
+  {
+    scope: "platform.read",
+    description: "Read platform health and metadata.",
+    surfaces: ["platform", "agent"],
+  },
+  {
+    scope: "tools:read",
+    description: "List and describe registered tools.",
+    surfaces: ["platform", "agent"],
+  },
+  {
+    scope: "tools:write",
+    description: "Invoke registered tools.",
+    surfaces: ["platform", "agent"],
+  },
+  {
+    scope: "profile.read",
+    description: "Read the actor profile.",
+    surfaces: ["platform", "agent"],
+  },
+  {
+    scope: "profile.write",
+    description: "Update the actor profile.",
+    surfaces: ["platform", "agent"],
+  },
 
   // Mail.
-  { scope: "mail.read", description: "Read the actor's own mail.", surfaces: ["agent", "app_password"] },
-  { scope: "mail.read:shared", description: "Read mail shared with the actor.", surfaces: ["agent"] },
-  { scope: "mail.send", description: "Send mail to internal recipients.", surfaces: ["agent", "app_password"] },
-  { scope: "mail.write", description: "Modify mail (labels, state, filters).", surfaces: ["agent", "app_password"] },
-  { scope: "mail.delete", description: "Permanently delete mail.", surfaces: ["agent", "app_password"] },
+  {
+    scope: "mail.read",
+    description: "Read the actor's own mail.",
+    surfaces: ["agent", "app_password"],
+  },
+  {
+    scope: "mail.read:shared",
+    description: "Read mail shared with the actor.",
+    surfaces: ["agent"],
+  },
+  {
+    scope: "mail.send",
+    description: "Send mail to internal recipients.",
+    surfaces: ["agent", "app_password"],
+  },
+  {
+    scope: "mail.write",
+    description: "Modify mail (labels, state, filters).",
+    surfaces: ["agent", "app_password"],
+  },
+  {
+    scope: "mail.delete",
+    description: "Permanently delete mail.",
+    surfaces: ["agent", "app_password"],
+  },
   {
     scope: "mail.admin",
     description: "Manage mail aliases and org-level mail routing configuration.",
@@ -95,25 +135,61 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
   },
 
   // Drive.
-  { scope: "drive.read", description: "Read the actor's own files.", surfaces: ["agent", "app_password"] },
-  { scope: "drive.read:shared", description: "Read files shared with the actor.", surfaces: ["agent"] },
-  { scope: "drive.write", description: "Create and modify the actor's files.", surfaces: ["agent", "app_password"] },
-  { scope: "drive.write:shared", description: "Modify files shared with the actor.", surfaces: ["agent"] },
-  { scope: "drive.delete", description: "Permanently delete files.", surfaces: ["agent", "app_password"] },
+  {
+    scope: "drive.read",
+    description: "Read the actor's own files.",
+    surfaces: ["agent", "app_password"],
+  },
+  {
+    scope: "drive.read:shared",
+    description: "Read files shared with the actor.",
+    surfaces: ["agent"],
+  },
+  {
+    scope: "drive.write",
+    description: "Create and modify the actor's files.",
+    surfaces: ["agent", "app_password"],
+  },
+  {
+    scope: "drive.write:shared",
+    description: "Modify files shared with the actor.",
+    surfaces: ["agent"],
+  },
+  {
+    scope: "drive.delete",
+    description: "Permanently delete files.",
+    surfaces: ["agent", "app_password"],
+  },
 
   // Chat.
   { scope: "chat.read", description: "Read chat rooms and messages.", surfaces: ["agent"] },
-  { scope: "chat.post", description: "Post, edit, and react to chat messages.", surfaces: ["agent"] },
-  { scope: "chat.create", description: "Create chat rooms and invite members.", surfaces: ["agent"] },
+  {
+    scope: "chat.post",
+    description: "Post, edit, and react to chat messages.",
+    surfaces: ["agent"],
+  },
+  {
+    scope: "chat.create",
+    description: "Create chat rooms and invite members.",
+    surfaces: ["agent"],
+  },
 
   // Calendar.
-  { scope: "calendar.read", description: "Read calendars and events.", surfaces: ["agent", "app_password"] },
+  {
+    scope: "calendar.read",
+    description: "Read calendars and events.",
+    surfaces: ["agent", "app_password"],
+  },
   {
     scope: "calendar.read:freebusy",
     description: "Read free/busy availability.",
     surfaces: ["agent", "app_password"],
   },
-  { scope: "calendar.write", description: "Create and modify calendar events.", surfaces: ["agent", "app_password"] },
+  {
+    scope: "calendar.write",
+    description: "Create and modify calendar events.",
+    surfaces: ["agent", "app_password"],
+  },
   {
     scope: "calendar.write:respond",
     description: "Respond to event invitations.",
@@ -132,7 +208,11 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
   { scope: "docs.comment", description: "Comment on documents.", surfaces: ["agent"] },
 
   // Sheets.
-  { scope: "sheets.read", description: "Read spreadsheets, tabs, and cell data.", surfaces: ["agent"] },
+  {
+    scope: "sheets.read",
+    description: "Read spreadsheets, tabs, and cell data.",
+    surfaces: ["agent"],
+  },
   {
     scope: "sheets.write",
     description: "Create and modify spreadsheets, tabs, and cells.",
@@ -152,15 +232,31 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
   { scope: "meet.write", description: "Create and end meeting rooms.", surfaces: ["agent"] },
 
   // Assistant.
-  { scope: "assistant.read", description: "Read assistant conversations and history.", surfaces: ["agent"] },
-  { scope: "assistant.write", description: "Use the assistant and run conversations.", surfaces: ["agent"] },
-  { scope: "assistant.memory", description: "Read and erase assistant memory.", surfaces: ["agent"] },
+  {
+    scope: "assistant.read",
+    description: "Read assistant conversations and history.",
+    surfaces: ["agent"],
+  },
+  {
+    scope: "assistant.write",
+    description: "Use the assistant and run conversations.",
+    surfaces: ["agent"],
+  },
+  {
+    scope: "assistant.memory",
+    description: "Read and erase assistant memory.",
+    surfaces: ["agent"],
+  },
 
   // Admin.
   { scope: "admin.users", description: "Administer users.", surfaces: ["admin"] },
   { scope: "admin.config", description: "Administer platform configuration.", surfaces: ["admin"] },
   { scope: "admin.config.read", description: "Read platform configuration.", surfaces: ["admin"] },
-  { scope: "admin.config.write", description: "Write platform configuration.", surfaces: ["admin"] },
+  {
+    scope: "admin.config.write",
+    description: "Write platform configuration.",
+    surfaces: ["admin"],
+  },
   { scope: "admin.audit", description: "Read the audit log.", surfaces: ["admin"] },
   { scope: "admin.plugins", description: "Administer plugins.", surfaces: ["admin"] },
   { scope: "admin.webhooks", description: "Administer webhooks.", surfaces: ["admin"] },
@@ -177,8 +273,18 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
   },
 
   // Legacy / protocol scopes for app passwords (DAV, IMAP, SMTP).
-  { scope: "caldav", description: "CalDAV protocol access.", protocolScope: true, surfaces: ["app_password"] },
-  { scope: "carddav", description: "CardDAV protocol access.", protocolScope: true, surfaces: ["app_password"] },
+  {
+    scope: "caldav",
+    description: "CalDAV protocol access.",
+    protocolScope: true,
+    surfaces: ["app_password"],
+  },
+  {
+    scope: "carddav",
+    description: "CardDAV protocol access.",
+    protocolScope: true,
+    surfaces: ["app_password"],
+  },
   {
     scope: "carddav.read",
     description: "CardDAV read-only protocol access.",
@@ -191,9 +297,24 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
     protocolScope: true,
     surfaces: ["app_password"],
   },
-  { scope: "webdav", description: "WebDAV protocol access.", protocolScope: true, surfaces: ["app_password"] },
-  { scope: "imap", description: "IMAP protocol access.", protocolScope: true, surfaces: ["app_password"] },
-  { scope: "smtp", description: "SMTP protocol access.", protocolScope: true, surfaces: ["app_password"] },
+  {
+    scope: "webdav",
+    description: "WebDAV protocol access.",
+    protocolScope: true,
+    surfaces: ["app_password"],
+  },
+  {
+    scope: "imap",
+    description: "IMAP protocol access.",
+    protocolScope: true,
+    surfaces: ["app_password"],
+  },
+  {
+    scope: "smtp",
+    description: "SMTP protocol access.",
+    protocolScope: true,
+    surfaces: ["app_password"],
+  },
 ];
 
 const scopesByName = new Map(SCOPE_CATALOG.map((entry) => [entry.scope, entry]));
@@ -221,7 +342,9 @@ export function isCompositeScope(scope: string): boolean {
  * catalog and the app-password catalog from this single source.
  */
 export function scopesForSurface(surface: ScopeSurface): readonly string[] {
-  return SCOPE_CATALOG.filter((entry) => entry.surfaces.includes(surface)).map((entry) => entry.scope);
+  return SCOPE_CATALOG.filter((entry) => entry.surfaces.includes(surface)).map(
+    (entry) => entry.scope,
+  );
 }
 
 /**

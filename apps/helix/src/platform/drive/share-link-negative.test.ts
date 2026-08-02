@@ -126,7 +126,9 @@ function createShareSql(scenario: SqlScenario): postgres.Sql {
       text.includes("rate_window_count") &&
       text.includes("returning password_hash")
     ) {
-      return Promise.resolve(scenario.admitted ?? [{ password_hash: scenario.candidate?.password_hash ?? null }]);
+      return Promise.resolve(
+        scenario.admitted ?? [{ password_hash: scenario.candidate?.password_hash ?? null }],
+      );
     }
 
     if (
@@ -288,8 +290,8 @@ describe("D10 sharing negative access matrix", () => {
         disposition: "attachment",
       });
     }
-    expect(
-      safeDriveDownloadPolicy({ mimeType: "application/pdf", requestedInline: true }),
-    ).toEqual({ mimeType: "application/pdf", disposition: "inline" });
+    expect(safeDriveDownloadPolicy({ mimeType: "application/pdf", requestedInline: true })).toEqual(
+      { mimeType: "application/pdf", disposition: "inline" },
+    );
   });
 });

@@ -13,9 +13,7 @@ describe("Calendar negative-security / tenant isolation (CAL.2 / CAL.11)", () =>
     const recording = recordingSql([[]]);
     const store = new PostgresCalendarStore(recording.sql);
 
-    await expect(
-      store.getEventForActor({ orgId, actorId, eventId }),
-    ).resolves.toBeNull();
+    await expect(store.getEventForActor({ orgId, actorId, eventId })).resolves.toBeNull();
 
     const query = recording.calls[0] ?? "";
     expect(query).toContain("from cal_events");
@@ -54,9 +52,7 @@ describe("Calendar negative-security / tenant isolation (CAL.2 / CAL.11)", () =>
     ]);
     const store = new PostgresCalendarStore(recording.sql);
 
-    await expect(
-      store.deleteEvent({ orgId: otherOrgId, actorId, eventId }),
-    ).resolves.toBeNull();
+    await expect(store.deleteEvent({ orgId: otherOrgId, actorId, eventId })).resolves.toBeNull();
 
     // Must not issue a destructive update when the event is invisible.
     expect(recording.calls.some((query) => query.includes("update cal_events"))).toBe(false);

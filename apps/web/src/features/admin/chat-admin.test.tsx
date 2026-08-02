@@ -134,11 +134,7 @@ describe("ChatAdminSection", () => {
       expect(container.textContent ?? "").toContain("90 day retention");
     });
 
-    expect(headingOutline()).toEqual([
-      "H1:Chat",
-      "H2:Retention policy",
-      "H2:Organization export",
-    ]);
+    expect(headingOutline()).toEqual(["H1:Chat", "H2:Retention policy", "H2:Organization export"]);
 
     const retentionInput = inputByLabel("Retention days");
     expect(retentionInput.value).toBe("90");
@@ -239,9 +235,9 @@ describe("ChatAdminSection", () => {
         document.body.querySelector('[data-slot="alert-dialog-content"]')?.textContent ?? "",
       ).toContain("Save Chat retention policy");
     });
-    expect(
-      document.body.querySelector('[data-slot="alert-dialog-action"]')?.textContent,
-    ).toContain("Save policy");
+    expect(document.body.querySelector('[data-slot="alert-dialog-action"]')?.textContent).toContain(
+      "Save policy",
+    );
     expect(document.body.querySelector(".admin-confirm-blast")).not.toBeNull();
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
     expect(

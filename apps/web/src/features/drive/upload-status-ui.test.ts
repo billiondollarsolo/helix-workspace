@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  canOpenDriveObject,
-  driveUploadStatusView,
-  openDenialMessage,
-} from "./upload-status-ui";
+import { canOpenDriveObject, driveUploadStatusView, openDenialMessage } from "./upload-status-ui";
 
 describe("Drive upload status UI (D8)", () => {
   it.each([

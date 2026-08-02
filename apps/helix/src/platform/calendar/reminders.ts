@@ -66,7 +66,9 @@ export class InMemoryReminderDispatchLedger implements ReminderDispatchLedger {
  * Empty metadata yields the product default (10 minutes).
  * Explicit empty array means "no reminders".
  */
-export function parseEventReminders(metadata: JsonObject | undefined | null): readonly CalendarReminderSpec[] {
+export function parseEventReminders(
+  metadata: JsonObject | undefined | null,
+): readonly CalendarReminderSpec[] {
   if (metadata === undefined || metadata === null) {
     return [{ minutesBefore: DEFAULT_REMINDER_MINUTES_BEFORE }];
   }

@@ -153,10 +153,7 @@ describe("mapMailSendUiStatus (M10 compose machine)", () => {
   });
 
   it("maps client submit errors to failed without faking a delivery status", () => {
-    const ui = mapMailSendUiStatus(
-      { clientPhase: "error", lastError: "network offline" },
-      NOW,
-    );
+    const ui = mapMailSendUiStatus({ clientPhase: "error", lastError: "network offline" }, NOW);
     expect(ui.phase).toBe("failed");
     expect(ui.label).toContain("network offline");
   });

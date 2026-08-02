@@ -28,9 +28,7 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
     await expect(
       store.getRoomForActor({ orgId, actorId: outsiderId, roomId: room.id }),
     ).resolves.toBeNull();
-    await expect(
-      store.getRoomById({ orgId: otherOrgId, roomId: room.id }),
-    ).resolves.toBeNull();
+    await expect(store.getRoomById({ orgId: otherOrgId, roomId: room.id })).resolves.toBeNull();
     await expect(
       store.endRoom({ orgId: otherOrgId, actorId, roomId: room.id }),
     ).resolves.toBeNull();
@@ -43,9 +41,7 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
     const recording = recordingSql([[]]);
     const store = new PostgresMeetStore(recording.sql);
 
-    await expect(
-      store.getRoomForActor({ orgId, actorId, roomId }),
-    ).resolves.toBeNull();
+    await expect(store.getRoomForActor({ orgId, actorId, roomId })).resolves.toBeNull();
 
     const query = recording.calls[0] ?? "";
     expect(query).toContain("from meet_rooms");
@@ -72,9 +68,13 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
       type: "user",
       scopes: ["meet.read", "meet.write"],
     };
-    const result = await registry.invoke("meet.mint-token", { roomId: room.id }, {
-      actor: foreignActor,
-    });
+    const result = await registry.invoke(
+      "meet.mint-token",
+      { roomId: room.id },
+      {
+        actor: foreignActor,
+      },
+    );
     expect(result.ok).toBe(false);
     if (result.ok) {
       throw new Error("expected denial");
@@ -100,18 +100,30 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
       scopes: ["meet.read", "meet.write"],
     };
 
-    const first = await registry.invoke("meet.create-room", {
-      subject: "Room 1",
-      jitsiDomain: "meet.helix.test",
-    }, { actor });
-    const second = await registry.invoke("meet.create-room", {
-      subject: "Room 2",
-      jitsiDomain: "meet.helix.test",
-    }, { actor });
-    const third = await registry.invoke("meet.create-room", {
-      subject: "Room 3",
-      jitsiDomain: "meet.helix.test",
-    }, { actor });
+    const first = await registry.invoke(
+      "meet.create-room",
+      {
+        subject: "Room 1",
+        jitsiDomain: "meet.helix.test",
+      },
+      { actor },
+    );
+    const second = await registry.invoke(
+      "meet.create-room",
+      {
+        subject: "Room 2",
+        jitsiDomain: "meet.helix.test",
+      },
+      { actor },
+    );
+    const third = await registry.invoke(
+      "meet.create-room",
+      {
+        subject: "Room 3",
+        jitsiDomain: "meet.helix.test",
+      },
+      { actor },
+    );
 
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
@@ -146,12 +158,12 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
       scopes: ["meet.read", "meet.write"],
     };
 
-    expect(
-      (await registry.invoke("meet.mint-token", { roomId: room.id }, { actor })).ok,
-    ).toBe(true);
-    expect(
-      (await registry.invoke("meet.mint-token", { roomId: room.id }, { actor })).ok,
-    ).toBe(true);
+    expect((await registry.invoke("meet.mint-token", { roomId: room.id }, { actor })).ok).toBe(
+      true,
+    );
+    expect((await registry.invoke("meet.mint-token", { roomId: room.id }, { actor })).ok).toBe(
+      true,
+    );
     const blocked = await registry.invoke("meet.mint-token", { roomId: room.id }, { actor });
     expect(blocked.ok).toBe(false);
     if (blocked.ok) {

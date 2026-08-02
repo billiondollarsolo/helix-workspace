@@ -271,10 +271,10 @@ export function AdminSecurity() {
           SSO/DLP/device trust remain recorded-only and cannot be set to Required.
           Partial controls (MFA, session) never claim full Required. */}
       <StateBanner kind="info">
-        Policy chips show runtime status, not intent alone. External sharing and org admin MFA
-        are enforced on live API paths. SSO, DLP, and device trust are recorded and audited only —
-        Helix will not let you set them to Required until enforcement ships. Prefer your identity
-        provider or gateway for those controls in the meantime.
+        Policy chips show runtime status, not intent alone. External sharing and org admin MFA are
+        enforced on live API paths. SSO, DLP, and device trust are recorded and audited only — Helix
+        will not let you set them to Required until enforcement ships. Prefer your identity provider
+        or gateway for those controls in the meantime.
       </StateBanner>
 
       {policiesFailure !== null ? (

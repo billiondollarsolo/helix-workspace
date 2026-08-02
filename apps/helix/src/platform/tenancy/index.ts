@@ -11,3 +11,4 @@ export * from "./provisioning-bootstrap.js";
 export * from "./provisioning-owner.js";
 export * from "./provisioning-storage.js";
 export * from "./provisioning-worker.js";
+export * from "./request-tenant-identity.js";

@@ -15,6 +15,10 @@ import {
 } from "../tool-registry.js";
 import { credentialPolicyOf } from "../../api/actor.js";
 import { resolveRequestOrgIdentity } from "../tenancy/request-tenant-identity.js";
+import {
+  TenantActorMismatchError,
+  assertActorMatchesRequestTenant,
+} from "../tenancy/middleware.js";
 import { loadNegativeMatrixFromDisk } from "./negative-matrix.js";
 import { DEFAULT_IDEMPOTENCY_TTL_MS } from "../../api/idempotency.js";
 import { buildErrorEnvelope } from "../../api/error-envelope.js";
@@ -195,6 +199,29 @@ describe("G1.8 request tenant identity", () => {
         defaultOrgId: "00000000-0000-0000-0000-000000000000",
       });
     }).toThrow(/bootstrap default organization/i);
+  });
+
+  it("wires identity helper into authenticated request tenant binding", () => {
+    const tenantOrgId = "11111111-1111-4111-8111-111111111111";
+    expect(() => {
+      assertActorMatchesRequestTenant(
+        {
+          tenant: {
+            orgId: tenantOrgId,
+            orgSlug: "acme",
+            orgTier: "business",
+            orgRegion: "us-east-1",
+            effectiveConfig: {} as never,
+            org: { id: tenantOrgId } as never,
+          },
+        },
+        {
+          id: "actor-1",
+          orgId: "99999999-9999-4999-8999-999999999999",
+          type: "user",
+        },
+      );
+    }).toThrow(TenantActorMismatchError);
   });
 });
 

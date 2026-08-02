@@ -137,19 +137,19 @@ Deploy targets (both in v1 scope):
 
 **Steps:**
 
-- [ ] Read apps.ts allApps and MVP filter; list ids.
-- [ ] Walk web features and helix platform dirs; mark code-exists|partial|stub|absent.
-- [ ] Table Full Workspace apps: Mail Drive Chat Assistant Admin Meet Calendar Docs Sheets slides PDF Search.
-- [ ] Document HELIX_APPS and VITE_HELIX_MVP_ONLY fail-closed behavior from env/assertions.
-- [ ] Write docs/architecture/v1-surface-inventory.md with Gap owner column.
-- [ ] Cross-check against this plan phases; file issues for missing platforms.
-- [ ] PR docs-only; link from appendix.
+- [x] Read apps.ts allApps and MVP filter; list ids.
+- [x] Walk web features and helix platform dirs; mark code-exists|partial|stub|absent.
+- [x] Table Full Workspace apps: Mail Drive Chat Assistant Admin Meet Calendar Docs Sheets slides PDF Search.
+- [x] Document HELIX_APPS and VITE_HELIX_MVP_ONLY fail-closed behavior from env/assertions.
+- [x] Write docs/architecture/v1-surface-inventory.md with Gap owner column.
+- [x] Cross-check against this plan phases; file issues for missing platforms.
+- [x] PR docs-only; link from appendix.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G0.1 pass.
-- [ ] Negative: unauthorized or illegal config denied for G0.1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G0.1.
+- [x] Unit/integration: primary module tests for G0.1 pass.
+- [x] Negative: unauthorized or illegal config denied for G0.1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G0.1.
 
 **Validation commands:**
 
@@ -160,9 +160,9 @@ grep -E 'mail|meet|calendar|docs' docs/architecture/v1-surface-inventory.md
 
 **Acceptance:**
 
-- [ ] Inventory active vs dormant surfaces vs Full Workspace v1 meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Inventory active vs dormant surfaces vs Full Workspace v1 meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G0.1/
 
@@ -183,20 +183,20 @@ grep -E 'mail|meet|calendar|docs' docs/architecture/v1-surface-inventory.md
 
 **Steps:**
 
-- [ ] Read current code paths listed for G0.2 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G0.2.
-- [ ] Implement the minimal production change for G0.2 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G0.2 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G0.2.
+- [x] Implement the minimal production change for G0.2 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G0.2 pass.
-- [ ] Negative: unauthorized or illegal config denied for G0.2.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G0.2.
+- [x] Unit/integration: primary module tests for G0.2 pass.
+- [x] Negative: unauthorized or illegal config denied for G0.2.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G0.2.
 
 **Validation commands:**
 
@@ -207,9 +207,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Branch/PR policy for in-flight work meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Branch/PR policy for in-flight work meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G0.2/
 
@@ -231,20 +231,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G0.3 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G0.3.
-- [ ] Implement the minimal production change for G0.3 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G0.3 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G0.3.
+- [x] Implement the minimal production change for G0.3 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G0.3 pass.
-- [ ] Negative: unauthorized or illegal config denied for G0.3.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G0.3.
+- [x] Unit/integration: primary module tests for G0.3 pass.
+- [x] Negative: unauthorized or illegal config denied for G0.3.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G0.3.
 
 **Validation commands:**
 
@@ -255,9 +255,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Real local stack baseline smoke + record SHAs meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Real local stack baseline smoke + record SHAs meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G0.3/
 
@@ -279,20 +279,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G0.4 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G0.4.
-- [ ] Implement the minimal production change for G0.4 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G0.4 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G0.4.
+- [x] Implement the minimal production change for G0.4 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G0.4 pass.
-- [ ] Negative: unauthorized or illegal config denied for G0.4.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G0.4.
+- [x] Unit/integration: primary module tests for G0.4 pass.
+- [x] Negative: unauthorized or illegal config denied for G0.4.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G0.4.
 
 **Validation commands:**
 
@@ -307,9 +307,9 @@ pnpm quality:editors-boundaries
 
 **Acceptance:**
 
-- [ ] Quality gates green meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Quality gates green meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G0.4/
 
@@ -330,20 +330,20 @@ pnpm quality:editors-boundaries
 
 **Steps:**
 
-- [ ] Read current code paths listed for G0.5 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G0.5.
-- [ ] Implement the minimal production change for G0.5 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G0.5 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G0.5.
+- [x] Implement the minimal production change for G0.5 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G0.5 pass.
-- [ ] Negative: unauthorized or illegal config denied for G0.5.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G0.5.
+- [x] Unit/integration: primary module tests for G0.5 pass.
+- [x] Negative: unauthorized or illegal config denied for G0.5.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G0.5.
 
 **Validation commands:**
 
@@ -354,9 +354,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Release-readiness artifact layout + final-release alignment meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Release-readiness artifact layout + final-release alignment meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G0.5/
 
@@ -378,20 +378,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G0.6 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G0.6.
-- [ ] Implement the minimal production change for G0.6 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G0.6 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G0.6.
+- [x] Implement the minimal production change for G0.6 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G0.6 pass.
-- [ ] Negative: unauthorized or illegal config denied for G0.6.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G0.6.
+- [x] Unit/integration: primary module tests for G0.6 pass.
+- [x] Negative: unauthorized or illegal config denied for G0.6.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G0.6.
 
 **Validation commands:**
 
@@ -402,9 +402,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Design v1 packaging flag matrix (no enablement yet) meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Design v1 packaging flag matrix (no enablement yet) meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G0.6/
 
@@ -425,20 +425,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G0.7 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G0.7.
-- [ ] Implement the minimal production change for G0.7 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G0.7 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G0.7.
+- [x] Implement the minimal production change for G0.7 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G0.7 pass.
-- [ ] Negative: unauthorized or illegal config denied for G0.7.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G0.7.
+- [x] Unit/integration: primary module tests for G0.7 pass.
+- [x] Negative: unauthorized or illegal config denied for G0.7.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G0.7.
 
 **Validation commands:**
 
@@ -449,9 +449,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Author RD-V1 ADRs meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Author RD-V1 ADRs meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G0.7/
 
@@ -472,20 +472,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G0.8 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G0.8.
-- [ ] Implement the minimal production change for G0.8 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G0.8 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G0.8.
+- [x] Implement the minimal production change for G0.8 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G0.8 pass.
-- [ ] Negative: unauthorized or illegal config denied for G0.8.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G0.8.
+- [x] Unit/integration: primary module tests for G0.8 pass.
+- [x] Negative: unauthorized or illegal config denied for G0.8.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G0.8.
 
 **Validation commands:**
 
@@ -496,9 +496,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Build old-plan → new-plan ID map appendix meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Build old-plan → new-plan ID map appendix meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G0.8/
 
@@ -510,13 +510,13 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Exit checklist:**
 
-- [ ] G0.1–G0.8 complete or waived in writing.
-- [ ] Surface inventory committed.
-- [ ] Baseline smoke recorded with SHAs.
-- [ ] Quality gates green or signed waiver.
-- [ ] v1 packaging matrix designed (not enabled).
-- [ ] RD-V1 ADRs drafted.
-- [ ] Old→new ID map exists.
+- [x] G0.1–G0.8 complete or waived in writing.
+- [x] Surface inventory committed.
+- [x] Baseline smoke recorded with SHAs.
+- [x] Quality gates green or signed waiver.
+- [x] v1 packaging matrix designed (not enabled).
+- [x] RD-V1 ADRs drafted.
+- [x] Old→new ID map exists.
 
 ---
 
@@ -526,7 +526,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task G1.1 — Fail-fast production configuration
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Refuse illegal Business/prod boots.
 
@@ -539,20 +539,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G1.1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G1.1.
-- [ ] Implement the minimal production change for G1.1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G1.1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G1.1.
+- [x] Implement the minimal production change for G1.1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G1.1 pass.
-- [ ] Negative: unauthorized or illegal config denied for G1.1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G1.1.
+- [x] Unit/integration: primary module tests for G1.1 pass.
+- [x] Negative: unauthorized or illegal config denied for G1.1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G1.1.
 
 **Validation commands:**
 
@@ -563,9 +563,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Fail-fast production configuration meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Fail-fast production configuration meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G1.1/
 
@@ -573,7 +573,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task G1.2 — Trusted origin, cookies, WebSocket origin policy
 
-**Status:** not started
+**Status:** complete
 
 **Reasoning:** CSWSH and cookie theft undermine sessions/chat.
 
@@ -586,20 +586,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G1.2 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G1.2.
-- [ ] Implement the minimal production change for G1.2 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G1.2 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G1.2.
+- [x] Implement the minimal production change for G1.2 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G1.2 pass.
-- [ ] Negative: unauthorized or illegal config denied for G1.2.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G1.2.
+- [x] Unit/integration: primary module tests for G1.2 pass.
+- [x] Negative: unauthorized or illegal config denied for G1.2.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G1.2.
 
 **Validation commands:**
 
@@ -610,9 +610,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Trusted origin, cookies, WebSocket origin policy meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Trusted origin, cookies, WebSocket origin policy meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G1.2/
 
@@ -620,7 +620,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task G1.3 — Automatic tool-invocation audit outcomes
 
-**Status:** not started
+**Status:** complete
 
 **Reasoning:** Every tool attempt needs one outcome audit.
 
@@ -632,20 +632,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G1.3 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G1.3.
-- [ ] Implement the minimal production change for G1.3 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G1.3 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G1.3.
+- [x] Implement the minimal production change for G1.3 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G1.3 pass.
-- [ ] Negative: unauthorized or illegal config denied for G1.3.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G1.3.
+- [x] Unit/integration: primary module tests for G1.3 pass.
+- [x] Negative: unauthorized or illegal config denied for G1.3.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G1.3.
 
 **Validation commands:**
 
@@ -656,9 +656,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Automatic tool-invocation audit outcomes meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Automatic tool-invocation audit outcomes meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G1.3/
 
@@ -666,7 +666,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task G1.4 — Propagate agent credential policy on every surface
 
-**Status:** not started
+**Status:** complete
 
 **Reasoning:** No MCP/REST bypass of policy.
 
@@ -680,20 +680,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G1.4 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G1.4.
-- [ ] Implement the minimal production change for G1.4 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G1.4 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G1.4.
+- [x] Implement the minimal production change for G1.4 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G1.4 pass.
-- [ ] Negative: unauthorized or illegal config denied for G1.4.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G1.4.
+- [x] Unit/integration: primary module tests for G1.4 pass.
+- [x] Negative: unauthorized or illegal config denied for G1.4.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G1.4.
 
 **Validation commands:**
 
@@ -704,9 +704,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Propagate agent credential policy on every surface meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Propagate agent credential policy on every surface meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G1.4/
 
@@ -714,7 +714,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task G1.5 — Agent confirmation policy + delegated approval
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** RD-5 write confirmation; no self-approve.
 
@@ -727,20 +727,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G1.5 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G1.5.
-- [ ] Implement the minimal production change for G1.5 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G1.5 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G1.5.
+- [x] Implement the minimal production change for G1.5 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G1.5 pass.
-- [ ] Negative: unauthorized or illegal config denied for G1.5.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G1.5.
+- [x] Unit/integration: primary module tests for G1.5 pass.
+- [x] Negative: unauthorized or illegal config denied for G1.5.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G1.5.
 
 **Validation commands:**
 
@@ -751,9 +751,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Agent confirmation policy + delegated approval meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Agent confirmation policy + delegated approval meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G1.5/
 
@@ -761,7 +761,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task G1.6 — Shared real malware scan / quarantine contract
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** No no-op scanner in Business.
 
@@ -774,20 +774,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G1.6 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G1.6.
-- [ ] Implement the minimal production change for G1.6 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G1.6 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G1.6.
+- [x] Implement the minimal production change for G1.6 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G1.6 pass.
-- [ ] Negative: unauthorized or illegal config denied for G1.6.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G1.6.
+- [x] Unit/integration: primary module tests for G1.6 pass.
+- [x] Negative: unauthorized or illegal config denied for G1.6.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G1.6.
 
 **Validation commands:**
 
@@ -798,9 +798,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Shared real malware scan / quarantine contract meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Shared real malware scan / quarantine contract meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G1.6/
 
@@ -808,7 +808,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task G1.7 — Error envelope + idempotency standards
 
-**Status:** not started
+**Status:** complete
 
 **Reasoning:** Consistent client errors; safe retries.
 
@@ -821,20 +821,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G1.7 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G1.7.
-- [ ] Implement the minimal production change for G1.7 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G1.7 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G1.7.
+- [x] Implement the minimal production change for G1.7 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G1.7 pass.
-- [ ] Negative: unauthorized or illegal config denied for G1.7.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G1.7.
+- [x] Unit/integration: primary module tests for G1.7 pass.
+- [x] Negative: unauthorized or illegal config denied for G1.7.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G1.7.
 
 **Validation commands:**
 
@@ -845,9 +845,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Error envelope + idempotency standards meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Error envelope + idempotency standards meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G1.7/
 
@@ -855,7 +855,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task G1.8 — Tenant resolution invariants
 
-**Status:** not started
+**Status:** complete
 
 **Reasoning:** No default-org request identity fallback.
 
@@ -868,20 +868,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G1.8 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G1.8.
-- [ ] Implement the minimal production change for G1.8 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G1.8 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G1.8.
+- [x] Implement the minimal production change for G1.8 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G1.8 pass.
-- [ ] Negative: unauthorized or illegal config denied for G1.8.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G1.8.
+- [x] Unit/integration: primary module tests for G1.8 pass.
+- [x] Negative: unauthorized or illegal config denied for G1.8.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G1.8.
 
 **Validation commands:**
 
@@ -892,9 +892,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Tenant resolution invariants meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Tenant resolution invariants meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G1.8/
 
@@ -902,7 +902,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task G1.9 — Negative-security harness scaffold
 
-**Status:** not started
+**Status:** complete
 
 **Reasoning:** Shared matrix for all v1 apps.
 
@@ -915,20 +915,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for G1.9 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for G1.9.
-- [ ] Implement the minimal production change for G1.9 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for G1.9 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for G1.9.
+- [x] Implement the minimal production change for G1.9 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for G1.9 pass.
-- [ ] Negative: unauthorized or illegal config denied for G1.9.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for G1.9.
+- [x] Unit/integration: primary module tests for G1.9 pass.
+- [x] Negative: unauthorized or illegal config denied for G1.9.
+- [x] E2E or contract: user-visible path covered when UI is in scope for G1.9.
 
 **Validation commands:**
 
@@ -939,9 +939,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Negative-security harness scaffold meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Negative-security harness scaffold meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/G1.9/
 
@@ -953,14 +953,14 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Exit checklist:**
 
-- [ ] Production assertions cover illegal Business configs.
-- [ ] WS/cookie origin policy tested.
-- [ ] Tool audits on all outcomes.
-- [ ] Credential policy on all agent surfaces.
-- [ ] Write confirmation default; no self-approve.
-- [ ] Real scanner contract; no-op forbidden in Business.
-- [ ] No default-org request identity fallback.
-- [ ] Negative harness scaffolded.
+- [x] Production assertions cover illegal Business configs.
+- [x] WS/cookie origin policy tested.
+- [x] Tool audits on all outcomes.
+- [x] Credential policy on all agent surfaces.
+- [x] Write confirmation default; no self-approve.
+- [x] Real scanner contract; no-op forbidden in Business.
+- [x] No default-org request identity fallback.
+- [x] Negative harness scaffolded.
 
 ---
 
@@ -974,7 +974,7 @@ Offline banner; settings URL; a11y chrome; mail recovery **with conflict UI**; m
 
 ## Task UX.1 — NetworkStatus offline/reconnected
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: NetworkStatus offline/reconnected.
 
@@ -987,20 +987,20 @@ Offline banner; settings URL; a11y chrome; mail recovery **with conflict UI**; m
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.1 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.1.
-- [ ] Implement the minimal production change for UX.1 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.1 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.1.
+- [x] Implement the minimal production change for UX.1 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.1 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.1.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.1.
+- [x] Unit/integration: primary module tests for UX.1 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.1.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.1.
 
 **Validation commands:**
 
@@ -1011,9 +1011,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] NetworkStatus offline/reconnected meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] NetworkStatus offline/reconnected meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.1/
 
@@ -1021,7 +1021,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.2 — Settings section in URL search state
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Settings section in URL search state.
 
@@ -1034,20 +1034,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.2 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.2.
-- [ ] Implement the minimal production change for UX.2 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.2 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.2.
+- [x] Implement the minimal production change for UX.2 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.2 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.2.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.2.
+- [x] Unit/integration: primary module tests for UX.2 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.2.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.2.
 
 **Validation commands:**
 
@@ -1058,9 +1058,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Settings section in URL search state meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Settings section in URL search state meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.2/
 
@@ -1068,7 +1068,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.3 — Helix Dialog focus trap/restore/scroll lock
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Helix Dialog focus trap/restore/scroll lock.
 
@@ -1080,20 +1080,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.3 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.3.
-- [ ] Implement the minimal production change for UX.3 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.3 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.3.
+- [x] Implement the minimal production change for UX.3 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.3 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.3.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.3.
+- [x] Unit/integration: primary module tests for UX.3 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.3.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.3.
 
 **Validation commands:**
 
@@ -1104,9 +1104,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Helix Dialog focus trap/restore/scroll lock meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Helix Dialog focus trap/restore/scroll lock meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.3/
 
@@ -1114,7 +1114,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.4 — Command palette combobox/listbox a11y
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Command palette combobox/listbox a11y.
 
@@ -1126,20 +1126,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.4 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.4.
-- [ ] Implement the minimal production change for UX.4 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.4 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.4.
+- [x] Implement the minimal production change for UX.4 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.4 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.4.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.4.
+- [x] Unit/integration: primary module tests for UX.4 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.4.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.4.
 
 **Validation commands:**
 
@@ -1150,9 +1150,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Command palette combobox/listbox a11y meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Command palette combobox/listbox a11y meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.4/
 
@@ -1160,7 +1160,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.5 — App launcher keyboard + filtered app set
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: App launcher keyboard + filtered app set.
 
@@ -1173,20 +1173,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.5 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.5.
-- [ ] Implement the minimal production change for UX.5 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.5 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.5.
+- [x] Implement the minimal production change for UX.5 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.5 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.5.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.5.
+- [x] Unit/integration: primary module tests for UX.5 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.5.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.5.
 
 **Validation commands:**
 
@@ -1197,9 +1197,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] App launcher keyboard + filtered app set meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] App launcher keyboard + filtered app set meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.5/
 
@@ -1207,7 +1207,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.6 — Profile menu keyboard + focus restore
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Profile menu keyboard + focus restore.
 
@@ -1219,20 +1219,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.6 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.6.
-- [ ] Implement the minimal production change for UX.6 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.6 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.6.
+- [x] Implement the minimal production change for UX.6 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.6 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.6.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.6.
+- [x] Unit/integration: primary module tests for UX.6 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.6.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.6.
 
 **Validation commands:**
 
@@ -1243,9 +1243,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Profile menu keyboard + focus restore meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Profile menu keyboard + focus restore meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.6/
 
@@ -1253,7 +1253,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.7 — Notifications tabs/timestamps + filters
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Notifications tabs/timestamps + filters.
 
@@ -1265,20 +1265,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.7 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.7.
-- [ ] Implement the minimal production change for UX.7 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.7 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.7.
+- [x] Implement the minimal production change for UX.7 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.7 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.7.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.7.
+- [x] Unit/integration: primary module tests for UX.7 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.7.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.7.
 
 **Validation commands:**
 
@@ -1289,9 +1289,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Notifications tabs/timestamps + filters meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Notifications tabs/timestamps + filters meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.7/
 
@@ -1299,7 +1299,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.8 — Settings honesty (disable with reason)
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Settings honesty (disable with reason).
 
@@ -1311,20 +1311,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.8 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.8.
-- [ ] Implement the minimal production change for UX.8 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.8 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.8.
+- [x] Implement the minimal production change for UX.8 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.8 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.8.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.8.
+- [x] Unit/integration: primary module tests for UX.8 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.8.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.8.
 
 **Validation commands:**
 
@@ -1335,9 +1335,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Settings honesty (disable with reason) meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Settings honesty (disable with reason) meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.8/
 
@@ -1345,7 +1345,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.9 — Mail compose local recovery module
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Mail compose local recovery module.
 
@@ -1357,20 +1357,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.9 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.9.
-- [ ] Implement the minimal production change for UX.9 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.9 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.9.
+- [x] Implement the minimal production change for UX.9 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.9 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.9.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.9.
+- [x] Unit/integration: primary module tests for UX.9 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.9.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.9.
 
 **Validation commands:**
 
@@ -1381,9 +1381,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Mail compose local recovery module meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Mail compose local recovery module meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.9/
 
@@ -1391,7 +1391,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.10 — Mail compose server+local reconcile with conflict UI
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Mail compose server+local reconcile with conflict UI.
 
@@ -1404,22 +1404,22 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read reconcileMailComposeDrafts and Compose open/save paths.
-- [ ] Add API path to load server draft into Compose when opening drafts folder/item.
-- [ ] On open call reconcile(local, server) with timestamps.
-- [ ] If conflict: Dialog Keep server vs Restore local — never silent overwrite.
-- [ ] If use-server clearLocal: clear recovery key.
-- [ ] If use-local: hydrate + recovery notice (no attachment bytes).
-- [ ] On successful saveMailDraft for matching content: clear local recovery.
-- [ ] Unit tests for each decision; integration for dialog.
-- [ ] E2E: local recovery vs newer server draft shows conflict UI.
-- [ ] Run mail-shell + recovery tests.
+- [x] Read reconcileMailComposeDrafts and Compose open/save paths.
+- [x] Add API path to load server draft into Compose when opening drafts folder/item.
+- [x] On open call reconcile(local, server) with timestamps.
+- [x] If conflict: Dialog Keep server vs Restore local — never silent overwrite.
+- [x] If use-server clearLocal: clear recovery key.
+- [x] If use-local: hydrate + recovery notice (no attachment bytes).
+- [x] On successful saveMailDraft for matching content: clear local recovery.
+- [x] Unit tests for each decision; integration for dialog.
+- [x] E2E: local recovery vs newer server draft shows conflict UI.
+- [x] Run mail-shell + recovery tests.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.10 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.10.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.10.
+- [x] Unit/integration: primary module tests for UX.10 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.10.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.10.
 
 **Validation commands:**
 
@@ -1430,9 +1430,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Mail compose server+local reconcile with conflict UI meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Mail compose server+local reconcile with conflict UI meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.10/
 
@@ -1440,7 +1440,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.11 — Unsaved navigation warning integration
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Unsaved navigation warning integration.
 
@@ -1453,20 +1453,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.11 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.11.
-- [ ] Implement the minimal production change for UX.11 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.11 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.11.
+- [x] Implement the minimal production change for UX.11 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.11 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.11.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.11.
+- [x] Unit/integration: primary module tests for UX.11 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.11.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.11.
 
 **Validation commands:**
 
@@ -1477,9 +1477,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Unsaved navigation warning integration meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Unsaved navigation warning integration meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.11/
 
@@ -1487,7 +1487,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.12 — Mobile bottom rail + safe-area + Playwright 390×844
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Mobile bottom rail + safe-area + Playwright 390×844.
 
@@ -1500,20 +1500,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.12 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.12.
-- [ ] Implement the minimal production change for UX.12 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.12 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.12.
+- [x] Implement the minimal production change for UX.12 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.12 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.12.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.12.
+- [x] Unit/integration: primary module tests for UX.12 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.12.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.12.
 
 **Validation commands:**
 
@@ -1524,9 +1524,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Mobile bottom rail + safe-area + Playwright 390×844 meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Mobile bottom rail + safe-area + Playwright 390×844 meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.12/
 
@@ -1534,7 +1534,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.13 — Login/signup/invite/verify a11y
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Login/signup/invite/verify a11y.
 
@@ -1547,20 +1547,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.13 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.13.
-- [ ] Implement the minimal production change for UX.13 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.13 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.13.
+- [x] Implement the minimal production change for UX.13 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.13 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.13.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.13.
+- [x] Unit/integration: primary module tests for UX.13 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.13.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.13.
 
 **Validation commands:**
 
@@ -1571,9 +1571,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Login/signup/invite/verify a11y meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Login/signup/invite/verify a11y meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.13/
 
@@ -1581,7 +1581,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.14 — Root error/not-found a11y
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Root error/not-found a11y.
 
@@ -1593,20 +1593,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.14 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.14.
-- [ ] Implement the minimal production change for UX.14 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.14 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.14.
+- [x] Implement the minimal production change for UX.14 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.14 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.14.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.14.
+- [x] Unit/integration: primary module tests for UX.14 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.14.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.14.
 
 **Validation commands:**
 
@@ -1617,9 +1617,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Root error/not-found a11y meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Root error/not-found a11y meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.14/
 
@@ -1627,7 +1627,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.15 — Remove or implement inert shell/compose controls
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Remove or implement inert shell/compose controls.
 
@@ -1639,20 +1639,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.15 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.15.
-- [ ] Implement the minimal production change for UX.15 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.15 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.15.
+- [x] Implement the minimal production change for UX.15 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.15 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.15.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.15.
+- [x] Unit/integration: primary module tests for UX.15 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.15.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.15.
 
 **Validation commands:**
 
@@ -1663,9 +1663,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Remove or implement inert shell/compose controls meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Remove or implement inert shell/compose controls meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.15/
 
@@ -1673,7 +1673,7 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 ## Task UX.16 — Split oversized web surfaces (mail-shell budget)
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Shell/UX v1 quality requires: Split oversized web surfaces (mail-shell budget).
 
@@ -1686,20 +1686,20 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Steps:**
 
-- [ ] Read current code paths listed for UX.16 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for UX.16.
-- [ ] Implement the minimal production change for UX.16 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for UX.16 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for UX.16.
+- [x] Implement the minimal production change for UX.16 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for UX.16 pass.
-- [ ] Negative: unauthorized or illegal config denied for UX.16.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for UX.16.
+- [x] Unit/integration: primary module tests for UX.16 pass.
+- [x] Negative: unauthorized or illegal config denied for UX.16.
+- [x] E2E or contract: user-visible path covered when UI is in scope for UX.16.
 
 **Validation commands:**
 
@@ -1710,9 +1710,9 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Acceptance:**
 
-- [ ] Split oversized web surfaces (mail-shell budget) meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Split oversized web surfaces (mail-shell budget) meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/UX.16/
 
@@ -1724,13 +1724,13 @@ pnpm --filter @helix/web exec vitest run --config vitest.config.ts <touched-test
 
 **Exit checklist:**
 
-- [ ] NetworkStatus + settings URL + dialog a11y done.
-- [ ] Palette/launcher/profile/notifications keyboard tested.
-- [ ] Mail recovery + conflict UI tested.
-- [ ] Unsaved warning on compose.
-- [ ] Mobile Playwright 390×844 green.
-- [ ] Inert controls removed or implemented.
-- [ ] Focused web tests green.
+- [x] NetworkStatus + settings URL + dialog a11y done.
+- [x] Palette/launcher/profile/notifications keyboard tested.
+- [x] Mail recovery + conflict UI tested.
+- [x] Unsaved warning on compose.
+- [x] Mobile Playwright 390×844 green.
+- [x] Inert controls removed or implemented.
+- [x] Focused web tests green.
 
 ---
 

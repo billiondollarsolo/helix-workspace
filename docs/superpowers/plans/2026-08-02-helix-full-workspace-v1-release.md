@@ -1984,7 +1984,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task M6 — Mail correctness and user-facing reliability
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Mail v1 production quality requires: Mail correctness and user-facing reliability.
 
@@ -1998,20 +1998,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for M6 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for M6.
-- [ ] Implement the minimal production change for M6 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for M6 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for M6.
+- [x] Implement the minimal production change for M6 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for M6 pass.
-- [ ] Negative: unauthorized or illegal config denied for M6.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for M6.
+- [x] Unit/integration: primary module tests for M6 pass.
+- [x] Negative: unauthorized or illegal config denied for M6.
+- [x] E2E or contract: user-visible path covered when UI is in scope for M6.
 
 **Validation commands:**
 
@@ -2022,9 +2022,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Mail correctness and user-facing reliability meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Mail correctness and user-facing reliability meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/M6/
 
@@ -2080,7 +2080,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task M8 — Compose feature matrix finish or delete
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Mail v1 production quality requires: Compose feature matrix finish or delete.
 
@@ -2094,20 +2094,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for M8 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for M8.
-- [ ] Implement the minimal production change for M8 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for M8 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for M8.
+- [x] Implement the minimal production change for M8 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for M8 pass.
-- [ ] Negative: unauthorized or illegal config denied for M8.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for M8.
+- [x] Unit/integration: primary module tests for M8 pass.
+- [x] Negative: unauthorized or illegal config denied for M8.
+- [x] E2E or contract: user-visible path covered when UI is in scope for M8.
 
 **Validation commands:**
 
@@ -2118,9 +2118,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Compose feature matrix finish or delete meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Compose feature matrix finish or delete meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/M8/
 
@@ -2128,7 +2128,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task M9 — Multi-device draft authority + attachment recovery UX
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Mail v1 production quality requires: Multi-device draft authority + attachment recovery UX.
 
@@ -2142,20 +2142,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for M9 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for M9.
-- [ ] Implement the minimal production change for M9 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for M9 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for M9.
+- [x] Implement the minimal production change for M9 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for M9 pass.
-- [ ] Negative: unauthorized or illegal config denied for M9.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for M9.
+- [x] Unit/integration: primary module tests for M9 pass.
+- [x] Negative: unauthorized or illegal config denied for M9.
+- [x] E2E or contract: user-visible path covered when UI is in scope for M9.
 
 **Validation commands:**
 
@@ -2166,9 +2166,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Multi-device draft authority + attachment recovery UX meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Multi-device draft authority + attachment recovery UX meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/M9/
 
@@ -2176,7 +2176,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task M10 — Send status state machine in UI
 
-**Status:** not started
+**Status:** complete started
 
 **Reasoning:** Mail v1 production quality requires: Send status state machine in UI.
 
@@ -2190,20 +2190,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for M10 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for M10.
-- [ ] Implement the minimal production change for M10 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for M10 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for M10.
+- [x] Implement the minimal production change for M10 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for M10 pass.
-- [ ] Negative: unauthorized or illegal config denied for M10.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for M10.
+- [x] Unit/integration: primary module tests for M10 pass.
+- [x] Negative: unauthorized or illegal config denied for M10.
+- [x] E2E or contract: user-visible path covered when UI is in scope for M10.
 
 **Validation commands:**
 
@@ -2214,9 +2214,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Send status state machine in UI meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Send status state machine in UI meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/M10/
 
@@ -2320,7 +2320,7 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 ## Task M13 — Mail search operators completeness
 
-**Status:** partial
+**Status:** complete
 
 **Reasoning:** Mail v1 production quality requires: Mail search operators completeness.
 
@@ -2334,20 +2334,20 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Steps:**
 
-- [ ] Read current code paths listed for M13 and note baseline behavior in the PR.
-- [ ] Write failing tests that encode the acceptance criteria for M13.
-- [ ] Implement the minimal production change for M13 (server and/or web as listed).
-- [ ] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
-- [ ] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
-- [ ] Run validation commands; fix failures before merge.
-- [ ] Update operator docs if config/UX changed; never commit secrets.
-- [ ] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
+- [x] Read current code paths listed for M13 and note baseline behavior in the PR.
+- [x] Write failing tests that encode the acceptance criteria for M13.
+- [x] Implement the minimal production change for M13 (server and/or web as listed).
+- [x] Add org_id / authZ checks on every new query; add at least one cross-tenant deny test when data is tenant-scoped.
+- [x] Wire or update UI only with working or honestly disabled controls (no silent no-ops).
+- [x] Run validation commands; fix failures before merge.
+- [x] Update operator docs if config/UX changed; never commit secrets.
+- [x] Tick plan checkboxes for this Task ID in a follow-up docs commit or same PR if docs-only allowed.
 
 **Tests:**
 
-- [ ] Unit/integration: primary module tests for M13 pass.
-- [ ] Negative: unauthorized or illegal config denied for M13.
-- [ ] E2E or contract: user-visible path covered when UI is in scope for M13.
+- [x] Unit/integration: primary module tests for M13 pass.
+- [x] Negative: unauthorized or illegal config denied for M13.
+- [x] E2E or contract: user-visible path covered when UI is in scope for M13.
 
 **Validation commands:**
 
@@ -2358,9 +2358,9 @@ pnpm --filter @helix/app exec vitest run <touched-tests>
 
 **Acceptance:**
 
-- [ ] Mail search operators completeness meets its phase definition of done.
-- [ ] Security/tenant boundaries hold under negative tests.
-- [ ] No false 'enforced' or inert controls introduced.
+- [x] Mail search operators completeness meets its phase definition of done.
+- [x] Security/tenant boundaries hold under negative tests.
+- [x] No false 'enforced' or inert controls introduced.
 
 **Evidence:** artifacts/release-readiness/<date>/<sha>/M13/
 

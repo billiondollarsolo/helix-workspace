@@ -61,8 +61,15 @@ export function snapshotFromEnvironment(env: {
   };
 }
 
+/** Tools that must remain callable while emergency kill is engaged (A10 self-unlock). */
+export const OPERATIONAL_CONTROL_BYPASS_TOOL_IDS: ReadonlySet<string> = new Set([
+  "admin.agent_controls.get",
+  "admin.agent_controls.set",
+]);
+
 /**
  * Evaluate kill switches for a non-read tool. Read tools always allowed here.
+ * Admin control tools are exempt so operators can clear emergency kill without restart.
  */
 export function evaluateAgentOperationalControls(input: {
   readonly actor: Pick<Actor, "type" | "orgId">;
@@ -70,6 +77,9 @@ export function evaluateAgentOperationalControls(input: {
   readonly snapshot: AgentOperationalControlSnapshot;
 }): AgentOperationalControlDecision {
   if (input.tool.sideEffects === "read") {
+    return { allowed: true };
+  }
+  if (OPERATIONAL_CONTROL_BYPASS_TOOL_IDS.has(input.tool.id)) {
     return { allowed: true };
   }
   if (input.snapshot.disabledToolIds.includes(input.tool.id)) {

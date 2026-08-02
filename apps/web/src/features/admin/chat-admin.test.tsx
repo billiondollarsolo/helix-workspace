@@ -228,7 +228,7 @@ describe("ChatAdminSection", () => {
     const saveButton = buttonByText("Save retention policy");
     expect(saveButton.disabled).toBe(false);
 
-    await act(() => {
+    act(() => {
       saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -245,7 +245,10 @@ describe("ChatAdminSection", () => {
     expect(document.body.querySelector(".admin-confirm-blast")).not.toBeNull();
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
     expect(
-      fetchMock.mock.calls.some((call) => String(call[0]).includes("chat.retention.set")),
+      fetchMock.mock.calls.some((call) => {
+        const url = call[0];
+        return typeof url === "string" && url.includes("chat.retention.set");
+      }),
     ).toBe(false);
   });
 
@@ -279,19 +282,18 @@ describe("ChatAdminSection", () => {
 
   async function waitFor(assertion: () => void, timeoutMs = 2_000): Promise<void> {
     const started = Date.now();
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- loop until timeout
-    while (true) {
+    let lastError: unknown;
+    while (Date.now() - started <= timeoutMs) {
       try {
         assertion();
         return;
       } catch (error) {
-        if (Date.now() - started > timeoutMs) {
-          throw error;
-        }
+        lastError = error;
         await act(async () => {
           await new Promise((resolve) => setTimeout(resolve, 20));
         });
       }
     }
+    throw lastError instanceof Error ? lastError : new Error("waitFor timed out");
   }
 });

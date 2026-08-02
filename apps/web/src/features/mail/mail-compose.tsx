@@ -166,12 +166,12 @@ export function Compose({ onClose, onSent }: ComposeProps) {
     let cancelled = false;
     void (async () => {
       const local = readMailComposeRecovery();
-      let serverDraft = null as ReturnType<typeof pickLatestMailDraft>;
+      let serverDraft: ReturnType<typeof pickLatestMailDraft> = null;
       try {
         const listed = await listMailDrafts();
         serverDraft = pickLatestMailDraft(filterMailDraftRecords(listed));
       } catch {
-        serverDraft = null;
+        // Offline / unauthorized: continue with local recovery only.
       }
       if (cancelled) {
         return;
@@ -289,13 +289,16 @@ export function Compose({ onClose, onSent }: ComposeProps) {
   });
 
   // Advance the clock so undoAvailable flips when undoUntil elapses.
+  // Native timers: send-status countdown is wall-clock UI, not interaction pacing.
   useEffect(() => {
     if (sendStatus === null) return;
     if (!sendStatus.undoAvailable && !shouldPollMailSendStatus(sendStatus.phase)) return;
+    // eslint-disable-next-line helix/pacer-discipline -- wall-clock undo countdown
     const id = window.setInterval(() => {
       setStatusClockMs(Date.now());
     }, 400);
     return () => {
+      // eslint-disable-next-line helix/pacer-discipline -- pair with setInterval above
       window.clearInterval(id);
     };
   }, [sendStatus?.phase, sendStatus?.undoAvailable]);
@@ -320,12 +323,14 @@ export function Compose({ onClose, onSent }: ComposeProps) {
     };
 
     void tick();
+    // eslint-disable-next-line helix/pacer-discipline -- delivery poll against server status
     const intervalId = window.setInterval(() => {
       void tick();
     }, 1_500);
 
     return () => {
       cancelled = true;
+      // eslint-disable-next-line helix/pacer-discipline -- pair with setInterval above
       window.clearInterval(intervalId);
     };
   }, [sendStatus?.outboundId, sendStatus?.phase]);
@@ -334,10 +339,12 @@ export function Compose({ onClose, onSent }: ComposeProps) {
   useEffect(() => {
     if (sendStatus === null) return;
     if (sendStatus.phase !== "sent" && sendStatus.phase !== "cancelled") return;
+    // eslint-disable-next-line helix/pacer-discipline -- brief terminal status display
     const timeoutId = window.setTimeout(() => {
       onClose();
     }, 1_200);
     return () => {
+      // eslint-disable-next-line helix/pacer-discipline -- pair with setTimeout above
       window.clearTimeout(timeoutId);
     };
   }, [onClose, sendStatus?.phase]);

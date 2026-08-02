@@ -68,16 +68,16 @@ const STATUS_VIEWS: Readonly<Record<DriveUploadState, DriveUploadStatusView>> = 
 };
 
 export function driveUploadStatusView(
-  state: DriveUploadState | string | null | undefined,
+  state: DriveUploadState | null | undefined,
 ): DriveUploadStatusView | null {
   if (state === null || state === undefined) return null;
   if (!(state in STATUS_VIEWS)) return null;
-  return STATUS_VIEWS[state as DriveUploadState];
+  return STATUS_VIEWS[state];
 }
 
 /** Content open/download/share is only allowed for active objects. */
 export function canOpenDriveObject(input: {
-  readonly uploadState?: DriveUploadState | string | null | undefined;
+  readonly uploadState?: DriveUploadState | null | undefined;
   readonly available?: boolean | null | undefined;
 }): boolean {
   // Either signal may deny; both must allow (or be omitted for legacy rows).
@@ -91,7 +91,7 @@ export function canOpenDriveObject(input: {
 }
 
 export function openDenialMessage(
-  state: DriveUploadState | string | null | undefined,
+  state: DriveUploadState | null | undefined,
 ): string {
   const view = driveUploadStatusView(state);
   if (view === null) {

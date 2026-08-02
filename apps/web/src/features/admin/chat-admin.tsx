@@ -71,7 +71,7 @@ export function ChatAdminSection() {
   const queryClient = useQueryClient();
   const retentionQuery = useQuery(chatRetentionQueryOptions());
   const retentionFailure = useQueryFailure(retentionQuery, () => {
-    void retentionQuery.refetch();
+    void queryClient.invalidateQueries({ queryKey: chatAdminQueryKeys.retention() });
   });
 
   const policy = retentionQuery.data;

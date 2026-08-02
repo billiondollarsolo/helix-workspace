@@ -63,10 +63,10 @@ export function DriveAdminSection() {
   const quotaQuery = useQuery(driveQuotaQueryOptions());
   const lifecycleQuery = useQuery(driveLifecycleQueryOptions());
   const quotaFailure = useQueryFailure(quotaQuery, () => {
-    void quotaQuery.refetch();
+    void queryClient.invalidateQueries({ queryKey: driveAdminQueryKeys.quota() });
   });
   const lifecycleFailure = useQueryFailure(lifecycleQuery, () => {
-    void lifecycleQuery.refetch();
+    void queryClient.invalidateQueries({ queryKey: driveAdminQueryKeys.lifecycle() });
   });
 
   const policy = lifecycleQuery.data;

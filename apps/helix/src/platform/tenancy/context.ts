@@ -3,6 +3,7 @@ import type { HelixConfig, TenantConfig } from "@helix/sdk-types";
 import { isSingleTenant, resolveHelixMode } from "../mode/index.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
 import { buildEffectiveTenantConfig, type PlanStore } from "./plans.js";
+import { resolveRequestOrgIdentity } from "./request-tenant-identity.js";
 
 export interface TenantContext {
   readonly orgId: string;
@@ -79,8 +80,20 @@ export async function resolveTenantContext(
   const plan = options.plans === undefined ? null : await options.plans.findById(org.planId);
   const effectiveConfig = buildEffectiveTenantConfig({ org, plan });
 
+  // G1.8 — Request-path org id must come from an explicitly resolved tenant
+  // (mode-bound single-tenant org or SaaS slug/header), never from inventing a
+  // tenant solely via HELIX_DEFAULT_ORG_ID when resolution failed. Single-tenant
+  // mode already resolved `org` via getOrCreateDefaultOrg; SaaS via slug. Both
+  // pass `resolvedTenantOrgId` so defaultOrgId cannot substitute.
+  const requestOrgId = resolveRequestOrgIdentity({
+    actorOrgId: undefined,
+    resolvedTenantOrgId: org.id,
+    defaultOrgId: options.defaultOrg?.id,
+    bootstrapContext: false,
+  });
+
   return {
-    orgId: org.id,
+    orgId: requestOrgId,
     orgSlug: org.slug,
     orgTier: org.tier,
     orgRegion: org.region,

@@ -2,6 +2,10 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Actor, TenantConfig } from "@helix/sdk-types";
 import { enrichActiveSpanWithTenant } from "../observability/tenant-span.js";
 import type { TenantContext } from "./context.js";
+import {
+  RequestTenantIdentityError,
+  resolveRequestOrgIdentity,
+} from "./request-tenant-identity.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -74,16 +78,38 @@ export function shouldResolveTenantForRequest(request: FastifyRequest): boolean 
   return true;
 }
 
+/**
+ * G1.8 — Bind authenticated actors to the resolved request tenant using the
+ * shared request-tenant identity helper. Bootstrap `HELIX_DEFAULT_ORG_ID` is
+ * never accepted as a request-path substitute here (`defaultOrgId: undefined`).
+ */
 export function assertActorMatchesRequestTenant(
   request: { readonly tenant?: TenantContext | null },
   actor: Pick<Actor, "id" | "orgId" | "type">,
 ): void {
   const tenant = request.tenant;
-  if (tenant === null || tenant === undefined || actor.orgId === tenant.orgId) {
+  if (tenant === null || tenant === undefined) {
     return;
   }
   if (actor.id === "anonymous" || actor.type === "system") {
     return;
   }
-  throw new TenantActorMismatchError(tenant.orgId, actor.orgId);
+
+  try {
+    const boundOrgId = resolveRequestOrgIdentity({
+      actorOrgId: actor.orgId.length > 0 ? actor.orgId : undefined,
+      resolvedTenantOrgId: tenant.orgId,
+      // Request auth path must never invent a tenant from the bootstrap default.
+      defaultOrgId: undefined,
+      bootstrapContext: false,
+    });
+    if (actor.orgId.length === 0 || boundOrgId !== actor.orgId || boundOrgId !== tenant.orgId) {
+      throw new TenantActorMismatchError(tenant.orgId, actor.orgId);
+    }
+  } catch (error) {
+    if (error instanceof RequestTenantIdentityError) {
+      throw new TenantActorMismatchError(tenant.orgId, actor.orgId);
+    }
+    throw error;
+  }
 }

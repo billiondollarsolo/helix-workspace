@@ -173,6 +173,19 @@ describe("tenant actor boundary", () => {
     }).toThrow(TenantActorMismatchError);
   });
 
+  it("rejects empty actor org ids without inventing a bootstrap default tenant", () => {
+    expect(() => {
+      assertActorMatchesRequestTenant(
+        { tenant },
+        {
+          id: "actor-1",
+          orgId: "",
+          type: "user",
+        },
+      );
+    }).toThrow(TenantActorMismatchError);
+  });
+
   it("leaves tenantless and anonymous requests to existing auth handling", () => {
     expect(() => {
       assertActorMatchesRequestTenant(

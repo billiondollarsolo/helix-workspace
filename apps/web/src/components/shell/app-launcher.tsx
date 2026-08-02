@@ -1,7 +1,8 @@
 /* AppLauncher — 3-column grid of app tiles. Ported from the design handoff
    (shell.jsx → AppLauncher). Anchored below the Rail logo. */
 
-import { useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 import { Icons } from "@/components/icons";
 import { APPS } from "@/components/apps";
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
@@ -12,15 +13,58 @@ export interface AppLauncherProps {
 }
 
 export function AppLauncher({ open, onClose }: AppLauncherProps) {
-  const navigate = useNavigate();
   const enabled = useEnabledApps();
+  const launcherRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        launcherItems(launcherRef.current)[0]?.focus();
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (previousFocus?.isConnected === true) {
+        previousFocus.focus();
+      }
+    };
+  }, [open]);
+
   if (!open) {
     return null;
   }
   const visible = APPS.filter((app) => enabled.isEnabled(app.id));
   return (
-    <div className="launcher" onClick={(event) => event.stopPropagation()}>
+    <div
+      ref={launcherRef}
+      id="app-launcher"
+      className="launcher"
+      role="menu"
+      aria-labelledby="app-launcher-title"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        const items = launcherItems(launcherRef.current);
+        const current = items.indexOf(document.activeElement as HTMLElement);
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onClose();
+          return;
+        }
+        const nextIndex = launcherNextIndex(event.key, current, items.length);
+        if (nextIndex !== null) {
+          event.preventDefault();
+          items[nextIndex]?.focus();
+        }
+      }}
+    >
       <div
+        id="app-launcher-title"
         style={{
           fontSize: "var(--text-caption)",
           color: "var(--text-3)",
@@ -36,23 +80,44 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
         {visible.map((app) => {
           const Icon = Icons[app.icon];
           return (
-            <button
+            <Link
               key={app.id}
-              type="button"
+              to={app.route}
+              preload="intent"
+              role="menuitem"
               className="launcher-tile"
-              onClick={() => {
-                void navigate({ to: app.route });
-                onClose();
-              }}
+              onClick={onClose}
             >
               <span className="launcher-icon" style={{ background: app.color }}>
                 <Icon />
               </span>
               <span>{app.name}</span>
-            </button>
+            </Link>
           );
         })}
       </div>
     </div>
   );
+}
+
+function launcherItems(root: HTMLElement | null): HTMLElement[] {
+  return root === null ? [] : Array.from(root.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+}
+
+function launcherNextIndex(key: string, current: number, length: number): number | null {
+  if (length === 0) {
+    return null;
+  }
+  if (key === "Home") {
+    return 0;
+  }
+  if (key === "End") {
+    return length - 1;
+  }
+  const start = current < 0 ? 0 : current;
+  const delta = key === "ArrowRight" ? 1 : key === "ArrowLeft" ? -1 : key === "ArrowDown" ? 3 : -3;
+  if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(key)) {
+    return null;
+  }
+  return (start + delta + length) % length;
 }

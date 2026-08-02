@@ -202,12 +202,14 @@ export async function startSignup(
 export async function verifySignupEmail(
   token: string,
   fetchImpl: SignupFetch = fetch,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<SignupVerifyEmailResponse> {
   const response = await fetchImpl("/api/signup/verify-email", {
     method: "POST",
     credentials: "include",
     headers: jsonHeaders,
     body: JSON.stringify({ token }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   return parseResponse(response, "verify email", signupVerifyEmailResponseSchema);
 }
@@ -245,12 +247,14 @@ export async function recordSignupFormViewed(
 export async function acceptSignupOnboardingInvite(
   token: string,
   fetchImpl: SignupFetch = fetch,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<SignupOnboardingInviteAcceptResponse> {
   const response = await fetchImpl("/api/signup/onboarding-invite/accept", {
     method: "POST",
     credentials: "include",
     headers: jsonHeaders,
     body: JSON.stringify({ token }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   return parseResponse(
     response,

@@ -1,7 +1,7 @@
 import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, Dna, Loader2, TriangleAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   resendSignupVerification,
   SignupApiError,
@@ -21,47 +21,50 @@ type VerifyState =
       readonly status: "error";
       readonly message: string;
       readonly canResend: boolean;
+      readonly canRetry: boolean;
       readonly resendStatus?: "idle" | "sending" | "sent";
     };
 
 export function VerifyEmailShell({ token, fetchImpl = fetch }: VerifyEmailShellProps) {
   const [state, setState] = useState<VerifyState>({
     status: "verifying",
-    message: "Verifying your email...",
+    message: "Verifying your email…",
   });
-  const submittedTokenRef = useRef<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const retryVerification = useDebouncedCallback(
     (attempt: number, verify: (attempt: number) => void) => verify(attempt),
     { wait: 2_000 },
   );
 
   useEffect(() => {
-    if (submittedTokenRef.current === token) {
-      return;
-    }
-    submittedTokenRef.current = token;
+    const controller = new AbortController();
 
     if (token.trim().length === 0) {
       setState({
         status: "error",
         message: "This verification link is missing its token.",
         canResend: false,
+        canRetry: false,
       });
-      return;
+      return () => controller.abort();
     }
 
     const verify = (attempt: number) => {
-      void verifySignupEmail(token, fetchImpl)
+      void verifySignupEmail(token, fetchImpl, { signal: controller.signal })
         .then((result) => {
+          if (controller.signal.aborted) return;
           setState({ status: "verified", result });
         })
         .catch((caught) => {
+          if (controller.signal.aborted) return;
           if (isTenantNotReady(caught) && attempt < 6) {
             setState({
               status: "verifying",
-              message: "Finishing workspace setup...",
+              message: "Finishing workspace setup…",
             });
-            retryVerification(attempt + 1, verify);
+            retryVerification(attempt + 1, (nextAttempt) => {
+              if (!controller.signal.aborted) verify(nextAttempt);
+            });
             return;
           }
           setState({
@@ -71,13 +74,16 @@ export function VerifyEmailShell({ token, fetchImpl = fetch }: VerifyEmailShellP
                 ? caught.message
                 : "Email verification could not be completed.",
             canResend: canResendVerification(caught),
+            canRetry: true,
             resendStatus: "idle",
           });
         });
     };
 
+    setState({ status: "verifying", message: "Verifying your email…" });
     verify(1);
-  }, [fetchImpl, retryVerification, token]);
+    return () => controller.abort();
+  }, [fetchImpl, retryNonce, retryVerification, token]);
 
   function resend(): void {
     if (token.trim().length === 0 || state.status !== "error" || !state.canResend) {
@@ -90,6 +96,7 @@ export function VerifyEmailShell({ token, fetchImpl = fetch }: VerifyEmailShellP
           status: "error",
           message: "If this link can be refreshed, we will send a new verification email.",
           canResend: false,
+          canRetry: false,
           resendStatus: "sent",
         });
       })
@@ -99,6 +106,7 @@ export function VerifyEmailShell({ token, fetchImpl = fetch }: VerifyEmailShellP
           message:
             caught instanceof Error ? caught.message : "Verification email could not be resent.",
           canResend: true,
+          canRetry: true,
           resendStatus: "idle",
         });
       });
@@ -125,7 +133,7 @@ export function VerifyEmailShell({ token, fetchImpl = fetch }: VerifyEmailShellP
         </div>
 
         {state.status === "verifying" ? (
-          <div className="auth-success" role="status">
+          <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
             <Loader2 className="auth-spinner" aria-hidden="true" />
             <span>{state.message}</span>
           </div>
@@ -144,13 +152,24 @@ export function VerifyEmailShell({ token, fetchImpl = fetch }: VerifyEmailShellP
             onClick={resend}
             disabled={state.resendStatus === "sending"}
           >
-            {state.resendStatus === "sending" ? "Sending..." : "Send a new link"}
+            {state.resendStatus === "sending" ? "Sending…" : "Send a new link"}
+            <ArrowRight aria-hidden="true" />
+          </button>
+        ) : null}
+
+        {state.status === "error" && state.canRetry ? (
+          <button
+            className="btn primary lg auth-submit"
+            type="button"
+            onClick={() => setRetryNonce((value) => value + 1)}
+          >
+            Try verification again
             <ArrowRight aria-hidden="true" />
           </button>
         ) : null}
 
         {state.status === "verified" ? (
-          <div className="auth-success" role="status">
+          <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
             <CheckCircle2 aria-hidden="true" />
             <span>
               Workspace <strong>{state.result.org.slug}</strong> is active.

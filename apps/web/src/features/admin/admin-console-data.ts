@@ -164,6 +164,7 @@ export const ADMIN_NAV_GROUPS = [
       { id: "oauth-apps", label: "OAuth apps", icon: "Grid" },
       { id: "app-passwords", label: "App passwords", icon: "Key" },
       { id: "agent-credentials", label: "Agent credentials", icon: "Sparkles" },
+      { id: "agent-controls", label: "Agent emergency controls", icon: "Shield" },
       { id: "webhooks", label: "Webhooks", icon: "Send" },
     ],
   },

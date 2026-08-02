@@ -418,6 +418,8 @@ import {
   type ToolInvokeErrorResult,
 } from "./platform/tool-registry.js";
 import { PostgresPendingActionStore } from "./platform/tools/pending-actions-postgres-store.js";
+import { RuntimeAgentOperationalControlStore } from "./platform/tools/agent-operational-controls.js";
+import { createAgentOperationalControlTools } from "./platform/tools/agent-operational-controls-tools.js";
 import { InMemoryConfirmationGate } from "./platform/tools/registry.js";
 import {
   OutboundWebhookWorker,
@@ -2323,6 +2325,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       return featureFlags.getAsync(key, defaultValue, context);
     },
   };
+  // A10: process-local emergency kill / per-org agent-write disable (admin-settable).
+  const agentOperationalControls = new RuntimeAgentOperationalControlStore();
   const tools = createToolRegistry({
     accessPolicy: toolAccessPolicy,
     confirmationGate,
@@ -2330,6 +2334,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     auditSink: auditStore,
     agentRateCostLimiter,
     agentLimitTier: securityTier,
+    operationalControls: agentOperationalControls,
     ...(agentLimitBudgetOverride === undefined
       ? {}
       : { agentLimitBudget: agentLimitBudgetOverride }),
@@ -2408,6 +2413,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const resourceClassifier = createResourceClassifier(resourceClassificationService, (error) => {
     app.log.error({ error }, "Resource auto-classification failed");
   });
+  for (const tool of createAgentOperationalControlTools(agentOperationalControls)) {
+    tools.register(tool);
+  }
   registerWebhookTools(tools, { store: webhookStore });
   // Core-app agent tools are contributed per app, conditionally on enablement
   // + role: a disabled app contributes no tools to the registry, so it is

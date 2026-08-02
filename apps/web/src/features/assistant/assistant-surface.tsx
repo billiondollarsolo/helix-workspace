@@ -49,6 +49,11 @@ import {
   type AssistantChatMessage,
   type AssistantThread,
 } from "@/features/assistant/assistant-data";
+import {
+  PendingApprovalsPanel,
+  type PendingApprovalItem,
+} from "@/features/assistant/pending-approvals";
+import { applyAssistantToolDecision } from "@/features/assistant/tool-decisions";
 
 const USER_NAME = "You";
 
@@ -99,6 +104,8 @@ export function AssistantSurface() {
   const [renameTarget, setRenameTarget] = useState<AssistantThread | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AssistantThread | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<readonly PendingApprovalItem[]>([]);
+  const [approvalBusy, setApprovalBusy] = useState(false);
   const conversationIdRef = useRef<string | undefined>(undefined);
 
   const trimmedSearch = search.trim();
@@ -187,6 +194,26 @@ export function AssistantSurface() {
               ...(finalText !== undefined && finalText.length > 0 ? { text: finalText } : {}),
             });
           }
+          // A12: surface pending tool confirmations for explicit approve/deny.
+          const fromTurn: PendingApprovalItem[] = (turn.pendingConfirmations ?? []).map(
+            (pending) => ({
+              id: pending.id,
+              toolId: pending.toolId,
+              status: "pending" as const,
+            }),
+          );
+          const fromCalls: PendingApprovalItem[] = [];
+          for (const call of turn.toolCalls ?? []) {
+            if (call.pending !== undefined) {
+              fromCalls.push({
+                id: call.pending.id,
+                toolId: call.pending.toolId,
+                toolCallId: call.toolCallId,
+                status: "pending",
+              });
+            }
+          }
+          setPendingApprovals(fromTurn.length > 0 ? fromTurn : fromCalls);
           invalidateConversations();
         })
         .catch(() => {
@@ -197,6 +224,59 @@ export function AssistantSurface() {
         });
     },
     [pending, invalidateConversations],
+  );
+
+  const decidePending = useCallback(
+    async (item: PendingApprovalItem, decision: "confirm" | "cancel") => {
+      const conversationId = conversationIdRef.current;
+      if (conversationId === undefined) {
+        return;
+      }
+      setApprovalBusy(true);
+      setPendingApprovals((prev) =>
+        prev.map((entry) =>
+          entry.id === item.id ? { ...entry, status: "running", error: undefined } : entry,
+        ),
+      );
+      try {
+        await applyAssistantToolDecision({
+          conversationId,
+          pendingId: item.id,
+          toolCallId: item.toolCallId ?? item.id,
+          decision,
+          setToolError: (_toolCallId, message) => {
+            setPendingApprovals((prev) =>
+              prev.map((entry) =>
+                entry.id === item.id
+                  ? {
+                      ...entry,
+                      status: "pending",
+                      ...(message === undefined ? {} : { error: message }),
+                    }
+                  : entry,
+              ),
+            );
+          },
+          setToolStatus: (_toolCallId, status) => {
+            setPendingApprovals((prev) =>
+              prev.map((entry) => (entry.id === item.id ? { ...entry, status } : entry)),
+            );
+          },
+        });
+        setPendingApprovals((prev) =>
+          prev.map((entry) =>
+            entry.id === item.id
+              ? { ...entry, status: decision === "confirm" ? "confirmed" : "cancelled" }
+              : entry,
+          ),
+        );
+      } catch {
+        // Error state already set via setToolError when possible.
+      } finally {
+        setApprovalBusy(false);
+      }
+    },
+    [],
   );
 
   const openThread = useCallback((id: string) => {
@@ -344,7 +424,17 @@ export function AssistantSurface() {
         ) : (
           <AssistantHero onPrompt={send} />
         )}
-        <AssistantComposer onSend={send} pending={pending} />
+        <PendingApprovalsPanel
+          items={pendingApprovals}
+          busy={approvalBusy}
+          onConfirm={(item) => {
+            void decidePending(item, "confirm");
+          }}
+          onCancel={(item) => {
+            void decidePending(item, "cancel");
+          }}
+        />
+        <AssistantComposer onSend={send} pending={pending || approvalBusy} />
       </div>
       {renameTarget !== null && (
         <RenameDialog

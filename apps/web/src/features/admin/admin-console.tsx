@@ -98,6 +98,11 @@ const SECTION_CONTENT: Record<AdminSectionId, ComponentType> = {
     "AgentCredentialsManagement",
     { scroll: true },
   ),
+  "agent-controls": section(
+    () => import("@/features/admin/agent-controls"),
+    "AgentControlsManagement",
+    { scroll: true },
+  ),
   webhooks: section(() => import("@/features/webhooks/webhook-management"), "WebhookManagement", {
     scroll: true,
   }),

@@ -1263,6 +1263,10 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     if (tool.sideEffects === "read") {
       return { allowed: true };
     }
+    // A10: allow admin control tools while kill is engaged so Clear emergency kill works.
+    if (tool.id === "admin.agent_controls.set" || tool.id === "admin.agent_controls.get") {
+      return { allowed: true };
+    }
     const external = await options.operationalControls?.evaluate({
       actor,
       tool,

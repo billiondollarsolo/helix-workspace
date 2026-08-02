@@ -114,4 +114,18 @@ describe("evaluateAgentOperationalControls (A10)", () => {
     });
     expect(decision.allowed).toBe(true);
   });
+
+  it("allows admin.agent_controls.set under emergency kill so Clear kill works", () => {
+    const setTool = {
+      id: "admin.agent_controls.set",
+      sideEffects: "write",
+    } as ToolDefinition;
+    expect(
+      evaluateAgentOperationalControls({
+        actor: user,
+        tool: setTool,
+        snapshot: { ...EMPTY_OPERATIONAL_CONTROL_SNAPSHOT, globalReadOnly: true },
+      }),
+    ).toEqual({ allowed: true });
+  });
 });

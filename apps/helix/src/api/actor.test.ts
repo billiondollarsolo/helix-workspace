@@ -200,6 +200,43 @@ describe("resolveCredentialAuthenticatedPrincipal", () => {
     expect(result).toMatchObject({ ok: false, statusCode: 403, code: "ip_not_allowed" });
   });
 
+  it("rejects an expired agent API key at principal resolution", async () => {
+    const { apiKey, apiKeyHash } = createApiKeyMaterial();
+    const result = await resolveCredentialAuthenticatedPrincipal(
+      requestWith({ authorization: `Bearer ${apiKey}` }, {}),
+      storeWith([
+        agentCredential({
+          apiKeyHash,
+          expiresAt: new Date("2020-01-01T00:00:00.000Z"),
+        }),
+      ]),
+    );
+    expect(result).toMatchObject({ ok: false, statusCode: 403, code: "credential_expired" });
+  });
+
+  it("rejects an API key request outside the credential allowed-hours window", async () => {
+    const { apiKey, apiKeyHash } = createApiKeyMaterial();
+    // days: [99] never matches 0–6, so wall-clock principal resolution always denies.
+    const denied = await resolveCredentialAuthenticatedPrincipal(
+      requestWith({ authorization: `Bearer ${apiKey}` }, {}),
+      storeWith([
+        agentCredential({
+          apiKeyHash,
+          policy: {
+            ...EMPTY_CREDENTIAL_POLICY,
+            allowedHours: {
+              startHour: 0,
+              endHour: 23,
+              timeZone: "UTC",
+              days: [99],
+            },
+          },
+        }),
+      ]),
+    );
+    expect(denied).toMatchObject({ ok: false, statusCode: 403, code: "outside_allowed_hours" });
+  });
+
   it("authenticates an mTLS certificate fingerprint", async () => {
     const store = storeWith([
       agentCredential({ credentialType: "mtls_cert", certFingerprint: "aabbcc" }),

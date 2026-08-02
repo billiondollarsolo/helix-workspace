@@ -35,6 +35,8 @@ workspace:
   # Exact production MVP allowlist. Full Workspace allowlist is documented only until PKG.
   apps: "mail,drive,chat,assistant"
   editorsMigrationsEnabled: false
+  # Required when profile=full and apps include docs/sheets/slides (HELIX_EDITORS_PIN_PRESENT).
+  editorsPinPresent: false
   modules:
     docs:
       enabled: false
@@ -44,6 +46,13 @@ workspace:
       enabled: false
     editors:
       enabled: false
+  # O-K.10 — Meet/Jitsi deps for Full Workspace (empty = fail-closed if meet in apps).
+  # Operators inject secrets via sealed-secrets/CSI; do not commit JWT secrets.
+  meet:
+    jitsiDomain: ""
+    # secretKeyRef name for MEET_JITSI_JWT_SECRET (chart does not invent a secret).
+    jitsiJwtSecretName: ""
+    jitsiJwtSecretKey: "jwt-secret"
 
 serviceAccount:
   create: true

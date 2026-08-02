@@ -13,6 +13,10 @@ data:
   HELIX_WORKSPACE_PROFILE: {{ default "mvp" .Values.workspace.profile | quote }}
   HELIX_APPS: {{ default "mail,drive,chat,assistant" .Values.workspace.apps | quote }}
   HELIX_EDITORS_MIGRATIONS_ENABLED: {{ ternary "true" "false" (default false .Values.workspace.editorsMigrationsEnabled) | quote }}
+  HELIX_EDITORS_PIN_PRESENT: {{ ternary "true" "false" (default false .Values.workspace.editorsPinPresent) | quote }}
+  {{- if and .Values.workspace.meet .Values.workspace.meet.jitsiDomain }}
+  MEET_JITSI_DOMAIN: {{ .Values.workspace.meet.jitsiDomain | quote }}
+  {{- end }}
   {{- /*
     FIPS is opt-in. The Helix crypto adapter treats an explicit
     HELIX_CRYPTO_ADAPTER as an override that selects the FipsCryptoProvider

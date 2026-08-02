@@ -92,6 +92,7 @@ export interface ProductionPostgresConfiguration {
 
 export interface ProductionDeploymentConfiguration {
   readonly NODE_ENV?: string | undefined;
+  readonly HELIX_WORKSPACE_PROFILE?: string | undefined;
   readonly HELIX_EDITORS_MIGRATIONS_ENABLED?: string | undefined;
   readonly HELIX_IMAGE?: string | undefined;
   readonly HELIX_WEB_IMAGE?: string | undefined;
@@ -321,10 +322,21 @@ function validateProductionDeploymentConfiguration(
   environment: ProductionDeploymentConfiguration,
   issues: ProductionConfigurationIssue[],
 ): void {
-  if (environment.HELIX_EDITORS_MIGRATIONS_ENABLED !== "false") {
+  const profile = resolveWorkspacePackagingProfile(environment.HELIX_WORKSPACE_PROFILE);
+  if (profile === "mvp" && environment.HELIX_EDITORS_MIGRATIONS_ENABLED !== "false") {
     issues.push({
       variable: "HELIX_EDITORS_MIGRATIONS_ENABLED",
       message: "must be exactly false for the production MVP",
+    });
+  }
+  if (
+    profile === "full" &&
+    environment.HELIX_EDITORS_MIGRATIONS_ENABLED !== "true" &&
+    environment.HELIX_EDITORS_MIGRATIONS_ENABLED !== "false"
+  ) {
+    issues.push({
+      variable: "HELIX_EDITORS_MIGRATIONS_ENABLED",
+      message: "must be explicitly true or false under Full Workspace packaging",
     });
   }
 
@@ -406,31 +418,13 @@ function validateProductionMvpScope(
   environment: Env,
   issues: ProductionConfigurationIssue[],
 ): void {
-  const profile = resolveWorkspacePackagingProfile(
-    (environment as { readonly HELIX_WORKSPACE_PROFILE?: string }).HELIX_WORKSPACE_PROFILE,
-  );
+  // Typed Env field (Zod) — never cast/optional-skip; stripped keys cannot flip profile.
+  const profile = resolveWorkspacePackagingProfile(environment.HELIX_WORKSPACE_PROFILE);
 
   // Deployment image pins always apply. Editors migrations: false in MVP; full
   // profile may enable editors and is validated by dependency gates below.
-  if (profile === "mvp") {
-    validateProductionDeploymentConfiguration(environment, issues);
-  } else {
-    // Still require image digests in production full mode.
-    const deploymentIssues: ProductionConfigurationIssue[] = [];
-    validateProductionDeploymentConfiguration(
-      {
-        ...environment,
-        // Temporarily satisfy editors check path: full mode re-validates migrations via gates.
-        HELIX_EDITORS_MIGRATIONS_ENABLED: "false",
-      },
-      deploymentIssues,
-    );
-    for (const issue of deploymentIssues) {
-      if (issue.variable !== "HELIX_EDITORS_MIGRATIONS_ENABLED") {
-        issues.push(issue);
-      }
-    }
-  }
+  // Image digests + profile-aware editors migrations flag.
+  validateProductionDeploymentConfiguration(environment, issues);
 
   for (const issue of validateWorkspaceAppsAllowlist({
     profile,
@@ -473,23 +467,62 @@ function validateProductionMvpScope(
     return;
   }
 
-  // Full Workspace: modules listed in HELIX_APPS must not be forced disabled;
-  // dependency gates refuse illegal combos (Meet without Jitsi, etc.).
+  // Full Workspace: refuse Meet without Jitsi, editors without pin/migrations, etc.
+  const pinPresent =
+    normalized(environment.HELIX_EDITORS_PIN_PRESENT)?.toLowerCase() === "true" ||
+    (normalized(environment.HELIX_EDITORS_CORE_APP_ENTRY) !== undefined &&
+      normalized(environment.HELIX_EDITORS_CORE_APP_MODULE) !== undefined);
+
+  const scannerKind =
+    normalized(environment.HELIX_DRIVE_SCANNER_KIND) ??
+    (normalized(environment.DRIVE_CLAMAV_ENABLED)?.toLowerCase() === "true" ||
+    normalized(environment.DRIVE_CLAMAV_ENABLED) === "1"
+      ? "clamav"
+      : undefined);
+
   for (const issue of validateFullWorkspaceDependencyGates({
     apps: environment.HELIX_APPS ?? "",
-    meetJitsiDomain:
-      (environment as { readonly MEET_JITSI_DOMAIN?: string }).MEET_JITSI_DOMAIN ??
-      (environment as { readonly JITSI_DOMAIN?: string }).JITSI_DOMAIN,
-    meetJitsiJwtSecret:
-      (environment as { readonly MEET_JITSI_JWT_SECRET?: string }).MEET_JITSI_JWT_SECRET ??
-      (environment as { readonly JITSI_JWT_SECRET?: string }).JITSI_JWT_SECRET,
+    meetJitsiDomain: environment.MEET_JITSI_DOMAIN,
+    meetJitsiJwtSecret: environment.MEET_JITSI_JWT_SECRET ?? environment.JITSI_JWT_SECRET,
     editorsMigrationsEnabled: environment.HELIX_EDITORS_MIGRATIONS_ENABLED,
-    helixEditorsPinPresent: true,
-    driveScannerKind: (environment as { readonly HELIX_DRIVE_SCANNER_KIND?: string })
-      .HELIX_DRIVE_SCANNER_KIND,
+    helixEditorsPinPresent: pinPresent,
+    driveScannerKind: scannerKind,
     securityTier: environment.HELIX_SECURITY_TIER,
   })) {
     issues.push(issue);
+  }
+
+  // Full Workspace modules that are in HELIX_APPS must not be forced disabled.
+  const apps = new Set(
+    (environment.HELIX_APPS ?? "")
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length > 0),
+  );
+  for (const moduleId of ["docs", "calendar", "meet", "editors"] as const) {
+    if (!apps.has(moduleId) && moduleId !== "editors") {
+      continue;
+    }
+    if (moduleId === "editors") {
+      const editorsInApps = apps.has("docs") || apps.has("sheets") || apps.has("slides");
+      if (!editorsInApps) {
+        continue;
+      }
+    } else if (!apps.has(moduleId)) {
+      continue;
+    }
+    const moduleConfig = modules?.[moduleId === "editors" ? "docs" : moduleId];
+    const forcedOff =
+      typeof moduleConfig === "object" &&
+      moduleConfig !== null &&
+      !Array.isArray(moduleConfig) &&
+      (moduleConfig as { readonly enabled?: unknown }).enabled === false;
+    if (forcedOff && moduleId !== "editors") {
+      issues.push({
+        variable: "HELIX_CONFIG_JSON",
+        message: `modules.${moduleId}.enabled cannot be false when ${moduleId} is in Full Workspace HELIX_APPS`,
+      });
+    }
   }
 }
 

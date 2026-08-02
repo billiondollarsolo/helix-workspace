@@ -387,4 +387,88 @@ describe("assertProductionConfiguration", () => {
     expect((caught as Error).message).toContain("BETTER_AUTH_SECRET");
     expect((caught as Error).message).not.toContain(sensitive);
   });
+
+  it("defaults HELIX_WORKSPACE_PROFILE to mvp when unset (boot-reachable)", () => {
+    const env = loadEnv(productionFixture());
+    expect(env.HELIX_WORKSPACE_PROFILE).toBeUndefined();
+    expect(() => {
+      assertProductionConfiguration(env);
+    }).not.toThrow();
+  });
+
+  it("accepts Full Workspace profile when deps are present (boot path)", () => {
+    const jwtSecret = secret();
+    const env = loadEnv({
+      ...productionFixture(),
+      HELIX_WORKSPACE_PROFILE: "full",
+      HELIX_APPS: "mail,drive,chat,assistant,calendar,meet,docs,sheets,slides",
+      HELIX_EDITORS_MIGRATIONS_ENABLED: "true",
+      HELIX_EDITORS_PIN_PRESENT: "true",
+      HELIX_EDITORS_CORE_APP_ENTRY: "core-app",
+      HELIX_EDITORS_CORE_APP_MODULE: "@helix/editors-core-app",
+      MEET_JITSI_DOMAIN: "meet.example.test",
+      MEET_JITSI_JWT_SECRET: jwtSecret,
+      HELIX_DRIVE_SCANNER_KIND: "clamav",
+      HELIX_CONFIG_JSON: JSON.stringify({
+        modules: {
+          docs: { enabled: true },
+          calendar: { enabled: true },
+          meet: { enabled: true },
+          editors: { enabled: true },
+        },
+      }),
+    });
+    expect(env.HELIX_WORKSPACE_PROFILE).toBe("full");
+    expect(() => {
+      assertProductionConfiguration(env);
+    }).not.toThrow();
+  });
+
+  it("refuses Full Workspace meet without Jitsi secret (fail-closed)", () => {
+    assertRejected(
+      {
+        HELIX_WORKSPACE_PROFILE: "full",
+        HELIX_APPS: "mail,drive,chat,assistant,calendar,meet,docs,sheets,slides",
+        HELIX_EDITORS_MIGRATIONS_ENABLED: "true",
+        HELIX_EDITORS_PIN_PRESENT: "true",
+        MEET_JITSI_DOMAIN: "meet.example.test",
+        MEET_JITSI_JWT_SECRET: undefined,
+        HELIX_DRIVE_SCANNER_KIND: "clamav",
+        HELIX_CONFIG_JSON: JSON.stringify({
+          modules: {
+            docs: { enabled: true },
+            calendar: { enabled: true },
+            meet: { enabled: true },
+            editors: { enabled: true },
+          },
+        }),
+      },
+      "MEET_JITSI_JWT_SECRET",
+    );
+  });
+
+  it("refuses Full Workspace editors without pin assertion", () => {
+    assertRejected(
+      {
+        HELIX_WORKSPACE_PROFILE: "full",
+        HELIX_APPS: "mail,drive,chat,assistant,calendar,meet,docs,sheets,slides",
+        HELIX_EDITORS_MIGRATIONS_ENABLED: "true",
+        HELIX_EDITORS_PIN_PRESENT: "false",
+        HELIX_EDITORS_CORE_APP_ENTRY: undefined,
+        HELIX_EDITORS_CORE_APP_MODULE: undefined,
+        MEET_JITSI_DOMAIN: "meet.example.test",
+        MEET_JITSI_JWT_SECRET: secret(),
+        HELIX_DRIVE_SCANNER_KIND: "clamav",
+        HELIX_CONFIG_JSON: JSON.stringify({
+          modules: {
+            docs: { enabled: true },
+            calendar: { enabled: true },
+            meet: { enabled: true },
+            editors: { enabled: true },
+          },
+        }),
+      },
+      "HELIX_EDITORS_PIN",
+    );
+  });
 });

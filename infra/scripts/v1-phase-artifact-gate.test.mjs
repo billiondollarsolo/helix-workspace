@@ -67,6 +67,23 @@ describe("Full Workspace v1 phase artifact gate (O/V/PKG/R)", () => {
     expect(packaging).toMatch(/PRODUCTION_FULL_APPS_ALLOWLIST|resolveWorkspacePackagingProfile/);
     const assertions = read("apps/helix/src/config/production-assertions.ts");
     expect(assertions).toMatch(/validateWorkspaceAppsAllowlist|workspace-packaging/);
+    const env = read("apps/helix/src/config/env.ts");
+    expect(env).toMatch(/HELIX_WORKSPACE_PROFILE/);
+  });
+
+  it("ships O-K.15 drill, ED.10 budgets, and R3 go/no-go executables", () => {
+    mustExist("infra/scripts/k8s-drill-dry-run.mjs");
+    mustExist("infra/scripts/k8s-drill-dry-run.test.mjs");
+    mustExist("infra/scripts/r3-go-no-go.mjs");
+    mustExist("infra/scripts/r3-go-no-go.test.mjs");
+    mustExist("apps/web/src/features/docs/editor-perf-budget.ts");
+    mustExist("apps/web/src/features/docs/editor-perf-budget.test.ts");
+    const drill = read("infra/scripts/k8s-drill-dry-run.mjs");
+    expect(drill).toMatch(/O-K\.15|dry-run|buildEvidence/);
+    const r3 = read("infra/scripts/r3-go-no-go.mjs");
+    expect(r3).toMatch(/evaluateR3|go|no-go/);
+    const budgets = read("apps/web/src/features/docs/editor-perf-budget.ts");
+    expect(budgets).toMatch(/EDITOR_PERF_BUDGETS|evaluateEditorOpenBudget/);
   });
 
   it("ships SaaS deferral ADR for S+ after R3", () => {

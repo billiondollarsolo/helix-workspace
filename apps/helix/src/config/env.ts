@@ -55,6 +55,12 @@ const envSchema = z.object({
   HELIX_BODY_LIMIT_BYTES: coercePositiveInt(134_217_728),
   HELIX_ROLE: optionalString,
   HELIX_APPS: optionalString,
+  /**
+   * Production packaging profile (PKG).
+   * - `mvp` (default): mail,drive,chat,assistant only; editors migrations false
+   * - `full` / `v1` / `full-workspace`: Full Workspace allowlist + dependency gates
+   */
+  HELIX_WORKSPACE_PROFILE: optionalString,
   HELIX_IMAGE: optionalString,
   HELIX_WEB_IMAGE: optionalString,
   HELIX_POSTGRES_IMAGE: optionalString,
@@ -112,6 +118,8 @@ const envSchema = z.object({
   HELIX_ADMIN_DNS_VERIFICATION_ENABLED: optionalString,
   DRIVE_AUTO_TAG_ENRICHMENT: optionalString,
   DRIVE_CLAMAV_ENABLED: optionalString,
+  /** Business+ scanner kind when Full Workspace packaging is active (`clamav` required). */
+  HELIX_DRIVE_SCANNER_KIND: optionalString,
   DRIVE_CLAMAV_HOST: optionalString,
   DRIVE_CLAMAV_PORT: optionalString,
   DRIVE_CLAMAV_TIMEOUT_MS: optionalString,
@@ -280,6 +288,11 @@ const envSchema = z.object({
   HELIX_EDITORS_CORE_APP_ENTRY: optionalString,
   HELIX_EDITORS_CORE_APP_MODULE: optionalString,
   HELIX_EDITORS_MIGRATIONS_ENABLED: optionalString,
+  /**
+   * When `true`, operator asserts helix-editors pin/process is present (sibling
+   * checkout + boundary contract). Required for Full Workspace editors apps.
+   */
+  HELIX_EDITORS_PIN_PRESENT: optionalString,
 
   // Admin / backup / demo / smoke
   HELIX_ADMIN_BACKUP_EXECUTE: optionalString,
@@ -414,6 +427,7 @@ const migrationEnvSchema = envSchema.pick({
   POSTGRES_TLS_CERT_FILE: true,
   POSTGRES_TLS_KEY_FILE: true,
   POSTGRES_POOL_MAX: true,
+  HELIX_WORKSPACE_PROFILE: true,
   HELIX_EDITORS_MIGRATIONS_ENABLED: true,
   HELIX_EDITORS_CORE_APP_ENTRY: true,
   HELIX_EDITORS_CORE_APP_MODULE: true,
@@ -454,9 +468,29 @@ export function loadMigrationEnv(
       "Invalid migration environment configuration:\n  - DATABASE_URL: Required in production",
     );
   }
-  if (nodeEnv === "production" && resolvedSource.HELIX_EDITORS_MIGRATIONS_ENABLED !== "false") {
+  // MVP profile: editors migrations must stay false. Full Workspace may enable them.
+  const workspaceProfile = (resolvedSource.HELIX_WORKSPACE_PROFILE ?? "mvp").trim().toLowerCase();
+  const fullWorkspace =
+    workspaceProfile === "full" ||
+    workspaceProfile === "v1" ||
+    workspaceProfile === "full-workspace";
+  if (
+    nodeEnv === "production" &&
+    !fullWorkspace &&
+    resolvedSource.HELIX_EDITORS_MIGRATIONS_ENABLED !== "false"
+  ) {
     throw new Error(
-      "Invalid migration environment configuration:\n  - HELIX_EDITORS_MIGRATIONS_ENABLED: must be exactly false in production",
+      "Invalid migration environment configuration:\n  - HELIX_EDITORS_MIGRATIONS_ENABLED: must be exactly false in production MVP packaging",
+    );
+  }
+  if (
+    nodeEnv === "production" &&
+    fullWorkspace &&
+    resolvedSource.HELIX_EDITORS_MIGRATIONS_ENABLED !== "true" &&
+    resolvedSource.HELIX_EDITORS_MIGRATIONS_ENABLED !== "false"
+  ) {
+    throw new Error(
+      "Invalid migration environment configuration:\n  - HELIX_EDITORS_MIGRATIONS_ENABLED: must be explicitly true or false under Full Workspace packaging",
     );
   }
 

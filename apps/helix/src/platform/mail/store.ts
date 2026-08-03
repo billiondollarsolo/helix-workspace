@@ -1191,9 +1191,13 @@ export class PostgresMailStore
     // literally (S8). Falls back to the FTS-backed search indexer for richer queries.
     const query = escapeMailLike(rawQuery);
     const label = input.label ?? "";
-    // The tab filter only applies inside the inbox view; other folders are not
-    // category-bucketed.
-    const tab = folder === "inbox" ? (input.tab ?? null) : null;
+    // Tab filter only for inbox folder views without a label. Labels are
+    // exclusive (Gmail-style): a Finance label may live under Updates, so
+    // forcing Primary would empty the list while the label count stays non-zero.
+    const tab =
+      folder === "inbox" && (input.label === undefined || input.label === "")
+        ? (input.tab ?? null)
+        : null;
 
     // True drafts live in mail_drafts (A2.1). Queued outbound (undo window) still
     // surfaces here until sent/cancelled so the Drafts folder is never empty of

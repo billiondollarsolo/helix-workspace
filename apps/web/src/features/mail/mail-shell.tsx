@@ -166,6 +166,8 @@ function MailSidebar({
   const ordered = FOLDER_ORDER.map((id) => byId.get(id)).filter(
     (entry): entry is MailFolderSummary => entry != null,
   );
+  // Folder and label are exclusive views: never highlight both.
+  const folderActiveId = activeLabel === null ? folder : null;
 
   return (
     <aside className="surf-sidebar">
@@ -180,7 +182,7 @@ function MailSidebar({
       <div style={{ overflowY: "auto", flex: 1 }}>
         {ordered.map((entry) => {
           const Icon = Icons[FOLDER_ICONS[entry.id]];
-          const active = folder === entry.id;
+          const active = folderActiveId === entry.id;
           const badge = entry.id === "inbox" ? entry.unread : entry.total;
           return (
             <button
@@ -499,6 +501,8 @@ type SelectAllSubset = "all" | "none" | "read" | "unread" | "starred" | "unstarr
 interface ThreadListProps {
   readonly tab: MailTabId;
   readonly onTab: (tab: MailTabId) => void;
+  /** Hide Primary/Updates/… tabs for exclusive label views. */
+  readonly hideCategoryTabs?: boolean;
   readonly selected: string | null;
   readonly onSelect: (id: string) => void;
   readonly threads: readonly MailThreadRow[];
@@ -604,6 +608,7 @@ function PagerControls({
 function ThreadList({
   tab,
   onTab,
+  hideCategoryTabs = false,
   selected,
   onSelect,
   threads,
@@ -1129,25 +1134,27 @@ function ThreadList({
         </div>
       </div>
 
-      <div className="tabs" role="tablist" aria-label="Mail categories">
-        {MAIL_TABS.map((entry) => {
-          const Icon = Icons[entry.icon];
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === entry.id}
-              className={cx("tab", tab === entry.id && "active")}
-              onClick={() => {
-                onTab(entry.id);
-              }}
-            >
-              <Icon /> {entry.label}
-            </button>
-          );
-        })}
-      </div>
+      {hideCategoryTabs ? null : (
+        <div className="tabs" role="tablist" aria-label="Mail categories">
+          {MAIL_TABS.map((entry) => {
+            const Icon = Icons[entry.icon];
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === entry.id}
+                className={cx("tab", tab === entry.id && "active")}
+                onClick={() => {
+                  onTab(entry.id);
+                }}
+              >
+                <Icon /> {entry.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div style={{ flex: 1, overflowY: "auto" }}>
         {isError && (
@@ -1923,11 +1930,15 @@ export function MailShell() {
     void navigate({
       to: "/mail",
       search: {
-        ...(folder === "inbox" ? {} : { folder }),
-        ...(tab === "primary" ? {} : { tab }),
+        // Label views are exclusive — omit folder/tab so URL is ?label=…
+        ...(activeLabel
+          ? { label: activeLabel }
+          : {
+              ...(folder === "inbox" ? {} : { folder }),
+              ...(tab === "primary" ? {} : { tab }),
+            }),
         ...(selected ? { thread: selected } : {}),
         ...(query.length === 0 ? {} : { q: query }),
-        ...(activeLabel ? { label: activeLabel } : {}),
       },
       replace: false,
     });
@@ -1957,10 +1968,14 @@ export function MailShell() {
   const foldersQuery = useQuery(mailFoldersQueryOptions());
   const labelsQuery = useQuery(mailLabelsQueryOptions());
 
+  // Label view is exclusive of folder tabs: labeled mail often lives outside
+  // Primary (e.g. Finance → Updates). Applying inbox+primary+label empties the list
+  // while the label still shows a non-zero count.
   const threadsInput = useMemo(
     () => ({
-      folder,
-      tab: folder === "inbox" ? tab : undefined,
+      folder: activeLabel !== null ? "inbox" : folder,
+      // Skip category tabs whenever a label filter is active.
+      tab: activeLabel === null && folder === "inbox" ? tab : undefined,
       label: activeLabel ?? undefined,
       query: query.trim() === "" ? undefined : query.trim(),
       limit: PAGE_SIZE,
@@ -2314,7 +2329,9 @@ export function MailShell() {
           <MailSidebar
             folder={folder}
             onFolder={(next) => {
+              // Folder view is exclusive of labels.
               setFolder(next);
+              setActiveLabel(null);
               setSelected(null);
               setOffset(0);
               setCheckedIds(new Set());
@@ -2326,7 +2343,11 @@ export function MailShell() {
             labels={labels}
             activeLabel={activeLabel}
             onLabel={(next) => {
+              // Label view is exclusive of folder chrome (inbox stays data scope only).
               setActiveLabel(next);
+              if (next !== null) {
+                setFolder("inbox");
+              }
               setSelected(null);
               setOffset(0);
               setCheckedIds(new Set());
@@ -2397,6 +2418,7 @@ export function MailShell() {
                 setTab(next);
                 setOffset(0);
               }}
+              hideCategoryTabs={activeLabel !== null}
               selected={selected}
               onSelect={handleSelect}
               threads={threads}

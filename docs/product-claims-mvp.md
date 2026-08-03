@@ -22,7 +22,7 @@ A self-hostable workspace for:
 | Mail delivery        | Managed provider owns reputation, bounce, and complaint integration. Helix is not a direct-to-MX outbound MTA for this launch. |
 | Mail clients         | Web UI plus REST, MCP, CLI, and related APIs. **There is no Helix-hosted IMAP server.**                                        |
 | Chat confidentiality | Encrypted in transit; org/room ACL; audited admin access. **Not end-to-end encrypted.**                                        |
-| Drive                | Files and previews only in MVP packaging. **No native Docs/Sheets/Slides collaborative editing.**                              |
+| Drive                | Files and previews only in MVP packaging. **No native Docs/Sheets/Slides collaborative editing.** Primary file action is **Download** (not Open-in-editor). Desktop sync: open-source **rclone** over WebDAV — see `docs/drive-desktop-sync.md`. |
 | Agents               | Non-read tool calls require human confirmation by default. Agents cannot approve their own actions.                            |
 | Deployment           | Single-organization Business pilot (order of 5–50 trusted users). Public multi-tenant SaaS is deferred.                        |
 | Recovery             | Pilot objectives: 99.5% monthly availability, RPO ≤ 24h, RTO ≤ 4h — engineering objectives, not a contractual SLA.             |

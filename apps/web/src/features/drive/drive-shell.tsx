@@ -238,6 +238,10 @@ function editorDestinationForFile(
 }
 
 function driveFileDragHref(file: DriveFileItem): string {
+  // MVP storage-only: no editor open paths — drag payload is download/location.
+  if (CORE_WORKSPACE_STORAGE_ONLY) {
+    return `/drive?file=${encodeURIComponent(file.id)}`;
+  }
   const format = detectFormat(file.name, file.mimeType);
   if (file.app === "docs") {
     const suffix = format.surface === "docs" ? "?open=office" : "";
@@ -391,6 +395,12 @@ export function DriveShell() {
     const status = uploadStatusQuery.data;
     if (processingUpload === null || status?.state !== "active") return;
     void invalidateDrive();
+    // Storage-only MVP: never auto-route into /open or editors after upload.
+    if (CORE_WORKSPACE_STORAGE_ONLY) {
+      setSelectedFileId(processingUpload.objectId);
+      setProcessingUpload(null);
+      return;
+    }
     if (
       processingUpload.openAfterUpload &&
       shouldOpenUploadedFile(processingUpload.fileName, processingUpload.mimeType)
@@ -400,7 +410,7 @@ export function DriveShell() {
         params: { objectId: processingUpload.objectId },
       });
     }
-  }, [processingUpload, uploadStatusQuery.data]);
+  }, [processingUpload, uploadStatusQuery.data, navigate]);
 
   const trashMutation = useMutation({
     mutationFn: (objectId: string) => trashDriveObject(objectId),
@@ -743,7 +753,10 @@ export function DriveShell() {
   const onFileChosen = (event: ChangeEvent<HTMLInputElement>) => {
     const chosen = event.target.files?.[0];
     if (chosen !== undefined) {
-      uploadMutation.mutate({ file: chosen, openAfterUpload: true });
+      uploadMutation.mutate({
+        file: chosen,
+        openAfterUpload: !CORE_WORKSPACE_STORAGE_ONLY,
+      });
     }
     event.target.value = "";
   };
@@ -913,7 +926,7 @@ export function DriveShell() {
         onSetStarred={(id, starred) => starMutation.mutate({ objectId: id, starred })}
         onUpload={onPickFile}
         onDropFiles={(droppedFiles) => {
-          const openAfterUpload = droppedFiles.length === 1;
+          const openAfterUpload = !CORE_WORKSPACE_STORAGE_ONLY && droppedFiles.length === 1;
           for (const file of droppedFiles) {
             uploadMutation.mutate({ file, openAfterUpload });
           }
@@ -2259,17 +2272,20 @@ function DriveDetailsPanel({
           ) : null}
 
           <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-            <button
-              type="button"
-              className="btn sm primary"
-              disabled={entry === null || !openable}
-              title={openable ? "Open file" : openDenialMessage(statusView?.state)}
-              onClick={() => onOpen(file.id)}
-              style={{ flex: 1, justifyContent: "center" }}
-            >
-              <Icons.Eye />
-              Open
-            </button>
+            {/* Storage-only MVP: no native editors — do not offer Open. */}
+            {CORE_WORKSPACE_STORAGE_ONLY ? null : (
+              <button
+                type="button"
+                className="btn sm primary"
+                disabled={entry === null || !openable}
+                title={openable ? "Open file" : openDenialMessage(statusView?.state)}
+                onClick={() => onOpen(file.id)}
+                style={{ flex: 1, justifyContent: "center" }}
+              >
+                <Icons.Eye />
+                Open
+              </button>
+            )}
             <button
               type="button"
               className="btn sm"
@@ -2281,27 +2297,28 @@ function DriveDetailsPanel({
               <Icons.Star fill={file.starred ? "currentColor" : "none"} />
               {file.starred ? "Unstar" : "Star"}
             </button>
-            {/* Native editor docs (docs/sheets/slides) carry their content as
-                Yjs state inside the typed table, not as a raw blob in RustFS,
-                so the "Download" stream returns nothing useful. Hide the
-                button for those; the editor surfaces its own export flow. */}
+            {/* Native editor docs (docs/sheets/slides) carry content as Yjs
+                state, not a raw blob — hide Download outside storage-only.
+                In storage-only MVP every file is a blob; Download is primary. */}
             <a
-              className="btn sm"
+              className={CORE_WORKSPACE_STORAGE_ONLY ? "btn sm primary" : "btn sm"}
               href={!openable || entry === null ? undefined : driveRawDownloadUrl(entry)}
-              download={openable ? download?.name : undefined}
-              aria-disabled={download === null || !openable}
+              download={openable ? (entry?.name ?? download?.name) : undefined}
+              aria-disabled={!openable || entry === null}
               title={openable ? "Download file" : openDenialMessage(statusView?.state)}
               onClick={(event) => {
-                if (!openable || download === null) {
+                if (!openable || entry === null) {
                   event.preventDefault();
                 }
               }}
-              hidden={entry?.app !== null && entry?.app !== undefined}
+              hidden={
+                !CORE_WORKSPACE_STORAGE_ONLY && entry?.app !== null && entry?.app !== undefined
+              }
               style={{
                 flex: 1,
                 justifyContent: "center",
-                pointerEvents: openable && download !== null ? "auto" : "none",
-                opacity: openable && download !== null ? 1 : 0.5,
+                pointerEvents: openable && entry !== null ? "auto" : "none",
+                opacity: openable && entry !== null ? 1 : 0.5,
               }}
             >
               <Icons.Download />

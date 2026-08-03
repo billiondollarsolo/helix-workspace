@@ -99,13 +99,13 @@ export function openDenialMessage(state: DriveUploadState | null | undefined): s
     case "pending_upload":
     case "uploaded":
     case "scanning":
-      return `${view.label}. Open and download are disabled until the security scan finishes.`;
+      return `${view.label}. Download is disabled until the security scan finishes.`;
     case "quarantined":
-      return "This file is quarantined and cannot be opened, shared, or downloaded.";
+      return "This file is quarantined and cannot be shared or downloaded.";
     case "scan_failed":
-      return "Security scan failed for this file. Open and download are disabled.";
+      return "Security scan failed for this file. Download is disabled.";
     case "trashed":
-      return "This file is in trash. Restore it before opening.";
+      return "This file is in trash. Restore it before downloading.";
     case "active":
       return "This file is available.";
   }

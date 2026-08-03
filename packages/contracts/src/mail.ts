@@ -36,6 +36,17 @@ export const mailReplyInputSchema = mailSendInputSchema.omit({ subject: true }).
 });
 export type MailReplyInput = z.infer<typeof mailReplyInputSchema>;
 
+export const mailSpamCatcherSchema = z.enum([
+  "spamd",
+  "ai",
+  "rules",
+  "user",
+  "virus",
+  "scanner-policy",
+  "auth-failure",
+]);
+export type MailSpamCatcher = z.infer<typeof mailSpamCatcherSchema>;
+
 export const mailThreadRowSchema = z.object({
   threadId: z.string(),
   messageId: z.string(),
@@ -52,6 +63,8 @@ export const mailThreadRowSchema = z.object({
   category: z.string(),
   folder: z.string(),
   snoozedUntil: z.string().nullable(),
+  /** Who put this in Spam (spamd / AI beta / user). Omitted when not spam. */
+  spamCatcher: mailSpamCatcherSchema.nullable().optional(),
 });
 export type MailThreadRow = z.infer<typeof mailThreadRowSchema>;
 

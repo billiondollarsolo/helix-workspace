@@ -44,9 +44,24 @@ thread projection is read and displayed in a sandboxed iframe.
 When spamd is disabled or unreachable, ingest does not invent a spam score. Business tier may still
 quarantine on **malware** scanner failure (ClamAV), which is separate from the Spam folder.
 
+### Layered classification (ordered)
+
+```
+inbound message
+  → SpamAssassin (spamd), if enabled
+       ├─ spam  → Spam folder (catcher=spamd)  [AI is NOT run]
+       └─ pass  → beta AI spam tool (if MAIL_SPAM_AI_BETA_ENABLED)
+                    ├─ spam → Spam folder (catcher=ai or rules) + feedback row
+                    └─ pass → Inbox (and other normal folders)
+```
+
+Auto-caught spam stores `metadata.spam.catcher` and a `mail_spam_feedback` row (`auto_spamd` /
+`auto_ai` / `auto_rules`). In the Spam UI, AI/rules catches show **Was this correct?** with
+**Yes, spam** (user feedback confirm) or **No, not spam** (clears spam + ham feedback).
+
 ### Beta AI spam second-pass (optional)
 
-Off by default. When enabled, Helix may apply **rules + optional LLM** after spamd. Failures never
+Off by default. Runs **only after spamd passes** (not spam). Rules + optional LLM. Failures never
 block SMTP accept (fail-open). Labeled **beta** until further notice.
 
 | Variable | Purpose |

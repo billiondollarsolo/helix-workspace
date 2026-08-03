@@ -32,7 +32,7 @@ describe("evaluateSpamRules", () => {
 });
 
 describe("combineSpamDecisions", () => {
-  it("routes when spamd says spam", () => {
+  it("defensive: if spamd already spam, combine reports spamd (AI layer should not run)", () => {
     const rules = evaluateSpamRules({
       subject: "hello",
       bodyText: "normal body",
@@ -41,6 +41,27 @@ describe("combineSpamDecisions", () => {
     const d = combineSpamDecisions({ spamdIsSpam: true, rules, llm: null });
     expect(d.isSpam).toBe(true);
     expect(d.source).toBe("spamd");
+  });
+
+  it("does not call LLM when features say spamd already spam", async () => {
+    const fetchImpl = vi.fn();
+    const decision = await runBetaSpamSecondPass(
+      {
+        subject: "anything",
+        bodyText: "body",
+        fromAddress: "x@y.com",
+        spamdIsSpam: true,
+        spamdScore: 9,
+      },
+      getMailSpamAiConfig({
+        MAIL_SPAM_AI_BETA_ENABLED: "true",
+        MAIL_SPAM_AI_API_KEY: "sk-test",
+      }),
+      fetchImpl,
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(decision.source).toBe("spamd");
+    expect(decision.isSpam).toBe(true);
   });
 
   it("routes on strong rules when spamd is ham", () => {
@@ -148,6 +169,7 @@ describe("runBetaSpamSecondPass", () => {
     expect(fetchImpl).toHaveBeenCalled();
     expect(decision.isSpam).toBe(true);
     expect(decision.source).toBe("llm");
+    expect(decision.evidence.source).toBe("ai");
   });
 });
 

@@ -73,6 +73,8 @@ export interface MailThreadRowRecord {
   readonly category: MailCategoryTab;
   readonly folder: MailFolderId;
   readonly snoozedUntil: string | null;
+  /** Who filed this thread into Spam (from message scan metadata). */
+  readonly spamCatcher?: "spamd" | "ai" | "rules" | "user" | "virus" | "scanner-policy" | "auth-failure" | null;
 }
 
 export interface MailThreadListRequest {

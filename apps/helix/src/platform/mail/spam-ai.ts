@@ -133,8 +133,9 @@ export function evaluateSpamRules(features: SpamMessageFeatures): SpamRulesVerdi
 }
 
 /**
- * Combine spamd + rules + optional LLM. Prefer strong spam signals;
- * never force spam on unsure-only when spamd said ham unless rules are strong.
+ * Ordered pipeline after spamd has already **passed** (not spam).
+ * Callers must not invoke this when spamd already classified spam.
+ * Inside: rules + optional LLM only — never re-apply spamd vote here except evidence.
  */
 export function combineSpamDecisions(input: {
   readonly spamdIsSpam?: boolean | undefined;
@@ -144,33 +145,43 @@ export function combineSpamDecisions(input: {
 }): CombinedSpamDecision {
   const evidence: JsonObject = {
     beta: true,
+    layering: "spamd_then_ai_if_pass",
     spamdIsSpam: input.spamdIsSpam ?? null,
     spamdScore: input.spamdScore ?? null,
     rules: input.rules.evidence,
     llm: input.llm?.evidence ?? null,
   };
 
+  // Spamd already caught it — AI layer should not have been called; preserve signal.
   if (input.spamdIsSpam === true) {
     return { isSpam: true, label: "spam", source: "spamd", evidence };
   }
+  // AI tool: LLM high confidence spam
   if (input.llm?.label === "spam" && input.llm.confidence >= 0.7) {
-    return { isSpam: true, label: "spam", source: "llm", evidence };
+    return { isSpam: true, label: "spam", source: "llm", evidence: { ...evidence, source: "ai" } };
   }
+  // AI tool: strong rules
   if (input.rules.label === "spam") {
-    return { isSpam: true, label: "spam", source: "rules", evidence };
+    return { isSpam: true, label: "spam", source: "rules", evidence: { ...evidence, source: "rules" } };
   }
+  // Combined uncertain rules + moderate LLM
   if (
     input.rules.label === "unsure" &&
     input.llm?.label === "spam" &&
     (input.llm.confidence ?? 0) >= 0.55
   ) {
-    return { isSpam: true, label: "spam", source: "combined", evidence };
+    return {
+      isSpam: true,
+      label: "spam",
+      source: "combined",
+      evidence: { ...evidence, source: "ai" },
+    };
   }
   return {
     isSpam: false,
     label: input.rules.label === "unsure" || input.llm?.label === "unsure" ? "unsure" : "ham",
     source: "combined",
-    evidence,
+    evidence: { ...evidence, source: "pass" },
   };
 }
 
@@ -290,18 +301,28 @@ export function parseLlmSpamContent(content: string): SpamLlmVerdict {
 }
 
 /**
- * Full beta second-pass: rules always; LLM only when configured and key present.
- * Never throws for LLM failures — returns rules-only combined with spamd.
+ * AI spam tool after spamd **pass**. If features.spamdIsSpam is true, returns
+ * spamd spam immediately without LLM (defensive).
+ * Never throws for LLM failures — fail-open to rules-only / ham.
  */
 export async function runBetaSpamSecondPass(
   features: SpamMessageFeatures,
   config: MailSpamAiConfig,
   fetchImpl: LlmFetch = globalThis.fetch,
 ): Promise<CombinedSpamDecision> {
+  // Hard gate: do not spend LLM budget if spamd already flagged spam.
+  if (features.spamdIsSpam === true) {
+    return combineSpamDecisions({
+      spamdIsSpam: true,
+      spamdScore: features.spamdScore,
+      rules: evaluateSpamRules(features),
+      llm: null,
+    });
+  }
   const rules = evaluateSpamRules(features);
   if (!config.enabled) {
     return combineSpamDecisions({
-      spamdIsSpam: features.spamdIsSpam,
+      spamdIsSpam: false,
       spamdScore: features.spamdScore,
       rules,
       llm: null,
@@ -316,7 +337,7 @@ export async function runBetaSpamSecondPass(
     llm = null;
   }
   return combineSpamDecisions({
-    spamdIsSpam: features.spamdIsSpam,
+    spamdIsSpam: false,
     spamdScore: features.spamdScore,
     rules,
     llm,

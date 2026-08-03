@@ -57,6 +57,15 @@ export interface IngestRawMailInput {
  * Outcome of inbound spam + antivirus scanning. `routedToSpam` is true when
  * either scanner produced a verdict that moved the message to the Spam folder.
  */
+export type SpamCatcher =
+  | "spamd"
+  | "ai"
+  | "rules"
+  | "virus"
+  | "scanner-policy"
+  | "auth-failure"
+  | null;
+
 export interface InboundScanResult {
   readonly spam: SpamScanResult | null;
   readonly antivirus: AntivirusScanResult | null;
@@ -64,6 +73,11 @@ export interface InboundScanResult {
   /** True when malware policy withheld the message because no clean verdict exists. */
   readonly quarantined: boolean;
   readonly spamReason: "spam-score" | "virus" | "scanner-policy" | "auth-failure" | null;
+  /**
+   * Who put the message in Spam (for UI + feedback).
+   * Layering: spamd first; AI/rules only after spamd passes (not spam).
+   */
+  readonly spamCatcher?: SpamCatcher;
   readonly quarantineReasons?: readonly string[];
   readonly scannerUnavailable?: boolean;
 }
@@ -543,13 +557,37 @@ export async function ingestResolvedRawMail(input: {
               now: receivedAt,
             });
             filterResults.push({ actorId, result });
-            if (scan.routedToSpam) {
+            if (scan.routedToSpam && !scan.quarantined) {
               await input.store.updateThreadState({
                 orgId,
                 actorId,
                 threadId: stored.threadId,
                 patch: { spamAt: receivedAt },
               });
+              if (input.store.recordSpamFeedback !== undefined) {
+                const catcher = scan.spamCatcher;
+                const source =
+                  catcher === "ai"
+                    ? "auto_ai"
+                    : catcher === "rules"
+                      ? "auto_rules"
+                      : catcher === "spamd"
+                        ? "auto_spamd"
+                        : "auto_spamd";
+                await input.store.recordSpamFeedback({
+                  orgId,
+                  actorId,
+                  threadId: stored.threadId,
+                  messageId: stored.messageId,
+                  label: "spam",
+                  source,
+                  evidence: {
+                    catcher,
+                    reason: scan.spamReason,
+                    layering: "spamd_then_ai_if_pass",
+                  },
+                });
+              }
             }
           }
         }
@@ -642,17 +680,39 @@ export async function ingestRawMail(input: {
             ...(message.actorId === undefined ? {} : { recipientActorId: message.actorId }),
             ...(input.input.receivedAt === undefined ? {} : { now: input.input.receivedAt }),
           });
-          // Route a spam/virus-flagged message to the recipient's Spam folder.
+          // Route a spam-flagged message to the recipient's Spam folder.
           // Best-effort: a routed message that has no resolved actor (unknown
           // recipient) is left unrouted — there is no per-actor folder to file it
-          // into.
-          if (scan.routedToSpam && message.actorId != null) {
+          // into. Quarantine is separate (not Spam folder).
+          if (scan.routedToSpam && !scan.quarantined && message.actorId != null) {
             await input.store.updateThreadState({
               orgId: input.input.orgId,
               actorId: message.actorId,
               threadId: stored.threadId,
               patch: { spamAt: input.input.receivedAt ?? new Date() },
             });
+            if (input.store.recordSpamFeedback !== undefined) {
+              const catcher = scan.spamCatcher;
+              const source =
+                catcher === "ai"
+                  ? "auto_ai"
+                  : catcher === "rules"
+                    ? "auto_rules"
+                    : "auto_spamd";
+              await input.store.recordSpamFeedback({
+                orgId: input.input.orgId,
+                actorId: message.actorId,
+                threadId: stored.threadId,
+                messageId: stored.messageId,
+                label: "spam",
+                source,
+                evidence: {
+                  catcher,
+                  reason: scan.spamReason,
+                  layering: "spamd_then_ai_if_pass",
+                },
+              });
+            }
           }
           return { stored, auth, filterResult, scan };
         } catch (error) {
@@ -828,30 +888,39 @@ export async function scanInboundMail(
     virusRouted ||
     antivirus?.disposition === "quarantine" ||
     (tier !== "personal" && scannerUnavailable);
-  let spamRouted = spam !== null && spam.isSpam;
+  // Layer 1: SpamAssassin. If it says spam, do not run AI.
+  const spamdIsSpam = spam !== null && spam.isSpam;
+  let spamRouted = spamdIsSpam;
+  let spamCatcher: SpamCatcher = spamdIsSpam ? "spamd" : null;
   let spamReason: InboundScanResult["spamReason"] = virusRouted
     ? "virus"
     : policyQuarantined
       ? "scanner-policy"
-      : spamRouted
+      : spamdIsSpam
         ? "spam-score"
         : null;
+  if (virusRouted) spamCatcher = "virus";
+  else if (policyQuarantined) spamCatcher = "scanner-policy";
 
-  // Optional beta AI+rules second pass. Fail-open: never block accept on LLM errors.
+  // Layer 2: beta AI spam tool — only when spamd passed (not spam) and not quarantined.
+  // Fail-open: never block SMTP accept on LLM/rules errors.
   let betaEvidence: JsonObject | null = null;
-  if (scanners.betaSpamSecondPass !== undefined && !virusRouted && !policyQuarantined) {
+  let betaSource: "ai" | "rules" | null = null;
+  const spamdPassed = !spamdIsSpam && !virusRouted && !policyQuarantined;
+  if (scanners.betaSpamSecondPass !== undefined && spamdPassed) {
     try {
       const features = extractSpamFeaturesFromRaw(raw, spam);
       const decision = await scanners.betaSpamSecondPass(features);
       betaEvidence = decision.evidence;
       if (decision.isSpam) {
         spamRouted = true;
-        if (spamReason === null) {
-          spamReason = "spam-score";
-        }
+        spamReason = "spam-score";
+        const src = String((decision.evidence as { source?: string }).source ?? "ai");
+        betaSource = src === "rules" ? "rules" : "ai";
+        spamCatcher = betaSource;
       }
     } catch {
-      betaEvidence = { beta: true, failed: true };
+      betaEvidence = { beta: true, failed: true, layer: "ai-after-spamd-pass" };
     }
   }
 
@@ -861,11 +930,14 @@ export async function scanInboundMail(
       : {
           score: spam?.score ?? 0,
           thresholdReportedBySpamd: spam?.thresholdReportedBySpamd ?? null,
-          isSpam: spamRouted && !virusRouted && !policyQuarantined ? true : (spam?.isSpam ?? false),
+          isSpam: spamRouted && !virusRouted && !policyQuarantined,
           symbols: spam?.symbols ?? [],
           evidence: {
             ...(spam?.evidence ?? {}),
+            layering: "spamd_then_ai_if_pass",
+            spamdPassed,
             ...(betaEvidence === null ? {} : { betaSecondPass: betaEvidence }),
+            ...(spamCatcher === null ? {} : { catcher: spamCatcher }),
           },
         };
 
@@ -879,6 +951,7 @@ export async function scanInboundMail(
       : [],
     scannerUnavailable,
     spamReason,
+    spamCatcher,
   };
 }
 
@@ -934,13 +1007,18 @@ export function applyInboundSecurityPolicy(
       (auth.dkim === "fail" || auth.dkim === "none"));
   const quarantineReasons = new Set(scan.quarantineReasons ?? []);
   for (const reason of attachmentPolicy.reasons) quarantineReasons.add(reason);
+  const routedToSpam = scan.routedToSpam || authFailed || attachmentPolicy.quarantine;
+  let spamCatcher = scan.spamCatcher ?? null;
+  if (attachmentPolicy.quarantine) spamCatcher = scan.spamCatcher ?? "scanner-policy";
+  else if (authFailed && !scan.routedToSpam) spamCatcher = "auth-failure";
   return {
     ...scan,
-    routedToSpam: scan.routedToSpam || authFailed || attachmentPolicy.quarantine,
+    routedToSpam,
     quarantined: scan.quarantined || attachmentPolicy.quarantine,
     spamReason:
       scan.spamReason ??
       (attachmentPolicy.quarantine ? "scanner-policy" : authFailed ? "auth-failure" : null),
+    spamCatcher,
     quarantineReasons: [...quarantineReasons],
   };
 }
@@ -985,6 +1063,7 @@ function scanEvidence(scan: InboundScanResult): JsonObject {
     routedToSpam: scan.routedToSpam,
     quarantined: scan.quarantined,
     reason: scan.spamReason,
+    catcher: scan.spamCatcher ?? null,
     scannerUnavailable: scan.scannerUnavailable ?? false,
     quarantineReasons: [...(scan.quarantineReasons ?? [])],
     ...(scan.antivirus?.evidence === undefined ? {} : { antivirus: scan.antivirus.evidence }),
@@ -994,7 +1073,7 @@ function scanEvidence(scan: InboundScanResult): JsonObject {
 
 /** Merge spam + antivirus scan evidence into the stored message metadata. */
 function withScanMetadata(message: MailMessageInput, scan: InboundScanResult): MailMessageInput {
-  if (scan.spam === null && scan.antivirus === null) {
+  if (scan.spam === null && scan.antivirus === null && !scan.routedToSpam) {
     return message;
   }
   return {
@@ -1005,6 +1084,7 @@ function withScanMetadata(message: MailMessageInput, scan: InboundScanResult): M
         routedToSpam: scan.routedToSpam,
         quarantined: scan.quarantined,
         reason: scan.spamReason,
+        catcher: scan.spamCatcher ?? null,
         ...(scan.spam === null
           ? {}
           : {

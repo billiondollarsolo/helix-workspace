@@ -2323,6 +2323,21 @@ function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): MailThreadR
           subject: row.subject ?? "",
         })
       : coerceMailCategory(row.category);
+  const spamMeta =
+    row.metadata !== null && typeof row.metadata === "object" && "spam" in row.metadata
+      ? (row.metadata as { spam?: { catcher?: string | null } }).spam
+      : undefined;
+  const catcherRaw = spamMeta?.catcher;
+  const spamCatcher =
+    catcherRaw === "spamd" ||
+    catcherRaw === "ai" ||
+    catcherRaw === "rules" ||
+    catcherRaw === "user" ||
+    catcherRaw === "virus" ||
+    catcherRaw === "scanner-policy" ||
+    catcherRaw === "auth-failure"
+      ? catcherRaw
+      : null;
   return {
     threadId: row.thread_id,
     messageId: row.message_id,
@@ -2339,6 +2354,7 @@ function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): MailThreadR
     category,
     folder,
     snoozedUntil: row.snoozed_until?.toISOString() ?? null,
+    ...(folder === "spam" || spamCatcher !== null ? { spamCatcher } : {}),
   };
 }
 

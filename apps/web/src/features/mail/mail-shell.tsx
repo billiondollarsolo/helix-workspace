@@ -1248,6 +1248,8 @@ interface ThreadViewProps {
   readonly onToggleLabel: () => void;
   readonly onReportSpam?: (() => void) | undefined;
   readonly onNotSpam?: (() => void) | undefined;
+  /** Confirm AI beta catch was correct (writes feedback while staying in Spam). */
+  readonly onConfirmAiSpam?: (() => void) | undefined;
   readonly actionBusy: boolean;
   readonly actionError: string | null;
 }
@@ -1265,6 +1267,7 @@ function ThreadView({
   onToggleLabel,
   onReportSpam,
   onNotSpam,
+  onConfirmAiSpam,
   actionBusy,
   actionError,
 }: ThreadViewProps) {
@@ -1379,6 +1382,18 @@ function ThreadView({
             <Icons.Inbox /> Not spam
           </button>
         ) : null}
+        {onConfirmAiSpam !== undefined ? (
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Yes, this is spam"
+            disabled={actionBusy}
+            onClick={onConfirmAiSpam}
+            style={{ marginLeft: 4 }}
+          >
+            Yes, spam
+          </button>
+        ) : null}
         {onReportSpam !== undefined ? (
           <button
             type="button"
@@ -1418,6 +1433,45 @@ function ThreadView({
       </div>
       <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
         <div style={{ maxWidth: 880, margin: "0 auto", padding: "20px 32px" }}>
+          {row.spamCatcher === "ai" || row.spamCatcher === "rules" ? (
+            <div
+              role="status"
+              style={{
+                marginBottom: 16,
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                fontSize: "var(--text-meta)",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                alignItems: "center",
+              }}
+            >
+              <span>
+                {row.spamCatcher === "ai"
+                  ? "Caught by Helix AI spam (beta)."
+                  : "Caught by Helix spam rules (beta)."}{" "}
+                Was this correct?
+              </span>
+              {onConfirmAiSpam !== undefined ? (
+                <button
+                  type="button"
+                  className="btn sm primary"
+                  disabled={actionBusy}
+                  onClick={onConfirmAiSpam}
+                >
+                  Yes, spam
+                </button>
+              ) : null}
+              {onNotSpam !== undefined ? (
+                <button type="button" className="btn sm" disabled={actionBusy} onClick={onNotSpam}>
+                  No, not spam
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div style={{ marginBottom: 16 }}>
             <h1
               style={{
@@ -2321,6 +2375,15 @@ export function MailShell() {
                 folder === "spam"
                   ? () => {
                       notSpamMutation.mutate(selectedRow.threadId);
+                    }
+                  : undefined
+              }
+              onConfirmAiSpam={
+                folder === "spam" &&
+                (selectedRow.spamCatcher === "ai" || selectedRow.spamCatcher === "rules")
+                  ? () => {
+                      // Re-affirm spam so durable feedback records user agreement with AI/rules.
+                      spamMutation.mutate(selectedRow.threadId);
                     }
                   : undefined
               }

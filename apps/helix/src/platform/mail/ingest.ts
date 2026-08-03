@@ -58,13 +58,7 @@ export interface IngestRawMailInput {
  * either scanner produced a verdict that moved the message to the Spam folder.
  */
 export type SpamCatcher =
-  | "spamd"
-  | "ai"
-  | "rules"
-  | "virus"
-  | "scanner-policy"
-  | "auth-failure"
-  | null;
+  "spamd" | "ai" | "rules" | "virus" | "scanner-policy" | "auth-failure" | null;
 
 export interface InboundScanResult {
   readonly spam: SpamScanResult | null;
@@ -117,7 +111,8 @@ export interface InboundMailScanners {
   readonly tier?: SecurityTier;
   /**
    * Optional beta AI+rules second pass after spamd. Must not throw; callers
-   * treat missing/failed AI as no additional vote.
+   * treat missing/failed AI as no additional vote. Return `null` when beta is
+   * disabled at call time (config is re-resolved per invocation for hot-reload).
    */
   readonly betaSpamSecondPass?:
     | ((features: {
@@ -126,7 +121,7 @@ export interface InboundMailScanners {
         readonly fromAddress: string;
         readonly spamdScore?: number | undefined;
         readonly spamdIsSpam?: boolean | undefined;
-      }) => Promise<{ readonly isSpam: boolean; readonly evidence: JsonObject }>)
+      }) => Promise<{ readonly isSpam: boolean; readonly evidence: JsonObject } | null>)
     | undefined;
 }
 
@@ -694,11 +689,7 @@ export async function ingestRawMail(input: {
             if (input.store.recordSpamFeedback !== undefined) {
               const catcher = scan.spamCatcher;
               const source =
-                catcher === "ai"
-                  ? "auto_ai"
-                  : catcher === "rules"
-                    ? "auto_rules"
-                    : "auto_spamd";
+                catcher === "ai" ? "auto_ai" : catcher === "rules" ? "auto_rules" : "auto_spamd";
               await input.store.recordSpamFeedback({
                 orgId: input.input.orgId,
                 actorId: message.actorId,
@@ -911,13 +902,16 @@ export async function scanInboundMail(
     try {
       const features = extractSpamFeaturesFromRaw(raw, spam);
       const decision = await scanners.betaSpamSecondPass(features);
-      betaEvidence = decision.evidence;
-      if (decision.isSpam) {
-        spamRouted = true;
-        spamReason = "spam-score";
-        const src = String((decision.evidence as { source?: string }).source ?? "ai");
-        betaSource = src === "rules" ? "rules" : "ai";
-        spamCatcher = betaSource;
+      // null = beta disabled at call time (Admin/env may flip after boot).
+      if (decision !== null) {
+        betaEvidence = decision.evidence;
+        if (decision.isSpam) {
+          spamRouted = true;
+          spamReason = "spam-score";
+          const src = String((decision.evidence as { source?: string }).source ?? "ai");
+          betaSource = src === "rules" ? "rules" : "ai";
+          spamCatcher = betaSource;
+        }
       }
     } catch {
       betaEvidence = { beta: true, failed: true, layer: "ai-after-spamd-pass" };
@@ -975,9 +969,7 @@ export function extractSpamFeaturesFromRaw(
     subject,
     bodyText,
     fromAddress,
-    ...(spam === null
-      ? {}
-      : { spamdScore: spam.score, spamdIsSpam: spam.isSpam }),
+    ...(spam === null ? {} : { spamdScore: spam.score, spamdIsSpam: spam.isSpam }),
   };
 }
 

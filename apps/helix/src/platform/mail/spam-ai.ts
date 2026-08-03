@@ -13,6 +13,7 @@
  */
 
 import type { JsonObject } from "@helix/sdk-types";
+import { resolveAiEnv } from "../ai/operator-settings.js";
 
 export type SpamLabel = "spam" | "ham" | "unsure";
 
@@ -63,22 +64,36 @@ export interface SpamMessageFeatures {
   readonly spamdIsSpam?: boolean | undefined;
 }
 
-const SPAM_SUBJECT_PATTERNS: readonly { readonly id: string; readonly re: RegExp; readonly weight: number }[] =
-  [
-    { id: "subj_free_money", re: /\b(free\s+money|you\s+won|winner|lottery|prize)\b/iu, weight: 3 },
-    { id: "subj_crypto", re: /\b(crypto|bitcoin|nft|airdrop)\b.*\b(urgent|claim|wallet)\b/iu, weight: 2.5 },
-    { id: "subj_viagra", re: /\b(viagra|cialis|pharmacy)\b/iu, weight: 3 },
-    { id: "subj_reply_only", re: /^(re|fwd):\s*$/iu, weight: 1 },
-    { id: "subj_all_caps", re: /^[A-Z0-9\s!?.$]{12,}$/u, weight: 1.5 },
-  ];
+const SPAM_SUBJECT_PATTERNS: readonly {
+  readonly id: string;
+  readonly re: RegExp;
+  readonly weight: number;
+}[] = [
+  { id: "subj_free_money", re: /\b(free\s+money|you\s+won|winner|lottery|prize)\b/iu, weight: 3 },
+  {
+    id: "subj_crypto",
+    re: /\b(crypto|bitcoin|nft|airdrop)\b.*\b(urgent|claim|wallet)\b/iu,
+    weight: 2.5,
+  },
+  { id: "subj_viagra", re: /\b(viagra|cialis|pharmacy)\b/iu, weight: 3 },
+  { id: "subj_reply_only", re: /^(re|fwd):\s*$/iu, weight: 1 },
+  { id: "subj_all_caps", re: /^[A-Z0-9\s!?.$]{12,}$/u, weight: 1.5 },
+];
 
-const SPAM_BODY_PATTERNS: readonly { readonly id: string; readonly re: RegExp; readonly weight: number }[] =
-  [
-    { id: "body_click_here", re: /\bclick\s+here\s+(now|to\s+claim)\b/iu, weight: 2 },
-    { id: "body_wire_transfer", re: /\b(wire\s+transfer|western\s+union|gift\s+card)\b/iu, weight: 2.5 },
-    { id: "body_unsubscribe_only", re: /unsubscribe/iu, weight: 0.5 },
-    { id: "body_too_many_urls", re: /https?:\/\//giu, weight: 0 }, // special-cased
-  ];
+const SPAM_BODY_PATTERNS: readonly {
+  readonly id: string;
+  readonly re: RegExp;
+  readonly weight: number;
+}[] = [
+  { id: "body_click_here", re: /\bclick\s+here\s+(now|to\s+claim)\b/iu, weight: 2 },
+  {
+    id: "body_wire_transfer",
+    re: /\b(wire\s+transfer|western\s+union|gift\s+card)\b/iu,
+    weight: 2.5,
+  },
+  { id: "body_unsubscribe_only", re: /unsubscribe/iu, weight: 0.5 },
+  { id: "body_too_many_urls", re: /https?:\/\//giu, weight: 0 }, // special-cased
+];
 
 /** Pure rule scorer — no I/O. */
 export function evaluateSpamRules(features: SpamMessageFeatures): SpamRulesVerdict {
@@ -162,7 +177,12 @@ export function combineSpamDecisions(input: {
   }
   // AI tool: strong rules
   if (input.rules.label === "spam") {
-    return { isSpam: true, label: "spam", source: "rules", evidence: { ...evidence, source: "rules" } };
+    return {
+      isSpam: true,
+      label: "spam",
+      source: "rules",
+      evidence: { ...evidence, source: "rules" },
+    };
   }
   // Combined uncertain rules + moderate LLM
   if (
@@ -188,15 +208,17 @@ export function combineSpamDecisions(input: {
 export function getMailSpamAiConfig(
   env: Readonly<Record<string, string | undefined>>,
 ): MailSpamAiConfig {
-  const enabled = envFlag(env.MAIL_SPAM_AI_BETA_ENABLED);
-  const apiKey = env.MAIL_SPAM_AI_API_KEY ?? env.OPENAI_API_KEY;
+  // Admin-saved operator settings (platform-config) overlay env bootstrap.
+  const merged = resolveAiEnv(env);
+  const enabled = envFlag(merged.MAIL_SPAM_AI_BETA_ENABLED);
+  const apiKey = merged.MAIL_SPAM_AI_API_KEY ?? merged.OPENAI_API_KEY;
   const baseUrl = (
-    env.MAIL_SPAM_AI_BASE_URL ??
-    env.OPENAI_BASE_URL ??
+    merged.MAIL_SPAM_AI_BASE_URL ??
+    merged.OPENAI_BASE_URL ??
     "https://api.openai.com/v1"
   ).replace(/\/+$/u, "");
-  const model = env.MAIL_SPAM_AI_MODEL ?? env.OPENAI_MODEL ?? "gpt-4o-mini";
-  const timeoutMs = parsePositiveInt(env.MAIL_SPAM_AI_TIMEOUT_MS) ?? 4_000;
+  const model = merged.MAIL_SPAM_AI_MODEL ?? merged.OPENAI_MODEL ?? "gpt-4o-mini";
+  const timeoutMs = parsePositiveInt(merged.MAIL_SPAM_AI_TIMEOUT_MS) ?? 4_000;
   return {
     enabled,
     beta: true,
@@ -207,10 +229,7 @@ export function getMailSpamAiConfig(
   };
 }
 
-export type LlmFetch = (
-  input: string | URL | Request,
-  init?: RequestInit,
-) => Promise<Response>;
+export type LlmFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 /** Call an OpenAI-compatible chat completions endpoint. Throws on transport errors. */
 export async function classifySpamWithLlm(
@@ -362,23 +381,27 @@ function clamp01(n: number): number {
 }
 
 /**
- * Factory for inbound scan second-pass. Returns undefined when beta AI is off
- * (rules-only still available via runBetaSpamSecondPass when enabled).
+ * Factory for inbound scan second-pass.
+ *
+ * Always returns a runner so the SMTP path can wire it once at boot. Config is
+ * re-resolved on **every** invocation via {@link getMailSpamAiConfig} (which
+ * merges the Admin operator-settings overlay), so enablement / key / model
+ * changes from platform-config hot-reload apply without rebuilding the
+ * receiver. When beta is off at call time, returns `null` (skip — no vote).
  */
 export function createBetaSpamSecondPass(
-  env: Readonly<Record<string, string | undefined>>,
+  env: Readonly<Record<string, string | undefined>> = process.env,
   fetchImpl: LlmFetch = globalThis.fetch,
-):
-  | ((features: SpamMessageFeatures) => Promise<{
-      readonly isSpam: boolean;
-      readonly evidence: JsonObject;
-    }>)
-  | undefined {
-  const config = getMailSpamAiConfig(env);
-  if (!config.enabled) {
-    return undefined;
-  }
+): (features: SpamMessageFeatures) => Promise<{
+  readonly isSpam: boolean;
+  readonly evidence: JsonObject;
+} | null> {
   return async (features) => {
+    // Re-read env + Admin overlay each call — do not freeze config at factory time.
+    const config = getMailSpamAiConfig(env);
+    if (!config.enabled) {
+      return null;
+    }
     const decision = await runBetaSpamSecondPass(features, config, fetchImpl);
     return { isSpam: decision.isSpam, evidence: decision.evidence };
   };

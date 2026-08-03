@@ -13,6 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AdminAiRelatedNav } from "@/features/admin/admin-related-nav";
 import { EmptyState, PageHeading, StateBanner } from "@/features/admin/console/primitives";
 import {
   aiCostLimitsQueryKeys,
@@ -157,7 +158,14 @@ export function AICostLimitsManagement() {
     // `ai-costs` is registered through `withPageScroll` in admin-console.tsx,
     // so the scroll container, page padding, and 1280px cap already wrap this.
     <section className="grid gap-4">
-      <PageHeading title="AI cost limits" subtitle={tierDefaultSubtitle(tierDefault)} />
+      <PageHeading
+        title="Cost limits"
+        subtitle={
+          tierDefaultSubtitle(tierDefault) +
+          " Per-user overrides for daily AI spend. Provider keys and models live under AI providers."
+        }
+      />
+      <AdminAiRelatedNav current="ai-costs" />
 
       <section
         aria-labelledby="ai-cost-limits-form-heading"
@@ -241,11 +249,11 @@ export function AICostLimitsManagement() {
         </h2>
 
         {limitsQuery.isPending ? (
-          <StateBanner kind="loading">Loading AI cost limits…</StateBanner>
+          <StateBanner kind="loading">Loading cost limits…</StateBanner>
         ) : null}
         {limitsQuery.isError ? (
           <StateBanner kind="error">
-            AI cost limits are unavailable or admin AI scope is missing.
+            Cost limits are unavailable or admin AI scope is missing.
           </StateBanner>
         ) : null}
         {clearMutation.isError ? (

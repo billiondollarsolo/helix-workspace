@@ -42,6 +42,23 @@ Desktop file sync: users run **`pnpm helix:drive-sync`** (or
 folder** or **virtual drive**. No manual rclone config required. See
 [Drive desktop sync](drive-desktop-sync.md).
 
+## AI providers (Admin)
+
+Day-2 operators configure shared LLM settings under **Admin → AI → AI providers**
+(`/admin/ai-providers`):
+
+| Control                    | Effect                                                                 |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Mail spam AI (beta)        | Enables the second-pass after SpamAssassin pass (rules + optional LLM) |
+| Base URL / model / API key | OpenAI-compatible defaults for assistant chat/reply and spam AI        |
+
+Settings persist in platform-config (`ai.operatorLlm`, `ai.mailSpamAi`). GET never returns the raw
+API key—only whether one is stored. Process env (`OPENAI_*`, `MAIL_SPAM_AI_*`) remains bootstrap
+and airgap fallback; Admin values override when set. Mail spam AI applies after config hot-reload;
+assistant provider lists built at process start may require an API restart to pick up a newly
+stored key. Cost limits and observability remain under **AI → Cost limits** and **AI →
+Observability**. See [Mail security](mail-security-and-reliability.md) for the spam pipeline.
+
 ## Quality Gate Responsibilities
 
 Admins own release readiness for:

@@ -278,12 +278,10 @@ export async function runSetup(options = {}) {
 
   try {
     const urlRaw =
-      env.HELIX_SYNC_URL ??
-      (await prompt(rl, "Helix server URL (e.g. https://helix.company.com)"));
+      env.HELIX_SYNC_URL ?? (await prompt(rl, "Helix server URL (e.g. https://helix.company.com)"));
     const url = normalizeDavUrl(urlRaw);
 
-    const user =
-      env.HELIX_SYNC_USER ?? (await prompt(rl, "Your Helix email"));
+    const user = env.HELIX_SYNC_USER ?? (await prompt(rl, "Your Helix email"));
     if (!user.trim()) {
       throw new Error("Email is required.");
     }
@@ -300,8 +298,7 @@ export async function runSetup(options = {}) {
     log("    1) Mirror folder  — a normal folder that stays in sync (recommended)");
     log("    2) Virtual drive  — mount Helix like a network drive");
     log("");
-    const modeRaw =
-      env.HELIX_SYNC_MODE ?? (await prompt(rl, "Choose mode", { defaultValue: "1" }));
+    const modeRaw = env.HELIX_SYNC_MODE ?? (await prompt(rl, "Choose mode", { defaultValue: "1" }));
     const mode = parseMode(modeRaw);
 
     const defaultPath = defaultLocalPath(mode);

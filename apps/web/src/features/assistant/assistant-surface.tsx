@@ -18,7 +18,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
 } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { bucketThreadsByDate, type ThreadSidebarItem } from "./date-buckets";
@@ -95,10 +95,11 @@ function relativeTime(iso: string): string {
 
 export function AssistantSurface() {
   const navigate = useNavigate();
+  const urlSearch: { readonly conversation?: string } = useSearch({ strict: false });
   const queryClient = useQueryClient();
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(urlSearch.conversation ?? null);
   const [conversation, setConversation] = useState<readonly AssistantChatMessage[]>([]);
-  const [hasMessages, setHasMessages] = useState(false);
+  const [hasMessages, setHasMessages] = useState(() => urlSearch.conversation !== undefined);
   const [pending, setPending] = useState(false);
   const [search, setSearch] = useState("");
   const [renameTarget, setRenameTarget] = useState<AssistantThread | null>(null);
@@ -106,7 +107,40 @@ export function AssistantSurface() {
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<readonly PendingApprovalItem[]>([]);
   const [approvalBusy, setApprovalBusy] = useState(false);
-  const conversationIdRef = useRef<string | undefined>(undefined);
+  const conversationIdRef = useRef<string | undefined>(urlSearch.conversation);
+
+  const pushConversationUrl = useCallback(
+    (conversationId: string | null) => {
+      void navigate({
+        to: "/assistant",
+        search: conversationId === null ? {} : { conversation: conversationId },
+        replace: false,
+      });
+    },
+    [navigate],
+  );
+
+  // Deep link: if the URL conversation id changes (back/forward/share), open it.
+  useEffect(() => {
+    const fromUrl = urlSearch.conversation;
+    if (fromUrl === undefined) {
+      return;
+    }
+    if (conversationIdRef.current === fromUrl && threadId === fromUrl) {
+      return;
+    }
+    conversationIdRef.current = fromUrl;
+    setThreadId(fromUrl);
+    setHasMessages(true);
+    setConversation([
+      {
+        id: `resume-${fromUrl}`,
+        role: "assistant",
+        text: "Conversation reopened. Send a message to pick up where you left off.",
+        time: assistantNowTime(),
+      },
+    ]);
+  }, [threadId, urlSearch.conversation]);
 
   const trimmedSearch = search.trim();
   const conversationsQuery = useQuery(
@@ -182,6 +216,7 @@ export function AssistantSurface() {
           conversationIdRef.current = backendId ?? conversationIdRef.current;
           if (backendId !== undefined) {
             setThreadId(backendId);
+            pushConversationUrl(backendId);
           }
           // Hydrate the full persisted history when the turn carries it; this
           // is how a continued conversation keeps every prior message.
@@ -223,7 +258,7 @@ export function AssistantSurface() {
           setPending(false);
         });
     },
-    [pending, invalidateConversations],
+    [pending, invalidateConversations, pushConversationUrl],
   );
 
   const decidePending = useCallback(
@@ -279,29 +314,34 @@ export function AssistantSurface() {
     [],
   );
 
-  const openThread = useCallback((id: string) => {
-    setThreadId(id);
-    setHasMessages(true);
-    // Reopen and continue this backend conversation. The full message history
-    // hydrates from the next turn's persisted `messages`; until then we show a
-    // resume hint so the user knows which conversation is active.
-    conversationIdRef.current = id;
-    setConversation([
-      {
-        id: `resume-${id}`,
-        role: "assistant",
-        text: "Conversation reopened. Send a message to pick up where you left off.",
-        time: assistantNowTime(),
-      },
-    ]);
-  }, []);
+  const openThread = useCallback(
+    (id: string) => {
+      setThreadId(id);
+      setHasMessages(true);
+      // Reopen and continue this backend conversation. The full message history
+      // hydrates from the next turn's persisted `messages`; until then we show a
+      // resume hint so the user knows which conversation is active.
+      conversationIdRef.current = id;
+      setConversation([
+        {
+          id: `resume-${id}`,
+          role: "assistant",
+          text: "Conversation reopened. Send a message to pick up where you left off.",
+          time: assistantNowTime(),
+        },
+      ]);
+      pushConversationUrl(id);
+    },
+    [pushConversationUrl],
+  );
 
   const startNewChat = useCallback(() => {
     setThreadId(null);
     setConversation([]);
     setHasMessages(false);
     conversationIdRef.current = undefined;
-  }, []);
+    pushConversationUrl(null);
+  }, [pushConversationUrl]);
 
   const navigateToSurface = useCallback(
     (target: string) => {

@@ -20,9 +20,46 @@ export type PluginLifecycleState =
   | "uninstalled";
 
 export interface PlatformConfigPatch {
-  readonly security: {
+  readonly security?: {
     readonly tier: TierId;
   };
+  readonly ai?: {
+    readonly operatorLlm?: {
+      readonly baseUrl?: string;
+      readonly model?: string;
+      /** Write-only; omit to keep the stored key. */
+      readonly apiKey?: string;
+    };
+    readonly mailSpamAi?: {
+      readonly betaEnabled?: boolean;
+    };
+    readonly providers?: readonly AIProviderConfig[];
+    readonly routing?: {
+      readonly rules?: readonly AIRoutingRule[];
+    };
+  };
+}
+
+export interface AIProviderConfig {
+  readonly id: string;
+  readonly plugin: string;
+  readonly enabled?: boolean;
+  readonly tags?: readonly string[];
+  readonly config?: {
+    readonly baseUrl?: string;
+    readonly defaultModel?: string;
+    readonly model?: string;
+    readonly models?: readonly string[];
+    readonly apiKey?: string;
+    readonly apiKeyConfigured?: boolean;
+    readonly displayName?: string;
+  };
+}
+
+export interface AIRoutingRule {
+  readonly feature: string;
+  readonly primary: { readonly providerId: string; readonly model?: string };
+  readonly fallback?: { readonly providerId: string; readonly model?: string };
 }
 
 export interface TierDefinition {
@@ -79,6 +116,17 @@ export interface PlatformConfigStatus {
   };
 }
 
+export interface AIOperatorLlmStatus {
+  readonly baseUrl?: string;
+  readonly model?: string;
+  /** True when a key is stored; the key itself is never returned. */
+  readonly apiKeyConfigured?: boolean;
+}
+
+export interface AIMailSpamStatus {
+  readonly betaEnabled?: boolean;
+}
+
 export interface AIConfigStatus {
   readonly costLimits?: {
     readonly perUserPerDayUSD?: number;
@@ -93,6 +141,12 @@ export interface AIConfigStatus {
     readonly redactPIIBeforeSend?: boolean;
     readonly classificationGating?: boolean;
     readonly blockExternalForClassifications?: readonly string[];
+  };
+  readonly operatorLlm?: AIOperatorLlmStatus;
+  readonly mailSpamAi?: AIMailSpamStatus;
+  readonly providers?: readonly AIProviderConfig[];
+  readonly routing?: {
+    readonly rules?: readonly AIRoutingRule[];
   };
 }
 

@@ -85,6 +85,9 @@ const ADMIN_SCOPES = [
   "admin.console.read",
   "admin.console.write",
   "admin.ai",
+  // Product admin surfaces (tools gate on these; bare `admin` is not a wildcard).
+  "admin.chat",
+  "admin.drive",
 ] as const;
 
 /** Scopes for non-admin principals — read/write on every app surface

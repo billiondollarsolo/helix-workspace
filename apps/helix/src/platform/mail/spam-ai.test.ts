@@ -174,22 +174,91 @@ describe("runBetaSpamSecondPass", () => {
 });
 
 describe("createBetaSpamSecondPass", () => {
-  it("returns undefined when beta disabled", () => {
-    expect(createBetaSpamSecondPass({})).toBeUndefined();
+  it("always returns a runner; disabled beta yields null per call", async () => {
+    const runner = createBetaSpamSecondPass({});
+    expect(runner).toBeTypeOf("function");
+    await expect(
+      runner({
+        subject: "hello",
+        bodyText: "world",
+        fromAddress: "a@b.com",
+      }),
+    ).resolves.toBeNull();
   });
 
-  it("returns a runner when beta enabled", async () => {
+  it("returns a spam decision when beta enabled", async () => {
     const runner = createBetaSpamSecondPass({
       MAIL_SPAM_AI_BETA_ENABLED: "true",
       MAIL_SPAM_AI_API_KEY: "sk",
     });
     expect(runner).toBeTypeOf("function");
-    const result = await runner!({
+    const result = await runner({
       subject: "hello",
       bodyText: "world",
       fromAddress: "a@b.com",
     });
-    expect(typeof result.isSpam).toBe("boolean");
-    expect(result.evidence).toBeTruthy();
+    expect(result).not.toBeNull();
+    expect(typeof result!.isSpam).toBe("boolean");
+    expect(result!.evidence).toBeTruthy();
+  });
+
+  it("re-resolves enablement on each call (Admin hot-reload path)", async () => {
+    const env: Record<string, string | undefined> = {};
+    const runner = createBetaSpamSecondPass(env);
+    await expect(
+      runner({ subject: "x", bodyText: "y", fromAddress: "a@b.com" }),
+    ).resolves.toBeNull();
+
+    env.MAIL_SPAM_AI_BETA_ENABLED = "true";
+    env.MAIL_SPAM_AI_API_KEY = "sk";
+    const afterEnable = await runner({
+      subject: "hello",
+      bodyText: "world",
+      fromAddress: "a@b.com",
+    });
+    expect(afterEnable).not.toBeNull();
+    expect(typeof afterEnable!.isSpam).toBe("boolean");
+
+    env.MAIL_SPAM_AI_BETA_ENABLED = "false";
+    await expect(
+      runner({ subject: "x", bodyText: "y", fromAddress: "a@b.com" }),
+    ).resolves.toBeNull();
+  });
+
+  it("picks up Admin operator-settings overlay without recreating the runner", async () => {
+    const { applyOperatorAiFromHelixConfig } = await import("../ai/operator-settings.js");
+    // Isolate: empty process-like bag so only the overlay can enable beta.
+    const env: Record<string, string | undefined> = {};
+    const runner = createBetaSpamSecondPass(env);
+
+    await expect(
+      runner({ subject: "x", bodyText: "y", fromAddress: "a@b.com" }),
+    ).resolves.toBeNull();
+
+    applyOperatorAiFromHelixConfig({
+      security: { tier: "personal" },
+      ai: {
+        operatorLlm: { apiKey: "sk-admin", model: "gpt-4o-mini" },
+        mailSpamAi: { betaEnabled: true },
+      },
+    });
+    // Overlay wins when merged inside getMailSpamAiConfig(env).
+    const afterAdmin = await runner({
+      subject: "hello",
+      bodyText: "world",
+      fromAddress: "a@b.com",
+    });
+    expect(afterAdmin).not.toBeNull();
+
+    applyOperatorAiFromHelixConfig({
+      security: { tier: "personal" },
+      ai: { mailSpamAi: { betaEnabled: false } },
+    });
+    await expect(
+      runner({ subject: "x", bodyText: "y", fromAddress: "a@b.com" }),
+    ).resolves.toBeNull();
+
+    // Clear overlay so other tests are not polluted.
+    applyOperatorAiFromHelixConfig({ security: { tier: "personal" } });
   });
 });

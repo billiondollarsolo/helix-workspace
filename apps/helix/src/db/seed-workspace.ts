@@ -84,9 +84,7 @@ function uid(group: string, index: number): string {
 }
 
 /** Fixed ids for the seeded org mail labels (the `0b00` group, indices 1..7). */
-const MAIL_LABEL_IDS: readonly string[] = Array.from({ length: 7 }, (_, i) =>
-  uid("0b00", i + 1),
-);
+const MAIL_LABEL_IDS: readonly string[] = Array.from({ length: 7 }, (_, i) => uid("0b00", i + 1));
 
 function json(sql: SeedSql, value: postgres.JSONValue): postgres.Parameter {
   return sql.json(value);
@@ -343,7 +341,7 @@ function mailThreadSpecs(): readonly MailThreadSpec[] {
       daysAgo: 3,
       read: true,
       bodies: [
-        "Priya Raman shared the document \"Helix Brand Guidelines\" with you and gave you comment access.\n\nOpen the document to review and leave feedback.",
+        'Priya Raman shared the document "Helix Brand Guidelines" with you and gave you comment access.\n\nOpen the document to review and leave feedback.',
       ],
     },
     {
@@ -355,7 +353,7 @@ function mailThreadSpecs(): readonly MailThreadSpec[] {
       daysAgo: 1,
       read: false,
       bodies: [
-        "Morgan Diaz mentioned you in a comment on \"Q3 Roadmap & Planning\":\n\n  \"@you — can you confirm the engineering estimate for the Sheets\n  formula engine before Friday's review?\"\n\nReply from the document to continue the conversation.",
+        'Morgan Diaz mentioned you in a comment on "Q3 Roadmap & Planning":\n\n  "@you — can you confirm the engineering estimate for the Sheets\n  formula engine before Friday\'s review?"\n\nReply from the document to continue the conversation.',
       ],
     },
     {
@@ -507,14 +505,14 @@ function mailThreadSpecs(): readonly MailThreadSpec[] {
     },
     {
       idx: 23,
-      subject: "Doc comment resolved: \"Onboarding Checklist\"",
+      subject: 'Doc comment resolved: "Onboarding Checklist"',
       from: { address: "no-reply@helix.local", name: "Helix Docs" },
       category: "updates",
       labels: ["inbox"],
       daysAgo: 2,
       read: true,
       bodies: [
-        "A comment thread you participated in on \"New Hire Onboarding Checklist\" has been marked resolved by Priya Raman.\n\nOpen the document to see the final state.",
+        'A comment thread you participated in on "New Hire Onboarding Checklist" has been marked resolved by Priya Raman.\n\nOpen the document to see the final state.',
       ],
     },
     {
@@ -699,8 +697,7 @@ async function seedMail(sql: SeedSql, orgId: string): Promise<number> {
       // Attachment on the first message of flagged threads.
       if (spec.hasAttachment === true && mi === 0) {
         const objectId = uid("0e00", spec.idx);
-        const attBody =
-          `Attachment for "${spec.subject}".\n\nThis is a seeded PDF placeholder representing the document referenced in the email above.`;
+        const attBody = `Attachment for "${spec.subject}".\n\nThis is a seeded PDF placeholder representing the document referenced in the email above.`;
         await sql`
           insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
           values (
@@ -791,28 +788,158 @@ async function seedDrive(sql: SeedSql, orgId: string): Promise<{ folders: number
   }
 
   const files: DriveFileSpec[] = [
-    { idx: 1, name: "Q3 Roadmap.helixdoc", folder: 3, mime: "application/vnd.helix.document", kb: 42, daysAgo: 2 },
-    { idx: 2, name: "Roadmap Tracker.helixsheet", folder: 3, mime: "application/vnd.helix.sheet", kb: 88, daysAgo: 1 },
-    { idx: 3, name: "Feature Prioritization.pdf", folder: 3, mime: "application/pdf", kb: 312, daysAgo: 5 },
-    { idx: 4, name: "User Interviews — April.pdf", folder: 4, mime: "application/pdf", kb: 540, daysAgo: 12 },
-    { idx: 5, name: "Survey Results.helixsheet", folder: 4, mime: "application/vnd.helix.sheet", kb: 124, daysAgo: 9 },
-    { idx: 6, name: "Competitor Analysis.helixdoc", folder: 4, mime: "application/vnd.helix.document", kb: 67, daysAgo: 14, shared: true },
-    { idx: 7, name: "Architecture Overview.helixdoc", folder: 5, mime: "application/vnd.helix.document", kb: 95, daysAgo: 6 },
+    {
+      idx: 1,
+      name: "Q3 Roadmap.helixdoc",
+      folder: 3,
+      mime: "application/vnd.helix.document",
+      kb: 42,
+      daysAgo: 2,
+    },
+    {
+      idx: 2,
+      name: "Roadmap Tracker.helixsheet",
+      folder: 3,
+      mime: "application/vnd.helix.sheet",
+      kb: 88,
+      daysAgo: 1,
+    },
+    {
+      idx: 3,
+      name: "Feature Prioritization.pdf",
+      folder: 3,
+      mime: "application/pdf",
+      kb: 312,
+      daysAgo: 5,
+    },
+    {
+      idx: 4,
+      name: "User Interviews — April.pdf",
+      folder: 4,
+      mime: "application/pdf",
+      kb: 540,
+      daysAgo: 12,
+    },
+    {
+      idx: 5,
+      name: "Survey Results.helixsheet",
+      folder: 4,
+      mime: "application/vnd.helix.sheet",
+      kb: 124,
+      daysAgo: 9,
+    },
+    {
+      idx: 6,
+      name: "Competitor Analysis.helixdoc",
+      folder: 4,
+      mime: "application/vnd.helix.document",
+      kb: 67,
+      daysAgo: 14,
+      shared: true,
+    },
+    {
+      idx: 7,
+      name: "Architecture Overview.helixdoc",
+      folder: 5,
+      mime: "application/vnd.helix.document",
+      kb: 95,
+      daysAgo: 6,
+    },
     { idx: 8, name: "Service Diagram.png", folder: 5, mime: "image/png", kb: 880, daysAgo: 6 },
-    { idx: 9, name: "On-call Runbook.pdf", folder: 5, mime: "application/pdf", kb: 220, daysAgo: 3 },
-    { idx: 10, name: "Drive Browser Mockups.png", folder: 6, mime: "image/png", kb: 1_640, daysAgo: 3, shared: true },
-    { idx: 11, name: "Design System.helixdoc", folder: 6, mime: "application/vnd.helix.document", kb: 73, daysAgo: 7 },
-    { idx: 12, name: "Component Library.helixslides", folder: 6, mime: "application/vnd.helix.slides", kb: 2_100, daysAgo: 4 },
+    {
+      idx: 9,
+      name: "On-call Runbook.pdf",
+      folder: 5,
+      mime: "application/pdf",
+      kb: 220,
+      daysAgo: 3,
+    },
+    {
+      idx: 10,
+      name: "Drive Browser Mockups.png",
+      folder: 6,
+      mime: "image/png",
+      kb: 1_640,
+      daysAgo: 3,
+      shared: true,
+    },
+    {
+      idx: 11,
+      name: "Design System.helixdoc",
+      folder: 6,
+      mime: "application/vnd.helix.document",
+      kb: 73,
+      daysAgo: 7,
+    },
+    {
+      idx: 12,
+      name: "Component Library.helixslides",
+      folder: 6,
+      mime: "application/vnd.helix.slides",
+      kb: 2_100,
+      daysAgo: 4,
+    },
     { idx: 13, name: "May Invoice.pdf", folder: 7, mime: "application/pdf", kb: 96, daysAgo: 5 },
-    { idx: 14, name: "Expense Tracker 2026.helixsheet", folder: 7, mime: "application/vnd.helix.sheet", kb: 156, daysAgo: 1 },
-    { idx: 15, name: "Budget Forecast.helixsheet", folder: 7, mime: "application/vnd.helix.sheet", kb: 204, daysAgo: 8 },
-    { idx: 16, name: "Northwind Renewal Terms.pdf", folder: 7, mime: "application/pdf", kb: 188, daysAgo: 6, shared: true },
-    { idx: 17, name: "Brand Guidelines.pdf", folder: 8, mime: "application/pdf", kb: 3_400, daysAgo: 11 },
-    { idx: 18, name: "Launch Announcement.helixdoc", folder: 8, mime: "application/vnd.helix.document", kb: 38, daysAgo: 2 },
+    {
+      idx: 14,
+      name: "Expense Tracker 2026.helixsheet",
+      folder: 7,
+      mime: "application/vnd.helix.sheet",
+      kb: 156,
+      daysAgo: 1,
+    },
+    {
+      idx: 15,
+      name: "Budget Forecast.helixsheet",
+      folder: 7,
+      mime: "application/vnd.helix.sheet",
+      kb: 204,
+      daysAgo: 8,
+    },
+    {
+      idx: 16,
+      name: "Northwind Renewal Terms.pdf",
+      folder: 7,
+      mime: "application/pdf",
+      kb: 188,
+      daysAgo: 6,
+      shared: true,
+    },
+    {
+      idx: 17,
+      name: "Brand Guidelines.pdf",
+      folder: 8,
+      mime: "application/pdf",
+      kb: 3_400,
+      daysAgo: 11,
+    },
+    {
+      idx: 18,
+      name: "Launch Announcement.helixdoc",
+      folder: 8,
+      mime: "application/vnd.helix.document",
+      kb: 38,
+      daysAgo: 2,
+    },
     { idx: 19, name: "Product Demo.mp4", folder: 8, mime: "video/mp4", kb: 48_200, daysAgo: 4 },
-    { idx: 20, name: "Social Media Plan.helixsheet", folder: 8, mime: "application/vnd.helix.sheet", kb: 64, daysAgo: 10 },
+    {
+      idx: 20,
+      name: "Social Media Plan.helixsheet",
+      folder: 8,
+      mime: "application/vnd.helix.sheet",
+      kb: 64,
+      daysAgo: 10,
+    },
     { idx: 21, name: "Team Photo.jpg", folder: 1, mime: "image/jpeg", kb: 2_750, daysAgo: 20 },
-    { idx: 22, name: "Welcome Packet.pdf", folder: 9, mime: "application/pdf", kb: 410, daysAgo: 14, shared: true },
+    {
+      idx: 22,
+      name: "Welcome Packet.pdf",
+      folder: 9,
+      mime: "application/pdf",
+      kb: 410,
+      daysAgo: 14,
+      shared: true,
+    },
   ];
   for (const file of files) {
     const objectId = uid("1000", file.idx);
@@ -858,7 +985,11 @@ interface DocSpec {
   readonly tags: readonly string[];
   readonly markdown: string;
   readonly versions?: number;
-  readonly comments?: readonly { readonly actor: string; readonly body: string; readonly resolved?: boolean }[];
+  readonly comments?: readonly {
+    readonly actor: string;
+    readonly body: string;
+    readonly resolved?: boolean;
+  }[];
 }
 
 /** Folder assignments for docs/sheets/decks — maps content idx to folder idx. */
@@ -896,8 +1027,15 @@ function docSpecs(): readonly DocSpec[] {
       markdown:
         "# Q3 Roadmap & Planning\n\n## Themes\n\nThis quarter is about depth, not breadth. We have three candidate investments and capacity for roughly two and a half of them.\n\n## Candidate bets\n\n### 1. Assistant automation\nExtend the assistant tool registry so it can chain actions across surfaces — drafting a reply, attaching the right Drive file, and scheduling a follow-up in one confirmed step.\n\n### 2. Sheets formula engine\nShip a real formula engine for Sheets: arithmetic, references, and the twenty most-used functions. The parser is already in private beta and further along than expected.\n\n### 3. Meet recording pipeline\nCapture, store, and transcribe Meet recordings. Decision: ship against current storage and migrate to the new tier in Q4 rather than blocking on it.\n\n## Sequencing\n\nFinance and engineering agree the recording pipeline should not depend on the storage migration. We will budget explicit Q4 time for that migration.\n\n## Open questions\n\n- Final engineering estimate for the formula engine — owner: Sasha\n- Pricing page updates for the enterprise tier — owner: Nadia\n",
       comments: [
-        { actor: TEAM[0].id, body: "@you — can you confirm the engineering estimate for the Sheets formula engine before Friday's review?" },
-        { actor: TEAM[1].id, body: "Parser is ~70% done. I'll have a firm number by Thursday.", resolved: true },
+        {
+          actor: TEAM[0].id,
+          body: "@you — can you confirm the engineering estimate for the Sheets formula engine before Friday's review?",
+        },
+        {
+          actor: TEAM[1].id,
+          body: "Parser is ~70% done. I'll have a firm number by Thursday.",
+          resolved: true,
+        },
       ],
     },
     {
@@ -907,7 +1045,11 @@ function docSpecs(): readonly DocSpec[] {
       markdown:
         "# New Hire Onboarding Checklist\n\nWelcome to Helix! Work through this checklist in your first week. Check items off as you go.\n\n## Day 1\n\n- Sign in to your Helix workspace and set a profile photo\n- Read the company handbook in Drive > Helix Workspace\n- Join the #general and #engineering chat spaces\n- Say hello in #general\n\n## Day 2–3\n\n- Pair with your onboarding buddy\n- Set up your local development environment\n- Walk through the architecture overview doc\n- Attend the new-hire Q&A (calendar invite)\n\n## Week 1\n\n- Ship one small change end to end\n- Book a 1:1 with your manager\n- Review the on-call runbook (you won't be on-call yet, but read it)\n\n## Anytime\n\n- Explore Sheets, Slides, and Meet — they're all connected\n- Ask questions early and often\n",
       comments: [
-        { actor: TEAM[2].id, body: "Added the chat spaces step — new folks kept missing it.", resolved: true },
+        {
+          actor: TEAM[2].id,
+          body: "Added the chat spaces step — new folks kept missing it.",
+          resolved: true,
+        },
       ],
     },
     {
@@ -917,9 +1059,7 @@ function docSpecs(): readonly DocSpec[] {
       versions: 2,
       markdown:
         "# Helix Brand Guidelines\n\n## Voice\n\nHelix sounds calm, capable, and direct. We explain things plainly and never oversell. When in doubt, cut a sentence.\n\n## Color\n\nThe primary brand color is Helix Blue (#1a73e8). Use it for primary actions and accents, never for large fills. Secondary palette: green for success, amber for warnings, red for destructive actions.\n\n## Typography\n\nHeadings use the display weight; body copy stays regular. Maintain generous line height — density is for data tables, not prose.\n\n## Logo\n\nKeep clear space around the mark equal to the height of the 'H'. Never recolor, rotate, or add effects to the logo.\n\n## Imagery\n\nPrefer real product screenshots over abstract illustration. Show the software doing real work.\n",
-      comments: [
-        { actor: TEAM[2].id, body: "Should we add a section on dark mode color usage?" },
-      ],
+      comments: [{ actor: TEAM[2].id, body: "Should we add a section on dark mode color usage?" }],
     },
     {
       idx: 4,
@@ -1061,7 +1201,10 @@ interface EventSpec {
   readonly attendees?: readonly number[];
 }
 
-async function seedCalendar(sql: SeedSql, orgId: string): Promise<{ calendars: number; events: number }> {
+async function seedCalendar(
+  sql: SeedSql,
+  orgId: string,
+): Promise<{ calendars: number; events: number }> {
   const calendars = [
     { idx: 1, name: "Avery Park", color: "#1a73e8", desc: "Personal calendar" },
     { idx: 2, name: "Helix Team", color: "#137333", desc: "Shared team calendar" },
@@ -1090,29 +1233,248 @@ async function seedCalendar(sql: SeedSql, orgId: string): Promise<{ calendars: n
   }
 
   const events: EventSpec[] = [
-    { idx: 1, calendar: 2, title: "Daily standup", description: "Quick sync on yesterday, today, and blockers.", location: "Meet — Standup Room", dayOffset: 0, startHour: 9, durationMin: 15, recurrence: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", attendees: [0, 1, 2] },
-    { idx: 2, calendar: 3, title: "Q3 roadmap review", description: "Lock the Q3 roadmap. Pre-read the planning doc and bring priority arguments.", location: "Conference Room A", dayOffset: 1, startHour: 13, durationMin: 90, attendees: [0, 1, 2, 4] },
-    { idx: 3, calendar: 1, title: "1:1 with Morgan", description: "Weekly one-on-one.", location: "Meet", dayOffset: 1, startHour: 16, durationMin: 30, attendees: [0] },
-    { idx: 4, calendar: 2, title: "Lunch & learn: assistant tooling", description: "Walkthrough of the assistant tool registry and how to add a new tool.", location: "Conference Room B", dayOffset: 2, startHour: 12, durationMin: 60, attendees: [1, 2, 3] },
-    { idx: 5, calendar: 3, title: "Design review — Drive browser", description: "Review the refreshed Drive file browser mockups.", location: "Meet", dayOffset: 3, startHour: 11, durationMin: 45, attendees: [2, 0] },
-    { idx: 6, calendar: 2, title: "Team lunch", description: "Team lunch at the noodle place.", location: "Noodle House", dayOffset: 3, startHour: 12, durationMin: 90, attendees: [0, 1, 2, 3, 4] },
-    { idx: 7, calendar: 1, title: "Focus time — importer fix", description: "Heads-down work on the mail importer pagination fix.", location: "", dayOffset: 4, startHour: 9, durationMin: 120 },
-    { idx: 8, calendar: 3, title: "Enterprise launch sync", description: "Status check on the enterprise launch checklist.", location: "Conference Room A", dayOffset: 5, startHour: 14, durationMin: 45, attendees: [0, 4] },
-    { idx: 9, calendar: 2, title: "Sprint planning", description: "Plan the next sprint.", location: "Conference Room A", dayOffset: 7, startHour: 10, durationMin: 90, recurrence: "FREQ=WEEKLY;INTERVAL=2;BYDAY=WE", attendees: [0, 1, 2] },
-    { idx: 10, calendar: 1, title: "Dentist appointment", description: "Routine checkup.", location: "Downtown Dental", dayOffset: 8, startHour: 15, durationMin: 60 },
-    { idx: 11, calendar: 3, title: "Customer call — Northwind", description: "Renewal discussion with Northwind procurement.", location: "Meet", dayOffset: 9, startHour: 13, durationMin: 60, attendees: [3, 4] },
-    { idx: 12, calendar: 2, title: "All-hands", description: "Monthly all-hands meeting.", location: "Main Hall + Meet", dayOffset: 10, startHour: 16, durationMin: 60, attendees: [0, 1, 2, 3, 4] },
-    { idx: 13, calendar: 2, title: "Team offsite", description: "Annual team offsite at The Foundry.", location: "The Foundry", dayOffset: 14, startHour: 9, durationMin: 480, attendees: [0, 1, 2, 3, 4] },
-    { idx: 14, calendar: 1, title: "Quarterly review prep", description: "Prepare materials for the quarterly business review.", location: "", dayOffset: 18, startHour: 10, durationMin: 120 },
+    {
+      idx: 1,
+      calendar: 2,
+      title: "Daily standup",
+      description: "Quick sync on yesterday, today, and blockers.",
+      location: "Meet — Standup Room",
+      dayOffset: 0,
+      startHour: 9,
+      durationMin: 15,
+      recurrence: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+      attendees: [0, 1, 2],
+    },
+    {
+      idx: 2,
+      calendar: 3,
+      title: "Q3 roadmap review",
+      description: "Lock the Q3 roadmap. Pre-read the planning doc and bring priority arguments.",
+      location: "Conference Room A",
+      dayOffset: 1,
+      startHour: 13,
+      durationMin: 90,
+      attendees: [0, 1, 2, 4],
+    },
+    {
+      idx: 3,
+      calendar: 1,
+      title: "1:1 with Morgan",
+      description: "Weekly one-on-one.",
+      location: "Meet",
+      dayOffset: 1,
+      startHour: 16,
+      durationMin: 30,
+      attendees: [0],
+    },
+    {
+      idx: 4,
+      calendar: 2,
+      title: "Lunch & learn: assistant tooling",
+      description: "Walkthrough of the assistant tool registry and how to add a new tool.",
+      location: "Conference Room B",
+      dayOffset: 2,
+      startHour: 12,
+      durationMin: 60,
+      attendees: [1, 2, 3],
+    },
+    {
+      idx: 5,
+      calendar: 3,
+      title: "Design review — Drive browser",
+      description: "Review the refreshed Drive file browser mockups.",
+      location: "Meet",
+      dayOffset: 3,
+      startHour: 11,
+      durationMin: 45,
+      attendees: [2, 0],
+    },
+    {
+      idx: 6,
+      calendar: 2,
+      title: "Team lunch",
+      description: "Team lunch at the noodle place.",
+      location: "Noodle House",
+      dayOffset: 3,
+      startHour: 12,
+      durationMin: 90,
+      attendees: [0, 1, 2, 3, 4],
+    },
+    {
+      idx: 7,
+      calendar: 1,
+      title: "Focus time — importer fix",
+      description: "Heads-down work on the mail importer pagination fix.",
+      location: "",
+      dayOffset: 4,
+      startHour: 9,
+      durationMin: 120,
+    },
+    {
+      idx: 8,
+      calendar: 3,
+      title: "Enterprise launch sync",
+      description: "Status check on the enterprise launch checklist.",
+      location: "Conference Room A",
+      dayOffset: 5,
+      startHour: 14,
+      durationMin: 45,
+      attendees: [0, 4],
+    },
+    {
+      idx: 9,
+      calendar: 2,
+      title: "Sprint planning",
+      description: "Plan the next sprint.",
+      location: "Conference Room A",
+      dayOffset: 7,
+      startHour: 10,
+      durationMin: 90,
+      recurrence: "FREQ=WEEKLY;INTERVAL=2;BYDAY=WE",
+      attendees: [0, 1, 2],
+    },
+    {
+      idx: 10,
+      calendar: 1,
+      title: "Dentist appointment",
+      description: "Routine checkup.",
+      location: "Downtown Dental",
+      dayOffset: 8,
+      startHour: 15,
+      durationMin: 60,
+    },
+    {
+      idx: 11,
+      calendar: 3,
+      title: "Customer call — Northwind",
+      description: "Renewal discussion with Northwind procurement.",
+      location: "Meet",
+      dayOffset: 9,
+      startHour: 13,
+      durationMin: 60,
+      attendees: [3, 4],
+    },
+    {
+      idx: 12,
+      calendar: 2,
+      title: "All-hands",
+      description: "Monthly all-hands meeting.",
+      location: "Main Hall + Meet",
+      dayOffset: 10,
+      startHour: 16,
+      durationMin: 60,
+      attendees: [0, 1, 2, 3, 4],
+    },
+    {
+      idx: 13,
+      calendar: 2,
+      title: "Team offsite",
+      description: "Annual team offsite at The Foundry.",
+      location: "The Foundry",
+      dayOffset: 14,
+      startHour: 9,
+      durationMin: 480,
+      attendees: [0, 1, 2, 3, 4],
+    },
+    {
+      idx: 14,
+      calendar: 1,
+      title: "Quarterly review prep",
+      description: "Prepare materials for the quarterly business review.",
+      location: "",
+      dayOffset: 18,
+      startHour: 10,
+      durationMin: 120,
+    },
     // Past events.
-    { idx: 15, calendar: 3, title: "Q2 retrospective", description: "What went well, what didn't, what to change.", location: "Conference Room A", dayOffset: -7, startHour: 14, durationMin: 90, attendees: [0, 1, 2] },
-    { idx: 16, calendar: 2, title: "Welcome lunch", description: "Welcome lunch for new teammates.", location: "Noodle House", dayOffset: -14, startHour: 12, durationMin: 90, attendees: [0, 1, 2, 3] },
-    { idx: 17, calendar: 1, title: "1:1 with Morgan", description: "Weekly one-on-one.", location: "Meet", dayOffset: -6, startHour: 16, durationMin: 30, attendees: [0] },
-    { idx: 18, calendar: 3, title: "Hiring loop — backend engineer", description: "Interview loop for the senior backend role.", location: "Meet", dayOffset: -3, startHour: 10, durationMin: 240, attendees: [1, 2] },
-    { idx: 19, calendar: 2, title: "Daily standup", description: "Quick sync.", location: "Meet — Standup Room", dayOffset: -2, startHour: 9, durationMin: 15, attendees: [0, 1, 2] },
-    { idx: 20, calendar: 3, title: "Design crit", description: "Critique of in-progress design work.", location: "Conference Room B", dayOffset: -5, startHour: 15, durationMin: 60, attendees: [2] },
-    { idx: 21, calendar: 1, title: "Coffee with Priya", description: "Informal catch-up.", location: "Café Lumen", dayOffset: -9, startHour: 10, durationMin: 30, attendees: [2] },
-    { idx: 22, calendar: 2, title: "Incident review — mail delays", description: "Blameless review of last week's mail delivery incident.", location: "Conference Room A", dayOffset: -4, startHour: 11, durationMin: 45, attendees: [0, 1] },
+    {
+      idx: 15,
+      calendar: 3,
+      title: "Q2 retrospective",
+      description: "What went well, what didn't, what to change.",
+      location: "Conference Room A",
+      dayOffset: -7,
+      startHour: 14,
+      durationMin: 90,
+      attendees: [0, 1, 2],
+    },
+    {
+      idx: 16,
+      calendar: 2,
+      title: "Welcome lunch",
+      description: "Welcome lunch for new teammates.",
+      location: "Noodle House",
+      dayOffset: -14,
+      startHour: 12,
+      durationMin: 90,
+      attendees: [0, 1, 2, 3],
+    },
+    {
+      idx: 17,
+      calendar: 1,
+      title: "1:1 with Morgan",
+      description: "Weekly one-on-one.",
+      location: "Meet",
+      dayOffset: -6,
+      startHour: 16,
+      durationMin: 30,
+      attendees: [0],
+    },
+    {
+      idx: 18,
+      calendar: 3,
+      title: "Hiring loop — backend engineer",
+      description: "Interview loop for the senior backend role.",
+      location: "Meet",
+      dayOffset: -3,
+      startHour: 10,
+      durationMin: 240,
+      attendees: [1, 2],
+    },
+    {
+      idx: 19,
+      calendar: 2,
+      title: "Daily standup",
+      description: "Quick sync.",
+      location: "Meet — Standup Room",
+      dayOffset: -2,
+      startHour: 9,
+      durationMin: 15,
+      attendees: [0, 1, 2],
+    },
+    {
+      idx: 20,
+      calendar: 3,
+      title: "Design crit",
+      description: "Critique of in-progress design work.",
+      location: "Conference Room B",
+      dayOffset: -5,
+      startHour: 15,
+      durationMin: 60,
+      attendees: [2],
+    },
+    {
+      idx: 21,
+      calendar: 1,
+      title: "Coffee with Priya",
+      description: "Informal catch-up.",
+      location: "Café Lumen",
+      dayOffset: -9,
+      startHour: 10,
+      durationMin: 30,
+      attendees: [2],
+    },
+    {
+      idx: 22,
+      calendar: 2,
+      title: "Incident review — mail delays",
+      description: "Blameless review of last week's mail delivery incident.",
+      location: "Conference Room A",
+      dayOffset: -4,
+      startHour: 11,
+      durationMin: 45,
+      attendees: [0, 1],
+    },
   ];
   for (const ev of events) {
     const threadId = uid("1700", ev.idx);
@@ -1186,7 +1548,13 @@ interface ChatSpec {
   readonly topic: string;
   readonly isPrivate: boolean;
   readonly members: readonly string[];
-  readonly messages: readonly { readonly actor: string; readonly body: string; readonly daysAgo: number; readonly hour: number; readonly minute: number }[];
+  readonly messages: readonly {
+    readonly actor: string;
+    readonly body: string;
+    readonly daysAgo: number;
+    readonly hour: number;
+    readonly minute: number;
+  }[];
 }
 
 async function seedChat(sql: SeedSql, orgId: string): Promise<{ rooms: number; messages: number }> {
@@ -1197,14 +1565,58 @@ async function seedChat(sql: SeedSql, orgId: string): Promise<{ rooms: number; m
       name: "general",
       topic: "Company-wide announcements and watercooler chat.",
       isPrivate: false,
-      members: [ADMIN_ACTOR, USER_ACTOR, TEAM[0].id, TEAM[1].id, TEAM[2].id, TEAM[3].id, TEAM[4].id],
+      members: [
+        ADMIN_ACTOR,
+        USER_ACTOR,
+        TEAM[0].id,
+        TEAM[1].id,
+        TEAM[2].id,
+        TEAM[3].id,
+        TEAM[4].id,
+      ],
       messages: [
-        { actor: TEAM[0].id, body: "Morning everyone! Reminder that the Q3 roadmap review is Thursday — please read the planning doc beforehand.", daysAgo: 2, hour: 9, minute: 2 },
-        { actor: USER_ACTOR, body: "Read it last night, left a couple of comments on sequencing. Looks solid overall.", daysAgo: 2, hour: 9, minute: 14 },
-        { actor: TEAM[2].id, body: "Drive browser mockups are up in the deck if anyone wants a sneak peek before the design review 👀", daysAgo: 2, hour: 10, minute: 30 },
-        { actor: TEAM[3].id, body: "Northwind escalation is resolved — fix is on staging. Huge thanks to Sasha for the fast turnaround.", daysAgo: 1, hour: 15, minute: 5 },
-        { actor: ADMIN_ACTOR, body: "Great work all around this week. Team lunch Friday — Priya is taking the reservation, reply to her thread.", daysAgo: 1, hour: 16, minute: 40 },
-        { actor: TEAM[4].id, body: "Reminder: May expense reports are due Friday. The tracker sheet is shared with everyone.", daysAgo: 0, hour: 9, minute: 30 },
+        {
+          actor: TEAM[0].id,
+          body: "Morning everyone! Reminder that the Q3 roadmap review is Thursday — please read the planning doc beforehand.",
+          daysAgo: 2,
+          hour: 9,
+          minute: 2,
+        },
+        {
+          actor: USER_ACTOR,
+          body: "Read it last night, left a couple of comments on sequencing. Looks solid overall.",
+          daysAgo: 2,
+          hour: 9,
+          minute: 14,
+        },
+        {
+          actor: TEAM[2].id,
+          body: "Drive browser mockups are up in the deck if anyone wants a sneak peek before the design review 👀",
+          daysAgo: 2,
+          hour: 10,
+          minute: 30,
+        },
+        {
+          actor: TEAM[3].id,
+          body: "Northwind escalation is resolved — fix is on staging. Huge thanks to Sasha for the fast turnaround.",
+          daysAgo: 1,
+          hour: 15,
+          minute: 5,
+        },
+        {
+          actor: ADMIN_ACTOR,
+          body: "Great work all around this week. Team lunch Friday — Priya is taking the reservation, reply to her thread.",
+          daysAgo: 1,
+          hour: 16,
+          minute: 40,
+        },
+        {
+          actor: TEAM[4].id,
+          body: "Reminder: May expense reports are due Friday. The tracker sheet is shared with everyone.",
+          daysAgo: 0,
+          hour: 9,
+          minute: 30,
+        },
       ],
     },
     {
@@ -1215,11 +1627,41 @@ async function seedChat(sql: SeedSql, orgId: string): Promise<{ rooms: number; m
       isPrivate: false,
       members: [ADMIN_ACTOR, USER_ACTOR, TEAM[1].id],
       messages: [
-        { actor: TEAM[1].id, body: "PR #482 is up — fixes the importer pagination for very large mailboxes. Resumable cursor + smaller batches.", daysAgo: 1, hour: 11, minute: 0 },
-        { actor: USER_ACTOR, body: "Reviewing now. Did you test against the full 80k mailbox or a sample?", daysAgo: 1, hour: 11, minute: 12 },
-        { actor: TEAM[1].id, body: "Full 80k on staging — completed in ~9 minutes, zero timeouts. Logs in the PR description.", daysAgo: 1, hour: 11, minute: 18 },
-        { actor: USER_ACTOR, body: "Nice. Approving. Let's ship to prod tomorrow after one more pass.", daysAgo: 1, hour: 11, minute: 25 },
-        { actor: ADMIN_ACTOR, body: "Heads up: scheduled storage maintenance Saturday 02:00–04:00 UTC. Drive uploads + Meet recordings briefly affected.", daysAgo: 0, hour: 10, minute: 0 },
+        {
+          actor: TEAM[1].id,
+          body: "PR #482 is up — fixes the importer pagination for very large mailboxes. Resumable cursor + smaller batches.",
+          daysAgo: 1,
+          hour: 11,
+          minute: 0,
+        },
+        {
+          actor: USER_ACTOR,
+          body: "Reviewing now. Did you test against the full 80k mailbox or a sample?",
+          daysAgo: 1,
+          hour: 11,
+          minute: 12,
+        },
+        {
+          actor: TEAM[1].id,
+          body: "Full 80k on staging — completed in ~9 minutes, zero timeouts. Logs in the PR description.",
+          daysAgo: 1,
+          hour: 11,
+          minute: 18,
+        },
+        {
+          actor: USER_ACTOR,
+          body: "Nice. Approving. Let's ship to prod tomorrow after one more pass.",
+          daysAgo: 1,
+          hour: 11,
+          minute: 25,
+        },
+        {
+          actor: ADMIN_ACTOR,
+          body: "Heads up: scheduled storage maintenance Saturday 02:00–04:00 UTC. Drive uploads + Meet recordings briefly affected.",
+          daysAgo: 0,
+          hour: 10,
+          minute: 0,
+        },
       ],
     },
     {
@@ -1230,9 +1672,27 @@ async function seedChat(sql: SeedSql, orgId: string): Promise<{ rooms: number; m
       isPrivate: false,
       members: [ADMIN_ACTOR, USER_ACTOR, TEAM[2].id],
       messages: [
-        { actor: TEAM[2].id, body: "Posted the refreshed Drive browser mockups. The breadcrumb at 3+ levels deep still feels crowded — open to ideas.", daysAgo: 3, hour: 13, minute: 0 },
-        { actor: USER_ACTOR, body: "What if deep paths collapse the middle segments into a '…' menu? Keeps the first and last visible.", daysAgo: 3, hour: 13, minute: 22 },
-        { actor: TEAM[2].id, body: "Oh that's clean. I'll mock that up for the review. Thanks!", daysAgo: 3, hour: 13, minute: 30 },
+        {
+          actor: TEAM[2].id,
+          body: "Posted the refreshed Drive browser mockups. The breadcrumb at 3+ levels deep still feels crowded — open to ideas.",
+          daysAgo: 3,
+          hour: 13,
+          minute: 0,
+        },
+        {
+          actor: USER_ACTOR,
+          body: "What if deep paths collapse the middle segments into a '…' menu? Keeps the first and last visible.",
+          daysAgo: 3,
+          hour: 13,
+          minute: 22,
+        },
+        {
+          actor: TEAM[2].id,
+          body: "Oh that's clean. I'll mock that up for the review. Thanks!",
+          daysAgo: 3,
+          hour: 13,
+          minute: 30,
+        },
       ],
     },
     {
@@ -1243,10 +1703,34 @@ async function seedChat(sql: SeedSql, orgId: string): Promise<{ rooms: number; m
       isPrivate: true,
       members: [ADMIN_ACTOR, USER_ACTOR, TEAM[0].id, TEAM[4].id],
       messages: [
-        { actor: TEAM[0].id, body: "Launch checklist has three open items: recording pipeline sign-off, data residency doc, pricing page.", daysAgo: 3, hour: 14, minute: 0 },
-        { actor: TEAM[4].id, body: "Pricing page draft is ready for review. Data residency doc is with Legal — expecting it back Wednesday.", daysAgo: 3, hour: 14, minute: 20 },
-        { actor: USER_ACTOR, body: "Recording pipeline is on track. I'll have the sign-off checklist filled in by end of week.", daysAgo: 2, hour: 9, minute: 45 },
-        { actor: ADMIN_ACTOR, body: "Good. Let's keep this thread tight — status only, discussion in the doc comments.", daysAgo: 2, hour: 10, minute: 0 },
+        {
+          actor: TEAM[0].id,
+          body: "Launch checklist has three open items: recording pipeline sign-off, data residency doc, pricing page.",
+          daysAgo: 3,
+          hour: 14,
+          minute: 0,
+        },
+        {
+          actor: TEAM[4].id,
+          body: "Pricing page draft is ready for review. Data residency doc is with Legal — expecting it back Wednesday.",
+          daysAgo: 3,
+          hour: 14,
+          minute: 20,
+        },
+        {
+          actor: USER_ACTOR,
+          body: "Recording pipeline is on track. I'll have the sign-off checklist filled in by end of week.",
+          daysAgo: 2,
+          hour: 9,
+          minute: 45,
+        },
+        {
+          actor: ADMIN_ACTOR,
+          body: "Good. Let's keep this thread tight — status only, discussion in the doc comments.",
+          daysAgo: 2,
+          hour: 10,
+          minute: 0,
+        },
       ],
     },
     {
@@ -1257,9 +1741,27 @@ async function seedChat(sql: SeedSql, orgId: string): Promise<{ rooms: number; m
       isPrivate: true,
       members: [USER_ACTOR, TEAM[0].id],
       messages: [
-        { actor: TEAM[0].id, body: "Hey — do you have ten minutes before the roadmap review? Want to align on the sequencing point you raised.", daysAgo: 1, hour: 8, minute: 30 },
-        { actor: USER_ACTOR, body: "Sure, I'm free at 11. My worry is just that the Q4 migration becomes invisible if we don't write it down now.", daysAgo: 1, hour: 8, minute: 41 },
-        { actor: TEAM[0].id, body: "Agreed. I'll add an explicit Q4 line item to the doc before Thursday. 11 works — talk then.", daysAgo: 1, hour: 8, minute: 44 },
+        {
+          actor: TEAM[0].id,
+          body: "Hey — do you have ten minutes before the roadmap review? Want to align on the sequencing point you raised.",
+          daysAgo: 1,
+          hour: 8,
+          minute: 30,
+        },
+        {
+          actor: USER_ACTOR,
+          body: "Sure, I'm free at 11. My worry is just that the Q4 migration becomes invisible if we don't write it down now.",
+          daysAgo: 1,
+          hour: 8,
+          minute: 41,
+        },
+        {
+          actor: TEAM[0].id,
+          body: "Agreed. I'll add an explicit Q4 line item to the doc before Thursday. 11 works — talk then.",
+          daysAgo: 1,
+          hour: 8,
+          minute: 44,
+        },
       ],
     },
     {
@@ -1270,8 +1772,20 @@ async function seedChat(sql: SeedSql, orgId: string): Promise<{ rooms: number; m
       isPrivate: true,
       members: [USER_ACTOR, TEAM[1].id],
       messages: [
-        { actor: USER_ACTOR, body: "Approved #482. One tiny nit in the comments about the cursor encoding, non-blocking.", daysAgo: 1, hour: 11, minute: 26 },
-        { actor: TEAM[1].id, body: "Thanks! Fixed the nit. Will ship tomorrow morning and post in #engineering.", daysAgo: 1, hour: 11, minute: 40 },
+        {
+          actor: USER_ACTOR,
+          body: "Approved #482. One tiny nit in the comments about the cursor encoding, non-blocking.",
+          daysAgo: 1,
+          hour: 11,
+          minute: 26,
+        },
+        {
+          actor: TEAM[1].id,
+          body: "Thanks! Fixed the nit. Will ship tomorrow morning and post in #engineering.",
+          daysAgo: 1,
+          hour: 11,
+          minute: 40,
+        },
       ],
     },
   ];
@@ -1353,7 +1867,10 @@ async function seedChat(sql: SeedSql, orgId: string): Promise<{ rooms: number; m
 interface SheetSpec {
   readonly idx: number;
   readonly title: string;
-  readonly tabs: readonly { readonly name: string; readonly rows: readonly (readonly string[])[] }[];
+  readonly tabs: readonly {
+    readonly name: string;
+    readonly rows: readonly (readonly string[])[];
+  }[];
 }
 
 function sheetSpecs(): readonly SheetSpec[] {
@@ -1477,7 +1994,10 @@ function sheetSpecs(): readonly SheetSpec[] {
   ];
 }
 
-async function seedSheets(sql: SeedSql, orgId: string): Promise<{ sheets: number; tabs: number; cells: number }> {
+async function seedSheets(
+  sql: SeedSql,
+  orgId: string,
+): Promise<{ sheets: number; tabs: number; cells: number }> {
   const specs = sheetSpecs();
   let tabCount = 0;
   let cellCount = 0;
@@ -1562,12 +2082,21 @@ function deckSpecs(): readonly DeckSpec[] {
       slides: [
         {
           layout: "title",
-          content: { layout: "title", title: "Q3 Roadmap Review", eyebrow: "Helix Product", subtitle: "Locking priorities for the quarter" },
+          content: {
+            layout: "title",
+            title: "Q3 Roadmap Review",
+            eyebrow: "Helix Product",
+            subtitle: "Locking priorities for the quarter",
+          },
           notes: "Welcome the room, set the goal: leave with a locked roadmap.",
         },
         {
           layout: "agenda",
-          content: { layout: "agenda", title: "Agenda", items: ["Where we are", "Three candidate bets", "Sequencing & trade-offs", "Decision"] },
+          content: {
+            layout: "agenda",
+            title: "Agenda",
+            items: ["Where we are", "Three candidate bets", "Sequencing & trade-offs", "Decision"],
+          },
           notes: "Keep this tight — five minutes max.",
         },
         {
@@ -1589,7 +2118,11 @@ function deckSpecs(): readonly DeckSpec[] {
           content: {
             layout: "bullets",
             title: "Three candidate bets",
-            items: ["Assistant automation — chained, confirmed actions", "Sheets formula engine — arithmetic, references, 20 functions", "Meet recording pipeline — capture, store, transcribe"],
+            items: [
+              "Assistant automation — chained, confirmed actions",
+              "Sheets formula engine — arithmetic, references, 20 functions",
+              "Meet recording pipeline — capture, store, transcribe",
+            ],
           },
           notes: "We can fund roughly two and a half of these.",
         },
@@ -1600,13 +2133,21 @@ function deckSpecs(): readonly DeckSpec[] {
             title: "Sequencing",
             left: "The recording pipeline should not block on the storage migration. Ship against current storage; budget explicit Q4 time to migrate.",
             rightKind: "list",
-            rightContent: ["Recording: Q3, current storage", "Migration: Q4, explicit line item", "Formula engine: pull earlier"],
+            rightContent: [
+              "Recording: Q3, current storage",
+              "Migration: Q4, explicit line item",
+              "Formula engine: pull earlier",
+            ],
           },
           notes: "This is the key decision — make sure everyone agrees before moving on.",
         },
         {
           layout: "image",
-          content: { layout: "image", title: "Proposed Q3 timeline", note: "Gantt view — see the Roadmap Tracker sheet for the live version." },
+          content: {
+            layout: "image",
+            title: "Proposed Q3 timeline",
+            note: "Gantt view — see the Roadmap Tracker sheet for the live version.",
+          },
           notes: "Reference the live sheet rather than reading the chart.",
         },
       ],
@@ -1617,7 +2158,13 @@ function deckSpecs(): readonly DeckSpec[] {
       slides: [
         {
           layout: "title",
-          content: { layout: "title", title: "Helix for Enterprise", eyebrow: "Launch", subtitle: "The connected workspace, with enterprise controls", bg: "accent" },
+          content: {
+            layout: "title",
+            title: "Helix for Enterprise",
+            eyebrow: "Launch",
+            subtitle: "The connected workspace, with enterprise controls",
+            bg: "accent",
+          },
           notes: "This is the external launch narrative.",
         },
         {
@@ -1627,7 +2174,11 @@ function deckSpecs(): readonly DeckSpec[] {
             title: "What's new",
             left: "Helix for Enterprise adds the governance larger organizations need without changing the product teams already love.",
             rightKind: "list",
-            rightContent: ["Data residency options", "Advanced audit logging", "Centralized administration"],
+            rightContent: [
+              "Data residency options",
+              "Advanced audit logging",
+              "Centralized administration",
+            ],
           },
           notes: "Emphasize: same product, more control.",
         },
@@ -1646,7 +2197,15 @@ function deckSpecs(): readonly DeckSpec[] {
         },
         {
           layout: "bullets",
-          content: { layout: "bullets", title: "Launch checklist", items: ["Recording pipeline sign-off", "Data residency documentation", "Updated pricing page"] },
+          content: {
+            layout: "bullets",
+            title: "Launch checklist",
+            items: [
+              "Recording pipeline sign-off",
+              "Data residency documentation",
+              "Updated pricing page",
+            ],
+          },
           notes: "Three items left — all must be green before announce.",
         },
       ],
@@ -1657,12 +2216,25 @@ function deckSpecs(): readonly DeckSpec[] {
       slides: [
         {
           layout: "title",
-          content: { layout: "title", title: "Drive Browser Refresh", eyebrow: "Design Review", subtitle: "Nested folders, clearer files, unified details" },
+          content: {
+            layout: "title",
+            title: "Drive Browser Refresh",
+            eyebrow: "Design Review",
+            subtitle: "Nested folders, clearer files, unified details",
+          },
           notes: "Quick intro, then straight into the mockups.",
         },
         {
           layout: "bullets",
-          content: { layout: "bullets", title: "Headline changes", items: ["Inline folder expansion", "Color-coded file type icons", "Version history + sharing in one detail panel"] },
+          content: {
+            layout: "bullets",
+            title: "Headline changes",
+            items: [
+              "Inline folder expansion",
+              "Color-coded file type icons",
+              "Version history + sharing in one detail panel",
+            ],
+          },
           notes: "",
         },
         {
@@ -1679,7 +2251,11 @@ function deckSpecs(): readonly DeckSpec[] {
         },
         {
           layout: "image",
-          content: { layout: "image", title: "Refreshed browser mockup", note: "Full mockups are in Drive > Design Docs." },
+          content: {
+            layout: "image",
+            title: "Refreshed browser mockup",
+            note: "Full mockups are in Drive > Design Docs.",
+          },
           notes: "",
         },
       ],
@@ -1690,17 +2266,38 @@ function deckSpecs(): readonly DeckSpec[] {
       slides: [
         {
           layout: "title",
-          content: { layout: "title", title: "Team Offsite", eyebrow: "Helix Team", subtitle: "Three days at The Foundry" },
+          content: {
+            layout: "title",
+            title: "Team Offsite",
+            eyebrow: "Helix Team",
+            subtitle: "Three days at The Foundry",
+          },
           notes: "Set an upbeat tone.",
         },
         {
           layout: "agenda",
-          content: { layout: "agenda", title: "Three days", items: ["Day 1 — Strategy & planning", "Day 2 — Workshops & deep dives", "Day 3 — Retro & social"] },
+          content: {
+            layout: "agenda",
+            title: "Three days",
+            items: [
+              "Day 1 — Strategy & planning",
+              "Day 2 — Workshops & deep dives",
+              "Day 3 — Retro & social",
+            ],
+          },
           notes: "",
         },
         {
           layout: "bullets",
-          content: { layout: "bullets", title: "Logistics", items: ["Venue: The Foundry (downtown, walkable)", "Travel: arrange your own, expense it", "Dietary needs: add to the offsite sheet by Friday"] },
+          content: {
+            layout: "bullets",
+            title: "Logistics",
+            items: [
+              "Venue: The Foundry (downtown, walkable)",
+              "Travel: arrange your own, expense it",
+              "Dietary needs: add to the offsite sheet by Friday",
+            ],
+          },
           notes: "Walkability was the deciding factor.",
         },
       ],
@@ -1771,45 +2368,85 @@ interface MeetSpec {
   readonly summary?: string;
 }
 
-async function seedMeet(sql: SeedSql, orgId: string): Promise<{ rooms: number; recordings: number }> {
+async function seedMeet(
+  sql: SeedSql,
+  orgId: string,
+): Promise<{ rooms: number; recordings: number }> {
   const specs: MeetSpec[] = [
     {
-      idx: 1, subject: "Q3 Roadmap Review", roomName: "helix-q3-roadmap",
-      status: "scheduled", dayOffset: 1, startHour: 13, durationMin: 90,
+      idx: 1,
+      subject: "Q3 Roadmap Review",
+      roomName: "helix-q3-roadmap",
+      status: "scheduled",
+      dayOffset: 1,
+      startHour: 13,
+      durationMin: 90,
       participants: [TEAM[0].id, TEAM[1].id, TEAM[2].id],
     },
     {
-      idx: 2, subject: "Design Review — Drive Browser", roomName: "helix-drive-design",
-      status: "scheduled", dayOffset: 3, startHour: 11, durationMin: 45,
+      idx: 2,
+      subject: "Design Review — Drive Browser",
+      roomName: "helix-drive-design",
+      status: "scheduled",
+      dayOffset: 3,
+      startHour: 11,
+      durationMin: 45,
       participants: [TEAM[2].id],
     },
     {
-      idx: 3, subject: "1:1 with Morgan", roomName: "helix-morgan-1on1",
-      status: "scheduled", dayOffset: 1, startHour: 16, durationMin: 30,
+      idx: 3,
+      subject: "1:1 with Morgan",
+      roomName: "helix-morgan-1on1",
+      status: "scheduled",
+      dayOffset: 1,
+      startHour: 16,
+      durationMin: 30,
       participants: [TEAM[0].id],
     },
     {
-      idx: 4, subject: "Customer Call — Northwind", roomName: "helix-northwind-call",
-      status: "scheduled", dayOffset: 9, startHour: 13, durationMin: 60,
+      idx: 4,
+      subject: "Customer Call — Northwind",
+      roomName: "helix-northwind-call",
+      status: "scheduled",
+      dayOffset: 9,
+      startHour: 13,
+      durationMin: 60,
       participants: [TEAM[3].id, TEAM[4].id],
     },
     {
-      idx: 5, subject: "Q2 Retrospective", roomName: "helix-q2-retro",
-      status: "ended", dayOffset: -7, startHour: 14, durationMin: 90,
-      participants: [TEAM[0].id, TEAM[1].id, TEAM[2].id], recording: true,
+      idx: 5,
+      subject: "Q2 Retrospective",
+      roomName: "helix-q2-retro",
+      status: "ended",
+      dayOffset: -7,
+      startHour: 14,
+      durationMin: 90,
+      participants: [TEAM[0].id, TEAM[1].id, TEAM[2].id],
+      recording: true,
       summary:
         "## Q2 Retrospective — Summary\n\n**Went well:** the legacy mail migration shipped on time; cross-team communication improved.\n\n**Needs work:** incident response was slow on the mail delays; staging environment drifted from production.\n\n**Actions:** add a staging parity check to CI; rotate the on-call runbook owner each quarter.",
     },
     {
-      idx: 6, subject: "Hiring Loop — Backend Engineer", roomName: "helix-hiring-backend",
-      status: "ended", dayOffset: -3, startHour: 10, durationMin: 240,
-      participants: [TEAM[1].id], recording: true,
+      idx: 6,
+      subject: "Hiring Loop — Backend Engineer",
+      roomName: "helix-hiring-backend",
+      status: "ended",
+      dayOffset: -3,
+      startHour: 10,
+      durationMin: 240,
+      participants: [TEAM[1].id],
+      recording: true,
       summary:
         "## Hiring Loop — Backend Engineer\n\nStrong systems-design round; clean sharding strategy without prompting. Coding round solid but slow. Loop consensus: **hire**.",
     },
     {
-      idx: 7, subject: "Incident Review — Mail Delays", roomName: "helix-incident-mail",
-      status: "ended", dayOffset: -4, startHour: 11, durationMin: 45,
+      idx: 7,
+      subject: "Incident Review — Mail Delays",
+      roomName: "helix-incident-mail",
+      status: "ended",
+      dayOffset: -4,
+      startHour: 11,
+      durationMin: 45,
       participants: [TEAM[1].id],
     },
   ];
@@ -1873,8 +2510,11 @@ async function seedMeet(sql: SeedSql, orgId: string): Promise<{ rooms: number; r
           ${Math.round(spec.durationMin * 2.4 * 1024 * 1024)}, ${sha(recBody)},
           ${json(sql, {
             source: WORKSPACE_SEED_SOURCE,
-            roomId, threadId, roomName: spec.roomName,
-            startedAt: startsAt.toISOString(), endedAt: endsAt.toISOString(),
+            roomId,
+            threadId,
+            roomName: spec.roomName,
+            startedAt: startsAt.toISOString(),
+            endedAt: endsAt.toISOString(),
           })},
           ${endsAt}
         )
@@ -1905,15 +2545,78 @@ async function seedMeet(sql: SeedSql, orgId: string): Promise<{ rooms: number; r
 
 async function seedActivity(sql: SeedSql, orgId: string): Promise<number> {
   const entries = [
-    { actor: TEAM[0].id, verb: "docs.comment.created", objectType: "document", objectId: uid("1300", 1), summary: "Morgan Diaz mentioned you in a comment on \"Q3 Roadmap & Planning\".", daysAgo: 1 },
-    { actor: TEAM[1].id, verb: "drive.file.shared", objectType: "object", objectId: uid("1000", 6), summary: "Sasha Okafor shared \"Competitor Analysis.helixdoc\" with you.", daysAgo: 2 },
-    { actor: TEAM[2].id, verb: "docs.document.shared", objectType: "document", objectId: uid("1300", 3), summary: "Priya Raman shared \"Helix Brand Guidelines\" with you.", daysAgo: 3 },
-    { actor: TEAM[3].id, verb: "chat.message.mention", objectType: "thread", objectId: uid("1900", 1), summary: "Leo Whitfield mentioned you in #general.", daysAgo: 1 },
-    { actor: TEAM[0].id, verb: "calendar.event.invited", objectType: "event", objectId: uid("1800", 2), summary: "Morgan Diaz invited you to \"Q3 roadmap review\".", daysAgo: 2 },
-    { actor: TEAM[1].id, verb: "meet.recording.attached", objectType: "meet_room", objectId: uid("2100", 5), summary: "A recording is ready for \"Q2 Retrospective\".", daysAgo: 7 },
-    { actor: ADMIN_ACTOR, verb: "mail.thread.received", objectType: "thread", objectId: uid("0c00", 3), summary: "New escalation: \"Customer escalation — Northwind onboarding\".", daysAgo: 1 },
-    { actor: TEAM[4].id, verb: "sheets.sheet.shared", objectType: "sheet", objectId: uid("1b00", 2), summary: "Nadia Korhonen shared \"Expense Tracker 2026\" with you.", daysAgo: 1 },
-    { actor: TEAM[2].id, verb: "docs.comment.resolved", objectType: "document", objectId: uid("1300", 2), summary: "Priya Raman resolved a comment on \"New Hire Onboarding Checklist\".", daysAgo: 2 },
+    {
+      actor: TEAM[0].id,
+      verb: "docs.comment.created",
+      objectType: "document",
+      objectId: uid("1300", 1),
+      summary: 'Morgan Diaz mentioned you in a comment on "Q3 Roadmap & Planning".',
+      daysAgo: 1,
+    },
+    {
+      actor: TEAM[1].id,
+      verb: "drive.file.shared",
+      objectType: "object",
+      objectId: uid("1000", 6),
+      summary: 'Sasha Okafor shared "Competitor Analysis.helixdoc" with you.',
+      daysAgo: 2,
+    },
+    {
+      actor: TEAM[2].id,
+      verb: "docs.document.shared",
+      objectType: "document",
+      objectId: uid("1300", 3),
+      summary: 'Priya Raman shared "Helix Brand Guidelines" with you.',
+      daysAgo: 3,
+    },
+    {
+      actor: TEAM[3].id,
+      verb: "chat.message.mention",
+      objectType: "thread",
+      objectId: uid("1900", 1),
+      summary: "Leo Whitfield mentioned you in #general.",
+      daysAgo: 1,
+    },
+    {
+      actor: TEAM[0].id,
+      verb: "calendar.event.invited",
+      objectType: "event",
+      objectId: uid("1800", 2),
+      summary: 'Morgan Diaz invited you to "Q3 roadmap review".',
+      daysAgo: 2,
+    },
+    {
+      actor: TEAM[1].id,
+      verb: "meet.recording.attached",
+      objectType: "meet_room",
+      objectId: uid("2100", 5),
+      summary: 'A recording is ready for "Q2 Retrospective".',
+      daysAgo: 7,
+    },
+    {
+      actor: ADMIN_ACTOR,
+      verb: "mail.thread.received",
+      objectType: "thread",
+      objectId: uid("0c00", 3),
+      summary: 'New escalation: "Customer escalation — Northwind onboarding".',
+      daysAgo: 1,
+    },
+    {
+      actor: TEAM[4].id,
+      verb: "sheets.sheet.shared",
+      objectType: "sheet",
+      objectId: uid("1b00", 2),
+      summary: 'Nadia Korhonen shared "Expense Tracker 2026" with you.',
+      daysAgo: 1,
+    },
+    {
+      actor: TEAM[2].id,
+      verb: "docs.comment.resolved",
+      objectType: "document",
+      objectId: uid("1300", 2),
+      summary: 'Priya Raman resolved a comment on "New Hire Onboarding Checklist".',
+      daysAgo: 2,
+    },
   ];
   let prevHash: string | null = null;
   for (const [i, e] of entries.entries()) {

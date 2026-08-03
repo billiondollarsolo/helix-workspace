@@ -33,13 +33,13 @@ thread projection is read and displayed in a sandboxed iframe.
 
 ### SpamAssassin (primary)
 
-| Variable | Purpose |
-|----------|---------|
-| `MAIL_SPAMD_ENABLED` | Truthy enables inbound spamd scoring (default off) |
-| `MAIL_SPAMD_HOST` | spamd host (default `spamd`) |
-| `MAIL_SPAMD_PORT` | spamd port (default `783`) |
-| `MAIL_SPAMD_THRESHOLD` | Score ≥ threshold routes to Spam (default `5`) |
-| `MAIL_SPAMD_TIMEOUT_MS` | Per-scan timeout (default `10000`) |
+| Variable                | Purpose                                            |
+| ----------------------- | -------------------------------------------------- |
+| `MAIL_SPAMD_ENABLED`    | Truthy enables inbound spamd scoring (default off) |
+| `MAIL_SPAMD_HOST`       | spamd host (default `spamd`)                       |
+| `MAIL_SPAMD_PORT`       | spamd port (default `783`)                         |
+| `MAIL_SPAMD_THRESHOLD`  | Score ≥ threshold routes to Spam (default `5`)     |
+| `MAIL_SPAMD_TIMEOUT_MS` | Per-scan timeout (default `10000`)                 |
 
 When spamd is disabled or unreachable, ingest does not invent a spam score. Business tier may still
 quarantine on **malware** scanner failure (ClamAV), which is separate from the Spam folder.
@@ -64,16 +64,19 @@ Auto-caught spam stores `metadata.spam.catcher` and a `mail_spam_feedback` row (
 Off by default. Runs **only after spamd passes** (not spam). Rules + optional LLM. Failures never
 block SMTP accept (fail-open). Labeled **beta** until further notice.
 
-| Variable | Purpose |
-|----------|---------|
-| `MAIL_SPAM_AI_BETA_ENABLED` | Truthy enables beta second-pass (default off) |
-| `MAIL_SPAM_AI_API_KEY` | Bearer token (falls back to `OPENAI_API_KEY`) |
-| `MAIL_SPAM_AI_BASE_URL` | OpenAI-compatible base URL (default `https://api.openai.com/v1`, or `OPENAI_BASE_URL`) |
-| `MAIL_SPAM_AI_MODEL` | Model id (default `gpt-4o-mini`, or `OPENAI_MODEL`) |
-| `MAIL_SPAM_AI_TIMEOUT_MS` | LLM timeout (default `4000`) |
+| Variable                    | Purpose                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `MAIL_SPAM_AI_BETA_ENABLED` | Truthy enables beta second-pass (default off)                                          |
+| `MAIL_SPAM_AI_API_KEY`      | Bearer token (falls back to `OPENAI_API_KEY`)                                          |
+| `MAIL_SPAM_AI_BASE_URL`     | OpenAI-compatible base URL (default `https://api.openai.com/v1`, or `OPENAI_BASE_URL`) |
+| `MAIL_SPAM_AI_MODEL`        | Model id (default `gpt-4o-mini`, or `OPENAI_MODEL`)                                    |
+| `MAIL_SPAM_AI_TIMEOUT_MS`   | LLM timeout (default `4000`)                                                           |
 
-Where to set them: deployment env / compose / secrets for the Helix API process — same place as
-other `MAIL_*` and `OPENAI_*` keys. Do not put secrets in the web build.
+**Admin path (preferred for day-2 ops):** Admin → **AI → AI providers**. Operators set the shared
+OpenAI-compatible **base URL / model / API key** and the **mail spam AI (beta)** enable toggle.
+Values persist in platform-config (`ai.operatorLlm`, `ai.mailSpamAi`), override env when set, and
+never return the raw key on GET (`apiKeyConfigured` only). Env remains valid bootstrap for airgap
+and first boot. Do not put secrets in the web build.
 
 Business tier fails closed: an unavailable or timed-out malware scanner quarantines the message
 instead of delivering it. Malware and executable or active-content attachments are also

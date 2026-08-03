@@ -30,8 +30,7 @@ const REPO_ROOT = resolve(__dirname, "..");
 
 export const DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000000";
 export const DEFAULT_BASE_URL = "http://127.0.0.1:38600";
-export const DEFAULT_DATABASE_URL =
-  "postgres://helix:helix_dev_password@127.0.0.1:38601/helix";
+export const DEFAULT_DATABASE_URL = "postgres://helix:helix_dev_password@127.0.0.1:38601/helix";
 
 /** Minimum DB counts after large seed (documented in seed-workspace-large). */
 export const MIN_COUNTS = {
@@ -66,7 +65,10 @@ export function parseArgs(argv) {
     else throw new Error(`unknown argument: ${arg}`);
   }
   if (options.outputDir === null) {
-    const stamp = new Date().toISOString().replaceAll(":", "").replace(/\.\d+Z$/, "Z");
+    const stamp = new Date()
+      .toISOString()
+      .replaceAll(":", "")
+      .replace(/\.\d+Z$/, "Z");
     options.outputDir = join(REPO_ROOT, "artifacts", "local-volume-soak", stamp);
   }
   return options;
@@ -170,12 +172,8 @@ export async function collectDbCounts(databaseUrl, orgId) {
     chatMessages: await q(
       `SELECT count(*)::text FROM messages m INNER JOIN threads t ON t.id = m.thread_id WHERE t.org_id = '${orgId}' AND t.kind IN ('chat_room', 'chat_dm')`,
     ),
-    driveObjects: await q(
-      `SELECT count(*)::text FROM objects WHERE org_id = '${orgId}'`,
-    ),
-    activity: await q(
-      `SELECT count(*)::text FROM activity WHERE org_id = '${orgId}'`,
-    ),
+    driveObjects: await q(`SELECT count(*)::text FROM objects WHERE org_id = '${orgId}'`),
+    activity: await q(`SELECT count(*)::text FROM activity WHERE org_id = '${orgId}'`),
     calendarThreads: await q(
       `SELECT count(*)::text FROM threads WHERE org_id = '${orgId}' AND kind = 'calendar'`,
     ),
@@ -338,10 +336,9 @@ export async function runAuditSpotCheck(baseUrl, token) {
   // Trigger list tools that should audit
   await toolCall(baseUrl, token, "app.passwords.list", {});
   await toolCall(baseUrl, token, "agent.credentials.list", {});
-  const response = await fetch(
-    new URL("/api/admin/audit-log?limit=25", baseUrl),
-    { headers: { authorization: `Bearer ${token}` } },
-  );
+  const response = await fetch(new URL("/api/admin/audit-log?limit=25", baseUrl), {
+    headers: { authorization: `Bearer ${token}` },
+  });
   const body = await response.json().catch(() => ({}));
   const rows = body.records ?? body.entries ?? body.items ?? body.audit ?? [];
   const list = Array.isArray(rows) ? rows : [];
@@ -349,7 +346,10 @@ export async function runAuditSpotCheck(baseUrl, token) {
     ok: response.status === 200 && list.length > 0,
     status: response.status,
     rowCount: list.length,
-    sampleVerbs: list.slice(0, 10).map((r) => r.verb ?? r.action ?? r.type).filter(Boolean),
+    sampleVerbs: list
+      .slice(0, 10)
+      .map((r) => r.verb ?? r.action ?? r.type)
+      .filter(Boolean),
   };
 }
 
@@ -440,7 +440,10 @@ export async function runLocalVolumeSoak(options) {
       ["--filter", "@helix/app", "exec", "tsx", "src/db/seed-workspace.ts"],
       seedEnv,
     );
-    await writeFile(join(options.outputDir, "seed-workspace.log"), `${light.stdout}${light.stderr}`);
+    await writeFile(
+      join(options.outputDir, "seed-workspace.log"),
+      `${light.stdout}${light.stderr}`,
+    );
     const large = await runCommand(
       "pnpm",
       ["--filter", "@helix/app", "exec", "tsx", "src/db/seed-workspace-large.ts"],
@@ -517,9 +520,7 @@ export async function runLocalVolumeSoak(options) {
       // (see BETTER_AUTH_TRUSTED_ORIGINS / BETTER_AUTH_URL). curl without Origin
       // works; undici does not — always send an allow-listed origin.
       const trustedOrigin =
-        process.env.HELIX_SMOKE_ORIGIN ??
-        process.env.BETTER_AUTH_URL ??
-        "http://localhost:3000";
+        process.env.HELIX_SMOKE_ORIGIN ?? process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
       const sign = await fetch(new URL("/api/auth/sign-in/email", options.baseUrl), {
         method: "POST",
         headers: {
@@ -577,7 +578,10 @@ export async function runLocalVolumeSoak(options) {
       writeWave: options.writeWave,
       ...wave,
     });
-    await writeFile(join(options.outputDir, "api-write-wave.json"), `${JSON.stringify(wave, null, 2)}\n`);
+    await writeFile(
+      join(options.outputDir, "api-write-wave.json"),
+      `${JSON.stringify(wave, null, 2)}\n`,
+    );
   } else {
     record("api-write-wave", "skipped");
   }
@@ -608,11 +612,19 @@ export async function runLocalVolumeSoak(options) {
   report.completedAt = new Date().toISOString();
   report.status = report.summary.failed > 0 ? "failed" : "passed";
   report.claims = {
-    multi_user_volume_seed: report.phases.some((p) => p.name === "seed-volume" && p.status === "passed"),
+    multi_user_volume_seed: report.phases.some(
+      (p) => p.name === "seed-volume" && p.status === "passed",
+    ),
     db_volume_verified: report.phases.some((p) => p.name === "db-counts" && p.status === "passed"),
-    api_volume_wave: report.phases.some((p) => p.name === "api-write-wave" && p.status === "passed"),
-    multi_user_rbac: report.phases.some((p) => p.name === "multi-user-rbac" && p.status === "passed"),
-    audit_spot_check: report.phases.some((p) => p.name === "audit-spot-check" && p.status === "passed"),
+    api_volume_wave: report.phases.some(
+      (p) => p.name === "api-write-wave" && p.status === "passed",
+    ),
+    multi_user_rbac: report.phases.some(
+      (p) => p.name === "multi-user-rbac" && p.status === "passed",
+    ),
+    audit_spot_check: report.phases.some(
+      (p) => p.name === "audit-spot-check" && p.status === "passed",
+    ),
     external_mail_deliverability: false,
     final_release_go: false,
   };

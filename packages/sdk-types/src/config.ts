@@ -90,6 +90,21 @@ export interface AiPluginRefConfig {
   readonly config?: JsonObject;
 }
 
+/** Shared default LLM credentials for assistant chat, mail assist, and spam AI. */
+export interface AiOperatorLlmConfig {
+  readonly baseUrl?: string;
+  readonly model?: string;
+  /** Present only on write; never returned after save. */
+  readonly apiKey?: string;
+  /** Read-only: whether a key is stored (admin UI masking). */
+  readonly apiKeyConfigured?: boolean;
+}
+
+/** Beta mail spam second-pass controls (rules + optional LLM after spamd). */
+export interface AiMailSpamConfig {
+  readonly betaEnabled?: boolean;
+}
+
 export interface AiConfig {
   readonly enabled?: boolean;
   readonly defaultPosture?: AiDefaultPosture;
@@ -100,6 +115,10 @@ export interface AiConfig {
   readonly costLimits?: AiCostLimitsConfig;
   readonly audit?: AiAuditConfig;
   readonly privacy?: AiPrivacyConfig;
+  /** Operator-facing LLM defaults (Admin → AI providers). */
+  readonly operatorLlm?: AiOperatorLlmConfig;
+  /** Mail spam AI beta toggle. */
+  readonly mailSpamAi?: AiMailSpamConfig;
 }
 
 export interface ObservabilitySamplingConfig {

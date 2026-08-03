@@ -65,7 +65,7 @@ export async function seedWorkspaceLarge(
 
     await sql.begin(async (tx) => {
       const cal = await seedCalendar(tx, orgId);
-      counts.calendars      = cal.calendars;
+      counts.calendars = cal.calendars;
       counts.calendarEvents = cal.events;
     });
 
@@ -79,20 +79,20 @@ export async function seedWorkspaceLarge(
 
     await sql.begin(async (tx) => {
       const s = await seedSheets(tx, orgId);
-      counts.sheets     = s.sheets;
-      counts.sheetTabs  = s.tabs;
+      counts.sheets = s.sheets;
+      counts.sheetTabs = s.tabs;
       counts.sheetCells = s.cells;
     });
 
     await sql.begin(async (tx) => {
       const d = await seedSlides(tx, orgId);
       counts.slideDecks = d.decks;
-      counts.slides     = d.slides;
+      counts.slides = d.slides;
     });
 
     await sql.begin(async (tx) => {
       const c = await seedChat(tx, orgId);
-      counts.chatRooms    = c.rooms;
+      counts.chatRooms = c.rooms;
       counts.chatMessages = c.messages;
     });
 

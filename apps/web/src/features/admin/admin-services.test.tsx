@@ -224,7 +224,7 @@ describe("AdminServicesOverview admin UI", () => {
     renderAdminServices();
     await waitForText("Mail");
 
-    expect(headingTexts("h1")).toEqual(["Admin services"]);
+    expect(headingTexts("h1")).toEqual(["Services"]);
     expect(container.textContent).toContain(
       "Runtime service surface, dependencies, routes, scopes, tools, and operations.",
     );

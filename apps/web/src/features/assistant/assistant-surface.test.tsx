@@ -42,6 +42,7 @@ const forgetAssistantMemoryMock = vi.fn<() => Promise<AssistantMemoryForgetResul
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
+  useSearch: () => ({}),
 }));
 
 vi.mock("@/components/shell", () => ({

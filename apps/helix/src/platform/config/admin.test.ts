@@ -17,10 +17,14 @@ import {
   buildPlatformReadinessReport,
   canReadPlatformConfig,
   canWritePlatformConfig,
+  mergeAiProvidersPreservingSecrets,
+  operatorAiEnvFromConfig,
   platformConfigChangedSubject,
   platformConfigAdminScopes,
   platformConfigUpdateSchema,
+  redactAiSecretsForAdmin,
   registerPlatformConfigAdminRoutes,
+  resolveFeatureProviderCredentials,
   type PlatformConfigStatus,
 } from "./admin.js";
 import {
@@ -972,6 +976,225 @@ const platformConfigStatusFixture: PlatformConfigStatus = {
     requirements: [],
   },
 };
+
+describe("operator AI platform config", () => {
+  it("accepts operator LLM + mail spam AI updates", () => {
+    const parsed = platformConfigUpdateSchema.parse({
+      ai: {
+        operatorLlm: {
+          baseUrl: "https://api.openai.com/v1",
+          model: "gpt-4o-mini",
+          apiKey: "sk-test-secret",
+        },
+        mailSpamAi: { betaEnabled: true },
+      },
+    });
+    expect(parsed.ai?.operatorLlm?.apiKey).toBe("sk-test-secret");
+    expect(parsed.ai?.mailSpamAi?.betaEnabled).toBe(true);
+  });
+
+  it("redacts write-only API keys and exposes apiKeyConfigured", () => {
+    const redacted = redactAiSecretsForAdmin({
+      security: { tier: "business" },
+      ai: {
+        operatorLlm: {
+          baseUrl: "https://llm.example/v1",
+          model: "gpt-4o-mini",
+          apiKey: "sk-live-secret",
+        },
+        mailSpamAi: { betaEnabled: true },
+      },
+    });
+    expect(redacted.ai?.operatorLlm).toEqual({
+      baseUrl: "https://llm.example/v1",
+      model: "gpt-4o-mini",
+      apiKeyConfigured: true,
+    });
+    expect(JSON.stringify(redacted)).not.toContain("sk-live-secret");
+    expect(redacted.ai?.mailSpamAi?.betaEnabled).toBe(true);
+  });
+
+  it("maps operator LLM + spam toggle into env overlay keys", () => {
+    expect(
+      operatorAiEnvFromConfig({
+        security: { tier: "personal" },
+        ai: {
+          operatorLlm: {
+            apiKey: "sk-op",
+            baseUrl: "https://llm.example/v1",
+            model: "gpt-4o-mini",
+          },
+          mailSpamAi: { betaEnabled: true },
+        },
+      }),
+    ).toEqual({
+      OPENAI_API_KEY: "sk-op",
+      OPENAI_BASE_URL: "https://llm.example/v1",
+      OPENAI_MODEL: "gpt-4o-mini",
+      MAIL_SPAM_AI_API_KEY: "sk-op",
+      MAIL_SPAM_AI_BASE_URL: "https://llm.example/v1",
+      MAIL_SPAM_AI_MODEL: "gpt-4o-mini",
+      MAIL_ASSIST_AI_API_KEY: "sk-op",
+      MAIL_ASSIST_AI_BASE_URL: "https://llm.example/v1",
+      MAIL_ASSIST_AI_MODEL: "gpt-4o-mini",
+      MAIL_SPAM_AI_BETA_ENABLED: "true",
+    });
+    expect(
+      operatorAiEnvFromConfig({
+        security: { tier: "personal" },
+        ai: { mailSpamAi: { betaEnabled: false } },
+      }),
+    ).toEqual({ MAIL_SPAM_AI_BETA_ENABLED: "false" });
+  });
+
+  it("routes different providers to spam vs assistant via feature rules", () => {
+    const config: HelixConfig = {
+      security: { tier: "personal" },
+      ai: {
+        providers: [
+          {
+            id: "chat-llm",
+            plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
+            config: {
+              baseUrl: "https://chat.example/v1",
+              defaultModel: "gpt-4o",
+              apiKey: "sk-chat",
+            },
+          },
+          {
+            id: "spam-llm",
+            plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
+            config: {
+              baseUrl: "https://spam.example/v1",
+              defaultModel: "gpt-4o-mini",
+              apiKey: "sk-spam",
+            },
+          },
+        ],
+        routing: {
+          rules: [
+            { feature: "assistant.chat", primary: { providerId: "chat-llm", model: "gpt-4o" } },
+            {
+              feature: "mail.spam-ai",
+              primary: { providerId: "spam-llm", model: "gpt-4o-mini" },
+            },
+          ],
+        },
+        mailSpamAi: { betaEnabled: true },
+      },
+    };
+    expect(resolveFeatureProviderCredentials(config, "mail.spam-ai")).toMatchObject({
+      providerId: "spam-llm",
+      apiKey: "sk-spam",
+      model: "gpt-4o-mini",
+    });
+    const overlay = operatorAiEnvFromConfig(config);
+    expect(overlay.OPENAI_API_KEY).toBe("sk-chat");
+    expect(overlay.OPENAI_MODEL).toBe("gpt-4o");
+    expect(overlay.MAIL_SPAM_AI_API_KEY).toBe("sk-spam");
+    expect(overlay.MAIL_SPAM_AI_MODEL).toBe("gpt-4o-mini");
+    expect(overlay.MAIL_SPAM_AI_BETA_ENABLED).toBe("true");
+  });
+
+  it("preserves provider apiKey when Admin omits it on PATCH merge", () => {
+    const merged = mergeAiProvidersPreservingSecrets(
+      {
+        providers: [
+          {
+            id: "p1",
+            plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
+            config: { apiKey: "sk-keep", baseUrl: "https://a.example/v1", defaultModel: "m1" },
+          },
+        ],
+      },
+      {
+        providers: [
+          {
+            id: "p1",
+            plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
+            config: { baseUrl: "https://b.example/v1", defaultModel: "m2" },
+          },
+        ],
+      },
+    );
+    expect(merged?.providers?.[0]?.config).toMatchObject({
+      apiKey: "sk-keep",
+      baseUrl: "https://b.example/v1",
+      defaultModel: "m2",
+    });
+  });
+
+  it("redacts provider apiKeys and exposes apiKeyConfigured", () => {
+    const redacted = redactAiSecretsForAdmin({
+      security: { tier: "personal" },
+      ai: {
+        providers: [
+          {
+            id: "p1",
+            plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
+            config: { apiKey: "sk-secret", baseUrl: "https://x", defaultModel: "m" },
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(redacted)).not.toContain("sk-secret");
+    expect(redacted.ai?.providers?.[0]?.config).toMatchObject({
+      apiKeyConfigured: true,
+      baseUrl: "https://x",
+      defaultModel: "m",
+    });
+  });
+
+  it("persists AI operator settings via platform-config store and redacts on GET", async () => {
+    const platformConfig = new InMemoryPlatformConfigSql({
+      security: { tier: "personal" },
+    });
+    const service = new PlatformConfigAdminService(
+      new PostgresPlatformConfigStore(platformConfig.sql),
+      {},
+    );
+    const actor = actorWithScopes([platformConfigAdminScopes.write]);
+
+    const status = await service.update(
+      {
+        ai: {
+          operatorLlm: {
+            baseUrl: "https://api.example/v1",
+            model: "gpt-4o-mini",
+            apiKey: "sk-persisted",
+          },
+          mailSpamAi: { betaEnabled: true },
+        },
+      },
+      actor,
+    );
+
+    expect(status.config.ai?.operatorLlm).toEqual({
+      baseUrl: "https://api.example/v1",
+      model: "gpt-4o-mini",
+      apiKeyConfigured: true,
+    });
+    expect(JSON.stringify(status)).not.toContain("sk-persisted");
+    expect(status.config.ai?.mailSpamAi?.betaEnabled).toBe(true);
+
+    // Partial update without apiKey keeps the stored key.
+    const again = await service.update(
+      {
+        ai: {
+          operatorLlm: { model: "gpt-4.1-mini" },
+          mailSpamAi: { betaEnabled: false },
+        },
+      },
+      actor,
+    );
+    expect(again.config.ai?.operatorLlm).toEqual({
+      baseUrl: "https://api.example/v1",
+      model: "gpt-4.1-mini",
+      apiKeyConfigured: true,
+    });
+    expect(again.config.ai?.mailSpamAi?.betaEnabled).toBe(false);
+  });
+});
 
 function actorWithScopes(scopes: readonly string[]): Actor {
   return {

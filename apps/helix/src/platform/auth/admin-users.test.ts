@@ -320,6 +320,10 @@ describe("offboardUser revoke cascade (E7.2)", () => {
     const result = await offboardUser(
       { orgId, actorId: targetActorId, at },
       {
+        resolveTargetInOrg: async (input) => {
+          expect(input).toEqual({ orgId, actorId: targetActorId });
+          return true;
+        },
         disableActor: async (input) => {
           disabled.push(input.actorId);
           expect(input).toEqual({
@@ -330,6 +334,7 @@ describe("offboardUser revoke cascade (E7.2)", () => {
           return true;
         },
         revokeSessionsForActor: async (input) => {
+          expect(input).toEqual({ orgId, actorId: targetActorId });
           sessions.push(input.actorId);
           return 3;
         },
@@ -377,6 +382,7 @@ describe("offboardUser revoke cascade (E7.2)", () => {
     const result = await offboardUser(
       { orgId, actorId: targetActorId, at },
       {
+        resolveTargetInOrg: async () => true,
         disableActor: async () => false,
         revokeSessionsForActor: async () => 0,
         appPasswords,
@@ -396,6 +402,55 @@ describe("offboardUser revoke cascade (E7.2)", () => {
     expect(credentials.revokedClientIds).toEqual([]);
   });
 
+  it("returns null without side effects when target is not in the admin org", async () => {
+    const foreignActorId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    let sessionsCalled = 0;
+    let disableCalled = 0;
+    const appPasswords = new RecordingAppPasswordStore([
+      {
+        id: "apw-foreign",
+        orgId: "33333333-3333-4333-8333-333333333333",
+        actorId: foreignActorId,
+        revokedAt: null,
+      },
+    ]);
+    const credentials = new RecordingAgentCredentialStore([
+      {
+        clientId: "client-foreign",
+        orgId: "33333333-3333-4333-8333-333333333333",
+        actorId: foreignActorId,
+        revokedAt: null,
+      },
+    ]);
+
+    const result = await offboardUser(
+      { orgId, actorId: foreignActorId },
+      {
+        resolveTargetInOrg: async (input) => {
+          expect(input.orgId).toBe(orgId);
+          expect(input.actorId).toBe(foreignActorId);
+          return false;
+        },
+        disableActor: async () => {
+          disableCalled += 1;
+          return true;
+        },
+        revokeSessionsForActor: async () => {
+          sessionsCalled += 1;
+          return 9;
+        },
+        appPasswords,
+        agentCredentials: credentials,
+      },
+    );
+
+    expect(result).toBeNull();
+    expect(disableCalled).toBe(0);
+    expect(sessionsCalled).toBe(0);
+    expect(appPasswords.revokedIds).toEqual([]);
+    expect(credentials.revokedClientIds).toEqual([]);
+  });
+
   it("POST /api/admin/users/:actorId/offboard drives offboardUser cascade", async () => {
     const targetActorId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
     const appPasswords = new RecordingAppPasswordStore([
@@ -409,6 +464,7 @@ describe("offboardUser revoke cascade (E7.2)", () => {
       store: new FakeAdminUsersStore([]),
       actorFromRequest,
       offboardStores: {
+        resolveTargetInOrg: async () => true,
         disableActor: async () => true,
         revokeSessionsForActor: async () => 2,
         appPasswords,
@@ -448,6 +504,7 @@ describe("offboardUser revoke cascade (E7.2)", () => {
       store: new FakeAdminUsersStore([]),
       actorFromRequest,
       offboardStores: {
+        resolveTargetInOrg: async () => true,
         revokeSessionsForActor: async () => 0,
         appPasswords: new RecordingAppPasswordStore([]),
         agentCredentials: new RecordingAgentCredentialStore([]),
@@ -468,6 +525,84 @@ describe("offboardUser revoke cascade (E7.2)", () => {
     expect(response.json()).toMatchObject({
       error: "Administrators cannot offboard themselves.",
     });
+    await app.close();
+  });
+
+  it("POST offboard returns 404 for foreign org actor and does not revoke sessions", async () => {
+    const foreignActorId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    let sessionsCalled = 0;
+    let resolveCalls = 0;
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store: new FakeAdminUsersStore([]),
+      actorFromRequest,
+      offboardStores: {
+        resolveTargetInOrg: async (input) => {
+          resolveCalls += 1;
+          expect(input).toEqual({ orgId, actorId: foreignActorId });
+          return false;
+        },
+        disableActor: async () => {
+          throw new Error("disableActor must not run for foreign target");
+        },
+        revokeSessionsForActor: async () => {
+          sessionsCalled += 1;
+          return 1;
+        },
+        appPasswords: new RecordingAppPasswordStore([]),
+        agentCredentials: new RecordingAgentCredentialStore([]),
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${foreignActorId}/offboard`,
+      headers: {
+        "x-helix-actor-id": actorId,
+        "x-helix-org-id": orgId,
+        "x-helix-scopes": "admin.users",
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      error: "User not found in this organization.",
+    });
+    expect(resolveCalls).toBe(1);
+    expect(sessionsCalled).toBe(0);
+    await app.close();
+  });
+
+  it("POST offboard returns 404 for unknown actor id", async () => {
+    const unknownActorId = "99999999-9999-4999-8999-999999999999";
+    let sessionsCalled = 0;
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store: new FakeAdminUsersStore([]),
+      actorFromRequest,
+      offboardStores: {
+        resolveTargetInOrg: async () => false,
+        revokeSessionsForActor: async () => {
+          sessionsCalled += 1;
+          return 1;
+        },
+        appPasswords: new RecordingAppPasswordStore([]),
+        agentCredentials: new RecordingAgentCredentialStore([]),
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${unknownActorId}/offboard`,
+      headers: {
+        "x-helix-actor-id": actorId,
+        "x-helix-org-id": orgId,
+        "x-helix-scopes": "admin.users",
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(sessionsCalled).toBe(0);
     await app.close();
   });
 });

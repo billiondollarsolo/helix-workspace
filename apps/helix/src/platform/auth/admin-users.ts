@@ -123,6 +123,14 @@ export interface OffboardUserInput {
 
 export interface OffboardUserStores {
   /**
+   * Fail-closed tenant check: true only when `actorId` exists in `orgId`.
+   * Must run before any revoke/disable side effects.
+   */
+  readonly resolveTargetInOrg: (input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }) => Promise<boolean>;
+  /**
    * Marks the actor disabled. Optional when only credential cascade is wired.
    * Returns true when a previously-active actor was disabled.
    */
@@ -131,8 +139,14 @@ export interface OffboardUserStores {
     readonly actorId: string;
     readonly disabledAt: Date;
   }) => Promise<boolean>;
-  /** Deletes Better Auth sessions linked via user.actor_id. */
-  readonly revokeSessionsForActor: (input: { readonly actorId: string }) => Promise<number>;
+  /**
+   * Deletes Better Auth sessions for users linked to the actor, scoped to the
+   * admin's organization (actor_id + org_id).
+   */
+  readonly revokeSessionsForActor: (input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }) => Promise<number>;
   readonly appPasswords: OffboardAppPasswordStore;
   readonly agentCredentials: OffboardAgentCredentialStore;
 }
@@ -147,17 +161,26 @@ export interface OffboardUserResult {
 }
 
 /**
- * Offboard cascade: disable actor (when provided), revoke browser sessions,
- * revoke all active app passwords, revoke all active agent OAuth credentials.
+ * Offboard cascade: verify target is in org, then disable actor (when provided),
+ * revoke browser sessions, revoke active app passwords, revoke agent OAuth credentials.
  *
- * Callers supply real store methods (PostgresAppPasswordStore, OAuth client
- * store, SQL session delete). Does not invent alternate revoke paths.
+ * Returns `null` when the target actor is not in the admin org (fail closed —
+ * no side effects). Callers supply real store methods (PostgresAppPasswordStore,
+ * OAuth client store, SQL session delete).
  */
 export async function offboardUser(
   input: OffboardUserInput,
   stores: OffboardUserStores,
-): Promise<OffboardUserResult> {
+): Promise<OffboardUserResult | null> {
   const at = input.at ?? new Date();
+
+  const inOrg = await stores.resolveTargetInOrg({
+    orgId: input.orgId,
+    actorId: input.actorId,
+  });
+  if (!inOrg) {
+    return null;
+  }
 
   let disabled = false;
   if (stores.disableActor !== undefined) {
@@ -168,7 +191,10 @@ export async function offboardUser(
     });
   }
 
-  const sessionsRevoked = await stores.revokeSessionsForActor({ actorId: input.actorId });
+  const sessionsRevoked = await stores.revokeSessionsForActor({
+    orgId: input.orgId,
+    actorId: input.actorId,
+  });
 
   const appPasswords = await stores.appPasswords.listAppPasswords({
     orgId: input.orgId,
@@ -237,18 +263,37 @@ export async function disableActorForOffboard(
 }
 
 /**
- * Postgres helper: delete Better Auth sessions for any user row linked to the
- * actor (`user.actor_id`). Matches seed-login-accounts session cleanup.
+ * Postgres helper: true when the actor row exists in the given organization.
+ */
+export async function actorExistsInOrg(
+  sql: postgres.Sql,
+  input: { readonly orgId: string; readonly actorId: string },
+): Promise<boolean> {
+  const rows = (await sql`
+    select id
+    from actors
+    where id = ${input.actorId}
+      and org_id = ${input.orgId}
+    limit 1
+  `) as unknown as readonly { readonly id: string }[];
+  return rows.length > 0;
+}
+
+/**
+ * Postgres helper: delete Better Auth sessions for user rows linked to the
+ * actor, scoped by actors.org_id so cross-tenant session kill is impossible.
  */
 export async function revokeSessionsForActorSql(
   sql: postgres.Sql,
-  input: { readonly actorId: string },
+  input: { readonly orgId: string; readonly actorId: string },
 ): Promise<number> {
   const result = await sql`
     delete from session
-    using "user"
+    using "user", actors
     where session."userId" = "user".id
-      and "user".actor_id = ${input.actorId}
+      and "user".actor_id = actors.id
+      and actors.id = ${input.actorId}
+      and actors.org_id = ${input.orgId}
   `;
   return typeof result.count === "number" ? result.count : 0;
 }
@@ -357,6 +402,9 @@ export async function registerAdminUsersRoutes(
         { orgId: actor.orgId, actorId: actorIdParsed.data },
         offboardStores,
       );
+      if (result === null) {
+        return reply.code(404).send({ error: "User not found in this organization." });
+      }
       return reply.code(200).send({ offboard: result });
     });
   }

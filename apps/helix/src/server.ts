@@ -86,6 +86,7 @@ import {
   type ToolInvocationPrincipal,
 } from "./platform/auth/tool-invocation-principal.js";
 import {
+  actorExistsInOrg,
   disableActorForOffboard,
   PostgresAdminUsersStore,
   registerAdminUsersRoutes,
@@ -2926,8 +2927,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerAdminUsersRoutes(app, {
     store: adminUsersStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    // E7.2: production offboard cascade (disable + sessions + app passwords + agent OAuth clients).
+    // E7.2: production offboard cascade (org-scoped resolve + disable + sessions + credentials).
     offboardStores: {
+      resolveTargetInOrg: (input) => actorExistsInOrg(sql, input),
       disableActor: (input) => disableActorForOffboard(sql, input),
       revokeSessionsForActor: (input) => revokeSessionsForActorSql(sql, input),
       appPasswords: appPasswordStore,

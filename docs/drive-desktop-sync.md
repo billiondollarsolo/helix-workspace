@@ -1,152 +1,106 @@
-# Helix Drive desktop sync (rclone-first)
+# Helix Drive desktop sync
 
-Helix stores files in Drive and exposes them over **WebDAV** at `/dav/files/*`.
-There is no first-party “Helix Sync” app yet. **Phase A** uses open-source
-**[rclone](https://rclone.org/)** so Windows, macOS, and Linux users can sync
-like Google Drive for desktop.
+Keep a folder (or virtual drive) on your computer in sync with Helix Drive.
 
-**Phase B** (later) will ship a thin branded tray app that wraps rclone.
+You do **not** need to learn rclone. Run the setup script and answer a few prompts.
 
-## Security model (Phase A)
+## Setup (easy path)
 
-| Requirement | Approach |
-|-------------|----------|
-| Auth | **App passwords** only (not the account password) |
-| Scopes | At least `webdav` and/or `drive.read` + `drive.write` (+ `drive.delete` if deletes should sync) |
-| Transport | **HTTPS** to your Helix URL in production |
-| Revocation | Admin → App passwords → revoke anytime |
-| Audit | WebDAV writes/deletes go through the same Drive authz and audit path |
+### 1. Install Node.js and rclone once
 
-Create an app password in **Admin → Apps & integrations → App passwords**
-(or the Helix CLI). Prefer a dedicated password for the desktop machine so you
-can revoke one laptop without logging out of the browser.
+- **Node.js 20+**: https://nodejs.org/  
+- **rclone** (open source):
 
-## Choose a mode
+| OS | One-liner |
+|----|-----------|
+| macOS | `brew install rclone` |
+| Windows | `winget install Rclone.Rclone` |
+| Linux | `curl https://rclone.org/install.sh \| sudo bash` |
 
-Give the user the option:
+### 2. Create an App password in Helix
 
-### 1. Mirror folder (recommended for most people)
+In Helix: **Admin → Apps & integrations → App passwords**  
+Create a password with **WebDAV / Drive** access. Use this password in setup—not your login password.
 
-A normal folder on disk that **rclone bisync** keeps in two-way sync with Helix.
+### 3. Run setup
 
-- Edit files in Word/Excel/local apps, then sync  
-- Offline work lives in the folder  
-- Conflicts: rclone keeps both copies (configure policy carefully)
-
-### 2. Network / virtual drive (mount)
-
-rclone **mount** presents Helix as a drive letter or FUSE path.
-
-- Feels like a network share  
-- Needs **WinFsp** (Windows) or **macFUSE / FUSE-T** (macOS)  
-- Cache mode matters for Office “save” behavior (`--vfs-cache-mode full`)
-
-Both modes use the **same** WebDAV remote; only the local presentation differs.
-
-## Prerequisites
-
-1. Helix reachable at `https://your-helix.example` (TLS in production).  
-2. rclone installed: <https://rclone.org/install/>  
-3. App password with WebDAV/Drive scopes.  
-4. For **mount** on Windows: [WinFsp](https://winfsp.dev/). On macOS: macFUSE or FUSE-T.
-
-## Configure the remote once
+From a machine that can reach your Helix server:
 
 ```sh
-rclone config
+# From the Helix workspace repo:
+pnpm helix:drive-sync
+
+# Or:
+node scripts/helix-drive-sync-setup.mjs
 ```
 
-Interactive values:
+The script asks for:
 
-| Prompt | Value |
-|--------|--------|
-| `n` new remote | e.g. `helix` |
-| Storage | `webdav` |
-| URL | `https://your-helix.example/dav/files/` |
-| Vendor | `other` |
-| User | your Helix login email (e.g. `you@company.com`) |
-| Password | **app password** (y → paste) |
-| Bearer token | leave empty |
+1. **Server URL** — e.g. `https://helix.company.com`  
+2. **Email** — your Helix account  
+3. **App password**  
+4. **Mode**  
+   - **1) Mirror folder** (recommended) — normal folder that stays in sync  
+   - **2) Virtual drive** — mount like a network drive  
+5. **Local path** — default `~/HelixDrive` or `~/HelixMount` (Windows mount default `X:`)
 
-Test:
+It then configures the connection, tests it, and runs the first sync (mirror) or tells you how to start the mount.
+
+### 4. Day-to-day
+
+Helpers are written to `~/.helix/drive-sync/` (Windows: `%USERPROFILE%\.helix\drive-sync\`):
+
+| Mode | Command |
+|------|---------|
+| Mirror | `~/.helix/drive-sync/sync-now.sh` (or `sync-now.cmd`) |
+| Mount | `~/.helix/drive-sync/mount.sh` (or `mount.cmd`) — leave running |
+| Status | `~/.helix/drive-sync/status.sh` |
+
+Schedule **sync-now** every few minutes (Task Scheduler / cron / launchd) if you want continuous mirror updates.
+
+## Modes (what to pick)
+
+| | Mirror folder | Virtual drive |
+|--|---------------|---------------|
+| Feels like | Google Drive’s local folder | Network drive letter / mount |
+| Offline edits | Yes (in the folder) | Depends on cache |
+| Extra software | None | WinFsp (Windows), macFUSE/FUSE-T (macOS) |
+| Best for | Most people | “Always live on the server” workflows |
+
+## Security
+
+- App passwords only; revoke anytime in Admin  
+- Prefer **HTTPS** for the server URL  
+- Password is stored in rclone’s local config (machine-local), not in git  
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `rclone is required` | Install rclone (table above), re-run setup |
+| Connection test fails | Check URL, email, app password scopes, TLS |
+| Mount fails on Mac/Windows | Install FUSE / WinFsp, then run the mount helper |
+| Mirror conflicts | rclone keeps both copies; check the folder for conflict-named files |
+
+Re-run `pnpm helix:drive-sync` anytime to reconfigure.
+
+## Automation (optional)
 
 ```sh
-rclone lsd helix:
-rclone ls helix: --max-depth 2
+HELIX_SYNC_URL=https://helix.example.com \
+HELIX_SYNC_USER=you@example.com \
+HELIX_SYNC_PASSWORD='app-password-here' \
+HELIX_SYNC_MODE=mirror \
+HELIX_SYNC_PATH=$HOME/HelixDrive \
+HELIX_SYNC_YES=1 \
+node scripts/helix-drive-sync-setup.mjs
 ```
 
-## Mode A — Mirror folder
+## Advanced
 
-```sh
-# First-time: make local root and pull (or push) carefully
-mkdir -p ~/HelixDrive
-rclone bisync ~/HelixDrive helix: --create-empty-src-dirs --resync
-```
+Power users can use raw rclone against the same WebDAV endpoint (`/dav/files/`).  
+The setup script is the supported path for everyone else.
 
-Ongoing (cron, Task Scheduler, or a loop):
+## Phase B (later)
 
-```sh
-rclone bisync ~/HelixDrive helix: --create-empty-src-dirs
-```
-
-Notes:
-
-- Always run `--resync` only when both sides are trusted (initial setup or recovery).  
-- Prefer excluding temporary Office files if needed (`--exclude` patterns).  
-- Document conflict recovery for operators: check rclone logs; rename conflict copies.
-
-## Mode B — Mount (virtual drive)
-
-**Linux / macOS:**
-
-```sh
-mkdir -p ~/HelixMount
-rclone mount helix: ~/HelixMount \
-  --vfs-cache-mode full \
-  --dir-cache-time 30s \
-  --daemon
-```
-
-**Windows** (after WinFsp; adjust drive letter):
-
-```bat
-rclone mount helix: X: --vfs-cache-mode full --network-mode
-```
-
-Unmount: stop the rclone process or `fusermount -u ~/HelixMount` / unmount the drive letter.
-
-## Recommended scopes
-
-Minimum for two-way sync:
-
-- `webdav` **or** explicit `drive.read` + `drive.write`  
-- Add `drive.delete` only if remote deletes should remove local files (and vice versa)
-
-Read-only mirror:
-
-- `drive.read` / `webdav` without write — use `rclone sync helix: ~/HelixDrive` (one-way pull) instead of bisync.
-
-## Operator checklist
-
-- [ ] App password created and stored in a password manager / OS keychain  
-- [ ] TLS certificate valid for the Helix hostname  
-- [ ] WebDAV smoke green: `pnpm quality:live-auth-smoke` with `--webdav-smoke` (or equivalent)  
-- [ ] Users choose **mirror** vs **mount** with the tradeoffs above  
-- [ ] Multi-node deploys: WebDAV locks should be durable (Postgres/Redis) before relying on LOCK for Office co-write  
-
-## What Helix will ship later (Phase B)
-
-A small open-source tray app that:
-
-1. Asks for server URL + app password (or device login later)  
-2. Offers **Mirror folder** vs **Mount drive**  
-3. Runs rclone under the hood and shows sync status  
-
-Until then, this document is the supported client path.
-
-## Related
-
-- Drive WebDAV implementation: `apps/helix/src/platform/drive/` (`/dav/files/*`)  
-- App passwords: Admin → App passwords; `docs/admin-guide.md`  
-- Live WebDAV smoke notes: `docs/troubleshooting.md`  
-- MVP product boundary: `docs/product-claims-mvp.md` (files + previews; no native editors)  
+A small tray app will wrap the same flow (endpoint, app password, mirror vs mount) without a terminal.

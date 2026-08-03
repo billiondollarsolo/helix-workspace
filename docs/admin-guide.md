@@ -37,8 +37,9 @@ also disabled. Any later commands in this guide that exercise Docs, Calendar, Me
 workflows are development/full-workspace evidence only and are not pilot acceptance steps for the
 storage-only production profile.
 
-Desktop file sync uses open-source **rclone** over Helix WebDAV (`/dav/files/*`) with **app
-passwords**. Users choose a **mirror folder** (bisync) or a **mounted virtual drive**. See
+Desktop file sync: users run **`pnpm helix:drive-sync`** (or
+`node scripts/helix-drive-sync-setup.mjs`), enter server URL + app password, and pick **mirror
+folder** or **virtual drive**. No manual rclone config required. See
 [Drive desktop sync](drive-desktop-sync.md).
 
 ## Quality Gate Responsibilities

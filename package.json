@@ -45,6 +45,7 @@
     "quality:local-disconnected-live-smokes": "node scripts/local-disconnected-live-smokes.mjs",
     "quality:local-disconnected-live-smokes:test": "vitest run scripts/local-disconnected-live-smokes.test.mjs",
     "quality:local-volume-soak": "node scripts/local-volume-soak.mjs",
+    "helix:drive-sync": "node scripts/helix-drive-sync-setup.mjs",
     "quality:production-readiness-contract:test": "node infra/scripts/negative-security-matrix.mjs > /dev/null && vitest run infra/scripts/production-compose.test.mjs infra/scripts/production-image-workflow.test.mjs infra/scripts/production-dependency-images.test.mjs infra/scripts/supply-chain-workflow.test.mjs infra/scripts/production-dependency-audit.test.mjs infra/scripts/negative-security-matrix.test.mjs infra/scripts/backup-manifest.test.mjs infra/scripts/production-readiness-workflow.test.mjs infra/scripts/normalize-image-spdx.test.mjs",
     "quality:alertmanager-signup-routing": "node infra/scripts/alertmanager-signup-routing-smoke.mjs",
     "quality:synthetic-signup-probe": "node infra/scripts/synthetic-signup-probe.mjs",

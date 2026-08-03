@@ -1986,7 +1986,8 @@ export async function seedWorkspace(
 async function main(): Promise<void> {
   const sql = createSqlClient();
   try {
-    const result = await seedWorkspace(sql);
+    const orgId = process.env.HELIX_DEFAULT_ORG_ID ?? DEFAULT_LOCAL_OAUTH_ORG_ID;
+    const result = await seedWorkspace(sql, { orgId });
     console.log(JSON.stringify(result, null, 2));
   } finally {
     await sql.end();

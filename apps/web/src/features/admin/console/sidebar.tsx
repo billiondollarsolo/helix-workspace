@@ -186,7 +186,8 @@ export function AdminSidebar({ section }: { readonly section: AdminSectionId }) 
     /* `block: "nearest"` is deliberate: it moves the nav only when the active
        row is actually out of view, so it never yanks the list out from under
        someone who has scrolled it themselves. jsdom does not implement
-       scrollIntoView, hence the guard. */
+       scrollIntoView, hence the guard. scroll-padding-bottom on .admin-nav
+       keeps the last rows (e.g. Services) clear of the viewport edge. */
     if (active && typeof active.scrollIntoView === "function") {
       active.scrollIntoView({ block: "nearest" });
     }

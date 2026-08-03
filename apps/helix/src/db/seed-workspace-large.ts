@@ -107,7 +107,8 @@ export async function seedWorkspaceLarge(
 }
 
 async function main(): Promise<void> {
-  const result = await seedWorkspaceLarge();
+  const orgId = process.env.HELIX_DEFAULT_ORG_ID ?? DEFAULT_LOCAL_OAUTH_ORG_ID;
+  const result = await seedWorkspaceLarge(orgId);
   console.log(JSON.stringify(result, null, 2));
 }
 

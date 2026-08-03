@@ -74,6 +74,9 @@ export default defineConfig(({ mode }) => {
           "/asyncapi.json",
           "/metrics",
           "/events",
+          // Mail realtime (EventSource) — without this the SPA logs
+          // "Failed to load resource: 404" for GET /sse/mail in dev.
+          "/sse",
           "/ws",
           "/sync",
           "/dav",

@@ -2,12 +2,9 @@ import fastify from "fastify";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
-import {
-  PlatformConfigAdminService,
-  PostgresPlatformConfigStore,
-} from "../config/admin.js";
+import { PlatformConfigAdminService, PostgresPlatformConfigStore } from "../config/admin.js";
 import { registerCoreAppsAdminRoutes, type CoreAppsAdminStatus } from "./admin-routes.js";
-import { CORE_APP_IDS } from "./core-apps.js";
+import { CORE_APP_IDS, resolveRoleAppSet } from "./core-apps.js";
 
 /** Minimal in-memory `platform_config` table fake (matches admin.test.ts). */
 class InMemoryPlatformConfigSql {
@@ -23,9 +20,7 @@ class InMemoryPlatformConfigSql {
     (strings: TemplateStringsArray, ...values: unknown[]) => {
       const text = strings.join("$");
       if (text.includes("select key, value")) {
-        return Promise.resolve(
-          [...this.rows.entries()].map(([key, value]) => ({ key, value })),
-        );
+        return Promise.resolve([...this.rows.entries()].map(([key, value]) => ({ key, value })));
       }
       if (text.includes("insert into platform_config")) {
         const [key, value] = values;
@@ -62,13 +57,21 @@ async function appWithCoreAppsRoutes(
   actor: Actor,
   initialRows: Record<string, unknown> = {},
   role = "all",
+  /** `HELIX_APPS`. When set it wins over `role`, exactly as at boot. */
+  apps?: string,
 ) {
   const store = new PostgresPlatformConfigStore(new InMemoryPlatformConfigSql(initialRows).sql);
   const service = new PlatformConfigAdminService(store, {});
   const app = fastify();
+  /* Resolve once and pass both, mirroring `server.ts`: it builds a
+     `CoreAppRegistrationPlan` at boot and hands the route its `role` *and*
+     `appIds`. Passing only the role is the defect this harness must be able
+     to reproduce. */
+  const plan = resolveRoleAppSet(apps === undefined ? { role } : { apps });
   await registerCoreAppsAdminRoutes(app, {
     service,
-    role,
+    role: plan.role,
+    appIds: plan.appIds,
     actorFromRequest: () => actor,
   });
   return app;
@@ -177,6 +180,36 @@ describe("core-app enablement admin routes", () => {
     expect(mail).toMatchObject({ enabled: true, inRole: false, registered: false });
     const chat = body.apps.find((coreApp) => coreApp.id === "chat");
     expect(chat).toMatchObject({ enabled: true, inRole: true, registered: true });
+    await app.close();
+  });
+
+  it("serves the status when the app set came from HELIX_APPS", async () => {
+    /* The production configuration (docker-compose.production.yml). An explicit
+       `HELIX_APPS` resolves to the sentinel role "custom", which is deliberately
+       not a member of HELIX_ROLES — so re-deriving the app set from the role
+       *name* threw `CoreAppRoleError` and this endpoint answered 500 for every
+       production process. The admin console's Overview reported it as
+       "Workspace apps could not be read".
+
+       Asserting the body, not just the status: a 200 carrying every app as
+       `inRole: false` would be the same outage wearing a success code. */
+    const app = await appWithCoreAppsRoutes(adminActor, {}, "all", "mail,drive,chat,assistant");
+    const response = await app.inject({ method: "GET", url: "/api/admin/core-apps" });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<CoreAppsAdminStatus>();
+    expect(body.role).toBe("custom");
+    const registered = body.apps
+      .filter((coreApp) => coreApp.registered)
+      .map((coreApp) => coreApp.id)
+      .sort();
+    expect(registered).toEqual(["assistant", "chat", "drive", "mail"]);
+    // The editor suite is excluded by the role, not disabled org-wide.
+    expect(body.apps.find((coreApp) => coreApp.id === "editors")).toMatchObject({
+      enabled: true,
+      inRole: false,
+      registered: false,
+    });
     await app.close();
   });
 });

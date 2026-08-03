@@ -77,6 +77,20 @@ export interface CoreAppEnablementInput {
   readonly role?: string;
   /** `HELIX_APPS` env value — a comma-separated explicit app subset. */
   readonly apps?: string;
+  /**
+   * A pre-resolved app set, taking precedence over `role` and `apps`.
+   *
+   * Resolution happens once at boot; the read endpoints re-derive statuses on
+   * every request only because `enabled` can change at runtime (an admin
+   * toggle). `inRole` cannot — it is fixed by how the process booted.
+   *
+   * Re-deriving it from `role` alone is lossy: `HELIX_APPS` resolves to the
+   * sentinel role `"custom"`, which by construction is not in
+   * {@link HELIX_ROLES}, so the lookup threw for every process that set
+   * `HELIX_APPS` — the entire production configuration. Passing the set the
+   * process actually booted with is what makes the round-trip total.
+   */
+  readonly appIds?: ReadonlySet<CoreAppId>;
 }
 
 export const EDITOR_CORE_APP_ROLE_IDS = [
@@ -143,10 +157,18 @@ export class CoreAppRoleError extends Error {
  * Resolve the set of core app ids this process's role is permitted to run.
  * `HELIX_APPS` (explicit list) takes precedence over `HELIX_ROLE` (named role).
  */
-export function resolveRoleAppSet(input: Pick<CoreAppEnablementInput, "role" | "apps">): {
+export function resolveRoleAppSet(
+  input: Pick<CoreAppEnablementInput, "role" | "apps" | "appIds">,
+): {
   readonly role: string;
   readonly appIds: ReadonlySet<CoreAppId>;
 } {
+  /* An already-resolved set is authoritative — there is nothing left to look
+     up, and the role name it came from may be the `"custom"` sentinel. */
+  if (input.appIds !== undefined) {
+    return { role: input.role ?? DEFAULT_HELIX_ROLE, appIds: input.appIds };
+  }
+
   const explicit = (input.apps ?? "").trim();
   if (explicit.length > 0) {
     const ids = explicit
@@ -229,11 +251,18 @@ export function isCoreAppEnabled(
  */
 export class CoreAppRegistrationPlan {
   readonly role: string;
+  /**
+   * The app set this process booted with. Hand this to anything that needs to
+   * recompute statuses later — {@link role} is a display string and cannot be
+   * resolved back to a set when it is `"custom"`.
+   */
+  readonly appIds: ReadonlySet<CoreAppId>;
   private readonly byId: Map<CoreAppId, CoreAppStatus>;
 
   constructor(input: CoreAppEnablementInput) {
     const { role, statuses } = resolveCoreAppStatuses(input);
     this.role = role;
+    this.appIds = new Set(statuses.filter((status) => status.inRole).map((status) => status.id));
     this.byId = new Map(statuses.map((status) => [status.id, status]));
   }
 

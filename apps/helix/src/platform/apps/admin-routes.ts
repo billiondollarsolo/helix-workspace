@@ -33,6 +33,13 @@ export interface RegisterCoreAppsAdminRoutesOptions {
   readonly service: PlatformConfigAdminService;
   /** The role this process booted as (informational, for the admin UI). */
   readonly role: string;
+  /**
+   * The app set this process booted with — `CoreAppRegistrationPlan.appIds`.
+   *
+   * Required, not optional: `role` is a display string, and deriving `inRole`
+   * from it threw for every process that set `HELIX_APPS` (role `"custom"`).
+   */
+  readonly appIds: ReadonlySet<CoreAppId>;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
 }
 
@@ -68,13 +75,16 @@ function permissionDeniedResponse(scope: string): { readonly error: string } {
  *  Exported so `GET /api/admin/overview` can serve the identical shape from the
  *  same code rather than a second implementation that could drift away from it. */
 export async function buildCoreAppsAdminStatus(
-  options: Pick<RegisterCoreAppsAdminRoutesOptions, "service" | "role">,
+  options: Pick<RegisterCoreAppsAdminRoutesOptions, "service" | "role" | "appIds">,
 ): Promise<CoreAppsAdminStatus> {
   const status = await options.service.getStatus();
   const modules = status.config.modules;
+  /* Fresh `modules` because an admin toggle changes `enabled` at runtime; the
+     boot-resolved `appIds` because `inRole` cannot change without a restart. */
   const { statuses } = resolveCoreAppStatuses({
     ...(modules === undefined ? {} : { modules }),
     role: options.role,
+    appIds: options.appIds,
   });
   return {
     role: options.role,

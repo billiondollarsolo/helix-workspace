@@ -2961,6 +2961,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerCoreAppsAdminRoutes(app, {
     service: platformConfig,
     role: coreApps.role,
+    appIds: coreApps.appIds,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
   /* One request for Admin > Overview instead of five. The page reads five
@@ -2986,7 +2987,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       });
       return { users, nextCursor: null };
     },
-    readCoreApps: () => buildCoreAppsAdminStatus({ service: platformConfig, role: coreApps.role }),
+    readCoreApps: () =>
+      buildCoreAppsAdminStatus({
+        service: platformConfig,
+        role: coreApps.role,
+        appIds: coreApps.appIds,
+      }),
     onSignalError: (input) => {
       app.log.error({ error: input.error, signal: input.signal }, "Admin overview signal failed");
     },
@@ -3746,6 +3752,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     const currentCoreApps = resolveCoreAppStatuses({
       ...(modules === undefined ? {} : { modules }),
       role: coreApps.role,
+      appIds: coreApps.appIds,
     });
     return {
       role: coreApps.role,

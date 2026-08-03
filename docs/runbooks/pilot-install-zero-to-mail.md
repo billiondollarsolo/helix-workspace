@@ -291,6 +291,8 @@ Org-scoped disable is available on the same page for a single organization UUID.
 - Incident index: [`docs/RUNBOOK.md`](../RUNBOOK.md)
 - Packaging: [`docs/architecture/v1-packaging-matrix.md`](../architecture/v1-packaging-matrix.md)
 - Admin enforce-or-hide inventory: [`docs/admin-enforce-or-hide-inventory.md`](../admin-enforce-or-hide-inventory.md)
+- Local disconnected multi-surface smokes (Mailpit/RustFS, multi-user RBAC):
+  [`docs/runbooks/local-disconnected-live-smokes.md`](./local-disconnected-live-smokes.md)
 
 ## Safety
 

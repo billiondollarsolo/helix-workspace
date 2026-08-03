@@ -233,9 +233,27 @@ function principalForActor(actor: Actor): JsonObject {
   };
 }
 
+/* Only an *unrestricted* grant earns the Cerbos `admin` role.
+ *
+ * This used to add the role for any scope beginning with `admin.`, and every
+ * resource policy grants that role `actions: ["*"]` within its org. So an actor
+ * holding nothing but `admin.drive` — a Drive quota read — could invoke every
+ * tool in the workspace: `admin.users`, `admin.plugins`, `mail.send`, all of
+ * it. The forty-odd action-specific rules were dead code for anyone with any
+ * admin scope, because the wildcard matched first and an ALLOW wins.
+ *
+ * It also disagreed with the platform's own definition. `actorHasScope`
+ * (api/scopes.ts) treats only `*` and `admin.*` as unrestricted, so the REST
+ * routes and the tool calls answered differently for the same actor — and the
+ * tool path is the one guarding the destructive operations. The login seed says
+ * the same thing in a comment: "tools gate on these; bare `admin` is not a
+ * wildcard".
+ *
+ * A scoped admin now gets exactly the scopes they hold, through the enumerated
+ * per-scope rules that exist for precisely this purpose. */
 function rolesForActor(actor: Actor): readonly string[] {
   const roles = new Set<string>([actor.type]);
-  if (actor.scopes?.some((scope) => scope === "admin" || scope.startsWith("admin."))) {
+  if (actor.scopes?.some((scope) => scope === "*" || scope === "admin.*")) {
     roles.add("admin");
   }
   return [...roles];

@@ -275,6 +275,20 @@ resourcePolicy:
         match:
           expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "assistant.memory" && P.attr.scopes.exists(scope, scope == "assistant.memory")
 
+    - actions: ["notifications.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "notifications.read" && P.attr.scopes.exists(scope, scope == "notifications.read")
+
+    - actions: ["notifications.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "notifications.write" && P.attr.scopes.exists(scope, scope == "notifications.write")
+
     - actions: ["admin.users"]
       effect: EFFECT_ALLOW
       roles: ["user", "agent", "service_account"]

@@ -248,6 +248,23 @@ export const SCOPE_CATALOG: readonly ScopeDefinition[] = [
     surfaces: ["agent"],
   },
 
+  // Notifications.
+  /* Granted by the login seed to every account and gated by real tools
+     (`platform/notifications/tools.ts`), but never catalogued — so no Cerbos
+     rule was generated for them and every non-admin actor was refused their own
+     notifications with a 403. Admins only escaped it because the tool policy's
+     wildcard answered for them. */
+  {
+    scope: "notifications.read",
+    description: "Read notifications and unread counts.",
+    surfaces: ["agent"],
+  },
+  {
+    scope: "notifications.write",
+    description: "Mark notifications read and dismiss them.",
+    surfaces: ["agent"],
+  },
+
   // Admin.
   { scope: "admin.users", description: "Administer users.", surfaces: ["admin"] },
   { scope: "admin.config", description: "Administer platform configuration.", surfaces: ["admin"] },

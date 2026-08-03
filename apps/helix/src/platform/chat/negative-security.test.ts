@@ -28,8 +28,15 @@ describe("Chat V2 negative-security boundary", () => {
     const readSql = recordingSql([[]]);
     await expect(
       new PostgresChatStore(readSql.sql).listMessages({ orgId, actorId, roomId }),
-    ).rejects.toBeInstanceOf(ChatRoomAccessError);
+    ).rejects.toMatchObject({
+      name: "ChatRoomAccessError",
+      code: "not_found",
+      message: "Chat room was not found.",
+      details: undefined,
+    });
     expect(readSql.calls.some((query) => query.includes("from messages"))).toBe(false);
+    expect(readSql.calls[0]).toContain("p.org_id = t.org_id");
+    expect(readSql.calls[0]).toContain("p.expires_at");
 
     const sendSql = recordingSql([[]]);
     await expect(
@@ -39,7 +46,49 @@ describe("Chat V2 negative-security boundary", () => {
         roomId,
         body: "must not be stored",
       }),
-    ).rejects.toBeInstanceOf(ChatRoomAccessError);
+    ).rejects.toMatchObject({
+      name: "ChatRoomAccessError",
+      code: "not_found",
+      message: "Chat room was not found.",
+      details: undefined,
+    });
+    expect(sendSql.calls.some((query) => query.includes("insert into messages"))).toBe(false);
+    expect(sendSql.calls[0]).toContain("p.org_id = t.org_id");
+    expect(sendSql.calls[0]).toContain("for key share of t, p");
+  });
+
+  it("uses the same non-enumerable denial for listMessages and sendMessage when membership is missing", async () => {
+    // E5.1 residual: store APIs must fail closed before history or insert side-effects.
+    const listSql = recordingSql([[]]);
+    const sendSql = recordingSql([[]]);
+    const listRejection = new PostgresChatStore(listSql.sql).listMessages({
+      orgId,
+      actorId,
+      roomId,
+    });
+    const sendRejection = new PostgresChatStore(sendSql.sql).sendMessage({
+      orgId,
+      actorId,
+      roomId,
+      body: "cross-check denial shape",
+    });
+
+    await expect(listRejection).rejects.toBeInstanceOf(ChatRoomAccessError);
+    await expect(sendRejection).rejects.toBeInstanceOf(ChatRoomAccessError);
+
+    const listError = await listRejection.catch((error: unknown) => error);
+    const sendError = await sendRejection.catch((error: unknown) => error);
+    expect(listError).toMatchObject({
+      code: "not_found",
+      message: "Chat room was not found.",
+      details: undefined,
+    });
+    expect(sendError).toMatchObject({
+      code: "not_found",
+      message: "Chat room was not found.",
+      details: undefined,
+    });
+    expect(listSql.calls.some((query) => query.includes("from messages"))).toBe(false);
     expect(sendSql.calls.some((query) => query.includes("insert into messages"))).toBe(false);
   });
 });

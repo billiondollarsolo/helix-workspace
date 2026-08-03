@@ -1,7 +1,11 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod3";
-import { searchReindexTypes, type SearchReindexRequest, type SearchReindexRunner } from "./reindex.js";
+import {
+  searchReindexTypes,
+  type SearchReindexRequest,
+  type SearchReindexRunner,
+} from "./reindex.js";
 
 const adminConfigWriteScope = "admin.config.write";
 
@@ -35,9 +39,15 @@ export async function registerSearchAdminRoutes(
         .send({ error: "Invalid search reindex request.", issues: parsed.error.issues });
     }
 
+    // Fail closed: tenant admins reindex only their own org. A missing body
+    // orgId scopes to the actor org rather than the entire corpus.
+    if (parsed.data.orgId !== undefined && parsed.data.orgId !== actor.orgId) {
+      return reply.code(403).send(crossOrgDeniedResponse());
+    }
+
     const input: SearchReindexRequest = {
+      orgId: actor.orgId,
       ...(parsed.data.types === undefined ? {} : { types: parsed.data.types }),
-      ...(parsed.data.orgId === undefined ? {} : { orgId: parsed.data.orgId }),
       ...(parsed.data.batchSize === undefined ? {} : { batchSize: parsed.data.batchSize }),
       ...(parsed.data.pruneStale === undefined ? {} : { pruneStale: parsed.data.pruneStale }),
     };
@@ -63,5 +73,15 @@ function permissionDeniedResponse(): {
   return {
     error: "Admin search reindex permission denied.",
     requiredScope: adminConfigWriteScope,
+  };
+}
+
+function crossOrgDeniedResponse(): {
+  readonly error: string;
+  readonly code: "cross_org_reindex_denied";
+} {
+  return {
+    error: "Cross-organization search reindex denied.",
+    code: "cross_org_reindex_denied",
   };
 }

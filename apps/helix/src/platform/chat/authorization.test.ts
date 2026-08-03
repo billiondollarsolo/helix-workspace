@@ -90,6 +90,26 @@ describe("central Chat authorization", () => {
     expect(visible.has(ACTOR_ID)).toBe(false);
     expect(sql.calls[0]).toContain("o.upload_state = 'active'");
   });
+
+  it("denies room access with a non-enumerable not_found for missing membership (list/send gate)", async () => {
+    // Shared gate for PostgresChatStore.listMessages / sendMessage (see negative-security).
+    const sql = fakeSql([[]]);
+    await expect(
+      requireChatRoomAccess(sql.tag, {
+        orgId: ORG_ID,
+        actorId: ACTOR_ID,
+        roomId: ROOM_ID,
+      }),
+    ).rejects.toMatchObject({
+      name: "ChatRoomAccessError",
+      code: "not_found",
+      message: "Chat room was not found.",
+      details: undefined,
+    });
+    expect(sql.calls[0]).toContain("p.resource_type = 'thread'");
+    expect(sql.calls[0]).toContain("p.actor_id");
+    expect(sql.calls[0]).toContain("p.org_id = t.org_id");
+  });
 });
 
 function fakeSql(responses: readonly unknown[][]): {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { skipUnlessLiveDatabase } from "../test/live-suite.js";
 import {
   InMemorySheetsStore,
   PostgresSheetsStore,
@@ -2244,7 +2245,7 @@ const PG_FOLDER_ID = "f2000000-0000-4000-8000-000000000003";
 describe(
   "PostgresSheetsStore — createSheet creates shared-PK objects row",
   {
-    skip: !process.env.DATABASE_URL,
+    skip: skipUnlessLiveDatabase("Sheets store (live PostgreSQL)"),
   },
   () => {
     let sql: postgres.Sql;

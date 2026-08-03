@@ -12,6 +12,7 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresDriveStore } from "./store.js";
+import { skipUnlessLiveDatabase } from "../test/live-suite.js";
 
 // Deterministic UUIDs in the f100… range to avoid collision with demo seed
 // data (0000...) and the migration test (f000...).
@@ -30,7 +31,7 @@ function createSql(): postgres.Sql {
 describe(
   "PostgresDriveStore — syncTargetDeletedAt cascade",
   {
-    skip: !process.env.DATABASE_URL,
+    skip: skipUnlessLiveDatabase("Drive store (live PostgreSQL)"),
   },
   () => {
     let sql: postgres.Sql;

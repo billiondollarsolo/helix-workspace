@@ -10,9 +10,10 @@
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
 
 const migrationUrl = new URL("./0088_activity_hash_shape.sql", import.meta.url);
-const live = describe.skipIf(process.env.DATABASE_URL === undefined);
+const live = describe.skipIf(skipUnlessLiveDatabase("migration 0088 activity hash shape"));
 
 live("0088 activity hash shape", () => {
   const schema = "helix_0088_activity_test";

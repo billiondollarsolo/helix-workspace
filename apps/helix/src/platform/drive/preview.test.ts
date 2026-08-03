@@ -9,8 +9,15 @@ import {
   type OfficePreviewConversionResult,
 } from "./preview.js";
 import { DriveForbiddenError } from "./errors.js";
+import { skipUnlessTestCorpus } from "../test/live-suite.js";
 
-const corpusIt = existsSync("../../test-corpus/apache-tika") ? it : it.skip;
+const corpusIt = skipUnlessTestCorpus(
+  "Drive preview (Apache Tika corpus)",
+  existsSync("../../test-corpus/apache-tika"),
+  "test-corpus/apache-tika",
+)
+  ? it.skip
+  : it;
 
 describe("assertPreviewUrlAllowed", () => {
   it("rejects a link-local metadata host", () => {

@@ -9,6 +9,7 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresDriveStore } from "../drive/index.js";
+import { skipUnlessLiveDatabase } from "../test/live-suite.js";
 
 const ACME_ORG_ID = "f9000000-0000-4000-8000-000000000001";
 const ACME_ACTOR_ID = "f9000000-0000-4000-8000-000000000002";
@@ -30,7 +31,7 @@ function createSql(): postgres.Sql {
 describe(
   "cross-tenant isolation adversarial fixture",
   {
-    skip: !process.env.DATABASE_URL,
+    skip: skipUnlessLiveDatabase("cross-tenant isolation adversarial fixture"),
   },
   () => {
     let sql: postgres.Sql;

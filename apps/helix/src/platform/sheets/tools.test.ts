@@ -4,10 +4,17 @@ import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
 import { InMemorySheetsStore } from "./store.js";
 import { registerSheetsTools } from "./tools.js";
+import { skipUnlessTestCorpus } from "../test/live-suite.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
-const corpusIt = existsSync("../../test-corpus/apache-tika") ? it : it.skip;
+const corpusIt = skipUnlessTestCorpus(
+  "Sheets tools (Apache Tika corpus)",
+  existsSync("../../test-corpus/apache-tika"),
+  "test-corpus/apache-tika",
+)
+  ? it.skip
+  : it;
 
 function readerActor(): Actor {
   return { id: actorId, orgId, type: "user", scopes: ["sheets.read"] };

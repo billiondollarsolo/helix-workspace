@@ -10,10 +10,11 @@
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
 
 const migrationUrl = new URL("./0087_domain_ownership_proof.sql", import.meta.url);
 const rollbackUrl = new URL("./rollbacks/0087_domain_ownership_proof.sql", import.meta.url);
-const live = describe.skipIf(process.env.DATABASE_URL === undefined);
+const live = describe.skipIf(skipUnlessLiveDatabase("migration 0087 domain ownership proof"));
 
 live("0087 domain ownership proof", () => {
   const schema = "helix_0087_ownership_test";

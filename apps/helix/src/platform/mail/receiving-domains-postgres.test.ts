@@ -1,11 +1,12 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { skipUnlessLiveDatabase } from "../test/live-suite.js";
 import {
   PostgresReceivingDomainStore,
   ReceivingDomainCatchAllError,
 } from "./receiving-domains-store.js";
 
-const live = describe.skipIf(process.env.DATABASE_URL === undefined);
+const live = describe.skipIf(skipUnlessLiveDatabase("mail receiving domains (live PostgreSQL)"));
 
 live("PostgresReceivingDomainStore", () => {
   const orgOne = "f7510000-0000-4000-8000-000000000001";

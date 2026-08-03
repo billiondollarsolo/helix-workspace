@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
 
 const migrationUrl = new URL("./0075_mail_receiving_domains.sql", import.meta.url);
 const rollbackUrl = new URL("./rollbacks/0075_mail_receiving_domains.sql", import.meta.url);
@@ -48,7 +49,7 @@ describe("0075 mail receiving-domain migration contract", () => {
   });
 });
 
-const live = describe.skipIf(process.env.DATABASE_URL === undefined);
+const live = describe.skipIf(skipUnlessLiveDatabase("migration 0075 mail receiving domains"));
 
 live("0075 mail receiving-domain PostgreSQL invariants", () => {
   const orgOne = "f7500000-0000-4000-8000-000000000001";

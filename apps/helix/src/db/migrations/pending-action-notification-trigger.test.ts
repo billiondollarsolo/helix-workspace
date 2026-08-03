@@ -19,8 +19,9 @@
 
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
 
-const live = describe.skipIf(process.env.DATABASE_URL === undefined);
+const live = describe.skipIf(skipUnlessLiveDatabase("pending-action notification trigger"));
 
 live("notify_pending_action_state trigger", () => {
   const orgId = "f7830000-0000-4000-8000-000000000001";

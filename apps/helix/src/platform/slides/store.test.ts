@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { InMemorySlidesStore, PostgresSlidesStore } from "./store.js";
 import type { SlideContent } from "./types.js";
 import type { TenantStorageClient, TenantStorageResolver } from "../storage/index.js";
+import { skipUnlessLiveDatabase } from "../test/live-suite.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const actorId = "11111111-1111-4111-8111-111111111111";
@@ -902,7 +903,7 @@ const PG_FOLDER_ID = "f3000000-0000-4000-8000-000000000003";
 describe(
   "PostgresSlidesStore — createDeck creates shared-PK objects row",
   {
-    skip: !process.env.DATABASE_URL,
+    skip: skipUnlessLiveDatabase("Slides store (live PostgreSQL)"),
   },
   () => {
     let sql: postgres.Sql;

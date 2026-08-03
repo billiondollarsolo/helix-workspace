@@ -13,10 +13,11 @@
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
 
 const migrationUrl = new URL("./0086_domain_registry_parent.sql", import.meta.url);
 const rollbackUrl = new URL("./rollbacks/0086_domain_registry_parent.sql", import.meta.url);
-const live = describe.skipIf(process.env.DATABASE_URL === undefined);
+const live = describe.skipIf(skipUnlessLiveDatabase("migration 0086 domain registry parent"));
 
 live("0086 domain registry parent — backfill", () => {
   /* A dedicated schema per run: the migration alters shared tables, so it is

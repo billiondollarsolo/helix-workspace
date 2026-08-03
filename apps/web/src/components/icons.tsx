@@ -3,6 +3,7 @@
    third-party icon library, so the visual language stays consistent. */
 
 import type { ComponentType, ReactNode, SVGProps } from "react";
+import { HELIX_MARK_PATHS } from "./shell/helix-mark";
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "children"> {
   /** Pixel size for both width and height. Defaults to 16. */
@@ -34,8 +35,8 @@ function I({ children, size = 16, ...rest }: IconProps & { children: ReactNode }
 /* The Helix mark: a DNA double helix. Kept as its own component rather than
    an `I(...)` icon because it carries a heavier 2px stroke — it reads as a
    brand mark at rail and favicon sizes, where 1.6px goes wispy.
-   Path data matches `HelixLogo` and the `index.html` favicon; change all
-   three together. */
+   Path data comes from `./shell/helix-mark`, shared with `HelixLogo` and the
+   `index.html` favicon and checked by `helix-mark.test.ts`. */
 const Helix: IconComponent = ({ size = 20, ...rest }) => (
   <svg
     width={size}
@@ -49,17 +50,9 @@ const Helix: IconComponent = ({ size = 20, ...rest }) => (
     aria-hidden="true"
     {...rest}
   >
-    <path d="m10 16 1.5 1.5" />
-    <path d="m14 8-1.5-1.5" />
-    <path d="M15 2c-1.798 1.998-2.518 3.995-2.807 5.993" />
-    <path d="m16.5 10.5 1 1" />
-    <path d="m17 6-2.891-2.891" />
-    <path d="M2 15c6.667-6 13.333 0 20-6" />
-    <path d="m20 9 .891.891" />
-    <path d="M3.109 14.109 4 15" />
-    <path d="m6.5 12.5 1 1" />
-    <path d="m7 18 2.891 2.891" />
-    <path d="M9 22c1.798-1.998 2.518-3.995 2.807-5.993" />
+    {HELIX_MARK_PATHS.map((d) => (
+      <path key={d} d={d} />
+    ))}
   </svg>
 );
 

@@ -26,9 +26,13 @@ production-readiness claim.
   no more than 4 hours. These are engineering objectives, not a contractual SLA.
 
 The runtime retains tenant-aware interfaces and test modes, but public multi-tenant SaaS is not an
-approved launch claim. See the [architecture decision records](docs/architecture/README.md) and
-[production-readiness plan](docs/superpowers/plans/2026-07-28-core-workspace-production-readiness.md)
-for the normative boundaries and release gates.
+approved launch claim. See:
+
+- [MVP product claims and non-claims](docs/product-claims-mvp.md)
+- [Elite MVP enterprise production plan](docs/superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md)
+  (active execution track)
+- [Architecture decision records](docs/architecture/README.md)
+- Historical: [2026-07-28 production-readiness plan](docs/superpowers/plans/2026-07-28-core-workspace-production-readiness.md)
 
 ## Development
 

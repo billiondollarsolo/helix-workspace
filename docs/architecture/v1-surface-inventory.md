@@ -3,7 +3,10 @@
 **Date:** 2026-08-02  
 **Task:** G0.1  
 **Source of truth for packaging today:** `apps/web/src/components/apps.ts`, `apps/helix/src/config/production-assertions.ts`  
-**Forward plan:** `docs/superpowers/plans/2026-08-02-helix-full-workspace-v1-release.md`
+**Forward plans:**
+
+- **Elite MVP (no editors) — active:** `docs/superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md`
+- **Full Workspace (Cal/Meet/Editors) — after MVP R3:** `docs/superpowers/plans/2026-08-02-helix-full-workspace-v1-release.md`
 
 ## Packaging today (production MVP fail-closed)
 

@@ -99,9 +99,9 @@ const SPAM_BODY_PATTERNS: readonly {
 export function evaluateSpamRules(features: SpamMessageFeatures): SpamRulesVerdict {
   const hits: SpamRuleHit[] = [];
   let score = 0;
-  const subject = features.subject ?? "";
-  const body = features.bodyText ?? "";
-  const from = features.fromAddress ?? "";
+  const subject = features.subject;
+  const body = features.bodyText;
+  const from = features.fromAddress;
 
   for (const rule of SPAM_SUBJECT_PATTERNS) {
     if (rule.re.test(subject)) {
@@ -114,7 +114,7 @@ export function evaluateSpamRules(features: SpamMessageFeatures): SpamRulesVerdi
       const urls = body.match(rule.re) ?? [];
       if (urls.length >= 5) {
         const weight = Math.min(3, urls.length * 0.4);
-        hits.push({ id: rule.id, weight, detail: `${urls.length} urls in body` });
+        hits.push({ id: rule.id, weight, detail: `${String(urls.length)} urls in body` });
         score += weight;
       }
       continue;
@@ -188,7 +188,7 @@ export function combineSpamDecisions(input: {
   if (
     input.rules.label === "unsure" &&
     input.llm?.label === "spam" &&
-    (input.llm.confidence ?? 0) >= 0.55
+    input.llm.confidence >= 0.55
   ) {
     return {
       isSpam: true,
@@ -245,7 +245,9 @@ export async function classifySpamWithLlm(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, config.timeoutMs);
   try {
     const prompt = [
       "Classify this email as spam, ham, or unsure. Reply JSON only:",
@@ -300,10 +302,10 @@ export function parseLlmSpamContent(content: string): SpamLlmVerdict {
   } catch {
     parsed = {};
   }
-  const rawLabel = String(parsed.label ?? "unsure").toLowerCase();
+  const rawLabel = (parsed.label ?? "unsure").toLowerCase();
   const label: SpamLabel =
     rawLabel === "spam" || rawLabel === "ham" || rawLabel === "unsure" ? rawLabel : "unsure";
-  const confidence = clamp01(Number(parsed.confidence ?? 0.5));
+  const confidence = clamp01(parsed.confidence ?? 0.5);
   const reason = typeof parsed.reason === "string" ? parsed.reason : "beta llm";
   return {
     label,

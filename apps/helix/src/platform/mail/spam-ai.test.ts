@@ -198,8 +198,8 @@ describe("createBetaSpamSecondPass", () => {
       fromAddress: "a@b.com",
     });
     expect(result).not.toBeNull();
-    expect(typeof result!.isSpam).toBe("boolean");
-    expect(result!.evidence).toBeTruthy();
+    expect(typeof result?.isSpam).toBe("boolean");
+    expect(result?.evidence).toBeTruthy();
   });
 
   it("re-resolves enablement on each call (Admin hot-reload path)", async () => {
@@ -217,7 +217,7 @@ describe("createBetaSpamSecondPass", () => {
       fromAddress: "a@b.com",
     });
     expect(afterEnable).not.toBeNull();
-    expect(typeof afterEnable!.isSpam).toBe("boolean");
+    expect(typeof afterEnable?.isSpam).toBe("boolean");
 
     env.MAIL_SPAM_AI_BETA_ENABLED = "false";
     await expect(

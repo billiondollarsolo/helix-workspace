@@ -552,7 +552,7 @@ export async function ingestResolvedRawMail(input: {
               now: receivedAt,
             });
             filterResults.push({ actorId, result });
-            if (scan.routedToSpam && !scan.quarantined) {
+            if (scan.routedToSpam) {
               await input.store.updateThreadState({
                 orgId,
                 actorId,
@@ -577,7 +577,11 @@ export async function ingestResolvedRawMail(input: {
                   label: "spam",
                   source,
                   evidence: {
-                    catcher,
+                    /* `spamCatcher` is optional on the scan result while
+                       `SpamCatcher` already models "nothing caught it" as null,
+                       so an absent field collapses to that rather than putting
+                       `undefined` into a JSON evidence record. */
+                    catcher: catcher ?? null,
                     reason: scan.spamReason,
                     layering: "spamd_then_ai_if_pass",
                   },
@@ -679,7 +683,7 @@ export async function ingestRawMail(input: {
           // Best-effort: a routed message that has no resolved actor (unknown
           // recipient) is left unrouted — there is no per-actor folder to file it
           // into. Quarantine is separate (not Spam folder).
-          if (scan.routedToSpam && !scan.quarantined && message.actorId != null) {
+          if (scan.routedToSpam && message.actorId != null) {
             await input.store.updateThreadState({
               orgId: input.input.orgId,
               actorId: message.actorId,
@@ -698,7 +702,8 @@ export async function ingestRawMail(input: {
                 label: "spam",
                 source,
                 evidence: {
-                  catcher,
+                  // See the note on the other feedback record above.
+                  catcher: catcher ?? null,
                   reason: scan.spamReason,
                   layering: "spamd_then_ai_if_pass",
                 },
@@ -896,7 +901,6 @@ export async function scanInboundMail(
   // Layer 2: beta AI spam tool — only when spamd passed (not spam) and not quarantined.
   // Fail-open: never block SMTP accept on LLM/rules errors.
   let betaEvidence: JsonObject | null = null;
-  let betaSource: "ai" | "rules" | null = null;
   const spamdPassed = !spamdIsSpam && !virusRouted && !policyQuarantined;
   if (scanners.betaSpamSecondPass !== undefined && spamdPassed) {
     try {
@@ -908,9 +912,8 @@ export async function scanInboundMail(
         if (decision.isSpam) {
           spamRouted = true;
           spamReason = "spam-score";
-          const src = String((decision.evidence as { source?: string }).source ?? "ai");
-          betaSource = src === "rules" ? "rules" : "ai";
-          spamCatcher = betaSource;
+          const src = (decision.evidence as { source?: string }).source ?? "ai";
+          spamCatcher = src === "rules" ? "rules" : "ai";
         }
       }
     } catch {

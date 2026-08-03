@@ -2328,7 +2328,7 @@ function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): MailThreadR
         })
       : coerceMailCategory(row.category);
   const spamMeta =
-    row.metadata !== null && typeof row.metadata === "object" && "spam" in row.metadata
+    typeof row.metadata === "object" && "spam" in row.metadata
       ? (row.metadata as { spam?: { catcher?: string | null } }).spam
       : undefined;
   const catcherRaw = spamMeta?.catcher;

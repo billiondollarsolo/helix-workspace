@@ -836,10 +836,7 @@ function mergePlatformConfigUpdate(
   const next = mergeConfig(current, updateToPartialConfig(update));
   // Providers are replaced as arrays; re-merge so omitted apiKeys keep stored secrets.
   if (update.ai?.providers !== undefined) {
-    const mergedAi = mergeAiProvidersPreservingSecrets(
-      current.ai as HelixConfig["ai"] | undefined,
-      next.ai as HelixConfig["ai"] | undefined,
-    );
+    const mergedAi = mergeAiProvidersPreservingSecrets(current.ai, next.ai);
     if (mergedAi !== undefined) {
       Object.assign(next, { ai: mergedAi });
     }

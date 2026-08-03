@@ -83,21 +83,46 @@ describe("resolveEffectiveMime", () => {
 });
 
 describe("createNoopVirusScanner", () => {
-  it("reports clean", async () => {
-    expect(await createNoopVirusScanner().scan(PNG)).toEqual({ clean: true });
+  it("reports clean and is tagged kind noop", async () => {
+    const scanner = createNoopVirusScanner();
+    expect(scanner.kind).toBe("noop");
+    expect(await scanner.scan(PNG)).toEqual({ clean: true });
   });
 
-  it("is rejected for Business production boot", () => {
+  it("production Business config path rejects no-op and missing scanners", () => {
+    // Mirrors server.ts production boot: assertDriveMalwareScannerReady(securityTier, driveVirusScanner)
+    // after optionally building createClamAvVirusScanner from malwareScanner config.
     expect(() => {
       assertDriveMalwareScannerReady("business", createNoopVirusScanner());
     }).toThrow("Business Drive requires the real streaming ClamAV adapter");
     expect(() => {
+      assertDriveMalwareScannerReady("business", undefined);
+    }).toThrow("Business Drive requires the real streaming ClamAV adapter");
+    expect(() => {
       assertDriveMalwareScannerReady("personal", createNoopVirusScanner());
+    }).not.toThrow();
+    expect(() => {
+      assertDriveMalwareScannerReady("personal", undefined);
     }).not.toThrow();
   });
 });
 
 describe("createClamAvVirusScanner", () => {
+  it("returns kind clamav (not noop) when malwareScanner config is present", () => {
+    // Pure factory contract: when driveConfig.malwareScanner is set, server.ts
+    // calls this factory. Kind is what assertDriveMalwareScannerReady inspects.
+    const scanner = createClamAvVirusScanner({
+      host: "127.0.0.1",
+      port: 9,
+      tier: "business",
+    });
+    expect(scanner.kind).toBe("clamav");
+    expect(scanner.kind).not.toBe("noop");
+    expect(() => {
+      assertDriveMalwareScannerReady("business", scanner);
+    }).not.toThrow();
+  });
+
   it("maps a real clean clamd verdict into the Drive adapter", async () => {
     const daemon = await fakeClamd("stream: OK\0");
     servers.push(daemon);
@@ -107,6 +132,7 @@ describe("createClamAvVirusScanner", () => {
       tier: "business",
       scannerVersion: "1.4.3/27388",
     });
+    expect(scanner.kind).toBe("clamav");
 
     const result = await scanner.scan(PNG);
 

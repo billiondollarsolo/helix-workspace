@@ -154,8 +154,11 @@ export interface DriveClamAvVirusScannerOptions {
 /**
  * Real Drive adapter over the shared, streaming clamd client.
  *
- * Server boot intentionally remains a separate production-configuration task.
- * Until it injects this adapter, Drive retains its explicit no-op default.
+ * `server.ts` wires this when `driveConfig.malwareScanner` is present
+ * (`createClamAvVirusScanner` + `assertDriveMalwareScannerReady` on production
+ * boots). Business/higher tiers reject a missing or no-op scanner at startup;
+ * personal may omit the adapter. Store/worker code never invents a silent
+ * no-op in production Business configuration.
  */
 export function createClamAvVirusScanner(
   options: DriveClamAvVirusScannerOptions = {},

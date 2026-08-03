@@ -30,7 +30,16 @@ export default defineConfig({
   webServer: {
     command: "pnpm exec vite --host 127.0.0.1 --port 4173",
     url: "http://127.0.0.1:4173",
-    reuseExistingServer: !process.env.CI,
+    // Never reuse a full-workspace Vite process when asserting MVP packaging.
+    reuseExistingServer: !process.env.CI && process.env.VITE_HELIX_MVP_ONLY !== "true",
+    // Forward packaging flags so `VITE_HELIX_MVP_ONLY=true playwright test`
+    // serves the production MVP launcher/route graph (see mvp-packaging.spec.ts).
+    env: {
+      ...process.env,
+      ...(process.env.VITE_HELIX_MVP_ONLY !== undefined
+        ? { VITE_HELIX_MVP_ONLY: process.env.VITE_HELIX_MVP_ONLY }
+        : {}),
+    },
   },
   projects: [
     {

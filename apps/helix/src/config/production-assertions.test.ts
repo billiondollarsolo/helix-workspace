@@ -123,25 +123,49 @@ describe("assertProductionConfiguration", () => {
   });
 
   it.each([
-    undefined,
-    "mail,drive,chat",
-    "mail,drive,chat,assistant,editors",
-    "assistant,chat,drive,mail",
-    "mail, drive, chat, assistant",
-  ])("requires the exact production MVP HELIX_APPS boundary (%s)", (apps) => {
+    ["undefined", undefined],
+    ["empty", ""],
+    ["missing assistant", "mail,drive,chat"],
+    ["extra editors", "mail,drive,chat,assistant,editors"],
+    ["extra calendar", "mail,drive,chat,assistant,calendar"],
+    ["extra docs", "mail,drive,chat,assistant,docs"],
+    ["extra meet", "mail,drive,chat,assistant,meet"],
+    ["extra sheets", "mail,drive,chat,assistant,sheets"],
+    ["extra slides", "mail,drive,chat,assistant,slides"],
+    ["full allowlist under mvp", "mail,drive,chat,assistant,calendar,meet,docs,sheets,slides"],
+    ["reordered", "assistant,chat,drive,mail"],
+    ["whitespace", "mail, drive, chat, assistant"],
+    ["trailing comma", "mail,drive,chat,assistant,"],
+  ] as const)("requires the exact production MVP HELIX_APPS boundary (%s)", (_label, apps) => {
     assertRejected({ HELIX_APPS: apps }, "HELIX_APPS");
+    // Explicit profile must not loosen the exact-string allowlist either.
+    assertRejected({ HELIX_WORKSPACE_PROFILE: "mvp", HELIX_APPS: apps }, "HELIX_APPS");
   });
 
-  it("requires editor migrations to remain disabled in every production process", () => {
-    assertRejected(
-      { HELIX_EDITORS_MIGRATIONS_ENABLED: undefined },
-      "HELIX_EDITORS_MIGRATIONS_ENABLED",
-    );
-    assertRejected(
-      { HELIX_EDITORS_MIGRATIONS_ENABLED: "true" },
-      "HELIX_EDITORS_MIGRATIONS_ENABLED",
-    );
-  });
+  it.each([
+    ["undefined", undefined],
+    ["true", "true"],
+    ["1", "1"],
+    ["yes", "yes"],
+    ["TRUE", "TRUE"],
+    ["false with whitespace", "false "],
+    ["empty", ""],
+  ] as const)(
+    "requires editor migrations to remain disabled in production MVP (%s)",
+    (_label, value) => {
+      assertRejected(
+        { HELIX_EDITORS_MIGRATIONS_ENABLED: value },
+        "HELIX_EDITORS_MIGRATIONS_ENABLED",
+      );
+      assertRejected(
+        {
+          HELIX_WORKSPACE_PROFILE: "mvp",
+          HELIX_EDITORS_MIGRATIONS_ENABLED: value,
+        },
+        "HELIX_EDITORS_MIGRATIONS_ENABLED",
+      );
+    },
+  );
 
   it.each([
     ["HELIX_IMAGE", "ghcr.io/billiondollarsolo/helix-workspace:latest"],
@@ -178,6 +202,61 @@ describe("assertProductionConfiguration", () => {
       assertRejected({ HELIX_CONFIG_JSON: JSON.stringify(config) }, "HELIX_CONFIG_JSON");
     },
   );
+
+  it.each([
+    ["missing HELIX_CONFIG_JSON", undefined],
+    ["empty object", "{}"],
+    ["modules omitted", '{"security":{"tier":"business"}}'],
+    ["modules null", '{"modules":null}'],
+    ["modules empty object", '{"modules":{}}'],
+  ] as const)(
+    "rejects production MVP when disabled modules are not configured (%s)",
+    (_label, configJson) => {
+      assertRejected({ HELIX_CONFIG_JSON: configJson }, "HELIX_CONFIG_JSON");
+    },
+  );
+
+  it("rejects Full Workspace HELIX_APPS that is not the exact v1 allowlist", () => {
+    assertRejected(
+      {
+        HELIX_WORKSPACE_PROFILE: "full",
+        HELIX_APPS: "mail,drive,chat,assistant",
+        HELIX_EDITORS_MIGRATIONS_ENABLED: "false",
+        HELIX_CONFIG_JSON: JSON.stringify({
+          modules: {
+            docs: { enabled: false },
+            calendar: { enabled: false },
+            meet: { enabled: false },
+            editors: { enabled: false },
+          },
+        }),
+      },
+      "HELIX_APPS",
+    );
+  });
+
+  it("requires editors migrations to be explicit under Full Workspace packaging", () => {
+    assertRejected(
+      {
+        HELIX_WORKSPACE_PROFILE: "full",
+        HELIX_APPS: "mail,drive,chat,assistant,calendar,meet,docs,sheets,slides",
+        HELIX_EDITORS_MIGRATIONS_ENABLED: undefined,
+        HELIX_EDITORS_PIN_PRESENT: "true",
+        MEET_JITSI_DOMAIN: "meet.example.test",
+        MEET_JITSI_JWT_SECRET: secret(),
+        HELIX_DRIVE_SCANNER_KIND: "clamav",
+        HELIX_CONFIG_JSON: JSON.stringify({
+          modules: {
+            docs: { enabled: true },
+            calendar: { enabled: true },
+            meet: { enabled: true },
+            editors: { enabled: true },
+          },
+        }),
+      },
+      "HELIX_EDITORS_MIGRATIONS_ENABLED",
+    );
+  });
 
   it.each([
     ["DATABASE_URL", "postgres://helix:helix_dev_password@postgres:5432/helix"],

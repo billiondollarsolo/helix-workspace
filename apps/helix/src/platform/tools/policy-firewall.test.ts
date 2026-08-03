@@ -56,6 +56,29 @@ describe("evaluateToolPolicyFirewall", () => {
     },
   );
 
+  it("queues ordinary agent write when no automation decision is present (default confirmation gate)", () => {
+    // Ordinary write sideEffects with undefined automationDecision must not
+    // auto-allow; agents always enter the confirmation queue unless a bounded
+    // automation policy matches independently.
+    expect(evaluateToolPolicyFirewall(policyInput(actors.agent, "write"))).toEqual({
+      outcome: "queue-confirmation",
+      reason: "agent_write_requires_approval",
+    });
+    expect(
+      evaluateToolPolicyFirewall(policyInput(actors.agent, "write", { automationDecision: null })),
+    ).toEqual({
+      outcome: "queue-confirmation",
+      reason: "agent_write_requires_approval",
+    });
+    // Destructive / external_communication follow the same default gate.
+    for (const sideEffects of ["destructive", "external_communication"] as const) {
+      expect(evaluateToolPolicyFirewall(policyInput(actors.agent, sideEffects))).toEqual({
+        outcome: "queue-confirmation",
+        reason: "agent_write_requires_approval",
+      });
+    }
+  });
+
   it("allows an agent write only after an independently exact automation decision", () => {
     expect(
       evaluateToolPolicyFirewall(

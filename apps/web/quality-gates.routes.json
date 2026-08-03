@@ -31,38 +31,8 @@
       "surface": "shell"
     },
     {
-      "name": "Docs",
-      "path": "/docs",
-      "surface": "shell"
-    },
-    {
-      "name": "Calendar",
-      "path": "/calendar",
-      "surface": "shell"
-    },
-    {
-      "name": "Meet",
-      "path": "/meet",
-      "surface": "shell"
-    },
-    {
       "name": "Assistant",
       "path": "/assistant",
-      "surface": "shell"
-    },
-    {
-      "name": "Search",
-      "path": "/search?q=launch",
-      "surface": "shell"
-    },
-    {
-      "name": "Settings",
-      "path": "/settings",
-      "surface": "shell"
-    },
-    {
-      "name": "Settings Admin",
-      "path": "/settings/admin",
       "surface": "shell"
     },
     {

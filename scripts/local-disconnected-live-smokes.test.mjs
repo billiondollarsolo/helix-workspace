@@ -68,7 +68,9 @@ describe("local-disconnected-live-smokes", () => {
     expect(result.ok).toBe(true);
     expect(result.results.find((r) => r.name === "admin.users.admin_ok")?.status).toBe(200);
     expect(result.results.find((r) => r.name === "admin.users.user_denied")?.status).toBe(403);
-    expect(result.results.find((r) => r.name === "offboard.foreign_404")?.status).toBe(404);
+    expect(result.results.find((r) => r.name === "offboard.foreign_denied_not_200")?.status).toBe(
+      404,
+    );
   });
 
   it("checkHealth reports unreachable without throwing", async () => {

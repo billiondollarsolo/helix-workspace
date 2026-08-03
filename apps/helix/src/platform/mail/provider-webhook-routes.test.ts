@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { signWebhookPayload } from "../webhooks/signatures.js";
 import { InMemoryOutboundProviderStore } from "./admin-store.js";
 import { InMemoryMailDeliveryEventStore } from "./delivery-events.js";
-import { OutboundMailDispatcher, type OutboundMailTransport } from "./outbound.js";
+import { OutboundMailDispatcher } from "./outbound.js";
 import type { MailStore } from "./store.js";
 import type { MailOutboundEnvelope, MailOutboundRecord } from "./types.js";
 import {
@@ -206,7 +206,7 @@ describe("managed provider webhook route", () => {
       createdAt: now,
       updatedAt: now,
     };
-    const transportFor = vi.fn((): OutboundMailTransport => {
+    const transportFor = vi.fn().mockImplementation(async () => {
       throw new Error("transport must not be resolved for suppressed recipients");
     });
     const markOutboundDeadLettered = vi.fn().mockImplementation(async (input) => ({

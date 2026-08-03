@@ -93,7 +93,7 @@ describe("MVP tool surface matrix (E3.6 / E4.6 / E5.6 / E9.1)", () => {
       expect(tool.id, "tool id").toMatch(/^(mail|drive|chat|admin\.agent_controls)\./);
       expect(
         KNOWN_SIDE_EFFECTS.has(tool.sideEffects),
-        `${tool.id} sideEffects=${String(tool.sideEffects)}`,
+        `${tool.id} sideEffects=${tool.sideEffects}`,
       ).toBe(true);
       expect(typeof tool.permission, `${tool.id} permission type`).toBe("string");
       expect(tool.permission.trim().length, `${tool.id} permission empty`).toBeGreaterThan(0);

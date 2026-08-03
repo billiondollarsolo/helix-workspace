@@ -72,8 +72,8 @@ describe("AgentControlsManagement", () => {
     currentControls = controlsOf();
     getAgentOperationalControls.mockReset();
     setAgentOperationalControls.mockReset();
-    getAgentOperationalControls.mockImplementation(async () => ({ ...currentControls }));
-    setAgentOperationalControls.mockImplementation(async (input) => {
+    getAgentOperationalControls.mockImplementation(() => Promise.resolve({ ...currentControls }));
+    setAgentOperationalControls.mockImplementation((input) => {
       currentControls = {
         ...currentControls,
         ...(input.globalReadOnly === undefined ? {} : { globalReadOnly: input.globalReadOnly }),
@@ -95,7 +95,7 @@ describe("AgentControlsManagement", () => {
               ),
             }),
       };
-      return { ...currentControls };
+      return Promise.resolve({ ...currentControls });
     });
   });
 

@@ -16,7 +16,7 @@
     "test": "turbo run test",
     "test:single-tenant": "HELIX_MODE=single-tenant turbo run test",
     "test:multi-tenant-saas": "HELIX_MODE=multi-tenant-saas turbo run test",
-    "test:cross-tenant-isolation": "HELIX_MODE=multi-tenant-saas pnpm --filter @helix/app exec vitest run src/platform/tenancy/cross-tenant-isolation.test.ts",
+    "test:cross-tenant-isolation": "HELIX_MODE=multi-tenant-saas DATABASE_URL=\"${DATABASE_URL:-postgres://helix:helix_dev_password@127.0.0.1:28432/helix}\" pnpm --filter @helix/app exec vitest run src/platform/tenancy/cross-tenant-isolation.test.ts",
     "typecheck": "turbo run typecheck",
     "quality:a11y": "pnpm --filter @helix/web audit:a11y",
     "quality:a11y:fallback": "pnpm --filter @helix/web audit:a11y:fallback",

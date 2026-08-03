@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { Actor, ToolDefinition } from "@helix/sdk-types";
 import { buildErrorEnvelope, errorCodeForStatus, toolErrorEnvelope } from "./error-envelope.js";
-import type { ToolInvokeErrorResult, ToolRateLimitMetadata } from "../platform/tool-registry.js";
+import {
+  createToolRegistry,
+  type ToolInvokeErrorResult,
+  type ToolRateLimitMetadata,
+} from "../platform/tool-registry.js";
+import { RuntimeAgentOperationalControlStore } from "../platform/tools/agent-operational-controls.js";
 
 const rateLimitMetadata: ToolRateLimitMetadata = {
   reason: "requests_per_minute",
@@ -19,6 +25,30 @@ const rateLimitMetadata: ToolRateLimitMetadata = {
   },
 };
 
+const writeActor: Actor = {
+  id: "actor-write-1",
+  orgId: "org-a",
+  type: "user",
+  scopes: ["danger.write"],
+};
+
+const passthroughSchema = {
+  parse: (value: unknown) => value,
+  toJsonSchema: () => ({ type: "object", additionalProperties: true }),
+};
+
+function writeTool(id: string): ToolDefinition {
+  return {
+    id,
+    description: id,
+    permission: "danger.write",
+    sideEffects: "write",
+    inputSchema: passthroughSchema,
+    outputSchema: passthroughSchema,
+    handler: async () => ({ written: true }),
+  };
+}
+
 describe("error-envelope", () => {
   it("maps status codes to stable error codes", () => {
     expect(errorCodeForStatus(400)).toBe("bad_request");
@@ -26,6 +56,8 @@ describe("error-envelope", () => {
     expect(errorCodeForStatus(410)).toBe("gone");
     expect(errorCodeForStatus(429)).toBe("rate_limited");
     expect(errorCodeForStatus(418)).toBe("error");
+    // 503 has no dedicated ERROR_CODES entry; mapper stays on legacy fallback.
+    expect(errorCodeForStatus(503)).toBe("error");
   });
 
   it("builds the canonical envelope with a traceId", () => {
@@ -56,5 +88,31 @@ describe("error-envelope", () => {
         },
       },
     });
+  });
+
+  it("maps agent operational kill denial to 503 + stable envelope (E9.2)", async () => {
+    const store = new RuntimeAgentOperationalControlStore();
+    store.setSnapshot({ globalReadOnly: true });
+    const registry = createToolRegistry({ operationalControls: store });
+    registry.register(writeTool("mail.send"));
+
+    const denied = await registry.invoke("mail.send", {}, { actor: writeActor });
+    expect(denied.ok).toBe(false);
+    if (denied.ok) {
+      throw new Error("expected operational kill denial");
+    }
+
+    expect(denied.statusCode).toBe(503);
+    expect(denied.error).toBe("Tool mutations are temporarily disabled by global read-only mode.");
+
+    const envelope = toolErrorEnvelope(denied, "trace-kill-1");
+    expect(envelope).toEqual({
+      error: {
+        code: "error",
+        message: "Tool mutations are temporarily disabled by global read-only mode.",
+        traceId: "trace-kill-1",
+      },
+    });
+    expect(errorCodeForStatus(denied.statusCode)).toBe(envelope.error.code);
   });
 });

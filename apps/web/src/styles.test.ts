@@ -175,3 +175,75 @@ describe("styles.css covers every class the app actually uses", () => {
     expect(unbridged, "used as a utility but missing from @theme").toEqual([]);
   });
 });
+
+/**
+ * E2.4 — shell responsive contract used by mobile (390×844) e2e.
+ * Asserts the production CSS media blocks that reparent the rail as a bottom bar.
+ * (styles.css has multiple `@media (max-width: 760px)` sections; we join them all.)
+ */
+describe("mobile shell responsive CSS (viewport ≤760 / 390 design width)", () => {
+  const mobileCss = extractAllMediaBlocks(STYLES, "(max-width: 760px)").join("\n");
+  const narrowTopbarCss = extractAllMediaBlocks(STYLES, "(max-width: 520px)").join("\n");
+
+  it("moves the rail to a horizontal bottom row with 44px targets", () => {
+    expect(mobileCss.length).toBeGreaterThan(0);
+    expect(mobileCss).toMatch(/\.app\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto/s);
+    expect(mobileCss).toMatch(/\.rail\s*\{[^}]*flex-direction:\s*row/s);
+    expect(mobileCss).toMatch(/\.rail\s*\{[^}]*grid-row:\s*2/s);
+    expect(mobileCss).toMatch(
+      /\.rail-(?:logo|item)\s*,\s*\.rail-(?:logo|item)\s*\{[^}]*width:\s*44px/s,
+    );
+    expect(mobileCss).toMatch(
+      /\.rail-(?:logo|item)\s*,\s*\.rail-(?:logo|item)\s*\{[^}]*height:\s*44px/s,
+    );
+    expect(mobileCss).toMatch(/\.rail\s*\{[^}]*safe-area-inset-bottom/s);
+    expect(mobileCss).toMatch(/\.workspace\s*\{[^}]*grid-row:\s*1/s);
+  });
+
+  it("keeps launcher and compose above the bottom rail on small viewports", () => {
+    expect(mobileCss).toMatch(/\.launcher\s*\{[^}]*position:\s*fixed/s);
+    expect(mobileCss).toMatch(/\.compose\s*\{[^}]*bottom:\s*calc\(56px/s);
+    expect(mobileCss).toMatch(/\.topbar-actions\s+\.icon-btn\s*\{[^}]*min-width:\s*40px/s);
+  });
+
+  it("collapses topbar chrome further at 520px (fits 390-wide phones)", () => {
+    expect(narrowTopbarCss.length).toBeGreaterThan(0);
+    expect(narrowTopbarCss).toMatch(/\.topbar-title\s*\{[^}]*display:\s*none/s);
+  });
+});
+
+/** Return bodies of every `@media <query> { … }` block (brace-balanced). */
+function extractAllMediaBlocks(css: string, query: string): string[] {
+  const marker = `@media ${query}`;
+  const blocks: string[] = [];
+  let from = 0;
+  while (from < css.length) {
+    const start = css.indexOf(marker, from);
+    if (start === -1) {
+      break;
+    }
+    const openBrace = css.indexOf("{", start);
+    if (openBrace === -1) {
+      break;
+    }
+    let depth = 0;
+    let end = -1;
+    for (let i = openBrace; i < css.length; i += 1) {
+      const ch = css[i];
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end === -1) {
+      break;
+    }
+    blocks.push(css.slice(openBrace + 1, end));
+    from = end + 1;
+  }
+  return blocks;
+}

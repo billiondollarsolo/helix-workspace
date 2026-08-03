@@ -362,6 +362,55 @@ describe("ChatShell", () => {
     );
   });
 
+  it("falls back to chat.send REST when realtime is not open", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    await flush();
+    // Intentionally leave the socket in CONNECTING so sendMessage returns false
+    // and ChatShell routes through the REST tool path.
+    expect(socket!.readyState).toBe(FakeWebSocket.CONNECTING);
+
+    const textarea = container.querySelector(".chat-composer-input") as HTMLTextAreaElement;
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value") as {
+      set?: (this: HTMLTextAreaElement, v: string) => void;
+    };
+    act(() => {
+      descriptor.set?.call(textarea, "Ship via REST fallback");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const sendButton = Array.from(container.querySelectorAll(".chat-composer button")).find((b) =>
+      b.textContent?.includes("Send"),
+    ) as HTMLButtonElement;
+    expect(sendButton.disabled).toBe(false);
+    act(() => {
+      sendButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(socket!.sent).toEqual([]);
+    const sendCall = fetchMock.mock.calls.find((call) => {
+      const url = typeof call[0] === "string" ? call[0] : "";
+      return url.endsWith("/chat.send");
+    });
+    expect(sendCall).toBeDefined();
+    const sendInit = sendCall?.[1];
+    const rawBody =
+      sendInit !== undefined &&
+      typeof sendInit === "object" &&
+      sendInit !== null &&
+      "body" in sendInit
+        ? sendInit.body
+        : undefined;
+    const body: unknown = JSON.parse(typeof rawBody === "string" ? rawBody : "{}");
+    expect(body).toMatchObject({
+      roomId: ROOM_ID,
+      body: "Ship via REST fallback",
+      bodyFormat: "plain",
+    });
+  });
+
   it("renders only server-sanitized Markdown HTML and keeps plain text inert", async () => {
     fetchMock = makeFetch({
       "chat.message.list": {

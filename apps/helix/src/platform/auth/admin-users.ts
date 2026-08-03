@@ -61,12 +61,196 @@ export interface AdminUsersStore {
 export interface RegisterAdminUsersRoutesOptions {
   readonly store: AdminUsersStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
+  /**
+   * When set, exposes `POST /api/admin/users/:actorId/offboard` (E7.2 cascade:
+   * disable actor, revoke sessions, app passwords, agent credentials).
+   */
+  readonly offboardStores?: OffboardUserStores;
 }
 
 export interface PeopleDirectoryRecord {
   readonly id: string;
   readonly email: string | null;
   readonly displayName: string;
+}
+
+/**
+ * Minimal store surfaces for offboarding cascade (E7.2).
+ * Wired to real app-password / OAuth-client / session revoke methods —
+ * not faked envelope shapes.
+ */
+export interface OffboardAppPasswordRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly revokedAt: Date | null;
+}
+
+export interface OffboardAppPasswordStore {
+  listAppPasswords(input: {
+    readonly orgId: string;
+    readonly actorId?: string;
+    readonly includeRevoked?: boolean;
+  }): Promise<readonly OffboardAppPasswordRecord[]>;
+  revokeAppPassword(input: {
+    readonly id: string;
+    readonly orgId: string;
+    readonly revokedAt: Date;
+  }): Promise<OffboardAppPasswordRecord | null>;
+}
+
+export interface OffboardAgentCredentialRecord {
+  readonly clientId: string;
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly revokedAt: Date | null;
+}
+
+export interface OffboardAgentCredentialStore {
+  listClients(input: {
+    readonly orgId: string;
+    readonly actorId?: string;
+    readonly includeRevoked?: boolean;
+  }): Promise<readonly OffboardAgentCredentialRecord[]>;
+  revokeClient(clientId: string, revokedAt: Date): Promise<OffboardAgentCredentialRecord | null>;
+}
+
+export interface OffboardUserInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  /** Defaults to now. Used for disable + revoke timestamps. */
+  readonly at?: Date;
+}
+
+export interface OffboardUserStores {
+  /**
+   * Marks the actor disabled. Optional when only credential cascade is wired.
+   * Returns true when a previously-active actor was disabled.
+   */
+  readonly disableActor?: (input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly disabledAt: Date;
+  }) => Promise<boolean>;
+  /** Deletes Better Auth sessions linked via user.actor_id. */
+  readonly revokeSessionsForActor: (input: { readonly actorId: string }) => Promise<number>;
+  readonly appPasswords: OffboardAppPasswordStore;
+  readonly agentCredentials: OffboardAgentCredentialStore;
+}
+
+export interface OffboardUserResult {
+  readonly actorId: string;
+  readonly orgId: string;
+  readonly disabled: boolean;
+  readonly sessionsRevoked: number;
+  readonly appPasswordsRevoked: number;
+  readonly agentCredentialsRevoked: number;
+}
+
+/**
+ * Offboard cascade: disable actor (when provided), revoke browser sessions,
+ * revoke all active app passwords, revoke all active agent OAuth credentials.
+ *
+ * Callers supply real store methods (PostgresAppPasswordStore, OAuth client
+ * store, SQL session delete). Does not invent alternate revoke paths.
+ */
+export async function offboardUser(
+  input: OffboardUserInput,
+  stores: OffboardUserStores,
+): Promise<OffboardUserResult> {
+  const at = input.at ?? new Date();
+
+  let disabled = false;
+  if (stores.disableActor !== undefined) {
+    disabled = await stores.disableActor({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      disabledAt: at,
+    });
+  }
+
+  const sessionsRevoked = await stores.revokeSessionsForActor({ actorId: input.actorId });
+
+  const appPasswords = await stores.appPasswords.listAppPasswords({
+    orgId: input.orgId,
+    actorId: input.actorId,
+    includeRevoked: false,
+  });
+  let appPasswordsRevoked = 0;
+  for (const password of appPasswords) {
+    if (password.orgId !== input.orgId) {
+      continue;
+    }
+    const revoked = await stores.appPasswords.revokeAppPassword({
+      id: password.id,
+      orgId: input.orgId,
+      revokedAt: at,
+    });
+    if (revoked !== null) {
+      appPasswordsRevoked += 1;
+    }
+  }
+
+  const credentials = await stores.agentCredentials.listClients({
+    orgId: input.orgId,
+    actorId: input.actorId,
+    includeRevoked: false,
+  });
+  let agentCredentialsRevoked = 0;
+  for (const credential of credentials) {
+    if (credential.orgId !== input.orgId || credential.actorId !== input.actorId) {
+      continue;
+    }
+    const revoked = await stores.agentCredentials.revokeClient(credential.clientId, at);
+    if (revoked !== null) {
+      agentCredentialsRevoked += 1;
+    }
+  }
+
+  return {
+    actorId: input.actorId,
+    orgId: input.orgId,
+    disabled,
+    sessionsRevoked,
+    appPasswordsRevoked,
+    agentCredentialsRevoked,
+  };
+}
+
+/** Postgres helper: set actors.disabled_at when still active. */
+export async function disableActorForOffboard(
+  sql: postgres.Sql,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly disabledAt: Date;
+  },
+): Promise<boolean> {
+  const rows = (await sql`
+    update actors
+    set disabled_at = ${input.disabledAt}, updated_at = ${input.disabledAt}
+    where id = ${input.actorId}
+      and org_id = ${input.orgId}
+      and disabled_at is null
+    returning id
+  `) as unknown as readonly { readonly id: string }[];
+  return rows.length > 0;
+}
+
+/**
+ * Postgres helper: delete Better Auth sessions for any user row linked to the
+ * actor (`user.actor_id`). Matches seed-login-accounts session cleanup.
+ */
+export async function revokeSessionsForActorSql(
+  sql: postgres.Sql,
+  input: { readonly actorId: string },
+): Promise<number> {
+  const result = await sql`
+    delete from session
+    using "user"
+    where session."userId" = "user".id
+      and "user".actor_id = ${input.actorId}
+  `;
+  return typeof result.count === "number" ? result.count : 0;
 }
 
 export class PostgresAdminUsersStore implements AdminUsersStore {
@@ -122,10 +306,13 @@ export async function registerAdminUsersRoutes(
 
     const parsed = adminUsersQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      return reply.code(400).send({ error: "Invalid admin users query.", issues: parsed.error.issues });
+      return reply
+        .code(400)
+        .send({ error: "Invalid admin users query.", issues: parsed.error.issues });
     }
 
-    const cursor = parsed.data.cursor === undefined ? undefined : decodeAdminUsersCursor(parsed.data.cursor);
+    const cursor =
+      parsed.data.cursor === undefined ? undefined : decodeAdminUsersCursor(parsed.data.cursor);
     if (cursor === null) {
       return reply.code(400).send({ error: "Invalid admin users cursor." });
     }
@@ -149,6 +336,30 @@ export async function registerAdminUsersRoutes(
       nextCursor,
     };
   });
+
+  if (options.offboardStores !== undefined) {
+    const offboardStores = options.offboardStores;
+    app.post("/api/admin/users/:actorId/offboard", async (request, reply) => {
+      const actor = await options.actorFromRequest(request);
+      if (!canReadAdminUsers(actor)) {
+        return reply.code(403).send(permissionDeniedResponse());
+      }
+      const actorIdParsed = uuidSchema.safeParse(
+        (request.params as { readonly actorId?: unknown }).actorId,
+      );
+      if (!actorIdParsed.success) {
+        return reply.code(400).send({ error: "Invalid actor id." });
+      }
+      if (actorIdParsed.data === actor.id) {
+        return reply.code(400).send({ error: "Administrators cannot offboard themselves." });
+      }
+      const result = await offboardUser(
+        { orgId: actor.orgId, actorId: actorIdParsed.data },
+        offboardStores,
+      );
+      return reply.code(200).send({ offboard: result });
+    });
+  }
 }
 
 export async function registerPeopleDirectoryRoutes(
@@ -159,7 +370,9 @@ export async function registerPeopleDirectoryRoutes(
     const actor = await options.actorFromRequest(request);
     const parsed = peopleDirectoryQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      return reply.code(400).send({ error: "Invalid people directory query.", issues: parsed.error.issues });
+      return reply
+        .code(400)
+        .send({ error: "Invalid people directory query.", issues: parsed.error.issues });
     }
 
     const users = await options.store.listUsers({
@@ -182,9 +395,10 @@ export function canReadAdminUsers(actor: Actor): boolean {
 }
 
 export function encodeAdminUsersCursor(record: Pick<AdminUserRecord, "createdAt" | "id">): string {
-  return Buffer.from(JSON.stringify({ createdAt: record.createdAt, id: record.id }), "utf8").toString(
-    "base64url",
-  );
+  return Buffer.from(
+    JSON.stringify({ createdAt: record.createdAt, id: record.id }),
+    "utf8",
+  ).toString("base64url");
 }
 
 export function decodeAdminUsersCursor(cursor: string): AdminUsersCursor | null {
@@ -208,7 +422,11 @@ export function decodeAdminUsersCursor(cursor: string): AdminUsersCursor | null 
   }
 }
 
-function booleanQuerySchema(): z.ZodEffects<z.ZodOptional<z.ZodBoolean>, boolean | undefined, unknown> {
+function booleanQuerySchema(): z.ZodEffects<
+  z.ZodOptional<z.ZodBoolean>,
+  boolean | undefined,
+  unknown
+> {
   return z.preprocess((value) => {
     if (value === "true" || value === true) {
       return true;
@@ -220,7 +438,9 @@ function booleanQuerySchema(): z.ZodEffects<z.ZodOptional<z.ZodBoolean>, boolean
   }, z.boolean().optional());
 }
 
-function emptyStringToUndefined<T extends z.ZodTypeAny>(schema: T): z.ZodEffects<T, z.output<T>, unknown> {
+function emptyStringToUndefined<T extends z.ZodTypeAny>(
+  schema: T,
+): z.ZodEffects<T, z.output<T>, unknown> {
   return z.preprocess((value) => (value === "" ? undefined : value), schema);
 }
 

@@ -479,6 +479,59 @@ describe("DriveShell", () => {
     });
   });
 
+  it("opens file details share UI, shares by email, then revokes access", async () => {
+    render();
+    await settle();
+
+    const fileCard = fileButton(container, "Specs.pdf");
+    expect(fileCard).not.toBeNull();
+    act(() => {
+      fileCard?.click();
+    });
+    await settle();
+
+    const panel = container.querySelector('aside[aria-label="File details"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.textContent ?? "").toContain("People with access");
+    expect(panel?.textContent ?? "").toContain("Maya Chen");
+    expect(toolCalls.some((call) => call.url === "/api/tools/drive.access.list")).toBe(true);
+
+    const input = container.querySelector<HTMLInputElement>(
+      'aside[aria-label="File details"] input[placeholder="Email, name, or actor ID"]',
+    );
+    expect(input).not.toBeNull();
+    setInputValue(input!, "ops@helix.local");
+    const shareRole = container.querySelector<HTMLSelectElement>(
+      'aside[aria-label="File details"] select[aria-label="Share role"]',
+    );
+    expect(shareRole).not.toBeNull();
+    setSelectValue(shareRole!, "editor");
+    const shareButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('aside[aria-label="File details"] button'),
+    ).find((button) => button.textContent?.trim() === "Share");
+    expect(shareButton).not.toBeNull();
+    act(() => {
+      shareButton?.click();
+    });
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.share")?.body).toEqual({
+      objectId: "file-specs",
+      actorIds: [],
+      actorRefs: ["ops@helix.local"],
+      role: "editor",
+      expiresAt: null,
+    });
+
+    clickControl("Remove access for Maya Chen");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/api/tools/drive.access.remove")?.body).toEqual({
+      objectId: "file-specs",
+      actorId: "66666666-6666-4666-8666-666666666666",
+    });
+  });
+
   it("updates Drive access grant roles from the details panel", async () => {
     render();
     await settle();

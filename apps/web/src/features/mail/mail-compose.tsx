@@ -152,14 +152,19 @@ export function Compose({ onClose, onSent }: ComposeProps) {
     leaveLabel: "Leave and keep draft",
   });
 
+  // Persist crash recovery only after server reconcile finishes. Clearing while
+  // reconcile is still pending would wipe the local draft before hydration reads it.
   useEffect(() => {
+    if (!serverReconcileDone) {
+      return;
+    }
     if (hasDraft) {
       recoveryDebouncer.maybeExecute({ to, cc, bcc, subject, body });
     } else {
       recoveryDebouncer.cancel();
       clearMailComposeRecovery();
     }
-  }, [bcc, body, cc, hasDraft, recoveryDebouncer, subject, to]);
+  }, [bcc, body, cc, hasDraft, recoveryDebouncer, serverReconcileDone, subject, to]);
 
   // UX.10 — load latest server draft and reconcile with local crash recovery.
   useEffect(() => {

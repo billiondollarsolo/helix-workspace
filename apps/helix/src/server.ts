@@ -86,9 +86,11 @@ import {
   type ToolInvocationPrincipal,
 } from "./platform/auth/tool-invocation-principal.js";
 import {
+  disableActorForOffboard,
   PostgresAdminUsersStore,
   registerAdminUsersRoutes,
   registerPeopleDirectoryRoutes,
+  revokeSessionsForActorSql,
 } from "./platform/auth/admin-users.js";
 import {
   createBetterAuthPlatformModule,
@@ -2924,6 +2926,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerAdminUsersRoutes(app, {
     store: adminUsersStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    // E7.2: production offboard cascade (disable + sessions + app passwords + agent OAuth clients).
+    offboardStores: {
+      disableActor: (input) => disableActorForOffboard(sql, input),
+      revokeSessionsForActor: (input) => revokeSessionsForActorSql(sql, input),
+      appPasswords: appPasswordStore,
+      agentCredentials: oauthStore,
+    },
   });
   await registerPeopleDirectoryRoutes(app, {
     store: adminUsersStore,

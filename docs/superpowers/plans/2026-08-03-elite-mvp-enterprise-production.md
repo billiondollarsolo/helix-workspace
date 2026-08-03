@@ -5,7 +5,7 @@
 > shipped tests. **Final production GO not claimed:** live E11 packet + calendar dogfood/pilot
 > (E12) remain residual-owned per `docs/architecture/mvp-r3-structural-decision.md`.
 >
-> **Date:** 2026-08-03  
+> **Date:** 2026-08-03
 
 > **Product boundary:** Mail · Drive (files + previews) · Chat · Assistant/agents · Admin · Shell · Search  
 > **Deploy:** Single-organization self-host first (Business tier pilot, 5–50 users).  

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
+import { MAIL_COMPOSE_RECOVERY_KEY, writeMailComposeRecovery } from "./mail-compose-recovery";
 import { MailShell } from "./mail-shell";
 
 const navigateMock = vi.fn();
@@ -167,11 +168,24 @@ describe("MailShell", () => {
     if (url.endsWith("/mail.thread.get")) {
       return Promise.resolve(Response.json({ thread: THREAD_DETAIL }));
     }
+    if (url.endsWith("/mail.draft.list")) {
+      return Promise.resolve(Response.json({ drafts: [] }));
+    }
+    if (url.endsWith("/mail.draft.save")) {
+      return Promise.resolve(
+        Response.json({
+          id: "draft-1",
+          version: 1,
+          updatedAt: "2026-05-21T11:00:00.000Z",
+        }),
+      );
+    }
     return Promise.resolve(Response.json({ id: "m1", status: "sent" }));
   }
 
   beforeEach(() => {
     navigateMock.mockClear();
+    window.localStorage.clear();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -188,6 +202,7 @@ describe("MailShell", () => {
       root.unmount();
     });
     container.remove();
+    window.localStorage.clear();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
@@ -440,6 +455,147 @@ describe("MailShell", () => {
     expect(body.cc).toEqual([{ address: "ops@helix.io" }]);
     expect(body.subject).toBe("Hello");
     expect(container.textContent).not.toContain("New message");
+  });
+
+  it("restores a local crash draft through the real compose recovery path", async () => {
+    writeMailComposeRecovery({
+      to: "recovered@helix.io",
+      cc: "ops@helix.io",
+      bcc: "",
+      subject: "Recovered subject",
+      body: "Recovered body from this device",
+    });
+    expect(window.localStorage.getItem(MAIL_COMPOSE_RECOVERY_KEY)).not.toBeNull();
+
+    render();
+    await flush();
+    clickButtonText("Compose");
+    await flush();
+
+    expect(container.textContent).toContain("New message");
+    expect(container.textContent).toContain(
+      "Restored unsent message from this device. Attachments were not recovered.",
+    );
+    expect(container.querySelector('input[aria-label="To"]')).toHaveProperty(
+      "value",
+      "recovered@helix.io",
+    );
+    expect(container.querySelector('input[aria-label="Subject"]')).toHaveProperty(
+      "value",
+      "Recovered subject",
+    );
+    expect(container.querySelector('textarea[aria-label="Message body"]')).toHaveProperty(
+      "value",
+      "Recovered body from this device",
+    );
+    expect(fetchMock.mock.calls.some((call) => call[0] === "/api/tools/mail.draft.list")).toBe(
+      true,
+    );
+
+    clickAriaButton("Dismiss recovery notice");
+    expect(container.textContent).not.toContain(
+      "Restored unsent message from this device. Attachments were not recovered.",
+    );
+  });
+
+  it("saves a server draft through mail.draft.save when compose fields blur", async () => {
+    render();
+    await flush();
+    clickButtonText("Compose");
+    await flush();
+
+    // Wait for server reconcile so draft-save blur handlers run against stable state.
+    expect(container.textContent).not.toContain("Checking server drafts for conflicts");
+
+    const toInput = container.querySelector('input[aria-label="To"]');
+    if (!(toInput instanceof HTMLInputElement)) {
+      throw new Error("To input not found");
+    }
+    const subjectInput = container.querySelector('input[aria-label="Subject"]');
+    if (!(subjectInput instanceof HTMLInputElement)) {
+      throw new Error("Subject input not found");
+    }
+    const bodyInput = container.querySelector('textarea[aria-label="Message body"]');
+    if (!(bodyInput instanceof HTMLTextAreaElement)) {
+      throw new Error("Body textarea not found");
+    }
+
+    setInputValue(toInput, "draft@helix.io");
+    setInputValue(subjectInput, "Draft subject");
+    setInputValue(bodyInput, "Draft body");
+    await flush();
+
+    // React listens for focusout (delegated onBlur). Move focus into the body,
+    // then out to To so the body onBlur={saveDraft} handler runs.
+    act(() => {
+      bodyInput.focus();
+      bodyInput.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    act(() => {
+      toInput.focus();
+      bodyInput.dispatchEvent(
+        new FocusEvent("focusout", { bubbles: true, relatedTarget: toInput }),
+      );
+      bodyInput.dispatchEvent(new FocusEvent("blur", { bubbles: true, relatedTarget: toInput }));
+    });
+    await flush();
+
+    const draftSaveCall = fetchMock.mock.calls.find((call) => {
+      const url = typeof call[0] === "string" ? call[0] : "";
+      return url.endsWith("/mail.draft.save");
+    });
+    expect(draftSaveCall).toBeDefined();
+    const rawBody = (draftSaveCall?.[1] as RequestInit).body;
+    const body = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as {
+      readonly to: ReadonlyArray<{ readonly address: string }>;
+      readonly subject: string;
+      readonly bodyText: string;
+    };
+    expect(body.to).toEqual([{ address: "draft@helix.io" }]);
+    expect(body.subject).toBe("Draft subject");
+    expect(body.bodyText).toBe("Draft body");
+  });
+
+  it("switches folders and pushes the folder into the mail URL search", async () => {
+    render();
+    await flush();
+
+    clickButtonText("Starred");
+    await flush();
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/mail",
+        search: expect.objectContaining({ folder: "starred" }),
+      }),
+    );
+
+    const starredListCall = fetchMock.mock.calls.find((call) => {
+      if (call[0] !== "/api/tools/mail.threads.list") {
+        return false;
+      }
+      const init = call[1];
+      if (init === undefined || typeof init !== "object" || init === null || !("body" in init)) {
+        return false;
+      }
+      const raw = init.body;
+      if (typeof raw !== "string") {
+        return false;
+      }
+      const parsed: unknown = JSON.parse(raw);
+      return (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "folder" in parsed &&
+        Reflect.get(parsed, "folder") === "starred"
+      );
+    });
+    expect(starredListCall).toBeDefined();
+    // Sidebar marks the active mailbox for assistive tech / styling.
+    const starredButton = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.includes("Starred") === true,
+    );
+    expect(starredButton?.getAttribute("aria-current")).toBe("page");
   });
 
   it("renders an empty thread list when mail.threads.list fails", async () => {

@@ -18,6 +18,75 @@ class CaptureStream extends Writable {
   }
 }
 
+describe("CLI smoke (E9.3)", () => {
+  it("exports help usage and tool-list module path with exit 0", async () => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+
+    await expect(
+      runCli(
+        ["--help"],
+        { HELIX_BASE_URL: "https://helix.example" },
+        {
+          stdin: Readable.from([]),
+          stdout,
+          stderr,
+        },
+      ),
+    ).resolves.toBe(0);
+
+    expect(stdout.output).toContain("Usage:");
+    expect(stdout.output).toContain("helix tool list");
+    expect(stdout.output).toContain("helix tool call");
+    expect(stderr.output).toBe("");
+  });
+
+  it("lists tools via openapi source (module path)", async () => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      requests.push({ url, init });
+      return new Response(
+        JSON.stringify({
+          openapi: "3.1.0",
+          paths: {
+            "/api/tools/mail.list": {
+              post: {
+                operationId: "mail.list",
+                summary: "List mail",
+                "x-helix-tool": {
+                  id: "mail.list",
+                  permission: "mail.read",
+                  sideEffects: "read",
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    await expect(
+      runCli(
+        ["tool", "list", "--source", "openapi"],
+        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-smoke" },
+        {
+          stdin: Readable.from([]),
+          stdout,
+          stderr,
+        },
+        fetchImpl,
+      ),
+    ).resolves.toBe(0);
+
+    expect(requests.some((request) => request.url.includes("/openapi"))).toBe(true);
+    expect(stdout.output).toContain("mail.list");
+    expect(stderr.output).toBe("");
+  });
+});
+
 describe("runCli API document commands", () => {
   it("fetches and formats the AsyncAPI document", async () => {
     const stdout = new CaptureStream();
@@ -453,7 +522,9 @@ describe("runCli action status commands", () => {
         },
       },
     ]);
-    expect(stdout.output).toBe('{\n  "status": "executed",\n  "output": {\n    "ok": true\n  }\n}\n');
+    expect(stdout.output).toBe(
+      '{\n  "status": "executed",\n  "output": {\n    "ok": true\n  }\n}\n',
+    );
     expect(stderr.output).toBe("");
   });
 

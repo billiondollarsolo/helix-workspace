@@ -6,11 +6,16 @@ import {
   PostgresAdminUsersStore,
   decodeAdminUsersCursor,
   encodeAdminUsersCursor,
+  offboardUser,
   registerAdminUsersRoutes,
   registerPeopleDirectoryRoutes,
   type AdminUserRecord,
   type AdminUsersStore,
   type ListAdminUsersInput,
+  type OffboardAgentCredentialRecord,
+  type OffboardAgentCredentialStore,
+  type OffboardAppPasswordRecord,
+  type OffboardAppPasswordStore,
 } from "./admin-users.js";
 
 interface RecordedQuery {
@@ -136,8 +141,16 @@ describe("admin users routes", () => {
 describe("people directory routes", () => {
   it("returns active org users for authenticated non-admin actors", async () => {
     const store = new FakeAdminUsersStore([
-      { ...userRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"), displayName: "Mina Park", email: "mina@example.com" },
-      { ...userRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"), displayName: "", email: "fallback@example.com" },
+      {
+        ...userRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"),
+        displayName: "Mina Park",
+        email: "mina@example.com",
+      },
+      {
+        ...userRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"),
+        displayName: "",
+        email: "fallback@example.com",
+      },
     ]);
     const app = fastify();
     await registerPeopleDirectoryRoutes(app, { store, actorFromRequest });
@@ -261,6 +274,204 @@ describe("PostgresAdminUsersStore", () => {
   });
 });
 
+describe("offboardUser revoke cascade (E7.2)", () => {
+  it("disables actor and revokes sessions, app passwords, and agent credentials", async () => {
+    const targetActorId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const otherActorId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const at = new Date("2026-08-03T12:00:00.000Z");
+
+    const disabled: string[] = [];
+    const sessions: string[] = [];
+    const appPasswords = new RecordingAppPasswordStore([
+      {
+        id: "apw-1",
+        orgId,
+        actorId: targetActorId,
+        revokedAt: null,
+      },
+      {
+        id: "apw-2",
+        orgId,
+        actorId: targetActorId,
+        revokedAt: null,
+      },
+      {
+        id: "apw-other",
+        orgId,
+        actorId: otherActorId,
+        revokedAt: null,
+      },
+    ]);
+    const credentials = new RecordingAgentCredentialStore([
+      {
+        clientId: "client-1",
+        orgId,
+        actorId: targetActorId,
+        revokedAt: null,
+      },
+      {
+        clientId: "client-other",
+        orgId,
+        actorId: otherActorId,
+        revokedAt: null,
+      },
+    ]);
+
+    const result = await offboardUser(
+      { orgId, actorId: targetActorId, at },
+      {
+        disableActor: async (input) => {
+          disabled.push(input.actorId);
+          expect(input).toEqual({
+            orgId,
+            actorId: targetActorId,
+            disabledAt: at,
+          });
+          return true;
+        },
+        revokeSessionsForActor: async (input) => {
+          sessions.push(input.actorId);
+          return 3;
+        },
+        appPasswords,
+        agentCredentials: credentials,
+      },
+    );
+
+    expect(result).toEqual({
+      actorId: targetActorId,
+      orgId,
+      disabled: true,
+      sessionsRevoked: 3,
+      appPasswordsRevoked: 2,
+      agentCredentialsRevoked: 1,
+    });
+    expect(disabled).toEqual([targetActorId]);
+    expect(sessions).toEqual([targetActorId]);
+    expect(appPasswords.revokedIds).toEqual(["apw-1", "apw-2"]);
+    expect(credentials.revokedClientIds).toEqual(["client-1"]);
+    expect(appPasswords.records.find((r) => r.id === "apw-other")?.revokedAt).toBeNull();
+    expect(credentials.records.find((r) => r.clientId === "client-other")?.revokedAt).toBeNull();
+  });
+
+  it("is idempotent when secrets are already revoked", async () => {
+    const targetActorId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const at = new Date("2026-08-03T13:00:00.000Z");
+    const appPasswords = new RecordingAppPasswordStore([
+      {
+        id: "apw-already",
+        orgId,
+        actorId: targetActorId,
+        revokedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    ]);
+    const credentials = new RecordingAgentCredentialStore([
+      {
+        clientId: "client-already",
+        orgId,
+        actorId: targetActorId,
+        revokedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    ]);
+
+    const result = await offboardUser(
+      { orgId, actorId: targetActorId, at },
+      {
+        disableActor: async () => false,
+        revokeSessionsForActor: async () => 0,
+        appPasswords,
+        agentCredentials: credentials,
+      },
+    );
+
+    expect(result).toEqual({
+      actorId: targetActorId,
+      orgId,
+      disabled: false,
+      sessionsRevoked: 0,
+      appPasswordsRevoked: 0,
+      agentCredentialsRevoked: 0,
+    });
+    expect(appPasswords.revokedIds).toEqual([]);
+    expect(credentials.revokedClientIds).toEqual([]);
+  });
+
+  it("POST /api/admin/users/:actorId/offboard drives offboardUser cascade", async () => {
+    const targetActorId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const appPasswords = new RecordingAppPasswordStore([
+      { id: "apw-route", orgId, actorId: targetActorId, revokedAt: null },
+    ]);
+    const credentials = new RecordingAgentCredentialStore([
+      { clientId: "client-route", orgId, actorId: targetActorId, revokedAt: null },
+    ]);
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store: new FakeAdminUsersStore([]),
+      actorFromRequest,
+      offboardStores: {
+        disableActor: async () => true,
+        revokeSessionsForActor: async () => 2,
+        appPasswords,
+        agentCredentials: credentials,
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${targetActorId}/offboard`,
+      headers: {
+        "x-helix-actor-id": actorId,
+        "x-helix-org-id": orgId,
+        "x-helix-scopes": "admin.users",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      offboard: {
+        actorId: targetActorId,
+        orgId,
+        disabled: true,
+        sessionsRevoked: 2,
+        appPasswordsRevoked: 1,
+        agentCredentialsRevoked: 1,
+      },
+    });
+    expect(appPasswords.revokedIds).toEqual(["apw-route"]);
+    expect(credentials.revokedClientIds).toEqual(["client-route"]);
+    await app.close();
+  });
+
+  it("refuses self-offboard via the HTTP entry point", async () => {
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store: new FakeAdminUsersStore([]),
+      actorFromRequest,
+      offboardStores: {
+        revokeSessionsForActor: async () => 0,
+        appPasswords: new RecordingAppPasswordStore([]),
+        agentCredentials: new RecordingAgentCredentialStore([]),
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${actorId}/offboard`,
+      headers: {
+        "x-helix-actor-id": actorId,
+        "x-helix-org-id": orgId,
+        "x-helix-scopes": "admin.users",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: "Administrators cannot offboard themselves.",
+    });
+    await app.close();
+  });
+});
+
 class FakeAdminUsersStore implements AdminUsersStore {
   readonly calls: ListAdminUsersInput[] = [];
 
@@ -269,6 +480,90 @@ class FakeAdminUsersStore implements AdminUsersStore {
   async listUsers(input: ListAdminUsersInput): Promise<readonly AdminUserRecord[]> {
     this.calls.push(input);
     return this.users;
+  }
+}
+
+type MutableAppPassword = {
+  id: string;
+  orgId: string;
+  actorId: string;
+  revokedAt: Date | null;
+};
+
+type MutableAgentCredential = {
+  clientId: string;
+  orgId: string;
+  actorId: string;
+  revokedAt: Date | null;
+};
+
+class RecordingAppPasswordStore implements OffboardAppPasswordStore {
+  readonly revokedIds: string[] = [];
+  readonly records: MutableAppPassword[];
+
+  constructor(records: readonly MutableAppPassword[]) {
+    this.records = records.map((record) => ({ ...record }));
+  }
+
+  async listAppPasswords(input: {
+    readonly orgId: string;
+    readonly actorId?: string;
+    readonly includeRevoked?: boolean;
+  }): Promise<readonly OffboardAppPasswordRecord[]> {
+    return this.records
+      .filter((record) => record.orgId === input.orgId)
+      .filter((record) => input.actorId === undefined || record.actorId === input.actorId)
+      .filter((record) => input.includeRevoked === true || record.revokedAt === null)
+      .map(({ id, orgId: recordOrgId, revokedAt }) => ({ id, orgId: recordOrgId, revokedAt }));
+  }
+
+  async revokeAppPassword(input: {
+    readonly id: string;
+    readonly orgId: string;
+    readonly revokedAt: Date;
+  }): Promise<OffboardAppPasswordRecord | null> {
+    const existing = this.records.find(
+      (record) => record.id === input.id && record.orgId === input.orgId,
+    );
+    if (existing === undefined || existing.revokedAt !== null) {
+      return null;
+    }
+    existing.revokedAt = input.revokedAt;
+    this.revokedIds.push(input.id);
+    return { id: existing.id, orgId: existing.orgId, revokedAt: existing.revokedAt };
+  }
+}
+
+class RecordingAgentCredentialStore implements OffboardAgentCredentialStore {
+  readonly revokedClientIds: string[] = [];
+  readonly records: MutableAgentCredential[];
+
+  constructor(records: readonly MutableAgentCredential[]) {
+    this.records = records.map((record) => ({ ...record }));
+  }
+
+  async listClients(input: {
+    readonly orgId: string;
+    readonly actorId?: string;
+    readonly includeRevoked?: boolean;
+  }): Promise<readonly OffboardAgentCredentialRecord[]> {
+    return this.records
+      .filter((record) => record.orgId === input.orgId)
+      .filter((record) => input.actorId === undefined || record.actorId === input.actorId)
+      .filter((record) => input.includeRevoked === true || record.revokedAt === null);
+  }
+
+  async revokeClient(
+    clientId: string,
+    revokedAt: Date,
+  ): Promise<OffboardAgentCredentialRecord | null> {
+    const existing = this.records.find((record) => record.clientId === clientId);
+    if (existing === undefined || existing.revokedAt !== null) {
+      return null;
+    }
+    existing.revokedAt = revokedAt;
+    this.revokedClientIds.push(clientId);
+    return { ...existing };
   }
 }
 

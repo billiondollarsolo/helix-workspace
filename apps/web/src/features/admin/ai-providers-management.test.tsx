@@ -291,7 +291,17 @@ describe("AIProvidersManagement", () => {
         const body = JSON.parse(typeof init.body === "string" ? init.body : "{}") as {
           ai?: {
             providers?: readonly { config?: { apiKey?: string } }[];
-            routing?: { rules?: readonly { feature: string }[] };
+            /* The full rule shape, not just `feature`. The narrow version made
+               `body.ai.routing` unassignable to `stored.ai.routing`, so this
+               fixture never typechecked — and a test fixture that does not
+               match the payload it stands in for is describing a response the
+               product does not send. */
+            routing?: {
+              rules?: readonly {
+                feature: string;
+                primary: { providerId: string; model: string };
+              }[];
+            };
             mailSpamAi?: { betaEnabled?: boolean };
           };
         };
@@ -301,8 +311,20 @@ describe("AIProvidersManagement", () => {
           security: { tier: "business" },
           ai: {
             ...stored.ai,
-            ...(body.ai?.mailSpamAi === undefined ? {} : { mailSpamAi: body.ai.mailSpamAi }),
-            ...(body.ai?.routing === undefined ? {} : { routing: body.ai.routing }),
+            ...(body.ai?.mailSpamAi === undefined
+              ? {}
+              : {
+                  mailSpamAi: {
+                    betaEnabled: body.ai.mailSpamAi.betaEnabled ?? stored.ai.mailSpamAi.betaEnabled,
+                  },
+                }),
+            /* Normalised rather than spread straight through: the parsed body
+               types `rules` as optional and readonly, while the stored config
+               requires a mutable list. Falling back to what is already stored
+               when the PATCH omits rules is also what the server does. */
+            ...(body.ai?.routing === undefined
+              ? {}
+              : { routing: { rules: [...(body.ai.routing.rules ?? stored.ai.routing.rules)] } }),
             providers: stored.ai.providers,
           },
         };

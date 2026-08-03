@@ -611,12 +611,17 @@ export function AIProvidersManagement() {
             aria-label="Mail spam AI beta mode"
             className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
             value={editor.spamBetaMode}
-            onChange={(event) =>
-              setEditor((current) => ({
-                ...current,
-                spamBetaMode: event.currentTarget.value as AiProvidersEditorState["spamBetaMode"],
-              }))
-            }
+            onChange={(event) => {
+              /* Read the value before the updater, not inside it.
+                 React nulls `currentTarget` once the handler returns, and a
+                 state updater runs later — during render — so reading it in
+                 there threw "Cannot read properties of null (reading 'value')"
+                 whenever the update was not processed synchronously. That is
+                 timing-dependent, which is exactly why this test was flaky
+                 rather than simply broken. */
+              const mode = event.target.value as AiProvidersEditorState["spamBetaMode"];
+              setEditor((current) => ({ ...current, spamBetaMode: mode }));
+            }}
           >
             <option value="env">Use environment default</option>
             <option value="on">Enabled</option>

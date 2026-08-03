@@ -330,3 +330,17 @@ resourcePolicy:
       condition:
         match:
           expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.agents" && P.attr.scopes.exists(scope, scope == "admin.agents")
+
+    - actions: ["admin.drive"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.drive" && P.attr.scopes.exists(scope, scope == "admin.drive")
+
+    - actions: ["admin.chat"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.chat" && P.attr.scopes.exists(scope, scope == "admin.chat")

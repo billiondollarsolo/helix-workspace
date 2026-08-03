@@ -16,7 +16,7 @@ vi.mock("@/components/apps", async (importOriginal) => {
 
 const routerMocks = vi.hoisted(() => ({
   navigate: vi.fn(),
-  search: {} as Record<string, unknown>,
+  search: {},
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -82,7 +82,7 @@ describe("Drive storage-only MVP actions", () => {
         clear: vi.fn(),
       },
     });
-    fetchMock = vi.fn<typeof fetch>((input, init) => {
+    fetchMock = vi.fn<typeof fetch>((input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url === "/api/auth/get-session") {
         return Promise.resolve(

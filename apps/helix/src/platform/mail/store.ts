@@ -172,6 +172,19 @@ export interface MailStore {
     readonly threadId: string;
     readonly patch: MailThreadStatePatch;
   }): Promise<void>;
+  /**
+   * Durable spam/ham feedback for user Report spam / Not spam and optional
+   * auto classifiers. Best-effort when the table is not yet migrated.
+   */
+  recordSpamFeedback?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly threadId: string;
+    readonly messageId?: string | null;
+    readonly label: "spam" | "ham";
+    readonly source?: "user" | "auto_spamd" | "auto_ai" | "auto_rules";
+    readonly evidence?: JsonObject;
+  }): Promise<void>;
   createFilter(input: CreateMailFilterInput): Promise<MailFilterRecord>;
   updateFilter(input: UpdateMailFilterInput): Promise<MailFilterRecord | null>;
   deleteFilter(input: {
@@ -745,6 +758,40 @@ export class PostgresMailStore
         end,
         updated_at = now()
     `;
+  }
+
+  async recordSpamFeedback(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly threadId: string;
+    readonly messageId?: string | null;
+    readonly label: "spam" | "ham";
+    readonly source?: "user" | "auto_spamd" | "auto_ai" | "auto_rules";
+    readonly evidence?: JsonObject;
+  }): Promise<void> {
+    try {
+      await this.sql`
+        insert into mail_spam_feedback (
+          org_id, actor_id, thread_id, message_id, label, source, evidence
+        )
+        values (
+          ${input.orgId},
+          ${input.actorId},
+          ${input.threadId},
+          ${input.messageId ?? null},
+          ${input.label},
+          ${input.source ?? "user"},
+          ${this.sql.json(toSqlJson(input.evidence ?? {}))}
+        )
+      `;
+    } catch (error) {
+      // Pre-migration deploys: do not fail spam mark/unmark on missing table.
+      const message = error instanceof Error ? error.message : String(error);
+      if (/mail_spam_feedback|does not exist/iu.test(message)) {
+        return;
+      }
+      throw error;
+    }
   }
 
   async createFilter(input: CreateMailFilterInput): Promise<MailFilterRecord> {

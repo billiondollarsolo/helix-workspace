@@ -330,6 +330,14 @@ export async function spamMailThread(
   await callMailTool("mail.spam", { threadId, spam: true }, fetchImpl);
 }
 
+/** Clear spam (Not spam) — returns the thread to the normal mailbox views. */
+export async function unspamMailThread(
+  threadId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callMailTool("mail.spam", { threadId, spam: false }, fetchImpl);
+}
+
 export async function getMailOutbound(
   outboundId: string,
   fetchImpl: MailApiFetch = authenticatedFetch,

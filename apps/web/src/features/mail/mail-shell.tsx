@@ -32,6 +32,7 @@ import {
   setMailThreadStarred,
   snoozeMailThread,
   spamMailThread,
+  unspamMailThread,
   type MailFolderKey,
   type MailFolderSummary,
   type MailLabelSummary,
@@ -103,7 +104,7 @@ const FOLDER_ICONS: Readonly<Record<MailFolderKey, IconName>> = {
   trash: "Trash",
 };
 
-/** Folder display order in the left rail. */
+/** Folder display order in the left rail. Spam is first-class (always listed). */
 const FOLDER_ORDER: readonly MailFolderKey[] = [
   "inbox",
   "starred",
@@ -111,6 +112,7 @@ const FOLDER_ORDER: readonly MailFolderKey[] = [
   "sent",
   "drafts",
   "archive",
+  "spam",
   "trash",
 ];
 
@@ -525,6 +527,7 @@ interface ThreadListProps {
   readonly onBulkArchive: (ids: ReadonlySet<string>) => void;
   readonly onBulkDelete: (ids: ReadonlySet<string>) => void;
   readonly onBulkSpam: (ids: ReadonlySet<string>) => void;
+  readonly onBulkNotSpam: (ids: ReadonlySet<string>) => void;
   readonly onBulkRead: (ids: ReadonlySet<string>, unread: boolean) => void;
   readonly onBulkSnooze: (ids: ReadonlySet<string>) => void;
   readonly onBulkMove: (ids: ReadonlySet<string>, folderId: MailFolderKey) => void;
@@ -627,6 +630,7 @@ function ThreadList({
   onBulkArchive,
   onBulkDelete,
   onBulkSpam,
+  onBulkNotSpam,
   onBulkRead,
   onBulkSnooze,
   onBulkMove,
@@ -923,16 +927,29 @@ function ThreadList({
               >
                 <Icons.Archive /> Archive
               </button>
-              <button
-                type="button"
-                className="mail-bulk-btn"
-                aria-label="Report spam"
-                onClick={() => {
-                  onBulkSpam(checkedIds);
-                }}
-              >
-                <Icons.Bell /> Report spam
-              </button>
+              {folder === "spam" ? (
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="Not spam"
+                  onClick={() => {
+                    onBulkNotSpam(checkedIds);
+                  }}
+                >
+                  <Icons.Inbox /> Not spam
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="Report spam"
+                  onClick={() => {
+                    onBulkSpam(checkedIds);
+                  }}
+                >
+                  <Icons.Bell /> Report spam
+                </button>
+              )}
               <button
                 type="button"
                 className="mail-bulk-btn"
@@ -1229,6 +1246,8 @@ interface ThreadViewProps {
   readonly onDelete: () => void;
   readonly onSnooze: () => void;
   readonly onToggleLabel: () => void;
+  readonly onReportSpam?: (() => void) | undefined;
+  readonly onNotSpam?: (() => void) | undefined;
   readonly actionBusy: boolean;
   readonly actionError: string | null;
 }
@@ -1244,6 +1263,8 @@ function ThreadView({
   onDelete,
   onSnooze,
   onToggleLabel,
+  onReportSpam,
+  onNotSpam,
   actionBusy,
   actionError,
 }: ThreadViewProps) {
@@ -1346,6 +1367,30 @@ function ThreadView({
         >
           <Icons.Snooze />
         </button>
+        {onNotSpam !== undefined ? (
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Not spam"
+            disabled={actionBusy}
+            onClick={onNotSpam}
+            style={{ marginLeft: 4 }}
+          >
+            <Icons.Inbox /> Not spam
+          </button>
+        ) : null}
+        {onReportSpam !== undefined ? (
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Report spam"
+            title="Report spam"
+            disabled={actionBusy}
+            onClick={onReportSpam}
+          >
+            <Icons.Bell />
+          </button>
+        ) : null}
         <div className="v-divider" style={{ height: 18, margin: "0 4px" }} />
         <button
           type="button"
@@ -1985,6 +2030,18 @@ export function MailShell() {
     },
   });
 
+  const notSpamMutation = useMutation({
+    mutationFn: (threadId: string) => unspamMailThread(threadId),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not mark as not spam. Try again.");
+    },
+    onSuccess: () => {
+      invalidateLists();
+      setSelected(null);
+    },
+  });
+
   const filterMutation = useMutation({
     mutationFn: (input: { readonly from: string }) =>
       createMailFilter({
@@ -2073,6 +2130,16 @@ export function MailShell() {
     [spamMutation],
   );
 
+  const handleBulkNotSpam = useCallback(
+    (ids: ReadonlySet<string>) => {
+      for (const threadId of ids) {
+        notSpamMutation.mutate(threadId);
+      }
+      setCheckedIds(new Set());
+    },
+    [notSpamMutation],
+  );
+
   const handleBulkRead = useCallback(
     (ids: ReadonlySet<string>, unread: boolean) => {
       for (const threadId of ids) {
@@ -2104,11 +2171,14 @@ export function MailShell() {
           deleteMutation.mutate(threadId);
         } else if (folderId === "spam") {
           spamMutation.mutate(threadId);
+        } else if (folderId === "inbox") {
+          // Moving out of spam (or generic restore to inbox) clears spam flag.
+          notSpamMutation.mutate(threadId);
         }
       }
       setCheckedIds(new Set());
     },
-    [archiveMutation, deleteMutation, spamMutation],
+    [archiveMutation, deleteMutation, spamMutation, notSpamMutation],
   );
 
   const handleBulkLabel = useCallback(
@@ -2166,7 +2236,8 @@ export function MailShell() {
     deleteMutation.isPending ||
     snoozeMutation.isPending ||
     labelMutation.isPending ||
-    spamMutation.isPending;
+    spamMutation.isPending ||
+    notSpamMutation.isPending;
 
   return (
     <>
@@ -2239,6 +2310,20 @@ export function MailShell() {
                   ...(applied ? { remove: [firstLabel.slug] } : { add: [firstLabel.slug] }),
                 });
               }}
+              onReportSpam={
+                folder === "spam"
+                  ? undefined
+                  : () => {
+                      spamMutation.mutate(selectedRow.threadId);
+                    }
+              }
+              onNotSpam={
+                folder === "spam"
+                  ? () => {
+                      notSpamMutation.mutate(selectedRow.threadId);
+                    }
+                  : undefined
+              }
               actionBusy={actionBusy}
               actionError={actionError}
             />
@@ -2285,6 +2370,7 @@ export function MailShell() {
               onBulkArchive={handleBulkArchive}
               onBulkDelete={handleBulkDelete}
               onBulkSpam={handleBulkSpam}
+              onBulkNotSpam={handleBulkNotSpam}
               onBulkRead={handleBulkRead}
               onBulkSnooze={handleBulkSnooze}
               onBulkMove={handleBulkMove}

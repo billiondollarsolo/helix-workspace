@@ -24,6 +24,7 @@ export * from "./smtp-rate-limit.js";
 export * from "./smtp-recipient-resolver.js";
 export * from "./smtp-transport-security.js";
 export * from "./spam.js";
+export * from "./spam-ai.js";
 export * from "./store.js";
 export * from "./stream.js";
 export * from "./tools.js";

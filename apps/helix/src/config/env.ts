@@ -236,6 +236,12 @@ const envSchema = z.object({
   MAIL_SPAMD_PORT: optionalString,
   MAIL_SPAMD_THRESHOLD: optionalString,
   MAIL_SPAMD_TIMEOUT_MS: optionalString,
+  /** Beta AI spam second-pass (off by default). See docs/mail-security-and-reliability.md. */
+  MAIL_SPAM_AI_BETA_ENABLED: optionalString,
+  MAIL_SPAM_AI_API_KEY: optionalString,
+  MAIL_SPAM_AI_BASE_URL: optionalUrl,
+  MAIL_SPAM_AI_MODEL: optionalString,
+  MAIL_SPAM_AI_TIMEOUT_MS: optionalString,
   MAIL_CLAMAV_ENABLED: optionalString,
   MAIL_CLAMAV_HOST: optionalString,
   MAIL_CLAMAV_PORT: optionalString,

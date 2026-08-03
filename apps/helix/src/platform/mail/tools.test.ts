@@ -28,7 +28,8 @@ describe("mail.spam tool", () => {
   });
 
   it("stamps spam_at when marking spam", async () => {
-    const { tool, updateThreadState } = toolById("mail.spam");
+    const recordSpamFeedback = vi.fn().mockResolvedValue(undefined);
+    const { tool, updateThreadState } = toolById("mail.spam", { recordSpamFeedback });
     const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
     const out = (await tool.handler(
       { threadId: "11111111-1111-1111-1111-111111111111", spam: true },
@@ -37,14 +38,27 @@ describe("mail.spam tool", () => {
     expect(out.ok).toBe(true);
     const update = updateThreadState.mock.calls[0]?.[0];
     expect(update?.patch.spamAt).toBeInstanceOf(Date);
+    expect(recordSpamFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "o1",
+        actorId: "a1",
+        threadId: "11111111-1111-1111-1111-111111111111",
+        label: "spam",
+        source: "user",
+      }),
+    );
   });
 
-  it("clears spam_at when un-marking (spam:false)", async () => {
-    const { tool, updateThreadState } = toolById("mail.spam");
+  it("clears spam_at when un-marking (spam:false) and records ham feedback", async () => {
+    const recordSpamFeedback = vi.fn().mockResolvedValue(undefined);
+    const { tool, updateThreadState } = toolById("mail.spam", { recordSpamFeedback });
     const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
     await tool.handler({ threadId: "11111111-1111-1111-1111-111111111111", spam: false }, ctx);
     const update = updateThreadState.mock.calls[0]?.[0];
     expect(update?.patch.spamAt).toBeNull();
+    expect(recordSpamFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "ham", source: "user" }),
+    );
   });
 
   it("requires the mail.write scope (not mail.read)", () => {

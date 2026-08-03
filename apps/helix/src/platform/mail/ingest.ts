@@ -101,6 +101,19 @@ export interface InboundMailScanners {
   readonly antivirus?: AntivirusScanner | undefined;
   /** Business and higher tiers fail closed when no clean antivirus verdict exists. */
   readonly tier?: SecurityTier;
+  /**
+   * Optional beta AI+rules second pass after spamd. Must not throw; callers
+   * treat missing/failed AI as no additional vote.
+   */
+  readonly betaSpamSecondPass?:
+    | ((features: {
+        readonly subject: string;
+        readonly bodyText: string;
+        readonly fromAddress: string;
+        readonly spamdScore?: number | undefined;
+        readonly spamdIsSpam?: boolean | undefined;
+      }) => Promise<{ readonly isSpam: boolean; readonly evidence: JsonObject }>)
+    | undefined;
 }
 
 export interface MailAuthenticator {
@@ -815,9 +828,49 @@ export async function scanInboundMail(
     virusRouted ||
     antivirus?.disposition === "quarantine" ||
     (tier !== "personal" && scannerUnavailable);
-  const spamRouted = spam !== null && spam.isSpam;
+  let spamRouted = spam !== null && spam.isSpam;
+  let spamReason: InboundScanResult["spamReason"] = virusRouted
+    ? "virus"
+    : policyQuarantined
+      ? "scanner-policy"
+      : spamRouted
+        ? "spam-score"
+        : null;
+
+  // Optional beta AI+rules second pass. Fail-open: never block accept on LLM errors.
+  let betaEvidence: JsonObject | null = null;
+  if (scanners.betaSpamSecondPass !== undefined && !virusRouted && !policyQuarantined) {
+    try {
+      const features = extractSpamFeaturesFromRaw(raw, spam);
+      const decision = await scanners.betaSpamSecondPass(features);
+      betaEvidence = decision.evidence;
+      if (decision.isSpam) {
+        spamRouted = true;
+        if (spamReason === null) {
+          spamReason = "spam-score";
+        }
+      }
+    } catch {
+      betaEvidence = { beta: true, failed: true };
+    }
+  }
+
+  const spamWithBeta: SpamScanResult | null =
+    spam === null && betaEvidence === null
+      ? null
+      : {
+          score: spam?.score ?? 0,
+          thresholdReportedBySpamd: spam?.thresholdReportedBySpamd ?? null,
+          isSpam: spamRouted && !virusRouted && !policyQuarantined ? true : (spam?.isSpam ?? false),
+          symbols: spam?.symbols ?? [],
+          evidence: {
+            ...(spam?.evidence ?? {}),
+            ...(betaEvidence === null ? {} : { betaSecondPass: betaEvidence }),
+          },
+        };
+
   return {
-    spam,
+    spam: spamWithBeta,
     antivirus,
     routedToSpam: virusRouted || policyQuarantined || spamRouted,
     quarantined: policyQuarantined,
@@ -825,13 +878,33 @@ export async function scanInboundMail(
       ? [virusRouted ? "malware" : scannerUnavailable ? "scanner_unavailable" : "scanner_policy"]
       : [],
     scannerUnavailable,
-    spamReason: virusRouted
-      ? "virus"
-      : policyQuarantined
-        ? "scanner-policy"
-        : spamRouted
-          ? "spam-score"
-          : null,
+    spamReason,
+  };
+}
+
+/** Best-effort subject/from/body extraction for beta spam rules (no full MIME reparse). */
+export function extractSpamFeaturesFromRaw(
+  raw: Buffer | string,
+  spam: SpamScanResult | null,
+): {
+  readonly subject: string;
+  readonly bodyText: string;
+  readonly fromAddress: string;
+  readonly spamdScore?: number | undefined;
+  readonly spamdIsSpam?: boolean | undefined;
+} {
+  const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : raw;
+  const subject = (/^subject:\s*(.+)$/imu.exec(text)?.[1] ?? "").trim();
+  const fromAddress = (/^from:\s*(.+)$/imu.exec(text)?.[1] ?? "").trim();
+  const bodySplit = text.split(/\r?\n\r?\n/u);
+  const bodyText = bodySplit.slice(1).join("\n\n").slice(0, 8_000);
+  return {
+    subject,
+    bodyText,
+    fromAddress,
+    ...(spam === null
+      ? {}
+      : { spamdScore: spam.score, spamdIsSpam: spam.isSpam }),
   };
 }
 

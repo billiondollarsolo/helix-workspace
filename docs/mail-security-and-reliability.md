@@ -23,6 +23,43 @@ spam, antivirus, and raw header evidence are retained internally. Client-visible
 are sanitized. Remote HTML images are removed by default, and HTML is sanitized again when the
 thread projection is read and displayed in a sandboxed iframe.
 
+### Spam folder and user actions
+
+- The mail UI always exposes a **Spam** folder (view over `mail_thread_state.spam_at`).
+- **Report spam** (`mail.spam` with `spam: true`) and **Not spam** (`spam: false`) update thread
+  state and write durable rows to `mail_spam_feedback` for ops/learning.
+- Auto-routing uses **SpamAssassin spamd** when enabled (see below). Without spamd, messages are
+  not auto-claimed as AI-scanned.
+
+### SpamAssassin (primary)
+
+| Variable | Purpose |
+|----------|---------|
+| `MAIL_SPAMD_ENABLED` | Truthy enables inbound spamd scoring (default off) |
+| `MAIL_SPAMD_HOST` | spamd host (default `spamd`) |
+| `MAIL_SPAMD_PORT` | spamd port (default `783`) |
+| `MAIL_SPAMD_THRESHOLD` | Score ≥ threshold routes to Spam (default `5`) |
+| `MAIL_SPAMD_TIMEOUT_MS` | Per-scan timeout (default `10000`) |
+
+When spamd is disabled or unreachable, ingest does not invent a spam score. Business tier may still
+quarantine on **malware** scanner failure (ClamAV), which is separate from the Spam folder.
+
+### Beta AI spam second-pass (optional)
+
+Off by default. When enabled, Helix may apply **rules + optional LLM** after spamd. Failures never
+block SMTP accept (fail-open). Labeled **beta** until further notice.
+
+| Variable | Purpose |
+|----------|---------|
+| `MAIL_SPAM_AI_BETA_ENABLED` | Truthy enables beta second-pass (default off) |
+| `MAIL_SPAM_AI_API_KEY` | Bearer token (falls back to `OPENAI_API_KEY`) |
+| `MAIL_SPAM_AI_BASE_URL` | OpenAI-compatible base URL (default `https://api.openai.com/v1`, or `OPENAI_BASE_URL`) |
+| `MAIL_SPAM_AI_MODEL` | Model id (default `gpt-4o-mini`, or `OPENAI_MODEL`) |
+| `MAIL_SPAM_AI_TIMEOUT_MS` | LLM timeout (default `4000`) |
+
+Where to set them: deployment env / compose / secrets for the Helix API process — same place as
+other `MAIL_*` and `OPENAI_*` keys. Do not put secrets in the web build.
+
 Business tier fails closed: an unavailable or timed-out malware scanner quarantines the message
 instead of delivering it. Malware and executable or active-content attachments are also
 quarantined. A spoofed but syntactically valid `From` header is not by itself grounds for SMTP

@@ -243,6 +243,7 @@ import {
   createSmtpRecipientResolver,
   SmtpMailReceiver,
   SpamdScanner,
+  createBetaSpamSecondPass,
   quarantineReleaseScannerFromAntivirus,
   withOutboundRoutingInvalidation,
 } from "./platform/mail/index.js";
@@ -2017,6 +2018,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
             ...(spamdScannerConfig ? { spam: new SpamdScanner(spamdScannerConfig) } : {}),
             ...(mailAntivirusScanner === undefined ? {} : { antivirus: mailAntivirusScanner }),
             tier: securityTier,
+            ...(createBetaSpamSecondPass(process.env) === undefined
+              ? {}
+              : { betaSpamSecondPass: createBetaSpamSecondPass(process.env) }),
           },
           quarantineStore: mailQuarantineStore,
         });

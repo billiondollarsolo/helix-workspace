@@ -514,7 +514,8 @@ export function createMailToolDefinitions(
     ),
     defineTool<z.output<typeof spamSchema>, z.output<typeof mailSpamResultSchema>>({
       id: "mail.spam",
-      description: "Mark or unmark a mail thread as spam.",
+      description:
+        "Mark or unmark a mail thread as spam (Not spam when spam:false). Writes durable feedback.",
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(spamSchema, genericObjectJsonSchema),
@@ -527,6 +528,16 @@ export function createMailToolDefinitions(
           threadId: input.threadId,
           patch: { spamAt },
         });
+        if (options.store.recordSpamFeedback !== undefined) {
+          await options.store.recordSpamFeedback({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            threadId: input.threadId,
+            label: input.spam ? "spam" : "ham",
+            source: "user",
+            evidence: { via: "mail.spam", spam: input.spam },
+          });
+        }
         return {
           ok: true as const,
           threadId: input.threadId,

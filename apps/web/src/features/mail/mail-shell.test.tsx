@@ -46,6 +46,7 @@ const FOLDERS = [
   { id: "sent", label: "Sent", total: 0, unread: 0 },
   { id: "drafts", label: "Drafts", total: 0, unread: 0 },
   { id: "archive", label: "Archive", total: 0, unread: 0 },
+  { id: "spam", label: "Spam", total: 1, unread: 1 },
   { id: "trash", label: "Trash", total: 0, unread: 0 },
 ];
 
@@ -279,7 +280,7 @@ describe("MailShell", () => {
   it("renders folders, labels, and thread rows from the backend tools", async () => {
     render();
     await flush();
-    for (const folder of ["Inbox", "Starred", "Snoozed", "Drafts", "Archive", "Trash"]) {
+    for (const folder of ["Inbox", "Starred", "Snoozed", "Drafts", "Archive", "Spam", "Trash"]) {
       expect(container.textContent).toContain(folder);
     }
     expect(container.textContent).toContain("Primary");

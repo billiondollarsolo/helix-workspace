@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { toast } from "sonner";
@@ -14,8 +14,79 @@ vi.mock("sonner", () => ({
   },
 }));
 
+const navigateMock = vi.fn();
+const routerSearch = { current: {} as Record<string, unknown> };
+
+vi.mock("@tanstack/react-router", async () => {
+  const actual =
+    await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+    useSearch: () => routerSearch.current,
+  };
+});
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
+
+/* Shared by the per-list tool mocks and the `webhook.overview` aggregate, so
+   the two can never drift into describing different workspaces. */
+const OUTBOUND_FIXTURE = [
+  {
+    id: "11111111-1111-4111-8111-111111111111",
+    orgId: "22222222-2222-4222-8222-222222222222",
+    name: "Slack launch channel",
+    url: "https://hooks.slack.test/launch",
+    eventSubjects: ["activity.mail.received"],
+    secretRef: "inline:redacted",
+    headers: {},
+    enabled: true,
+    metadata: { format: "slack" },
+    createdByActorId: null,
+    createdAt: "2026-05-20T12:00:00.000Z",
+    updatedAt: "2026-05-20T12:05:00.000Z",
+  },
+];
+
+const INBOUND_FIXTURE = [
+  {
+    id: "33333333-3333-4333-8333-333333333333",
+    orgId: "22222222-2222-4222-8222-222222222222",
+    name: "GitHub deploy hook",
+    slug: "github-deploy",
+    source: "github",
+    secretRef: "inline:redacted",
+    enabled: true,
+    metadata: { action: { toolId: "chat.send" } },
+    createdByActorId: null,
+    lastReceivedAt: "2026-05-20T12:10:00.000Z",
+    createdAt: "2026-05-20T12:00:00.000Z",
+    updatedAt: "2026-05-20T12:05:00.000Z",
+  },
+];
+
+const DELIVERIES_FIXTURE = Array.from({ length: 24 }, (_, index) => ({
+  id: `44444444-4444-4444-8444-${String(index).padStart(12, "0")}`,
+  orgId: "22222222-2222-4222-8222-222222222222",
+  direction: index % 2 === 0 ? "outbound" : "inbound",
+  outboundWebhookId: index % 2 === 0 ? "11111111-1111-4111-8111-111111111111" : null,
+  inboundWebhookId: index % 2 === 0 ? null : "33333333-3333-4333-8333-333333333333",
+  eventSubject: `activity.webhook.${String(index)}`,
+  status: index === 0 ? "failed" : "delivered",
+  attempt: index + 1,
+  payload: { index },
+  payloadSha256: null,
+  signature: null,
+  requestHeaders: { "x-delivery": String(index) },
+  responseStatus: index === 0 ? 500 : 200,
+  responseHeaders: { "content-type": "application/json" },
+  error: index === 0 ? "boom" : null,
+  nextAttemptAt: null,
+  deliveredAt: "2026-05-20T12:12:00.000Z",
+  createdAt: "2026-05-20T12:11:00.000Z",
+  updatedAt: "2026-05-20T12:12:00.000Z",
+}));
 
 describe("WebhookManagement", () => {
   let container: HTMLDivElement;
@@ -36,6 +107,27 @@ describe("WebhookManagement", () => {
         },
       },
     });
+    routerSearch.current = {};
+    navigateMock.mockReset();
+    navigateMock.mockImplementation(
+      async (opts: { search?: (prev: Record<string, unknown>) => Record<string, unknown> }) => {
+        if (typeof opts.search === "function") {
+          routerSearch.current = opts.search({ ...routerSearch.current });
+        }
+        await act(async () => {
+          root.render(
+            createElement(
+              QueryClientProvider,
+              { client: queryClient },
+              createElement(WebhookManagement),
+            ),
+          );
+          /* The re-render has to settle before the caller asserts, and an
+             `async` callback with nothing awaited in it is a lint error. */
+          await Promise.resolve();
+        });
+      },
+    );
     deferredResponses = new Map();
     fetchMock = vi.fn<typeof fetch>((input) => {
       if (typeof input === "string") {
@@ -45,73 +137,26 @@ describe("WebhookManagement", () => {
         }
       }
       if (input === "/api/tools/webhook.outbound.list") {
-        return Promise.resolve(
-          Response.json({
-            webhooks: [
-              {
-                id: "11111111-1111-4111-8111-111111111111",
-                orgId: "22222222-2222-4222-8222-222222222222",
-                name: "Slack launch channel",
-                url: "https://hooks.slack.test/launch",
-                eventSubjects: ["activity.mail.received"],
-                secretRef: "inline:redacted",
-                headers: {},
-                enabled: true,
-                metadata: { format: "slack" },
-                createdByActorId: null,
-                createdAt: "2026-05-20T12:00:00.000Z",
-                updatedAt: "2026-05-20T12:05:00.000Z",
-              },
-            ],
-          }),
-        );
+        return Promise.resolve(Response.json({ webhooks: OUTBOUND_FIXTURE }));
       }
       if (input === "/api/tools/webhook.inbound.list") {
-        return Promise.resolve(
-          Response.json({
-            webhooks: [
-              {
-                id: "33333333-3333-4333-8333-333333333333",
-                orgId: "22222222-2222-4222-8222-222222222222",
-                name: "GitHub deploy hook",
-                slug: "github-deploy",
-                source: "github",
-                secretRef: "inline:redacted",
-                enabled: true,
-                metadata: { action: { toolId: "chat.send" } },
-                createdByActorId: null,
-                lastReceivedAt: "2026-05-20T12:10:00.000Z",
-                createdAt: "2026-05-20T12:00:00.000Z",
-                updatedAt: "2026-05-20T12:05:00.000Z",
-              },
-            ],
-          }),
-        );
+        return Promise.resolve(Response.json({ webhooks: INBOUND_FIXTURE }));
       }
       if (input === "/api/tools/webhook.delivery.list") {
+        return Promise.resolve(Response.json({ deliveries: DELIVERIES_FIXTURE }));
+      }
+      /* The section reads all three lists through one tool now. Three separate
+         calls spent three of the tenant's five requests per second on top of
+         the two the app shell always spends, so a cold load reliably rendered
+         "Tenant API request rate limit exceeded" instead of the page. The
+         per-list tools stay mocked: the filtered deliveries path still calls
+         `webhook.delivery.list` directly. */
+      if (input === "/api/tools/webhook.overview") {
         return Promise.resolve(
           Response.json({
-            deliveries: Array.from({ length: 24 }, (_, index) => ({
-              id: `44444444-4444-4444-8444-${String(index).padStart(12, "0")}`,
-              orgId: "22222222-2222-4222-8222-222222222222",
-              direction: index % 2 === 0 ? "outbound" : "inbound",
-              outboundWebhookId: index % 2 === 0 ? "11111111-1111-4111-8111-111111111111" : null,
-              inboundWebhookId: index % 2 === 0 ? null : "33333333-3333-4333-8333-333333333333",
-              eventSubject: `activity.webhook.${String(index)}`,
-              status: index === 0 ? "failed" : "delivered",
-              attempt: index + 1,
-              payload: { index },
-              payloadSha256: null,
-              signature: null,
-              requestHeaders: { "x-delivery": String(index) },
-              responseStatus: index === 0 ? 500 : 200,
-              responseHeaders: { "content-type": "application/json" },
-              error: index === 0 ? "boom" : null,
-              nextAttemptAt: null,
-              deliveredAt: "2026-05-20T12:12:00.000Z",
-              createdAt: "2026-05-20T12:11:00.000Z",
-              updatedAt: "2026-05-20T12:12:00.000Z",
-            })),
+            outbound: OUTBOUND_FIXTURE,
+            inbound: INBOUND_FIXTURE,
+            deliveries: DELIVERIES_FIXTURE,
           }),
         );
       }
@@ -141,10 +186,16 @@ describe("WebhookManagement", () => {
     await waitForText("activity.webhook.0");
     expect(container.textContent).toContain("failed");
     expect(container.querySelector(".webhooks-table-wrap.deliveries")).not.toBeNull();
-    expect(fetchBody("/api/tools/webhook.delivery.list")).toMatchObject({ limit: 100 });
+    /* One request for the whole section, not three. Three separate list calls
+       spent three of the tenant's five requests per second on top of the two
+       the app shell always spends, so a cold load reliably rendered "Tenant API
+       request rate limit exceeded" instead of the page — reproducible in a
+       running workspace, not a theoretical budget. */
+    expect(fetchBody("/api/tools/webhook.overview")).toMatchObject({ deliveryLimit: 100 });
+    expect(toolCallUrls()).toEqual(["/api/tools/webhook.overview"]);
 
     await clickDeliveryAction("View");
-    expect(container.textContent).toContain("delivery detail");
+    expect(container.textContent).toContain("Delivery detail");
     expect(container.textContent).toContain("Response status");
     expect(container.textContent).toContain('"payload"');
     expect(container.textContent).toContain('"response"');
@@ -167,7 +218,11 @@ describe("WebhookManagement", () => {
       expect(latestFetchBody("/api/tools/webhook.delivery.list")).toMatchObject({
         direction: "outbound",
         status: "failed",
-        webhookId: "11111111-1111-4111-8111-111111111111",
+        /* `webhookId` is one field in the UI but two columns on the delivery
+           row; the direction picks which one it filters. Sent under the wrong
+           name the server would quietly return everything, which is worse than
+           no filter at all. */
+        outboundWebhookId: "11111111-1111-4111-8111-111111111111",
         createdAfter: new Date("2026-05-20T08:00").toISOString(),
         createdBefore: new Date("2026-05-20T12:30").toISOString(),
         limit: 25,
@@ -447,6 +502,127 @@ describe("WebhookManagement", () => {
     );
   });
 
+  /* The bar announced role="tab" with no panel relationship, no ids and no
+     keyboard interface, so a screen reader was told "tab, 1 of 3" and then had
+     nothing to operate. It is a real tabset, so it now carries the whole ARIA
+     tabs contract. */
+  it("moves between webhook tabs with arrow keys and points each tab at its panel", async () => {
+    renderWebhooks();
+    await waitForText("Slack launch channel");
+
+    const tabs = Array.from(container.querySelectorAll<HTMLElement>('[role="tab"]'));
+    expect(tabs.map((tab) => tab.textContent?.trim())).toEqual([
+      "Outbound",
+      "Inbound",
+      "Deliveries",
+    ]);
+    // Roving tabindex: only the selected tab is a tab stop, so arrow keys are
+    // the only way to reach the other two.
+    expect(tabs.filter((tab) => tab.getAttribute("tabindex") === "0")).toHaveLength(1);
+    expect(tabs.map((tab) => tab.getAttribute("aria-controls"))).toEqual([
+      "webhooks-panel-outbound",
+      "webhooks-panel-inbound",
+      "webhooks-panel-deliveries",
+    ]);
+    expectSelectedTabAndPanel("Outbound", "webhooks-panel-outbound");
+
+    expect(await pressKeyOnSelectedTab("ArrowRight")).toBe("webhooks-tab-inbound");
+    expectSelectedTabAndPanel("Inbound", "webhooks-panel-inbound");
+    expect(document.activeElement).toBe(selectedTab());
+
+    await pressKeyOnSelectedTab("ArrowRight");
+    expectSelectedTabAndPanel("Deliveries", "webhooks-panel-deliveries");
+
+    // Right from the last tab wraps to the first, Left from the first wraps back.
+    await pressKeyOnSelectedTab("ArrowRight");
+    expectSelectedTabAndPanel("Outbound", "webhooks-panel-outbound");
+    await pressKeyOnSelectedTab("ArrowLeft");
+    expectSelectedTabAndPanel("Deliveries", "webhooks-panel-deliveries");
+
+    await pressKeyOnSelectedTab("Home");
+    expectSelectedTabAndPanel("Outbound", "webhooks-panel-outbound");
+    await pressKeyOnSelectedTab("End");
+    expectSelectedTabAndPanel("Deliveries", "webhooks-panel-deliveries");
+
+    // Keys the tabs pattern does not own must leave selection alone.
+    await pressKeyOnSelectedTab("ArrowDown");
+    expectSelectedTabAndPanel("Deliveries", "webhooks-panel-deliveries");
+  });
+
+  /* The editor's step strip shares the tab bar's look but is a form wizard, not
+     a tabset. Claiming role="tab" there promised a panel relationship and a
+     keyboard interface that never existed. */
+  it("exposes editor steps as plain buttons rather than a second tablist", async () => {
+    renderWebhooks();
+    await waitForText("Slack launch channel");
+    await clickHeaderAction("Outbound");
+    await waitForText("Destination");
+
+    // One tablist on the page: the section tabs.
+    expect(container.querySelectorAll('[role="tablist"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(3);
+
+    const steps = Array.from(container.querySelectorAll<HTMLElement>('[role="group"] button.tab'));
+    expect(steps.map((step) => step.textContent?.trim())).toEqual([
+      "Destination",
+      "Payload",
+      "Review",
+    ]);
+    // Plain buttons stay in the tab order and say which step is current.
+    expect(steps.filter((step) => step.hasAttribute("tabindex"))).toHaveLength(0);
+    expect(steps.map((step) => step.getAttribute("aria-current"))).toEqual(["step", null, null]);
+    expect(steps.some((step) => step.hasAttribute("aria-selected"))).toBe(false);
+    /* `.webhooks-tab` marks its current item with `[aria-selected="true"]`, so
+       dropping that attribute here would have left the current step with no
+       visible marker; `.tab.active` carries it instead. */
+    expect(steps.map((step) => step.className)).toEqual(["tab active", "tab", "tab"]);
+  });
+
+  it("names every webhook table so its rows are not an anonymous grid", async () => {
+    renderWebhooks();
+    await waitForText("Slack launch channel");
+    expect(tableLabel()).toBe("Outbound webhooks");
+
+    await clickTab("Inbound");
+    await waitForText("GitHub deploy hook");
+    expect(tableLabel()).toBe("Inbound webhooks");
+
+    await clickTab("Deliveries");
+    await waitForText("activity.webhook.0");
+    expect(tableLabel()).toBe("Webhook deliveries");
+  });
+
+  function tableLabel(): string | null | undefined {
+    return container.querySelector("table.webhooks-table")?.getAttribute("aria-label");
+  }
+
+  function selectedTab(): HTMLElement | null {
+    return container.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+  }
+
+  function expectSelectedTabAndPanel(label: string, panelId: string) {
+    const tab = selectedTab();
+    expect(tab?.textContent?.trim()).toBe(label);
+    expect(tab?.getAttribute("tabindex")).toBe("0");
+    const panel = container.querySelector<HTMLElement>('[role="tabpanel"]');
+    expect(panel?.id).toBe(panelId);
+    expect(panel?.getAttribute("aria-labelledby")).toBe(tab?.id);
+  }
+
+  /** Sends a key to the selected tab and reports the id of the tab it focused. */
+  async function pressKeyOnSelectedTab(key: string): Promise<string | undefined> {
+    const tab = selectedTab();
+    if (tab === null) {
+      throw new Error("No selected tab to send a key to.");
+    }
+    act(() => {
+      tab.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+    const focusedId = document.activeElement?.id;
+    await flush();
+    return focusedId;
+  }
+
   function renderWebhooks() {
     act(() => {
       root.render(
@@ -592,6 +768,18 @@ describe("WebhookManagement", () => {
     descriptor?.set?.call(input, value);
   }
 
+  /** Every tool endpoint the section called, de-duplicated and in order — the
+   *  section's request cost, which is what the tenant rate limiter meters. */
+  function toolCallUrls(): readonly string[] {
+    return [
+      ...new Set(
+        fetchMock.mock.calls
+          .map((call) => (typeof call[0] === "string" ? call[0] : ""))
+          .filter((url) => url.startsWith("/api/tools/")),
+      ),
+    ];
+  }
+
   function fetchBody(url: string) {
     const body = fetchMock.mock.calls.find((call) => call[0] === url)?.[1]?.body;
     if (typeof body !== "string") {
@@ -609,25 +797,28 @@ describe("WebhookManagement", () => {
     return JSON.parse(body) as unknown;
   }
 
+  /* The section renders from one cache entry now, so that is where optimistic
+     edits land and what a rollback has to restore. Reading the old per-list
+     keys would report an empty cache and pass whatever the UI did. */
+  interface OverviewCache {
+    readonly outbound?: readonly { readonly name: string; readonly enabled: boolean }[];
+    readonly inbound?: readonly {
+      readonly name: string;
+      readonly enabled: boolean;
+      readonly secretRef: string | null;
+    }[];
+  }
+
+  function overviewCache(): OverviewCache {
+    return queryClient.getQueryData<OverviewCache>(["webhooks", "overview", 100]) ?? {};
+  }
+
   function outboundCache() {
-    return (
-      queryClient.getQueryData<readonly { readonly name: string; readonly enabled: boolean }[]>([
-        "webhooks",
-        "outbound",
-      ]) ?? []
-    );
+    return overviewCache().outbound ?? [];
   }
 
   function inboundCache() {
-    return (
-      queryClient.getQueryData<
-        readonly {
-          readonly name: string;
-          readonly enabled: boolean;
-          readonly secretRef: string | null;
-        }[]
-      >(["webhooks", "inbound"]) ?? []
-    );
+    return overviewCache().inbound ?? [];
   }
 
   async function waitForText(text: string) {

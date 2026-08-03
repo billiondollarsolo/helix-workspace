@@ -6,12 +6,12 @@
  * no-op.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { AdminField, AdminInput } from "@/features/admin/console/controls";
 import {
-  INPUT_STYLE,
   PageHeading,
   QueryFailureBanner,
   StateBanner,
@@ -34,23 +34,6 @@ import {
   type ChatRetentionFormInput,
   type ChatRetentionPolicyView,
 } from "@/features/admin/chat-admin-api";
-
-function Field({
-  label,
-  className,
-  children,
-}: {
-  readonly label: string;
-  readonly className?: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <label className={className === undefined ? "grid gap-1" : `grid gap-1 ${className}`}>
-      <span className="text-[var(--text-3)] [font-size:var(--text-caption)]">{label}</span>
-      {children}
-    </label>
-  );
-}
 
 const PANEL = "grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4";
 
@@ -262,8 +245,8 @@ export function ChatAdminSection() {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Retention days">
-            <input
+          <AdminField label="Retention days">
+            <AdminInput
               aria-label="Retention days"
               disabled={controlsDisabled || retentionMutation.isPending}
               inputMode="numeric"
@@ -273,12 +256,11 @@ export function ChatAdminSection() {
                   retentionDays: event.target.value,
                 }))
               }
-              style={INPUT_STYLE}
               value={retentionForm.retentionDays}
             />
-          </Field>
-          <Field label="Edit window (seconds)">
-            <input
+          </AdminField>
+          <AdminField label="Edit window (seconds)">
+            <AdminInput
               aria-label="Edit window in seconds"
               disabled={controlsDisabled || retentionMutation.isPending}
               inputMode="numeric"
@@ -288,12 +270,11 @@ export function ChatAdminSection() {
                   editWindowSeconds: event.target.value,
                 }))
               }
-              style={INPUT_STYLE}
               value={retentionForm.editWindowSeconds}
             />
-          </Field>
-          <Field label="Delete window (seconds)">
-            <input
+          </AdminField>
+          <AdminField label="Delete window (seconds)">
+            <AdminInput
               aria-label="Delete window in seconds"
               disabled={controlsDisabled || retentionMutation.isPending}
               inputMode="numeric"
@@ -303,12 +284,11 @@ export function ChatAdminSection() {
                   deleteWindowSeconds: event.target.value,
                 }))
               }
-              style={INPUT_STYLE}
               value={retentionForm.deleteWindowSeconds}
             />
-          </Field>
-          <Field label="Room ID override (optional)">
-            <input
+          </AdminField>
+          <AdminField label="Room ID override (optional)">
+            <AdminInput
               aria-label="Room ID override"
               disabled={controlsDisabled || retentionMutation.isPending}
               onChange={(event) =>
@@ -318,10 +298,9 @@ export function ChatAdminSection() {
                 }))
               }
               placeholder="org default when empty"
-              style={INPUT_STYLE}
               value={retentionForm.roomId}
             />
-          </Field>
+          </AdminField>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -370,54 +349,50 @@ export function ChatAdminSection() {
         {exportError !== null ? <StateBanner kind="error">{exportError}</StateBanner> : null}
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="From (ISO datetime, optional)">
-            <input
+          <AdminField label="From (ISO datetime, optional)">
+            <AdminInput
               aria-label="Export from datetime"
               disabled={controlsDisabled || exportMutation.isPending}
               onChange={(event) =>
                 setExportForm((current) => ({ ...current, from: event.target.value }))
               }
               placeholder="2026-01-01T00:00:00.000Z"
-              style={INPUT_STYLE}
               value={exportForm.from}
             />
-          </Field>
-          <Field label="To (ISO datetime, optional)">
-            <input
+          </AdminField>
+          <AdminField label="To (ISO datetime, optional)">
+            <AdminInput
               aria-label="Export to datetime"
               disabled={controlsDisabled || exportMutation.isPending}
               onChange={(event) =>
                 setExportForm((current) => ({ ...current, to: event.target.value }))
               }
               placeholder="2026-12-31T23:59:59.000Z"
-              style={INPUT_STYLE}
               value={exportForm.to}
             />
-          </Field>
-          <Field label="Message limit">
-            <input
+          </AdminField>
+          <AdminField label="Message limit">
+            <AdminInput
               aria-label="Export message limit"
               disabled={controlsDisabled || exportMutation.isPending}
               inputMode="numeric"
               onChange={(event) =>
                 setExportForm((current) => ({ ...current, limit: event.target.value }))
               }
-              style={INPUT_STYLE}
               value={exportForm.limit}
             />
-          </Field>
-          <Field label="Room IDs (comma-separated, optional)">
-            <input
+          </AdminField>
+          <AdminField label="Room IDs (comma-separated, optional)">
+            <AdminInput
               aria-label="Export room IDs"
               disabled={controlsDisabled || exportMutation.isPending}
               onChange={(event) =>
                 setExportForm((current) => ({ ...current, roomIds: event.target.value }))
               }
               placeholder="all rooms when empty"
-              style={INPUT_STYLE}
               value={exportForm.roomIds}
             />
-          </Field>
+          </AdminField>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

@@ -5,14 +5,33 @@
  * The console-wide suite in `admin-console.test.tsx` covers the section's
  * place in the shell. These cover the section's own contract: the role
  * derivation (which the platform authorizes per dotted scope, not by an exact
- * `admin` match), selection identity, and the honesty of the controls. */
+ * `admin` match), selection identity, and the honesty of the controls.
+ *
+ * The fetch double below answers `query`, `type`, `includeDisabled` and the
+ * cursor the way the route does, because search is now the server's job: a test
+ * whose double ignored those params would pass while the directory searched one
+ * page and told a 10k-actor workspace that nobody matched. */
 
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AdminUsers } from "@/features/admin/sections/users";
+import { AdminUsers, prefetchAdminDirectoryQuery } from "@/features/admin/sections/users";
+import { adminUsersInfiniteQueryOptions } from "@/features/admin/admin-users";
 import { adminScopesOf, roleForActor } from "@/features/admin/admin-console-data";
+
+const navigateMock = vi.fn();
+const routerSearch = { current: {} as Record<string, unknown> };
+
+vi.mock("@tanstack/react-router", async () => {
+  const actual =
+    await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+    useSearch: () => routerSearch.current,
+  };
+});
 
 interface ApiUser {
   readonly id: string;
@@ -84,14 +103,51 @@ describe("AdminUsers", () => {
   let queryClient: QueryClient;
   let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
   let clipboardWrite: ReturnType<typeof vi.fn>;
+  let requests: URL[];
 
-  function mockUsers(users: readonly ApiUser[], nextCursor: string | null = null) {
-    fetchMock.mockImplementation(() => Promise.resolve(Response.json({ users, nextCursor })));
+  /** A stand-in for `GET /api/admin/users`: it filters on `query`, `type` and
+   *  `includeDisabled` exactly as the SQL does, and pages with an opaque cursor
+   *  (here, the offset). `pageSize` defaults to one page holding everything. */
+  function mockUsers(users: readonly ApiUser[], pageSize?: number) {
+    const size = pageSize ?? Math.max(users.length, 1);
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const href =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(href, "http://localhost");
+      requests.push(url);
+      const needle = (url.searchParams.get("query") ?? "").toLowerCase();
+      const type = url.searchParams.get("type") ?? "";
+      const includeDisabled = url.searchParams.get("includeDisabled") === "true";
+      const matching = users.filter((user) => {
+        if (
+          needle !== "" &&
+          !user.displayName.toLowerCase().includes(needle) &&
+          !(user.email ?? "").toLowerCase().includes(needle) &&
+          !user.id.toLowerCase().includes(needle)
+        ) {
+          return false;
+        }
+        if (type !== "" && user.type !== type) {
+          return false;
+        }
+        if (!includeDisabled && user.disabledAt !== null) {
+          return false;
+        }
+        return true;
+      });
+      const start = Number(url.searchParams.get("cursor") ?? "0");
+      const page = matching.slice(start, start + size);
+      const next = start + page.length;
+      return Promise.resolve(
+        Response.json({ users: page, nextCursor: next < matching.length ? String(next) : null }),
+      );
+    });
   }
 
   /** Polls with real timers — react-query settles over several ticks, so a
-   *  fixed number of microtask flushes is racy. */
-  async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
+   *  fixed number of microtask flushes is racy. The search box also debounces
+   *  through Pacer, so assertions about a typed query wait here too. */
+  async function waitFor(assertion: () => void, timeout = 2000): Promise<void> {
     const start = Date.now();
     let lastError: unknown;
     while (Date.now() - start <= timeout) {
@@ -121,11 +177,12 @@ describe("AdminUsers", () => {
     });
   }
 
-  async function renderWith(users: readonly ApiUser[], nextCursor: string | null = null) {
-    mockUsers(users, nextCursor);
+  async function renderWith(users: readonly ApiUser[], pageSize?: number) {
+    mockUsers(users, pageSize);
     await render();
+    const expected = Math.min(pageSize ?? users.length, users.length);
     await waitFor(() => {
-      expect(visibleUsers()).toHaveLength(users.length);
+      expect(visibleUsers()).toHaveLength(expected);
     });
   }
 
@@ -141,6 +198,15 @@ describe("AdminUsers", () => {
       .map((input) => input.getAttribute("aria-label") ?? "")
       .filter((label) => label.startsWith("Select ") && label !== "Select all users")
       .map((label) => label.slice("Select ".length));
+  }
+
+  /** Body rows of the directory table — accounts plus any open detail row. */
+  function tableRows(): readonly HTMLTableRowElement[] {
+    return [
+      ...container.querySelectorAll<HTMLTableRowElement>(
+        'table[aria-label="User directory"] tbody tr',
+      ),
+    ];
   }
 
   /** The role chip text of each rendered row, in row order. */
@@ -212,6 +278,11 @@ describe("AdminUsers", () => {
     });
   }
 
+  /** Every directory request the component made, in order. */
+  function requestedQueries(): readonly string[] {
+    return requests.map((url) => url.searchParams.get("query") ?? "");
+  }
+
   beforeEach(() => {
     container = document.createElement("div");
     document.body.append(container);
@@ -220,12 +291,28 @@ describe("AdminUsers", () => {
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
     fetchMock = vi.fn<typeof fetch>();
+    requests = [];
     vi.stubGlobal("fetch", fetchMock);
     clipboardWrite = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: clipboardWrite },
     });
+    routerSearch.current = {};
+    navigateMock.mockReset();
+    navigateMock.mockImplementation(
+      async (opts: { search?: (prev: Record<string, unknown>) => Record<string, unknown> }) => {
+        if (typeof opts.search === "function") {
+          routerSearch.current = opts.search({ ...routerSearch.current });
+        }
+        await act(() => {
+          root.render(
+            createElement(QueryClientProvider, { client: queryClient }, createElement(AdminUsers)),
+          );
+          return Promise.resolve();
+        });
+      },
+    );
   });
 
   afterEach(() => {
@@ -249,6 +336,8 @@ describe("AdminUsers", () => {
     // the count beside the chip is what separates them from a broader admin.
     expect(visibleRoles()).toEqual(["Scoped admin · 1", "Admin", "Member"]);
 
+    // Role is derived from scopes and the endpoint has no scope filter, so this
+    // one stays a browser pass over the loaded rows.
     await selectValue("Filter by role", "Scoped admin");
     expect(visibleUsers()).toEqual(["Ada Auditor"]);
 
@@ -257,6 +346,27 @@ describe("AdminUsers", () => {
 
     await selectValue("Filter by role", "Member");
     expect(visibleUsers()).toEqual(["Pat Plain"]);
+  });
+
+  it("renders the directory as a named table rather than a stack of divs", async () => {
+    await renderWith([
+      apiUser({ id: "u-1", displayName: "One" }),
+      apiUser({ id: "u-2", displayName: "Two" }),
+    ]);
+
+    // The pseudo-table it replaces gave assistive tech anonymous boxes where the
+    // semantics said "table", and no accessible name at all.
+    const table = container.querySelector<HTMLTableElement>('table[aria-label="User directory"]');
+    expect(table).not.toBeNull();
+    expect([...(table?.querySelectorAll("thead th") ?? [])].map((th) => th.textContent)).toEqual([
+      "",
+      "User",
+      "Role",
+      "Type",
+      "Status",
+      "Details",
+    ]);
+    expect(tableRows()).toHaveLength(2);
   });
 
   it("keeps selection distinct for actors that share a missing email", async () => {
@@ -279,10 +389,49 @@ describe("AdminUsers", () => {
     expect(text()).toContain("No email address");
 
     // The old projection stored "—" as the email, so searching the placeholder
-    // matched every address-less actor as if it were their address.
+    // matched every address-less actor as if it were their address. The search
+    // is server-side now, and the endpoint has no such value either.
     await typeSearch("—");
+    await waitFor(() => {
+      expect(text()).toContain("No users match the current filters.");
+    });
     expect(visibleUsers()).toEqual([]);
-    expect(text()).toContain("No users match the current filters.");
+  });
+
+  it("searches the whole directory, not just the page already loaded", async () => {
+    // The reported bug: one 250-row page filtered in the browser, so anyone
+    // outside it was reported as "no users match". `Zed` is on the second page.
+    await renderWith(
+      [
+        apiUser({ id: "u-1", displayName: "Ada Front" }),
+        apiUser({ id: "u-2", displayName: "Zed Behind" }),
+      ],
+      1,
+    );
+    expect(visibleUsers()).toEqual(["Ada Front"]);
+
+    await typeSearch("zed");
+
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["Zed Behind"]);
+    });
+    expect(requests.at(-1)?.searchParams.get("query")).toBe("zed");
+  });
+
+  it("debounces typing into one request rather than one per keystroke", async () => {
+    await renderWith([apiUser({ id: "u-1", displayName: "Ada Front" })]);
+    const before = requests.length;
+
+    await typeSearch("a");
+    await typeSearch("ad");
+    await typeSearch("ada");
+
+    await waitFor(() => {
+      expect(requests.at(-1)?.searchParams.get("query")).toBe("ada");
+    });
+    // One extra request in total: the intermediate values never left.
+    expect(requests.length).toBe(before + 1);
+    expect(requestedQueries()).not.toContain("ad");
   });
 
   it("offers no Invited status, because the projection cannot produce one", async () => {
@@ -303,7 +452,26 @@ describe("AdminUsers", () => {
     ]);
 
     await selectValue("Filter by status", "suspended");
-    expect(visibleUsers()).toEqual(["Off Person"]);
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["Off Person"]);
+    });
+  });
+
+  it("asks the server to drop suspended accounts when only active ones are wanted", async () => {
+    // `includeDisabled` is the API's only status lever, so Active is answered
+    // over the whole workspace instead of by hiding rows that were fetched.
+    await renderWith([
+      apiUser({ id: "u-live", displayName: "Live Person" }),
+      apiUser({ id: "u-off", displayName: "Off Person", disabledAt: "2026-05-01T00:00:00Z" }),
+    ]);
+    expect(requests[0]?.searchParams.get("includeDisabled")).toBe("true");
+
+    await selectValue("Filter by status", "active");
+
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["Live Person"]);
+    });
+    expect(requests.at(-1)?.searchParams.get("includeDisabled")).toBe("false");
   });
 
   it("hides the actor-type filter when every actor is the same type", async () => {
@@ -311,29 +479,47 @@ describe("AdminUsers", () => {
     expect(container.querySelector('select[aria-label="Filter by actor type"]')).toBeNull();
   });
 
-  it("offers the actor-type filter once the directory holds more than one type", async () => {
+  it("sends the actor type to the server once more than one type is present", async () => {
     await renderWith([apiUser({ id: "u-1" }), apiUser({ id: "a-1", type: "agent", email: null })]);
 
     expect(container.querySelector('select[aria-label="Filter by actor type"]')).not.toBeNull();
     await selectValue("Filter by actor type", "agent");
-    expect(visibleUsers()).toEqual(["User a-1"]);
-  });
-
-  it("stops applying the type filter once its control is no longer on screen", async () => {
-    await renderWith([apiUser({ id: "u-1" }), apiUser({ id: "a-1", type: "agent", email: null })]);
-    await selectValue("Filter by actor type", "agent");
-    expect(visibleUsers()).toEqual(["User a-1"]);
-
-    // The agent leaves the directory, so the type select unmounts. A filter the
-    // operator can no longer see must not keep hiding the remaining rows.
-    mockUsers([apiUser({ id: "u-1" })]);
-    await act(async () => {
-      await queryClient.invalidateQueries();
-    });
 
     await waitFor(() => {
-      expect(container.querySelector('select[aria-label="Filter by actor type"]')).toBeNull();
+      expect(visibleUsers()).toEqual(["User a-1"]);
     });
+    expect(requests.at(-1)?.searchParams.get("type")).toBe("agent");
+  });
+
+  it("keeps the type filter on screen while it applies, so it can always be cleared", async () => {
+    await renderWith([apiUser({ id: "u-1" }), apiUser({ id: "a-1", type: "agent", email: null })]);
+    await selectValue("Filter by actor type", "agent");
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["User a-1"]);
+    });
+
+    // The filter now narrows the server result set, so the loaded rows are all
+    // one type by construction. A select that hid itself on that basis would
+    // leave a filter applied with no control on screen to clear it.
+    const select = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Filter by actor type"]',
+    );
+    expect(select).not.toBeNull();
+    expect(select?.value).toBe("agent");
+
+    await selectValue("Filter by actor type", "all");
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["User u-1", "User a-1"]);
+    });
+  });
+
+  it("ignores an actor type the endpoint would reject", async () => {
+    // A hand-edited or stale `?actorType=` must not turn into a 400 that reads
+    // as a broken directory; it is read as "all".
+    routerSearch.current = { actorType: "wizard" };
+    await renderWith([apiUser({ id: "u-1" })]);
+
+    expect(requests[0]?.searchParams.get("type")).toBeNull();
     expect(visibleUsers()).toEqual(["User u-1"]);
   });
 
@@ -351,9 +537,15 @@ describe("AdminUsers", () => {
     expect(expander.getAttribute("aria-expanded")).toBe("false");
     // Collapsed rows must not leak the detail into the table.
     expect(text()).not.toContain("Actor ID");
+    expect(tableRows()).toHaveLength(1);
 
     await click(expander);
 
+    // The disclosure is a second row of the same table, not a panel that left
+    // the table — and it is the row `aria-controls` points at.
+    expect(tableRows()).toHaveLength(2);
+    expect(tableRows()[1]?.contains(container.querySelector(`#user-detail-u-1`))).toBe(true);
+    expect(expander.getAttribute("aria-controls")).toBe("user-detail-u-1");
     expect(expander.getAttribute("aria-expanded")).toBe("true");
     expect(text()).toContain("Actor ID");
     expect(text()).toContain("admin.audit");
@@ -401,6 +593,38 @@ describe("AdminUsers", () => {
 
     await click(button("Clear selection"));
     expect(text()).not.toContain("2 selected");
+  });
+
+  it("counts only rows the action would actually affect", async () => {
+    await renderWith([
+      apiUser({ id: "u-1", displayName: "One", scopes: ["admin.audit"] }),
+      apiUser({ id: "u-2", displayName: "Two" }),
+    ]);
+
+    await click(checkbox("Select all users"));
+    expect(text()).toContain("2 selected");
+
+    // The bug: selection outlived the rows, so the bar counted — and copied —
+    // accounts that were no longer on screen.
+    await selectValue("Filter by role", "Scoped admin");
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["One"]);
+    });
+    expect(text()).toContain("1 selected");
+    expect(text()).not.toContain("2 selected");
+    expect(buttonLabels()).toContain("Copy 1 email");
+  });
+
+  it("says the selection covers loaded rows only while pages remain", async () => {
+    await renderWith(
+      [apiUser({ id: "u-1", displayName: "One" }), apiUser({ id: "u-2", displayName: "Two" })],
+      1,
+    );
+
+    await click(checkbox("Select all users"));
+    expect(text()).toContain("1 selected");
+    expect(text()).toContain("from the loaded rows only");
+    expect(checkbox("Select all users").getAttribute("title")).toContain("not yet loaded");
   });
 
   it("disables Import CSV and Invite users with a stated reason", async () => {
@@ -457,11 +681,58 @@ describe("AdminUsers", () => {
     URL.revokeObjectURL = original.revoke as typeof URL.revokeObjectURL;
   });
 
-  it("says so when the directory is longer than the page it loaded", async () => {
-    await renderWith([apiUser({ id: "u-1" })], "cursor-2");
+  it("says more pages remain, and never calls the loaded rows the workspace total", async () => {
+    await renderWith(
+      [apiUser({ id: "u-1", displayName: "One" }), apiUser({ id: "u-2", displayName: "Two" })],
+      1,
+    );
 
-    expect(text()).toContain("Showing the first 250 accounts");
-    expect(text()).toContain("apply only to these rows");
+    // The old banner claimed search covered only the loaded rows; that is now
+    // false. What replaces it may not claim completeness either.
+    expect(text()).not.toContain("Showing the first 250 accounts");
+    expect(text()).toContain("the server has more");
+    expect(text()).toContain("1 loaded");
+    expect(text()).not.toContain("1 user");
+  });
+
+  it("calls loaded what was loaded, not what the browser filter left", async () => {
+    await renderWith(
+      [
+        apiUser({ id: "u-1", displayName: "One", scopes: ["admin.audit"] }),
+        apiUser({ id: "u-2", displayName: "Two" }),
+        apiUser({ id: "u-3", displayName: "Three" }),
+      ],
+      2,
+    );
+
+    // The role pass runs after the fetch, so counting it made the header read
+    // "1 loaded" while the banner one line below said 2 accounts are loaded —
+    // two numbers on the same screen contradicting each other.
+    await selectValue("Filter by role", "Scoped admin");
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["One"]);
+    });
+
+    expect(text()).toContain("1 shown of 2 loaded");
+    expect(text()).toContain("2 accounts are loaded");
+    expect(text()).not.toContain("1 loaded");
+  });
+
+  it("loads the next page on demand and stops saying more remain", async () => {
+    await renderWith(
+      [apiUser({ id: "u-1", displayName: "One" }), apiUser({ id: "u-2", displayName: "Two" })],
+      1,
+    );
+
+    await click(button("Load more"));
+
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["One", "Two"]);
+    });
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("1");
+    expect(text()).not.toContain("the server has more");
+    expect(text()).toContain("2 users");
+    expect(buttonLabels()).not.toContain("Load more");
   });
 
   it("reports a failed directory load with a retry instead of an empty table", async () => {
@@ -515,5 +786,36 @@ describe("AdminUsers", () => {
     });
     expect(text()).not.toContain("count unavailable");
     expect(text()).not.toContain("counting…");
+  });
+});
+
+describe("prefetchAdminDirectoryQuery", () => {
+  it("warms the key the section reads, not a neighbouring one", async () => {
+    const captured: unknown[] = [];
+    await prefetchAdminDirectoryQuery({
+      ensureInfiniteQueryData: (options) => {
+        captured.push(options.queryKey);
+        return Promise.resolve();
+      },
+    });
+
+    // A prefetch under a different key is a wasted request, so this pins it to
+    // the input the section mounts with: full page, no search, disabled shown.
+    expect(captured).toEqual([
+      adminUsersInfiniteQueryOptions({
+        limit: 250,
+        query: "",
+        type: "",
+        includeDisabled: true,
+      }).queryKey,
+    ]);
+  });
+
+  it("contains its own failure so navigation is never blocked", async () => {
+    await expect(
+      prefetchAdminDirectoryQuery({
+        ensureInfiniteQueryData: () => Promise.reject(new Error("directory unavailable")),
+      }),
+    ).resolves.toBeUndefined();
   });
 });

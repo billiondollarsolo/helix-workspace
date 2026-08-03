@@ -63,29 +63,37 @@ function permissionDeniedResponse(scope: string): { readonly error: string } {
   return { error: `Missing required scope: ${scope}` };
 }
 
+/** The `GET /api/admin/core-apps` body.
+ *
+ *  Exported so `GET /api/admin/overview` can serve the identical shape from the
+ *  same code rather than a second implementation that could drift away from it. */
+export async function buildCoreAppsAdminStatus(
+  options: Pick<RegisterCoreAppsAdminRoutesOptions, "service" | "role">,
+): Promise<CoreAppsAdminStatus> {
+  const status = await options.service.getStatus();
+  const modules = status.config.modules;
+  const { statuses } = resolveCoreAppStatuses({
+    ...(modules === undefined ? {} : { modules }),
+    role: options.role,
+  });
+  return {
+    role: options.role,
+    apps: statuses.map((appStatus) => ({
+      id: appStatus.id,
+      name: appStatus.name,
+      description: appStatus.description,
+      enabled: appStatus.enabled,
+      inRole: appStatus.inRole,
+      registered: appStatus.registered,
+    })),
+  };
+}
+
 export async function registerCoreAppsAdminRoutes(
   app: FastifyInstance,
   options: RegisterCoreAppsAdminRoutesOptions,
 ): Promise<void> {
-  const buildStatus = async (): Promise<CoreAppsAdminStatus> => {
-    const status = await options.service.getStatus();
-    const modules = status.config.modules;
-    const { statuses } = resolveCoreAppStatuses({
-      ...(modules === undefined ? {} : { modules }),
-      role: options.role,
-    });
-    return {
-      role: options.role,
-      apps: statuses.map((appStatus) => ({
-        id: appStatus.id,
-        name: appStatus.name,
-        description: appStatus.description,
-        enabled: appStatus.enabled,
-        inRole: appStatus.inRole,
-        registered: appStatus.registered,
-      })),
-    };
-  };
+  const buildStatus = () => buildCoreAppsAdminStatus(options);
 
   app.get("/api/admin/core-apps", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
@@ -118,10 +126,7 @@ export async function registerCoreAppsAdminRoutes(
     const wasEnabled = isCoreAppEnabled(current.config.modules, appId);
     // Persist `modules[appId].enabled`. The platform-config update is shallow-
     // merged, so other module keys are preserved.
-    await options.service.update(
-      { modules: { [appId]: { enabled: parsed.data.enabled } } },
-      actor,
-    );
+    await options.service.update({ modules: { [appId]: { enabled: parsed.data.enabled } } }, actor);
 
     const status = await buildStatus();
     return {

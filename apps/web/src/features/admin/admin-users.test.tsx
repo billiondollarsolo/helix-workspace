@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  adminUsersInfiniteQueryOptions,
   adminUsersQueryKeys,
   adminUsersQueryOptions,
   listAdminUsers,
@@ -49,6 +50,59 @@ describe("admin users API helpers", () => {
     expect(adminUsersQueryOptions({ cursor: "cursor-2" }).queryKey).not.toEqual(
       adminUsersQueryOptions().queryKey,
     );
+  });
+
+  /* An infinite query caches `{ pages, pageParams }` where a plain one caches a
+     single response. The audit-log actor picker reads `list` with the very same
+     limit and includeDisabled the directory uses, so a shared key would hand it
+     a paged object it would fail to read. */
+  it("keeps the paged directory key out of the single-page key space", () => {
+    const input = { includeDisabled: true, limit: 250 } as const;
+    expect(adminUsersQueryKeys.infinite(input)).not.toEqual(adminUsersQueryKeys.list(input));
+    expect(adminUsersQueryKeys.infinite({ ...input, query: "mina" })).not.toEqual(
+      adminUsersQueryKeys.infinite(input),
+    );
+    // The cursor is the page param, not part of the query's identity — keying on
+    // it would give every page its own cache entry and never accumulate.
+    expect(adminUsersQueryKeys.infinite({ ...input, cursor: "cursor-2" })).toEqual(
+      adminUsersQueryKeys.infinite(input),
+    );
+  });
+
+  it("follows the route's cursor and stops when it runs out", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json(adminUsersPage({ nextCursor: "cursor-2" })));
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: { getItem: vi.fn(() => null) },
+    });
+
+    const options = adminUsersInfiniteQueryOptions({ includeDisabled: true, limit: 250 });
+    expect(
+      options.getNextPageParam(adminUsersPage({ nextCursor: "cursor-2" }), [], undefined, []),
+    ).toBe("cursor-2");
+    // `null` means the server has nothing after this page; react-query needs
+    // `undefined` to stop, and a null cursor sent back would 400.
+    expect(
+      options.getNextPageParam(adminUsersPage({ nextCursor: null }), [], undefined, []),
+    ).toBeUndefined();
+
+    const { queryFn } = options;
+    if (typeof queryFn !== "function") {
+      throw new Error("adminUsersInfiniteQueryOptions must define a queryFn");
+    }
+    await queryFn({
+      queryKey: options.queryKey,
+      pageParam: "cursor-2",
+      signal: new AbortController().signal,
+      client: undefined as never,
+      direction: "forward",
+      meta: undefined,
+    });
+    const requested = fetchMock.mock.calls[0]?.[0];
+    expect(typeof requested === "string" ? requested : "").toContain("cursor=cursor-2");
   });
 
   it("prefetches the default admin users query with contained errors", async () => {

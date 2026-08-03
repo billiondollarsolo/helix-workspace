@@ -5,6 +5,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AICostLimitsManagement, normalizeFormInput } from "./ai-cost-limits-management";
+import { withAdminRouter } from "@/features/admin/console/test-router";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -113,7 +114,7 @@ describe("AICostLimitsManagement", () => {
         createElement(
           QueryClientProvider,
           { client: queryClient },
-          createElement(AICostLimitsManagement),
+          withAdminRouter(createElement(AICostLimitsManagement)),
         ),
       );
       return Promise.resolve();
@@ -124,7 +125,7 @@ describe("AICostLimitsManagement", () => {
     });
     // h1 from PageHeading, then two sibling h2 panels — no skipped levels.
     expect(headingOutline()).toEqual([
-      "H1:AI cost limits",
+      "H1:Cost limits",
       "H2:Set a per-user override",
       "H2:Active overrides",
     ]);
@@ -162,7 +163,7 @@ describe("AICostLimitsManagement", () => {
         createElement(
           QueryClientProvider,
           { client: queryClient },
-          createElement(AICostLimitsManagement),
+          withAdminRouter(createElement(AICostLimitsManagement)),
         ),
       );
       return Promise.resolve();
@@ -185,7 +186,7 @@ describe("AICostLimitsManagement", () => {
         createElement(
           QueryClientProvider,
           { client: queryClient },
-          createElement(AICostLimitsManagement),
+          withAdminRouter(createElement(AICostLimitsManagement)),
         ),
       );
       return Promise.resolve();
@@ -193,7 +194,7 @@ describe("AICostLimitsManagement", () => {
 
     await waitFor(() => {
       expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-        "AI cost limits are unavailable or admin AI scope is missing.",
+        "Cost limits are unavailable or admin AI scope is missing.",
       );
     });
     expect(container.querySelector('[role="alert"]')?.getAttribute("data-kind")).toBe("error");

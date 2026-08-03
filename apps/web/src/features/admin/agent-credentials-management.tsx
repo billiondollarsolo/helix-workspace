@@ -1,3 +1,4 @@
+import { useDebouncedCallback } from "@tanstack/react-pacer";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
@@ -14,8 +15,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { adminUsersQueryOptions, type AdminUser } from "@/features/admin/admin-users";
+import { AdminAccessRelatedNav } from "@/features/admin/admin-related-nav";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { EmptyRow, PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import { AdminInput } from "@/features/admin/console/controls";
 import {
   agentCredentialsQueryOptions,
   createAgentCredential,
@@ -88,7 +91,28 @@ export function AgentCredentialsManagement() {
   /* A credential is minted for an actor id the admin cannot be expected to know
      by heart, so the directory drives both the picker and the id -> name lookup
      that every actor id in this section is rendered through. */
-  const actorsQuery = useQuery(adminUsersQueryOptions({ includeDisabled: false }));
+  /* The picker used to show one fixed page of 50 actors, so in a workspace of
+     350 the other 300 were simply unselectable — the notice said so, which made
+     it an honest dead end rather than a silent one, but a dead end either way.
+     The directory search is server-side (`sections/users.tsx` uses the same
+     transport), so typing here narrows across the whole workspace and any actor
+     is reachable. Still one bounded page per request. */
+  const [actorSearchDraft, setActorSearchDraft] = useState("");
+  const [actorSearch, setActorSearch] = useState("");
+  /* House rule (helix/pacer-discipline): the delay is Pacer's, never a bare
+     setTimeout. */
+  const commitActorSearch = useDebouncedCallback(
+    (value: string) => {
+      setActorSearch(value.trim());
+    },
+    { wait: 300 },
+  );
+  const actorsQuery = useQuery(
+    adminUsersQueryOptions({
+      includeDisabled: false,
+      ...(actorSearch.length === 0 ? {} : { query: actorSearch }),
+    }),
+  );
 
   const createMutation = useMutation({
     mutationFn: (input: Parameters<typeof createAgentCredential>[0]) =>
@@ -225,7 +249,10 @@ export function AgentCredentialsManagement() {
       },
       {
         id: "actions",
-        header: "",
+        /* Not `""`: an empty <th> gives screen readers an unnamed column.
+           Visually hidden text names it without adding a visible caption to a
+           column of icon buttons. */
+        header: () => <span className="sr-only">Credential actions</span>,
         cell: ({ row }) => (
           <Button
             aria-label={`Revoke credential ${row.original.clientId}`}
@@ -271,12 +298,13 @@ export function AgentCredentialsManagement() {
     <section className="grid gap-4">
       <PageHeading
         title="Agent credentials"
-        subtitle="Issue scoped OAuth client credentials to agent actors, and revoke credentials that should no longer mint access tokens."
+        subtitle="Issue scoped OAuth client credentials for agent actors. Revoke credentials that should no longer mint tokens. Emergency kill switches live under Agent emergency controls; human protocol secrets live under App passwords."
       />
+      <AdminAccessRelatedNav current="agent-credentials" />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(20rem,0.8fr)_minmax(0,1.2fr)]">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(20rem,0.8fr)_minmax(0,1.2fr)]">
         <form
-          className="grid gap-4 rounded-lg border border-border bg-card p-4"
+          className="grid content-start gap-4 rounded-lg border border-border bg-card p-4"
           onSubmit={(event) => {
             event.preventDefault();
             void credentialForm.handleSubmit();
@@ -317,6 +345,20 @@ export function AgentCredentialsManagement() {
               const selectedActor = actorsById.get(field.state.value);
               return (
                 <div className="grid gap-2">
+                  <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-actor-search">
+                    Find actor
+                    <AdminInput
+                      id="agent-actor-search"
+                      type="search"
+                      autoComplete="off"
+                      placeholder="Search name, email, or ID…"
+                      value={actorSearchDraft}
+                      onChange={(event) => {
+                        setActorSearchDraft(event.target.value);
+                        commitActorSearch(event.target.value);
+                      }}
+                    />
+                  </label>
                   <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-actor-id">
                     Actor
                     <select
@@ -449,7 +491,7 @@ export function AgentCredentialsManagement() {
           ) : null}
         </form>
 
-        <section className="grid min-w-0 gap-3 rounded-lg border border-border bg-card p-4">
+        <section className="grid min-w-0 content-start gap-3 rounded-lg border border-border bg-card p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-sm font-medium">Issued credentials</h2>

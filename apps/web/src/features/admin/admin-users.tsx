@@ -4,7 +4,7 @@
    surfaces all project from. */
 
 import { authenticatedFetch } from "@/lib/auth";
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 export interface AdminUser {
   readonly id: string;
@@ -49,12 +49,50 @@ export const adminUsersQueryKeys = {
       input.type?.trim() ?? "",
       input.includeDisabled ?? defaultAdminUsersInput.includeDisabled,
     ] as const,
+  /* Deliberately a different key space from `list`, and deliberately without
+     the cursor: an infinite query caches `{ pages, pageParams }` where a plain
+     one caches a single page, and the cursor is the page param rather than part
+     of the identity. Sharing a key would hand the audit-log actor picker — which
+     reads `list` with the same limit and includeDisabled — a paged object where
+     it expects one response. */
+  infinite: (input: AdminUsersQueryInput = defaultAdminUsersInput) =>
+    [
+      "admin",
+      "users",
+      "infinite",
+      input.limit ?? defaultAdminUsersInput.limit,
+      input.query?.trim() ?? "",
+      input.type?.trim() ?? "",
+      input.includeDisabled ?? defaultAdminUsersInput.includeDisabled,
+    ] as const,
 };
 
 export function adminUsersQueryOptions(input: AdminUsersQueryInput = defaultAdminUsersInput) {
   return queryOptions({
     queryKey: adminUsersQueryKeys.list(input),
     queryFn: () => listAdminUsers(input),
+    retry: false,
+    staleTime: 30_000,
+    throwOnError: false,
+  });
+}
+
+/** The same endpoint, walked page by page with the route's keyset cursor.
+ *
+ *  The directory used to fetch one 250-row page and search it in the browser,
+ *  which meant a 10k-actor workspace answered "no users match" for anyone
+ *  outside the newest 250. `query` and `type` now go to the server (indexed SQL
+ *  over email / display name / id) and the rest of the workspace is reachable
+ *  by following `nextCursor` instead of being silently dropped. */
+export function adminUsersInfiniteQueryOptions(
+  input: AdminUsersQueryInput = defaultAdminUsersInput,
+) {
+  return infiniteQueryOptions({
+    queryKey: adminUsersQueryKeys.infinite(input),
+    queryFn: ({ pageParam }) =>
+      listAdminUsers({ ...input, ...(pageParam === undefined ? {} : { cursor: pageParam }) }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
     retry: false,
     staleTime: 30_000,
     throwOnError: false,

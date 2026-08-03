@@ -18,6 +18,12 @@ interface PlatformConfigPatchRequest {
   readonly pathname: string;
 }
 
+/** The admin sidebar. Scoped because the "related pages" chips inside a
+ *  section are real links too, so an unscoped role=link query can match twice. */
+function adminNav(page: Page) {
+  return page.getByRole("navigation", { name: "Administration" });
+}
+
 test.describe("/admin platform config", () => {
   test("sends the typed PATCH body and reflects a successful tier update", async ({ page }) => {
     const patchRequests: PlatformConfigPatchRequest[] = [];
@@ -31,14 +37,20 @@ test.describe("/admin platform config", () => {
     });
 
     await page.goto("/admin");
-    await page.getByRole("button", { name: "Tier readiness", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "Tier readiness", exact: true }).click();
     await expect(page.getByText("Live platform config connected")).toBeVisible();
 
     await page.getByRole("button", { name: /Enterprise/ }).click();
     await page.getByRole("button", { name: "Apply tier draft" }).click();
+    /* Applying a tier is destructive — it sets the deployment's security tier
+       whether or not the platform meets the gates — so it now routes through the
+       shared confirmation dialog. This spec predates that. */
+    await page.getByRole("button", { name: /^Apply (Enterprise|Business)$/ }).click();
 
     await expect(page.getByRole("heading", { name: "Enterprise platform state" })).toBeVisible();
-    await expect(page.getByText("Live tier").locator("..")).toContainText("Enterprise");
+    await expect(page.getByText("Live tier", { exact: true }).locator("..")).toContainText(
+      "Enterprise",
+    );
     expect(patchRequests).toEqual([
       {
         method: "PATCH",
@@ -60,11 +72,15 @@ test.describe("/admin platform config", () => {
     });
 
     await page.goto("/admin");
-    await page.getByRole("button", { name: "Tier readiness", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "Tier readiness", exact: true }).click();
     await expect(page.getByText("Live platform config connected")).toBeVisible();
 
     await page.getByRole("button", { name: /Enterprise/ }).click();
     await page.getByRole("button", { name: "Apply tier draft" }).click();
+    /* Applying a tier is destructive — it sets the deployment's security tier
+       whether or not the platform meets the gates — so it now routes through the
+       shared confirmation dialog. This spec predates that. */
+    await page.getByRole("button", { name: /^Apply (Enterprise|Business)$/ }).click();
 
     // Scope to the tier-draft mutation alert specifically: this spec only mocks
     // `/api/admin/platform-config`, so the other (un-mocked) admin panels render
@@ -85,10 +101,10 @@ test.describe("/admin platform config", () => {
 });
 
 async function seedAdminToken(page: Page): Promise<void> {
-  await page.addInitScript(
-    ({ key, token }) => window.localStorage.setItem(key, token),
-    { key: accessTokenStorageKey, token: adminToken },
-  );
+  await page.addInitScript(({ key, token }) => window.localStorage.setItem(key, token), {
+    key: accessTokenStorageKey,
+    token: adminToken,
+  });
 }
 
 async function mockPlatformConfig(

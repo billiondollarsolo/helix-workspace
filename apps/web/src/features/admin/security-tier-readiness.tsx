@@ -1,24 +1,23 @@
 /* Admin › Security › Tier readiness.
  *
- * Pick a target security tier, review the gates that block it, and manage the
- * plugin catalogue. The catalogue, transport, projection, and formatting live
- * in `tier-readiness/`; this file is the screen.
+ * Primary job: show the live tier, pick a target, review gates, apply.
+ * Plugins are a second tab — they are not tier gates. Reference control tables
+ * and AI cost cards do not live here (Policies / AI cost limits own those).
  *
- * Re-exports below keep `TierId` / `PlatformConfigPatch` /
- * `adminPlatformConfigQueryOptions` importable from the section module, which
- * is how `ai-observability` and the route prefetch already reach them. */
+ * Catalogue, transport, and projection live in `tier-readiness/`.
+ * Re-exports keep `TierId` / query options importable from this module. */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
-import {
-  AlertTriangle,
-  BadgeDollarSign,
-  CheckCircle2,
-  CircleDashed,
-  RotateCcw,
-  ShieldCheck,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -28,7 +27,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AdminSecurityRelatedNav } from "@/features/admin/admin-related-nav";
+import {
+  resolveClosedSearchParam,
+  useAdminSectionSearch,
+} from "@/features/admin/admin-section-search";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { PageHeading, StateBanner } from "@/features/admin/console/primitives";
 import {
   adminPlatformConfigQueryKey,
   adminPlatformConfigQueryOptions,
@@ -39,7 +44,6 @@ import {
   updatePlatformTier,
 } from "@/features/admin/tier-readiness/api";
 import {
-  controls,
   serviceById,
   serviceRequirementKeyById,
   statusText,
@@ -61,7 +65,6 @@ import {
   pluginLifecycleStatusMessage,
 } from "@/features/admin/tier-readiness/plugins";
 import {
-  aiCostAuditRowsForTier,
   serviceFromBackendRequirement,
   tierGatesForTier,
 } from "@/features/admin/tier-readiness/readiness";
@@ -74,7 +77,6 @@ import type {
   PluginInstallResult,
   PluginLifecycleResult,
   PluginSource,
-  RenderedControlRow,
   RenderedReadinessCheck,
   RequirementField,
   TierId,
@@ -98,10 +100,23 @@ export {
 } from "@/features/admin/tier-readiness/readiness";
 export type { PlatformConfigPatch, TierId } from "@/features/admin/tier-readiness/types";
 
+const TIER_IDS = [
+  "personal",
+  "business",
+  "enterprise",
+  "sovereign",
+] as const satisfies readonly TierId[];
+
+const TIER_PAGE_TABS = ["readiness", "plugins"] as const;
+type TierPageTab = (typeof TIER_PAGE_TABS)[number];
+const TIER_PAGE_TAB_LABELS: Record<TierPageTab, string> = {
+  readiness: "Readiness",
+  plugins: "Plugins",
+};
+
 export function SecurityTierReadiness() {
-  const [selectedTierId, setSelectedTierId] = useState<TierId>("business");
+  const { search, patchSearch } = useAdminSectionSearch("tier-readiness");
   const [tierConfirmOpen, setTierConfirmOpen] = useState(false);
-  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [pluginSource, setPluginSource] = useState<PluginSource>("official");
   const [confirmedPluginRequirements, setConfirmedPluginRequirements] = useState<readonly string[]>(
     [],
@@ -120,12 +135,66 @@ export function SecurityTierReadiness() {
     [],
   );
   const [acknowledgedUninstallIds, setAcknowledgedUninstallIds] = useState<readonly string[]>([]);
-  const [controlOverrides, setControlOverrides] = useState<Record<string, string>>(() =>
-    Object.fromEntries(controls.map((control) => [control.id, control.currentValue])),
-  );
+  const tabRefs = useRef<Partial<Record<TierPageTab, HTMLButtonElement | null>>>({});
   const queryClient = useQueryClient();
   const platformConfigQuery = useQuery(adminPlatformConfigQueryOptions());
   const pluginCatalogQuery = useQuery(adminPluginCatalogQueryOptions());
+  const liveTier = platformConfigQuery.data?.config.security.tier;
+  /* Deep-link: `?plugin=` without `?tab=` opens Plugins. Otherwise readiness. */
+  const activeTab: TierPageTab = resolveClosedSearchParam(
+    search.tab,
+    TIER_PAGE_TABS,
+    search.plugin !== undefined ? "plugins" : "readiness",
+  );
+  const setActiveTab = (tab: TierPageTab) => {
+    patchSearch({
+      tab: tab === "readiness" ? undefined : tab,
+      ...(tab === "readiness" ? { plugin: undefined } : {}),
+    });
+  };
+  /* Roving tabindex keeps only the selected tab in the document tab order, so
+     without this handler the unselected tab (Plugins) was reachable by mouse
+     only — no keyboard route to it existed at all. Same ARIA tabs interface as
+     the mail admin tab bar: Left/Right wrap, Home/End jump to the ends. */
+  const moveTabSelection = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const last = TIER_PAGE_TABS.length - 1;
+    const current = TIER_PAGE_TABS.indexOf(activeTab);
+    const nextIndex =
+      event.key === "ArrowRight"
+        ? (current + 1) % TIER_PAGE_TABS.length
+        : event.key === "ArrowLeft"
+          ? (current + last) % TIER_PAGE_TABS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : null;
+    if (nextIndex === null) {
+      return;
+    }
+    const next = TIER_PAGE_TABS[nextIndex];
+    if (next === undefined) {
+      return;
+    }
+    event.preventDefault();
+    setActiveTab(next);
+    tabRefs.current[next]?.focus();
+  };
+
+  /* URL `?tier=` wins when present; otherwise follow the live platform tier. */
+  const selectedTierId: TierId = TIER_IDS.includes(search.tier as TierId)
+    ? (search.tier as TierId)
+    : (liveTier ?? "business");
+  const setSelectedTierId = (tier: TierId) => {
+    patchSearch({ tier });
+  };
+  const selectedPluginId = search.plugin ?? null;
+  const setSelectedPluginId = (pluginId: string | null) => {
+    patchSearch({
+      plugin: pluginId ?? undefined,
+      tab: "plugins",
+    });
+  };
   const tierMutation = useMutation({
     mutationFn: updatePlatformTier,
     onMutate: async (tier) => {
@@ -288,13 +357,6 @@ export function SecurityTierReadiness() {
     },
   });
 
-  useEffect(() => {
-    const tier = platformConfigQuery.data?.config.security.tier;
-    if (tier !== undefined) {
-      setSelectedTierId(tier);
-    }
-  }, [platformConfigQuery.data?.config.security.tier]);
-
   const pluginCatalog = pluginCatalogQuery.data?.plugins ?? [];
   const selectedPlugin = useMemo(
     () => pluginCatalog.find((plugin) => plugin.id === selectedPluginId) ?? pluginCatalog[0],
@@ -339,13 +401,6 @@ export function SecurityTierReadiness() {
     },
     [uninstallPluginId],
   );
-
-  useEffect(() => {
-    if (selectedPluginId !== null || pluginCatalog.length === 0) {
-      return;
-    }
-    setSelectedPluginId(pluginCatalog[0]?.id ?? null);
-  }, [pluginCatalog, selectedPluginId]);
 
   useEffect(() => {
     setConfirmedPluginRequirements([]);
@@ -454,88 +509,8 @@ export function SecurityTierReadiness() {
      under Apply, and the confirmation's blast radius, so the operator reads the
      same explanation wherever they meet it. */
   const notEvaluatedReason = `${selectedTierTitle} is not the tier this platform runs (${currentTierTitle}), and readiness is only reported for the live tier`;
-  const resetControlOverride = useCallback(
-    (controlId: string) => {
-      const control = controls.find((candidate) => candidate.id === controlId);
-      if (control === undefined) {
-        return;
-      }
-      setControlOverrides((current) => ({
-        ...current,
-        [controlId]: control.valuesByTier[selectedTierId],
-      }));
-    },
-    [selectedTierId],
-  );
-  const controlRows = useMemo<RenderedControlRow[]>(
-    () =>
-      controls.map((control) => {
-        const tierDefault = control.valuesByTier[selectedTierId];
-        const currentValue = controlOverrides[control.id] ?? control.currentValue;
-        return {
-          ...control,
-          currentValue,
-          tierDefault,
-          isOverridden: currentValue !== tierDefault,
-        };
-      }),
-    [controlOverrides, selectedTierId],
-  );
-  const controlColumns = useMemo<ColumnDef<RenderedControlRow>[]>(
-    () => [
-      {
-        id: "control",
-        header: "Control",
-        cell: ({ row }) => {
-          const Icon = row.original.icon;
-          return (
-            <>
-              <Icon aria-hidden="true" size={18} />
-              {row.original.label}
-            </>
-          );
-        },
-      },
-      {
-        accessorKey: "tierDefault",
-        header: "Tier default",
-        cell: ({ row }) => row.original.tierDefault,
-      },
-      {
-        accessorKey: "currentValue",
-        /* NOT observed state. These values come from the static catalogue and
-           live only in `controlOverrides` component state — `tierMutation`
-           sends the tier id and nothing else, so nothing here is read from or
-           written to the platform. Headed "Current override" it read as this
-           deployment's actual crypto/MFA/secrets posture. */
-        header: "Reference value",
-        cell: ({ row }) => row.original.currentValue,
-      },
-      {
-        id: "reset",
-        header: "Reset",
-        cell: ({ row }) => (
-          <button
-            aria-label={`Reset ${row.original.label} to tier default`}
-            className="helix-button helix-button-secondary"
-            disabled={!row.original.isOverridden}
-            onClick={() => resetControlOverride(row.original.id)}
-            type="button"
-          >
-            <RotateCcw aria-hidden="true" size={14} />
-            Reset
-          </button>
-        ),
-      },
-    ],
-    [resetControlOverride],
-  );
-  const controlTable = useReactTable({
-    columns: controlColumns,
-    data: controlRows,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (row) => row.id,
-  });
+  const isLiveTierSelected =
+    backendStatus !== undefined && backendStatus.config.security.tier === selectedTierId;
   const pluginCatalogColumns = useMemo<ColumnDef<PluginCatalogItem>[]>(
     () => [
       {
@@ -638,634 +613,576 @@ export function SecurityTierReadiness() {
     getCoreRowModel: getCoreRowModel(),
     getRowId: (row) => row.id,
   });
-  const aiCostAuditRows = useMemo(
-    () => aiCostAuditRowsForTier(selectedTierId, backendStatus?.config.ai),
-    [backendStatus?.config.ai, selectedTierId],
-  );
 
   return (
-    /* No `role="main"`: SurfaceFrame already renders the page's <main>, and a
-       second main landmark inside it leaves assistive tech with two. */
-    <section className="admin-tier-page" aria-labelledby="admin-tier-title">
-      <header className="admin-tier-header">
-        <div>
-          <p className="admin-tier-kicker">Admin</p>
-          <h1 id="admin-tier-title">Security tier readiness</h1>
-          <p>
-            Select a target tier, review readiness gates, and see which services the tier engine
-            expects before applying the configuration.
-          </p>
-          <p className="admin-tier-live-status">
-            {platformConfigQuery.isPending
-              ? "Loading platform config"
-              : backendStatus !== undefined
-                ? "Live platform config connected"
-                : "Admin config API unavailable or unauthorized"}
-          </p>
-        </div>
-        <div
-          className="admin-tier-score"
-          data-unknown={readiness === null ? "" : undefined}
-          aria-label={
-            readiness !== null
-              ? `${readiness.percent}% readiness, ${readiness.blocking} blocking`
-              : readinessMode === "not-evaluated"
-                ? `Readiness for ${selectedTierTitle} not evaluated — ${notEvaluatedReason}`
-                : "Readiness unknown — no live platform config"
-          }
-        >
-          <strong>{readiness === null ? "—" : `${readiness.percent}%`}</strong>
-          <span>
-            {readiness !== null
-              ? `${readiness.blocking} blocking`
-              : readinessMode === "not-evaluated"
-                ? "not evaluated"
-                : "readiness unknown"}
-          </span>
-        </div>
-      </header>
-
-      <div className="admin-tier-selector" aria-label="Security tier selector" role="group">
-        {tiers.map((tier) => (
-          <button
-            className={tier.id === selectedTierId ? "selected" : ""}
-            key={tier.id}
-            onClick={() => setSelectedTierId(tier.id)}
-            disabled={tierMutation.isPending}
-            type="button"
-          >
-            <span>{tier.shortName}</span>
-            <strong>{tier.title}</strong>
-            <small>{tier.target}</small>
-          </button>
-        ))}
-      </div>
-
-      <div className="admin-tier-grid">
-        <section
-          className="admin-tier-panel admin-tier-readiness"
-          aria-labelledby="readiness-title"
-        >
-          <div className="admin-tier-panel-header">
-            <div>
-              <p className="admin-tier-kicker">Target</p>
-              <h2 id="readiness-title">
-                {selectedTier.shortName}: {selectedTier.title}
-              </h2>
-              <p>{selectedTier.serviceSummary}</p>
-            </div>
-            {/* Hidden rather than emptied when unscoreable: a 0%-wide bar is
-                indistinguishable from "nothing is ready", which is a claim. */}
-            {readiness === null ? null : (
-              <div className="admin-tier-progress" aria-hidden="true">
-                <span style={{ width: `${readiness.percent}%` }} />
-              </div>
-            )}
-          </div>
-
-          <div className="admin-check-list">
-            {readinessMode === "unscoreable" ? (
-              <p>
-                Readiness gates are unavailable until the admin config API returns a valid response.
-              </p>
-            ) : null}
-            {measuredChecks.map((check) => (
-              <article className="admin-check-row" data-status={check.status} key={check.id}>
-                <StatusIcon status={check.status} />
-                <div>
-                  <h3>{check.title}</h3>
-                  {check.detail.length > 0 ? <p>{check.detail}</p> : null}
-                  <RequirementFacts check={check} />
-                </div>
-                <span>{statusText[check.status]}</span>
-              </article>
-            ))}
-            {/* Expectations, kept after the measured gates and visibly neutral.
-                They are still worth showing — the catalogue really does know
-                which gates a tier requires — but they carry no status, no
-                evidence, and no weight in the score, because nothing here
-                looked at them. */}
-            {unevaluatedGates.length === 0 ? null : (
-              <div
-                aria-label={`Gates not evaluated for ${selectedTierTitle}`}
-                className="admin-check-list"
-                role="group"
-              >
-                <p>
-                  {readinessMode === "not-evaluated"
-                    ? `${notEvaluatedReason}. These are the gates ${selectedTierTitle} requires, from this console's tier catalogue — not measurements of this deployment.`
-                    : `The platform reported no result for these gates, so nothing here has evaluated them.`}
-                </p>
-                {unevaluatedGates.map((gate) => (
-                  <article className="admin-check-row" data-status="unknown" key={gate.id}>
-                    <CircleDashed aria-hidden="true" size={20} />
-                    <div>
-                      <h3>{gate.title}</h3>
-                      {gate.detail.length > 0 ? <p>{gate.detail}</p> : null}
-                    </div>
-                    <span>
-                      {gate.requiredByTier ? "Not evaluated" : "Not required at this tier"}
-                    </span>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <aside className="admin-tier-panel admin-tier-summary" aria-labelledby="summary-title">
-          <p className="admin-tier-kicker">Current config</p>
-          <h2 id="summary-title">{currentTierTitle} platform state</h2>
-          <dl>
-            <div>
-              <dt>Selected tier</dt>
-              <dd>{selectedTierTitle}</dd>
-            </div>
-            <div>
-              <dt>Live tier</dt>
-              <dd>{currentTierTitle}</dd>
-            </div>
-            <div>
-              <dt>Readiness</dt>
-              <dd>
-                {/* Four readouts, because "unavailable", "not evaluated" and
-                    "reported nothing" are three different situations and only
-                    one of them is the backend's fault. TS cannot narrow
-                    `backendStatus` through `readinessMode`, so it is tested
-                    directly. */}
-                {platformConfigQuery.isPending
-                  ? "Loading"
-                  : backendStatus === undefined || readinessMode === "unscoreable"
-                    ? "Backend unavailable"
-                    : readinessMode === "not-evaluated"
-                      ? `Not evaluated for ${selectedTierTitle}`
-                      : readiness === null
-                        ? "No gates reported"
-                        : backendStatus.readiness.ready
-                          ? "Ready"
-                          : `${readiness.blocking} blocking`}
-              </dd>
-            </div>
-            <div>
-              <dt>Backend requirements</dt>
-              <dd>
-                {platformConfigQuery.isPending
-                  ? "Loading"
-                  : backendStatus === undefined
-                    ? "Unavailable"
-                    : measuredRequirements === undefined
-                      ? `Live gates only for ${currentTierTitle}`
-                      : `${measuredRequirements.length} live gates`}
-              </dd>
-            </div>
-          </dl>
-          {/* A status readout, not an action. This was a <button> with no
-              onClick, styled exactly like the Apply control beside it and
-              focusable in the same tab order — an invitation to click that did
-              nothing. `role="status"` also announces the connection changing. */}
-          <p className="admin-tier-live-status-row" role="status">
-            {platformConfigQuery.isPending ? (
-              <CircleDashed aria-hidden="true" size={16} />
-            ) : (
-              <ShieldCheck aria-hidden="true" size={16} />
-            )}
-            {platformConfigQuery.isPending
-              ? "Loading config API"
-              : backendStatus !== undefined
-                ? "Config API connected"
-                : "Config API unavailable"}
-          </p>
-          {/* De-emphasised — never disabled — while the score says the tier
-              cannot be met. Applying a tier before every gate passes is a
-              legitimate move (stage the tier, then close the gates), so
-              removing the escape hatch would be wrong; the weight moves off the
-              button and onto the confirmation. */}
-          <button
-            aria-describedby={applyNeedsConfirmation ? "apply-tier-note" : undefined}
-            className={
-              applyNeedsConfirmation ? "helix-button helix-button-secondary" : "helix-button"
+    /* No `role="main"`: SurfaceFrame / PageScroll already own the page shell. */
+    <section className="admin-tier-page grid gap-4">
+      <PageHeading
+        title="Tier readiness"
+        subtitle="See the live security tier, pick a target, review gates that block it, and apply when ready. Plugin install lives on its own tab."
+        meta={
+          <div
+            className="admin-tier-score"
+            data-unknown={readiness === null ? "" : undefined}
+            aria-label={
+              readiness !== null
+                ? `${readiness.percent}% readiness, ${readiness.blocking} blocking`
+                : readinessMode === "not-evaluated"
+                  ? `Readiness for ${selectedTierTitle} not evaluated — ${notEvaluatedReason}`
+                  : "Readiness unknown — no live platform config"
             }
-            disabled={tierMutation.isPending || backendStatus === undefined}
-            onClick={() => {
-              if (applyNeedsConfirmation) {
-                setTierConfirmOpen(true);
-                return;
-              }
-              tierMutation.mutate(selectedTierId);
-            }}
-            type="button"
           >
-            Apply tier draft
-          </button>
-          {applyNeedsConfirmation ? (
-            <p className="admin-tier-apply-note" id="apply-tier-note">
+            <strong>{readiness === null ? "—" : `${readiness.percent}%`}</strong>
+            <span>
               {readiness !== null
-                ? `${blockingSummary(blockingChecks.length, selectedTierTitle)}. Applying it asks you to confirm first.`
+                ? `${readiness.blocking} blocking`
                 : readinessMode === "not-evaluated"
-                  ? `${selectedTierTitle} has not been evaluated on this platform — it reports gates only for ${currentTierTitle}. Applying it asks you to confirm first.`
-                  : `Readiness for ${selectedTierTitle} could not be scored. Applying it asks you to confirm first.`}
-            </p>
-          ) : null}
-          <ConfirmDestructive
-            open={tierConfirmOpen}
-            onOpenChange={setTierConfirmOpen}
-            title={`Apply ${selectedTierTitle} tier`}
-            blastRadius={
-              blockingChecks.length > 0
-                ? `${blockingSummary(blockingChecks.length, selectedTierTitle)}: ${blockingChecks
-                    .map((check) => check.title)
-                    .join(", ")}. Applying the tier does not clear them.`
-                : readinessMode === "not-evaluated"
-                  ? `Nothing has evaluated this platform against ${selectedTierTitle}: ${notEvaluatedReason}. The ${String(unevaluatedGates.length)} gates listed are what the tier requires, not what was measured here.`
-                  : `Readiness for ${selectedTierTitle} could not be scored — the admin config API returned no usable gate data, so nothing has verified that this platform meets the tier.`
-            }
-            confirmLabel={`Apply ${selectedTierTitle}`}
-            isPending={tierMutation.isPending}
-            onConfirm={() => tierMutation.mutate(selectedTierId)}
-          >
-            Sets this deployment&apos;s security tier to {selectedTierTitle}. The configuration is
-            applied whether or not the platform currently satisfies the tier&apos;s readiness gates.
-          </ConfirmDestructive>
-          {tierMutation.isError ? <p role="alert">Could not apply the tier draft.</p> : null}
-          {platformConfigQuery.isError ? (
-            <p role="alert">
-              {platformConfigError ??
-                "Admin config API is unavailable or missing admin config scope."}
-            </p>
-          ) : null}
-        </aside>
+                  ? "not evaluated"
+                  : "readiness unknown"}
+            </span>
+          </div>
+        }
+      />
+      <AdminSecurityRelatedNav current="tier-readiness" />
+
+      <p className="admin-tier-live-status m-0 text-sm text-muted-foreground" role="status">
+        {platformConfigQuery.isPending
+          ? "Loading platform config"
+          : backendStatus !== undefined
+            ? `Live platform config connected · live tier ${currentTierTitle}`
+            : "Admin config API unavailable or unauthorized"}
+      </p>
+
+      <div
+        role="tablist"
+        aria-label="Tier readiness views"
+        className="mb-1 flex gap-0.5 border-b border-[var(--border)]"
+        onKeyDown={moveTabSelection}
+      >
+        {TIER_PAGE_TABS.map((tab) => {
+          const active = tab === activeTab;
+          return (
+            <button
+              key={tab}
+              id={`tier-tab-${tab}`}
+              ref={(node) => {
+                tabRefs.current[tab] = node;
+              }}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-controls={`tier-panel-${tab}`}
+              tabIndex={active ? 0 : -1}
+              /* Arrow keys move focus programmatically, so the focused tab has
+                 to show a ring even though `.tab` only styles hover/selection. */
+              className={`tab focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)] ${active ? "active" : ""}`.trim()}
+              onClick={() => setActiveTab(tab)}
+            >
+              {TIER_PAGE_TAB_LABELS[tab]}
+            </button>
+          );
+        })}
       </div>
 
-      <section className="admin-tier-panel" aria-labelledby="services-title">
-        <div className="admin-tier-panel-header">
-          <div>
-            <p className="admin-tier-kicker">Required services</p>
-            <h2 id="services-title">Runtime dependencies for {selectedTier.title}</h2>
-            <p>
-              {platformConfigQuery.isPending
-                ? "Loading platform config."
-                : readinessMode === "unscoreable"
-                  ? "Connect the admin config API to see backend-managed service health."
-                  : readinessMode === "not-evaluated"
-                    ? `No service here has been checked against ${selectedTier.title}: gates are reported only for the live tier (${currentTierTitle}).`
-                    : "Live readiness gates are reflected for backend-managed services."}
-            </p>
-          </div>
-        </div>
-        <div className="admin-service-grid">
-          {requiredServiceList.length === 0 ? (
-            <p>
-              Service gates are unavailable until the admin config API returns a valid response.
-            </p>
-          ) : (
-            requiredServiceList.map((service) => (
-              /* `service.status` from the catalogue is what the tier EXPECTS,
-                 not what the platform reports. Only the four ids in
-                 `serviceRequirementKeyById` have a live requirement behind
-                 them; the other thirteen used to render their catalogue
-                 literal through `serviceStatusText` — so "Online" appeared,
-                 in green, for services nothing had checked. Observed status is
-                 shown only where `backendStatus` exists; otherwise the card
-                 says so and stays neutral. */
-              <article
-                className="admin-service-card"
-                data-status={service.backendStatus === undefined ? "unknown" : service.status}
-                key={service.id}
-              >
-                <service.icon aria-hidden="true" size={20} />
-                <div>
-                  <h3>{service.name}</h3>
-                  <p>{service.description}</p>
-                </div>
-                <span>
-                  {service.backendStatus === undefined
-                    ? "Not verified"
-                    : backendStatusText(service.backendStatus)}
-                </span>
-              </article>
-            ))
-          )}
-        </div>
-      </section>
-
-      <section className="admin-tier-panel" aria-labelledby="controls-title">
-        <div className="admin-tier-panel-header">
-          <div>
-            <p className="admin-tier-kicker">Per-layer controls</p>
-            <h2 id="controls-title">Tier control reference</h2>
-            <p>
-              What each tier prescribes per layer, for comparison. These rows are reference values,
-              not this deployment&apos;s live configuration, and editing them here changes nothing —
-              they will become editable through config schema forms.
-            </p>
-          </div>
-        </div>
-        <Table aria-label="Security controls" className="admin-tier-table" role="table">
-          <TableHeader>
-            {controlTable.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} role="row">
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id} role="columnheader">
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {controlTable.getRowModel().rows.map((row) => (
-              <TableRow key={row.id} role="row">
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id} role="cell">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </section>
-
-      <section className="admin-tier-panel" aria-labelledby="ai-cost-audit-title">
-        <div className="admin-tier-panel-header">
-          <div>
-            <p className="admin-tier-kicker">AI governance</p>
-            <h2 id="ai-cost-audit-title">Cost limits and audit evidence</h2>
-            <p>
-              Daily AI spend controls, request audit posture, and classification gating are shown
-              beside tier defaults for dashboard review.
-            </p>
-          </div>
-        </div>
-        <div className="admin-ai-cost-grid">
-          {aiCostAuditRows.map((row) => (
-            <article className="admin-ai-cost-card" key={row.id}>
-              <BadgeDollarSign aria-hidden="true" size={18} />
-              <div>
-                <h3>{row.label}</h3>
-                <dl>
-                  <div>
-                    <dt>Tier default</dt>
-                    <dd>{row.tierDefault}</dd>
-                  </div>
-                  <div>
-                    <dt>Configured</dt>
-                    <dd>{row.configured}</dd>
-                  </div>
-                </dl>
-                <p>{row.evidence}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="admin-tier-panel" aria-labelledby="plugins-title">
-        <div className="admin-tier-panel-header">
-          <div>
-            <p className="admin-tier-kicker">Plugins</p>
-            <h2 id="plugins-title">Install permissions prompt</h2>
-            <p>
-              Non-official plugin installs require explicit review of requested permissions,
-              capabilities, and outbound endpoints before the install tool can run.
-            </p>
-          </div>
-        </div>
-        <div className="admin-plugin-panel">
-          <div className="admin-plugin-picker">
-            <label>
-              <span>Plugin</span>
-              <select
-                aria-label="Plugin to install"
-                disabled={pluginCatalog.length === 0}
-                onChange={(event) => setSelectedPluginId(event.target.value)}
-                value={selectedPlugin?.id ?? ""}
-              >
-                {pluginCatalog.map((plugin) => (
-                  <option key={plugin.id} value={plugin.id}>
-                    {plugin.name} {plugin.version}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Source</span>
-              <select
-                aria-label="Plugin source"
-                onChange={(event) => setPluginSource(event.target.value as PluginSource)}
-                value={pluginSource}
-              >
-                <option value="official">Official Helix registry</option>
-                <option value="sideload">Sideloaded bundle</option>
-                <option value="self-hosted">Self-hosted registry</option>
-              </select>
-            </label>
+      {activeTab === "readiness" ? (
+        <div
+          id="tier-panel-readiness"
+          role="tabpanel"
+          aria-labelledby="tier-tab-readiness"
+          className="grid gap-4"
+        >
+          <div className="admin-tier-selector" aria-label="Target security tier" role="group">
+            {tiers.map((tier) => {
+              const isSelected = tier.id === selectedTierId;
+              const isLive = liveTier === tier.id;
+              return (
+                <button
+                  className={isSelected ? "selected" : ""}
+                  key={tier.id}
+                  onClick={() => setSelectedTierId(tier.id)}
+                  disabled={tierMutation.isPending}
+                  type="button"
+                  aria-pressed={isSelected}
+                >
+                  <span>{tier.shortName}</span>
+                  <strong>{tier.title}</strong>
+                  <small>{isLive ? "Live on this platform" : tier.target}</small>
+                </button>
+              );
+            })}
           </div>
 
-          {pluginCatalogQuery.isError ? (
-            <p role="alert">Plugin catalog is unavailable or missing admin plugin scope.</p>
+          {!isLiveTierSelected && backendStatus !== undefined ? (
+            <StateBanner kind="info">
+              You are reviewing <strong>{selectedTierTitle}</strong>. The platform is running{" "}
+              <strong>{currentTierTitle}</strong>, so gates below are catalogue requirements — not
+              live measurements — until you apply this tier.
+            </StateBanner>
           ) : null}
-          {pluginCatalog.length === 0 ? null : (
-            <Table
-              aria-label="Plugin catalog"
-              className="admin-tier-table admin-plugin-table"
-              role="table"
+
+          <div className="admin-tier-grid">
+            <section
+              className="admin-tier-panel admin-tier-readiness"
+              aria-labelledby="readiness-title"
             >
-              <TableHeader>
-                {pluginCatalogTable.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id} role="row">
-                    {headerGroup.headers.map((header) => (
-                      <TableHead key={header.id} role="columnheader">
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(header.column.columnDef.header, header.getContext())}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableHeader>
-              <TableBody>
-                {pluginCatalogTable.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id} role="row">
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id} role="cell">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-          {selectedPlugin === undefined ? (
-            <p>No installable plugins were returned by the backend catalog.</p>
-          ) : (
-            <article className="admin-plugin-card">
-              <header>
+              <div className="admin-tier-panel-header">
                 <div>
-                  <h3>{selectedPlugin.name}</h3>
-                  <p>
-                    {selectedPlugin.id} · {selectedPlugin.kind} · {selectedPlugin.version}
-                  </p>
+                  <p className="admin-tier-kicker">Gates</p>
+                  <h2 id="readiness-title">
+                    {selectedTier.shortName}: {selectedTier.title}
+                  </h2>
+                  <p>{selectedTier.serviceSummary}</p>
                 </div>
-                <span>{pluginConfirmations.length} confirmations</span>
-              </header>
-              <PluginManifestFacts plugin={selectedPlugin} />
-              <div className="admin-plugin-confirmations">
-                {pluginConfirmations.length === 0 ? (
-                  <p>Official installs do not require additional source confirmations.</p>
-                ) : (
-                  pluginConfirmations.map((confirmation) => (
-                    <label key={confirmation.id}>
-                      <input
-                        checked={confirmedPluginIds.has(confirmation.id)}
-                        onChange={() =>
-                          setConfirmedPluginRequirements((current) =>
-                            current.includes(confirmation.id)
-                              ? current.filter((id) => id !== confirmation.id)
-                              : [...current, confirmation.id],
-                          )
-                        }
-                        type="checkbox"
-                      />
-                      <span>
-                        <strong>{confirmation.label}</strong>
-                        {confirmation.detail}
-                      </span>
-                    </label>
-                  ))
+                {readiness === null ? null : (
+                  <div className="admin-tier-progress" aria-hidden="true">
+                    <span style={{ width: `${readiness.percent}%` }} />
+                  </div>
                 )}
               </div>
-              <button
-                className="helix-button"
-                disabled={pluginInstallMutation.isPending || !allPluginConfirmationsAccepted}
-                onClick={() =>
-                  pluginInstallMutation.mutate({
-                    pluginId: selectedPlugin.id,
-                    version: selectedPlugin.version,
-                    source: pluginSource,
-                    confirmations: confirmedPluginRequirements,
-                  })
-                }
-                type="button"
-              >
-                {pluginInstallMutation.isPending ? (
+
+              <div className="admin-check-list">
+                {readinessMode === "unscoreable" ? (
+                  <p>
+                    Readiness gates are unavailable until the admin config API returns a valid
+                    response.
+                  </p>
+                ) : null}
+                {measuredChecks.map((check) => (
+                  <article className="admin-check-row" data-status={check.status} key={check.id}>
+                    <StatusIcon status={check.status} />
+                    <div>
+                      <h3>{check.title}</h3>
+                      {check.detail.length > 0 ? <p>{check.detail}</p> : null}
+                      <RequirementFacts check={check} />
+                    </div>
+                    <span>{statusText[check.status]}</span>
+                  </article>
+                ))}
+                {unevaluatedGates.length === 0 ? null : (
+                  <div
+                    aria-label={`Gates not evaluated for ${selectedTierTitle}`}
+                    className="admin-check-list"
+                    role="group"
+                  >
+                    <p>
+                      {readinessMode === "not-evaluated"
+                        ? `${notEvaluatedReason}. These are the gates ${selectedTierTitle} requires, from this console's tier catalogue — not measurements of this deployment.`
+                        : `The platform reported no result for these gates, so nothing here has evaluated them.`}
+                    </p>
+                    {unevaluatedGates.map((gate) => (
+                      <article className="admin-check-row" data-status="unknown" key={gate.id}>
+                        <CircleDashed aria-hidden="true" size={20} />
+                        <div>
+                          <h3>{gate.title}</h3>
+                          {gate.detail.length > 0 ? <p>{gate.detail}</p> : null}
+                        </div>
+                        <span>
+                          {gate.requiredByTier ? "Not evaluated" : "Not required at this tier"}
+                        </span>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <aside className="admin-tier-panel admin-tier-summary" aria-labelledby="summary-title">
+              <p className="admin-tier-kicker">Apply</p>
+              <h2 id="summary-title">{currentTierTitle} platform state</h2>
+              <dl>
+                <div>
+                  <dt>Selected tier</dt>
+                  <dd>{selectedTierTitle}</dd>
+                </div>
+                <div>
+                  <dt>Live tier</dt>
+                  <dd>{currentTierTitle}</dd>
+                </div>
+                <div>
+                  <dt>Readiness</dt>
+                  <dd>
+                    {platformConfigQuery.isPending
+                      ? "Loading"
+                      : backendStatus === undefined || readinessMode === "unscoreable"
+                        ? "Backend unavailable"
+                        : readinessMode === "not-evaluated"
+                          ? `Not evaluated for ${selectedTierTitle}`
+                          : readiness === null
+                            ? "No gates reported"
+                            : backendStatus.readiness.ready
+                              ? "Ready"
+                              : `${readiness.blocking} blocking`}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Backend requirements</dt>
+                  <dd>
+                    {platformConfigQuery.isPending
+                      ? "Loading"
+                      : backendStatus === undefined
+                        ? "Unavailable"
+                        : measuredRequirements === undefined
+                          ? `Live gates only for ${currentTierTitle}`
+                          : `${measuredRequirements.length} live gates`}
+                  </dd>
+                </div>
+              </dl>
+              <p className="admin-tier-live-status-row" role="status">
+                {platformConfigQuery.isPending ? (
                   <CircleDashed aria-hidden="true" size={16} />
                 ) : (
                   <ShieldCheck aria-hidden="true" size={16} />
                 )}
-                Install plugin
-              </button>
-              {pluginInstallMutation.isError ? (
-                <p role="alert">Could not validate the plugin install request.</p>
-              ) : null}
-              {pluginInstallStatus === null ? null : (
-                <p role="status">{pluginInstallStatusMessage(pluginInstallStatus)}</p>
-              )}
-              {pluginLifecycleMutation.isError ? (
-                <p role="alert">Could not update the plugin lifecycle state.</p>
-              ) : null}
-              {pluginLifecycleStatus === null ? null : (
-                <p role="status">{pluginLifecycleStatusMessage(pluginLifecycleStatus)}</p>
-              )}
-            </article>
-          )}
-
-          {uninstallPlugin === undefined ? null : (
-            <>
-              {/* Rendered only once the PLATFORM has said what it wants
-                  acknowledged. The client no longer ships a hardcoded
-                  `plugin.uninstall` id with the request — the first call sends
-                  nothing, the backend answers with its requirements, and only
-                  the ids ticked here go back. */}
-              {uninstallRequirements.length === 0 ? null : (
-                <article className="admin-plugin-card" data-status="warning">
-                  <AlertTriangle aria-hidden="true" size={20} />
-                  <div>
-                    <h3>Uninstall {uninstallPlugin.name}</h3>
-                    <p>
-                      The platform refused the uninstall and listed{" "}
-                      {requirementCount(uninstallRequirements.length)} it requires. Nothing is sent
-                      back that you have not ticked.
-                    </p>
-                    <div className="admin-plugin-confirmations">
-                      {uninstallRequirements.map((requirement) => (
-                        <label key={requirement.id}>
-                          <input
-                            checked={acknowledgedUninstallSet.has(requirement.id)}
-                            onChange={() =>
-                              setAcknowledgedUninstallIds((current) =>
-                                current.includes(requirement.id)
-                                  ? current.filter((id) => id !== requirement.id)
-                                  : [...current, requirement.id],
-                              )
-                            }
-                            type="checkbox"
-                          />
-                          <span>
-                            <strong>{requirement.label}</strong>
-                            {requirement.detail}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                    <Button
-                      aria-describedby={
-                        outstandingUninstallRequirements.length === 0
-                          ? undefined
-                          : "uninstall-acknowledgement-note"
-                      }
-                      disabled={
-                        pluginLifecycleMutation.isPending ||
-                        outstandingUninstallRequirements.length > 0
-                      }
-                      onClick={() => setUninstallConfirmOpen(true)}
-                      size="sm"
-                      type="button"
-                      variant="destructive"
-                    >
-                      Uninstall {uninstallPlugin.name}
-                    </Button>
-                    {outstandingUninstallRequirements.length === 0 ? null : (
-                      <p className="admin-tier-apply-note" id="uninstall-acknowledgement-note">
-                        Tick every requirement the platform listed — it refuses the uninstall until
-                        all {String(uninstallRequirements.length)} come back acknowledged.
-                      </p>
-                    )}
-                  </div>
-                </article>
-              )}
-              <ConfirmDestructive
-                open={uninstallConfirmOpen}
-                onOpenChange={setUninstallConfirmOpen}
-                title={`Uninstall ${uninstallPlugin.name}`}
-                blastRadius={uninstallBlastRadius(
-                  uninstallPlugin,
-                  uninstallRequirements,
-                  outstandingUninstallRequirements,
-                )}
-                confirmLabel={`Uninstall ${uninstallPlugin.name}`}
-                isPending={pluginLifecycleMutation.isPending}
-                onConfirm={() =>
-                  pluginLifecycleMutation.mutate({
-                    action: "uninstall",
-                    pluginId: uninstallPlugin.id,
-                    /* Only what the operator ticked. Empty on the first request
-                       — that is what makes the platform state its requirements
-                       instead of this client inventing them. */
-                    confirmations: acknowledgedUninstallIds,
-                  })
+                {platformConfigQuery.isPending
+                  ? "Loading config API"
+                  : backendStatus !== undefined
+                    ? "Config API connected"
+                    : "Config API unavailable"}
+              </p>
+              <button
+                aria-describedby={applyNeedsConfirmation ? "apply-tier-note" : undefined}
+                className={
+                  applyNeedsConfirmation ? "helix-button helix-button-secondary" : "helix-button"
                 }
+                disabled={tierMutation.isPending || backendStatus === undefined}
+                onClick={() => {
+                  if (applyNeedsConfirmation) {
+                    setTierConfirmOpen(true);
+                    return;
+                  }
+                  tierMutation.mutate(selectedTierId);
+                }}
+                type="button"
               >
-                Removes {uninstallPlugin.id} {uninstallPlugin.version} from this deployment.
-                Installing it again is a fresh install with its own permission confirmations.
+                Apply tier draft
+              </button>
+              {applyNeedsConfirmation ? (
+                <p className="admin-tier-apply-note" id="apply-tier-note">
+                  {readiness !== null
+                    ? `${blockingSummary(blockingChecks.length, selectedTierTitle)}. Applying it asks you to confirm first.`
+                    : readinessMode === "not-evaluated"
+                      ? `${selectedTierTitle} has not been evaluated on this platform — it reports gates only for ${currentTierTitle}. Applying it asks you to confirm first.`
+                      : `Readiness for ${selectedTierTitle} could not be scored. Applying it asks you to confirm first.`}
+                </p>
+              ) : null}
+              <ConfirmDestructive
+                open={tierConfirmOpen}
+                onOpenChange={setTierConfirmOpen}
+                title={`Apply ${selectedTierTitle} tier`}
+                blastRadius={
+                  blockingChecks.length > 0
+                    ? `${blockingSummary(blockingChecks.length, selectedTierTitle)}: ${blockingChecks
+                        .map((check) => check.title)
+                        .join(", ")}. Applying the tier does not clear them.`
+                    : readinessMode === "not-evaluated"
+                      ? `Nothing has evaluated this platform against ${selectedTierTitle}: ${notEvaluatedReason}. The ${String(unevaluatedGates.length)} gates listed are what the tier requires, not what was measured here.`
+                      : `Readiness for ${selectedTierTitle} could not be scored — the admin config API returned no usable gate data, so nothing has verified that this platform meets the tier.`
+                }
+                confirmLabel={`Apply ${selectedTierTitle}`}
+                isPending={tierMutation.isPending}
+                onConfirm={() => tierMutation.mutate(selectedTierId)}
+              >
+                Sets this deployment&apos;s security tier to {selectedTierTitle}. The configuration
+                is applied whether or not the platform currently satisfies the tier&apos;s readiness
+                gates.
               </ConfirmDestructive>
-            </>
-          )}
+              {tierMutation.isError ? <p role="alert">Could not apply the tier draft.</p> : null}
+              {platformConfigQuery.isError ? (
+                <p role="alert">
+                  {platformConfigError ??
+                    "Admin config API is unavailable or missing admin config scope."}
+                </p>
+              ) : null}
+            </aside>
+          </div>
+
+          <section className="admin-tier-panel" aria-labelledby="services-title">
+            <div className="admin-tier-panel-header">
+              <div>
+                <p className="admin-tier-kicker">Services</p>
+                <h2 id="services-title">Runtime dependencies for {selectedTier.title}</h2>
+                <p>
+                  {platformConfigQuery.isPending
+                    ? "Loading platform config."
+                    : readinessMode === "unscoreable"
+                      ? "Connect the admin config API to see backend-managed service health."
+                      : readinessMode === "not-evaluated"
+                        ? `No service here has been checked against ${selectedTier.title}: gates are reported only for the live tier (${currentTierTitle}).`
+                        : "Live readiness gates are reflected for backend-managed services only. Cards without a live gate stay “Not verified”."}
+                </p>
+              </div>
+            </div>
+            <div className="admin-service-grid">
+              {requiredServiceList.length === 0 ? (
+                <p>
+                  Service gates are unavailable until the admin config API returns a valid response.
+                </p>
+              ) : (
+                requiredServiceList.map((service) => (
+                  <article
+                    className="admin-service-card"
+                    data-status={service.backendStatus === undefined ? "unknown" : service.status}
+                    key={service.id}
+                  >
+                    <service.icon aria-hidden="true" size={20} />
+                    <div>
+                      <h3>{service.name}</h3>
+                      <p>{service.description}</p>
+                    </div>
+                    <span>
+                      {service.backendStatus === undefined
+                        ? "Not verified"
+                        : backendStatusText(service.backendStatus)}
+                    </span>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
         </div>
-      </section>
+      ) : (
+        <div
+          id="tier-panel-plugins"
+          role="tabpanel"
+          aria-labelledby="tier-tab-plugins"
+          className="admin-tier-panel"
+        >
+          <div className="admin-tier-panel-header">
+            <div>
+              <p className="admin-tier-kicker">Plugins</p>
+              <h2 id="plugins-title">Catalog and install</h2>
+              <p>
+                Review permissions, install from official or non-official sources, and manage enable
+                / disable / uninstall. This is separate from security tier gates.
+              </p>
+            </div>
+          </div>
+          <div className="admin-plugin-panel">
+            <div className="admin-plugin-picker">
+              <label>
+                <span>Plugin</span>
+                <select
+                  aria-label="Plugin to install"
+                  disabled={pluginCatalog.length === 0}
+                  onChange={(event) => setSelectedPluginId(event.target.value)}
+                  value={selectedPlugin?.id ?? ""}
+                >
+                  {pluginCatalog.map((plugin) => (
+                    <option key={plugin.id} value={plugin.id}>
+                      {plugin.name} {plugin.version}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Source</span>
+                <select
+                  aria-label="Plugin source"
+                  onChange={(event) => setPluginSource(event.target.value as PluginSource)}
+                  value={pluginSource}
+                >
+                  <option value="official">Official Helix registry</option>
+                  <option value="sideload">Sideloaded bundle</option>
+                  <option value="self-hosted">Self-hosted registry</option>
+                </select>
+              </label>
+            </div>
+
+            {pluginCatalogQuery.isError ? (
+              <p role="alert">Plugin catalog is unavailable or missing admin plugin scope.</p>
+            ) : null}
+            {pluginCatalog.length === 0 ? null : (
+              <Table
+                aria-label="Plugin catalog"
+                className="admin-tier-table admin-plugin-table"
+                role="table"
+              >
+                <TableHeader>
+                  {pluginCatalogTable.getHeaderGroups().map((headerGroup) => (
+                    <TableRow key={headerGroup.id} role="row">
+                      {headerGroup.headers.map((header) => (
+                        <TableHead key={header.id} role="columnheader">
+                          {header.isPlaceholder
+                            ? null
+                            : flexRender(header.column.columnDef.header, header.getContext())}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableHeader>
+                <TableBody>
+                  {pluginCatalogTable.getRowModel().rows.map((row) => (
+                    <TableRow key={row.id} role="row">
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id} role="cell">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+            {selectedPlugin === undefined ? (
+              <p>No installable plugins were returned by the backend catalog.</p>
+            ) : (
+              <article className="admin-plugin-card">
+                <header>
+                  <div>
+                    <h3>{selectedPlugin.name}</h3>
+                    <p>
+                      {selectedPlugin.id} · {selectedPlugin.kind} · {selectedPlugin.version}
+                    </p>
+                  </div>
+                  <span>{pluginConfirmations.length} confirmations</span>
+                </header>
+                <PluginManifestFacts plugin={selectedPlugin} />
+                <div className="admin-plugin-confirmations">
+                  {pluginConfirmations.length === 0 ? (
+                    <p>Official installs do not require additional source confirmations.</p>
+                  ) : (
+                    pluginConfirmations.map((confirmation) => (
+                      <label key={confirmation.id}>
+                        <input
+                          checked={confirmedPluginIds.has(confirmation.id)}
+                          onChange={() =>
+                            setConfirmedPluginRequirements((current) =>
+                              current.includes(confirmation.id)
+                                ? current.filter((id) => id !== confirmation.id)
+                                : [...current, confirmation.id],
+                            )
+                          }
+                          type="checkbox"
+                        />
+                        <span>
+                          <strong>{confirmation.label}</strong>
+                          {confirmation.detail}
+                        </span>
+                      </label>
+                    ))
+                  )}
+                </div>
+                <button
+                  className="helix-button"
+                  disabled={pluginInstallMutation.isPending || !allPluginConfirmationsAccepted}
+                  onClick={() =>
+                    pluginInstallMutation.mutate({
+                      pluginId: selectedPlugin.id,
+                      version: selectedPlugin.version,
+                      source: pluginSource,
+                      confirmations: confirmedPluginRequirements,
+                    })
+                  }
+                  type="button"
+                >
+                  {pluginInstallMutation.isPending ? (
+                    <CircleDashed aria-hidden="true" size={16} />
+                  ) : (
+                    <ShieldCheck aria-hidden="true" size={16} />
+                  )}
+                  Install plugin
+                </button>
+                {pluginInstallMutation.isError ? (
+                  <p role="alert">Could not validate the plugin install request.</p>
+                ) : null}
+                {pluginInstallStatus === null ? null : (
+                  <p role="status">{pluginInstallStatusMessage(pluginInstallStatus)}</p>
+                )}
+                {pluginLifecycleMutation.isError ? (
+                  <p role="alert">Could not update the plugin lifecycle state.</p>
+                ) : null}
+                {pluginLifecycleStatus === null ? null : (
+                  <p role="status">{pluginLifecycleStatusMessage(pluginLifecycleStatus)}</p>
+                )}
+              </article>
+            )}
+
+            {uninstallPlugin === undefined ? null : (
+              <>
+                {uninstallRequirements.length === 0 ? null : (
+                  <article className="admin-plugin-card" data-status="warning">
+                    <AlertTriangle aria-hidden="true" size={20} />
+                    <div>
+                      <h3>Uninstall {uninstallPlugin.name}</h3>
+                      <p>
+                        The platform refused the uninstall and listed{" "}
+                        {requirementCount(uninstallRequirements.length)} it requires. Nothing is
+                        sent back that you have not ticked.
+                      </p>
+                      <div className="admin-plugin-confirmations">
+                        {uninstallRequirements.map((requirement) => (
+                          <label key={requirement.id}>
+                            <input
+                              checked={acknowledgedUninstallSet.has(requirement.id)}
+                              onChange={() =>
+                                setAcknowledgedUninstallIds((current) =>
+                                  current.includes(requirement.id)
+                                    ? current.filter((id) => id !== requirement.id)
+                                    : [...current, requirement.id],
+                                )
+                              }
+                              type="checkbox"
+                            />
+                            <span>
+                              <strong>{requirement.label}</strong>
+                              {requirement.detail}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <Button
+                        aria-describedby={
+                          outstandingUninstallRequirements.length === 0
+                            ? undefined
+                            : "uninstall-acknowledgement-note"
+                        }
+                        disabled={
+                          pluginLifecycleMutation.isPending ||
+                          outstandingUninstallRequirements.length > 0
+                        }
+                        onClick={() => setUninstallConfirmOpen(true)}
+                        size="sm"
+                        type="button"
+                        variant="destructive"
+                      >
+                        Uninstall {uninstallPlugin.name}
+                      </Button>
+                      {outstandingUninstallRequirements.length === 0 ? null : (
+                        <p className="admin-tier-apply-note" id="uninstall-acknowledgement-note">
+                          Tick every requirement the platform listed — it refuses the uninstall
+                          until all {String(uninstallRequirements.length)} come back acknowledged.
+                        </p>
+                      )}
+                    </div>
+                  </article>
+                )}
+                <ConfirmDestructive
+                  open={uninstallConfirmOpen}
+                  onOpenChange={setUninstallConfirmOpen}
+                  title={`Uninstall ${uninstallPlugin.name}`}
+                  blastRadius={uninstallBlastRadius(
+                    uninstallPlugin,
+                    uninstallRequirements,
+                    outstandingUninstallRequirements,
+                  )}
+                  confirmLabel={`Uninstall ${uninstallPlugin.name}`}
+                  isPending={pluginLifecycleMutation.isPending}
+                  onConfirm={() =>
+                    pluginLifecycleMutation.mutate({
+                      action: "uninstall",
+                      pluginId: uninstallPlugin.id,
+                      confirmations: acknowledgedUninstallIds,
+                    })
+                  }
+                >
+                  Removes {uninstallPlugin.id} {uninstallPlugin.version} from this deployment.
+                  Installing it again is a fresh install with its own permission confirmations.
+                </ConfirmDestructive>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

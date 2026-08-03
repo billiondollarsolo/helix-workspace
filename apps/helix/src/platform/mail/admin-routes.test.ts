@@ -1,13 +1,18 @@
 import fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
-import { registerMailDeliveryAdminRoutes } from "./admin-routes.js";
+import {
+  buildMailSpamAdminSettings,
+  registerMailDeliveryAdminRoutes,
+  summarizeDmarcReports,
+} from "./admin-routes.js";
 import {
   InMemoryMailDkimKeyStore,
   InMemoryMailDmarcReportStore,
   InMemoryMailRoutingRuleStore,
   InMemoryOutboundProviderStore,
   InMemorySendingDomainStore,
+  type MailDmarcReportRecord,
 } from "./admin-store.js";
 import { parseDmarcAggregateReport, DmarcReportParseError } from "./dmarc.js";
 
@@ -127,6 +132,40 @@ interface DmarcSummaryView {
   readonly passRate: number;
   readonly topFailingSources: readonly { readonly sourceIp: string }[];
 }
+
+/* The half of the client/server route contract that lives on the server.
+ *
+ * This list is duplicated verbatim in the web app's
+ * mail-admin-api.contract.test.ts, which asserts the admin console issues
+ * exactly these method/path pairs. Two of them used to exist on only one side —
+ * the console called `POST /providers/:id/set-default` and `GET /dmarc`, neither
+ * of which was ever registered, so Deliverability was a permanent 404 and
+ * "Make default" failed on every click while both sides' own tests stayed green.
+ * Delete or rename a route here and the pair stops matching. */
+const CONSOLE_ROUTES = [
+  { method: "GET", url: "/api/admin/mail/providers" },
+  { method: "POST", url: "/api/admin/mail/providers" },
+  { method: "PATCH", url: "/api/admin/mail/providers/:id" },
+  { method: "GET", url: "/api/admin/mail/sending-domains" },
+  { method: "POST", url: "/api/admin/mail/sending-domains" },
+  { method: "DELETE", url: "/api/admin/mail/sending-domains/:id" },
+  { method: "POST", url: "/api/admin/mail/sending-domains/:id/dkim" },
+  { method: "POST", url: "/api/admin/mail/sending-domains/:id/dkim/rotate" },
+  { method: "GET", url: "/api/admin/mail/dmarc" },
+  { method: "GET", url: "/api/admin/mail/routing-rules" },
+  { method: "POST", url: "/api/admin/mail/routing-rules" },
+  { method: "PATCH", url: "/api/admin/mail/routing-rules/:id" },
+  { method: "DELETE", url: "/api/admin/mail/routing-rules/:id" },
+  { method: "GET", url: "/api/admin/mail/spam" },
+] as const;
+
+describe("admin console route contract", () => {
+  for (const route of CONSOLE_ROUTES) {
+    it(`registers ${route.method} ${route.url}`, () => {
+      expect(app.hasRoute({ method: route.method, url: route.url })).toBe(true);
+    });
+  }
+});
 
 describe("outbound provider admin routes", () => {
   it("creates, lists, updates, and deletes a provider; secrets are never echoed", async () => {
@@ -335,6 +374,164 @@ describe("sending domain and DKIM admin routes", () => {
     expect(retired.body<{ key: DkimKeyView }>().key.status).toBe("retired");
   });
 
+  it("rotates a DKIM key in one call, demoting the incumbent to retiring", async () => {
+    const created = await inject({
+      method: "POST",
+      url: "/api/admin/mail/sending-domains",
+      payload: { domain: "rotate.helix.test" },
+    });
+    const domain = created.body<{ domain: DomainView }>().domain;
+    await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/dkim`,
+      payload: { selector: "s1", keyBits: 1024 },
+    });
+
+    const rotated = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/dkim/rotate`,
+      payload: { keyBits: 1024 },
+    });
+    expect(rotated.statusCode).toBe(201);
+    const rotatedBody = rotated.body<{ key: DkimKeyView; keys: readonly DkimKeyView[] }>();
+    expect(rotatedBody.key.status).toBe("active");
+    // The selector is the server's to choose; the console never invents one.
+    expect(rotatedBody.key.selector).toMatch(/^helix\d{8}(-\d+)?$/u);
+    expect(JSON.stringify(rotatedBody)).not.toContain("PRIVATE KEY");
+
+    /* The outgoing key must stay published in DNS while mail signed with it is
+       still in flight — a rotation that retired it would break DKIM on those
+       messages. Retiring is the separate `/retire` step. */
+    const byStatus = Object.fromEntries(rotatedBody.keys.map((key) => [key.selector, key.status]));
+    expect(byStatus.s1).toBe("retiring");
+    expect(audited.map((entry) => entry.verb)).toContain("mail.dkim_key.rotated");
+  });
+
+  it("rotates without a request body", async () => {
+    const created = await inject({
+      method: "POST",
+      url: "/api/admin/mail/sending-domains",
+      payload: { domain: "bodyless.helix.test" },
+    });
+    const domain = created.body<{ domain: DomainView }>().domain;
+
+    const rotated = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/dkim/rotate`,
+      payload: {},
+    });
+    expect(rotated.statusCode).toBe(201);
+  });
+
+  it("gives same-day rotations distinct selectors", async () => {
+    const created = await inject({
+      method: "POST",
+      url: "/api/admin/mail/sending-domains",
+      payload: { domain: "twice.helix.test" },
+    });
+    const domain = created.body<{ domain: DomainView }>().domain;
+
+    const first = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/dkim/rotate`,
+      payload: { keyBits: 1024 },
+    });
+    const second = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/dkim/rotate`,
+      payload: { keyBits: 1024 },
+    });
+    expect(second.statusCode).toBe(201);
+    expect(second.body<{ key: DkimKeyView }>().key.selector).not.toBe(
+      first.body<{ key: DkimKeyView }>().key.selector,
+    );
+  });
+
+  it("returns 404 rotating DKIM for an unknown domain", async () => {
+    const response = await inject({
+      method: "POST",
+      url: "/api/admin/mail/sending-domains/00000000-0000-4000-8000-000000000999/dkim/rotate",
+      payload: {},
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("forbids DKIM rotation without admin console write", async () => {
+    currentActor = readerActor;
+    const response = await inject({
+      method: "POST",
+      url: "/api/admin/mail/sending-domains/00000000-0000-4000-8000-000000000999/dkim/rotate",
+      payload: {},
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  /* The console sends no selector: picking one requires reading the domain's
+     existing selectors, and doing that from the browser is a list-then-generate
+     pair that races other admins. The route used to demand it, so every
+     "Generate DKIM key" click was a 400. */
+  it("generates a DKIM key with a server-chosen selector when none is named", async () => {
+    const created = await inject({
+      method: "POST",
+      url: "/api/admin/mail/sending-domains",
+      payload: { domain: "selectorless.helix.test" },
+    });
+    const domain = created.body<{ domain: DomainView }>().domain;
+
+    const generated = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/dkim`,
+      payload: {},
+    });
+    expect(generated.statusCode).toBe(201);
+    const key = generated.body<{ key: DkimKeyView }>().key;
+    expect(key.selector).toMatch(/^helix\d{8}(-\d+)?$/u);
+    expect(key.status).toBe("active");
+    expect(key.dnsHost).toBe(`${key.selector}._domainkey`);
+    expect(JSON.stringify(key)).not.toContain("PRIVATE KEY");
+  });
+
+  it("gives same-day selector-less generations distinct selectors", async () => {
+    const created = await inject({
+      method: "POST",
+      url: "/api/admin/mail/sending-domains",
+      payload: { domain: "twiceselectorless.helix.test" },
+    });
+    const domain = created.body<{ domain: DomainView }>().domain;
+
+    const first = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/dkim`,
+      payload: {},
+    });
+    const second = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/dkim`,
+      payload: {},
+    });
+    expect(second.statusCode).toBe(201);
+    expect(second.body<{ key: DkimKeyView }>().key.selector).not.toBe(
+      first.body<{ key: DkimKeyView }>().key.selector,
+    );
+  });
+
+  it("still honours an explicitly named selector", async () => {
+    const created = await inject({
+      method: "POST",
+      url: "/api/admin/mail/sending-domains",
+      payload: { domain: "named.helix.test" },
+    });
+    const domain = created.body<{ domain: DomainView }>().domain;
+
+    const generated = await inject({
+      method: "POST",
+      url: `/api/admin/mail/sending-domains/${domain.id}/dkim`,
+      payload: { selector: "custom1", keyBits: 1024 },
+    });
+    expect(generated.statusCode).toBe(201);
+    expect(generated.body<{ key: DkimKeyView }>().key.selector).toBe("custom1");
+  });
+
   it("returns 404 generating a DKIM key for an unknown domain", async () => {
     const response = await inject({
       method: "POST",
@@ -419,6 +616,65 @@ describe("DMARC admin routes", () => {
     expect(reports.body<{ reports: readonly DmarcReportView[] }>().reports).toHaveLength(1);
   });
 
+  /* One request serves the whole Deliverability tab: the header rates and the
+     per-reporter rows are the same reports at two zoom levels, and the tenant
+     budget is 5 rps. */
+  it("serves the console aggregate from GET /api/admin/mail/dmarc", async () => {
+    await inject({
+      method: "POST",
+      url: "/api/admin/mail/dmarc/reports",
+      payload: { report: SAMPLE_DMARC_REPORT },
+    });
+    currentActor = readerActor;
+
+    const aggregate = await inject({ method: "GET", url: "/api/admin/mail/dmarc" });
+    expect(aggregate.statusCode).toBe(200);
+    const body = aggregate.body<{
+      summary: { dmarcPassRate: number; messagesEvaluated: number; windowDays: number };
+      reports: readonly {
+        id: string;
+        reporter: string;
+        domain: string;
+        rangeStart: string;
+        rangeEnd: string;
+        total: number;
+        passCount: number;
+        failCount: number;
+      }[];
+    }>();
+    expect(body.summary.dmarcPassRate).toBeCloseTo(0.8);
+    expect(body.summary.messagesEvaluated).toBe(50);
+    expect(body.summary.windowDays).toBeGreaterThanOrEqual(1);
+    /* Field-for-field the shape the console's zod schema demands; anything
+       missing here renders as "malformed response", not as a partial table. */
+    expect(body.reports[0]).toMatchObject({
+      domain: "helix.test",
+      total: 50,
+      passCount: 40,
+      failCount: 10,
+    });
+    expect(typeof body.reports[0]?.reporter).toBe("string");
+    expect(typeof body.reports[0]?.rangeStart).toBe("string");
+    expect(typeof body.reports[0]?.rangeEnd).toBe("string");
+  });
+
+  /* A pass rate over zero measured messages is a number about nothing; the
+     console drops the header rather than render a reassuring 100%. */
+  it("reports no summary when no DMARC reports have arrived", async () => {
+    const aggregate = await inject({ method: "GET", url: "/api/admin/mail/dmarc" });
+    expect(aggregate.statusCode).toBe(200);
+    expect(aggregate.body<{ summary: unknown; reports: readonly unknown[] }>()).toEqual({
+      summary: null,
+      reports: [],
+    });
+  });
+
+  it("forbids the DMARC aggregate without admin console read", async () => {
+    currentActor = unprivilegedActor;
+    const response = await inject({ method: "GET", url: "/api/admin/mail/dmarc" });
+    expect(response.statusCode).toBe(403);
+  });
+
   it("rejects an invalid DMARC XML payload with 400", async () => {
     const response = await inject({
       method: "POST",
@@ -426,6 +682,65 @@ describe("DMARC admin routes", () => {
       payload: { report: "<not-a-feedback/>" },
     });
     expect(response.statusCode).toBe(400);
+  });
+});
+
+describe("summarizeDmarcReports", () => {
+  function report(overrides: Partial<MailDmarcReportRecord>): MailDmarcReportRecord {
+    return {
+      id: "r-1",
+      orgId,
+      domain: "helix.test",
+      orgName: "google.com",
+      reportId: "abc-123",
+      dateRangeBegin: "2026-05-20T00:00:00.000Z",
+      dateRangeEnd: "2026-05-21T00:00:00.000Z",
+      policyP: "none",
+      policySp: null,
+      policyPct: 100,
+      totalMessages: 100,
+      passMessages: 80,
+      failMessages: 20,
+      createdAt: "2026-05-21T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  /* One unreadable range used to be folded straight into the running min/max,
+     turning the window NaN and making the guard discard the whole org's summary —
+     including a message count and pass rate that were measured and real. */
+  it("skips an unreadable range instead of poisoning the aggregate", () => {
+    const summary = summarizeDmarcReports([
+      report({ id: "r-1" }),
+      report({ id: "r-2", dateRangeBegin: "not-a-date", dateRangeEnd: "also-not-a-date" }),
+    ]);
+    expect(summary).not.toBeNull();
+    expect(summary?.messagesEvaluated).toBe(200);
+    expect(summary?.dmarcPassRate).toBeCloseTo(0.8);
+    expect(summary?.windowDays).toBe(1);
+    expect(summary?.reportCount).toBe(2);
+  });
+
+  it("keeps the window bound it can read when only the other end is unreadable", () => {
+    const summary = summarizeDmarcReports([
+      report({ id: "r-1", dateRangeBegin: "2026-05-14T00:00:00.000Z" }),
+      report({ id: "r-2", dateRangeBegin: "garbage" }),
+    ]);
+    expect(summary?.windowDays).toBe(7);
+  });
+
+  /* No readable bound anywhere leaves the window unstated, and a summary whose
+     rates describe an unknown period is worse than none. */
+  it("reports nothing when no report carries a readable range", () => {
+    expect(
+      summarizeDmarcReports([report({ dateRangeBegin: "garbage", dateRangeEnd: "garbage" })]),
+    ).toBeNull();
+  });
+
+  it("reports nothing when the reports cover no messages", () => {
+    expect(
+      summarizeDmarcReports([report({ totalMessages: 0, passMessages: 0, failMessages: 0 })]),
+    ).toBeNull();
   });
 });
 
@@ -477,5 +792,70 @@ describe("inbound routing rule admin routes", () => {
       },
     });
     expect(response.statusCode).toBe(400);
+  });
+
+  it("exposes GET /api/admin/mail/spam with env-backed spamd posture", async () => {
+    currentActor = readerActor;
+    const previous = {
+      enabled: process.env.MAIL_SPAMD_ENABLED,
+      host: process.env.MAIL_SPAMD_HOST,
+      threshold: process.env.MAIL_SPAMD_THRESHOLD,
+    };
+    try {
+      delete process.env.MAIL_SPAMD_ENABLED;
+      delete process.env.MAIL_SPAMD_HOST;
+      delete process.env.MAIL_SPAMD_THRESHOLD;
+
+      const off = await inject({ method: "GET", url: "/api/admin/mail/spam" });
+      expect(off.statusCode).toBe(200);
+      expect(off.body<{ enabled: boolean; daemonStatus: string }>()).toMatchObject({
+        enabled: false,
+        daemonStatus: "stopped",
+      });
+
+      process.env.MAIL_SPAMD_ENABLED = "true";
+      process.env.MAIL_SPAMD_HOST = "127.0.0.1";
+      process.env.MAIL_SPAMD_THRESHOLD = "6.5";
+      const on = await inject({ method: "GET", url: "/api/admin/mail/spam" });
+      expect(on.statusCode).toBe(200);
+      expect(
+        on.body<{ enabled: boolean; threshold: number; spamd: { host: string } }>(),
+      ).toMatchObject({
+        enabled: true,
+        threshold: 6.5,
+        spamd: { enabled: true, host: "127.0.0.1" },
+      });
+    } finally {
+      if (previous.enabled === undefined) delete process.env.MAIL_SPAMD_ENABLED;
+      else process.env.MAIL_SPAMD_ENABLED = previous.enabled;
+      if (previous.host === undefined) delete process.env.MAIL_SPAMD_HOST;
+      else process.env.MAIL_SPAMD_HOST = previous.host;
+      if (previous.threshold === undefined) delete process.env.MAIL_SPAMD_THRESHOLD;
+      else process.env.MAIL_SPAMD_THRESHOLD = previous.threshold;
+    }
+  });
+
+  it("forbids spam settings without admin console read", async () => {
+    currentActor = unprivilegedActor;
+    const response = await inject({ method: "GET", url: "/api/admin/mail/spam" });
+    expect(response.statusCode).toBe(403);
+  });
+});
+
+describe("buildMailSpamAdminSettings", () => {
+  it("reports filtering off when MAIL_SPAMD_ENABLED is unset", () => {
+    expect(buildMailSpamAdminSettings({}).enabled).toBe(false);
+    expect(buildMailSpamAdminSettings({}).daemonStatus).toBe("stopped");
+  });
+
+  it("reports filtering on when spamd is configured", () => {
+    const settings = buildMailSpamAdminSettings({
+      MAIL_SPAMD_ENABLED: "true",
+      MAIL_SPAMD_HOST: "spamd",
+      MAIL_SPAMD_THRESHOLD: "5",
+    });
+    expect(settings.enabled).toBe(true);
+    expect(settings.threshold).toBe(5);
+    expect(settings.daemonStatus).toBe("unknown");
   });
 });

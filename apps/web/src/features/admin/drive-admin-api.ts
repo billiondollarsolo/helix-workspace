@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /**
  * Admin Console — Drive storage quota usage + lifecycle policy (D11).
@@ -111,20 +112,18 @@ export const driveAdminQueryKeys = {
 
 export function driveQuotaQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: driveAdminQueryKeys.quota(),
     queryFn: () => getDriveQuotaUsage(fetchImpl),
-    retry: false,
-    throwOnError: false,
     staleTime: 15_000,
   });
 }
 
 export function driveLifecycleQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: driveAdminQueryKeys.lifecycle(),
     queryFn: () => getDriveLifecyclePolicy(fetchImpl),
-    retry: false,
-    throwOnError: false,
     staleTime: 15_000,
   });
 }

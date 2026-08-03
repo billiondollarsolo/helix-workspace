@@ -123,7 +123,11 @@ describe("webhook API helpers", () => {
     expect(fetchBody("/api/tools/webhook.delivery.list")).toEqual({
       direction: "outbound",
       status: "delivered",
-      webhookId: "11111111-1111-4111-8111-111111111111",
+      /* `webhookId` is one field in the UI but two columns on the delivery row,
+         so the direction decides which one it filters. Sent under the UI's own
+         name the server ignored it and returned every endpoint's deliveries —
+         a filter that looks applied and is not. */
+      outboundWebhookId: "11111111-1111-4111-8111-111111111111",
       createdAfter: "2026-05-20T12:00:00.000Z",
       createdBefore: "2026-05-20T13:00:00.000Z",
       limit: 50,

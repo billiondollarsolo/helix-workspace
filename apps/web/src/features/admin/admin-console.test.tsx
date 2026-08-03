@@ -525,7 +525,7 @@ describe("AdminConsole", () => {
     // Overview's own content is covered by sections/overview.test.tsx; this is
     // a routing test, so it asserts only that the default section is the one
     // that rendered.
-    expect(container.querySelector("h1")?.textContent).toBe("Workspace overview");
+    expect(container.querySelector("h1")?.textContent).toBe("Overview");
   });
 
   it("renders the section named in the URL, not a fixed default", async () => {
@@ -535,8 +535,8 @@ describe("AdminConsole", () => {
 
     // Deep-linking is the point of the route split: /admin/groups must open
     // Groups without first landing on Overview.
-    expect(container.textContent).toContain("Organizational Units");
-    expect(container.querySelector("h1")?.textContent).not.toBe("Workspace overview");
+    expect(container.textContent).toContain("Groups & org units");
+    expect(container.querySelector("h1")?.textContent).not.toBe("Overview");
   });
 
   it("groups the sidebar and marks only the active entry", async () => {
@@ -614,7 +614,7 @@ describe("AdminConsole", () => {
     // The summary says what went behind the fold.
     expect(
       navGroup("Apps & integrations").querySelector(".admin-nav-group-count")?.textContent,
-    ).toBe("6");
+    ).toBe("9");
     expect(window.localStorage.setItem).toHaveBeenCalledWith(
       COLLAPSED_GROUPS_KEY,
       JSON.stringify(["Apps & integrations"]),
@@ -792,7 +792,7 @@ describe("AdminConsole", () => {
     await renderConsole();
 
     await clickNav("Groups & org units");
-    expect(container.textContent).toContain("Organizational Units");
+    expect(container.textContent).toContain("Groups & org units");
     expect(currentPath()).toBe("/admin/groups");
 
     await clickNav("Policies");
@@ -911,7 +911,23 @@ describe("AdminConsole", () => {
   });
 
   it("filters users by search query (using real API rows)", async () => {
-    mockJsonResponse(fetchMock, apiUsers);
+    /* The directory now searches on the server, so the double has to behave
+       like the server: honour `?query=` instead of returning the same two rows
+       whatever is asked. A double that ignores the parameter would keep this
+       test green against a UI that had stopped searching at all. */
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const href =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(href, "http://localhost");
+      const needle = (url.searchParams.get("query") ?? "").toLowerCase();
+      const users = apiUsers.users.filter(
+        (user) =>
+          needle === "" ||
+          user.displayName.toLowerCase().includes(needle) ||
+          (user.email ?? "").toLowerCase().includes(needle),
+      );
+      return Promise.resolve(Response.json({ users, nextCursor: null }));
+    });
 
     await renderConsole("users");
 
@@ -929,8 +945,13 @@ describe("AdminConsole", () => {
       return Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Marcus Bell");
-    expect(container.textContent).not.toContain("Mira Okafor");
+    /* The input is debounced before it reaches the URL and the query key, so
+       the assertion has to wait for the round trip rather than read the DOM in
+       the same tick the keystroke landed. */
+    await waitFor(() => {
+      expect(container.textContent).toContain("Marcus Bell");
+      expect(container.textContent).not.toContain("Mira Okafor");
+    });
   });
 
   it("shows bulk actions when users are selected", async () => {

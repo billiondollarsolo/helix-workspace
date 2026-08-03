@@ -1,10 +1,17 @@
 /* Helix Admin console — the surface shell.
  *
  * This file owns three things and nothing else: the chrome, the sidebar, and
- * the map from a URL section to the component that renders it. Each section
- * lives in its own module under `sections/`, and the pieces they share (page
- * header, scroll container, state banners, table cells) live in
- * `console/primitives`.
+ * turning the section loader table into React components. Each section lives in
+ * its own module under `sections/`, and the pieces they share (page header,
+ * scroll container, state banners, table cells) live in `console/primitives`.
+ *
+ * The loader table itself lives in `console/section-loaders.ts`, not here, and
+ * that separation is load-bearing: the admin route's `loader` is not code-split
+ * by `autoCodeSplitting` (only `component` is), so a route importing its
+ * prefetch entry point from this file drags the console shell, the sidebar, the
+ * icon set and the realtime hub into the initial JavaScript graph of every page
+ * in the app. The bundle budget caught exactly that — 605.0 kB against a
+ * 450.0 kB ceiling.
  *
  * Sections render live platform data only. When an endpoint is unavailable
  * they surface a loading / error / empty state rather than seed values. */
@@ -13,129 +20,74 @@ import { lazy, Suspense, type ComponentType } from "react";
 import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
 import { AdminSidebar } from "@/features/admin/console/sidebar";
-import { PageScroll } from "@/features/admin/console/primitives";
-import type { AdminSectionId } from "@/features/admin/admin-console-data";
+import { PageScroll, SectionSkeleton } from "@/features/admin/console/primitives";
+import {
+  ADMIN_SECTION_LOADERS,
+  preloadAdminSection,
+  type AdminSectionLoader,
+} from "@/features/admin/console/section-loaders";
+import { useAdminRealtime } from "@/features/admin/use-admin-realtime";
+import { adminSectionLabel, type AdminSectionId } from "@/features/admin/admin-console-data";
 
-/** Load one section on demand.
+/** Turn one loader entry into a lazy component.
  *
- * Every section used to be imported eagerly here, which put all eighteen into
- * a single route chunk — 503.8 kB against a 500 kB budget, and an operator
- * opening Overview downloaded the AI observability dashboard to get there.
- * Each is now its own chunk, fetched when its URL is visited.
- *
- * `scroll` wraps the section in the standard `PageScroll` container, for the
- * ones that render their own padding but no outer scroll. */
-function section(
-  /* `unknown` values, not `ComponentType`: a section module also exports types,
-     query options and constants, so a narrower signature would reject every
-     real module. The named export is checked at load time instead. */
-  load: () => Promise<Record<string, unknown>>,
-  name: string,
-  options: { readonly scroll?: boolean } = {},
-): ComponentType {
+ *  Every section used to be imported eagerly, which put all eighteen into a
+ *  single route chunk — 503.8 kB against a 500 kB budget, and an operator
+ *  opening Overview downloaded the AI observability dashboard to get there.
+ *  Each is now its own chunk, fetched when its URL is visited — or, since
+ *  `preloadAdminSection` exists, when the operator's pointer lands on its row. */
+function sectionComponent(entry: AdminSectionLoader): ComponentType {
   return lazy(async () => {
-    const loaded = await load();
-    const Component = loaded[name] as ComponentType | undefined;
-    if (Component === undefined) {
-      throw new Error(`Admin section module has no export named ${name}`);
+    const loaded = await entry.load();
+    const Section = loaded[entry.exportName] as ComponentType | undefined;
+    if (Section === undefined) {
+      throw new Error(`Admin section module has no export named ${entry.exportName}`);
     }
     return {
-      default: options.scroll
+      default: entry.scroll
         ? function ScrolledSection() {
             return (
               <PageScroll>
-                <Component />
+                <Section />
               </PageScroll>
             );
           }
-        : Component,
+        : Section,
     };
   });
 }
 
-/** Section id (and URL segment) -> the component that renders it.
- *  Keyed by `AdminSectionId`, so adding a nav entry without wiring content —
- *  or leaving a stale entry behind — is a type error. */
-const SECTION_CONTENT: Record<AdminSectionId, ComponentType> = {
-  overview: section(() => import("@/features/admin/sections/overview"), "AdminOverview"),
-  domains: section(() => import("@/features/admin/sections/domains"), "AdminDomain"),
-  billing: section(() => import("@/features/admin/sections/billing"), "AdminBilling"),
-  "workspace-settings": section(
-    () => import("@/features/admin/tenant-config-management"),
-    "TenantConfigManagement",
-    { scroll: true },
-  ),
-  users: section(() => import("@/features/admin/sections/users"), "AdminUsers"),
-  groups: section(() => import("@/features/admin/sections/groups"), "AdminGroups"),
-  policies: section(() => import("@/features/admin/sections/policies"), "AdminSecurity"),
-  identity: section(() => import("@/features/admin/identity-management"), "IdentityManagement", {
-    scroll: true,
-  }),
-  "tier-readiness": section(
-    () => import("@/features/admin/security-tier-readiness"),
-    "SecurityTierReadiness",
-    { scroll: true },
-  ),
-  audit: section(() => import("@/features/admin/audit-log"), "AuditLogList", { scroll: true }),
-  "workspace-apps": section(
-    () => import("@/features/admin/core-apps-management"),
-    "CoreAppsManagement",
-    { scroll: true },
-  ),
-  mail: section(() => import("@/features/admin/mail-admin"), "MailAdminSection"),
-  chat: section(() => import("@/features/admin/chat-admin"), "ChatAdminSection", { scroll: true }),
-  drive: section(() => import("@/features/admin/drive-admin"), "DriveAdminSection", {
-    scroll: true,
-  }),
-  "oauth-apps": section(() => import("@/features/admin/sections/oauth-apps"), "AdminApps"),
-  "app-passwords": section(
-    () => import("@/features/admin/app-passwords-management"),
-    "AppPasswordsManagement",
-    { scroll: true },
-  ),
-  "agent-credentials": section(
-    () => import("@/features/admin/agent-credentials-management"),
-    "AgentCredentialsManagement",
-    { scroll: true },
-  ),
-  "agent-controls": section(
-    () => import("@/features/admin/agent-controls"),
-    "AgentControlsManagement",
-    { scroll: true },
-  ),
-  webhooks: section(() => import("@/features/webhooks/webhook-management"), "WebhookManagement", {
-    scroll: true,
-  }),
-  "ai-costs": section(
-    () => import("@/features/admin/ai-cost-limits-management"),
-    "AICostLimitsManagement",
-    { scroll: true },
-  ),
-  "ai-observability": section(
-    () => import("@/features/admin/ai-observability"),
-    "AIObservabilityDashboard",
-    { scroll: true },
-  ),
-  services: section(() => import("@/features/admin/admin-services"), "AdminServicesOverview", {
-    scroll: true,
-  }),
-};
+/* Built once at module scope: `lazy()` memoises per call, so creating these
+   inside the component would throw the resolved module away on every render. */
+const SECTION_COMPONENTS: Record<AdminSectionId, ComponentType> = Object.fromEntries(
+  Object.entries(ADMIN_SECTION_LOADERS).map(([id, entry]) => [id, sectionComponent(entry)]),
+) as Record<AdminSectionId, ComponentType>;
 
 /** The console body for one section. The section comes from the route, not
  *  component state, so every surface is linkable and survives refresh and
  *  back/forward. */
-export function AdminConsole({ section }: { readonly section: AdminSectionId }) {
-  const Section = SECTION_CONTENT[section];
+export function AdminConsole({ section: id }: { readonly section: AdminSectionId }) {
+  const Component = SECTION_COMPONENTS[id];
+
+  /* One ref-counted socket per distinct subject for the whole console, mounted
+     here rather than per section so switching sections does not tear down and
+     re-open the connection. */
+  useAdminRealtime(id);
 
   return (
-    <SurfaceFrame title="Admin" icon={<Icons.Shield />}>
-      <AdminSidebar section={section} />
-      {/* The sidebar renders immediately; only the panel waits on its chunk.
-          The fallback is deliberately empty: the chunk resolves in a tick on a
-          local network, and a flashed skeleton reads as a slower load than no
-          skeleton at all. Sections render their own loading state for data. */}
-      <Suspense fallback={null}>
-        <Section />
+    /* The section name is in the chrome, which sits *outside* the Suspense
+       boundary below — so it repaints on the click itself rather than after the
+       chunk lands. During a cold navigation it is the only thing on screen that
+       names where you are going. */
+    <SurfaceFrame title={`Admin · ${adminSectionLabel(id)}`} icon={<Icons.Shield />}>
+      <AdminSidebar section={id} onPreloadSection={preloadAdminSection} />
+      {/* Keyed on the section so React tears down the previous section's tree
+          instead of holding it while the next chunk loads. The fallback is
+          page-shaped: a blank pane for the duration of a chunk fetch reads as a
+          broken page, and the geometry has to survive the swap or the content
+          jumps when it arrives. */}
+      <Suspense key={id} fallback={<SectionSkeleton />}>
+        <Component />
       </Suspense>
     </SurfaceFrame>
   );

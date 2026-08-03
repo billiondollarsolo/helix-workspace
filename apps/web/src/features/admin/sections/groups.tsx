@@ -20,10 +20,11 @@ import {
   type GroupMember,
   type OrgUnit,
 } from "@/features/admin/groups-api";
+import { AdminField, AdminInput, AdminToolbar } from "@/features/admin/console/controls";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   EmptyRow,
   EmptyState,
-  INPUT_STYLE,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
@@ -35,9 +36,16 @@ import {
 /* Groups & OUs                                                       */
 /* ------------------------------------------------------------------ */
 
-/** `.btn` has no disabled styling in styles.css, so a disabled create button
- *  would still look pressable. */
-const DISABLED_CONTROL: React.CSSProperties = { opacity: 0.55, cursor: "not-allowed" };
+/** Tree indent for a nested org unit, as a fixed class per depth.
+ *
+ *  A computed `paddingLeft` would have to be an inline style, which cannot be
+ *  themed or overridden; depth is clamped at four because the indent is a
+ *  reading aid, and past that the name column has nothing left to give. */
+const INDENT_CLASS = ["pl-0", "pl-5", "pl-10", "pl-[60px]", "pl-[80px]"] as const;
+
+function indentClass(depth: number): string {
+  return INDENT_CLASS[Math.min(Math.max(depth, 0), INDENT_CLASS.length - 1)] ?? "pl-0";
+}
 
 interface GroupsRow {
   readonly key: string;
@@ -171,11 +179,50 @@ function GroupMembershipPanel({ group }: { group: Group }) {
     });
   });
 
+  const columns: readonly AdminColumn<GroupMember>[] = [
+    {
+      id: "actor",
+      header: "Actor",
+      width: "100%",
+      cell: (member) => <span className="mono block max-w-[46ch] truncate">{member.actorId}</span>,
+    },
+    {
+      id: "role",
+      header: "Role",
+      width: "90px",
+      cell: (member) => <span className="chip">{member.role}</span>,
+    },
+    {
+      id: "remove",
+      header: "Remove member",
+      headerHidden: true,
+      align: "right",
+      width: "90px",
+      cell: (member) => (
+        /* Was a grey icon button that fired the DELETE on the first click,
+           sitting a few pixels from the row above it. */
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="destructive"
+          title={`Remove member ${member.actorId}`}
+          aria-label={`Remove member ${member.actorId}`}
+          disabled={removeMutation.isPending}
+          onClick={() => setRemoveTarget(member)}
+        >
+          <Icons.Trash />
+        </Button>
+      ),
+    },
+  ];
+
   return (
-    <div className="panel" style={{ padding: 16, marginBottom: 12 }}>
-      <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)", marginBottom: 8 }}>
+    <div className="panel mb-3 p-4">
+      {/* h2, under the section's one h1: this panel is a sub-view of the
+          directory below it. */}
+      <h2 className="mb-2 font-semibold [font-size:var(--text-body-sm)]">
         Members of {group.name}
-      </div>
+      </h2>
       {membersFailure !== null ? (
         /* Panel-level: the directory table below is still live, so this retry
            must not outrank it. */
@@ -196,7 +243,6 @@ function GroupMembershipPanel({ group }: { group: Group }) {
         <StateBanner kind="error">{removeMutation.error.message}</StateBanner>
       ) : null}
       <form
-        style={{ display: "flex", gap: 8, marginBottom: 8 }}
         onSubmit={(event) => {
           event.preventDefault();
           if (actorId.trim().length === 0) {
@@ -205,60 +251,37 @@ function GroupMembershipPanel({ group }: { group: Group }) {
           addMutation.mutate(actorId.trim());
         }}
       >
-        <input
-          aria-label="Member actor id"
-          value={actorId}
-          onChange={(event) => setActorId(event.target.value)}
-          placeholder="Actor UUID"
-          style={{ ...INPUT_STYLE, flex: 1 }}
-        />
-        <button type="submit" className="btn sm primary" disabled={addMutation.isPending}>
-          <Icons.Plus /> Add member
-        </button>
+        <AdminToolbar label={`Add a member to ${group.name}`}>
+          <AdminField label="Member actor id" className="flex-1">
+            <AdminInput
+              value={actorId}
+              onChange={(event) => setActorId(event.target.value)}
+              placeholder="Actor UUID"
+            />
+          </AdminField>
+          <Button type="submit" size="sm" className="self-end" disabled={addMutation.isPending}>
+            <Icons.Plus /> Add member
+          </Button>
+        </AdminToolbar>
       </form>
-      {members.length === 0 ? (
-        membersFailure !== null ? null : (
-          <EmptyRow>
-            {membersQuery.isPending
-              ? "Loading members…"
-              : "No members in this group yet — add one by actor ID above."}
-          </EmptyRow>
-        )
-      ) : (
-        members.map((member) => (
-          <div
-            key={member.id}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 90px 90px",
-              alignItems: "center",
-              height: 32,
-              fontSize: "var(--text-meta)",
-              borderTop: "1px solid var(--border)",
-            }}
-          >
-            <span className="mono truncate" style={{ fontSize: "var(--text-caption)" }}>
-              {member.actorId}
-            </span>
-            <span>
-              <span className="chip">{member.role}</span>
-            </span>
-            {/* Was a grey icon button that fired the DELETE on the first click,
-                sitting a few pixels from the row above it. */}
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="destructive"
-              className="justify-self-end"
-              title={`Remove member ${member.actorId}`}
-              aria-label={`Remove member ${member.actorId}`}
-              disabled={removeMutation.isPending}
-              onClick={() => setRemoveTarget(member)}
-            >
-              <Icons.Trash />
-            </Button>
-          </div>
-        ))
+      {/* A failure with nothing to show renders no table at all: the banner
+          above is the whole account of the state, and an "empty" members table
+          under it would claim this group has no members when we never read
+          them. */}
+      {membersFailure !== null && members.length === 0 ? null : (
+        <AdminTable
+          label={`Members of ${group.name}`}
+          columns={columns}
+          rows={members}
+          rowKey={(member) => member.id}
+          empty={
+            <EmptyRow>
+              {membersQuery.isPending
+                ? "Loading members…"
+                : "No members in this group yet — add one by actor ID above."}
+            </EmptyRow>
+          }
+        />
       )}
 
       {/* Nominally reversible, actually not: re-adding a member means typing
@@ -382,30 +405,101 @@ export function AdminGroups() {
   const createOuDisabled = orgUnitsFailure !== null;
   const createGroupDisabled = groupsFailure !== null;
 
+  const directoryColumns: readonly AdminColumn<GroupsRow>[] = [
+    {
+      id: "name",
+      header: "Name",
+      width: "100%",
+      cell: (row) => (
+        <div className={`row gap-2 ${indentClass(row.indent)}`}>
+          {row.type === "OU" ? <Icons.Building /> : <Icons.Users />}
+          <span className="font-medium">{row.name}</span>
+        </div>
+      ),
+    },
+    {
+      id: "type",
+      header: "Type",
+      width: "100px",
+      cell: (row) => <span className="chip">{row.type}</span>,
+    },
+    {
+      id: "members",
+      header: "Members",
+      width: "100px",
+      cell: (row) => <span className="text-[var(--text-2)]">{row.members} members</span>,
+    },
+    {
+      id: "actions",
+      /* 170px: "Delete" says what it does instead of being a bare glyph, so
+         the two controls no longer fit in the old 140px track. */
+      header: "Row actions",
+      headerHidden: true,
+      align: "right",
+      width: "170px",
+      cell: (row) => {
+        /* Narrowed outside the callbacks below: `row.id` is nullable and
+           TypeScript drops property narrowing inside a closure. */
+        const rowId = row.id;
+        return (
+          <div className="flex justify-end gap-1.5">
+            {row.type === "Group" && rowId !== null ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-label={`Manage ${row.name}`}
+                onClick={() => setManagedGroupId((current) => (current === rowId ? null : rowId))}
+              >
+                Manage
+              </Button>
+            ) : null}
+            {rowId !== null ? (
+              /* Was a bare trash glyph in the same grey as "Manage", one click
+                 from an irreversible DELETE. */
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                aria-label={`Delete ${row.name}`}
+                disabled={deleteOuMutation.isPending || deleteGroupMutation.isPending}
+                onClick={() => setDeleteTarget({ row, id: rowId })}
+              >
+                <Icons.Trash /> Delete
+              </Button>
+            ) : null}
+          </div>
+        );
+      },
+    },
+  ];
+
   return (
     <PageScroll>
       <PageHeading
-        title="Groups & Organizational Units"
+        title="Groups & org units"
         actions={
           <>
-            <button
+            {/* `Button`, not `.btn`: these two sat beside `Button`s everywhere
+                else in the console, and `.btn` has no disabled styling — a
+                disabled create control still looked pressable. */}
+            <Button
               type="button"
-              className="btn"
+              variant="outline"
+              aria-expanded={showGroupForm}
               disabled={createGroupDisabled}
-              style={createGroupDisabled ? DISABLED_CONTROL : undefined}
               onClick={() => setShowGroupForm((open) => !open)}
             >
               <Icons.Plus /> New group
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn primary"
+              aria-expanded={showOuForm}
               disabled={createOuDisabled}
-              style={createOuDisabled ? DISABLED_CONTROL : undefined}
               onClick={() => setShowOuForm((open) => !open)}
             >
               <Icons.Plus /> New OU
-            </button>
+            </Button>
           </>
         }
       />
@@ -471,8 +565,7 @@ export function AdminGroups() {
 
       {showOuForm && !createOuDisabled ? (
         <form
-          className="panel"
-          style={{ padding: 12, marginBottom: 12, display: "flex", gap: 8 }}
+          className="panel mb-3 px-3 pt-3"
           onSubmit={(event) => {
             event.preventDefault();
             if (ouName.trim().length === 0) {
@@ -481,22 +574,23 @@ export function AdminGroups() {
             createOuMutation.mutate(ouName.trim());
           }}
         >
-          <input
-            aria-label="New org unit name"
-            value={ouName}
-            onChange={(event) => setOuName(event.target.value)}
-            placeholder="Engineering"
-            style={{ ...INPUT_STYLE, flex: 1 }}
-          />
-          <button type="submit" className="btn primary" disabled={createOuMutation.isPending}>
-            {createOuMutation.isPending ? "Creating…" : "Create OU"}
-          </button>
+          <AdminToolbar label="New org unit">
+            <AdminField label="New org unit name" className="flex-1">
+              <AdminInput
+                value={ouName}
+                onChange={(event) => setOuName(event.target.value)}
+                placeholder="Engineering"
+              />
+            </AdminField>
+            <Button type="submit" className="self-end" disabled={createOuMutation.isPending}>
+              {createOuMutation.isPending ? "Creating…" : "Create OU"}
+            </Button>
+          </AdminToolbar>
         </form>
       ) : null}
       {showGroupForm && !createGroupDisabled ? (
         <form
-          className="panel"
-          style={{ padding: 12, marginBottom: 12, display: "flex", gap: 8 }}
+          className="panel mb-3 px-3 pt-3"
           onSubmit={(event) => {
             event.preventDefault();
             if (groupName.trim().length === 0) {
@@ -505,16 +599,18 @@ export function AdminGroups() {
             createGroupMutation.mutate(groupName.trim());
           }}
         >
-          <input
-            aria-label="New group name"
-            value={groupName}
-            onChange={(event) => setGroupName(event.target.value)}
-            placeholder="leads"
-            style={{ ...INPUT_STYLE, flex: 1 }}
-          />
-          <button type="submit" className="btn primary" disabled={createGroupMutation.isPending}>
-            {createGroupMutation.isPending ? "Creating…" : "Create group"}
-          </button>
+          <AdminToolbar label="New group">
+            <AdminField label="New group name" className="flex-1">
+              <AdminInput
+                value={groupName}
+                onChange={(event) => setGroupName(event.target.value)}
+                placeholder="leads"
+              />
+            </AdminField>
+            <Button type="submit" className="self-end" disabled={createGroupMutation.isPending}>
+              {createGroupMutation.isPending ? "Creating…" : "Create group"}
+            </Button>
+          </AdminToolbar>
         </form>
       ) : null}
 
@@ -532,66 +628,12 @@ export function AdminGroups() {
         ) : null
       ) : (
         <div className="panel">
-          {rows.map((row, index) => {
-            /* Narrowed outside the callbacks below: `row.id` is nullable and
-               TypeScript drops property narrowing inside a closure. */
-            const rowId = row.id;
-            return (
-              <div
-                key={row.key}
-                style={{
-                  display: "grid",
-                  /* 170px, not 140px: "Delete" now says what it does instead
-                     of being a bare glyph, and the two controls no longer
-                     fit in the old track. */
-                  gridTemplateColumns: "1fr 100px 100px 170px",
-                  padding: "0 16px",
-                  height: 38,
-                  alignItems: "center",
-                  fontSize: "var(--text-meta)",
-                  borderBottom: index < rows.length - 1 ? "1px solid var(--border)" : "none",
-                }}
-              >
-                <div className="row gap-2" style={{ paddingLeft: row.indent * 20 }}>
-                  {row.type === "OU" ? <Icons.Building /> : <Icons.Users />}
-                  <span style={{ fontWeight: 500 }}>{row.name}</span>
-                </div>
-                <span className="chip" style={{ width: "fit-content" }}>
-                  {row.type}
-                </span>
-                <span style={{ color: "var(--text-2)" }}>{row.members} members</span>
-                <div style={{ display: "flex", gap: 6, justifySelf: "flex-end" }}>
-                  {row.type === "Group" && rowId !== null ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      aria-label={`Manage ${row.name}`}
-                      onClick={() =>
-                        setManagedGroupId((current) => (current === rowId ? null : rowId))
-                      }
-                    >
-                      Manage
-                    </Button>
-                  ) : null}
-                  {rowId !== null ? (
-                    /* Was a bare trash glyph in the same grey as "Manage",
-                       one click from an irreversible DELETE. */
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      aria-label={`Delete ${row.name}`}
-                      disabled={deleteOuMutation.isPending || deleteGroupMutation.isPending}
-                      onClick={() => setDeleteTarget({ row, id: rowId })}
-                    >
-                      <Icons.Trash /> Delete
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
+          <AdminTable
+            label="Org units and groups"
+            columns={directoryColumns}
+            rows={rows}
+            rowKey={(row) => row.key}
+          />
         </div>
       )}
 

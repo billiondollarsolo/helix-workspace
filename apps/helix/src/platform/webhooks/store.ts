@@ -493,10 +493,16 @@ export class PostgresWebhookStore {
     return rows[0] === undefined ? null : mapDelivery(rows[0]);
   }
 
+  /* `outboundWebhookId` / `inboundWebhookId` narrow the log to one endpoint.
+     Without them the deliveries tab could only be read as one undifferentiated
+     stream, so triaging "why is *this* endpoint failing" meant scrolling a list
+     that mixes every endpoint in the workspace together. */
   async listDeliveries(input: {
     readonly orgId: string;
     readonly direction?: WebhookDirection | undefined;
     readonly status?: WebhookDeliveryStatus | undefined;
+    readonly outboundWebhookId?: string | undefined;
+    readonly inboundWebhookId?: string | undefined;
     readonly limit?: number | undefined;
   }): Promise<readonly WebhookDeliveryRecord[]> {
     const rows = (await this.sql`
@@ -504,6 +510,8 @@ export class PostgresWebhookStore {
       where org_id = ${input.orgId}
         and (${input.direction ?? null}::webhook_direction is null or direction = ${input.direction ?? null}::webhook_direction)
         and (${input.status ?? null}::webhook_delivery_status is null or status = ${input.status ?? null}::webhook_delivery_status)
+        and (${input.outboundWebhookId ?? null}::uuid is null or outbound_webhook_id = ${input.outboundWebhookId ?? null}::uuid)
+        and (${input.inboundWebhookId ?? null}::uuid is null or inbound_webhook_id = ${input.inboundWebhookId ?? null}::uuid)
       order by created_at desc
       limit ${input.limit ?? 100}
     `) as unknown as readonly WebhookDeliveryRow[];

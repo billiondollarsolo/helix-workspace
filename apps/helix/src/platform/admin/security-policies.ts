@@ -240,6 +240,16 @@ export interface RegisterAdminSecurityPoliciesRoutesOptions {
  *   GET   /api/admin/security-policies/:policyType
  *   PUT   /api/admin/security-policies/:policyType
  */
+/** The `GET /api/admin/security-policies` body, shared with
+ *  `GET /api/admin/overview` so both serve one implementation. */
+export async function readSecurityPolicies(
+  store: SecurityPoliciesStore,
+  orgId: string,
+): Promise<{ readonly policies: readonly SecurityPolicyView[] }> {
+  const policies = await store.list(orgId);
+  return { policies: policies.map(toPolicyView) };
+}
+
 export async function registerAdminSecurityPoliciesRoutes(
   app: FastifyInstance,
   options: RegisterAdminSecurityPoliciesRoutesOptions,
@@ -251,8 +261,7 @@ export async function registerAdminSecurityPoliciesRoutes(
     if (!canReadAdminConsole(actor)) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
-    const policies = await store.list(actor.orgId);
-    return { policies: policies.map(toPolicyView) };
+    return readSecurityPolicies(store, actor.orgId);
   });
 
   app.get("/api/admin/security-policies/:policyType", async (request, reply) => {

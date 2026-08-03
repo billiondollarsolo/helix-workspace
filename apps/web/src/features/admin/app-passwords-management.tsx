@@ -1,3 +1,4 @@
+import { useDebouncedCallback } from "@tanstack/react-pacer";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
@@ -14,8 +15,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { adminUsersQueryOptions, type AdminUser } from "@/features/admin/admin-users";
+import { AdminAccessRelatedNav } from "@/features/admin/admin-related-nav";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { EmptyRow, PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import { AdminInput } from "@/features/admin/console/controls";
 import {
   appPasswordsQueryOptions,
   createAppPassword,
@@ -84,7 +87,28 @@ export function AppPasswordsManagement() {
   const passwordsQuery = useQuery(appPasswordsQueryOptions(includeRevoked));
   /* One page of enabled actors, sharing the cache (and the route prefetch) with
      the Users section rather than issuing a second identical request. */
-  const actorsQuery = useQuery(adminUsersQueryOptions({ includeDisabled: false }));
+  /* The picker used to show one fixed page of 50 actors, so in a workspace of
+     350 the other 300 were simply unselectable — the notice said so, which made
+     it an honest dead end rather than a silent one, but a dead end either way.
+     The directory search is server-side (`sections/users.tsx` uses the same
+     transport), so typing here narrows across the whole workspace and any actor
+     is reachable. Still one bounded page per request. */
+  const [actorSearchDraft, setActorSearchDraft] = useState("");
+  const [actorSearch, setActorSearch] = useState("");
+  /* House rule (helix/pacer-discipline): the delay is Pacer's, never a bare
+     setTimeout. */
+  const commitActorSearch = useDebouncedCallback(
+    (value: string) => {
+      setActorSearch(value.trim());
+    },
+    { wait: 300 },
+  );
+  const actorsQuery = useQuery(
+    adminUsersQueryOptions({
+      includeDisabled: false,
+      ...(actorSearch.length === 0 ? {} : { query: actorSearch }),
+    }),
+  );
 
   const createMutation = useMutation({
     mutationFn: (input: Parameters<typeof createAppPassword>[0]) => createAppPassword(input),
@@ -200,7 +224,10 @@ export function AppPasswordsManagement() {
       },
       {
         id: "actions",
-        header: "",
+        /* Not `""`: an empty <th> gives screen readers an unnamed column.
+           Visually hidden text names it without adding a visible caption to a
+           column of icon buttons. */
+        header: () => <span className="sr-only">App password actions</span>,
         cell: ({ row }) => (
           <Button
             aria-label={`Revoke app password ${row.original.label}`}
@@ -248,7 +275,7 @@ export function AppPasswordsManagement() {
     <section className="grid gap-4">
       <PageHeading
         title="App passwords"
-        subtitle="Issue one-time app passwords for protocol clients and revoke access that should no longer be usable."
+        subtitle="Issue one-time app passwords for IMAP, CalDAV, WebDAV, and other protocol clients. Shown once at creation — revoke when a client should lose access. For OAuth agent clients use Agent credentials."
         actions={
           <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
             <input
@@ -261,6 +288,7 @@ export function AppPasswordsManagement() {
           </label>
         }
       />
+      <AdminAccessRelatedNav current="app-passwords" />
 
       {/* `items-start` / `content-start`: a grid track is stretch-aligned by
           default, so the short panel used to inherit the tall form's height and
@@ -298,6 +326,23 @@ export function AppPasswordsManagement() {
           <passwordForm.Field name="actorId">
             {(field) => (
               <div className="grid gap-2">
+                <label
+                  className="grid gap-1.5 text-xs font-medium"
+                  htmlFor="app-password-actor-search"
+                >
+                  Find actor
+                  <AdminInput
+                    id="app-password-actor-search"
+                    type="search"
+                    autoComplete="off"
+                    placeholder="Search name, email, or ID…"
+                    value={actorSearchDraft}
+                    onChange={(event) => {
+                      setActorSearchDraft(event.target.value);
+                      commitActorSearch(event.target.value);
+                    }}
+                  />
+                </label>
                 <label className="grid gap-1.5 text-xs font-medium" htmlFor="app-password-actor-id">
                   Actor
                   {/* A native select over the loaded actors: a labelled form
@@ -586,7 +631,7 @@ function actorNoticeFor(
   if (status === "truncated") {
     return {
       kind: "info",
-      message: `Showing the first ${actorCount} enabled actors; the directory holds more. An actor beyond this page cannot be picked here.`,
+      message: `Showing ${actorCount} enabled actors; the directory holds more. Type in the search box above to find anyone in the workspace.`,
       retryable: false,
     };
   }

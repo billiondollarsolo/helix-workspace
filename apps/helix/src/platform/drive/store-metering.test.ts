@@ -213,6 +213,10 @@ describe("PostgresDriveStore metering", () => {
       {
         subject: "quota.storage.exceeded",
         payload: {
+          /* The subscriber-side tenant filter on `/events/ws` drops any
+             org-scoped envelope that does not name its org, so this marker is
+             what keeps the event deliverable at all. */
+          orgId,
           quota: "storage_bytes_limit",
           bucket: "drive",
           used_bytes: 95,
@@ -251,6 +255,10 @@ describe("PostgresDriveStore metering", () => {
       {
         subject: "quota.storage.exceeded",
         payload: {
+          /* The subscriber-side tenant filter on `/events/ws` drops any
+             org-scoped envelope that does not name its org, so this marker is
+             what keeps the event deliverable at all. */
+          orgId,
           quota: "storage_bytes_limit",
           bucket: "drive",
           used_bytes: 95,

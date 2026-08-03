@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { meteringRollupMetricKeys, type MeteringRollupMetricKey } from "@helix/sdk-types";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 export type { MeteringRollupMetricKey } from "@helix/sdk-types";
 
@@ -158,10 +159,9 @@ export const billingQueryKeys = {
 
 export function billingAccountQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: billingQueryKeys.account(),
     queryFn: () => fetchBillingAccount(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 
@@ -170,10 +170,9 @@ export function invoicesQueryOptions(
   fetchImpl: AuthFetch = authenticatedFetch,
 ) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: billingQueryKeys.invoices(input),
     queryFn: () => fetchInvoices(input, fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 
@@ -182,10 +181,9 @@ export function usageRollupsQueryOptions(
   fetchImpl: AuthFetch = authenticatedFetch,
 ) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: billingQueryKeys.usage(input),
     queryFn: () => fetchUsageRollups(input, fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 

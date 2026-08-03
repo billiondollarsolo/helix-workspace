@@ -15,18 +15,23 @@ import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import type { LucideIcon } from "lucide-react";
+import { useAdminSectionTab } from "@/features/admin/admin-section-search";
 import {
   createInboundWebhook,
   createOutboundWebhook,
   deleteInboundWebhook,
   deleteOutboundWebhook,
   generateInlineSecretRef,
-  inboundWebhooksQueryOptions,
-  outboundWebhooksQueryOptions,
   rotateInboundSecret,
   testInboundWebhook,
   testOutboundWebhook,
@@ -35,6 +40,10 @@ import {
   webhookDeliveriesQueryOptions,
   webhookDeliveryStatuses,
   webhookQueryKeys,
+  webhookOverviewQueryOptions,
+  DEFAULT_DELIVERY_LIMIT,
+  replayWebhookDelivery,
+  type WebhookOverview,
 } from "./api";
 import type { WebhookDeliveryListInput } from "./api";
 import type {
@@ -45,7 +54,23 @@ import type {
   WebhookDirection,
 } from "./types";
 
-type WebhookTab = "outbound" | "inbound" | "deliveries";
+export const WEBHOOK_TABS = ["outbound", "inbound", "deliveries"] as const;
+export type WebhookTab = (typeof WEBHOOK_TABS)[number];
+export const DEFAULT_WEBHOOK_TAB: WebhookTab = "outbound";
+/* Three sibling views of one section, one visible at a time: a real tabset, so
+   it gets the full ARIA tabs contract (panel ids, roving tabindex, arrow keys)
+   rather than the half-declared `role="tab"` it used to carry. */
+const WEBHOOK_TAB_VIEWS: readonly {
+  readonly id: WebhookTab;
+  readonly label: string;
+  readonly icon: LucideIcon;
+}[] = [
+  { id: "outbound", label: "Outbound", icon: Webhook },
+  { id: "inbound", label: "Inbound", icon: Webhook },
+  { id: "deliveries", label: "Deliveries", icon: Activity },
+];
+const webhookTabDomId = (tab: WebhookTab) => `webhooks-tab-${tab}`;
+const webhookPanelDomId = (tab: WebhookTab) => `webhooks-panel-${tab}`;
 type OutboundEditorStep = "destination" | "payload" | "review";
 type InboundEditorStep = "receiver" | "action" | "review";
 
@@ -177,9 +202,27 @@ const emptyInboundForm: InboundFormState = {
   metadataJson: "{}",
 };
 
+/** True when the operator has narrowed the delivery log beyond the default page
+ *  the overview already returns. Only then is a second request worth spending
+ *  against the tenant's five-per-second budget. */
+function isFilteredDeliveryInput(input: WebhookDeliveryListInput): boolean {
+  return (
+    input.direction !== undefined ||
+    input.status !== undefined ||
+    input.webhookId !== undefined ||
+    input.createdAfter !== undefined ||
+    input.createdBefore !== undefined
+  );
+}
+
 export function WebhookManagement() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<WebhookTab>("outbound");
+  const [activeTab, setActiveTab] = useAdminSectionTab(
+    WEBHOOK_TABS,
+    DEFAULT_WEBHOOK_TAB,
+    "webhooks",
+  );
+  const tabRefs = useRef<Partial<Record<WebhookTab, HTMLButtonElement | null>>>({});
   const [outboundForm, setOutboundForm] = useState<OutboundFormState | null>(null);
   const [inboundForm, setInboundForm] = useState<InboundFormState | null>(null);
   const [deliveryFilters, setDeliveryFilters] = useState<Required<DeliveryFilterState>>({
@@ -214,9 +257,23 @@ export function WebhookManagement() {
     };
   }, [deliveryFilters]);
 
-  const outboundQuery = useQuery(outboundWebhooksQueryOptions());
-  const inboundQuery = useQuery(inboundWebhooksQueryOptions());
-  const deliveriesQuery = useQuery(webhookDeliveriesQueryOptions(deliveryInput));
+  const deliveryLimit = deliveryInput.limit ?? DEFAULT_DELIVERY_LIMIT;
+
+  /* The whole section in one request. Three separate tool calls put this page
+     over the tenant's five-per-second budget on every cold load — the shell
+     already spends two — so it rendered "Tenant API request rate limit
+     exceeded" instead of its content, and `retry: false` made that stick. */
+  const overviewQuery = useQuery(webhookOverviewQueryOptions(deliveryLimit));
+  const overview = overviewQuery.data;
+
+  /* A second request only once the operator narrows the log. Unfiltered, the
+     overview's own delivery page is exactly what this tab would have asked
+     for. */
+  const deliveriesFiltered = isFilteredDeliveryInput(deliveryInput);
+  const deliveriesQuery = useQuery({
+    ...webhookDeliveriesQueryOptions(deliveryInput),
+    enabled: deliveriesFiltered,
+  });
 
   const outboundMutation = useMutation({
     mutationFn: async (form: OutboundFormState) => {
@@ -229,9 +286,10 @@ export function WebhookManagement() {
     onMutate: async (form) => {
       await cancelWebhookQueries(queryClient);
       const context = snapshotWebhookQueries(queryClient);
-      queryClient.setQueryData<readonly OutboundWebhook[]>(webhookQueryKeys.outbound, (current) =>
-        optimisticOutboundSave(current, form),
-      );
+      patchOverview(queryClient, deliveryLimit, (current) => ({
+        ...current,
+        outbound: optimisticOutboundSave(current.outbound, form),
+      }));
       return context;
     },
     onSuccess: async () => {
@@ -256,9 +314,10 @@ export function WebhookManagement() {
     onMutate: async (form) => {
       await cancelWebhookQueries(queryClient);
       const context = snapshotWebhookQueries(queryClient);
-      queryClient.setQueryData<readonly InboundWebhook[]>(webhookQueryKeys.inbound, (current) =>
-        optimisticInboundSave(current, form),
-      );
+      patchOverview(queryClient, deliveryLimit, (current) => ({
+        ...current,
+        inbound: optimisticInboundSave(current.inbound, form),
+      }));
       return context;
     },
     onSuccess: async () => {
@@ -306,9 +365,10 @@ export function WebhookManagement() {
     onMutate: async (action) => {
       await cancelWebhookQueries(queryClient);
       const context = snapshotWebhookQueries(queryClient);
-      queryClient.setQueryData<readonly OutboundWebhook[]>(webhookQueryKeys.outbound, (current) =>
-        optimisticOutboundAction(current, action),
-      );
+      patchOverview(queryClient, deliveryLimit, (current) => ({
+        ...current,
+        outbound: optimisticOutboundAction(current.outbound, action),
+      }));
       return context;
     },
     onSuccess: async (_output, action) => {
@@ -338,9 +398,10 @@ export function WebhookManagement() {
     onMutate: async (action) => {
       await cancelWebhookQueries(queryClient);
       const context = snapshotWebhookQueries(queryClient);
-      queryClient.setQueryData<readonly InboundWebhook[]>(webhookQueryKeys.inbound, (current) =>
-        optimisticInboundAction(current, action),
-      );
+      patchOverview(queryClient, deliveryLimit, (current) => ({
+        ...current,
+        inbound: optimisticInboundAction(current.inbound, action),
+      }));
       return context;
     },
     onSuccess: async (output, action) => {
@@ -357,9 +418,82 @@ export function WebhookManagement() {
     },
   });
 
-  const outboundWebhooks = outboundQuery.data ?? [];
-  const inboundWebhooks = inboundQuery.data ?? [];
-  const deliveries = deliveriesQuery.data ?? [];
+  /* `webhook.outbound.replay` has existed on the backend since the feature
+     landed with nothing in the UI able to reach it, so a failed delivery was a
+     dead end — the operator could read the error and had no way to act on it. */
+  const replayMutation = useMutation({
+    mutationFn: (deliveryId: string) => replayWebhookDelivery(deliveryId),
+    onMutate: async () => {
+      await cancelWebhookQueries(queryClient);
+      return snapshotWebhookQueries(queryClient);
+    },
+    onSuccess: async (result) => {
+      /* Re-select the replayed row so the detail pane shows the new attempt's
+         response rather than the failure the operator was looking at. */
+      if (result.delivery !== null) {
+        setSelectedDelivery(result.delivery);
+      }
+      await invalidateWebhookQueries(queryClient);
+      toast.success(
+        result.delivery?.status === "delivered" ? "Delivery replayed" : "Replay attempted",
+      );
+    },
+    onError: (error: Error, _deliveryId, context) => {
+      rollbackWebhookQueries(queryClient, context);
+      showError(error);
+    },
+  });
+
+  const outboundWebhooks = overview?.outbound ?? [];
+  const inboundWebhooks = overview?.inbound ?? [];
+  const deliveries = (deliveriesFiltered ? deliveriesQuery.data : overview?.deliveries) ?? [];
+  /* Distinguishing "the list is empty" from "we could not read it" is the whole
+     point of these two, so they track the query that actually produced the
+     rows rather than assuming the overview did. */
+  const deliveriesLoaded = deliveriesFiltered
+    ? deliveriesQuery.data !== undefined
+    : overview !== undefined;
+  const deliveriesLoading = deliveriesFiltered
+    ? deliveriesQuery.isLoading
+    : overviewQuery.isLoading;
+
+  /* Delivery rows name their endpoint by raw UUID. An operator triaging a
+     failure should not have to match a UUID against a table by eye. */
+  const webhookNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const webhook of outboundWebhooks) names.set(webhook.id, webhook.name);
+    for (const webhook of inboundWebhooks) names.set(webhook.id, webhook.name);
+    return names;
+  }, [outboundWebhooks, inboundWebhooks]);
+
+  /* The bar announced itself as a tablist but had no arrow keys and no roving
+     tabindex, so a screen reader heard "tab, 1 of 3" and then got none of the
+     behaviour that promises. Left/Right wrap, Home/End jump to the ends —
+     the same interface as the mail admin tab bar. */
+  const moveTabSelection = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const last = WEBHOOK_TAB_VIEWS.length - 1;
+    const current = WEBHOOK_TAB_VIEWS.findIndex((view) => view.id === activeTab);
+    const nextIndex =
+      event.key === "ArrowRight"
+        ? (current + 1) % WEBHOOK_TAB_VIEWS.length
+        : event.key === "ArrowLeft"
+          ? (current + last) % WEBHOOK_TAB_VIEWS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : null;
+    if (nextIndex === null) {
+      return;
+    }
+    const next = WEBHOOK_TAB_VIEWS[nextIndex];
+    if (next === undefined) {
+      return;
+    }
+    event.preventDefault();
+    setActiveTab(next.id);
+    tabRefs.current[next.id]?.focus();
+  };
 
   return (
     <section className="webhooks-page" aria-labelledby="webhooks-title">
@@ -407,17 +541,17 @@ export function WebhookManagement() {
       <div className="webhooks-summary" aria-label="Webhook summary">
         <SummaryMetric
           label="Outbound"
-          value={outboundQuery.data === undefined ? null : outboundWebhooks.length}
+          value={overview === undefined ? null : outboundWebhooks.length}
         />
         <SummaryMetric
           label="Inbound"
-          value={inboundQuery.data === undefined ? null : inboundWebhooks.length}
+          value={overview === undefined ? null : inboundWebhooks.length}
         />
         <SummaryMetric
           label="Enabled"
           /* Needs both lists: half a total is a wrong number, not a partial one. */
           value={
-            outboundQuery.data === undefined || inboundQuery.data === undefined
+            overview === undefined
               ? null
               : outboundWebhooks.filter((item) => item.enabled).length +
                 inboundWebhooks.filter((item) => item.enabled).length
@@ -426,36 +560,40 @@ export function WebhookManagement() {
         <SummaryMetric
           label="Failed deliveries"
           value={
-            deliveriesQuery.data === undefined
-              ? null
-              : deliveries.filter((item) => item.status === "failed").length
+            !deliveriesLoaded ? null : deliveries.filter((item) => item.status === "failed").length
           }
           tone="danger"
         />
       </div>
 
-      <div className="webhooks-tabs" role="tablist" aria-label="Webhook sections">
-        <TabButton
-          activeTab={activeTab}
-          icon={Webhook}
-          label="Outbound"
-          tab="outbound"
-          setActiveTab={setActiveTab}
-        />
-        <TabButton
-          activeTab={activeTab}
-          icon={Webhook}
-          label="Inbound"
-          tab="inbound"
-          setActiveTab={setActiveTab}
-        />
-        <TabButton
-          activeTab={activeTab}
-          icon={Activity}
-          label="Deliveries"
-          tab="deliveries"
-          setActiveTab={setActiveTab}
-        />
+      <div
+        className="webhooks-tabs"
+        role="tablist"
+        aria-label="Webhook sections"
+        onKeyDown={moveTabSelection}
+      >
+        {WEBHOOK_TAB_VIEWS.map((view) => {
+          const active = view.id === activeTab;
+          return (
+            <button
+              key={view.id}
+              id={webhookTabDomId(view.id)}
+              ref={(node) => {
+                tabRefs.current[view.id] = node;
+              }}
+              aria-controls={webhookPanelDomId(view.id)}
+              aria-selected={active}
+              className={active ? "webhooks-tab active" : "webhooks-tab"}
+              onClick={() => setActiveTab(view.id)}
+              role="tab"
+              tabIndex={active ? 0 : -1}
+              type="button"
+            >
+              <view.icon aria-hidden="true" size={16} />
+              {view.label}
+            </button>
+          );
+        })}
       </div>
 
       {rotatedSecret !== null ? (
@@ -481,13 +619,18 @@ export function WebhookManagement() {
         </div>
       ) : null}
 
-      <QueryErrors errors={[outboundQuery.error, inboundQuery.error, deliveriesQuery.error]} />
+      <QueryErrors errors={[overviewQuery.error, deliveriesQuery.error]} />
 
       {activeTab === "outbound" ? (
-        <div className="webhooks-grid">
+        <div
+          className="webhooks-grid"
+          id={webhookPanelDomId("outbound")}
+          role="tabpanel"
+          aria-labelledby={webhookTabDomId("outbound")}
+        >
           <OutboundTable
-            failed={outboundQuery.data === undefined && !outboundQuery.isLoading}
-            isBusy={outboundQuery.isLoading || outboundActionMutation.isPending}
+            failed={overview === undefined && !overviewQuery.isLoading}
+            isBusy={overviewQuery.isLoading || outboundActionMutation.isPending}
             onAction={(action) => outboundActionMutation.mutate(action)}
             onEdit={(webhook) => setOutboundForm(outboundFormFromWebhook(webhook))}
             pendingDelete={pendingDelete}
@@ -507,10 +650,15 @@ export function WebhookManagement() {
       ) : null}
 
       {activeTab === "inbound" ? (
-        <div className="webhooks-grid">
+        <div
+          className="webhooks-grid"
+          id={webhookPanelDomId("inbound")}
+          role="tabpanel"
+          aria-labelledby={webhookTabDomId("inbound")}
+        >
           <InboundTable
-            failed={inboundQuery.data === undefined && !inboundQuery.isLoading}
-            isBusy={inboundQuery.isLoading || inboundActionMutation.isPending}
+            failed={overview === undefined && !overviewQuery.isLoading}
+            isBusy={overviewQuery.isLoading || inboundActionMutation.isPending}
             onAction={(action) => inboundActionMutation.mutate(action)}
             onEdit={(webhook) => setInboundForm(inboundFormFromWebhook(webhook))}
             pendingDelete={pendingDelete}
@@ -530,14 +678,25 @@ export function WebhookManagement() {
       ) : null}
 
       {activeTab === "deliveries" ? (
-        <DeliveriesPanel
-          deliveries={deliveries}
-          filters={deliveryFilters}
-          isLoading={deliveriesQuery.isLoading}
-          selectedDelivery={selectedDelivery}
-          setFilters={setDeliveryFilters}
-          setSelectedDelivery={setSelectedDelivery}
-        />
+        <div
+          id={webhookPanelDomId("deliveries")}
+          role="tabpanel"
+          aria-labelledby={webhookTabDomId("deliveries")}
+        >
+          <DeliveriesPanel
+            deliveries={deliveries}
+            filters={deliveryFilters}
+            isLoading={deliveriesLoading}
+            selectedDelivery={selectedDelivery}
+            setFilters={setDeliveryFilters}
+            setSelectedDelivery={setSelectedDelivery}
+            webhookNames={webhookNames}
+            onReplay={(deliveryId) => {
+              replayMutation.mutate(deliveryId);
+            }}
+            isReplaying={replayMutation.isPending}
+          />
+        </div>
       ) : null}
     </section>
   );
@@ -592,33 +751,6 @@ function SummaryMetric({
       <span>{label}</span>
       <strong>{unknown ? "—" : value}</strong>
     </div>
-  );
-}
-
-function TabButton({
-  activeTab,
-  icon: Icon,
-  label,
-  tab,
-  setActiveTab,
-}: {
-  readonly activeTab: WebhookTab;
-  readonly icon: LucideIcon;
-  readonly label: string;
-  readonly tab: WebhookTab;
-  readonly setActiveTab: (tab: WebhookTab) => void;
-}) {
-  return (
-    <button
-      aria-selected={activeTab === tab}
-      className={activeTab === tab ? "webhooks-tab active" : "webhooks-tab"}
-      onClick={() => setActiveTab(tab)}
-      role="tab"
-      type="button"
-    >
-      <Icon aria-hidden="true" size={16} />
-      {label}
-    </button>
   );
 }
 
@@ -787,7 +919,7 @@ function OutboundTable({
     <div className="webhooks-panel">
       <PanelTitle title="Outbound webhooks" detail="Helix to external systems" />
       <div className="webhooks-table-wrap" tabIndex={0}>
-        <table className="webhooks-table">
+        <table className="webhooks-table" aria-label="Outbound webhooks">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
@@ -968,7 +1100,7 @@ function InboundTable({
     <div className="webhooks-panel">
       <PanelTitle title="Inbound webhooks" detail="External systems to Helix" />
       <div className="webhooks-table-wrap" tabIndex={0}>
-        <table className="webhooks-table">
+        <table className="webhooks-table" aria-label="Inbound webhooks">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
@@ -1376,6 +1508,32 @@ function InboundForm({
   );
 }
 
+/** The endpoint a delivery belongs to, by name where we know it.
+ *
+ *  Falls back to the id rather than to a dash: a delivery whose endpoint has
+ *  since been deleted still has to be identifiable, and an em dash there would
+ *  read as "no endpoint" when the truth is "an endpoint that no longer exists". */
+function deliveryEndpointLabel(
+  delivery: WebhookDelivery,
+  names: ReadonlyMap<string, string>,
+): string {
+  const id = delivery.outboundWebhookId ?? delivery.inboundWebhookId;
+  if (id === null || id === undefined) {
+    return "—";
+  }
+  return names.get(id) ?? id;
+}
+
+/** Replaying only makes sense for an outbound delivery that did not land: an
+ *  inbound record is what someone else sent us, and re-firing a delivered
+ *  webhook would duplicate an event the receiver already acted on. */
+function canReplayDelivery(delivery: WebhookDelivery): boolean {
+  return (
+    delivery.direction === "outbound" &&
+    (delivery.status === "failed" || delivery.status === "abandoned")
+  );
+}
+
 function DeliveriesPanel({
   deliveries,
   filters,
@@ -1383,6 +1541,9 @@ function DeliveriesPanel({
   selectedDelivery,
   setFilters,
   setSelectedDelivery,
+  webhookNames,
+  onReplay,
+  isReplaying,
 }: {
   readonly deliveries: readonly WebhookDelivery[];
   readonly filters: Required<DeliveryFilterState>;
@@ -1390,6 +1551,10 @@ function DeliveriesPanel({
   readonly selectedDelivery: WebhookDelivery | null;
   readonly setFilters: (filters: Required<DeliveryFilterState>) => void;
   readonly setSelectedDelivery: (delivery: WebhookDelivery | null) => void;
+  /** Endpoint id -> name, so a row can say "Billing sync" instead of a UUID. */
+  readonly webhookNames: ReadonlyMap<string, string>;
+  readonly onReplay: (deliveryId: string) => void;
+  readonly isReplaying: boolean;
 }) {
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const columns = useMemo<ColumnDef<WebhookDelivery>[]>(
@@ -1424,6 +1589,11 @@ function DeliveriesPanel({
         cell: ({ row }) => row.original.direction,
       },
       {
+        id: "endpoint",
+        header: "Endpoint",
+        cell: ({ row }) => deliveryEndpointLabel(row.original, webhookNames),
+      },
+      {
         id: "subject",
         header: "Subject",
         cell: ({ row }) => row.original.eventSubject,
@@ -1444,7 +1614,7 @@ function DeliveriesPanel({
         cell: ({ row }) => formatDate(row.original.createdAt),
       },
     ],
-    [setSelectedDelivery],
+    [setSelectedDelivery, webhookNames],
   );
   const data = useMemo(() => [...deliveries], [deliveries]);
   const table = useReactTable({
@@ -1534,7 +1704,7 @@ function DeliveriesPanel({
           />
         </div>
         <div className="webhooks-table-wrap deliveries" ref={tableWrapRef} tabIndex={0}>
-          <table className="webhooks-table">
+          <table className="webhooks-table" aria-label="Webhook deliveries">
             <thead>
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
@@ -1614,14 +1784,14 @@ function DeliveriesPanel({
       {selectedDelivery !== null ? (
         <aside className="webhooks-editor">
           <EditorTitle
-            mode="edit"
-            title="delivery detail"
+            mode="view"
+            title="Delivery detail"
             onCancel={() => setSelectedDelivery(null)}
           />
           <DetailRow label="ID" value={selectedDelivery.id} />
           <DetailRow
             label="Webhook"
-            value={selectedDelivery.outboundWebhookId ?? selectedDelivery.inboundWebhookId ?? "-"}
+            value={deliveryEndpointLabel(selectedDelivery, webhookNames)}
           />
           <DetailRow label="Direction" value={selectedDelivery.direction} />
           <DetailRow label="Status" value={selectedDelivery.status} />
@@ -1631,6 +1801,35 @@ function DeliveriesPanel({
           />
           <DetailRow label="Payload SHA-256" value={selectedDelivery.payloadSha256 ?? "-"} />
           <DetailRow label="Error" value={selectedDelivery.error ?? "-"} />
+          {canReplayDelivery(selectedDelivery) ? (
+            <div className="webhooks-row-actions">
+              <button
+                className="helix-button"
+                disabled={isReplaying}
+                onClick={() => {
+                  onReplay(selectedDelivery.id);
+                }}
+                type="button"
+              >
+                {isReplaying ? "Replaying…" : "Replay delivery"}
+              </button>
+              <button
+                className="helix-button helix-button-secondary"
+                onClick={() => {
+                  /* Jump straight from one failure to that endpoint's whole
+                     history — the question after "this failed" is almost always
+                     "is it only this one?". */
+                  const id = selectedDelivery.outboundWebhookId;
+                  if (id !== null) {
+                    setFilters({ ...filters, direction: "outbound", webhookId: id, status: "" });
+                  }
+                }}
+                type="button"
+              >
+                Show this endpoint
+              </button>
+            </div>
+          ) : null}
           <pre>
             {JSON.stringify(
               {
@@ -1671,14 +1870,19 @@ function EditorTitle({
   title,
   onCancel,
 }: {
-  readonly mode: "create" | "edit";
+  /** `view` is a read-only pane. It used to reuse `edit`, so the delivery
+   *  detail — which has no editable field on it — was headed "Edit delivery
+   *  detail" and invited the operator to change a historical record. */
+  readonly mode: "create" | "edit" | "view";
   readonly title: string;
   readonly onCancel: () => void;
 }) {
+  const prefix = mode === "create" ? "New " : mode === "edit" ? "Edit " : "";
   return (
     <div className="webhooks-editor-title">
       <h2>
-        {mode === "create" ? "New" : "Edit"} {title}
+        {prefix}
+        {title}
       </h2>
       <button className="icon-button" onClick={onCancel} title="Close editor" type="button">
         <X aria-hidden="true" size={16} />
@@ -1808,15 +2012,25 @@ function EditorSteps<Step extends string>({
   readonly onStepChange: (step: Step) => void;
   readonly steps: readonly { readonly id: Step; readonly label: string }[];
 }) {
+  /* Not a tabset, despite sharing the `.webhooks-tabs` look: these are ordered
+     stages of one form, driven mainly by the Back/Continue/Save footer, and the
+     step body is part of that form rather than a panel owned by the button. It
+     used to claim `role="tab"`/`role="tablist"` with no panels and no keyboard
+     interface, which told a screen reader "tab, 1 of 3" and then delivered
+     none of it. Plain buttons plus `aria-current="step"` describe what this
+     actually is, and they stay in the tab order where a roving tabindex would
+     have hidden them. */
   return (
-    <div className="webhooks-tabs" role="tablist" aria-label={ariaLabel}>
+    <div className="webhooks-tabs" role="group" aria-label={ariaLabel}>
       {steps.map((step) => (
         <button
-          aria-selected={activeStep === step.id}
-          className={activeStep === step.id ? "webhooks-tab active" : "webhooks-tab"}
+          aria-current={activeStep === step.id ? "step" : undefined}
+          /* The app-wide `.tab` look rather than `.webhooks-tab`: the latter
+             marks its current item with `[aria-selected="true"]`, which is only
+             valid on a real tab and is exactly the attribute dropped here. */
+          className={activeStep === step.id ? "tab active" : "tab"}
           key={step.id}
           onClick={() => onStepChange(step.id)}
-          role="tab"
           type="button"
         >
           {step.label}
@@ -2090,24 +2304,36 @@ function isRotateOutput(value: unknown): value is { readonly secretRef: string }
 }
 
 interface WebhookMutationContext {
-  readonly outbound?: readonly OutboundWebhook[];
-  readonly inbound?: readonly InboundWebhook[];
+  /** Every cached overview entry and its key, for an exact rollback. */
+  readonly overviews: readonly (readonly [readonly unknown[], WebhookOverview | undefined])[];
 }
 
 async function cancelWebhookQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  await Promise.all([
-    queryClient.cancelQueries({ queryKey: webhookQueryKeys.outbound }),
-    queryClient.cancelQueries({ queryKey: webhookQueryKeys.inbound }),
-    queryClient.cancelQueries({ queryKey: ["webhooks", "deliveries"] }),
-  ]);
+  /* One prefix: every webhook query lives under ["webhooks", …], including the
+     overview the section now reads. Listing the leaves individually is how the
+     overview would get missed when someone adds the next one. */
+  await queryClient.cancelQueries({ queryKey: ["webhooks"] });
+}
+
+/** Apply an optimistic edit to the single cache entry the section renders. */
+function patchOverview(
+  queryClient: ReturnType<typeof useQueryClient>,
+  deliveryLimit: number,
+  patch: (current: WebhookOverview) => WebhookOverview,
+): void {
+  queryClient.setQueryData<WebhookOverview>(webhookQueryKeys.overview(deliveryLimit), (current) =>
+    patch(current ?? { outbound: [], inbound: [], deliveries: [] }),
+  );
 }
 
 function snapshotWebhookQueries(
   queryClient: ReturnType<typeof useQueryClient>,
 ): WebhookMutationContext {
+  /* Snapshot every overview entry, not one limit's worth: the delivery limit is
+     part of the key, so an operator who changed it would otherwise get an
+     optimistic edit that no rollback could undo. */
   return {
-    outbound: queryClient.getQueryData<readonly OutboundWebhook[]>(webhookQueryKeys.outbound),
-    inbound: queryClient.getQueryData<readonly InboundWebhook[]>(webhookQueryKeys.inbound),
+    overviews: queryClient.getQueriesData<WebhookOverview>({ queryKey: ["webhooks", "overview"] }),
   };
 }
 
@@ -2115,11 +2341,10 @@ function rollbackWebhookQueries(
   queryClient: ReturnType<typeof useQueryClient>,
   context: WebhookMutationContext | undefined,
 ) {
-  if (context?.outbound !== undefined) {
-    queryClient.setQueryData(webhookQueryKeys.outbound, context.outbound);
-  }
-  if (context?.inbound !== undefined) {
-    queryClient.setQueryData(webhookQueryKeys.inbound, context.inbound);
+  for (const [key, data] of context?.overviews ?? []) {
+    if (data !== undefined) {
+      queryClient.setQueryData(key, data);
+    }
   }
 }
 
@@ -2241,11 +2466,7 @@ function optimisticId(prefix: string): string {
 }
 
 async function invalidateWebhookQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: webhookQueryKeys.outbound }),
-    queryClient.invalidateQueries({ queryKey: webhookQueryKeys.inbound }),
-    queryClient.invalidateQueries({ queryKey: ["webhooks", "deliveries"] }),
-  ]);
+  await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
 }
 
 function showError(error: Error) {

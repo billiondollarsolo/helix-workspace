@@ -25,7 +25,8 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AdminOverview } from "@/features/admin/sections/overview";
+import { AdminOverview, prefetchAdminOverviewQueries } from "@/features/admin/sections/overview";
+import { adminOverviewQueryKey } from "@/features/admin/admin-overview-api";
 
 /* ------------------------------------------------------------------ */
 /* Fixtures — the exact payload shapes the clients validate            */
@@ -126,37 +127,59 @@ describe("AdminOverview", () => {
     return input instanceof Request ? input.url : "";
   }
 
-  /** Routes each admin endpoint to its own payload. A `Response` is served as
-   *  given (so a test can hand back a 403), anything else is wrapped as 200
-   *  JSON, and `undefined` means "never answers" — the pending state. */
-  function mockWorkspace(workspace: Workspace) {
-    fetchMock.mockImplementation((input) => {
-      const url = requestUrl(input);
-      const payload = payloadFor(url, workspace);
-      if (payload === undefined) {
-        return new Promise<Response>(() => undefined);
+  /** Serves `GET /api/admin/overview` by composing the same per-source payloads
+   *  the five endpoints used to return.
+   *
+   *  The page reads one request now, but the fixtures stay per source because
+   *  that is what the tests are about: a 403 on policies, a 500 on domains, a
+   *  source that never answers. The server reports each source's own status
+   *  inside one response, so those cases survive the move — which is precisely
+   *  the property worth testing, since a naive aggregate would have collapsed
+   *  all five into a single failure. */
+  async function overviewEnvelope(workspace: Workspace): Promise<unknown> {
+    const signal = async (payload: unknown) => {
+      if (payload instanceof Response) {
+        /* The server reports the source's own message, which is the reason the
+           aggregate keeps a per-signal `reason` at all — a 403 saying why beats
+           a generic "unavailable". */
+        const body = (await payload
+          .clone()
+          .json()
+          .catch(() => ({}))) as { readonly error?: string };
+        return {
+          status: "unavailable",
+          reason: body.error ?? `The service returned HTTP ${String(payload.status)}.`,
+        };
       }
-      return Promise.resolve(payload instanceof Response ? payload : Response.json(payload));
-    });
+      return { status: "ok", data: payload };
+    };
+    return {
+      signals: {
+        domains: await signal(workspace.domains),
+        policies: await signal(workspace.policies),
+        platformConfig: await signal(workspace.platform),
+        directory: await signal(workspace.users),
+        coreApps: await signal(workspace.coreApps),
+      },
+    };
   }
 
-  function payloadFor(url: string, workspace: Workspace): unknown {
-    if (url.includes("/api/admin/domains")) {
-      return workspace.domains;
-    }
-    if (url.includes("/api/admin/security-policies")) {
-      return workspace.policies;
-    }
-    if (url.includes("/api/admin/platform-config")) {
-      return workspace.platform;
-    }
-    if (url.includes("/api/admin/core-apps")) {
-      return workspace.coreApps;
-    }
-    if (url.includes("/api/admin/users")) {
-      return workspace.users;
-    }
-    throw new Error(`Unexpected request in AdminOverview: ${url}`);
+  function mockWorkspace(workspace: Workspace) {
+    fetchMock.mockImplementation(() => {
+      /* `undefined` on any source means "never answers" — with one request that
+         is the whole page pending, which is the state the caller is asking for. */
+      const pending = [
+        workspace.domains,
+        workspace.policies,
+        workspace.platform,
+        workspace.users,
+        workspace.coreApps,
+      ].some((payload) => payload === undefined);
+      if (pending) {
+        return new Promise<Response>(() => undefined);
+      }
+      return overviewEnvelope(workspace).then((body) => Response.json(body));
+    });
   }
 
   /** Polls with real timers — five queries settle over several ticks, so a
@@ -230,11 +253,18 @@ describe("AdminOverview", () => {
     return container.textContent ?? "";
   }
 
-  /** Every card is a `<section>` labelled by its own `<h3>`. */
+  /** Check cards only (not enterprise detail bands). */
+  function checkSections(): readonly HTMLElement[] {
+    return [...container.querySelectorAll<HTMLElement>('section[data-overview-band="check"]')];
+  }
+
+  /** Every check card is a `<section>` labelled by its own `<h3>`. Detail bands
+   *  use the same shape but a different data attribute so helpers stay honest. */
   function card(title: string): HTMLElement {
-    const match = [...container.querySelectorAll("section")].find(
-      (section) => section.querySelector("h3")?.textContent?.trim() === title,
-    );
+    const match = [
+      ...checkSections(),
+      ...container.querySelectorAll<HTMLElement>('section[data-overview-band="detail"]'),
+    ].find((section) => section.querySelector("h3")?.textContent?.trim() === title);
     if (!match) {
       throw new Error(`Card "${title}" not found. Cards: ${cardTitles().join(" | ")}`);
     }
@@ -242,7 +272,7 @@ describe("AdminOverview", () => {
   }
 
   function cardTitles(): readonly string[] {
-    return [...container.querySelectorAll("section h3")].map((h3) => h3.textContent?.trim() ?? "");
+    return checkSections().map((section) => section.querySelector("h3")?.textContent?.trim() ?? "");
   }
 
   function chipFor(title: string): string {
@@ -368,7 +398,17 @@ describe("AdminOverview", () => {
         ],
       },
       platform: {
-        config: { security: { tier: "enterprise" } },
+        config: {
+          security: { tier: "enterprise" },
+          ai: {
+            operatorLlm: {
+              baseUrl: "https://api.openai.com/v1",
+              model: "gpt-4o-mini",
+              apiKeyConfigured: true,
+            },
+            mailSpamAi: { betaEnabled: true },
+          },
+        },
         readiness: { ready: true, requirements: [] },
       },
       users: {
@@ -394,6 +434,18 @@ describe("AdminOverview", () => {
     expect(cardText("Security policies")).toContain(
       "Not runtime-enforced: Single sign-on (SSO), DLP — Data loss prevention",
     );
+
+    // Enterprise detail bands — same payloads, richer operational surface.
+    expect(text()).toContain("Operational detail");
+    expect(cardText("Security & tier")).toContain("Enterprise");
+    expect(cardText("Security & tier")).toContain("Ready");
+    expect(cardText("People & domains")).toContain("2/2 verified");
+    expect(cardText("People & domains")).toContain("2 active, 1 suspended");
+    expect(cardText("App enablement")).toContain("Mail");
+    expect(cardText("AI & mail spam")).toContain("Stored in Admin");
+    expect(cardText("AI & mail spam")).toContain("Enabled (beta)");
+    expect(cardText("AI & mail spam")).toContain("gpt-4o-mini");
+    expect(text()).not.toContain("sk-");
   });
 
   it("marks the directory count as a floor when the API pages", async () => {
@@ -476,38 +528,34 @@ describe("AdminOverview", () => {
   /* The page's own request budget                                     */
   /* ---------------------------------------------------------------- */
 
-  it("does not spend the org's whole per-second request budget in one tick", async () => {
-    const startedAt: number[] = [];
+  it("reads the whole page in one request", async () => {
+    const requested: string[] = [];
     fetchMock.mockImplementation((input) => {
-      startedAt.push(Date.now());
-      const payload = payloadFor(requestUrl(input), CLEAN);
-      return Promise.resolve(payload instanceof Response ? payload : Response.json(payload));
+      requested.push(requestUrl(input));
+      return overviewEnvelope(CLEAN).then((body) => Response.json(body));
     });
     await render();
-
-    // The defect: five checks leaving in the same tick, on top of whatever the
-    // shell is fetching, overran the tenant's 5 rps quota and one came back 429.
-    expect(startedAt).toHaveLength(1);
 
     await waitFor(() => {
       expect(stillChecking()).toEqual([]);
     }, 6000);
 
-    // Paced, not dropped — every check still runs …
-    expect(startedAt).toHaveLength(5);
-    // … and they span more than the limiter's one-second window, so no single
-    // second of the org's budget carries all five.
-    const span = Number(startedAt.at(-1)) - Number(startedAt.at(0));
-    expect(span).toBeGreaterThanOrEqual(750);
+    /* The original defect: five checks leaving in the same tick overran the
+       tenant's 5 rps quota and one came back 429 — on the page whose job is to
+       report on the workspace's health. The client answer was a release queue
+       that spread them over a second; the real answer is not to make five
+       requests. Anything above one here means a section is back to reading its
+       own endpoint and the pacing problem is back with it. */
+    expect(requested).toEqual(["/api/admin/overview"]);
   });
 
   it("treats a 429 as ask-again-later rather than a verdict", async () => {
-    let coreAppAttempts = 0;
+    let attempts = 0;
     fetchMock.mockImplementation((input) => {
       const url = requestUrl(input);
-      if (url.includes("/api/admin/core-apps")) {
-        coreAppAttempts += 1;
-        if (coreAppAttempts === 1) {
+      if (url.includes("/api/admin/overview")) {
+        attempts += 1;
+        if (attempts === 1) {
           // The shape the limiter actually sends: a nested envelope, so the
           // client falls back to its generated "(429)." message.
           return Promise.resolve(
@@ -524,19 +572,20 @@ describe("AdminOverview", () => {
           );
         }
       }
-      const payload = payloadFor(url, CLEAN);
-      return Promise.resolve(payload instanceof Response ? payload : Response.json(payload));
+      return overviewEnvelope(CLEAN).then((body) => Response.json(body));
     });
 
     await render();
 
     await waitFor(() => {
-      expect(coreAppAttempts).toBe(1);
-      expect(stillChecking()).toEqual(["Workspace apps"]);
+      expect(attempts).toBe(1);
     }, 6000);
-    // A check waiting out the limiter is still in flight: it reads as checking,
-    // not as a verdict, and Refresh stays disabled rather than inviting the
-    // operator to fire a second burst into the same limit.
+    /* The page reads one request, so a refusal holds every card rather than one
+       — but the invariant is unchanged and is the point of the test: while a
+       retry is pending nothing claims a verdict. Cards read as checking, the
+       headline withholds "nothing needs attention", and Refresh stays disabled
+       rather than inviting a second burst into the same limit. */
+    expect(stillChecking().length).toBeGreaterThan(0);
     expect(cleanHeading()).toBeNull();
     expect(button("Refreshing…").disabled).toBe(true);
 
@@ -544,7 +593,7 @@ describe("AdminOverview", () => {
       expect(chipFor("Workspace apps")).toBe("Nothing flagged");
     }, 8000);
 
-    expect(coreAppAttempts).toBe(2);
+    expect(attempts).toBe(2);
     expect(figureFor("Workspace apps")).toBe("1/1 app enabled");
     // The regression: `retry: false` made a rate limit permanent, so the front
     // door greeted the operator with a red band about a limit it had tripped
@@ -555,15 +604,12 @@ describe("AdminOverview", () => {
   });
 
   it("still reports a status that retrying cannot fix", async () => {
-    let policyAttempts = 0;
-    fetchMock.mockImplementation((input) => {
-      const url = requestUrl(input);
-      if (url.includes("/api/admin/security-policies")) {
-        policyAttempts += 1;
-        return Promise.resolve(Response.json({}, { status: 500 }));
-      }
-      const payload = payloadFor(url, CLEAN);
-      return Promise.resolve(payload instanceof Response ? payload : Response.json(payload));
+    let attempts = 0;
+    fetchMock.mockImplementation(() => {
+      attempts += 1;
+      return overviewEnvelope({ ...CLEAN, policies: Response.json({}, { status: 500 }) }).then(
+        (body) => Response.json(body),
+      );
     });
 
     await render();
@@ -573,7 +619,7 @@ describe("AdminOverview", () => {
 
     // Only 429 means "ask again later". Retrying a 500 would hide a real fault
     // behind a spinner, so it is asked once and reported.
-    expect(policyAttempts).toBe(1);
+    expect(attempts).toBe(1);
     expect(failureBanner("Security policies").textContent).toContain("HTTP 500");
   });
 
@@ -864,7 +910,9 @@ describe("AdminOverview", () => {
 
     await click(button("Refresh"));
     await waitFor(() => {
-      expect(fetchMock.mock.calls.length).toBe(before + 5);
+      /* One request refreshes every card now — the five it replaced are what
+         made this page trip the tenant's rate limit in the first place. */
+      expect(fetchMock.mock.calls.length).toBe(before + 1);
     });
   });
 
@@ -889,5 +937,44 @@ describe("AdminOverview", () => {
       const previous = levels[index - 1] ?? level;
       expect(level - previous).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe("prefetchAdminOverviewQueries", () => {
+  /* The route loader hands this helper an `ensureQueryData` and nothing else,
+     so the whole contract is observable from a stub. */
+  function ensureQueryDataMock() {
+    return vi.fn<(options: { readonly queryKey: readonly unknown[] }) => Promise<unknown>>();
+  }
+
+  it("warms the whole page in one request", async () => {
+    const ensureQueryData = ensureQueryDataMock().mockResolvedValue(undefined);
+
+    await prefetchAdminOverviewQueries({ ensureQueryData });
+
+    /* Bounded on purpose, and the bound is one — measured, not reasoned.
+       The tenant ceiling is 5 requests/second and a real cold load shows the
+       app shell spending 3 of them (`SHELL_BASELINE_REQUESTS`: /api/core-apps,
+       notifications.unread-count, notifications.list) inside the same 20 ms.
+       With two checks prefetched, both landed in that window and one came back
+       429 — it recovered, because the 429-only retry makes a refusal survivable
+       rather than permanent, but a card that arrives 1.4 s late having been
+       refused is worse than one that waited its turn.
+       Letting this grow back silently rebuilds that burst one layer above where
+       the release schedule can reach it. */
+    expect(ensureQueryData).toHaveBeenCalledTimes(1);
+    expect(ensureQueryData.mock.calls.map(([options]) => options.queryKey)).toEqual([
+      adminOverviewQueryKey,
+    ]);
+  });
+
+  it("resolves even when a warmed query rejects, so a dead check cannot blank the route", async () => {
+    const ensureQueryData = ensureQueryDataMock().mockRejectedValue(
+      new Error("domains unavailable"),
+    );
+
+    await expect(prefetchAdminOverviewQueries({ ensureQueryData })).resolves.toBeUndefined();
+
+    expect(ensureQueryData).toHaveBeenCalledTimes(1);
   });
 });

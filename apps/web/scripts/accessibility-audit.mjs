@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { installAuditSession, routeNeedsSession } from "./a11y-session.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -59,9 +60,30 @@ function routeUrl(baseUrl, routePath) {
   return `${base}${routePath}`;
 }
 
+/* Seed the key the app actually themes off.
+ *
+ * This used to write `helix-color-mode`, which nothing styles from — the theme
+ * lives in `helix-appearance` and is applied to the document as `data-theme`
+ * (see `src/components/settings-store.ts`), and `styles.css` selects on
+ * `[data-theme="dark"]`. So every "dark" pass of this audit was a second light
+ * pass: same tokens, same surfaces, near-identical findings. Dark mode has
+ * never been audited, and the report said it had been — the same shape of false
+ * green as the routes that were silently scanning the login page.
+ *
+ * The whole object is written, not just `theme`, because the store replaces its
+ * state wholesale from this key; a partial write would drop density and font
+ * scale back to defaults and quietly change what is being measured. */
 async function prepareTheme(context, theme) {
   await context.addInitScript((nextTheme) => {
-    window.localStorage.setItem("helix-color-mode", nextTheme);
+    window.localStorage.setItem(
+      "helix-appearance",
+      JSON.stringify({
+        theme: nextTheme,
+        density: "compact",
+        accent: "#7c3aed",
+        fontScale: "default",
+      }),
+    );
   }, theme);
 }
 
@@ -240,12 +262,24 @@ async function collectVisualSmoke(page, route, viewport, theme, rightRail) {
 
       function effectiveBackground(element) {
         let current = element;
-        const white = { r: 255, g: 255, b: 255, a: 1 };
+        /* Blend translucent colours against the page's own background, not
+           against white. Assuming white inverted every alpha calculation in
+           dark mode and produced contrast figures for a page that does not
+           exist. */
+        const pageBackground = parsedColor(
+          window.getComputedStyle(document.documentElement).backgroundColor,
+        ) ??
+          parsedColor(window.getComputedStyle(document.body).backgroundColor) ?? {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 1,
+          };
         while (current instanceof Element) {
           const backgroundValue = window.getComputedStyle(current).backgroundColor;
           const background = parsedColor(backgroundValue);
           if (background !== null && background.a > 0) {
-            return background.a < 1 ? blend(background, white) : background;
+            return background.a < 1 ? blend(background, pageBackground) : background;
           }
           if (
             background === null &&
@@ -422,14 +456,27 @@ async function runAudit(options, config) {
   try {
     for (const viewport of config.viewports) {
       for (const theme of themes) {
+        /* Two contexts per viewport/theme, because the route list spans both
+           sides of the sign-in boundary. Everything behind the shell needs a
+           session — without one it redirects to /login, which is why this audit
+           has been scanning the login page for twenty-odd routes and calling it
+           a pass. `/login` and `/signup` need the opposite: seeding a session
+           there would bounce into the shell and stop auditing the auth screens,
+           which is the same bug pointing the other way. */
         let context;
+        let authedContext;
         try {
-          context = await browser.newContext({
-            colorScheme: theme,
-            reducedMotion: "reduce",
-            viewport: { width: viewport.width, height: viewport.height },
-          });
+          const newContext = () =>
+            browser.newContext({
+              colorScheme: theme,
+              reducedMotion: "reduce",
+              viewport: { width: viewport.width, height: viewport.height },
+            });
+          context = await newContext();
           await prepareTheme(context, theme);
+          authedContext = await newContext();
+          await prepareTheme(authedContext, theme);
+          await installAuditSession(authedContext);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           for (const route of config.routes) {
@@ -454,7 +501,7 @@ async function runAudit(options, config) {
         for (const route of config.routes) {
           let page;
           try {
-            page = await context.newPage();
+            page = await (routeNeedsSession(route.path) ? authedContext : context).newPage();
             const url = routeUrl(options.baseUrl, route.path);
             await page.goto(url, { timeout: 45_000, waitUntil: "domcontentloaded" });
             await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
@@ -462,7 +509,14 @@ async function runAudit(options, config) {
             const rightRail = options.visualSmoke
               ? await openRightRail(page)
               : { present: false, opened: false };
-            const shouldRunAxe = theme === "light";
+            /* Both themes. axe used to run in light only, so dark mode was
+               checked by nothing at all: the hand-written contrast parser below
+               deliberately bails on `oklch()` (the accent and several surfaces
+               are authored in it) on the grounds that "axe handles them
+               correctly" — which was true, and irrelevant, because axe was never
+               asked. Dark is not a re-skin: it has its own foreground tokens,
+               its own surfaces, and its own contrast failures. */
+            const shouldRunAxe = true;
             const result = shouldRunAxe
               ? await page.addScriptTag({ content: axeCore.default.source }).then(() =>
                   page.evaluate(async () => {
@@ -544,6 +598,7 @@ async function runAudit(options, config) {
         }
 
         await context.close().catch(() => {});
+        await authedContext?.close().catch(() => {});
       }
     }
   } finally {

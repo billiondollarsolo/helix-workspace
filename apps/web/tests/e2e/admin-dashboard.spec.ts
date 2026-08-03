@@ -12,6 +12,12 @@ interface BackendCall {
   readonly pathname: string;
 }
 
+/** The admin sidebar. Scoped because the "related pages" chips inside a
+ *  section are real links too, so an unscoped role=link query can match twice. */
+function adminNav(page: Page) {
+  return page.getByRole("navigation", { name: "Administration" });
+}
+
 test.describe("/admin dashboard", () => {
   test("renders mocked admin evidence with bearer-authenticated backend calls", async ({
     page,
@@ -28,20 +34,22 @@ test.describe("/admin dashboard", () => {
 
     await page.goto("/admin");
 
-    await page.getByRole("button", { name: "Audit log", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "Audit log", exact: true }).click();
     await expect(page.getByRole("region", { name: "Audit log" })).toBeVisible();
     await expect(page.getByRole("table", { name: "Audit log" })).toContainText("tool.invoked");
     await expect(page.getByRole("table", { name: "Audit log" })).toContainText(
       "source: playwright",
     );
 
-    await page.getByRole("button", { name: "Users", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "Users", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
     await expect(page.getByText("E2E Admin", { exact: true })).toBeVisible();
     await expect(page.getByText("admin-e2e@example.test", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Agent credentials", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "OAuth client credentials" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "Agent credentials", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Agent credentials", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByRole("table", { name: "Agent credentials" })).toContainText(
       "agent-client-e2e",
     );
@@ -49,29 +57,40 @@ test.describe("/admin dashboard", () => {
       "admin.agents",
     );
 
-    await page.getByRole("button", { name: "App passwords", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Scoped app access" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "App passwords", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "App passwords", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByRole("table", { name: "App passwords" })).toContainText(
       "Calendar sync e2e",
     );
     await expect(page.getByRole("table", { name: "App passwords" })).toContainText("caldav");
 
-    await page.getByRole("button", { name: "Tier readiness", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Security tier readiness" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "Tier readiness", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Tier readiness", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByText("Live platform config connected").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "Business platform state" })).toBeVisible();
     await expect(page.getByText("Audit destinations").first()).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Install permissions prompt" })).toBeVisible();
+    /* The plugin catalog moved behind a tab in the tier-readiness restructure;
+       this spec predates it. */
+    await page.getByRole("tab", { name: "Plugins" }).click();
+    await expect(page.getByRole("heading", { name: "Catalog and install" })).toBeVisible();
     await expect(page.getByRole("table", { name: "Plugin catalog" })).toContainText(
       "Evidence Plugin",
     );
 
-    await page.getByRole("button", { name: "AI observability", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "AI observability" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "Observability", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Observability", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByText("30 day retention").first()).toBeVisible();
 
-    await page.getByRole("button", { name: "Services", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Admin services" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "Services", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Services", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByRole("table", { name: "Admin services" })).toContainText("Mail");
     await expect(page.getByRole("table", { name: "Admin services" })).toContainText(
       "com.helix.core.mail",

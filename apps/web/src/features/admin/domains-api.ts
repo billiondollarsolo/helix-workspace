@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /**
  * Admin Console — Domain & DNS client.
@@ -102,10 +103,9 @@ export const domainsQueryKeys = {
 
 export function domainsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: domainsQueryKeys.domains(),
     queryFn: () => fetchDomains(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 
@@ -114,11 +114,10 @@ export function dnsRecordsQueryOptions(
   fetchImpl: AuthFetch = authenticatedFetch,
 ) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: domainsQueryKeys.dnsRecords(domainId ?? ""),
     queryFn: () => fetchDnsRecords(domainId ?? "", fetchImpl),
     enabled: domainId !== null,
-    retry: false,
-    throwOnError: false,
   });
 }
 

@@ -5,6 +5,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppPasswordsManagement } from "./app-passwords-management";
+import { withAdminRouter } from "@/features/admin/console/test-router";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -378,7 +379,7 @@ describe("AppPasswordsManagement", () => {
         createElement(
           QueryClientProvider,
           { client: queryClient },
-          createElement(AppPasswordsManagement),
+          withAdminRouter(createElement(AppPasswordsManagement)),
         ),
       );
     });

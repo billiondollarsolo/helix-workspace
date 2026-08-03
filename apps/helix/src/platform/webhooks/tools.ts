@@ -65,7 +65,23 @@ const outboundReplaySchema = z
 const deliveryListSchema = z.object({
   direction: z.enum(webhookDirections).optional(),
   status: z.enum(webhookDeliveryStatuses).optional(),
+  /* Narrow the log to a single endpoint. Triaging one failing endpoint used to
+     mean reading a stream that interleaves every endpoint in the workspace. */
+  outboundWebhookId: uuidSchema.optional(),
+  inboundWebhookId: uuidSchema.optional(),
   limit: z.coerce.number().int().positive().max(500).default(100),
+});
+
+/* The console's Webhooks section reads all three lists on every load. As three
+   separate tool calls that is three of the tenant's five requests per second
+   (`api_rps_limit`), on top of the two the app shell always spends — so the
+   section reliably tripped the limiter and rendered "Webhook API unavailable:
+   Tenant API request rate limit exceeded" instead of its content, with
+   `retry: false` making the refusal stick until the operator hit Refresh.
+   One call for the whole page removes the class of problem rather than pacing
+   around it. */
+const overviewSchema = z.object({
+  deliveryLimit: z.coerce.number().int().positive().max(500).default(100),
 });
 
 const emptyObjectSchema = z.object({});
@@ -298,6 +314,29 @@ export function registerWebhookTools(
         serializeDelivery,
       ),
     }),
+  });
+
+  registerTool(registry, {
+    id: "webhook.overview",
+    description: "Read outbound endpoints, inbound receivers and recent deliveries in one call.",
+    permission: "admin.webhooks",
+    sideEffects: "read",
+    inputSchema: zodToolSchema(overviewSchema, genericObjectJsonSchema),
+    outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+    handler: async (input, ctx) => {
+      /* Concurrent, not sequential: this is one request against the tenant's
+         rate limit either way, and the three reads are independent. */
+      const [outbound, inbound, deliveries] = await Promise.all([
+        options.store.listOutbound(ctx.actor.orgId),
+        options.store.listInbound(ctx.actor.orgId),
+        options.store.listDeliveries({ orgId: ctx.actor.orgId, limit: input.deliveryLimit }),
+      ]);
+      return {
+        outbound: outbound.map(serializeOutbound),
+        inbound: inbound.map(serializeInbound),
+        deliveries: deliveries.map(serializeDelivery),
+      };
+    },
   });
 }
 

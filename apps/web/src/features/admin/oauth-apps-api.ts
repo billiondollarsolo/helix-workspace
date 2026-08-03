@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /**
  * Admin Console — OAuth apps client.
@@ -98,10 +99,9 @@ export function oauthAppsQueryOptions(
   fetchImpl: AuthFetch = authenticatedFetch,
 ) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: oauthAppsQueryKeys.list(input),
     queryFn: () => fetchOAuthApps(input, fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 

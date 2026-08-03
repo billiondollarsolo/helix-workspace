@@ -4,7 +4,9 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import { useAdminSectionSearch } from "@/features/admin/admin-section-search";
 import {
+  SECURITY_POLICY_TYPES,
   securityPoliciesQueryKeys,
   securityPoliciesQueryOptions,
   securityPolicyGroup,
@@ -16,15 +18,30 @@ import {
   type SecurityPolicyType,
   type SsoTestLoginResponse,
 } from "@/features/admin/security-policies-api";
+import { AdminField, AdminSelect } from "@/features/admin/console/controls";
 import {
   EmptyState,
-  INPUT_STYLE,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
   StateBanner,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
+
+/* Structural rather than importing `QueryClient`: the route loader only ever
+   hands this helper an `ensureQueryData`, and typing it that way keeps the
+   section free of a router/query-client dependency it does not otherwise have. */
+interface AdminPoliciesRouteQueryClient {
+  ensureQueryData(options: ReturnType<typeof securityPoliciesQueryOptions>): Promise<unknown>;
+}
+
+/** Warms the exact key `AdminPolicies` mounts, so the section's first request
+ *  leaves while its chunk is still downloading. Failures are swallowed: the
+ *  mounted `useQuery` re-reports them through `QueryFailureBanner`, and a
+ *  rejected loader would blank the route over a fetch the page can recover. */
+export async function prefetchAdminPoliciesQuery(queryClient: AdminPoliciesRouteQueryClient) {
+  await queryClient.ensureQueryData(securityPoliciesQueryOptions()).catch(() => undefined);
+}
 
 /* ------------------------------------------------------------------ */
 /* Security                                                           */
@@ -133,59 +150,57 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
 
   return (
     <form
-      style={{ marginTop: 12, display: "grid", gap: 10 }}
+      className="mt-3 grid gap-2.5"
       onSubmit={(event) => {
         event.preventDefault();
         onSubmit({ enabled, enforcement });
       }}
     >
-      <label className="row gap-2" style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
+      <label className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
         <input
           type="checkbox"
+          className="accent-[var(--accent)]"
           aria-label={`Enable ${securityPolicyLabels[policy.policyType]}`}
           checked={enabled}
           onChange={(event) => setEnabled(event.target.checked)}
-          style={{ accentColor: "var(--accent)" }}
         />
         Policy enabled
       </label>
-      <label style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
-        Enforcement
-        <select
+      {/* The accessible name keeps the policy in it: every card on this page
+          shows a control captioned "Enforcement", and a screen reader moving
+          between them would otherwise hear the same name six times. */}
+      <AdminField label="Enforcement">
+        <AdminSelect
           aria-label={`Enforcement for ${securityPolicyLabels[policy.policyType]}`}
           value={enforcement === "required" && requiredUnavailable ? "optional" : enforcement}
           onChange={(event) => setEnforcement(event.target.value as PolicyEnforcement)}
-          style={{ ...INPUT_STYLE, width: "100%", marginTop: 4 }}
         >
           <option value="disabled">Disabled</option>
           <option value="optional">Optional</option>
           {requiredUnavailable ? null : <option value="required">Required</option>}
-        </select>
-      </label>
+        </AdminSelect>
+      </AdminField>
       {requiredUnavailable ? (
-        <p style={{ margin: 0, fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
+        <p className="m-0 text-[var(--text-3)] [font-size:var(--text-meta)]">
           Required is unavailable until Helix enforces this control at runtime.
         </p>
       ) : null}
       {policy.policyType === "sso" ? (
-        <label
-          className="row gap-2"
-          style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}
-        >
+        <label className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
           <input
             type="checkbox"
+            className="accent-[var(--accent)]"
             aria-label="Local email/password login enabled"
             checked
             disabled
             readOnly
-            style={{ accentColor: "var(--accent)" }}
           />
           Local email/password login remains enabled
         </label>
       ) : null}
       {/* Save is this card's single filled button; Cancel and the card's own
           Edit/Test controls stay outlined beside it. */}
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+      <div className="flex justify-end gap-2">
         <Button type="button" size="sm" variant="outline" onClick={onCancel}>
           Cancel
         </Button>
@@ -197,10 +212,20 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
   );
 }
 
+function policyTypeFromSearch(value: string | undefined): SecurityPolicyType | null {
+  return value !== undefined && (SECURITY_POLICY_TYPES as readonly string[]).includes(value)
+    ? (value as SecurityPolicyType)
+    : null;
+}
+
 export function AdminSecurity() {
   const queryClient = useQueryClient();
   const policiesQuery = useQuery(securityPoliciesQueryOptions());
-  const [editing, setEditing] = useState<SecurityPolicyType | null>(null);
+  const { search, patchSearch } = useAdminSectionSearch("policies");
+  const editing = policyTypeFromSearch(search.policy);
+  const setEditing = (policyType: SecurityPolicyType | null) => {
+    patchSearch({ policy: policyType ?? undefined });
+  };
   const [ssoTestResult, setSsoTestResult] = useState<SsoTestLoginResponse | null>(null);
 
   const updateMutation = useMutation({
@@ -307,7 +332,7 @@ export function AdminSecurity() {
       )}
 
       {policiesFailure !== null ? null : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div className="grid gap-4 lg:grid-cols-2">
           {POLICY_GROUPS.map((label) => (
             <section key={label} aria-labelledby={POLICY_GROUP_HEADING_ID[label]}>
               <h2 className="mb-2 text-sm font-semibold" id={POLICY_GROUP_HEADING_ID[label]}>
@@ -335,27 +360,10 @@ export function AdminSecurity() {
                 const isEditing = editing === policy.policyType;
                 const settingsSummary = policySettingsSummary(policy);
                 return (
-                  <div
-                    key={policy.policyType}
-                    className="panel"
-                    style={{ padding: 16, marginBottom: 12 }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: 12,
-                      }}
-                    >
-                      <div style={{ flex: 1 }}>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            marginBottom: 4,
-                          }}
-                        >
+                  <div key={policy.policyType} className="panel mb-3 p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1">
+                        <div className="mb-1 flex items-center gap-2">
                           {/* h3 under the column's h2 — one card is one policy,
                               and its name is the only thing identifying it. */}
                           <h3 className="m-0 font-semibold [font-size:var(--text-body)]">
@@ -370,10 +378,7 @@ export function AdminSecurity() {
                             nothing, so the row renders only when there is a
                             setting to describe. */}
                         {settingsSummary.length === 0 ? null : (
-                          <div
-                            className="row gap-2"
-                            style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}
-                          >
+                          <div className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
                             <Icons.Key /> {settingsSummary}
                           </div>
                         )}
@@ -392,9 +397,7 @@ export function AdminSecurity() {
                             : `Edit ${securityPolicyLabels[policy.policyType]}`
                         }
                         onClick={() =>
-                          setEditing((current) =>
-                            current === policy.policyType ? null : policy.policyType,
-                          )
+                          setEditing(editing === policy.policyType ? null : policy.policyType)
                         }
                       >
                         {isEditing ? "Close" : "Edit"}
@@ -445,17 +448,10 @@ export function AdminSecurity() {
  * the policy would render a value that has exactly one possible state. */
 function LocalLoginSecurityCard() {
   return (
-    <div className="panel" style={{ padding: 16, marginBottom: 12 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-        <div style={{ flex: 1 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginBottom: 4,
-            }}
-          >
+    <div className="panel mb-3 p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex-1">
+          <div className="mb-1 flex items-center gap-2">
             <h3 className="m-0 font-semibold [font-size:var(--text-body)]">
               Local email/password login
             </h3>
@@ -464,10 +460,7 @@ function LocalLoginSecurityCard() {
               Enabled
             </span>
           </div>
-          <div
-            className="row gap-2"
-            style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}
-          >
+          <div className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
             <Icons.Lock /> Owner/admin recovery path; SSO is additive.
           </div>
         </div>

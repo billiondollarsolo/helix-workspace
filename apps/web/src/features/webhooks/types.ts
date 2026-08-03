@@ -1,6 +1,7 @@
 export type WebhookDirection = "outbound" | "inbound";
 
-export type WebhookDeliveryStatus = "pending" | "in_progress" | "delivered" | "failed" | "abandoned";
+export type WebhookDeliveryStatus =
+  "pending" | "in_progress" | "delivered" | "failed" | "abandoned";
 
 export interface OutboundWebhook {
   readonly id: string;

@@ -76,6 +76,47 @@ export function PageScroll({ children }: { children: ReactNode }) {
   );
 }
 
+/** What the console shows while a section's chunk is still in flight.
+ *
+ *  Replaces `<Suspense fallback={null}>`, whose comment claimed "the chunk
+ *  resolves in a tick on a local network" — true locally, false over any real
+ *  link, where the whole content pane went white between the click and the
+ *  first paint. Two visible transitions per navigation, the first of which
+ *  reads as a broken page.
+ *
+ *  Deliberately page-*shaped* rather than a spinner: it holds the geometry the
+ *  real page will occupy (heading block, then panel bars at the standard row
+ *  height), so content arriving does not shift the layout. `aria-hidden` with a
+ *  sibling live region — the bars are decoration, and the thing worth
+ *  announcing is "loading", once. */
+export function SectionSkeleton() {
+  return (
+    <div className="admin-page">
+      <div className="admin-page-inner">
+        <span className="sr-only" role="status">
+          Loading section…
+        </span>
+        <div className="admin-skeleton" aria-hidden="true">
+          <div className="admin-skeleton-title" />
+          <div className="admin-skeleton-subtitle" />
+          <div className="admin-skeleton-panel">
+            <div className="admin-skeleton-row" />
+            <div className="admin-skeleton-row" />
+            <div className="admin-skeleton-row" />
+            <div className="admin-skeleton-row" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Id of the page `<h1>`. Exactly one `PageHeading` renders per admin page, so
+ *  a constant is safe — and it lets a section name its own landmark from the
+ *  heading rather than repeating the title in an `aria-label` that can drift
+ *  away from what is on screen. */
+export const ADMIN_PAGE_TITLE_ID = "admin-page-title";
+
 export function PageHeading({
   title,
   subtitle,
@@ -92,7 +133,7 @@ export function PageHeading({
       <div className="admin-page-header-row">
         {/* Always h1: this is the page for `/admin/<section>`, and sections
             previously started at h1, h2, or h3 depending on their vintage. */}
-        <h1>{title}</h1>
+        <h1 id={ADMIN_PAGE_TITLE_ID}>{title}</h1>
         {meta}
         {actions ? <div className="admin-page-actions">{actions}</div> : null}
       </div>

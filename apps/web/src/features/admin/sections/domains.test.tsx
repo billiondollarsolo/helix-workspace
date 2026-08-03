@@ -334,6 +334,46 @@ describe("AdminDomain — deleting a domain", () => {
     expect(dialogText()).toContain("This is the workspace's primary domain");
   });
 
+  /* The DNS list was a CSS-grid pseudo-table: a stack of anonymous divs that a
+     screen reader announced as nothing at all. */
+  it("renders DNS records as a named table with real rows", async () => {
+    await renderWith([
+      {
+        domain: apiDomain(),
+        dnsRecords: [apiDnsRecord("rec-1"), apiDnsRecord("rec-2", { recordType: "SPF" })],
+      },
+    ]);
+
+    const table = container.querySelector<HTMLTableElement>(
+      'table[aria-label="DNS records for helix.io"]',
+    );
+    if (!table) {
+      throw new Error("DNS records table not found");
+    }
+    expect([...table.querySelectorAll("thead th")].map((cell) => cell.textContent)).toEqual([
+      "Type",
+      "Host",
+      "Value",
+      "Status",
+      "Verify record",
+    ]);
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(2);
+  });
+
+  it("says why a domain has no DNS records rather than showing a blank table", async () => {
+    await renderWith([{ domain: apiDomain(), dnsRecords: [] }]);
+
+    const table = container.querySelector<HTMLTableElement>(
+      'table[aria-label="DNS records for helix.io"]',
+    );
+    // An empty table body with no explanation reads as a broken panel — and
+    // "no records" here means the deployment has no public mail hostname, not
+    // that the request failed.
+    expect(table?.querySelector("tbody")?.textContent ?? "").toContain(
+      "HELIX_MAIL_PUBLIC_HOSTNAME",
+    );
+  });
+
   it("cancelling leaves the domain in place", async () => {
     await renderWith([{ domain: apiDomain(), dnsRecords: [] }]);
 

@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /**
  * Admin Console — Chat retention, legal hold, and organization export.
@@ -237,10 +238,9 @@ export function chatRetentionQueryOptions(
   fetchImpl: AuthFetch = authenticatedFetch,
 ) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: chatAdminQueryKeys.retention(roomId),
     queryFn: () => getChatRetentionPolicy(roomId === undefined ? {} : { roomId }, fetchImpl),
-    retry: false,
-    throwOnError: false,
     staleTime: 15_000,
   });
 }

@@ -13,6 +13,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
 import { parseResponse } from "./mail-admin-api";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /** `pending` → `verified` → `active`, with `disabled` reachable from `active`.
  *  Only `active` accepts mail; `verified` means ownership is proven but the
@@ -54,10 +55,9 @@ export const receivingDomainQueryKeys = {
 
 export function receivingDomainsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: receivingDomainQueryKeys.all(),
     queryFn: () => fetchReceivingDomains(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 

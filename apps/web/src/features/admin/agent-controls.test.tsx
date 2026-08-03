@@ -5,6 +5,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentOperationalControls } from "./agent-controls-api";
+import { withAdminRouter } from "@/features/admin/console/test-router";
 
 const { getAgentOperationalControls, setAgentOperationalControls } = vi.hoisted(() => ({
   getAgentOperationalControls: vi.fn<() => Promise<AgentOperationalControls>>(),
@@ -166,7 +167,7 @@ describe("AgentControlsManagement", () => {
         createElement(
           QueryClientProvider,
           { client: queryClient },
-          createElement(AgentControlsManagement),
+          withAdminRouter(createElement(AgentControlsManagement)),
         ),
       );
       return Promise.resolve();

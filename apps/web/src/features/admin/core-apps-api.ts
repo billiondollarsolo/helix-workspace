@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /**
  * Core-app enablement client.
@@ -128,21 +129,19 @@ export const coreAppsQueryKeys = {
 /** Query options for the shell's enabled-app set. */
 export function coreAppsShellQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: coreAppsQueryKeys.shell(),
     queryFn: () => fetchCoreAppsShellStatus(fetchImpl),
-    retry: false,
     staleTime: 60_000,
-    throwOnError: false,
   });
 }
 
 export function coreAppsAdminQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: coreAppsQueryKeys.admin(),
     queryFn: () => fetchCoreAppsAdminStatus(fetchImpl),
-    retry: false,
     staleTime: 30_000,
-    throwOnError: false,
   });
 }
 

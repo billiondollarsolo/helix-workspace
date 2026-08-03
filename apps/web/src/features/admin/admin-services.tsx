@@ -17,6 +17,7 @@ import {
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, CircleAlert, CircleDashed, CircleHelp, PlugZap } from "lucide-react";
 import { useMemo, useState } from "react";
+import { ADMIN_QUERY_DEFAULTS, ADMIN_STALE_TIME } from "@/features/admin/console/request-budget";
 
 export type AdminServiceStatus = "ready" | "configured" | "missing" | "degraded" | "disabled";
 /** The API only ever reports a graded status; "unknown" is this page's reading
@@ -98,9 +99,19 @@ export const adminServicesQueryKey = ["admin", "services"] as const;
 
 export function adminServicesQueryOptions() {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: adminServicesQueryKey,
     queryFn: fetchAdminServices,
-    throwOnError: false,
+    staleTime: ADMIN_STALE_TIME.volatile,
+    /* Nothing on the event bus publishes service health — `service-status.ts`
+       computes its counters (pendingOutbox and friends) from live SQL on each
+       request, and no emitter fires when they move. So this is the one surface
+       where polling is not a fallback but the only honest mechanism: a status
+       page that only refreshes when you navigate to it will show green through
+       an outage for as long as the operator leaves it open.
+       Delete this interval when a `platform.service_health.*` subject exists
+       and `use-admin-realtime.ts` subscribes to it. */
+    refetchInterval: 15_000,
   });
 }
 
@@ -139,7 +150,7 @@ export function AdminServicesOverview() {
       {/* The catalog's own h2 sits below this h1, and the per-service detail
           below that, so the page reads as one heading chain. */}
       <PageHeading
-        title="Admin services"
+        title="Services"
         subtitle="Runtime service surface, dependencies, routes, scopes, tools, and operations."
         meta={
           servicesQuery.data === undefined ? undefined : (

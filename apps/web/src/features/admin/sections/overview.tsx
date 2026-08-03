@@ -25,19 +25,19 @@
  * back 429, and because every admin `queryOptions` in this app sets
  * `retry: false`, that refusal was permanent until the operator clicked Retry.
  * The console's front door was raising a red alarm about a limit it had
- * tripped itself, on every cold load. Hence `CHECK_RELEASE_INTERVAL_MS` and
- * `RATE_LIMIT_*` below. Both live here rather than in the shared clients:
- * a section that opens one request is not the cause, and loosening `retry`
- * for every caller would hide real faults on every other surface.
+ * tripped itself, on every cold load. The pacing and the 429-only retry that
+ * fixed it now live in `console/request-budget.ts` and apply to every admin
+ * section, because this page was only where the problem was *found*, not the
+ * only page that has it. The retry there is still 429-only: loosening `retry`
+ * generally would hide real faults on every other surface.
  *
  * Coverage. Five checks against the live admin section catalog. `CoverageNote` says so on
  * every load and in every state, because the way a status page does real
  * damage is an operator reading a quiet one as a checked workspace. */
 
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import { useQueuer } from "@tanstack/react-pacer";
-import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,31 +46,11 @@ import {
   ADMIN_SECTION_IDS,
   type AdminSectionId,
 } from "@/features/admin/admin-console-data";
-import {
-  adminUsersQueryKeys,
-  adminUsersQueryOptions,
-  type AdminUsersListResponse,
-} from "@/features/admin/admin-users";
-import {
-  coreAppsAdminQueryOptions,
-  coreAppsQueryKeys,
-  type CoreAppsAdminStatus,
-} from "@/features/admin/core-apps-api";
-import {
-  domainsQueryKeys,
-  domainsQueryOptions,
-  type DomainWithRecords,
-} from "@/features/admin/domains-api";
-import {
-  securityPoliciesQueryKeys,
-  securityPoliciesQueryOptions,
-  securityPolicyLabels,
-  type SecurityPolicy,
-} from "@/features/admin/security-policies-api";
-import {
-  adminPlatformConfigQueryKey,
-  adminPlatformConfigQueryOptions,
-} from "@/features/admin/tier-readiness/api";
+import { type AdminUsersListResponse } from "@/features/admin/admin-users";
+import { type CoreAppsAdminStatus } from "@/features/admin/core-apps-api";
+import { type DomainWithRecords } from "@/features/admin/domains-api";
+import { securityPolicyLabels, type SecurityPolicy } from "@/features/admin/security-policies-api";
+import {} from "@/features/admin/tier-readiness/api";
 import { titleForTier } from "@/features/admin/tier-readiness/format";
 import type { PlatformConfigStatus } from "@/features/admin/tier-readiness/types";
 import {
@@ -82,90 +62,23 @@ import {
   useQueryFailure,
   type QueryFailure,
 } from "@/features/admin/console/primitives";
+import {
+  adminOverviewQueryKey,
+  adminOverviewQueryOptions,
+  type AdminOverviewSignalData,
+  type AdminOverviewSignalName,
+} from "@/features/admin/admin-overview-api";
 
-/* ------------------------------------------------------------------ */
-/* Request budget                                                     */
-/* ------------------------------------------------------------------ */
+/* Re-exported so the console's section registry (`console/section-loaders.ts`)
+   and this section's tests keep finding it on the module that owns the page. */
+export { prefetchAdminOverviewQueries } from "@/features/admin/admin-overview-api";
 
-const CHECK_COUNT = 5;
-
-/* One release every 250ms puts at most four of the five checks inside any
-   one-second window, so this page cannot on its own exhaust the org's 5 rps
-   budget — the spare slot is what the shell and the rest of the app are
-   fetching alongside it. The cost is paid only by a genuinely cold console:
-   a disabled query still serves whatever is already in the cache, so a check
-   whose section has been visited renders immediately and never waits its
-   turn. */
-const CHECK_RELEASE_INTERVAL_MS = 250;
-
-/* 429 is the one status where retrying is the correct client behaviour: it
-   means "ask again later", and the limiter's window is a single second, so a
-   check that waits it out gets a real answer. Every other status is reported
-   to the operator instead — auto-retrying a 403 or a 500 only hides a real
-   fault behind a spinner. Three attempts, then the banner. */
-const RATE_LIMIT_RETRIES = 3;
-const RATE_LIMIT_BACKOFF_MS = 1_100;
-const RATE_LIMIT_JITTER_MS = 400;
-
-/* These clients throw plain `Error`s, so an HTTP status only survives in the
-   message tail — `… (429).` from the schema-validating clients, `… with 429`
-   from the hand-rolled ones. A backend `error` string ("Permission denied.")
-   carries no trailing number and correctly does not match, which is why this
-   only ever *adds* a retry and never suppresses a reported failure. */
-const TRAILING_STATUS = /\(?(\d{3})\)?\.?\s*$/u;
-
-function isRateLimited(error: Error): boolean {
-  return TRAILING_STATUS.exec(error.message)?.[1] === "429";
-}
-
-/* Jittered, because checks refused in the same second must not come back in
-   the same second either — that synchronised burst is what earned the refusal
-   in the first place. */
-function rateLimitBackoff(failureCount: number): number {
-  return RATE_LIMIT_BACKOFF_MS * 2 ** failureCount + Math.random() * RATE_LIMIT_JITTER_MS;
-}
-
-/** What each check adds on top of the section's own `queryOptions`: its place
- *  in the release order, and retry-on-429-only. */
-function checkOptions(released: number, order: number) {
-  return {
-    enabled: order < released,
-    retry: (failureCount: number, error: Error) =>
-      failureCount < RATE_LIMIT_RETRIES && isRateLimited(error),
-    retryDelay: rateLimitBackoff,
-  };
-}
-
-/** Releases the checks one at a time and reports how many may start.
- *
- *  The queue owns its timer and is stopped when the page unmounts, so
- *  navigating away mid-release cannot leave requests firing at a page nobody
- *  is on (house rule `helix/pacer-discipline`: scheduled work goes through
- *  Pacer, never a bare `setTimeout`). */
-function useReleaseSchedule(count: number): number {
-  const [released, setReleased] = useState(0);
-  const queue = useQueuer<number>(
-    (order) => {
-      /* Idempotent in `order`: React remounts effects in development, so the
-         same release can be enqueued twice and must not skip a check or count
-         one twice. */
-      setReleased((current) => Math.max(current, order + 1));
-    },
-    { wait: CHECK_RELEASE_INTERVAL_MS },
-  );
-
-  useEffect(() => {
-    /* The unmount half of that development remount stops the queue, so a
-       re-entered effect has to start it again or the remaining checks never
-       leave. */
-    queue.start();
-    for (let order = 0; order < count; order += 1) {
-      queue.addItem(order);
-    }
-  }, [count, queue]);
-
-  return released;
-}
+/* The pacing that used to live here is gone with the requests it paced.
+   Overview read five endpoints and released them one at a time so the burst
+   could not exhaust the tenant's five-per-second budget; the server now serves
+   all five readings in one response (`admin-overview-api.ts`), so there is
+   nothing to stagger. `console/request-budget.ts` still owns the shared 429
+   policy for every other section. */
 
 /* ------------------------------------------------------------------ */
 /* Signal model                                                       */
@@ -496,45 +409,60 @@ function CoverageNote({ coverage }: { readonly coverage: Coverage }) {
    is also what makes the suspended count answerable at all. If
    `sections/users.tsx` changes its page size these silently stop sharing:
    the figures stay correct, the request stops being free. */
-const DIRECTORY_QUERY_INPUT = { includeDisabled: true, limit: 250 } as const;
-
+/* Structural rather than importing `QueryClient`: the route loader only ever
+   hands this helper an `ensureQueryData`, and typing it that way keeps the
+   section free of a router/query-client dependency it does not otherwise have. */
 export function AdminOverview() {
   const queryClient = useQueryClient();
 
-  /* Release order is card order, so a cold page fills left to right rather
-     than in whatever order the network happens to answer. */
-  const released = useReleaseSchedule(CHECK_COUNT);
+  /* One request for the whole page. This used to be five — the five endpoints
+     the cards read — released one at a time by a queue so they would not
+     exhaust the tenant's five-per-second budget in a single tick. The server
+     fans out instead now (`GET /api/admin/overview`), so there is nothing left
+     to pace and the page no longer throttles itself on its own front door. */
+  const overviewQuery = useQuery(adminOverviewQueryOptions());
+  const overview = overviewQuery.data;
 
-  const domainsQuery = useQuery({ ...domainsQueryOptions(), ...checkOptions(released, 0) });
-  const policiesQuery = useQuery({
-    ...securityPoliciesQueryOptions(),
-    ...checkOptions(released, 1),
-  });
-  const platformQuery = useQuery({
-    ...adminPlatformConfigQueryOptions(),
-    ...checkOptions(released, 2),
-  });
-  const directoryQuery = useQuery({
-    ...adminUsersQueryOptions(DIRECTORY_QUERY_INPUT),
-    ...checkOptions(released, 3),
-  });
-  const coreAppsQuery = useQuery({ ...coreAppsAdminQueryOptions(), ...checkOptions(released, 4) });
+  const retryOverview = () => {
+    void queryClient.invalidateQueries({ queryKey: adminOverviewQueryKey });
+  };
+
+  /* Per signal, not per request. The aggregate reports each source's own
+     status, so one dead endpoint still leaves the other four cards accurate —
+     the property five separate requests provided for free, and the one a naive
+     aggregate would have destroyed.
+
+     `useQueryFailure` wants something query-shaped, so each signal is adapted
+     into one: a transport failure fails every card, a per-signal `unavailable`
+     fails only its own. */
+  const signalOf = <Name extends AdminOverviewSignalName>(name: Name) => {
+    const signal = overview?.[name];
+    const reason = signal?.status === "unavailable" ? signal.reason : null;
+    return {
+      /* `signals` is a record of differently-typed payloads, so indexing it with
+         a generic key widens to their union. The cast narrows back to the one
+         this name actually carries — `AdminOverview` is the single place that
+         mapping is declared. */
+      data: signal?.status === "ok" ? (signal.data as AdminOverviewSignalData<Name>) : undefined,
+      error: overviewQuery.error ?? (reason === null ? null : new Error(reason)),
+      isSuccess: signal?.status === "ok",
+      isFetching: overviewQuery.isFetching,
+    };
+  };
+
+  const domainsQuery = signalOf("domains");
+  const policiesQuery = signalOf("policies");
+  const platformQuery = signalOf("platformConfig");
+  const directoryQuery = signalOf("directory");
+  const coreAppsQuery = signalOf("coreApps");
 
   /* Invalidate the shared key rather than the local observer's refetch, so a
      recovery here also un-sticks the section that owns the data. */
-  const invalidate = (queryKey: QueryKey) => () => void queryClient.invalidateQueries({ queryKey });
-
-  const domainsFailure = useQueryFailure(domainsQuery, invalidate(domainsQueryKeys.domains()));
-  const policiesFailure = useQueryFailure(
-    policiesQuery,
-    invalidate(securityPoliciesQueryKeys.list()),
-  );
-  const platformFailure = useQueryFailure(platformQuery, invalidate(adminPlatformConfigQueryKey));
-  const directoryFailure = useQueryFailure(
-    directoryQuery,
-    invalidate(adminUsersQueryKeys.list(DIRECTORY_QUERY_INPUT)),
-  );
-  const coreAppsFailure = useQueryFailure(coreAppsQuery, invalidate(coreAppsQueryKeys.admin()));
+  const domainsFailure = useQueryFailure(domainsQuery, retryOverview);
+  const policiesFailure = useQueryFailure(policiesQuery, retryOverview);
+  const platformFailure = useQueryFailure(platformQuery, retryOverview);
+  const directoryFailure = useQueryFailure(directoryQuery, retryOverview);
+  const coreAppsFailure = useQueryFailure(coreAppsQuery, retryOverview);
 
   const signals: readonly Signal[] = [
     toSignal(
@@ -614,27 +542,15 @@ export function AdminOverview() {
 
   const queries = [domainsQuery, policiesQuery, platformQuery, directoryQuery, coreAppsQuery];
   const isRefreshing = queries.some((query) => query.isFetching);
-  /* Deliberately not paced. This burst is one the operator asked for and is
-     watching, the button stays disabled across the whole thing (a query in
-     429 backoff still reports `isFetching`), and pacing it would blink that
-     button between waves. The retry above is what keeps a refused refresh from
-     becoming a red banner. */
-  const refreshAll = () => {
-    for (const queryKey of [
-      domainsQueryKeys.domains(),
-      securityPoliciesQueryKeys.list(),
-      adminPlatformConfigQueryKey,
-      adminUsersQueryKeys.list(DIRECTORY_QUERY_INPUT),
-      coreAppsQueryKeys.admin(),
-    ]) {
-      void queryClient.invalidateQueries({ queryKey });
-    }
-  };
+  /* One request, so there is no burst left to pace — this used to fan five
+     invalidations out at once and rely on the 429 retry to survive its own
+     refresh. */
+  const refreshAll = retryOverview;
 
   return (
     <PageScroll>
       <PageHeading
-        title="Workspace overview"
+        title="Overview"
         subtitle="Live status from the sections below — Overview stores nothing of its own."
         actions={
           <Button
@@ -680,6 +596,96 @@ export function AdminOverview() {
         {signals.map((signal) => (
           <SignalCard key={signal.id} signal={signal} />
         ))}
+      </div>
+
+      {/* Enterprise detail bands reuse the same five query payloads — no extra
+          rps. Partial / failed queries stay labeled unavailable, never green. */}
+      <h2 className="mt-6 mb-2" style={HEADER_CELL}>
+        Operational detail
+      </h2>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <EnterpriseDetailBand
+          title="Security & tier"
+          section="tier-readiness"
+          linkLabel="Open Tier readiness"
+          tone={signals.find((s) => s.id === "platform")?.tone ?? "checking"}
+        >
+          {platformFailure !== null ? (
+            <p className="m-0 text-xs text-[var(--text-2)]">
+              Tier readiness could not be read — see the banner above.
+            </p>
+          ) : platformQuery.data === undefined ? (
+            <p className="m-0 text-xs text-[var(--text-2)]">Reading platform configuration…</p>
+          ) : (
+            <SecurityTierDetail status={platformQuery.data} />
+          )}
+        </EnterpriseDetailBand>
+
+        <EnterpriseDetailBand
+          title="People & domains"
+          section="users"
+          linkLabel="Open Users"
+          tone={
+            domainsFailure !== null || directoryFailure !== null
+              ? "unavailable"
+              : domainsQuery.data === undefined || directoryQuery.data === undefined
+                ? "checking"
+                : signals.find((s) => s.id === "domains")?.tone === "attention" ||
+                    signals.find((s) => s.id === "directory")?.tone === "attention"
+                  ? "attention"
+                  : "clear"
+          }
+        >
+          {domainsFailure !== null || directoryFailure !== null ? (
+            <p className="m-0 text-xs text-[var(--text-2)]">
+              Directory or domains could not be read — see the banner above.
+            </p>
+          ) : domainsQuery.data === undefined || directoryQuery.data === undefined ? (
+            <p className="m-0 text-xs text-[var(--text-2)]">Reading people and domains…</p>
+          ) : (
+            <PeopleDomainsDetail domains={domainsQuery.data} directory={directoryQuery.data} />
+          )}
+        </EnterpriseDetailBand>
+
+        <EnterpriseDetailBand
+          title="App enablement"
+          section="workspace-apps"
+          linkLabel="Open Workspace apps"
+          tone={signals.find((s) => s.id === "apps")?.tone ?? "checking"}
+        >
+          {coreAppsFailure !== null ? (
+            <p className="m-0 text-xs text-[var(--text-2)]">
+              Workspace apps could not be read — see the banner above.
+            </p>
+          ) : coreAppsQuery.data === undefined ? (
+            <p className="m-0 text-xs text-[var(--text-2)]">Reading workspace apps…</p>
+          ) : (
+            <WorkspaceAppsDetail status={coreAppsQuery.data} />
+          )}
+        </EnterpriseDetailBand>
+
+        <EnterpriseDetailBand
+          title="AI & mail spam"
+          section="ai-providers"
+          linkLabel="Open AI providers"
+          tone={
+            platformFailure !== null
+              ? "unavailable"
+              : platformQuery.data === undefined
+                ? "checking"
+                : "clear"
+          }
+        >
+          {platformFailure !== null ? (
+            <p className="m-0 text-xs text-[var(--text-2)]">
+              AI config is part of platform-config and could not be read.
+            </p>
+          ) : platformQuery.data === undefined ? (
+            <p className="m-0 text-xs text-[var(--text-2)]">Reading AI configuration…</p>
+          ) : (
+            <AiMailDetail status={platformQuery.data} />
+          )}
+        </EnterpriseDetailBand>
       </div>
 
       {/* Rare detail: an operator acting on a figure needs the figure, not its
@@ -855,12 +861,193 @@ function describeGap(unavailable: number, checking: number): string | null {
 /* Signal card                                                         */
 /* ------------------------------------------------------------------ */
 
+function EnterpriseDetailBand({
+  title,
+  section,
+  linkLabel,
+  tone,
+  children,
+}: {
+  readonly title: string;
+  readonly section: AdminSectionId;
+  readonly linkLabel: string;
+  readonly tone: SignalTone;
+  readonly children: ReactNode;
+}) {
+  const headingId = `admin-overview-detail-${section}`;
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="panel p-4 flex flex-col gap-3"
+      data-overview-band="detail"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h3 id={headingId} className="m-0 text-sm font-semibold">
+          {title}
+        </h3>
+        <span className={`${TONE_CHIP[tone]} shrink-0`}>{TONE_LABEL[tone]}</span>
+      </div>
+      <div className="min-w-0 flex-1">{children}</div>
+      <div>
+        <Button asChild size="xs" variant="outline">
+          <Link to="/admin/$section" params={{ section }}>
+            {linkLabel}
+          </Link>
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function SecurityTierDetail({ status }: { readonly status: PlatformConfigStatus }) {
+  const tier = titleForTier(status.config.security.tier);
+  const unmet = countUnmetRequirements(status.readiness.requirements);
+  const requirementLines = status.readiness.requirements
+    .filter(
+      (requirement: unknown): requirement is { readonly key?: string; readonly status?: string } =>
+        typeof requirement === "object" && requirement !== null,
+    )
+    .filter((requirement) => requirement.status === "missing" || requirement.status === "degraded")
+    .map((requirement) => String(requirement.key ?? "requirement"))
+    .slice(0, 6);
+
+  return (
+    <dl className="m-0 grid gap-1 text-xs">
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Security tier</dt>
+        <dd className="m-0 font-medium">{tier}</dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Readiness</dt>
+        <dd className="m-0 font-medium">{status.readiness.ready ? "Ready" : "Not ready"}</dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Unmet requirements</dt>
+        <dd className="m-0 font-medium tabular-nums">{String(unmet)}</dd>
+      </div>
+      {requirementLines.length === 0 ? null : (
+        <p className="m-0 mt-1 text-[var(--text-2)]">Attention: {nameList(requirementLines, 4)}.</p>
+      )}
+    </dl>
+  );
+}
+
+function PeopleDomainsDetail({
+  domains,
+  directory,
+}: {
+  readonly domains: readonly DomainWithRecords[];
+  readonly directory: AdminUsersListResponse;
+}) {
+  const verified = domains.filter((it) => it.domain.verificationStatus === "verified").length;
+  const pending = domains.filter((it) => it.domain.verificationStatus === "pending").length;
+  const failed = domains.filter((it) => it.domain.verificationStatus === "failed").length;
+  const suspended = directory.users.filter((user) => user.disabledAt !== null).length;
+  const active = directory.users.length - suspended;
+  const domainNames = domains.map((it) => it.domain.domain);
+
+  return (
+    <dl className="m-0 grid gap-1 text-xs">
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Domains</dt>
+        <dd className="m-0 font-medium tabular-nums">
+          {String(verified)}/{String(domains.length)} verified
+        </dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Verification queue</dt>
+        <dd className="m-0 font-medium tabular-nums">
+          {String(pending)} pending, {String(failed)} failed
+        </dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Directory (this page)</dt>
+        <dd className="m-0 font-medium tabular-nums">
+          {String(active)} active, {String(suspended)} suspended
+          {directory.nextCursor !== null ? " +" : ""}
+        </dd>
+      </div>
+      {domainNames.length === 0 ? null : (
+        <p className="m-0 mt-1 text-[var(--text-2)]">Registered: {nameList(domainNames, 4)}.</p>
+      )}
+    </dl>
+  );
+}
+
+function WorkspaceAppsDetail({ status }: { readonly status: CoreAppsAdminStatus }) {
+  const enabled = status.apps.filter((app) => app.enabled).map((app) => app.name);
+  const disabled = status.apps.filter((app) => !app.enabled).map((app) => app.name);
+  return (
+    <dl className="m-0 grid gap-1 text-xs">
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Enabled</dt>
+        <dd className="m-0 font-medium">{enabled.length === 0 ? "None" : nameList(enabled, 6)}</dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Disabled</dt>
+        <dd className="m-0 font-medium">
+          {disabled.length === 0 ? "None" : nameList(disabled, 6)}
+        </dd>
+      </div>
+      <p className="m-0 mt-1 text-[var(--text-2)]">
+        Org-wide enablement only — a node may still not serve an enabled app.
+      </p>
+    </dl>
+  );
+}
+
+function AiMailDetail({ status }: { readonly status: PlatformConfigStatus }) {
+  const ai = status.config.ai;
+  const key =
+    ai?.operatorLlm?.apiKeyConfigured === true ? "Stored in Admin" : "Not stored (env may apply)";
+  const model = ai?.operatorLlm?.model?.trim() || "Not set in Admin";
+  const base = ai?.operatorLlm?.baseUrl?.trim() || "Not set in Admin";
+  const spam =
+    ai?.mailSpamAi?.betaEnabled === true
+      ? "Enabled (beta)"
+      : ai?.mailSpamAi?.betaEnabled === false
+        ? "Disabled in Admin"
+        : "Unset (env default)";
+
+  return (
+    <dl className="m-0 grid gap-1 text-xs">
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Operator API key</dt>
+        <dd className="m-0 font-medium">{key}</dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Model</dt>
+        <dd className="m-0 max-w-[12rem] truncate font-medium" title={model}>
+          {model}
+        </dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Base URL</dt>
+        <dd className="m-0 max-w-[12rem] truncate font-medium" title={base}>
+          {base}
+        </dd>
+      </div>
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--text-2)]">Mail spam AI</dt>
+        <dd className="m-0 font-medium">{spam}</dd>
+      </div>
+      <p className="m-0 mt-1 text-[var(--text-2)]">
+        Configure under AI → AI providers. Cost limits and observability stay separate.
+      </p>
+    </dl>
+  );
+}
+
 function SignalCard({ signal }: { readonly signal: Signal }) {
   const headingId = `admin-overview-${signal.id}`;
   return (
-    <section aria-labelledby={headingId} className="panel p-3 flex flex-col gap-2">
+    <section
+      aria-labelledby={headingId}
+      className="panel p-3 flex flex-col gap-2"
+      data-overview-band="check"
+    >
       <div className="flex items-start gap-2">
-        <span className="text-[var(--text-3)] mt-0.5 shrink-0">{signal.icon}</span>
+        <span className="text-[var(--text-2)] mt-0.5 shrink-0">{signal.icon}</span>
         <h3 id={headingId} className="m-0 min-w-0 text-sm font-semibold">
           {signal.title}
         </h3>
@@ -873,7 +1060,7 @@ function SignalCard({ signal }: { readonly signal: Signal }) {
       <div className="flex flex-wrap items-center gap-2">
         <p className="m-0 flex items-baseline gap-2">
           <span className="text-2xl font-semibold tabular-nums leading-none">{signal.figure}</span>
-          <span className="text-xs text-[var(--text-3)]">{signal.caption}</span>
+          <span className="text-xs text-[var(--text-2)]">{signal.caption}</span>
         </p>
         <span className={`${TONE_CHIP[signal.tone]} ml-auto shrink-0`}>
           {TONE_LABEL[signal.tone]}
@@ -889,7 +1076,7 @@ function SignalCard({ signal }: { readonly signal: Signal }) {
           renders the same string the band counted, so the two cannot drift. */}
       {signal.attention === null ? null : (
         <p className="m-0 text-xs">
-          <span className="text-[var(--text-3)]">Counted above: </span>
+          <span className="text-[var(--text-2)]">Counted above: </span>
           {signal.attention}
         </p>
       )}

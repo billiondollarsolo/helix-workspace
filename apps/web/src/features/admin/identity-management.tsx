@@ -40,6 +40,21 @@ const CHECKBOX_LABEL_CLASS = "flex min-h-8 items-center gap-2 text-sm";
    field for two OIDC fields, and a fixed grid leaves a hole behind. */
 const FIELD_GRID_CLASS = "grid gap-3 grid-cols-[repeat(auto-fit,minmax(180px,1fr))]";
 
+/* Structural rather than importing `QueryClient`: the route loader only ever
+   hands this helper an `ensureQueryData`, and typing it that way keeps the
+   section free of a router/query-client dependency it does not otherwise have. */
+interface AdminIdentityRouteQueryClient {
+  ensureQueryData(options: ReturnType<typeof adminIdentityQueryOptions>): Promise<unknown>;
+}
+
+/** Warms the exact key `IdentityManagement` mounts, so the section's first
+ *  request leaves while its chunk is still downloading. Failures are swallowed:
+ *  the mounted `useQuery` re-reports them through `QueryFailureBanner`, and a
+ *  rejected loader would blank the route over a fetch the page can recover. */
+export async function prefetchAdminIdentityQuery(queryClient: AdminIdentityRouteQueryClient) {
+  await queryClient.ensureQueryData(adminIdentityQueryOptions()).catch(() => undefined);
+}
+
 export function IdentityManagement() {
   const queryClient = useQueryClient();
   const identityQuery = useQuery(adminIdentityQueryOptions());
@@ -171,7 +186,7 @@ export function IdentityManagement() {
   return (
     <>
       <PageHeading
-        title="Identity"
+        title="Identity & SSO"
         subtitle="Local recovery, tenant IdPs, and provisioning entry points"
       />
 

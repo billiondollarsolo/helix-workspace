@@ -59,6 +59,11 @@ const mailProvidersResponseSchema = z.object({
   providers: z.array(mailProviderSchema),
 });
 
+/** Single-provider writes answer with the record wrapped in a `provider` key. */
+const mailProviderEnvelopeSchema = z.object({
+  provider: mailProviderSchema,
+});
+
 export type MailProvidersResponse = z.infer<typeof mailProvidersResponseSchema>;
 
 export interface CreateMailProviderInput {
@@ -91,6 +96,11 @@ const dkimKeySchema = z.object({
 });
 
 export type DkimKey = z.infer<typeof dkimKeySchema>;
+
+/** DKIM key writes answer with the key wrapped in a `key` envelope. */
+const dkimKeyEnvelopeSchema = z.object({
+  key: dkimKeySchema,
+});
 
 const sendingDomainSchema = z.object({
   id: z.string(),
@@ -137,12 +147,36 @@ const deliverabilitySchema = z.object({
 
 export type Deliverability = z.infer<typeof deliverabilitySchema>;
 
+/**
+ * The wire shape is deliberately looser than `deliverabilitySchema`.
+ *
+ * The backend stores DMARC aggregate reports at report granularity — total,
+ * pass, fail as evaluated by DMARC alignment — so it can back the DMARC pass
+ * rate but not the per-mechanism SPF/DKIM rates, which exist only in the
+ * per-record rows. It also has nothing to say when no reports have arrived.
+ * Rather than have the server invent numbers to satisfy this schema, an
+ * incomplete summary is treated as no summary: the header cards are dropped, not
+ * filled with rates nothing measured. If the backend later aggregates
+ * record-level results, the fields simply arrive and the cards appear.
+ */
+const dmarcSummaryWireSchema = z.object({
+  dmarcPassRate: z.number().nullish(),
+  spfPassRate: z.number().nullish(),
+  dkimPassRate: z.number().nullish(),
+  messagesEvaluated: z.number().int().nullish(),
+  windowDays: z.number().int().nullish(),
+});
+
 const dmarcResponseSchema = z.object({
-  summary: deliverabilitySchema,
+  summary: dmarcSummaryWireSchema.nullish(),
   reports: z.array(dmarcReportSchema),
 });
 
-export type DmarcResponse = z.infer<typeof dmarcResponseSchema>;
+export interface DmarcResponse {
+  /** `null` when the server could not state every rate the header reports. */
+  readonly summary: Deliverability | null;
+  readonly reports: readonly DmarcReport[];
+}
 
 // ---------------------------------------------------------------------------
 // Inbound routing rules
@@ -196,6 +230,22 @@ const spamSettingsResponseSchema = z.object({
   daemonStatus: z.enum(["running", "stopped", "unknown"]),
   rulesetVersion: z.string().nullish(),
   taggedLast24h: z.number().int().nullish(),
+  /** Present on current API; optional for older servers. */
+  spamd: z
+    .object({
+      enabled: z.boolean(),
+      host: z.string().nullable(),
+      port: z.number().nullable(),
+    })
+    .optional(),
+  aiBeta: z
+    .object({
+      enabled: z.boolean(),
+      model: z.string(),
+      baseUrl: z.string(),
+      apiKeyConfigured: z.boolean(),
+    })
+    .optional(),
 });
 
 export type SpamSettingsResponse = z.infer<typeof spamSettingsResponseSchema>;
@@ -281,7 +331,8 @@ export async function createMailProvider(
     headers: jsonHeaders,
     body: JSON.stringify(input),
   });
-  return parseResponse(response, "create mail provider", mailProviderSchema);
+  const payload = await parseResponse(response, "create mail provider", mailProviderEnvelopeSchema);
+  return payload.provider;
 }
 
 export async function patchMailProvider(
@@ -294,18 +345,33 @@ export async function patchMailProvider(
     headers: jsonHeaders,
     body: JSON.stringify(input),
   });
-  return parseResponse(response, "update mail provider", mailProviderSchema);
+  const payload = await parseResponse(response, "update mail provider", mailProviderEnvelopeSchema);
+  return payload.provider;
 }
 
+/**
+ * Promote a provider to the org default.
+ *
+ * There is no `/set-default` endpoint — this used to POST to one, and every
+ * click 404'd. Default is a field on the provider, and the patch route already
+ * moves the flag (and demotes the incumbent) transactionally, so this is that
+ * route with one field set rather than a second way to express the same write.
+ */
 export async function setDefaultMailProvider(
   id: string,
   fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<MailProvidersResponse> {
-  const response = await fetchImpl(
-    `/api/admin/mail/providers/${encodeURIComponent(id)}/set-default`,
-    { method: "POST", headers: jsonHeaders },
+): Promise<MailProvider> {
+  const response = await fetchImpl(`/api/admin/mail/providers/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify({ isDefault: true }),
+  });
+  const payload = await parseResponse(
+    response,
+    "set default mail provider",
+    mailProviderEnvelopeSchema,
   );
-  return parseResponse(response, "set default mail provider", mailProvidersResponseSchema);
+  return payload.provider;
 }
 
 // ---------------------------------------------------------------------------
@@ -319,16 +385,22 @@ export async function fetchSendingDomains(
   return parseResponse(response, "load sending domains", sendingDomainsResponseSchema);
 }
 
+/* Returns nothing on purpose. The create route answers `201 { domain }` with a
+   raw store record — only the list route joins in spf/dkim/dmarc/dkimKeys — so
+   parsing a `SendingDomain` out of it failed on every successful create and
+   told the operator "Failed to add sending domain: malformed response." after
+   the domain had in fact been added. The sole caller discards the value and
+   invalidates the list, which is where the joined record lives. */
 export async function createSendingDomain(
   domain: string,
   fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<SendingDomain> {
+): Promise<void> {
   const response = await fetchImpl("/api/admin/mail/sending-domains", {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify({ domain }),
   });
-  return parseResponse(response, "add sending domain", sendingDomainSchema);
+  await ensureOk(response, "add sending domain");
 }
 
 export async function deleteSendingDomain(
@@ -341,26 +413,51 @@ export async function deleteSendingDomain(
   await ensureOk(response, "delete sending domain");
 }
 
+/**
+ * Issue this domain's first DKIM signing key.
+ *
+ * No `selector` is sent: it must be unique among the domain's selectors for as
+ * long as any of them exists, so choosing one means reading the existing keys
+ * first — from the browser a list-then-generate pair that races other admins and
+ * spends two of the tenant's five requests per second. The server picks it, the
+ * same way rotation does, and answers with the key alone.
+ */
 export async function generateDkimKey(
   domainId: string,
   fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<SendingDomain> {
+): Promise<DkimKey> {
   const response = await fetchImpl(
     `/api/admin/mail/sending-domains/${encodeURIComponent(domainId)}/dkim`,
-    { method: "POST", headers: jsonHeaders },
+    // Fastify rejects an empty body under a JSON content-type, so send `{}`.
+    { method: "POST", headers: jsonHeaders, body: JSON.stringify({}) },
   );
-  return parseResponse(response, "generate DKIM key", sendingDomainSchema);
+  const payload = await parseResponse(response, "generate DKIM key", dkimKeyEnvelopeSchema);
+  return payload.key;
 }
 
+/**
+ * Rotate this domain's DKIM signing key: a fresh key becomes active and the
+ * incumbent drops to `retiring`, staying published in DNS until mail already
+ * signed with it has been delivered. Retiring that old key is a separate,
+ * deliberate step (`/dkim/:keyId/retire`) — pulling it here would break DKIM on
+ * in-flight messages.
+ *
+ * This is one server call rather than a client-side list-then-generate pair:
+ * the new selector has to be unique among the domain's existing selectors, and
+ * choosing it in the browser both races other admins and spends two of the
+ * tenant's five requests per second.
+ */
 export async function rotateDkimKey(
   domainId: string,
   fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<SendingDomain> {
+): Promise<DkimKey> {
   const response = await fetchImpl(
     `/api/admin/mail/sending-domains/${encodeURIComponent(domainId)}/dkim/rotate`,
-    { method: "POST", headers: jsonHeaders },
+    // Fastify rejects an empty body under a JSON content-type, so send `{}`.
+    { method: "POST", headers: jsonHeaders, body: JSON.stringify({}) },
   );
-  return parseResponse(response, "rotate DKIM key", sendingDomainSchema);
+  const payload = await parseResponse(response, "rotate DKIM key", dkimKeyEnvelopeSchema);
+  return payload.key;
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +468,20 @@ export async function fetchMailDmarc(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<DmarcResponse> {
   const response = await fetchImpl("/api/admin/mail/dmarc", { method: "GET" });
-  return parseResponse(response, "load DMARC reports", dmarcResponseSchema);
+  const wire = await parseResponse(response, "load DMARC reports", dmarcResponseSchema);
+  /* Re-parsing normalises the loose wire shape into the one the UI reads:
+     the fields the server must state (DMARC rate, window, message count) are
+     required, and the two it cannot yet aggregate arrive as null. */
+  const summary = deliverabilitySchema.safeParse(
+    wire.summary === null || wire.summary === undefined
+      ? null
+      : {
+          ...wire.summary,
+          spfPassRate: wire.summary.spfPassRate ?? null,
+          dkimPassRate: wire.summary.dkimPassRate ?? null,
+        },
+  );
+  return { summary: summary.success ? summary.data : null, reports: wire.reports };
 }
 
 // ---------------------------------------------------------------------------

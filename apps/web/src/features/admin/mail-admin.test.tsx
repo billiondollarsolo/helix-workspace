@@ -4,10 +4,31 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MailAdminSection } from "./mail-admin";
+import {
+  DEFAULT_MAIL_SUBVIEW,
+  MailAdminSection,
+  mailAdminSearchForSubview,
+  mailSubviewFromSearch,
+} from "./mail-admin";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
+
+const navigateMock = vi.fn();
+const routerMocks = {
+  search: {} as { tab?: string },
+};
+
+vi.mock("@tanstack/react-router", async () => {
+  const actual =
+    await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+    useSearch: () => routerMocks.search,
+    useParams: () => ({ section: "mail" }),
+  };
+});
 
 const providersPayload = {
   providers: [
@@ -249,6 +270,26 @@ describe("MailAdminSection", () => {
       configurable: true,
       value: { getItem: vi.fn(() => null), removeItem: vi.fn(), setItem: vi.fn() },
     });
+    routerMocks.search = {};
+    navigateMock.mockReset();
+    navigateMock.mockImplementation(
+      async (opts: { search?: (prev: Record<string, unknown>) => Record<string, unknown> }) => {
+        if (typeof opts.search === "function") {
+          routerMocks.search = opts.search({ ...routerMocks.search });
+        }
+        // Re-render so useSearch() reflects the new `?tab=` (real router would).
+        await act(async () => {
+          root.render(
+            createElement(
+              QueryClientProvider,
+              { client: queryClient },
+              createElement(MailAdminSection),
+            ),
+          );
+          await Promise.resolve();
+        });
+      },
+    );
   });
 
   afterEach(() => {
@@ -259,6 +300,19 @@ describe("MailAdminSection", () => {
     container.remove();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  describe("mailSubviewFromSearch / mailAdminSearchForSubview", () => {
+    it("defaults unknown or missing tab to providers", () => {
+      expect(mailSubviewFromSearch(undefined)).toBe(DEFAULT_MAIL_SUBVIEW);
+      expect(mailSubviewFromSearch("not-a-tab")).toBe("providers");
+      expect(mailSubviewFromSearch("spam")).toBe("spam");
+    });
+
+    it("omits default tab from the URL search fragment", () => {
+      expect(mailAdminSearchForSubview("providers")).toEqual({});
+      expect(mailAdminSearchForSubview("spam")).toEqual({ tab: "spam" });
+    });
   });
 
   it("renders outbound providers from the admin API by default", async () => {
@@ -282,6 +336,35 @@ describe("MailAdminSection", () => {
         requestUrlOf(call[0]).includes("/api/admin/mail/providers"),
       ),
     ).toBe(true);
+  });
+
+  it("opens the spam tab from ?tab=spam and deep-links tab clicks into the URL", async () => {
+    routerMocks.search = { tab: "spam" };
+    const fetchMock = routedFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await render(createElement(MailAdminSection));
+
+    await waitFor(() => {
+      expect(activeTabLabel()).toBe("Spam filtering");
+      expect(container.textContent).toMatch(/spamd|Filtering|threshold/i);
+    });
+    expect(
+      fetchMock.mock.calls.some((call) => requestUrlOf(call[0]).includes("/api/admin/mail/spam")),
+    ).toBe(true);
+
+    await clickButton("Routing rules");
+    expect(navigateMock).toHaveBeenCalled();
+    const last = navigateMock.mock.calls.at(-1)?.[0] as {
+      to: string;
+      params: { section: string };
+      search: (prev: Record<string, unknown>) => Record<string, unknown>;
+    };
+    expect(last.to).toBe("/admin/$section");
+    expect(last.params).toEqual({ section: "mail" });
+    expect(last.search({})).toEqual({ tab: "routing" });
+    // Default tab drops `tab` so the share URL stays clean.
+    expect(last.search({ tab: "spam" })).toEqual({ tab: "routing" });
   });
 
   it("posts a new provider with kind-specific config", async () => {
@@ -461,9 +544,10 @@ describe("MailAdminSection", () => {
     await clickButton("Spam filtering");
 
     await waitFor(() => {
-      expect(container.textContent).toContain("spamd daemon");
+      expect(container.textContent).toContain("Spam threshold");
+      expect(container.textContent).toContain("Filtering on");
     });
-    expect(container.textContent).toContain("Spam threshold");
+    expect(container.textContent).toContain("SpamAssassin (spamd)");
     expect(container.textContent).toContain("running");
     expect(container.textContent).toContain("Reject threshold");
   });
@@ -633,9 +717,9 @@ describe("MailAdminSection", () => {
     await clickButton("Spam filtering");
 
     await waitFor(() => {
-      expect(container.textContent).toContain("spamd daemon");
+      expect(container.textContent).toContain("Ruleset Unknown");
+      expect(container.textContent).toContain("SpamAssassin (spamd)");
     });
-    expect(container.textContent).toContain("Ruleset Unknown");
     /* Reject threshold, ruleset version and the tagged counter are all absent
        from this payload; each has to read as unknown, not as a dash or a zero. */
     expect(container.textContent?.match(/Unknown/g)?.length ?? 0).toBeGreaterThanOrEqual(3);

@@ -2749,7 +2749,14 @@ export class PostgresDriveStore
     event: Omit<StorageQuotaExceededEvent, "bucket" | "quota">,
   ): void {
     void this.options.events
+      /* `orgId` was accepted and never published, which made this envelope
+         indistinguishable from a platform-global one. Now that `/events/ws`
+         filters delivery by the subscriber's org (platform/events/routes.ts),
+         an unmarked org-scoped event is dropped for everyone — so omitting it
+         silently disabled the admin console's Drive liveness rather than
+         leaking it. */
       ?.publish("quota.storage.exceeded", {
+        orgId,
         quota: "storage_bytes_limit",
         bucket: "drive",
         ...event,

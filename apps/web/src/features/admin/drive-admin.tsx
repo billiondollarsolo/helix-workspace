@@ -6,12 +6,12 @@
  * disable controls with an explicit reason — never a silent no-op.
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { AdminField, AdminInput } from "@/features/admin/console/controls";
 import {
-  INPUT_STYLE,
   PageHeading,
   QueryFailureBanner,
   StateBanner,
@@ -31,23 +31,6 @@ import {
   type DriveLifecyclePolicy,
   type DriveQuotaUsage,
 } from "@/features/admin/drive-admin-api";
-
-function Field({
-  label,
-  className,
-  children,
-}: {
-  readonly label: string;
-  readonly className?: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <label className={className === undefined ? "grid gap-1" : `grid gap-1 ${className}`}>
-      <span className="text-[var(--text-3)] [font-size:var(--text-caption)]">{label}</span>
-      {children}
-    </label>
-  );
-}
 
 const PANEL = "grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4";
 
@@ -178,9 +161,8 @@ export function DriveAdminSection() {
           </p>
         ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Trash retention (days)">
-            <input
-              style={INPUT_STYLE}
+          <AdminField label="Trash retention (days)">
+            <AdminInput
               inputMode="numeric"
               value={form.trashRetentionDays}
               disabled={controlsDisabled || saveMutation.isPending}
@@ -188,10 +170,9 @@ export function DriveAdminSection() {
                 setForm((prev) => ({ ...prev, trashRetentionDays: event.target.value }))
               }
             />
-          </Field>
-          <Field label="Orphan grace (hours)">
-            <input
-              style={INPUT_STYLE}
+          </AdminField>
+          <AdminField label="Orphan grace (hours)">
+            <AdminInput
               inputMode="numeric"
               value={form.orphanGraceHours}
               disabled={controlsDisabled || saveMutation.isPending}
@@ -199,7 +180,7 @@ export function DriveAdminSection() {
                 setForm((prev) => ({ ...prev, orphanGraceHours: event.target.value }))
               }
             />
-          </Field>
+          </AdminField>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button

@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { IdentityManagement } from "./identity-management";
+import { IdentityManagement, prefetchAdminIdentityQuery } from "./identity-management";
+import { adminIdentityQueryKeys } from "./identity-api";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -107,7 +108,10 @@ describe("IdentityManagement", () => {
     await render();
 
     await waitFor(() => {
-      expect(headingTexts("h1")).toEqual(["Identity"]);
+      /* Must match the sidebar label exactly — `admin-console-data.ts` states the
+         rule: clicking "Identity & SSO" and landing on a page headed "Identity"
+         reads as having navigated somewhere else. */
+      expect(headingTexts("h1")).toEqual(["Identity & SSO"]);
     });
     expect(container.textContent).toContain(
       "Local recovery, tenant IdPs, and provisioning entry points",
@@ -793,6 +797,34 @@ describe("IdentityManagement", () => {
     }
     return JSON.parse(call[1].body) as Record<string, unknown>;
   }
+});
+
+describe("prefetchAdminIdentityQuery", () => {
+  it("warms the exact key the mounted section reads", async () => {
+    const ensureQueryData = vi
+      .fn<(options: { readonly queryKey: readonly unknown[] }) => Promise<unknown>>()
+      .mockResolvedValue(identityPayload);
+
+    await prefetchAdminIdentityQuery({ ensureQueryData });
+
+    expect(ensureQueryData).toHaveBeenCalledTimes(1);
+    expect(ensureQueryData.mock.calls.map(([options]) => options.queryKey)).toEqual([
+      adminIdentityQueryKeys.detail(),
+    ]);
+  });
+
+  it("resolves when the warmed query rejects, so a failed prefetch cannot block navigation", async () => {
+    const ensureQueryData = vi
+      .fn<(options: { readonly queryKey: readonly unknown[] }) => Promise<unknown>>()
+      .mockRejectedValue(new Error("identity unavailable"));
+
+    /* The mounted `useQuery` re-reports the same failure through
+       `QueryFailureBanner`; a rejecting loader would blank the whole route
+       instead, over a fetch the page can recover from with its Retry button. */
+    await expect(prefetchAdminIdentityQuery({ ensureQueryData })).resolves.toBeUndefined();
+
+    expect(ensureQueryData).toHaveBeenCalledTimes(1);
+  });
 });
 
 function setInputValue(input: HTMLInputElement, value: string): void {

@@ -51,6 +51,7 @@ import { createResourceClassifier } from "./api/classify-resource.js";
 import { createHelixTRPCRouter } from "./api/trpc.js";
 import { createSqlClient } from "./db/client.js";
 import { env } from "./config/env.js";
+import { resolveAiEnv } from "./platform/ai/operator-settings.js";
 import { resolveRedisConnection } from "./config/redis-connection.js";
 import { helixLoggerOptions } from "./platform/security/logger-redaction.js";
 import {
@@ -192,6 +193,7 @@ import { loadDriveConfig } from "./platform/drive/config.js";
 import { InMemoryEventBus } from "./platform/events/in-memory-event-bus.js";
 import { NatsEventBus } from "./platform/events/nats-event-bus.js";
 import { registerEventRoutes } from "./platform/events/routes.js";
+import { EventStreamLimiter } from "./platform/events/stream-limit.js";
 import { createEventSchemaRegistry } from "./platform/events/schema-registry.js";
 import { PostgresAuditStore } from "./platform/audit/store.js";
 import { registerAuditLogAdminRoutes } from "./platform/audit/routes.js";
@@ -278,6 +280,7 @@ import {
 import { PostgresGroupsStore, registerAdminGroupsRoutes } from "./platform/admin/groups.js";
 import {
   PostgresSecurityPoliciesStore,
+  readSecurityPolicies,
   registerAdminSecurityPoliciesRoutes,
 } from "./platform/admin/security-policies.js";
 import { registerTenantConfigAdminRoutes } from "./platform/admin/tenant-config.js";
@@ -286,7 +289,11 @@ import {
   registerAdminOAuthAppsRoutes,
 } from "./platform/admin/oauth-apps.js";
 import { PostgresBillingStore, registerAdminBillingRoutes } from "./platform/admin/billing.js";
-import { PostgresDomainsStore, registerAdminDomainsRoutes } from "./platform/admin/domains.js";
+import {
+  PostgresDomainsStore,
+  readDomainsWithRecords,
+  registerAdminDomainsRoutes,
+} from "./platform/admin/domains.js";
 import { NodeDnsResolver } from "./platform/admin/dns-resolver.js";
 import { DnsTxtDomainOwnershipVerifier } from "./platform/admin/domain-identity.js";
 import { registerReceivingDomainAdminRoutes } from "./platform/mail/receiving-domains-routes.js";
@@ -382,7 +389,11 @@ import {
 } from "./platform/tenancy/index.js";
 import { registerEditorsCoreApp } from "./platform/editors/index.js";
 import { createEditorsRuntimeHost } from "./platform/editors/core-app.js";
-import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
+import {
+  buildCoreAppsAdminStatus,
+  registerCoreAppsAdminRoutes,
+} from "./platform/apps/admin-routes.js";
+import { registerAdminOverviewRoutes } from "./platform/admin/overview.js";
 import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
 import {
   createMfaAssertionVerificationResolver,
@@ -537,6 +548,19 @@ export interface TenantApiRpsLimitHookOptions {
   readonly onQuotaEventError?: ((error: unknown) => void) | undefined;
 }
 
+/* Paths that hold a connection open rather than answering and closing.
+ *
+ * Only `/events/ws` for now, deliberately. `/sse/mail` and `/ws/chat` have the
+ * same shape and the same argument applies to them, but they are metered today
+ * and nothing has been observed to suffer for it — exempting a surface means
+ * moving it onto the concurrency cap instead, and that is a change worth making
+ * per surface, with its own verification, rather than in a sweep. */
+const LONG_LIVED_STREAM_PATHS: ReadonlySet<string> = new Set(["/events/ws"]);
+
+export function isLongLivedStreamPath(path: string): boolean {
+  return LONG_LIVED_STREAM_PATHS.has(path);
+}
+
 export function installTenantApiRpsLimitHook(
   app: FastifyInstance,
   options: TenantApiRpsLimitHookOptions,
@@ -544,6 +568,22 @@ export function installTenantApiRpsLimitHook(
   app.addHook("preHandler", async (request, reply) => {
     const path = request.url.split("?")[0] ?? request.url;
     if (path === "/api/auth" || path.startsWith("/api/auth/")) {
+      return;
+    }
+    /* Long-lived streams are exempt from the *rate* meter.
+     *
+     * `api_rps_limit` bounds work per unit time, and that is the wrong shape
+     * for a connection that costs one upgrade and then lives for minutes. The
+     * cost was real and visible: the admin console opens its event sockets as a
+     * section mounts, so the upgrades landed in the same one-second window as
+     * that section's own queries and pushed the page over its own budget — a
+     * liveness feature stealing the request budget from the data it exists to
+     * keep fresh.
+     *
+     * These connections are still bounded, just by the right control: a
+     * per-org cap on *concurrent* streams, enforced at upgrade time by
+     * `assertStreamConnectionAvailable` below. */
+    if (isLongLivedStreamPath(path)) {
       return;
     }
 
@@ -1290,6 +1330,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const defaultOrg = resolveDefaultOrgInput(process.env);
   const appPasswordStore = new PostgresAppPasswordStore(sql);
   const adminUsersStore = new PostgresAdminUsersStore(sql);
+  /* Built here rather than inline at its route registration because
+     `GET /api/admin/overview` reads through the same instance, and that route is
+     registered earlier in this function. */
+  const adminDomainsStore = new PostgresDomainsStore(sql);
   const auditStore = new PostgresAuditStore(sql, {
     onAppend: (record) => {
       metrics.recordAuditActivity({ verb: record.verb, objectType: record.objectType });
@@ -1424,6 +1468,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // freshly merged config so runtime readers (observability, readiness probes)
   // see config changes without a restart.
   let runtimeConfig = await loadHelixConfig(configSources);
+  const { applyOperatorAiFromHelixConfig } = await import("./platform/ai/operator-settings.js");
+  applyOperatorAiFromHelixConfig(runtimeConfig);
   await verifyDefaultOrgAtBoot({
     config: runtimeConfig,
     orgs: orgStore,
@@ -2018,9 +2064,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
             ...(spamdScannerConfig ? { spam: new SpamdScanner(spamdScannerConfig) } : {}),
             ...(mailAntivirusScanner === undefined ? {} : { antivirus: mailAntivirusScanner }),
             tier: securityTier,
-            ...(createBetaSpamSecondPass(process.env) === undefined
-              ? {}
-              : { betaSpamSecondPass: createBetaSpamSecondPass(process.env) }),
+            // Always wire: runner re-resolves Admin overlay + env on each message.
+            betaSpamSecondPass: createBetaSpamSecondPass(process.env),
           },
           quarantineStore: mailQuarantineStore,
         });
@@ -2918,6 +2963,34 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     role: coreApps.role,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
+  /* One request for Admin > Overview instead of five. The page reads five
+     figures from five endpoints, which is the whole of the tenant's
+     five-per-second budget on top of the three the app shell spends — so the
+     console's landing page could not load without tripping the limiter it
+     reports on. The readers below are the *same* functions the individual
+     endpoints use, so the aggregate cannot drift away from the section pages,
+     and each is caught separately so one dead source cannot blank the other
+     four cards. */
+  registerAdminOverviewRoutes(app, {
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    readDomains: (actor) => readDomainsWithRecords(adminDomainsStore, actor.orgId),
+    readPolicies: (actor) => readSecurityPolicies(securityPoliciesStore, actor.orgId),
+    readPlatformConfig: () => platformConfig.getStatus(),
+    readDirectory: async (actor) => {
+      /* Same page size Overview's Directory card asks for, so the aggregate and
+         the Users section share one reading rather than disagreeing by a page. */
+      const users = await adminUsersStore.listUsers({
+        orgId: actor.orgId,
+        includeDisabled: true,
+        limit: 250,
+      });
+      return { users, nextCursor: null };
+    },
+    readCoreApps: () => buildCoreAppsAdminStatus({ service: platformConfig, role: coreApps.role }),
+    onSignalError: (input) => {
+      app.log.error({ error: input.error, signal: input.signal }, "Admin overview signal failed");
+    },
+  });
   await registerAuditLogAdminRoutes(app, {
     store: auditStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
@@ -3037,7 +3110,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     true,
   );
   await registerAdminDomainsRoutes(app, {
-    store: new PostgresDomainsStore(sql),
+    store: adminDomainsStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
     ...(adminDnsVerificationEnabled ? { dnsResolver: new NodeDnsResolver() } : {}),
@@ -3074,6 +3147,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   await registerEventRoutes(app, {
     bus: eventBus,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    /* `/events/ws` is exempt from the tenant request-rate meter, so this cap on
+       concurrent streams is what bounds the resource instead. */
+    streamLimiter: new EventStreamLimiter(),
     // Follow-up B: feed the helix_websocket_connections_active gauge.
     metrics,
     onError: (error) => {
@@ -3607,6 +3683,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     reload: () => loadHelixConfig(configSources),
     onReload: (config) => {
       runtimeConfig = config;
+      void import("./platform/ai/operator-settings.js").then(
+        ({ applyOperatorAiFromHelixConfig }) => {
+          applyOperatorAiFromHelixConfig(config);
+        },
+      );
       app.log.info({ tier: config.security.tier }, "Applied hot-reloaded platform configuration");
     },
   });
@@ -4425,7 +4506,8 @@ export function createAssistantProviders(
   aiConfig: AiConfig | undefined,
 ): readonly LLMProviderCapability[] {
   const providers: LLMProviderCapability[] = [];
-  const aiEnv = env();
+  // Admin platform-config overlay (operator LLM) wins over process env bootstrap.
+  const aiEnv = resolveAiEnv(process.env);
   if (aiConfig?.enabled !== false) {
     for (const provider of aiConfig?.providers ?? []) {
       if (provider.enabled === false) {

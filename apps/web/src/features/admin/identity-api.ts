@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
 const jsonObjectSchema = z.record(z.string(), z.unknown());
@@ -76,11 +77,10 @@ export const adminIdentityQueryKeys = {
 
 export function adminIdentityQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: adminIdentityQueryKeys.detail(),
     queryFn: () => fetchAdminIdentity(fetchImpl),
-    retry: false,
     staleTime: 30_000,
-    throwOnError: false,
   });
 }
 

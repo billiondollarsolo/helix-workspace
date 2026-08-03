@@ -9,6 +9,19 @@ import { AdminSecurity } from "./policies";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
+const navigateMock = vi.fn();
+const routerSearch = { current: {} as Record<string, unknown> };
+
+vi.mock("@tanstack/react-router", async () => {
+  const actual =
+    await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+    useSearch: () => routerSearch.current,
+  };
+});
+
 function policy(
   policyType: string,
   enabled: boolean,
@@ -80,6 +93,25 @@ describe("AdminSecurity", () => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
+    routerSearch.current = {};
+    navigateMock.mockReset();
+    navigateMock.mockImplementation(
+      async (opts: { search?: (prev: Record<string, unknown>) => Record<string, unknown> }) => {
+        if (typeof opts.search === "function") {
+          routerSearch.current = opts.search({ ...routerSearch.current });
+        }
+        await act(async () => {
+          root.render(
+            createElement(
+              QueryClientProvider,
+              { client: queryClient },
+              createElement(AdminSecurity),
+            ),
+          );
+          await Promise.resolve();
+        });
+      },
+    );
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: { getItem: vi.fn(() => null), removeItem: vi.fn(), setItem: vi.fn() },
@@ -133,6 +165,25 @@ describe("AdminSecurity", () => {
     });
     expect(container.textContent).toContain("External sharing");
     expect(container.textContent).toContain("identity provider");
+  });
+
+  it("edits enforcement through the shared control, not an inline style object", async () => {
+    routerSearch.current = { policy: "mfa" };
+    await render();
+
+    await waitFor(() => {
+      expect(
+        container.querySelector<HTMLSelectElement>('select[aria-label^="Enforcement for"]'),
+      ).not.toBeNull();
+    });
+    const select = container.querySelector<HTMLSelectElement>(
+      'select[aria-label^="Enforcement for"]',
+    );
+    // `INPUT_STYLE` could not carry a focus ring; `.admin-control` can, so the
+    // control must actually be wearing the class rather than a style attribute.
+    expect(select?.classList.contains("admin-control")).toBe(true);
+    expect(select?.getAttribute("style")).toBeNull();
+    expect(container.textContent).toContain("Enforcement");
   });
 
   it("renders honest chips from runtimeStatus (Required only when enforced)", async () => {

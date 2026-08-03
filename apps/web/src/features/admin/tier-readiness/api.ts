@@ -6,6 +6,7 @@
 
 import { queryOptions } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 import type {
   PlatformConfigPatch,
   PlatformConfigStatus,
@@ -26,21 +27,19 @@ export const adminPluginCatalogQueryKey = ["admin", "plugins", "catalog"] as con
 
 export function adminPlatformConfigQueryOptions() {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: adminPlatformConfigQueryKey,
     queryFn: fetchPlatformConfigStatus,
-    retry: false,
     staleTime: 30_000,
-    throwOnError: false,
   });
 }
 
 export function adminPluginCatalogQueryOptions() {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: adminPluginCatalogQueryKey,
     queryFn: fetchPluginCatalog,
-    retry: false,
     staleTime: 30_000,
-    throwOnError: false,
   });
 }
 
@@ -69,7 +68,19 @@ export async function fetchPlatformConfigStatus(): Promise<PlatformConfigStatus>
 }
 
 export async function updatePlatformTier(tier: TierId): Promise<PlatformConfigStatus> {
-  const payload: PlatformConfigPatch = { security: { tier } };
+  return patchPlatformConfig({ security: { tier } });
+}
+
+/** Persist operator AI / mail spam settings via the platform-config admin API. */
+export async function updatePlatformAiSettings(
+  ai: NonNullable<PlatformConfigPatch["ai"]>,
+): Promise<PlatformConfigStatus> {
+  return patchPlatformConfig({ ai });
+}
+
+export async function patchPlatformConfig(
+  payload: PlatformConfigPatch,
+): Promise<PlatformConfigStatus> {
   const response = await authenticatedFetch("/api/admin/platform-config", {
     method: "PATCH",
     headers: { "content-type": "application/json" },

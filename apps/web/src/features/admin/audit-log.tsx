@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/table";
 import {
   EmptyRow,
+  ADMIN_PAGE_TITLE_ID,
   PageHeading,
   QueryFailureBanner,
   StateBanner,
@@ -26,6 +27,7 @@ import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { Filter, RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 export interface AuditLogRecord {
   readonly id: string;
@@ -75,9 +77,16 @@ export const adminAuditLogQueryKeys = {
 
 export function adminAuditLogQueryOptions(input: AuditLogQueryInput = defaultAuditLogInput) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: adminAuditLogQueryKeys.list(input),
     queryFn: () => listAuditLog(input),
-    throwOnError: false,
+    /* The one surface where serving a cached page is a correctness problem
+       rather than a freshness trade-off: this is the record of what happened,
+       an operator opens it precisely to check whether something just did, and
+       no admin mutation anywhere in the console invalidates it. `0` means
+       returning to a filter you looked at a minute ago re-reads the log instead
+       of replaying the answer from before the thing you are investigating. */
+    staleTime: 0,
   });
 }
 
@@ -239,7 +248,10 @@ export function AuditLogList() {
     // (333px of overflow at 1280×800). With the minimum pinned to 0 the track
     // is the container's width and the overflow lands where `<Table>`'s own
     // `overflow-x-auto` wrapper can take it.
-    <section className="grid min-w-0 gap-4">
+    /* A named landmark, so assistive tech and the e2e suite can both address
+       "the Audit log region" rather than an anonymous <section>. Named from the
+       page heading itself so the two cannot drift apart. */
+    <section className="grid min-w-0 gap-4" aria-labelledby={ADMIN_PAGE_TITLE_ID}>
       <PageHeading
         title="Audit log"
         subtitle="Immutable, hash-chained record of privileged activity in this organization, newest first. Filter by actor, event verb, or object type to trace a single action. All three filters run on the server across the whole log, not just the page loaded below."

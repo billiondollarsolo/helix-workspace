@@ -16,11 +16,11 @@ import {
   type OAuthAppsQueryInput,
   type OAuthAppStatus,
 } from "@/features/admin/oauth-apps-api";
+import { AdminSelect, AdminToolbar } from "@/features/admin/console/controls";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   EmptyRow,
   EmptyState,
-  HEADER_CELL,
-  INPUT_STYLE,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
@@ -32,18 +32,12 @@ import {
 /* Apps                                                               */
 /* ------------------------------------------------------------------ */
 
-const APPS_GRID = "1fr 1.4fr 70px 90px 100px 180px";
-
 /** Ties the disabled filters to the sentence explaining why, so a screen reader
  *  reaches the reason from the control rather than by hunting for it. */
 const FILTERS_REASON_ID = "oauth-apps-filters-unavailable";
 
 const NO_GRANTS_REASON =
   "No app has been granted OAuth access yet, so there is nothing to filter. These controls come back as soon as a grant exists.";
-
-/** The console's inputs carry their colours inline, which overrides the browser's
- *  own disabled rendering — a disabled filter has to be dimmed by hand. */
-const DISABLED_CONTROL: React.CSSProperties = { opacity: 0.55, cursor: "not-allowed" };
 
 function riskVariant(risk: OAuthAppRisk): string {
   return risk === "high" ? "danger" : risk === "medium" ? "warning" : "success";
@@ -163,9 +157,106 @@ export function AdminApps() {
      Disabled with the reason beside them, per the console's no-dead-control
      rule; both conditions clear themselves the moment the list has rows. */
   const filtersDisabled = appsFailure !== null || noGrants;
-  const filterStyle: React.CSSProperties = filtersDisabled
-    ? { ...INPUT_STYLE, ...DISABLED_CONTROL }
-    : INPUT_STYLE;
+
+  const columns: readonly AdminColumn<AppsRow>[] = [
+    {
+      id: "name",
+      header: "App",
+      cell: (app) => (
+        <div className="row gap-2">
+          <div className="grid size-6 place-items-center rounded-[5px] border border-[var(--border)] bg-[var(--surface-2)] text-[length:var(--text-caption)] font-semibold">
+            {app.name[0]}
+          </div>
+          <span className="font-medium">{app.name}</span>
+        </div>
+      ),
+    },
+    {
+      id: "scope",
+      header: "Requested scope",
+      cell: (app) => <span className="truncate text-[var(--text-2)]">{app.scope}</span>,
+    },
+    {
+      id: "users",
+      header: "Users",
+      align: "right",
+      width: "70px",
+      /* `userCount` is required by the schema, so this is always a real count —
+         the row only exists when the list resolved. */
+      cell: (app) => String(app.users),
+    },
+    {
+      id: "risk",
+      header: "Risk",
+      width: "90px",
+      cell: (app) => (
+        <span className={`chip ${riskVariant(app.risk)}`}>
+          <span className="chip-dot" />
+          {app.risk}
+        </span>
+      ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      width: "100px",
+      cell: (app) => <span className={`chip ${statusVariant(app.status)}`}>{app.status}</span>,
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      headerHidden: true,
+      align: "right",
+      width: "180px",
+      /* Approve and Block are peers — both flip a status the operator can flip
+         straight back — so they carry the same weight. Revoke is the one action
+         here that cannot be undone. */
+      cell: (app) => (
+        <div className="flex justify-end gap-1.5">
+          {app.id !== null && app.status !== "revoked" ? (
+            <>
+              {app.status !== "approved" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  aria-label={`Approve ${app.name}`}
+                  disabled={mutating}
+                  onClick={() => statusMutation.mutate({ id: app.id ?? "", status: "approved" })}
+                >
+                  Approve
+                </Button>
+              ) : null}
+              {app.status !== "blocked" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  aria-label={`Block ${app.name}`}
+                  disabled={mutating}
+                  onClick={() => statusMutation.mutate({ id: app.id ?? "", status: "blocked" })}
+                >
+                  Block
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                aria-label={`Revoke ${app.name}`}
+                disabled={mutating}
+                onClick={() =>
+                  setRevokeTarget({ id: app.id ?? "", name: app.name, users: app.users })
+                }
+              >
+                Revoke
+              </Button>
+            </>
+          ) : null}
+        </div>
+      ),
+    },
+  ];
 
   return (
     <PageScroll>
@@ -178,71 +269,58 @@ export function AdminApps() {
         subtitle="Third-party apps that have OAuth access to Helix Workspace data"
       />
 
-      <div style={{ marginBottom: 12 }}>
+      <AdminToolbar label="OAuth app filters">
+        {/* `.search` is a wrapper, not a control, so it never picks up the
+            browser's disabled rendering — `data-disabled` dims the icon and the
+            frame with the input it holds. */}
         <div
-          aria-label="OAuth app filters"
-          role="group"
-          style={{ display: "flex", gap: 8, alignItems: "center" }}
+          className="search h-[30px] max-w-[280px] data-disabled:cursor-not-allowed data-disabled:opacity-55"
+          data-disabled={filtersDisabled ? "" : undefined}
         >
-          <div
-            className="search"
-            style={
-              filtersDisabled
-                ? { maxWidth: 280, height: 30, ...DISABLED_CONTROL }
-                : { maxWidth: 280, height: 30 }
-            }
-          >
-            <Icons.Search />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Filter apps…"
-              aria-label="Filter apps"
-              aria-describedby={noGrants ? FILTERS_REASON_ID : undefined}
-              disabled={filtersDisabled}
-            />
-          </div>
-          <select
-            aria-label="Filter by status"
+          <Icons.Search />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter apps…"
+            aria-label="Filter apps"
             aria-describedby={noGrants ? FILTERS_REASON_ID : undefined}
-            value={statusFilter}
             disabled={filtersDisabled}
-            onChange={(event) => setStatusFilter(event.target.value as "all" | OAuthAppStatus)}
-            style={filterStyle}
-          >
-            <option value="all">All statuses</option>
-            <option value="approved">Approved</option>
-            <option value="pending">Pending</option>
-            <option value="blocked">Blocked</option>
-            <option value="revoked">Revoked</option>
-          </select>
-          <select
-            aria-label="Filter by risk"
-            aria-describedby={noGrants ? FILTERS_REASON_ID : undefined}
-            value={riskFilter}
-            disabled={filtersDisabled}
-            onChange={(event) => setRiskFilter(event.target.value as "all" | OAuthAppRisk)}
-            style={filterStyle}
-          >
-            <option value="all">All risk levels</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
+          />
         </div>
-        {/* Never a dead control: with nothing to filter, the reason sits under
+        <AdminSelect
+          aria-label="Filter by status"
+          aria-describedby={noGrants ? FILTERS_REASON_ID : undefined}
+          value={statusFilter}
+          disabled={filtersDisabled}
+          onChange={(event) => setStatusFilter(event.target.value as "all" | OAuthAppStatus)}
+        >
+          <option value="all">All statuses</option>
+          <option value="approved">Approved</option>
+          <option value="pending">Pending</option>
+          <option value="blocked">Blocked</option>
+          <option value="revoked">Revoked</option>
+        </AdminSelect>
+        <AdminSelect
+          aria-label="Filter by risk"
+          aria-describedby={noGrants ? FILTERS_REASON_ID : undefined}
+          value={riskFilter}
+          disabled={filtersDisabled}
+          onChange={(event) => setRiskFilter(event.target.value as "all" | OAuthAppRisk)}
+        >
+          <option value="all">All risk levels</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </AdminSelect>
+      </AdminToolbar>
+      {/* Never a dead control: with nothing to filter, the reason sits under
           the controls it disables. The failure case states its own reason in
           the banner below, so it is not repeated here. */}
-        {noGrants ? (
-          <p
-            className="admin-unavailable-reason"
-            id={FILTERS_REASON_ID}
-            style={{ margin: "6px 0 0" }}
-          >
-            {NO_GRANTS_REASON}
-          </p>
-        ) : null}
-      </div>
+      {noGrants ? (
+        <p className="admin-unavailable-reason mb-3" id={FILTERS_REASON_ID}>
+          {NO_GRANTS_REASON}
+        </p>
+      ) : null}
 
       {appsFailure !== null ? (
         <QueryFailureBanner
@@ -287,138 +365,24 @@ export function AdminApps() {
 
       {appsFailure !== null || noGrants ? null : (
         <div className="panel">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: APPS_GRID,
-              padding: "0 16px",
-              height: 32,
-              alignItems: "center",
-              borderBottom: "1px solid var(--border)",
-              background: "var(--surface-2)",
-              ...HEADER_CELL,
-            }}
-          >
-            <span>App</span>
-            <span>Requested scope</span>
-            <span>Users</span>
-            <span>Risk</span>
-            <span>Status</span>
-            <span />
-          </div>
-          {rows.length === 0 ? (
+          <AdminTable
+            label="OAuth apps with access to workspace data"
+            columns={columns}
+            rows={rows}
+            rowKey={(app) => app.id ?? app.name}
             /* "No grants exist" is the EmptyState above and is only ever said
                after a successful load. The last branch here is a not-loaded
                list, which must not read as an empty one. */
-            <EmptyRow>
-              {appsQuery.isPending
-                ? "Loading apps…"
-                : filtersActive
-                  ? "No OAuth apps match the filters."
-                  : "The OAuth app list is not loaded."}
-            </EmptyRow>
-          ) : (
-            rows.map((app, index) => (
-              <div
-                key={app.id ?? app.name}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: APPS_GRID,
-                  padding: "0 16px",
-                  height: 40,
-                  alignItems: "center",
-                  fontSize: "var(--text-meta)",
-                  borderBottom: index < rows.length - 1 ? "1px solid var(--border)" : "none",
-                }}
-              >
-                <div className="row gap-2">
-                  <div
-                    style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: 5,
-                      background: "var(--surface-2)",
-                      border: "1px solid var(--border)",
-                      display: "grid",
-                      placeItems: "center",
-                      fontSize: "var(--text-caption)",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {app.name[0]}
-                  </div>
-                  <span style={{ fontWeight: 500 }}>{app.name}</span>
-                </div>
-                <span className="truncate" style={{ color: "var(--text-2)" }}>
-                  {app.scope}
-                </span>
-                <span>{app.users}</span>
-                <span>
-                  <span className={`chip ${riskVariant(app.risk)}`}>
-                    <span className="chip-dot" />
-                    {app.risk}
-                  </span>
-                </span>
-                <span>
-                  <span className={`chip ${statusVariant(app.status)}`}>{app.status}</span>
-                </span>
-                {/* Approve and Block are peers — both flip a status the operator
-                    can flip straight back — so they carry the same weight.
-                    Revoke is the one action here that cannot be undone, and it
-                    used to be the third identical grey button in the row. */}
-                <div style={{ display: "flex", gap: 6, justifySelf: "flex-end" }}>
-                  {app.id !== null && app.status !== "revoked" ? (
-                    <>
-                      {app.status !== "approved" ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          aria-label={`Approve ${app.name}`}
-                          disabled={mutating}
-                          onClick={() =>
-                            statusMutation.mutate({ id: app.id ?? "", status: "approved" })
-                          }
-                        >
-                          Approve
-                        </Button>
-                      ) : null}
-                      {app.status !== "blocked" ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          aria-label={`Block ${app.name}`}
-                          disabled={mutating}
-                          onClick={() =>
-                            statusMutation.mutate({ id: app.id ?? "", status: "blocked" })
-                          }
-                        >
-                          Block
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="destructive"
-                        aria-label={`Revoke ${app.name}`}
-                        disabled={mutating}
-                        onClick={() =>
-                          setRevokeTarget({
-                            id: app.id ?? "",
-                            name: app.name,
-                            users: app.users,
-                          })
-                        }
-                      >
-                        Revoke
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            ))
-          )}
+            empty={
+              <EmptyRow>
+                {appsQuery.isPending
+                  ? "Loading apps…"
+                  : filtersActive
+                    ? "No OAuth apps match the filters."
+                    : "The OAuth app list is not loaded."}
+              </EmptyRow>
+            }
+          />
         </div>
       )}
 

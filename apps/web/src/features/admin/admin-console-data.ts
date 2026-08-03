@@ -171,6 +171,7 @@ export const ADMIN_NAV_GROUPS = [
   {
     title: "AI",
     items: [
+      { id: "ai-providers", label: "AI providers", icon: "Sparkles" },
       { id: "ai-costs", label: "Cost limits", icon: "Credit" },
       { id: "ai-observability", label: "Observability", icon: "Eye" },
     ],
@@ -187,11 +188,19 @@ export type AdminSectionId =
 /** Every section id, in sidebar order. */
 /* Sections a deployment does not run.
  *
- * Billing is metered SaaS plumbing. A self-hosted install has no billing
- * service, so `/api/admin/billing/*` answers 404 and the section can only ever
- * render its own error — a top-level slot advertising a feature that is not
- * there. Off by default, matching this repo's fail-closed rule; a hosted build
- * sets VITE_HELIX_BILLING_ENABLED=true.
+ * Billing is metered SaaS plumbing and is PARKED while Helix ships as open
+ * source: there is no billing service behind it, `/api/admin/billing/*` answers
+ * 404, and the section can only ever render its own error — a top-level slot
+ * advertising a feature that is not there. Off by default, matching this repo's
+ * fail-closed rule; a hosted build that grows a billing service turns it on
+ * with VITE_HELIX_BILLING_ENABLED=true and the section is already written.
+ *
+ * Parked, not deleted, and the distinction is deliberate: the code is complete
+ * and its shape is the record of what a hosted build would need. What parking
+ * costs is bounded — the section is one lazy chunk nothing fetches, it is
+ * absent from the nav, `isAdminSectionId` makes `/admin/billing` a 404 rather
+ * than an unreachable page, and the request-budget harness skips it so it
+ * cannot hold an over-budget entry open against work nobody is going to do.
  *
  * Build-time rather than a capability probe: the sidebar renders on every admin
  * page, and giving it a runtime query would put one more request into the burst
@@ -213,6 +222,27 @@ export const ADMIN_SECTION_IDS: readonly AdminSectionId[] = [
 ];
 
 export const DEFAULT_ADMIN_SECTION: AdminSectionId = ADMIN_NAV_ROOT.id;
+
+/** Nav label for a section id — the same string as its `PageHeading title`.
+ *
+ *  Read by the console chrome so the topbar names the destination. That happens
+ *  outside the section's Suspense boundary, which is the point: during a cold
+ *  navigation the `<h1>` has not rendered yet, and a topbar still reading
+ *  "Admin" is why a click used to look like nothing had happened.
+ *
+ *  Built from `ADMIN_NAV_GROUPS` (not the build-filtered list) so a section that
+ *  this deployment does not serve still resolves rather than falling through to
+ *  the id. */
+const SECTION_LABELS: Record<string, string> = Object.fromEntries<string>([
+  [ADMIN_NAV_ROOT.id, ADMIN_NAV_ROOT.label],
+  ...ADMIN_NAV_GROUPS.flatMap((group) =>
+    group.items.map((item): readonly [string, string] => [item.id, item.label]),
+  ),
+]);
+
+export function adminSectionLabel(id: AdminSectionId): string {
+  return SECTION_LABELS[id] ?? id;
+}
 
 /** Route-param guard — `/admin/<anything>` has to be narrowed before use.
  *

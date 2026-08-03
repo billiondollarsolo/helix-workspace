@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withAdminRouter } from "@/features/admin/console/test-router";
 import {
   adminPlatformConfigQueryKey,
   adminPluginCatalogQueryKey,
@@ -19,6 +20,19 @@ import {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
+
+const navigateMock = vi.fn();
+const routerSearch = { current: {} as Record<string, unknown> };
+
+vi.mock("@tanstack/react-router", async () => {
+  const actual =
+    await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+    useSearch: () => routerSearch.current,
+  };
+});
 
 describe("SecurityTierReadiness admin UI", () => {
   let container: HTMLDivElement;
@@ -39,6 +53,27 @@ describe("SecurityTierReadiness admin UI", () => {
         mutations: { retry: false },
       },
     });
+    routerSearch.current = {};
+    navigateMock.mockReset();
+    navigateMock.mockImplementation(
+      async (opts: { search?: (prev: Record<string, unknown>) => Record<string, unknown> }) => {
+        if (typeof opts.search === "function") {
+          routerSearch.current = opts.search({ ...routerSearch.current });
+        }
+        await act(async () => {
+          root.render(
+            createElement(
+              QueryClientProvider,
+              { client: queryClient },
+              withAdminRouter(createElement(SecurityTierReadiness)),
+            ),
+          );
+          /* The re-render has to settle before the caller asserts, and an
+             `async` callback with nothing awaited in it is a lint error. */
+          await Promise.resolve();
+        });
+      },
+    );
     fetchMock = vi.fn<typeof fetch>();
     alertMock = vi.fn();
     confirmMock = vi.fn(() => true);
@@ -509,29 +544,6 @@ describe("SecurityTierReadiness admin UI", () => {
     expect(container.querySelector(".admin-tier-progress")).toBeNull();
   });
 
-  it("does not claim AI audit or classification gating are on when nothing was reported", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/api/tools/plugin.list"
-            ? pluginCatalog()
-            : // Live config, but the AI block is absent entirely.
-              platformStatus("business", true),
-        ),
-      ),
-    );
-
-    renderAdminUI();
-    await waitForText("Live platform config connected");
-    await waitForText("Classification gating");
-
-    // Previously "metadata-only" and "Enabled" — both positive security
-    // findings synthesised from `undefined`.
-    expect(container.textContent).toContain("Not reported");
-    expect(container.textContent).not.toContain("metadata-only");
-    expect(container.textContent).not.toContain("No AI privacy config reported: Enabled");
-  });
-
   it("marks services with no live requirement as not verified rather than online", async () => {
     fetchMock.mockImplementation((input) =>
       Promise.resolve(
@@ -574,39 +586,14 @@ describe("SecurityTierReadiness admin UI", () => {
       button.textContent?.includes("Config API connected"),
     );
     expect(readout).toBeUndefined();
-    expect(container.querySelector('[role="status"]')?.textContent).toContain(
-      "Config API connected",
+    const statuses = [...container.querySelectorAll('[role="status"]')].map(
+      (node) => node.textContent ?? "",
     );
+    expect(statuses.some((text) => text.includes("Config API connected"))).toBe(true);
+    expect(statuses.some((text) => text.includes("Live platform config connected"))).toBe(true);
   });
 
-  it("labels the control table as reference values and resets one to the tier default", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/api/tools/plugin.list" ? pluginCatalog() : platformStatus("business", true),
-        ),
-      ),
-    );
-
-    renderAdminUI();
-    await waitForText("Live platform config connected");
-    // These are catalogue values held in component state — nothing reads or
-    // writes them on the platform — so the column must not claim to show this
-    // deployment's live posture.
-    await waitForText("Reference value");
-    expect(container.textContent).not.toContain("Current override");
-    expect(container.textContent).toContain("admins required, passkeys enabled");
-
-    await clickButtonByLabel("Reset MFA to tier default");
-
-    expect(container.textContent).not.toContain("admins required, passkeys enabled");
-    expect(container.textContent).toContain("admins required");
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(confirmMock).not.toHaveBeenCalled();
-    expect(promptMock).not.toHaveBeenCalled();
-  });
-
-  it("surfaces AI cost limits and audit evidence from live admin config", async () => {
+  it("keeps fake control-reference edits and AI cost cards off this page", async () => {
     fetchMock.mockImplementation((input) =>
       Promise.resolve(
         Response.json(
@@ -625,20 +612,74 @@ describe("SecurityTierReadiness admin UI", () => {
     );
 
     renderAdminUI();
-    await waitForText("Cost limits and audit evidence");
     await waitForText("Live platform config connected");
-    await waitForText("$5.00");
+    await waitForText("Tier readiness");
 
-    expect(container.textContent).toContain("User daily AI cost");
-    expect(container.textContent).toContain("$5.00");
-    expect(container.textContent).toContain("$10.00");
-    expect(container.textContent).toContain("Org daily AI cost");
-    expect(container.textContent).toContain("$500.00");
-    expect(container.textContent).toContain("90 day retention");
-    expect(container.textContent).toContain("Blocks Confidential, Restricted");
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(confirmMock).not.toHaveBeenCalled();
-    expect(promptMock).not.toHaveBeenCalled();
+    // Dead "reference value" tables and AI governance cards used to live here
+    // and looked actionable. Controls belong under Policies; spend under AI costs.
+    expect(container.textContent).not.toContain("Reference value");
+    expect(container.textContent).not.toContain("Tier control reference");
+    expect(container.textContent).not.toContain("Cost limits and audit evidence");
+    expect(container.textContent).not.toContain("User daily AI cost");
+    expect(container.querySelector('[role="table"][aria-label="Security controls"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Related security admin pages"]')).not.toBeNull();
+    // Plugins are a tab, not dumped under readiness.
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+      "Readiness",
+    );
+    expect(container.querySelector('[aria-label="Plugin catalog"]')).toBeNull();
+  });
+
+  it("reaches the Plugins tab with arrow keys, which roving tabindex otherwise makes unreachable", async () => {
+    fetchMock.mockImplementation((input) =>
+      Promise.resolve(
+        Response.json(
+          input === "/api/tools/plugin.list" ? pluginCatalog() : platformStatus("business", true),
+        ),
+      ),
+    );
+
+    renderAdminUI();
+    await waitForText("Tier readiness");
+
+    const tabs = Array.from(container.querySelectorAll<HTMLElement>('[role="tab"]'));
+    expect(tabs.map((tab) => tab.textContent?.trim())).toEqual(["Readiness", "Plugins"]);
+    // Roving tabindex: only the selected tab is a tab stop, so arrow keys are
+    // the only route to the other one.
+    expect(tabs.filter((tab) => tab.getAttribute("tabindex") === "0")).toHaveLength(1);
+    for (const tab of tabs) {
+      const panelId = tab.getAttribute("aria-controls") ?? "";
+      expect(panelId).toBe(`tier-panel-${tab.textContent?.trim().toLowerCase() ?? ""}`);
+    }
+    expect(selectedTab()?.textContent?.trim()).toBe("Readiness");
+
+    // Selection moves and focus follows it, so the key press lands the user on
+    // the tab they just selected rather than leaving focus behind.
+    expect(await pressKeyOnSelectedTab("ArrowRight")).toBe("tier-tab-plugins");
+    expect(selectedTab()?.textContent?.trim()).toBe("Plugins");
+    expect(selectedTab()?.getAttribute("tabindex")).toBe("0");
+
+    const panel = container.querySelector<HTMLElement>('[role="tabpanel"]');
+    expect(panel?.id).toBe("tier-panel-plugins");
+    expect(panel?.getAttribute("aria-labelledby")).toBe(selectedTab()?.id);
+
+    // Right from the last tab wraps back to the first.
+    await pressKeyOnSelectedTab("ArrowRight");
+    expect(selectedTab()?.textContent?.trim()).toBe("Readiness");
+
+    // Left from the first tab wraps to the last.
+    await pressKeyOnSelectedTab("ArrowLeft");
+    expect(selectedTab()?.textContent?.trim()).toBe("Plugins");
+
+    await pressKeyOnSelectedTab("Home");
+    expect(selectedTab()?.textContent?.trim()).toBe("Readiness");
+
+    await pressKeyOnSelectedTab("End");
+    expect(selectedTab()?.textContent?.trim()).toBe("Plugins");
+
+    // Keys the tabs pattern does not own must not steal selection.
+    await pressKeyOnSelectedTab("ArrowDown");
+    expect(selectedTab()?.textContent?.trim()).toBe("Plugins");
   });
 
   it("renders plugin catalog headers and rows with TanStack table semantics", async () => {
@@ -651,6 +692,7 @@ describe("SecurityTierReadiness admin UI", () => {
     );
 
     renderAdminUI();
+    await openPluginsTab();
     await waitForText("Community importer");
 
     const pluginTable = tableByLabel("Plugin catalog");
@@ -690,6 +732,7 @@ describe("SecurityTierReadiness admin UI", () => {
     });
 
     renderAdminUI();
+    await openPluginsTab();
     await waitForText("Community importer");
     expect(tableByLabel("Plugin catalog").textContent).toContain("Community importer");
     await setSelectValue("Plugin source", "sideload");
@@ -748,6 +791,7 @@ describe("SecurityTierReadiness admin UI", () => {
     });
 
     renderAdminUI();
+    await openPluginsTab();
     await waitForText("Community importer");
     await waitForText("Disabled");
 
@@ -782,6 +826,7 @@ describe("SecurityTierReadiness admin UI", () => {
     mockPluginUninstallBackend();
 
     renderAdminUI();
+    await openPluginsTab();
     await waitForText("Community importer");
     await clickPluginAction("com.example.mail-auditor", "Uninstall");
 
@@ -838,6 +883,7 @@ describe("SecurityTierReadiness admin UI", () => {
     mockPluginUninstallBackend();
 
     renderAdminUI();
+    await openPluginsTab();
     await waitForText("Community importer");
     await clickPluginAction("com.example.mail-auditor", "Uninstall");
     await clickDialogButton("Cancel");
@@ -863,6 +909,7 @@ describe("SecurityTierReadiness admin UI", () => {
     });
 
     renderAdminUI();
+    await openPluginsTab();
     await waitForText("Community importer");
     await setSelectValue("Plugin source", "sideload");
     await clickAllPluginConfirmations();
@@ -891,10 +938,59 @@ describe("SecurityTierReadiness admin UI", () => {
         createElement(
           QueryClientProvider,
           { client: queryClient },
-          createElement(SecurityTierReadiness),
+          withAdminRouter(createElement(SecurityTierReadiness)),
         ),
       );
     });
+  }
+
+  async function openPluginsTab() {
+    await waitForText("Plugins");
+    const tab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (candidate) => candidate.textContent?.trim() === "Plugins",
+    );
+    if (!(tab instanceof HTMLButtonElement)) {
+      throw new Error("Plugins tab not found.");
+    }
+    act(() => {
+      tab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  function selectedTab(): HTMLElement | null {
+    return container.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+  }
+
+  /* Sends a key to the selected tab and reports the id of the element the
+     handler moved focus to. `document.activeElement` cannot be read afterwards:
+     tab selection lives in the URL, and this file's navigate mock re-renders a
+     brand new router tree, so the focused node is detached before the assertion
+     runs. Recording the focus call keeps the assertion about the component. */
+  async function pressKeyOnSelectedTab(key: string): Promise<string | undefined> {
+    const tab = selectedTab();
+    if (tab === null) {
+      throw new Error("No selected tab to send a key to.");
+    }
+    let focusedId: string | undefined;
+    const focusSpy = vi
+      .spyOn(HTMLElement.prototype, "focus")
+      .mockImplementation(function focusRecorder(this: HTMLElement) {
+        focusedId = this.id;
+      });
+    try {
+      act(() => {
+        tab.dispatchEvent(new window.KeyboardEvent("keydown", { key, bubbles: true }));
+      });
+    } finally {
+      focusSpy.mockRestore();
+    }
+    await act(async () => {
+      await Promise.resolve();
+    });
+    return focusedId;
   }
 
   async function clickButton(name: string) {
@@ -951,19 +1047,6 @@ describe("SecurityTierReadiness admin UI", () => {
       throw new Error(`Table not found: ${label}`);
     }
     return table;
-  }
-
-  async function clickButtonByLabel(label: string) {
-    const button = container.querySelector(`button[aria-label="${label}"]`);
-    if (!(button instanceof HTMLButtonElement)) {
-      throw new Error(`Button not found: ${label}`);
-    }
-    act(() => {
-      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
   }
 
   async function clickPluginAction(pluginId: string, action: string) {
@@ -1328,7 +1411,7 @@ function deferred<T>() {
 }
 
 function platformStatus(
-  tier: PlatformConfigPatch["security"]["tier"],
+  tier: NonNullable<PlatformConfigPatch["security"]>["tier"],
   ready: boolean,
   ai?: {
     costLimits?: {

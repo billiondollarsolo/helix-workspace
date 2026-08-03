@@ -14,20 +14,41 @@ import {
   setPrimaryDomain,
   upsertDnsRecord,
   verifyDnsRecord,
+  type DnsRecord,
   type DnsRecordType,
   type DomainWithRecords,
 } from "@/features/admin/domains-api";
 import {
+  AdminField,
+  AdminInput,
+  AdminSelect,
+  AdminToolbar,
+} from "@/features/admin/console/controls";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
+import {
   EmptyRow,
   EmptyState,
-  HEADER_CELL,
-  INPUT_STYLE,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
   StateBanner,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
+
+/* Structural rather than importing `QueryClient`: the route loader only ever
+   hands this helper an `ensureQueryData`, and typing it that way keeps the
+   section free of a router/query-client dependency it does not otherwise have. */
+interface AdminDomainsRouteQueryClient {
+  ensureQueryData(options: ReturnType<typeof domainsQueryOptions>): Promise<unknown>;
+}
+
+/** Warms the exact key `AdminDomains` mounts, so the section's first request
+ *  leaves while its chunk is still downloading. Failures are swallowed: the
+ *  mounted `useQuery` re-reports them through `QueryFailureBanner`, and a
+ *  rejected loader would blank the route over a fetch the page can recover. */
+export async function prefetchAdminDomainsQuery(queryClient: AdminDomainsRouteQueryClient) {
+  await queryClient.ensureQueryData(domainsQueryOptions()).catch(() => undefined);
+}
 
 /* ------------------------------------------------------------------ */
 /* Audit log                                                          */
@@ -37,7 +58,6 @@ import {
 /* Domain                                                             */
 /* ------------------------------------------------------------------ */
 
-const DOMAIN_GRID = "70px 180px 1fr 100px 90px";
 const DNS_RECORD_TYPES_UI: readonly DnsRecordType[] = [
   "MX",
   "SPF",
@@ -123,101 +143,97 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
     onSuccess: () => invalidate(),
   });
 
-  return (
-    <div className="panel" style={{ overflow: "hidden", marginBottom: 16 }}>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: DOMAIN_GRID,
-          padding: "0 16px",
-          height: 32,
-          alignItems: "center",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--surface-2)",
-          ...HEADER_CELL,
-        }}
-      >
-        <span>Type</span>
-        <span>Host</span>
-        <span>Value</span>
-        <span>Status</span>
-        <span />
-      </div>
+  const columns: readonly AdminColumn<DnsRecord>[] = [
+    {
+      id: "type",
+      header: "Type",
+      width: "70px",
+      cell: (record) => <span className="font-semibold">{record.recordType}</span>,
+    },
+    {
+      id: "host",
+      header: "Host",
+      width: "180px",
+      cell: (record) => <span className="mono">{record.host}</span>,
+    },
+    {
+      id: "value",
+      /* Takes the slack so the fixed columns keep their widths. */
+      header: "Value",
+      width: "100%",
+      cell: (record) => (
+        /* A DKIM public key is hundreds of characters; bounded and clipped so
+           one record cannot push the status and verify controls off-screen. */
+        <span className="mono block max-w-[46ch] truncate text-[var(--text-2)]">
+          {record.expectedValue}
+        </span>
+      ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      width: "100px",
+      cell: (record) => (
+        <span className={`chip ${verificationVariant(record.status)}`}>
+          <span className="chip-dot" />
+          {record.status}
+        </span>
+      ),
+    },
+    {
+      id: "verify",
+      header: "Verify record",
+      headerHidden: true,
+      align: "right",
+      width: "90px",
+      cell: (record) => (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-label={`Verify ${record.recordType} ${record.host}`}
+          disabled={verifyMutation.isPending}
+          onClick={() => verifyMutation.mutate(record.id)}
+        >
+          Verify
+        </Button>
+      ),
+    },
+  ];
 
+  return (
+    <div className="panel mb-4 overflow-hidden">
       {upsertMutation.isError ? (
-        <div style={{ padding: "8px 16px" }}>
+        <div className="px-4 py-2">
           <StateBanner kind="error">{upsertMutation.error.message}</StateBanner>
         </div>
       ) : null}
       {verifyMutation.isError ? (
-        <div style={{ padding: "8px 16px" }}>
+        <div className="px-4 py-2">
           <StateBanner kind="error">{verifyMutation.error.message}</StateBanner>
         </div>
       ) : null}
 
-      {entry.dnsRecords.length === 0 ? (
-        /* Helix seeds the MX / SPF / DMARC rows it needs when the deployment
-           has a public mail hostname configured. An empty panel therefore means
-           it does not — say so, rather than leaving an operator to guess which
-           records to type into the form below. */
-        <EmptyRow>
-          No DNS records yet. Helix adds the records it needs automatically once
-          <code> HELIX_MAIL_PUBLIC_HOSTNAME</code> is set on the deployment; until then, add them
-          below.
-        </EmptyRow>
-      ) : (
-        entry.dnsRecords.map((record) => (
-          <div
-            key={record.id}
-            style={{
-              display: "grid",
-              gridTemplateColumns: DOMAIN_GRID,
-              padding: "0 16px",
-              height: 38,
-              alignItems: "center",
-              fontSize: "var(--text-meta)",
-              borderBottom: "1px solid var(--border)",
-            }}
-          >
-            <span style={{ fontWeight: 600 }}>{record.recordType}</span>
-            <span className="mono" style={{ fontSize: "var(--text-caption)" }}>
-              {record.host}
-            </span>
-            <span
-              className="mono truncate"
-              style={{ fontSize: "var(--text-caption)", color: "var(--text-2)" }}
-            >
-              {record.expectedValue}
-            </span>
-            <span>
-              <span className={`chip ${verificationVariant(record.status)}`}>
-                <span className="chip-dot" />
-                {record.status}
-              </span>
-            </span>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              style={{ justifySelf: "flex-end" }}
-              aria-label={`Verify ${record.recordType} ${record.host}`}
-              disabled={verifyMutation.isPending}
-              onClick={() => verifyMutation.mutate(record.id)}
-            >
-              Verify
-            </Button>
-          </div>
-        ))
-      )}
+      <AdminTable
+        label={`DNS records for ${entry.domain.domain}`}
+        columns={columns}
+        rows={entry.dnsRecords}
+        rowKey={(record) => record.id}
+        empty={
+          /* Helix seeds the MX / SPF / DMARC rows it needs when the deployment
+             has a public mail hostname configured. An empty panel therefore
+             means it does not — say so, rather than leaving an operator to
+             guess which records to type into the form below. */
+          <EmptyRow>
+            No DNS records yet. Helix adds the records it needs automatically once
+            <code> HELIX_MAIL_PUBLIC_HOSTNAME</code> is set on the deployment; until then, add them
+            below.
+          </EmptyRow>
+        }
+      />
 
       <form
-        style={{
-          display: "grid",
-          gridTemplateColumns: "70px 180px 1fr 90px",
-          gap: 8,
-          padding: "10px 16px",
-          alignItems: "center",
-        }}
+        className="px-4 pt-3"
         onSubmit={(event) => {
           event.preventDefault();
           if (host.trim().length === 0 || expectedValue.trim().length === 0) {
@@ -230,37 +246,41 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
           });
         }}
       >
-        <select
-          aria-label="DNS record type"
-          value={recordType}
-          onChange={(event) => setRecordType(event.target.value as DnsRecordType)}
-          style={INPUT_STYLE}
-        >
-          {DNS_RECORD_TYPES_UI.map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
-        <input
-          aria-label="DNS record host"
-          value={host}
-          onChange={(event) => setHost(event.target.value)}
-          placeholder="helix.io"
-          style={INPUT_STYLE}
-        />
-        <input
-          aria-label="DNS record value"
-          value={expectedValue}
-          onChange={(event) => setExpectedValue(event.target.value)}
-          placeholder="10 mx1.helix.io"
-          style={INPUT_STYLE}
-        />
-        {/* The one primary action of this panel — the Verify buttons above it
-            are outline so they do not compete with it. */}
-        <Button type="submit" size="sm" disabled={upsertMutation.isPending}>
-          <Icons.Plus /> Record
-        </Button>
+        <AdminToolbar label={`Add a DNS record to ${entry.domain.domain}`}>
+          <AdminField label="Record type">
+            <AdminSelect
+              value={recordType}
+              onChange={(event) => setRecordType(event.target.value as DnsRecordType)}
+            >
+              {DNS_RECORD_TYPES_UI.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </AdminSelect>
+          </AdminField>
+          <AdminField label="Host">
+            <AdminInput
+              value={host}
+              onChange={(event) => setHost(event.target.value)}
+              placeholder="helix.io"
+            />
+          </AdminField>
+          <AdminField label="Value" className="flex-1">
+            <AdminInput
+              value={expectedValue}
+              onChange={(event) => setExpectedValue(event.target.value)}
+              placeholder="10 mx1.helix.io"
+            />
+          </AdminField>
+          {/* `self-end` so the button sits on the controls' baseline rather
+              than centred against the taller labelled fields. It is the one
+              primary action of this panel — the Verify buttons above it are
+              outline so they do not compete with it. */}
+          <Button type="submit" size="sm" className="self-end" disabled={upsertMutation.isPending}>
+            <Icons.Plus /> Record
+          </Button>
+        </AdminToolbar>
       </form>
     </div>
   );
@@ -342,8 +362,7 @@ export function AdminDomain() {
       {domainsFailure !== null ? null : (
         <>
           <form
-            className="panel"
-            style={{ padding: 12, marginBottom: 16, display: "flex", gap: 8 }}
+            className="panel mb-4 flex items-end gap-2 p-3"
             onSubmit={(event) => {
               event.preventDefault();
               if (newDomain.trim().length === 0) {
@@ -352,15 +371,17 @@ export function AdminDomain() {
               addMutation.mutate(newDomain.trim());
             }}
           >
-            <input
-              aria-label="New domain"
-              value={newDomain}
-              onChange={(event) => setNewDomain(event.target.value)}
-              placeholder="helix.io"
-              /* No `flex: 1` — a hostname is ~20 characters, and stretching the
-                 field across the panel put the submit button a screen away. */
-              style={{ ...INPUT_STYLE, width: 320 }}
-            />
+            <AdminField label="New domain">
+              <AdminInput
+                value={newDomain}
+                onChange={(event) => setNewDomain(event.target.value)}
+                placeholder="helix.io"
+                /* Fixed width rather than `flex-1` — a hostname is ~20
+                   characters, and stretching the field across the panel put the
+                   submit button a screen away. */
+                className="w-80"
+              />
+            </AdminField>
             <Button type="submit" disabled={addMutation.isPending}>
               <Icons.Plus /> Add domain
             </Button>

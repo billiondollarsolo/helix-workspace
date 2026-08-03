@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 export interface AppPassword {
   readonly id: string;
@@ -56,11 +57,10 @@ export const appPasswordsQueryKeys = {
 
 export function appPasswordsQueryOptions(includeRevoked = false) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: appPasswordsQueryKeys.list(includeRevoked),
     queryFn: () => listAppPasswords({ includeRevoked }),
-    retry: false,
     staleTime: 30_000,
-    throwOnError: false,
   });
 }
 

@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AIObservabilityDashboard, prefetchAdminAIObservabilityQuery } from "./ai-observability";
 import { adminPlatformConfigQueryOptions } from "./security-tier-readiness";
+import { withAdminRouter } from "@/features/admin/console/test-router";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -66,9 +67,9 @@ describe("AIObservabilityDashboard", () => {
     );
 
     await prefetchPlatformConfig();
-    renderDashboard();
+    await renderDashboard();
 
-    expect(container.textContent).toContain("AI observability");
+    expect(container.textContent).toContain("Observability");
     expect(container.textContent).toContain("$5.00");
     expect(container.textContent).toContain("Cost by provider, feature, and actor");
     expect(container.textContent).toContain("provider, model, feature, actor_id");
@@ -80,7 +81,7 @@ describe("AIObservabilityDashboard", () => {
     );
     // h1 → h2 panels → h3 cards, with nothing skipped in between.
     expect(headingOutline()).toEqual([
-      "H1:AI observability",
+      "H1:Observability",
       "H2:Controls in force",
       "H3:Cost budgets",
       "H3:Request audit",
@@ -100,7 +101,7 @@ describe("AIObservabilityDashboard", () => {
     );
 
     await prefetchPlatformConfig();
-    renderDashboard();
+    await renderDashboard();
 
     // No platform default exists for logRequests, so the card cannot claim one.
     expect(container.textContent).toContain("Not configured");
@@ -111,23 +112,23 @@ describe("AIObservabilityDashboard", () => {
   it("surfaces backend-unavailable state without hiding provisioned dashboard coverage", async () => {
     fetchMock.mockResolvedValue(Response.json({ error: "missing admin scope" }, { status: 403 }));
 
-    renderDashboard();
+    await renderDashboard();
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = false;
-    await waitForText("AI observability config is unavailable");
+    await waitForText("Observability config is unavailable");
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
 
-    expect(container.textContent).toContain("AI observability config is unavailable");
+    expect(container.textContent).toContain("Observability config is unavailable");
     expect(container.textContent).toContain("Pending live telemetry");
     expect(container.textContent).toContain("Dashboard provisioned");
     expect(container.querySelector('[role="alert"]')?.getAttribute("data-kind")).toBe("error");
     // Without a tier there is no honest budget or gating state to show, so the
     // governance cards stay away rather than inventing one.
     expect(container.querySelector(".admin-ai-cost-card")).toBeNull();
-    expect(headingOutline()).toEqual(["H1:AI observability", "H2:Required AI metrics"]);
+    expect(headingOutline()).toEqual(["H1:Observability", "H2:Required AI metrics"]);
   });
 
   it("prefetches the shared platform config query with contained failures", async () => {
@@ -137,16 +138,20 @@ describe("AIObservabilityDashboard", () => {
     expect(ensureQueryData).toHaveBeenCalledTimes(1);
   });
 
-  function renderDashboard() {
+  /* Async since the section gained a router in context: `RouterProvider`
+     resolves its initial match before rendering children, so a synchronous
+     render leaves the container empty for a tick. */
+  async function renderDashboard() {
     act(() => {
       root.render(
         createElement(
           QueryClientProvider,
           { client: queryClient },
-          createElement(AIObservabilityDashboard),
+          withAdminRouter(createElement(AIObservabilityDashboard)),
         ),
       );
     });
+    await flushReact();
   }
 
   async function flushReact() {

@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/auth";
 import { callTool, type ToolFetch } from "@/lib/tool-call";
+import { ADMIN_QUERY_DEFAULTS, ADMIN_STALE_TIME } from "@/features/admin/console/request-budget";
 
 export interface AgentOperationalControls {
   readonly globalReadOnly: boolean;
@@ -16,11 +17,16 @@ export const agentControlsQueryKeys = {
 
 export function agentControlsQueryOptions(fetchImpl: ToolFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: agentControlsQueryKeys.detail(),
     queryFn: () => getAgentOperationalControls(fetchImpl),
-    retry: false,
-    throwOnError: false,
-    staleTime: 5_000,
+    staleTime: ADMIN_STALE_TIME.volatile,
+    /* This is the agent kill switch. Another operator disabling agents during
+       an incident has to be visible here without a reload — `staleTime: 5_000`
+       alone only meant "the next mount may refetch", and a page left open
+       never mounts again. `platform.pending_action.created` covers approvals
+       but not the switch itself, so the interval stays until an emitter does. */
+    refetchInterval: 10_000,
   });
 }
 

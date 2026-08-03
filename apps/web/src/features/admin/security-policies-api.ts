@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /**
  * Admin Console — Security policies client.
@@ -98,10 +99,9 @@ export const securityPoliciesQueryKeys = {
 
 export function securityPoliciesQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: securityPoliciesQueryKeys.list(),
     queryFn: () => fetchSecurityPolicies(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 

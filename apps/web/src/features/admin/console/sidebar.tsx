@@ -8,6 +8,7 @@ import {
   ADMIN_NAV_ROOT,
   type AdminSectionId,
 } from "@/features/admin/admin-console-data";
+import { useAdminRealtimeState } from "@/features/admin/use-admin-realtime";
 
 /* ------------------------------------------------------------------ */
 /* Collapse preference                                                 */
@@ -87,8 +88,23 @@ interface AdminNavItem {
   readonly icon: keyof typeof Icons;
 }
 
-function AdminNavLink({ item, active }: { readonly item: AdminNavItem; readonly active: boolean }) {
+function AdminNavLink({
+  item,
+  active,
+  onPreload,
+}: {
+  readonly item: AdminNavItem;
+  readonly active: boolean;
+  readonly onPreload?: (id: AdminSectionId) => void;
+}) {
   const Icon = Icons[item.icon];
+  /* The router's `defaultPreload: "intent"` preloads *route* components, and
+     all 22 sections share one route — so hovering used to preload nothing at
+     all and the click paid for the chunk from cold. Pointer-enter and focus
+     both fire it: a keyboard operator tabbing the nav deserves the same head
+     start as a mouse. Fire-and-forget; the click that follows reports any real
+     failure. */
+  const preload = onPreload === undefined ? undefined : () => onPreload(item.id);
   return (
     <Link
       to="/admin/$section"
@@ -96,11 +112,19 @@ function AdminNavLink({ item, active }: { readonly item: AdminNavItem; readonly 
       aria-current={active ? "page" : undefined}
       className="admin-nav-link"
       data-active={active ? "" : undefined}
+      onPointerEnter={preload}
+      onFocus={preload}
     >
       <Icon />
       <span>{item.label}</span>
     </Link>
   );
+}
+
+/** Case- and punctuation-insensitive substring match, so "oauth" finds
+ *  "OAuth apps" and "org" finds "Groups & org units". */
+function matchesFilter(label: string, needle: string): boolean {
+  return label.toLowerCase().includes(needle);
 }
 
 /* No "Administration" heading above the list: the TopBar title and the
@@ -128,10 +152,40 @@ function AdminNavLink({ item, active }: { readonly item: AdminNavItem; readonly 
  * a control worth shipping, and a *disabled* toggle there would just be a
  * focus stop that does nothing. Its stored preference is untouched, so the
  * group folds itself back up as soon as you navigate away. */
-export function AdminSidebar({ section }: { readonly section: AdminSectionId }) {
+export function AdminSidebar({
+  section,
+  onPreloadSection,
+}: {
+  readonly section: AdminSectionId;
+  /** Warms a section's chunk and data on hover/focus. Passed down rather than
+   *  imported so the sidebar does not have to import the console that renders
+   *  it, and so a test can mount the nav on its own. */
+  readonly onPreloadSection?: (id: AdminSectionId) => void;
+}) {
   const navRef = useRef<HTMLElement | null>(null);
   const [collapsed, setCollapsed] = useState<readonly string[]>(readCollapsedGroups);
   const [edges, setEdges] = useState<OverflowEdges>({ top: false, bottom: false });
+  /* Not persisted, and cleared on navigation: a filter is a way of getting
+     somewhere, not a standing preference about the console (unlike the group
+     folds above). A filter that survived a click would leave the operator on a
+     page whose nav hides most of itself for reasons they have forgotten. */
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+
+  useEffect(() => {
+    setFilter("");
+  }, [section]);
+
+  const filteredGroups = ADMIN_NAV_GROUPS_FOR_BUILD.map((group) => ({
+    title: group.title,
+    /* A matching group title keeps all its rows — searching "security" should
+       show what is in Security, not nothing. */
+    items: matchesFilter(group.title, needle)
+      ? group.items
+      : group.items.filter((item) => matchesFilter(item.label, needle)),
+  })).filter((group) => group.items.length > 0);
+  const rootMatches = needle === "" || matchesFilter(ADMIN_NAV_ROOT.label, needle);
+  const noMatches = !rootMatches && filteredGroups.length === 0;
 
   function toggleGroup(title: string): void {
     /* Functional update, not `collapsed` from this render's closure: two
@@ -204,13 +258,46 @@ export function AdminSidebar({ section }: { readonly section: AdminSectionId }) 
       {/* Sticky inside the scroll container, and pulled out of flow by a
           negative margin so the affordance costs no vertical space. */}
       <div className="admin-nav-fade admin-nav-fade-top" aria-hidden="true" />
-      <AdminNavLink item={ADMIN_NAV_ROOT} active={section === ADMIN_NAV_ROOT.id} />
-      {ADMIN_NAV_GROUPS_FOR_BUILD.map((group) => {
+      {/* 22 sections across 6 groups did not fit the nav, and the three
+          existing affordances — an overflow fade, autoscroll-to-active, and
+          collapsible groups — all compensate for the absence of this box.
+          Typing is faster than scanning six headings. */}
+      <div className="admin-nav-filter">
+        <label className="sr-only" htmlFor="admin-nav-filter-input">
+          Filter admin sections
+        </label>
+        <Icons.Search size={13} aria-hidden="true" />
+        <input
+          id="admin-nav-filter-input"
+          type="search"
+          value={filter}
+          placeholder="Filter sections…"
+          autoComplete="off"
+          onChange={(event) => {
+            setFilter(event.target.value);
+          }}
+        />
+      </div>
+      {noMatches ? (
+        <p className="admin-nav-empty" role="status">
+          No section matches “{filter.trim()}”.
+        </p>
+      ) : null}
+      {rootMatches ? (
+        <AdminNavLink
+          item={ADMIN_NAV_ROOT}
+          active={section === ADMIN_NAV_ROOT.id}
+          onPreload={onPreloadSection}
+        />
+      ) : null}
+      {filteredGroups.map((group) => {
         const slug = groupSlug(group.title);
         const headingId = `admin-nav-${slug}`;
         const listId = `admin-nav-${slug}-list`;
         const holdsActive = group.items.some((item) => item.id === section);
-        const open = holdsActive || !collapsed.includes(group.title);
+        /* A filtered group is always open: hiding the rows the operator just
+           searched for behind a fold would make the filter useless. */
+        const open = holdsActive || needle !== "" || !collapsed.includes(group.title);
         return (
           <div
             className="admin-nav-group"
@@ -224,7 +311,7 @@ export function AdminSidebar({ section }: { readonly section: AdminSectionId }) 
                 accordion shape) rather than replacing it, so the document
                 outline does not change as groups fold. */}
             <h2 className="section-label" id={headingId}>
-              {holdsActive ? (
+              {holdsActive || needle !== "" ? (
                 <span className="admin-nav-group-heading">
                   <span className="admin-nav-group-label">{group.title}</span>
                 </span>
@@ -260,7 +347,11 @@ export function AdminSidebar({ section }: { readonly section: AdminSectionId }) 
             <ul id={listId} aria-labelledby={headingId} hidden={!open}>
               {group.items.map((item) => (
                 <li key={item.id}>
-                  <AdminNavLink item={item} active={section === item.id} />
+                  <AdminNavLink
+                    item={item}
+                    active={section === item.id}
+                    onPreload={onPreloadSection}
+                  />
                 </li>
               ))}
             </ul>
@@ -268,6 +359,26 @@ export function AdminSidebar({ section }: { readonly section: AdminSectionId }) 
         );
       })}
       <div className="admin-nav-fade admin-nav-fade-bottom" aria-hidden="true" />
+      <AdminRealtimeIndicator />
     </nav>
+  );
+}
+
+/* The console's liveness is not uniform — nine sections are event-driven, the
+   rest poll or refresh on focus — so the honest statement is about the
+   connection, not about the data. A dead socket that looks identical to a quiet
+   system is the failure mode this exists to prevent. Hidden entirely while
+   healthy: a permanent green light is noise. */
+function AdminRealtimeIndicator() {
+  const state = useAdminRealtimeState();
+  if (state === "live") {
+    return null;
+  }
+  return (
+    <p className="admin-nav-realtime" data-state={state} role="status">
+      {state === "offline"
+        ? "Live updates unavailable — sections refresh on their own schedule."
+        : "Connecting to live updates…"}
+    </p>
   );
 }

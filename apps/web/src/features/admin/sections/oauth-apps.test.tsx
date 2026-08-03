@@ -256,6 +256,18 @@ describe("AdminApps — revoking an OAuth app", () => {
     expect(dialogButton("action").disabled).toBe(false);
   });
 
+  it("lists grants as a named table, not a stack of anonymous boxes", async () => {
+    await renderWith([apiApp()]);
+
+    // The pseudo-table this replaced announced nothing: a screen reader reached
+    // six divs with no row, no column, and no name for the list itself.
+    const table = container.querySelector("table");
+    expect(table?.getAttribute("aria-label")).toBe("OAuth apps with access to workspace data");
+    const headers = [...container.querySelectorAll("th")].map((cell) => cell.textContent);
+    expect(headers).toEqual(["App", "Requested scope", "Users", "Risk", "Status", "Actions"]);
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(1);
+  });
+
   it("does not render Revoke in the same style as the reversible actions", async () => {
     await renderWith([apiApp({ status: "pending" })]);
 

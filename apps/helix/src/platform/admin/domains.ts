@@ -293,6 +293,33 @@ export interface RegisterAdminDomainsRoutesOptions {
  *   PUT    /api/admin/domains/:id/dns                  — upsert a DNS record
  *   POST   /api/admin/domains/:id/dns/:recordId/verify — re-check a record
  */
+/** The `GET /api/admin/domains` body.
+ *
+ *  Exported so `GET /api/admin/overview` serves the identical shape from the
+ *  same code rather than a second implementation that could drift. */
+export async function readDomainsWithRecords(
+  store: DomainsStore,
+  orgId: string,
+): Promise<{ readonly domains: readonly DomainWithRecords[] }> {
+  const domains = await store.listDomains(orgId);
+  /* One capability query for the whole list, indexed by parent id, rather than
+     two more round trips per domain. */
+  const capabilities = new Map(
+    (await store.listCapabilities(orgId)).map((entry) => [entry.adminDomainId, entry]),
+  );
+  const withRecords: DomainWithRecords[] = [];
+  for (const domain of domains) {
+    const capability = capabilities.get(domain.id);
+    withRecords.push({
+      domain,
+      dnsRecords: await store.listDnsRecords(orgId, domain.id),
+      sending: capability?.sending ?? null,
+      receiving: capability?.receiving ?? null,
+    });
+  }
+  return { domains: withRecords };
+}
+
 export async function registerAdminDomainsRoutes(
   app: FastifyInstance,
   options: RegisterAdminDomainsRoutesOptions,
@@ -305,23 +332,7 @@ export async function registerAdminDomainsRoutes(
     if (!canReadAdminConsole(actor)) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
-    const domains = await store.listDomains(actor.orgId);
-    /* One capability query for the whole list, indexed by parent id, rather
-       than two more round trips per domain. */
-    const capabilities = new Map(
-      (await store.listCapabilities(actor.orgId)).map((entry) => [entry.adminDomainId, entry]),
-    );
-    const withRecords: DomainWithRecords[] = [];
-    for (const domain of domains) {
-      const capability = capabilities.get(domain.id);
-      withRecords.push({
-        domain,
-        dnsRecords: await store.listDnsRecords(actor.orgId, domain.id),
-        sending: capability?.sending ?? null,
-        receiving: capability?.receiving ?? null,
-      });
-    }
-    return { domains: withRecords };
+    return readDomainsWithRecords(store, actor.orgId);
   });
 
   app.post("/api/admin/domains", async (request, reply) => {

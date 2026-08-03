@@ -26,14 +26,21 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
+import { useAdminSectionTab } from "@/features/admin/admin-section-search";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import {
+  AdminField,
+  AdminInput,
+  AdminSelect,
+  AdminStatRow,
+  AdminStatTile,
+} from "@/features/admin/console/controls";
+import {
   EmptyRow,
   EmptyState,
-  HEADER_CELL,
-  INPUT_STYLE,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
@@ -41,6 +48,7 @@ import {
   StateBanner,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   createMailProvider,
   createRoutingRule,
@@ -56,6 +64,8 @@ import {
   ROUTING_ACTIONS,
   setDefaultMailProvider,
   spamSettingsQueryOptions,
+  type DmarcReport,
+  type MailProvider,
   type MailProviderConfig,
   type MailProviderKind,
   type RoutingAction,
@@ -75,6 +85,26 @@ export const MAIL_SUBVIEWS = [
 
 export type MailSubviewId = (typeof MAIL_SUBVIEWS)[number]["id"];
 
+/** Default tab when `?tab=` is missing or unknown (keeps `/admin/mail` clean). */
+export const DEFAULT_MAIL_SUBVIEW: MailSubviewId = "providers";
+
+export function isMailSubviewId(value: string): value is MailSubviewId {
+  return MAIL_SUBVIEWS.some((view) => view.id === value);
+}
+
+/** Map URL `?tab=` to a known mail admin subview. Unknown → default. */
+export function mailSubviewFromSearch(tab: string | undefined): MailSubviewId {
+  return tab !== undefined && isMailSubviewId(tab) ? tab : DEFAULT_MAIL_SUBVIEW;
+}
+
+/**
+ * Search fragment for the admin section route. Default tab is omitted so the
+ * URL stays `/admin/mail` rather than `/admin/mail?tab=providers`.
+ */
+export function mailAdminSearchForSubview(subview: MailSubviewId): { readonly tab?: string } {
+  return subview === DEFAULT_MAIL_SUBVIEW ? {} : { tab: subview };
+}
+
 const tabDomId = (id: MailSubviewId) => `mail-tab-${id}`;
 const panelDomId = (id: MailSubviewId) => `mail-panel-${id}`;
 
@@ -82,44 +112,31 @@ const panelDomId = (id: MailSubviewId) => `mail-panel-${id}`;
 /* Local layout vocabulary                                            */
 /* ------------------------------------------------------------------ */
 
-/* Column templates ride on a custom property set on the table frame so the
-   header row and every body row read one definition instead of repeating the
-   track list. */
-const TABLE_HEAD =
-  "grid h-8 items-center border-b border-[var(--border)] bg-[var(--surface-2)] px-3 [grid-template-columns:var(--admin-table-cols)]";
-const TABLE_ROW =
-  "grid items-center border-b border-[var(--border)] px-3 last:border-b-0 [font-size:var(--rd-row-fs)] [grid-template-columns:var(--admin-table-cols)] [min-height:var(--rd-list-row-h)]";
-
-const TABLE_FRAME = "panel overflow-hidden";
-const PROVIDERS_COLS = "[--admin-table-cols:1fr_130px_1.6fr_90px_110px]";
-const DMARC_COLS = "[--admin-table-cols:1fr_1fr_1.4fr_90px_90px_90px]";
-const ROUTING_COLS = "[--admin-table-cols:60px_1.4fr_130px_1.4fr_90px_150px]";
-
 const DISCLOSURE = "rounded-[var(--radius)] border border-[var(--border)]";
 const DISCLOSURE_SUMMARY =
   "cursor-pointer px-3 py-2 [font-size:var(--text-body-sm)] text-[var(--text-2)]";
 
-const STAT_VALUE = "mt-2 font-bold tracking-[-0.02em] [font-size:var(--text-h1)]";
-const STAT_NOTE = "mt-1 text-[var(--text-3)] [font-size:var(--text-caption)]";
-
-/** Heading for one of the five mail views. The page `<h1>` is "Mail" — one per
- *  route, from `PageHeading` — so a view title is an `<h2>` under it rather
- *  than a second page title. */
-
-function Field({
-  label,
-  className,
+/** Title of a panel or form inside a sub-view. The page `<h1>` is "Mail" and a
+ *  sub-view title is the `<h2>` under it, so a panel title is an `<h3>` — as a
+ *  styled `<div>` it was invisible to anything walking the heading chain. */
+function PanelTitle({
   children,
+  /** Form titles sit a step below the status-card titles they share a page with. */
+  size = "sm",
 }: {
-  readonly label: string;
-  readonly className?: string;
   readonly children: ReactNode;
+  readonly size?: "sm" | "md";
 }) {
   return (
-    <label className={className === undefined ? "grid gap-1" : `grid gap-1 ${className}`}>
-      <span className="text-[var(--text-3)] [font-size:var(--text-caption)]">{label}</span>
+    <h3
+      className={
+        size === "sm"
+          ? "m-0 font-semibold [font-size:var(--text-body-sm)]"
+          : "m-0 font-semibold [font-size:var(--text-body)]"
+      }
+    >
       {children}
-    </label>
+    </h3>
   );
 }
 
@@ -190,33 +207,31 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
         onSubmit({ name: name.trim(), kind, config });
       }}
     >
-      <div className="font-semibold [font-size:var(--text-body-sm)]">Add outbound provider</div>
+      <PanelTitle>Add outbound provider</PanelTitle>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Name">
-          <input
+        <AdminField label="Name">
+          <AdminInput
             aria-label="Provider name"
             className="w-full"
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Primary SES"
-            style={INPUT_STYLE}
           />
-        </Field>
-        <Field label="Kind">
-          <select
+        </AdminField>
+        <AdminField label="Kind">
+          <AdminSelect
             aria-label="Provider kind"
             className="w-full"
             value={kind}
             onChange={(event) => setKind(event.target.value as MailProviderKind)}
-            style={INPUT_STYLE}
           >
             {MAIL_PROVIDER_KINDS.map((value) => (
               <option key={value} value={value}>
                 {mailProviderKindLabels[value]}
               </option>
             ))}
-          </select>
-        </Field>
+          </AdminSelect>
+        </AdminField>
       </div>
 
       {/* Credentials the chosen provider cannot deliver without. They stay in
@@ -230,52 +245,48 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
         </legend>
         <div className="grid gap-3 sm:grid-cols-2">
           {kind === "ses" || kind === "mailgun" || kind === "postmark" ? (
-            <Field label="API key (env ref)">
-              <input
+            <AdminField label="API key (env ref)">
+              <AdminInput
                 aria-label="API key env ref"
                 className="w-full"
                 value={config.apiKeyRef ?? ""}
                 onChange={(event) => setField("apiKeyRef", event.target.value)}
                 placeholder="env:MAIL_API_KEY"
-                style={INPUT_STYLE}
               />
-            </Field>
+            </AdminField>
           ) : null}
           {kind === "ses" ? (
-            <Field label="Region">
-              <input
+            <AdminField label="Region">
+              <AdminInput
                 aria-label="Region"
                 className="w-full"
                 value={config.region ?? ""}
                 onChange={(event) => setField("region", event.target.value)}
                 placeholder="us-east-1"
-                style={INPUT_STYLE}
               />
-            </Field>
+            </AdminField>
           ) : null}
           {kind === "mailgun" ? (
-            <Field label="Domain">
-              <input
+            <AdminField label="Domain">
+              <AdminInput
                 aria-label="Mailgun domain"
                 className="w-full"
                 value={config.domain ?? ""}
                 onChange={(event) => setField("domain", event.target.value)}
                 placeholder="mg.helix.io"
-                style={INPUT_STYLE}
               />
-            </Field>
+            </AdminField>
           ) : null}
           {kind === "smtp" ? (
-            <Field label="Host">
-              <input
+            <AdminField label="Host">
+              <AdminInput
                 aria-label="SMTP host"
                 className="w-full"
                 value={config.host ?? ""}
                 onChange={(event) => setField("host", event.target.value)}
                 placeholder="smtp.relay.example"
-                style={INPUT_STYLE}
               />
-            </Field>
+            </AdminField>
           ) : null}
         </div>
       </fieldset>
@@ -288,17 +299,16 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
             Advanced relay settings — submission port
           </summary>
           <div className="border-t border-[var(--border)] p-3">
-            <Field label="Port">
-              <input
+            <AdminField label="Port">
+              <AdminInput
                 aria-label="SMTP port"
                 className="w-full"
                 type="number"
                 value={config.port ?? ""}
                 onChange={(event) => setField("port", event.target.value)}
                 placeholder="587"
-                style={INPUT_STYLE}
               />
-            </Field>
+            </AdminField>
           </div>
         </details>
       ) : null}
@@ -350,6 +360,67 @@ function MailProviders() {
   const mutationError = createMutation.error ?? defaultMutation.error;
   const showEmptyState =
     failure === null && !providersQuery.isPending && providers.length === 0 && !showForm;
+
+  const providerColumns: readonly AdminColumn<MailProvider>[] = [
+    {
+      id: "name",
+      header: "Name",
+      cell: (provider) => (
+        <span className="font-medium">
+          {provider.name}
+          {provider.isDefault ? <span className="chip accent ml-2">Default</span> : null}
+        </span>
+      ),
+    },
+    {
+      id: "kind",
+      header: "Kind",
+      width: "130px",
+      cell: (provider) => <span className="chip">{mailProviderKindLabels[provider.kind]}</span>,
+    },
+    {
+      id: "config",
+      header: "Config",
+      cell: (provider) => (
+        <span className="mono text-[var(--text-2)] [font-size:var(--text-caption)]">
+          {configSummary(provider.kind, provider.config)}
+        </span>
+      ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      width: "110px",
+      cell: (provider) => (
+        <span className={`chip ${provider.enabled ? "success" : "warning"}`}>
+          <span className="chip-dot" />
+          {provider.enabled ? "Enabled" : "Disabled"}
+        </span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      headerHidden: true,
+      align: "right",
+      width: "130px",
+      /* The default provider gets no button: the chip beside its name already
+         says so, and "Set default" on it would do nothing. */
+      cell: (provider) =>
+        provider.isDefault ? null : (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={defaultMutation.isPending}
+            aria-label={`Make ${provider.name} default`}
+            onClick={() => defaultMutation.mutate(provider.id)}
+          >
+            Set default
+          </Button>
+        ),
+    },
+  ];
 
   return (
     <>
@@ -408,51 +479,13 @@ function MailProviders() {
           Mailgun, Postmark, or an SMTP relay. Add one and mark it default to start delivering.
         </EmptyState>
       ) : providers.length === 0 ? null : (
-        <div className={`${TABLE_FRAME} ${PROVIDERS_COLS}`}>
-          <div className={TABLE_HEAD} style={HEADER_CELL}>
-            <span>Name</span>
-            <span>Kind</span>
-            <span>Config</span>
-            <span>Status</span>
-            <span />
-          </div>
-          {providers.map((provider) => (
-            <div key={provider.id} className={TABLE_ROW}>
-              <span className="min-w-0 truncate font-medium">
-                {provider.name}
-                {provider.isDefault ? <span className="chip accent ml-2">Default</span> : null}
-              </span>
-              <span>
-                <span className="chip">{mailProviderKindLabels[provider.kind]}</span>
-              </span>
-              <span className="mono min-w-0 truncate text-[var(--text-2)] [font-size:var(--text-caption)]">
-                {configSummary(provider.kind, provider.config)}
-              </span>
-              <span>
-                <span className={`chip ${provider.enabled ? "success" : "warning"}`}>
-                  <span className="chip-dot" />
-                  {provider.enabled ? "Enabled" : "Disabled"}
-                </span>
-              </span>
-              {/* The default provider gets no button: the chip beside its name
-                  already says so, and "Set default" on it would do nothing. */}
-              {provider.isDefault ? (
-                <span />
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="justify-self-end"
-                  disabled={defaultMutation.isPending}
-                  aria-label={`Make ${provider.name} default`}
-                  onClick={() => defaultMutation.mutate(provider.id)}
-                >
-                  Set default
-                </Button>
-              )}
-            </div>
-          ))}
+        <div className="panel overflow-hidden">
+          <AdminTable
+            label="Outbound mail providers"
+            columns={providerColumns}
+            rows={providers}
+            rowKey={(provider) => provider.id}
+          />
         </div>
       )}
     </>
@@ -467,6 +500,43 @@ function percent(fraction: number): string {
   return `${(fraction * 100).toFixed(1)}%`;
 }
 
+const DMARC_COLUMNS: readonly AdminColumn<DmarcReport>[] = [
+  { id: "reporter", header: "Reporter", cell: (report) => report.reporter },
+  {
+    id: "domain",
+    header: "Domain",
+    cell: (report) => <span className="text-[var(--text-2)]">{report.domain}</span>,
+  },
+  {
+    id: "window",
+    header: "Window",
+    cell: (report) => (
+      <span className="mono text-[var(--text-3)] [font-size:var(--text-caption)]">
+        {report.rangeStart} → {report.rangeEnd}
+      </span>
+    ),
+  },
+  { id: "total", header: "Messages", align: "right", cell: (report) => report.total },
+  {
+    id: "pass",
+    header: "Pass",
+    align: "right",
+    cell: (report) => <span className="text-[var(--success)]">{report.passCount}</span>,
+  },
+  {
+    id: "fail",
+    header: "Fail",
+    align: "right",
+    /* Only colour a failure count that is actually non-zero — a red 0 reads as
+       a problem the reporter did not report. */
+    cell: (report) => (
+      <span className={report.failCount > 0 ? "text-[var(--danger)]" : undefined}>
+        {report.failCount}
+      </span>
+    ),
+  },
+];
+
 function Deliverability() {
   const queryClient = useQueryClient();
   const dmarcQuery = useQuery(mailDmarcQueryOptions());
@@ -480,11 +550,19 @@ function Deliverability() {
 
   const rateCards = useMemo(
     () =>
+      /* Per metric, not all-or-nothing. The backend can state the DMARC rate
+         today but not the per-mechanism SPF/DKIM rates; dropping only the cards
+         it cannot back beats dropping the one it can. A null rate is never
+         rendered as 0%. */
       summary
         ? [
             { label: "DMARC pass rate", value: percent(summary.dmarcPassRate) },
-            { label: "SPF pass rate", value: percent(summary.spfPassRate) },
-            { label: "DKIM pass rate", value: percent(summary.dkimPassRate) },
+            ...(summary.spfPassRate === null
+              ? []
+              : [{ label: "SPF pass rate", value: percent(summary.spfPassRate) }]),
+            ...(summary.dkimPassRate === null
+              ? []
+              : [{ label: "DKIM pass rate", value: percent(summary.dkimPassRate) }]),
           ]
         : [],
     [summary],
@@ -517,13 +595,12 @@ function Deliverability() {
       ) : null}
 
       {summary ? (
-        <div className="mb-4 grid gap-3 sm:grid-cols-3">
-          {rateCards.map((card) => (
-            <div key={card.label} className="panel p-4">
-              <span style={HEADER_CELL}>{card.label}</span>
-              <div className={STAT_VALUE}>{card.value}</div>
-            </div>
-          ))}
+        <div className="mb-4">
+          <AdminStatRow>
+            {rateCards.map((card) => (
+              <AdminStatTile key={card.label} label={card.label} value={card.value} />
+            ))}
+          </AdminStatRow>
         </div>
       ) : null}
 
@@ -541,29 +618,13 @@ function Deliverability() {
           <summary className={DISCLOSURE_SUMMARY}>
             {`Per-reporter aggregate reports (${String(reports.length)}) — reporter, window, and pass/fail counts`}
           </summary>
-          <div className={`border-t border-[var(--border)] ${DMARC_COLS}`}>
-            <div className={TABLE_HEAD} style={HEADER_CELL}>
-              <span>Reporter</span>
-              <span>Domain</span>
-              <span>Window</span>
-              <span>Messages</span>
-              <span>Pass</span>
-              <span>Fail</span>
-            </div>
-            {reports.map((report) => (
-              <div key={report.id} className={TABLE_ROW}>
-                <span className="min-w-0 truncate font-medium">{report.reporter}</span>
-                <span className="min-w-0 truncate text-[var(--text-2)]">{report.domain}</span>
-                <span className="mono min-w-0 truncate text-[var(--text-3)] [font-size:var(--text-caption)]">
-                  {report.rangeStart} → {report.rangeEnd}
-                </span>
-                <span>{report.total}</span>
-                <span className="text-[var(--success)]">{report.passCount}</span>
-                <span className={report.failCount > 0 ? "text-[var(--danger)]" : undefined}>
-                  {report.failCount}
-                </span>
-              </div>
-            ))}
+          <div className="border-t border-[var(--border)]">
+            <AdminTable
+              label="DMARC reports"
+              columns={DMARC_COLUMNS}
+              rows={reports}
+              rowKey={(report) => report.id}
+            />
           </div>
         </details>
       )}
@@ -610,43 +671,40 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
         });
       }}
     >
-      <div className="font-semibold [font-size:var(--text-body-sm)]">Add inbound routing rule</div>
+      <PanelTitle>Add inbound routing rule</PanelTitle>
       <div className="grid gap-3 sm:grid-cols-3">
-        <Field label="Match pattern">
-          <input
+        <AdminField label="Match pattern">
+          <AdminInput
             aria-label="Match pattern"
             className="w-full"
             value={matchPattern}
             onChange={(event) => setMatchPattern(event.target.value)}
             placeholder="*@support.helix.io"
-            style={INPUT_STYLE}
           />
-        </Field>
-        <Field label="Action">
-          <select
+        </AdminField>
+        <AdminField label="Action">
+          <AdminSelect
             aria-label="Routing action"
             className="w-full"
             value={action}
             onChange={(event) => setAction(event.target.value as RoutingAction)}
-            style={INPUT_STYLE}
           >
             {ROUTING_ACTIONS.map((value) => (
               <option key={value} value={value}>
                 {routingActionLabels[value]}
               </option>
             ))}
-          </select>
-        </Field>
-        <Field label="Destination">
-          <input
+          </AdminSelect>
+        </AdminField>
+        <AdminField label="Destination">
+          <AdminInput
             aria-label="Destination"
             className="w-full"
             value={destination}
             onChange={(event) => setDestination(event.target.value)}
             placeholder="support-team or https://hook"
-            style={INPUT_STYLE}
           />
-        </Field>
+        </AdminField>
       </div>
 
       {/* Priority has a working default (100) and only matters once two rules
@@ -656,16 +714,15 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
           Advanced — match priority when several rules overlap
         </summary>
         <div className="border-t border-[var(--border)] p-3">
-          <Field label="Priority">
-            <input
+          <AdminField label="Priority">
+            <AdminInput
               aria-label="Priority"
               className="w-full"
               type="number"
               value={priority}
               onChange={(event) => setPriority(event.target.value)}
-              style={INPUT_STYLE}
             />
-          </Field>
+          </AdminField>
           <p className="mt-2 mb-0 text-[var(--text-3)] [font-size:var(--text-caption)]">
             Rules are matched in ascending priority order — the lowest number wins.
           </p>
@@ -741,6 +798,84 @@ function RoutingRules() {
   const showEmptyState =
     failure === null && !rulesQuery.isPending && rules.length === 0 && !showForm;
 
+  const ruleColumns: readonly AdminColumn<RoutingRule>[] = [
+    {
+      id: "priority",
+      header: "Priority",
+      width: "80px",
+      align: "right",
+      cell: (rule) => (
+        <span className="mono text-[var(--text-3)] [font-size:var(--text-caption)]">
+          {rule.priority}
+        </span>
+      ),
+    },
+    {
+      id: "match",
+      header: "Match",
+      cell: (rule) => (
+        <span className="mono [font-size:var(--text-caption)]">{rule.matchPattern}</span>
+      ),
+    },
+    {
+      id: "action",
+      header: "Action",
+      width: "150px",
+      cell: (rule) => <span className="chip">{routingActionLabels[rule.action]}</span>,
+    },
+    {
+      id: "destination",
+      header: "Destination",
+      cell: (rule) => <span className="text-[var(--text-2)]">{rule.destination}</span>,
+    },
+    {
+      id: "status",
+      header: "Status",
+      width: "100px",
+      cell: (rule) => (
+        <span className={`chip ${rule.enabled ? "success" : "warning"}`}>
+          <span className="chip-dot" />
+          {rule.enabled ? "Active" : "Off"}
+        </span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      headerHidden: true,
+      align: "right",
+      width: "170px",
+      cell: (rule) => (
+        <div className="flex justify-end gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-label={`${rule.enabled ? "Disable" : "Enable"} rule ${rule.matchPattern}`}
+            disabled={patchMutation.isPending}
+            onClick={() => patchMutation.mutate({ id: rule.id, enabled: !rule.enabled })}
+          >
+            {rule.enabled ? "Disable" : "Enable"}
+          </Button>
+          {/* Stays a glyph — the column holds "Disable" and this together and
+              nothing else — but not a grey one: it was indistinguishable from
+              the reversible toggle beside it. */}
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="destructive"
+            title={`Delete rule ${rule.matchPattern}`}
+            aria-label={`Delete rule ${rule.matchPattern}`}
+            disabled={deleteMutation.isPending}
+            onClick={() => setDeleteTarget(rule)}
+          >
+            <Icons.Trash />
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <>
       <SubviewHeading
@@ -797,61 +932,13 @@ function RoutingRules() {
           ascending priority order.
         </EmptyState>
       ) : rules.length === 0 ? null : (
-        <div className={`${TABLE_FRAME} ${ROUTING_COLS}`}>
-          <div className={TABLE_HEAD} style={HEADER_CELL}>
-            <span>Priority</span>
-            <span>Match</span>
-            <span>Action</span>
-            <span>Destination</span>
-            <span>Status</span>
-            <span />
-          </div>
-          {rules.map((rule) => (
-            <div key={rule.id} className={TABLE_ROW}>
-              <span className="mono text-[var(--text-3)] [font-size:var(--text-caption)]">
-                {rule.priority}
-              </span>
-              <span className="mono min-w-0 truncate [font-size:var(--text-caption)]">
-                {rule.matchPattern}
-              </span>
-              <span>
-                <span className="chip">{routingActionLabels[rule.action]}</span>
-              </span>
-              <span className="min-w-0 truncate text-[var(--text-2)]">{rule.destination}</span>
-              <span>
-                <span className={`chip ${rule.enabled ? "success" : "warning"}`}>
-                  <span className="chip-dot" />
-                  {rule.enabled ? "Active" : "Off"}
-                </span>
-              </span>
-              <div className="flex justify-self-end gap-1.5">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  aria-label={`${rule.enabled ? "Disable" : "Enable"} rule ${rule.matchPattern}`}
-                  disabled={patchMutation.isPending}
-                  onClick={() => patchMutation.mutate({ id: rule.id, enabled: !rule.enabled })}
-                >
-                  {rule.enabled ? "Disable" : "Enable"}
-                </Button>
-                {/* Stays a glyph — the 150px track holds "Disable" and this
-                    together and nothing else — but not a grey one: it was
-                    indistinguishable from the reversible toggle beside it. */}
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="destructive"
-                  title={`Delete rule ${rule.matchPattern}`}
-                  aria-label={`Delete rule ${rule.matchPattern}`}
-                  disabled={deleteMutation.isPending}
-                  onClick={() => setDeleteTarget(rule)}
-                >
-                  <Icons.Trash />
-                </Button>
-              </div>
-            </div>
-          ))}
+        <div className="panel overflow-hidden">
+          <AdminTable
+            label="Inbound routing rules"
+            columns={ruleColumns}
+            rows={rules}
+            rowKey={(rule) => rule.id}
+          />
         </div>
       )}
 
@@ -916,11 +1003,16 @@ function SpamFiltering() {
         ? "danger"
         : "warning";
 
+  const spamdHost =
+    settings?.spamd?.host !== undefined && settings.spamd.host !== null
+      ? `${settings.spamd.host}${settings.spamd.port !== null ? `:${String(settings.spamd.port)}` : ""}`
+      : null;
+
   return (
     <>
       <SubviewHeading
         title="Spam filtering"
-        subtitle="spamd thresholds and daemon status — configuration is environment-driven, so this view is read-only."
+        subtitle="SpamAssassin (spamd) is env-driven and read-only here. Optional AI second-pass is configured under AI providers."
       />
 
       {failure ? (
@@ -932,7 +1024,8 @@ function SpamFiltering() {
           onRetry={failure.retry}
           retryVariant="default"
         >
-          Filtering keeps running on the server; this page just cannot read its thresholds.
+          Filtering keeps running on the server; this page just cannot read its thresholds. If the
+          API is older than this UI, restart Helix so GET /api/admin/mail/spam is registered.
         </QueryFailureBanner>
       ) : spamQuery.isPending ? (
         <StateBanner kind="loading">Loading spam settings…</StateBanner>
@@ -940,14 +1033,25 @@ function SpamFiltering() {
 
       {settings ? (
         <>
+          {!settings.enabled ? (
+            <StateBanner kind="info">
+              SpamAssassin is off for this process (
+              <code className="text-[0.7rem]">MAIL_SPAMD_ENABLED</code> not set). Inbound mail is
+              not scored by spamd until that env flag is enabled and a reachable spamd host is
+              configured.
+            </StateBanner>
+          ) : null}
+
           <div className="panel mb-3 flex flex-wrap items-center gap-3 p-4">
             <span className="text-[var(--text-3)]">
               <Icons.Shield />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="font-semibold [font-size:var(--text-body)]">spamd daemon</div>
+              <PanelTitle size="md">SpamAssassin (spamd)</PanelTitle>
               <div className="text-[var(--text-2)] [font-size:var(--text-meta)]">
-                {`Ruleset ${settings.rulesetVersion ?? "Unknown"}`}
+                {spamdHost !== null
+                  ? `Host ${spamdHost} · ruleset ${settings.rulesetVersion ?? "Unknown"}`
+                  : `Ruleset ${settings.rulesetVersion ?? "Unknown"}`}
               </div>
             </div>
             <span className={`chip ${settings.enabled ? "success" : "warning"}`}>
@@ -960,10 +1064,42 @@ function SpamFiltering() {
             </span>
           </div>
 
-          <div className="panel mb-3 p-4">
-            <span style={HEADER_CELL}>Spam threshold</span>
-            <div className={STAT_VALUE}>{settings.threshold.toFixed(1)}</div>
-            <div className={STAT_NOTE}>Score above which mail is tagged as spam</div>
+          {settings.aiBeta !== undefined ? (
+            <div className="panel mb-3 flex flex-wrap items-center gap-3 p-4">
+              <span className="text-[var(--text-3)]">
+                <Icons.Sparkles />
+              </span>
+              <div className="min-w-0 flex-1">
+                <PanelTitle size="md">
+                  Mail spam AI <span className="font-normal text-[var(--text-3)]">(beta)</span>
+                </PanelTitle>
+                <div className="text-[var(--text-2)] [font-size:var(--text-meta)]">
+                  {settings.aiBeta.enabled
+                    ? `Model ${settings.aiBeta.model} · ${settings.aiBeta.apiKeyConfigured ? "API key configured" : "no API key"}`
+                    : "Second-pass after spamd is disabled (env or Admin)."}
+                </div>
+              </div>
+              <span className={`chip ${settings.aiBeta.enabled ? "success" : "warning"}`}>
+                <span className="chip-dot" />
+                {settings.aiBeta.enabled ? "AI beta on" : "AI beta off"}
+              </span>
+              <Button asChild size="sm" type="button" variant="outline">
+                {/* A same-origin anchor here would be a full document reload —
+                    entry bundle re-parsed, session re-fetched, every warm query
+                    thrown away — to move one section sideways. */}
+                <Link to="/admin/$section" params={{ section: "ai-providers" }}>
+                  Configure in AI providers
+                </Link>
+              </Button>
+            </div>
+          ) : null}
+
+          <div className="mb-3">
+            <AdminStatTile
+              label="Spam threshold"
+              value={settings.threshold.toFixed(1)}
+              note="Score above which mail is tagged as spam"
+            />
           </div>
 
           {/* Threshold and daemon state are the decision here; the reject cut-off
@@ -973,28 +1109,26 @@ function SpamFiltering() {
               Advanced detail — reject threshold, ruleset version, and messages tagged in the last
               day
             </summary>
-            <div className="grid gap-3 border-t border-[var(--border)] p-3 sm:grid-cols-3">
-              <div>
-                <span style={HEADER_CELL}>Reject threshold</span>
-                <div className={STAT_VALUE}>
-                  {knownNumber(settings.rejectThreshold, (value) => value.toFixed(1))}
-                </div>
-                <div className={STAT_NOTE}>Score above which mail is rejected outright</div>
-              </div>
-              <div>
-                <span style={HEADER_CELL}>Ruleset version</span>
-                <div className={STAT_VALUE}>{settings.rulesetVersion ?? "Unknown"}</div>
-                <div className={STAT_NOTE}>Rule bundle the daemon is matching against</div>
-              </div>
-              <div>
-                <span style={HEADER_CELL}>Tagged (24h)</span>
-                <div className={STAT_VALUE}>
-                  {knownNumber(settings.taggedLast24h, (value) =>
+            <div className="border-t border-[var(--border)] p-3">
+              <AdminStatRow>
+                <AdminStatTile
+                  label="Reject threshold"
+                  value={knownNumber(settings.rejectThreshold, (value) => value.toFixed(1))}
+                  note="Score above which mail is rejected outright"
+                />
+                <AdminStatTile
+                  label="Ruleset version"
+                  value={settings.rulesetVersion ?? "Unknown"}
+                  note="Rule bundle the daemon is matching against"
+                />
+                <AdminStatTile
+                  label="Tagged (24h)"
+                  value={knownNumber(settings.taggedLast24h, (value) =>
                     new Intl.NumberFormat("en-US").format(value),
                   )}
-                </div>
-                <div className={STAT_NOTE}>Messages flagged as spam in the last day</div>
-              </div>
+                  note="Messages flagged as spam in the last day"
+                />
+              </AdminStatRow>
             </div>
           </details>
         </>
@@ -1014,8 +1148,14 @@ const MAIL_SUBVIEW_CONTENT: Record<MailSubviewId, () => ReactNode> = {
   spam: SpamFiltering,
 };
 
+const MAIL_SUBVIEW_IDS = MAIL_SUBVIEWS.map((view) => view.id);
+
 export function MailAdminSection() {
-  const [subview, setSubview] = useState<MailSubviewId>("providers");
+  const [subview, selectSubview] = useAdminSectionTab(
+    MAIL_SUBVIEW_IDS,
+    DEFAULT_MAIL_SUBVIEW,
+    "mail",
+  );
   const tabRefs = useRef<Partial<Record<MailSubviewId, HTMLButtonElement | null>>>({});
   const Subview = MAIL_SUBVIEW_CONTENT[subview];
 
@@ -1043,7 +1183,7 @@ export function MailAdminSection() {
       return;
     }
     event.preventDefault();
-    setSubview(next.id);
+    selectSubview(next.id);
     tabRefs.current[next.id]?.focus();
   };
 
@@ -1083,7 +1223,7 @@ export function MailAdminSection() {
                  tab has to be visible even though `.tab` styles only hover and
                  selection. */
               className={`tab focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)] ${active ? "active" : ""}`.trim()}
-              onClick={() => setSubview(view.id)}
+              onClick={() => selectSubview(view.id)}
             >
               {view.label}
             </button>

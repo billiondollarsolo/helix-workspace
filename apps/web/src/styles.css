@@ -2475,30 +2475,13 @@ aside,
   gap: 20px;
 }
 
-.admin-tier-header {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--gap);
-  flex-wrap: wrap;
-}
-.admin-tier-header h1 {
-  font-size: var(--text-h2);
-  font-weight: 600;
-  margin: 0;
-}
-.admin-tier-header p {
-  margin: 4px 0 0;
-  font-size: var(--text-body-sm);
-  color: var(--text-2);
-  max-width: 68ch;
-}
 .admin-tier-kicker,
 .admin-tier-live-status {
   font-size: var(--text-caption);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-3);
+  color: var(--text-2);
   margin: 0;
 }
 
@@ -2516,12 +2499,12 @@ aside,
 }
 .admin-tier-score span {
   font-size: var(--text-meta);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 /* Unscoreable reads as muted, not as a number. A large confident "100%" was
    the whole problem; an em dash at full weight would still look like a score. */
 .admin-tier-score[data-unknown] strong {
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--text-h3);
 }
 
@@ -2568,7 +2551,7 @@ aside,
   font-size: var(--text-caption);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .admin-tier-selector strong {
   font-size: var(--text-body);
@@ -2576,7 +2559,7 @@ aside,
 }
 .admin-tier-selector small {
   font-size: var(--text-meta);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* Panels */
@@ -2791,7 +2774,7 @@ aside,
   font-size: var(--text-caption);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-3);
+  color: var(--text-2);
   margin-bottom: 2px;
 }
 .admin-requirement-fact-group ul {
@@ -2955,6 +2938,11 @@ aside,
 }
 .admin-nav-group-toggle {
   cursor: pointer;
+  /* WCAG 2.2 target size (2.5.8): the toggle was 14.3px tall, so the row an
+     operator has to hit to fold a group was half the minimum. The heading's own
+     padding supplies the rest of the box, so this only has to guarantee the
+     floor. */
+  min-height: 24px;
 }
 .admin-nav-group-toggle:hover {
   color: var(--text-2);
@@ -2964,9 +2952,13 @@ aside,
   outline-offset: 2px;
   border-radius: var(--radius);
 }
+/* `--text-3` on `--surface` measures 2.52:1 at 11px — below the 4.5:1 these
+   uppercase 11px labels need. They are structural navigation headings, not
+   incidental text, so they take the readable token rather than the faint one. */
 .admin-nav-group-label {
   flex: 1;
   min-width: 0;
+  color: var(--text-2);
 }
 /* What is behind the fold, stated in the summary. */
 .admin-nav-group-count {
@@ -3018,6 +3010,60 @@ aside,
   color: var(--text-3);
 }
 
+/* Sidebar section filter. 22 sections across 6 groups do not fit the nav; the
+   overflow fade, autoscroll and folding groups all compensate for the absence
+   of this one control. */
+.admin-nav-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 4px 8px;
+  padding: 0 8px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.admin-nav-filter:focus-within {
+  border-color: var(--accent, var(--text-3));
+}
+.admin-nav-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: var(--text-meta);
+  outline: none;
+}
+/* The UA's own clear button in a search input sits at a different size in every
+   engine and fights the 30px row. */
+.admin-nav-filter input::-webkit-search-cancel-button {
+  appearance: none;
+}
+.admin-nav-empty {
+  margin: 4px 8px 8px;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+
+/* Only rendered when the event socket is NOT healthy — a permanent green light
+   is noise, and the failure this guards against is a dead connection reading as
+   a quiet system. */
+.admin-nav-realtime {
+  margin: 12px 4px 0;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+.admin-nav-realtime[data-state="offline"] {
+  color: var(--text-2);
+}
+
 /* ============================================================
    Admin console — page chrome
 
@@ -3025,6 +3071,64 @@ aside,
    stretches to whatever is left (a hostname input at 1350px), and a row's
    trailing control drifts a screen's width from the label it belongs to.
    ============================================================ */
+
+/* Shown while a section's chunk is in flight, in place of the blank pane that
+   used to be there. Page-shaped so the geometry survives the swap: a spinner
+   centred in an empty column would move every element once the real content
+   arrives. */
+.admin-skeleton {
+  display: grid;
+  gap: 12px;
+}
+.admin-skeleton-title,
+.admin-skeleton-subtitle,
+.admin-skeleton-row {
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  animation: admin-skeleton-pulse 1.4s ease-in-out infinite;
+}
+.admin-skeleton-title {
+  height: 26px;
+  width: 220px;
+}
+.admin-skeleton-subtitle {
+  height: 14px;
+  width: 340px;
+  max-width: 100%;
+}
+.admin-skeleton-panel {
+  display: grid;
+  gap: 1px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.admin-skeleton-row {
+  height: var(--rd-list-row-h, 36px);
+}
+/* Staggered, so the block reads as one loading surface rather than four
+   elements flashing in lockstep. */
+.admin-skeleton-row:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.admin-skeleton-row:nth-child(3) {
+  animation-delay: 0.2s;
+}
+.admin-skeleton-row:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+@keyframes admin-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
 
 .admin-page {
   flex: 1;
@@ -3057,7 +3161,7 @@ aside,
 .admin-page-subtitle {
   margin: 4px 0 0;
   font-size: var(--text-body-sm);
-  color: var(--text-3);
+  color: var(--text-2);
   max-width: 76ch;
 }
 
@@ -3094,7 +3198,7 @@ aside,
   padding: 32px;
   text-align: center;
   font-size: var(--text-body-sm);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* One empty state for the whole console: mark, what this surface holds, and
@@ -3155,7 +3259,12 @@ aside,
 }
 .admin-failure-detail {
   font-size: var(--text-caption);
-  opacity: 0.85;
+  /* Was `opacity: 0.85`, which dims the text *and* whatever it sits on, so the
+     ratio fell below AA in both themes. This line is the raw error message —
+     the one thing here support can act on — so it is de-emphasised by colour,
+     which the contrast tokens account for, rather than by transparency, which
+     they cannot. */
+  color: var(--text-2);
   overflow-wrap: anywhere;
 }
 
@@ -3183,6 +3292,165 @@ aside,
   margin-bottom: 12px;
 }
 
+/* ---- Shared form + table vocabulary (console/controls.tsx, console/table.tsx)
+   Every rule below replaces something that was written three to five times per
+   section, or an exported CSSProperties object that could not be themed. ---- */
+
+.admin-field {
+  display: grid;
+  gap: 4px;
+}
+.admin-field-label {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+}
+
+/* Replaces the exported `INPUT_STYLE` object. Same metrics, but now it can
+   carry a focus ring — which an inline style never could. */
+.admin-control {
+  height: 30px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 8px;
+  font-size: var(--text-meta);
+}
+.admin-control:focus-visible {
+  outline: 2px solid var(--text-3);
+  outline-offset: -1px;
+}
+.admin-control:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* The frame every admin table sits in. Replaces the per-section
+   `TABLE_FRAME = "panel overflow-hidden"` constants, and the six different
+   panel radii that surrounded the pseudo-tables. */
+.admin-table {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--surface);
+  /* So the header row's background is clipped by the rounded corners rather
+     than squaring them off. */
+  overflow: hidden;
+}
+
+/* Scroll container for a virtualized table. Only rendered above the row
+   threshold, so a short table keeps its natural height and no scroll box. */
+.admin-table-scroll {
+  overflow-y: auto;
+  border-radius: 8px;
+}
+.admin-table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A sortable caption is a button, so it has to look like the caption it
+   replaced rather than like a control bolted into a header row. */
+.admin-table-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.admin-table-sort:hover {
+  color: var(--text);
+}
+.admin-table-sort:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+/* The direction indicator, drawn from `aria-sort` rather than rendered as an
+   element. Generated content keeps the glyph out of the header's text content
+   and out of its accessible name — the semantics live in `aria-sort`, which is
+   what assistive tech reads anyway. The unsorted state is dimmed rather than
+   hidden: a column that *can* sort should say so before it is clicked, without
+   competing with the one that currently is. */
+.admin-table-sort::after {
+  content: "↕";
+  font-size: 0.85em;
+  opacity: 0.45;
+}
+.admin-table-head[aria-sort="ascending"] .admin-table-sort::after {
+  content: "▲";
+  opacity: 1;
+}
+.admin-table-head[aria-sort="descending"] .admin-table-sort::after {
+  content: "▼";
+  opacity: 1;
+}
+
+/* One caption treatment for the console, replacing `HEADER_CELL` and its four
+   near-copies. */
+.admin-table-head {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.admin-table-head[data-align="right"],
+.admin-table-cell[data-align="right"] {
+  text-align: right;
+}
+/* The one row height, from the density token — so a row is the same height in
+   Users as in Domains, and both grow under [data-density="comfortable"]. Five
+   sections previously hardcoded five different heights. */
+.admin-table-cell {
+  height: var(--rd-list-row-h);
+  font-size: var(--rd-row-fs);
+}
+
+.admin-stat-row {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.admin-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+}
+.admin-stat-label {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.admin-stat-value {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.admin-stat[data-tone="success"] .admin-stat-value {
+  color: var(--success, var(--text));
+}
+.admin-stat[data-tone="warning"] .admin-stat-value {
+  color: var(--warning, var(--text));
+}
+.admin-stat[data-tone="danger"] .admin-stat-value {
+  color: var(--danger, var(--text));
+}
+.admin-stat-note {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+}
+
 /* Progressive disclosure. One look for every <details> in the console so a
    drill-down is recognisable wherever an operator meets it. */
 .admin-disclosure > summary {
@@ -3196,17 +3464,6 @@ aside,
 
 /* Expanded table-row detail (actor id, scopes). Indented past the row's
    checkbox column so it reads as belonging to the row above. */
-.admin-user-detail {
-  display: grid;
-  gap: var(--gap-sm);
-  padding: 10px 12px 12px 40px;
-  background: var(--surface-2);
-  font-size: var(--text-meta);
-}
-.admin-user-detail dt,
-.admin-user-detail-label {
-  color: var(--text-3);
-}
 
 /* A disabled control shown beside the reason it is disabled. We disable with a
    stated reason rather than hiding, so the reason needs somewhere to live. */
@@ -3486,6 +3743,32 @@ aside,
 .webhooks-table tbody tr:last-child td {
   border-bottom: 0;
 }
+/* The delivery-detail pane renders label/value pairs as span + code, not as a
+   table row. Only the `td` variant below was styled, so every pair rendered as
+   one run-together string — "Directionoutbound", "Errorfetch failed". */
+.webhooks-detail-row {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.webhooks-detail-row:last-of-type {
+  border-bottom: 0;
+}
+.webhooks-detail-row > span {
+  font-size: var(--text-caption);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.webhooks-detail-row > code {
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+}
+
 .webhooks-detail-row td {
   white-space: normal;
   background: var(--surface-2);
@@ -4015,5 +4298,13 @@ aside,
 @media (prefers-reduced-motion: reduce) {
   .network-status {
     transition: none;
+  }
+  /* The skeleton still has to read as "not the real content", so it keeps a
+     dimmed resting state rather than losing the distinction entirely. */
+  .admin-skeleton-title,
+  .admin-skeleton-subtitle,
+  .admin-skeleton-row {
+    animation: none;
+    opacity: 0.7;
   }
 }

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
+import { Button } from "@/components/ui/button";
 import {
   billingAccountQueryOptions,
   billingQueryKeys,
@@ -10,14 +11,22 @@ import {
   formatMoney,
   invoicesQueryOptions,
   usageRollupsQueryOptions,
+  type BillingUsageMeter,
+  type Invoice,
   type MeteringRollupMetricKey,
   type UsageRollup,
   type UsageSummaryMetric,
 } from "@/features/admin/billing-api";
 import {
+  AdminInput,
+  AdminSelect,
+  AdminStatRow,
+  AdminStatTile,
+  AdminToolbar,
+} from "@/features/admin/console/controls";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
+import {
   EmptyRow,
-  HEADER_CELL,
-  INPUT_STYLE,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
@@ -29,13 +38,10 @@ import {
 /* Billing                                                            */
 /* ------------------------------------------------------------------ */
 
-/* No trailing action column: there is no per-invoice document endpoint, and
-   the "PDF" button that used to sit here had no handler. */
-const INVOICE_GRID = "160px 1fr 140px 90px";
-
-/** The console's inputs carry their colours inline, which overrides the browser's
- *  own disabled rendering — a disabled filter has to be dimmed by hand. */
-const DISABLED_CONTROL: React.CSSProperties = { opacity: 0.55, cursor: "not-allowed" };
+/** What every figure on this page falls back to when its query has not
+ *  resolved. A billing console that answers "how much do we owe?" with `0`
+ *  reads as "nothing" — the one wrong answer a money figure can give. */
+const NO_VALUE = "—";
 
 const METER_LABEL: Record<"licenses" | "storage" | "ai_credits", string> = {
   licenses: "Licenses used",
@@ -61,13 +67,21 @@ const USAGE_FILTER_METRICS = Object.entries(USAGE_METRIC_LABELS) as ReadonlyArra
 
 function formatDateLabel(value: string | null): string {
   if (value === null) {
-    return "—";
+    return NO_VALUE;
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(date);
+}
+
+function formatMeterValue(meter: BillingUsageMeter): string {
+  if (meter.id === "storage") {
+    return `${formatBytes(meter.used)} / ${formatBytes(meter.limit)}`;
+  }
+  const number = new Intl.NumberFormat("en-US");
+  return `${number.format(meter.used)} / ${number.format(meter.limit)}`;
 }
 
 function buildPlanChangeMailto(planName: string, orgId: string): string {
@@ -87,6 +101,42 @@ function buildBillingContactMailto(topic: string, planName: string, orgId: strin
   ].join("\n");
   return `mailto:sales@helix.example?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
+
+/* No trailing action column: there is no per-invoice document endpoint, and
+   the "PDF" button that used to sit here had no handler. */
+const INVOICE_COLUMNS: readonly AdminColumn<Invoice>[] = [
+  {
+    id: "number",
+    header: "Invoice",
+    width: "160px",
+    cell: (invoice) => <span className="mono">{invoice.invoiceNumber}</span>,
+  },
+  {
+    id: "issued",
+    header: "Issued",
+    cell: (invoice) => (
+      <span className="text-[var(--text-2)]">{formatDateLabel(invoice.issuedAt)}</span>
+    ),
+  },
+  {
+    id: "amount",
+    header: "Amount",
+    align: "right",
+    width: "140px",
+    cell: (invoice) => formatMoney(invoice.amountCents, invoice.currency),
+  },
+  {
+    id: "status",
+    header: "Status",
+    width: "110px",
+    cell: (invoice) => (
+      <span className={`chip ${invoice.status === "paid" ? "success" : "warning"}`}>
+        <span className="chip-dot" />
+        {invoice.status}
+      </span>
+    ),
+  },
+];
 
 export function AdminBilling() {
   const queryClient = useQueryClient();
@@ -143,12 +193,16 @@ export function AdminBilling() {
     usageFailure?.retry();
   };
 
+  /* React Query keeps the last good `data` after a failed refetch, so `view`
+     outlives the read that produced it. Plan and seat *labels* survive that
+     gap honestly enough, but a money or quota figure presented as current when
+     the console could not confirm it is the page's worst failure mode — those
+     read `NO_VALUE` until the account query itself resolves again. */
+  const accountResolved = accountQuery.isSuccess;
+
   /* Filters re-key the usage query, so leaving them live over a failed panel
      offers a control that cannot do its job until the query recovers. */
   const usageFiltersDisabled = usageFailure !== null;
-  const usageFilterStyle: React.CSSProperties = usageFiltersDisabled
-    ? { ...INPUT_STYLE, ...DISABLED_CONTROL }
-    : INPUT_STYLE;
 
   return (
     <PageScroll>
@@ -174,214 +228,170 @@ export function AdminBilling() {
               error={accountFailure.error}
               isRetrying={accountFailure.isRetrying}
               onRetry={accountFailure.retry}
-            />
+            >
+              The plan figures below read “{NO_VALUE}” rather than a number: the console cannot
+              confirm what the current amounts are.
+            </QueryFailureBanner>
           ) : accountQuery.isPending ? (
             <StateBanner kind="loading">Loading billing account…</StateBanner>
           ) : null}
 
           {view ? (
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
-              <div className="panel" style={{ padding: 20 }}>
-                <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+            <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+              <div className="panel p-5">
+                <div className="mb-3 flex items-center">
                   <span className="chip accent">Current plan</span>
                 </div>
-                <div
-                  style={{ fontSize: "var(--text-h1)", fontWeight: 700, letterSpacing: "-0.02em" }}
-                >
+                {/* Deliberately not a heading: the plan name is a value, and
+                    an outline entry reading "Business" names nothing. */}
+                <div className="font-bold tracking-[-0.02em] [font-size:var(--text-h1)]">
                   {view.account.planName}
                 </div>
-                <div
-                  style={{
-                    fontSize: "var(--text-body-sm)",
-                    color: "var(--text-2)",
-                    marginBottom: 16,
-                  }}
-                >
-                  {`${formatMoney(view.account.pricePerSeatCents, view.account.currency)} per user / month · billed ${view.account.billingCycle}`}
-                </div>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(3, 1fr)",
-                    gap: 12,
-                  }}
-                >
-                  {view.meters.map((meter) => {
-                    const valueText =
-                      meter.id === "storage"
-                        ? `${formatBytes(meter.used)} / ${formatBytes(meter.limit)}`
-                        : `${new Intl.NumberFormat("en-US").format(meter.used)} / ${new Intl.NumberFormat("en-US").format(meter.limit)}`;
-                    return (
-                      <div key={meter.id}>
-                        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
-                          {METER_LABEL[meter.id]}
-                        </div>
-                        <div style={{ fontWeight: 600, marginTop: 2 }}>{valueText}</div>
-                        <div
-                          style={{
-                            height: 4,
-                            background: "var(--surface-2)",
-                            borderRadius: 2,
-                            marginTop: 6,
-                          }}
-                        >
-                          <div
-                            style={{
-                              height: "100%",
-                              width: `${String(meter.fraction * 100)}%`,
-                              background: "var(--accent)",
-                              borderRadius: 2,
-                            }}
+                <p className="mt-0 mb-4 text-[var(--text-2)] [font-size:var(--text-body-sm)]">
+                  {accountResolved
+                    ? `${formatMoney(view.account.pricePerSeatCents, view.account.currency)} per user / month · billed ${view.account.billingCycle}`
+                    : "Per-seat price unavailable — the plan read did not complete."}
+                </p>
+                <AdminStatRow>
+                  {view.meters.map((meter) => (
+                    <AdminStatTile
+                      key={meter.id}
+                      label={METER_LABEL[meter.id]}
+                      value={accountResolved ? formatMeterValue(meter) : NO_VALUE}
+                      note={
+                        accountResolved ? (
+                          /* `<progress>` rather than a div whose width is a
+                             percentage: the bar then carries its own value to
+                             assistive tech, and the fill needs no inline
+                             style to place it. */
+                          <progress
+                            className="h-1 w-full accent-[var(--accent)]"
+                            aria-label={`${METER_LABEL[meter.id]} against limit`}
+                            value={meter.fraction}
+                            max={1}
                           />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div
-                  style={{
-                    borderTop: "1px solid var(--border)",
-                    marginTop: 16,
-                    paddingTop: 12,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>
+                        ) : undefined
+                      }
+                    />
+                  ))}
+                </AdminStatRow>
+                <div className="mt-4 flex items-center gap-3 border-t border-[var(--border)] pt-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold [font-size:var(--text-body-sm)]">
                       Need more capacity?
                     </div>
-                    <div
-                      style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", marginTop: 2 }}
-                    >
+                    <div className="mt-0.5 text-[var(--text-3)] [font-size:var(--text-meta)]">
                       Request a plan change from the Helix billing team.
                     </div>
                   </div>
-                  <a
-                    className="btn primary"
-                    href={buildPlanChangeMailto(view.account.planName, view.account.orgId)}
-                    style={{ marginLeft: "auto", textDecoration: "none" }}
-                  >
-                    <Icons.Plus /> Upgrade plan
-                  </a>
+                  <Button asChild size="sm" className="ml-auto">
+                    <a href={buildPlanChangeMailto(view.account.planName, view.account.orgId)}>
+                      <Icons.Plus /> Upgrade plan
+                    </a>
+                  </Button>
                 </div>
               </div>
 
-              <div className="panel" style={{ padding: 20 }}>
-                <div style={{ ...HEADER_CELL, marginBottom: 4 }}>Next invoice</div>
-                <div style={{ fontSize: "var(--text-h1)", fontWeight: 700 }}>
-                  {formatMoney(view.account.nextInvoiceCents, view.account.currency)}
-                </div>
-                <div
-                  style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginBottom: 16 }}
-                >
-                  {formatDateLabel(view.account.nextInvoiceAt)}
-                </div>
+              <div className="grid content-start gap-4">
+                <AdminStatTile
+                  label="Next invoice"
+                  value={
+                    accountResolved
+                      ? formatMoney(view.account.nextInvoiceCents, view.account.currency)
+                      : NO_VALUE
+                  }
+                  note={accountResolved ? formatDateLabel(view.account.nextInvoiceAt) : undefined}
+                />
                 {/* There is no self-serve payment or invoice-export endpoint —
                     the billing API is three GETs (account, invoices, usage).
                     These were buttons with no handler, indistinguishable from
                     the working controls beside them. The mailto is the same
                     escape hatch the plan-change action already uses, and it
                     actually does something. */}
-                <a
-                  className="btn"
-                  style={{ width: "100%", marginBottom: 8, justifyContent: "center" }}
-                  href={buildBillingContactMailto(
-                    "Payment method update",
-                    view.account.planName,
-                    view.account.orgId,
-                  )}
-                >
-                  <Icons.Credit /> Request payment method change
-                </a>
-                <a
-                  className="btn"
-                  style={{ width: "100%", justifyContent: "center" }}
-                  href={buildBillingContactMailto(
-                    "Invoice export",
-                    view.account.planName,
-                    view.account.orgId,
-                  )}
-                >
-                  <Icons.Download /> Request invoice export
-                </a>
+                <div className="panel grid gap-2 p-4">
+                  <Button asChild variant="outline" size="sm">
+                    <a
+                      href={buildBillingContactMailto(
+                        "Payment method update",
+                        view.account.planName,
+                        view.account.orgId,
+                      )}
+                    >
+                      <Icons.Credit /> Request payment method change
+                    </a>
+                  </Button>
+                  <Button asChild variant="outline" size="sm">
+                    <a
+                      href={buildBillingContactMailto(
+                        "Invoice export",
+                        view.account.planName,
+                        view.account.orgId,
+                      )}
+                    >
+                      <Icons.Download /> Request invoice export
+                    </a>
+                  </Button>
+                </div>
               </div>
             </div>
           ) : null}
 
-          <div className="panel" style={{ padding: 16, marginTop: 16 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                marginBottom: 12,
-                flexWrap: "wrap",
-              }}
-            >
-              <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>
+          <div className="panel mt-4 p-4">
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <h2 className="m-0 font-semibold [font-size:var(--text-body-sm)]">
                 Billing-period usage
-              </span>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginLeft: "auto",
-                  flexWrap: "wrap",
-                }}
-              >
-                <select
-                  aria-label="Usage metric filter"
-                  value={usageFilters.metricKey}
-                  disabled={usageFiltersDisabled}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value as MeteringRollupMetricKey | "";
-                    setUsageFilters((current) => ({ ...current, metricKey: value }));
-                  }}
-                  style={{ ...usageFilterStyle, minWidth: 170 }}
-                >
-                  <option value="">All metrics</option>
-                  {USAGE_FILTER_METRICS.map(([metricKey, label]) => (
-                    <option key={metricKey} value={metricKey}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  aria-label="Usage from date"
-                  type="date"
-                  value={usageFilters.from}
-                  disabled={usageFiltersDisabled}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    setUsageFilters((current) => ({ ...current, from: value }));
-                  }}
-                  style={{ ...usageFilterStyle, width: 132 }}
-                />
-                <input
-                  aria-label="Usage to date"
-                  type="date"
-                  value={usageFilters.to}
-                  disabled={usageFiltersDisabled}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    setUsageFilters((current) => ({ ...current, to: value }));
-                  }}
-                  style={{ ...usageFilterStyle, width: 132 }}
-                />
-                <button
-                  type="button"
-                  className="btn sm"
-                  disabled={usageFiltersDisabled}
-                  /* `.btn` has no disabled styling in styles.css, so a disabled
-                     Clear would still look pressable. */
-                  style={usageFiltersDisabled ? DISABLED_CONTROL : undefined}
-                  onClick={() => setUsageFilters({ from: "", to: "", metricKey: "" })}
-                >
-                  Clear
-                </button>
+              </h2>
+              <div className="ml-auto">
+                <AdminToolbar label="Billing-period usage filters">
+                  <AdminSelect
+                    aria-label="Usage metric filter"
+                    className="min-w-[170px]"
+                    value={usageFilters.metricKey}
+                    disabled={usageFiltersDisabled}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value as MeteringRollupMetricKey | "";
+                      setUsageFilters((current) => ({ ...current, metricKey: value }));
+                    }}
+                  >
+                    <option value="">All metrics</option>
+                    {USAGE_FILTER_METRICS.map(([metricKey, label]) => (
+                      <option key={metricKey} value={metricKey}>
+                        {label}
+                      </option>
+                    ))}
+                  </AdminSelect>
+                  <AdminInput
+                    aria-label="Usage from date"
+                    type="date"
+                    className="w-[132px]"
+                    value={usageFilters.from}
+                    disabled={usageFiltersDisabled}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      setUsageFilters((current) => ({ ...current, from: value }));
+                    }}
+                  />
+                  <AdminInput
+                    aria-label="Usage to date"
+                    type="date"
+                    className="w-[132px]"
+                    value={usageFilters.to}
+                    disabled={usageFiltersDisabled}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      setUsageFilters((current) => ({ ...current, to: value }));
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={usageFiltersDisabled}
+                    onClick={() => setUsageFilters({ from: "", to: "", metricKey: "" })}
+                  >
+                    Clear
+                  </Button>
+                </AdminToolbar>
               </div>
             </div>
             {usageFailure !== null ? (
@@ -399,43 +409,31 @@ export function AdminBilling() {
             ) : usageRollups.length === 0 ? (
               <EmptyRow>No metered usage rollups yet.</EmptyRow>
             ) : (
-              <div style={{ display: "grid", gap: 12 }}>
+              /* Reached only with no usage failure and rollups in hand, so every
+                 figure below came from a read that completed. */
+              <div className="grid gap-3">
                 {usageSummary === undefined || usageSummary.metrics.length === 0 ? null : (
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-                      gap: 12,
-                    }}
-                  >
+                  <AdminStatRow>
                     {usageSummary.metrics.slice(0, 8).map((metric) => (
                       <UsageSummaryCard key={metric.metricKey} metric={metric} />
                     ))}
-                  </div>
+                  </AdminStatRow>
                 )}
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-                    gap: 12,
-                  }}
-                >
+                <AdminStatRow>
                   {usageRollups.slice(0, 8).map((rollup) => (
                     <UsageRollupCard
                       key={`${rollup.periodStart}:${rollup.metricKey}`}
                       rollup={rollup}
                     />
                   ))}
-                </div>
+                </AdminStatRow>
               </div>
             )}
           </div>
 
-          <div className="panel" style={{ padding: 16, marginTop: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-              <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>
-                Recent invoices
-              </span>
+          <div className="panel mt-4 p-4">
+            <div className="mb-3 flex items-center">
+              <h2 className="m-0 font-semibold [font-size:var(--text-body-sm)]">Recent invoices</h2>
             </div>
             {invoicesFailure !== null ? (
               <QueryFailureBanner
@@ -450,31 +448,12 @@ export function AdminBilling() {
             ) : invoices.length === 0 ? (
               <EmptyRow>No invoices yet.</EmptyRow>
             ) : (
-              invoices.map((invoice, index) => (
-                <div
-                  key={invoice.id}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: INVOICE_GRID,
-                    alignItems: "center",
-                    height: 32,
-                    fontSize: "var(--text-meta)",
-                    borderTop: index ? "1px solid var(--border)" : "none",
-                  }}
-                >
-                  <span className="mono">{invoice.invoiceNumber}</span>
-                  <span style={{ color: "var(--text-2)" }}>
-                    {formatDateLabel(invoice.issuedAt)}
-                  </span>
-                  <span>{formatMoney(invoice.amountCents, invoice.currency)}</span>
-                  <span>
-                    <span className={`chip ${invoice.status === "paid" ? "success" : "warning"}`}>
-                      <span className="chip-dot" />
-                      {invoice.status}
-                    </span>
-                  </span>
-                </div>
-              ))
+              <AdminTable
+                label="Recent invoices"
+                columns={INVOICE_COLUMNS}
+                rows={invoices}
+                rowKey={(invoice) => invoice.id}
+              />
             )}
           </div>
         </>
@@ -485,44 +464,21 @@ export function AdminBilling() {
 
 function UsageSummaryCard({ metric }: { readonly metric: UsageSummaryMetric }) {
   return (
-    <article
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: 12,
-        minWidth: 0,
-        background: "var(--surface-2)",
-      }}
-    >
-      <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
-        {USAGE_METRIC_LABELS[metric.metricKey] ?? metric.metricKey}
-      </div>
-      <div style={{ fontWeight: 700, marginTop: 4 }}>{formatUsageMetricQuantity(metric)}</div>
-      <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginTop: 4 }}>
-        {metric.aggregation} over {metric.sampleCount} day{metric.sampleCount === 1 ? "" : "s"}
-      </div>
-    </article>
+    <AdminStatTile
+      label={USAGE_METRIC_LABELS[metric.metricKey] ?? metric.metricKey}
+      value={formatUsageMetricQuantity(metric)}
+      note={`${metric.aggregation} over ${String(metric.sampleCount)} day${metric.sampleCount === 1 ? "" : "s"}`}
+    />
   );
 }
 
 function UsageRollupCard({ rollup }: { readonly rollup: UsageRollup }) {
   return (
-    <article
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: 12,
-        minWidth: 0,
-      }}
-    >
-      <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
-        {USAGE_METRIC_LABELS[rollup.metricKey] ?? rollup.metricKey}
-      </div>
-      <div style={{ fontWeight: 700, marginTop: 4 }}>{formatUsageQuantity(rollup)}</div>
-      <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginTop: 4 }}>
-        {formatUsagePeriod(rollup.periodStart)}
-      </div>
-    </article>
+    <AdminStatTile
+      label={USAGE_METRIC_LABELS[rollup.metricKey] ?? rollup.metricKey}
+      value={formatUsageQuantity(rollup)}
+      note={formatUsagePeriod(rollup.periodStart)}
+    />
   );
 }
 

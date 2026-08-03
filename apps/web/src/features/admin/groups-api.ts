@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /**
  * Admin Console — Groups & Organizational Units client.
@@ -135,19 +136,17 @@ export const groupsAdminQueryKeys = {
 
 export function orgUnitsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: groupsAdminQueryKeys.orgUnits(),
     queryFn: () => fetchOrgUnits(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 
 export function groupsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: groupsAdminQueryKeys.groups(),
     queryFn: () => fetchGroups(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 
@@ -156,11 +155,10 @@ export function groupMembersQueryOptions(
   fetchImpl: AuthFetch = authenticatedFetch,
 ) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: groupsAdminQueryKeys.groupMembers(groupId ?? ""),
     queryFn: () => fetchGroupMembers(groupId ?? "", fetchImpl),
     enabled: groupId !== null,
-    retry: false,
-    throwOnError: false,
   });
 }
 

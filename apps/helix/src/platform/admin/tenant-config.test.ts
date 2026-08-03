@@ -1035,6 +1035,33 @@ describe("tenant config admin routes", () => {
     expect(store.updates).toEqual([]);
     await app.close();
   });
+
+  it("returns 404 for storage migration cutover on an unknown job id", async () => {
+    const storageMigrationJobs = new InMemoryTenantStorageMigrationJobStore();
+    const store = new InMemoryTenantConfigAdminStore();
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store,
+      actorFromRequest,
+      storageMigrationJobs,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/tenant-config/byo-storage/migrations/44444444-4444-4444-8444-444444444444/cutover",
+      headers: headers("admin.console.write"),
+      payload: { confirm: "CUTOVER" },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      error: "Tenant storage migration job not found.",
+    });
+    // A missing job must never fall through to a tenant config write: cutover
+    // repoints live object storage, so an unknown id has to stop before the update.
+    expect(store.updates).toEqual([]);
+    await app.close();
+  });
 });
 
 class InMemoryTenantConfigAdminStore implements TenantConfigAdminStore {

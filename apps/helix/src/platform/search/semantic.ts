@@ -100,7 +100,11 @@ export class SemanticSearchEngine implements SearchEngine {
 
     const queryVector = (await this.options.embeddings.embed([query]))[0];
     if (queryVector === undefined) {
-      return keywordResponse;
+      /* `keywordOnly()`, not `keywordResponse`: the keyword side is queried
+         with `limit + offset` rows from position 0, so returning it raw hands
+         the caller the whole over-fetch and makes page two repeat page one.
+         The two fallbacks above already slice; this one did not. */
+      return keywordOnly();
     }
 
     const semanticMatches = await this.options.vectorStore.query(

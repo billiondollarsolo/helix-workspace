@@ -97,16 +97,21 @@ export class ByoStorageHealthWorker {
               storageResolver: this.storageResolver,
               refresh: true,
             });
-            if (health.status === "healthy") {
-              healthyCount += 1;
-            } else {
-              degradedCount += 1;
-            }
             await this.store.updateByoStorageHealth({
               orgId,
               health: persistedTenantStorageHealth(health),
               reason: "byo-storage-health-worker",
             });
+            /* Tally after the write lands, not before. The `catch` below sits
+               outside this callback, so incrementing first meant a tenant whose
+               persist threw was counted twice — once as healthy/degraded here
+               and again as an error there — and the three counts could sum to
+               more than `checkedCount`. Each tenant owes exactly one outcome. */
+            if (health.status === "healthy") {
+              healthyCount += 1;
+            } else {
+              degradedCount += 1;
+            }
           });
         } catch (error) {
           errorCount += 1;

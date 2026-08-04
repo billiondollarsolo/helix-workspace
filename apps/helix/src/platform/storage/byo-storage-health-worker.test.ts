@@ -72,12 +72,21 @@ describe("ByoStorageHealthWorker", () => {
           : { client: new RecordingStorageClient(), managedBy: "byo", prefix: "helix/" },
     });
 
-    await expect(worker.runOnce()).resolves.toMatchObject({
+    /* org-a probes degraded and then fails to persist. It is one tenant, so it
+       owes exactly one outcome: the run did not record a result for it, which
+       is an error. Tallying the probe result before the write landed counted it
+       twice — degraded *and* error — so the three counts summed to 3 across 2
+       tenants and every consumer of these numbers over-reported. */
+    const result = await worker.runOnce();
+    expect(result).toMatchObject({
       checkedCount: 2,
       healthyCount: 1,
-      degradedCount: 1,
+      degradedCount: 0,
       errorCount: 1,
     });
+    expect(result.healthyCount + result.degradedCount + result.errorCount).toBe(
+      result.checkedCount,
+    );
 
     expect(errors).toHaveLength(1);
     expect(store.healthUpdates.map((update) => update.orgId)).toEqual(["org-b"]);

@@ -39,9 +39,14 @@ describe("SemanticSearchEngine", () => {
 
     expect(keyword.upserts).toEqual([docs]);
     expect(embeddings.texts).toEqual([
-      ["Launch mail\nPlanning notes for the product launch", "Roadmap deck\nQuarterly launch roadmap"],
+      [
+        "Launch mail\nPlanning notes for the product launch",
+        "Roadmap deck\nQuarterly launch roadmap",
+      ],
     ]);
-    expect(vectorStore.collections).toEqual([{ orgId: "org-1", name: "helix_search", dim: 3, metric: "cosine" }]);
+    expect(vectorStore.collections).toEqual([
+      { orgId: "org-1", name: "helix_search", dim: 3, metric: "cosine" },
+    ]);
     expect(vectorStore.upserts).toEqual([
       {
         orgId: "org-1",
@@ -85,6 +90,37 @@ describe("SemanticSearchEngine", () => {
     ]);
     expect(vectorStore.upserts).toEqual([]);
     expect(vectorStore.collections).toEqual([]);
+  });
+
+  it("paginates the keyword fallback when embeddings return nothing", async () => {
+    /* `search` deliberately over-fetches the keyword side — `limit + offset`
+       rows starting at 0 — and every path that returns those rows owes the
+       caller a slice. Two fallbacks did. The third, taken when the embedding
+       provider yields no vector, returned the raw over-fetched response: the
+       caller asked for 2 rows starting at 2 and got all 5 starting at 0, so
+       page two repeated page one. An outage in embeddings silently became a
+       pagination bug in every paged search. */
+    const paged = Array.from({ length: 5 }, (_, index) => ({
+      id: `mail:${String(index)}`,
+      type: "mail",
+      title: `Message ${String(index)}`,
+      attributes: { orgId: "org-1" },
+    })) satisfies readonly IndexDocument[];
+    const keyword = new FakeSearchEngine(paged);
+    const engine = new SemanticSearchEngine({
+      keyword,
+      embeddings: new EmptyEmbeddingProvider(),
+      vectorStore: new FakeVectorStore(),
+    });
+
+    const response = await engine.search({
+      query: "message",
+      limit: 2,
+      offset: 2,
+      filter: 'attributes.orgId = "org-1"',
+    });
+
+    expect(response.hits.map((hit) => hit.id)).toEqual(["mail:2", "mail:3"]);
   });
 
   it("embeds the query and fuses semantic results without leaking other orgs", async () => {
@@ -142,7 +178,9 @@ describe("SemanticSearchEngine", () => {
         filter: 'attributes.orgId = "org-1"',
       },
     ]);
-    expect(vectorStore.queries).toEqual([{ orgId: "org-1", collection: "helix_search", vector: [0.1, 0.2, 0.3], limit: 50 }]);
+    expect(vectorStore.queries).toEqual([
+      { orgId: "org-1", collection: "helix_search", vector: [0.1, 0.2, 0.3], limit: 50 },
+    ]);
     expect(response.hits.map((hit) => hit.id)).toEqual(["mail:1", "chat:1"]);
     expect(response.hits.some((hit) => hit.id === "mail:other")).toBe(false);
     expect(response.hits.some((hit) => hit.id === "drive:1")).toBe(false);
@@ -181,6 +219,14 @@ describe("SemanticSearchEngine", () => {
     expect(vectorStore.deletes).toEqual([]);
   });
 });
+
+/** Yields no vector at all, so `search` falls back to keyword-only results.
+ *  Mirrors a real embedding provider being unavailable or returning nothing. */
+class EmptyEmbeddingProvider {
+  async embed(): Promise<readonly (readonly number[])[]> {
+    return [];
+  }
+}
 
 class FakeEmbeddingProvider {
   readonly texts: readonly string[][] = [];
@@ -223,21 +269,53 @@ class FakeSearchEngine implements SearchEngine {
 
 class FakeVectorStore implements VectorStore {
   readonly id = "vector";
-  readonly collections: Array<{ readonly orgId: VectorOrgScope; readonly name: string; readonly dim: number; readonly metric: VectorMetric }> = [];
-  readonly upserts: Array<{ readonly orgId: VectorOrgScope; readonly collection: string; readonly ids: readonly string[] }> = [];
-  readonly deletes: Array<{ readonly orgId: VectorOrgScope; readonly collection: string; readonly ids: readonly string[] }> = [];
-  readonly queries: Array<{ readonly orgId: VectorOrgScope; readonly collection: string; readonly vector: readonly number[]; readonly limit: number | undefined }> = [];
+  readonly collections: Array<{
+    readonly orgId: VectorOrgScope;
+    readonly name: string;
+    readonly dim: number;
+    readonly metric: VectorMetric;
+  }> = [];
+  readonly upserts: Array<{
+    readonly orgId: VectorOrgScope;
+    readonly collection: string;
+    readonly ids: readonly string[];
+  }> = [];
+  readonly deletes: Array<{
+    readonly orgId: VectorOrgScope;
+    readonly collection: string;
+    readonly ids: readonly string[];
+  }> = [];
+  readonly queries: Array<{
+    readonly orgId: VectorOrgScope;
+    readonly collection: string;
+    readonly vector: readonly number[];
+    readonly limit: number | undefined;
+  }> = [];
   matches: readonly VectorMatch[] = [];
 
-  async createCollection(orgId: VectorOrgScope, name: string, dim: number, metric: VectorMetric): Promise<void> {
+  async createCollection(
+    orgId: VectorOrgScope,
+    name: string,
+    dim: number,
+    metric: VectorMetric,
+  ): Promise<void> {
     this.collections.push({ orgId, name, dim, metric });
   }
 
-  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(
+    orgId: VectorOrgScope,
+    collection: string,
+    items: readonly VectorItem[],
+  ): Promise<void> {
     this.upserts.push({ orgId, collection, ids: items.map((item) => item.id) });
   }
 
-  async query(orgId: VectorOrgScope, collection: string, vector: readonly number[], opts?: VectorQueryOpts): Promise<readonly VectorMatch[]> {
+  async query(
+    orgId: VectorOrgScope,
+    collection: string,
+    vector: readonly number[],
+    opts?: VectorQueryOpts,
+  ): Promise<readonly VectorMatch[]> {
     this.queries.push({ orgId, collection, vector, limit: opts?.limit });
     return this.matches;
   }

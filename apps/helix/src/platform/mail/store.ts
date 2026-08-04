@@ -138,6 +138,18 @@ export interface MailStore {
   getOutbound(id: string): Promise<MailOutboundRecord | null>;
   markOutboundSending(id: string): Promise<MailOutboundRecord | null>;
   /**
+   * Ids of messages still `queued` well past their undo window.
+   *
+   * Dispatch is driven purely by a `mail.send` event. That makes a single lost
+   * or unconsumed event permanent: the row stays `queued` forever, with no
+   * error and nothing to retry it. This is the query that lets the worker
+   * reconcile against the database instead of trusting the bus.
+   */
+  listStrandedOutbound?(input: {
+    readonly limit: number;
+    readonly strandedForMs: number;
+  }): Promise<readonly string[]>;
+  /**
    * Atomically bind the first provider decision. A retry may read the same
    * decision, but cannot silently replace it.
    */
@@ -577,6 +589,24 @@ export class PostgresMailStore
       lastFailureAt: failures[0]?.failed_at?.toISOString() ?? null,
       lastError: failures[0]?.last_error ?? null,
     };
+  }
+
+  async listStrandedOutbound(input: {
+    readonly limit: number;
+    readonly strandedForMs: number;
+  }): Promise<readonly string[]> {
+    /* `undo_until` already encodes "eligible to send". The extra grace period
+       on top of it keeps the sweep clear of messages the event path is about
+       to handle normally, so reconciliation is a backstop rather than a race. */
+    const rows = (await this.sql`
+      select id
+      from mail_outbound_messages
+      where status = 'queued'
+        and undo_until <= now() - make_interval(secs => ${input.strandedForMs / 1000})
+      order by undo_until asc
+      limit ${input.limit}
+    `) as unknown as readonly { readonly id: string }[];
+    return rows.map((row) => row.id);
   }
 
   async markOutboundSending(id: string): Promise<MailOutboundRecord | null> {

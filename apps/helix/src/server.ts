@@ -326,6 +326,7 @@ import {
 import { GoogleRecaptchaVerifier } from "./platform/signup/recaptcha.js";
 import { PostgresSignupOnboardingStore } from "./platform/signup/onboarding.js";
 import { PostgresSignupOnboardingInviteTokenStore } from "./platform/signup/invites.js";
+import { MailProviderConfigurationError } from "./platform/mail/errors.js";
 import { OutboxWorker } from "./platform/outbox/outbox.js";
 import { PostgresOutboxStore } from "./platform/outbox/postgres-store.js";
 import { registerPluginAdminRoutes } from "./platform/plugins/admin-routes.js";
@@ -2004,10 +2005,40 @@ export async function createHelixServer(): Promise<FastifyInstance> {
                 readFile: (input) => driveStore.readFile(input),
               }),
               suppressionStore: mailDeliveryEventStore,
+              /* A dispatch that matched no row used to set a span attribute and
+                 return. The message then stayed `queued` with no error and
+                 nothing in the log, which is indistinguishable from "not sent
+                 yet" — so a permanently stranded send looked healthy. */
+              onDispatchSkipped: ({ outboundId, reason }) => {
+                app.log.warn({ outboundId, reason }, "Outbound mail dispatch skipped");
+              },
             },
           ),
+          // Reconciliation backstop: dispatch is otherwise driven only by a
+          // `mail.send` event, so one unconsumed event strands a message
+          // forever. The sweep re-dispatches from the database instead.
+          store: mailStore,
+          onSweepRecovered: ({ count }) => {
+            app.log.warn(
+              { count },
+              "Outbound mail recovered by reconciliation sweep — the event path dropped these",
+            );
+          },
           onError: (error) => {
-            app.log.error({ error }, "Outbound mail dispatch error");
+            /* Name and message explicitly: pino renders a bare `{ error }` of a
+               custom Error subclass as `{}`, which is a log line that proves
+               something failed while withholding what. */
+            app.log.error(
+              {
+                error,
+                errorName: error instanceof Error ? error.name : typeof error,
+                errorMessage: error instanceof Error ? error.message : String(error),
+                ...(error instanceof MailProviderConfigurationError
+                  ? { operatorCode: error.operatorCode }
+                  : {}),
+              },
+              "Outbound mail dispatch error",
+            );
           },
         });
   const signupFromAddress = {

@@ -54,6 +54,23 @@ export interface OutboundMailWorkerOptions {
   readonly dispatcher: OutboundMailDispatcher;
   readonly subject?: string;
   readonly onError?: (error: unknown) => void;
+  /**
+   * Backstop for messages the event path never delivered.
+   *
+   * Dispatch is otherwise driven solely by a `mail.send` event, so one dropped
+   * or unconsumed event strands a message permanently and silently. Supplying a
+   * store lets the worker reconcile against the database on an interval.
+   */
+  readonly store?: Pick<MailStore, "listStrandedOutbound">;
+  /** How often to reconcile. Default 60s; `0` disables the sweep. */
+  readonly sweepIntervalMs?: number;
+  /** How long past its undo window a message must sit before the sweep claims
+   *  it. Default 60s, so the event path gets first refusal. */
+  readonly strandedForMs?: number;
+  readonly sweepBatchSize?: number;
+  /** Reports messages the sweep had to recover — a non-zero count means the
+   *  event path is dropping mail, which is worth an operator's attention. */
+  readonly onSweepRecovered?: (input: { readonly count: number }) => void;
 }
 
 export interface QueueMailInput {
@@ -69,6 +86,18 @@ export interface QueueMailInput {
 }
 
 export interface OutboundDispatchOptions {
+  /**
+   * Called when a dispatch attempt finds nothing to do.
+   *
+   * `dispatch` reaching this state is not benign: the message stays `queued`
+   * with no error, no `lastError`, and — before this hook — nothing in the log.
+   * A send that will never leave looked exactly like a send that had not left
+   * *yet*, which is how two probe messages sat stranded and silent.
+   */
+  readonly onDispatchSkipped?: (input: {
+    readonly outboundId: string;
+    readonly reason: string;
+  }) => void;
   readonly maxAttempts?: number;
   readonly baseDelayMs?: number;
   readonly maxDelayMs?: number;
@@ -285,11 +314,14 @@ export class OutboundMailDispatcher {
   private readonly transportFor: OutboundTransportFor | undefined;
   private readonly legacyTransport: OutboundMailTransport | undefined;
 
+  private readonly onDispatchSkipped: OutboundDispatchOptions["onDispatchSkipped"];
+
   constructor(
     private readonly store: MailStore,
     transport: OutboundMailTransport | OutboundTransportFor,
     options: OutboundDispatchOptions = {},
   ) {
+    this.onDispatchSkipped = options.onDispatchSkipped;
     this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
@@ -321,7 +353,18 @@ export class OutboundMailDispatcher {
           try {
             const outbound = await this.store.markOutboundSending(outboundId);
             if (outbound === null) {
+              /* The transition requires `status = 'queued' AND undo_until <=
+                 now()`. Missing it means the row was already claimed (a benign
+                 double-delivery), cancelled, or still inside its undo window —
+                 or the row is stranded and this dispatch was the only thing
+                 that would ever have moved it. A span attribute nobody reads
+                 could not tell those apart, so report it. */
               span.setAttribute("helix.mail.dispatch_skipped", true);
+              this.onDispatchSkipped?.({
+                outboundId,
+                reason:
+                  "markOutboundSending matched no row: already claimed, cancelled, or still inside the undo window.",
+              });
               return null;
             }
 
@@ -498,6 +541,7 @@ export class OutboundMailWorker {
   private readonly subject: string;
   private readonly onError: ((error: unknown) => void) | undefined;
   private unsubscribe: Unsubscribe | undefined;
+  private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(private readonly options: OutboundMailWorkerOptions) {
     this.subject = options.subject ?? "mail.send";
@@ -512,9 +556,62 @@ export class OutboundMailWorker {
     this.unsubscribe = await this.options.events.subscribe(this.subject, async (event) => {
       await this.handle(event);
     });
+
+    const intervalMs = this.options.sweepIntervalMs ?? 60_000;
+    if (intervalMs > 0 && this.options.store?.listStrandedOutbound !== undefined) {
+      this.sweepTimer = setInterval(() => {
+        void this.sweep();
+      }, intervalMs);
+      // Do not hold the process open for a backstop.
+      this.sweepTimer.unref();
+    }
+  }
+
+  /**
+   * Re-dispatch messages the event path left behind.
+   *
+   * Returns the number recovered, so a caller can alert on it: a healthy
+   * deployment sweeps up nothing, and a non-zero count means events are being
+   * lost between the outbox and this worker.
+   */
+  async sweep(): Promise<number> {
+    const store = this.options.store;
+    if (store?.listStrandedOutbound === undefined) {
+      return 0;
+    }
+    try {
+      /* Called on `store`, not through an extracted reference: the Postgres
+         implementation reads `this.sql`, so an unbound call throws
+         `Cannot read properties of undefined (reading 'sql')` — which is
+         exactly what the new error logging caught on the first run. */
+      const ids = await store.listStrandedOutbound({
+        limit: this.options.sweepBatchSize ?? 50,
+        strandedForMs: this.options.strandedForMs ?? 60_000,
+      });
+      let recovered = 0;
+      for (const id of ids) {
+        // Sequential on purpose: these are already-late sends competing with
+        // live traffic for the same provider, not a backlog to fan out.
+        const dispatched = await this.options.dispatcher.dispatch(id);
+        if (dispatched !== null) {
+          recovered += 1;
+        }
+      }
+      if (recovered > 0) {
+        this.options.onSweepRecovered?.({ count: recovered });
+      }
+      return recovered;
+    } catch (error) {
+      this.onError?.(error);
+      return 0;
+    }
   }
 
   async stop(): Promise<void> {
+    if (this.sweepTimer !== undefined) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = undefined;
+    }
     if (this.unsubscribe === undefined) {
       return;
     }

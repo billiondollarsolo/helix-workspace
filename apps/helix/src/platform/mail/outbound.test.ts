@@ -4,6 +4,7 @@ import {
   MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES,
   NodemailerMailTransport,
   OutboundMailDispatcher,
+  OutboundMailWorker,
   type OutboundMailTransport,
   resolveOutboundAttachments,
 } from "./outbound.js";
@@ -495,5 +496,73 @@ describe("NodemailerMailTransport attachment content", () => {
     };
 
     expect(transport.transporter.options.requireTLS).toBe(false);
+  });
+});
+
+describe("OutboundMailWorker reconciliation sweep", () => {
+  /* Dispatch is driven solely by a `mail.send` event. Two probe messages were
+     found sitting `queued` indefinitely — the outbox had published (delivered_at
+     set, no error) but the message never moved, with nothing in the log and no
+     `lastError`. Whatever drops the event, the message must not be lost, and the
+     stall must not be silent. */
+
+  function workerFor(
+    store: Pick<MailStore, "listStrandedOutbound">,
+    dispatch: ReturnType<typeof vi.fn>,
+  ) {
+    return new OutboundMailWorker({
+      events: { subscribe: vi.fn().mockResolvedValue(async () => undefined) } as never,
+      dispatcher: { dispatch } as unknown as OutboundMailDispatcher,
+      store,
+      sweepIntervalMs: 0,
+    });
+  }
+
+  it("re-dispatches messages the event path left stranded", async () => {
+    const dispatch = vi.fn().mockResolvedValue({ id: "out-1", status: "sent" });
+    const listStrandedOutbound = vi.fn().mockResolvedValue(["out-1", "out-2"]);
+    dispatch.mockResolvedValueOnce({ id: "out-1" }).mockResolvedValueOnce({ id: "out-2" });
+
+    const recovered = await workerFor({ listStrandedOutbound }, dispatch).sweep();
+
+    expect(recovered).toBe(2);
+    expect(dispatch).toHaveBeenCalledWith("out-1");
+    expect(dispatch).toHaveBeenCalledWith("out-2");
+  });
+
+  it("reports recovery, because a healthy deployment sweeps up nothing", async () => {
+    const onSweepRecovered = vi.fn();
+    const worker = new OutboundMailWorker({
+      events: { subscribe: vi.fn() } as never,
+      dispatcher: {
+        dispatch: vi.fn().mockResolvedValue({ id: "out-1" }),
+      } as unknown as OutboundMailDispatcher,
+      store: { listStrandedOutbound: vi.fn().mockResolvedValue(["out-1"]) },
+      sweepIntervalMs: 0,
+      onSweepRecovered,
+    });
+
+    await worker.sweep();
+
+    // A non-zero count means events are being dropped between the outbox and
+    // this worker, which is an operator-visible fault rather than routine work.
+    expect(onSweepRecovered).toHaveBeenCalledWith({ count: 1 });
+  });
+
+  it("does not count a message another dispatcher already claimed", async () => {
+    // `dispatch` returns null when the row was already taken. Counting that as
+    // a recovery would manufacture a permanent false alarm on every sweep.
+    const dispatch = vi.fn().mockResolvedValue(null);
+    const onSweepRecovered = vi.fn();
+    const worker = new OutboundMailWorker({
+      events: { subscribe: vi.fn() } as never,
+      dispatcher: { dispatch } as unknown as OutboundMailDispatcher,
+      store: { listStrandedOutbound: vi.fn().mockResolvedValue(["out-1"]) },
+      sweepIntervalMs: 0,
+      onSweepRecovered,
+    });
+
+    expect(await worker.sweep()).toBe(0);
+    expect(onSweepRecovered).not.toHaveBeenCalled();
   });
 });

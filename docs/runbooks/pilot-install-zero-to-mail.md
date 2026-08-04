@@ -192,7 +192,41 @@ Details: [`docs/mail-managed-provider-delivery.md`](../mail-managed-provider-del
    - Headers show provider DKIM, not a Helix-local DKIM story.
 
 Mailpit is a **local/dev sink** and is not a production dependency. Do not treat
-Mailpit success as pilot mail evidence.
+Mailpit success as pilot mail evidence. Helix sets `requireTLS` on SMTP and will
+not downgrade to plaintext, so a catcher that does not offer STARTTLS refuses the
+send outright — locally that surfaces as
+`Error upgrading connection with STARTTLS: 502 5.5.1 Command ...`. That is the
+transport refusing to leak mail, not a Helix bug.
+
+### If the message stays `queued`
+
+`queued` with no error used to be indistinguishable from "not sent yet". It is
+now diagnosable — work down this list:
+
+1. **Read the row, not the UI.** `mail.outbound.get` returns `status`,
+   `deliveryStatus`, `provider`/`providerKind`, `sentAt`, and `lastError`. A
+   bound `providerKind` with a populated `lastError` means dispatch ran and the
+   provider rejected it; that error text is the provider's and belongs in their
+   support ticket, not a code change.
+2. **`provider: null` after the undo window** means no provider was ever bound —
+   dispatch either never ran or could not resolve a transport for the sending
+   domain. Check a provider is registered _and set as default_ for the org, and
+   that `MAIL_FROM_DOMAIN` matches a verified sending domain.
+3. **`Outbound mail dispatch skipped`** (warn): dispatch found no row to claim —
+   already sent by another replica, cancelled, or still inside its undo window.
+   Benign unless it repeats for the same id.
+4. **`Outbound mail recovered by reconciliation sweep`** (warn): dispatch is
+   driven by a `mail.send` event, and the sweep is the backstop that re-dispatches
+   what the event path dropped. Recovering anything means events are being lost
+   between the outbox and the worker — the mail is not stuck, but the bus needs
+   investigating. A healthy deployment sweeps up nothing.
+5. **`Outbound mail dispatch error`** (error): carries `errorName`,
+   `errorMessage`, and `operatorCode` when the cause is provider
+   misconfiguration.
+
+A message that stays `queued` with _none_ of the above in the log means the
+worker is not running — confirm `outbound-mail-worker` acquired singleton
+leadership at boot, and that this node has `mail` in `HELIX_APPS`.
 
 If delivery fails, follow [`runbooks/mail-provider-outage.md`](./mail-provider-outage.md)
 and the provider’s own DNS verification UI before changing Helix code.
